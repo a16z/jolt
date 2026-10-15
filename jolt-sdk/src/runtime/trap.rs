@@ -40,12 +40,10 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
     let regs = regs as *mut TrapFrame;
     let mcause = (*regs).mcause;
     if mcause_is_interrupt(mcause) {
-        // Interrupt handling is disabled
         return;
     }
 
     match mcause_code(mcause) {
-        // Handle envcalls (syscalls) from any privilege mode.
         code if code == (Exception::UserEnvCall as usize)
             || code == (Exception::SupervisorEnvCall as usize)
             || code == (Exception::MachineEnvCall as usize) =>

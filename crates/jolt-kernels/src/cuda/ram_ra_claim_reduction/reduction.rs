@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
@@ -21,7 +21,7 @@ pub struct CyclePoints<'a, F> {
     pub val_check: &'a [F],
 }
 
-impl<F: Field> CyclePoints<'_, F> {
+impl<F: JoltField> CyclePoints<'_, F> {
     fn all(&self) -> [&[F]; TERMS] {
         [self.raf, self.read_write, self.val_check]
     }
@@ -52,7 +52,7 @@ pub struct DeviceRamRaReduction {
 }
 
 impl DeviceRamRaReduction {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         words: &CudaSlice<u32>,
         eq_address: &DeviceFrVec,
@@ -113,7 +113,7 @@ impl DeviceRamRaReduction {
         })
     }
 
-    pub fn new_windowed<F: Field>(
+    pub fn new_windowed<F: JoltField>(
         context: &CudaKernelContext,
         windows: &[(usize, Arc<CudaSlice<u32>>)],
         r_address: &[F],
@@ -415,7 +415,10 @@ impl DeviceRamRaReduction {
         }
     }
 
-    pub fn round_evals<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+    pub fn round_evals<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Vec<F>, CudaError> {
         match &self.phase {
             Phase::Prefix { p, q } => {
                 let half = p
@@ -433,7 +436,7 @@ impl DeviceRamRaReduction {
         }
     }
 
-    fn phase1_round_evals<F: Field>(
+    fn phase1_round_evals<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         p: &[DeviceFrVec],
@@ -487,7 +490,7 @@ impl DeviceRamRaReduction {
             .collect()
     }
 
-    fn phase2_round_evals<F: Field>(
+    fn phase2_round_evals<F: JoltField>(
         context: &CudaKernelContext,
         h_prime: &DeviceFrVec,
         eq_hi: &[DeviceFrVec],
@@ -548,7 +551,7 @@ impl DeviceRamRaReduction {
             .collect()
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -613,7 +616,8 @@ fn eq_mle(left: &[Fr], right: &[Fr]) -> Fr {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use cudarc::driver::CudaSlice;
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use proptest::prelude::*;
 
@@ -719,7 +723,7 @@ mod tests {
             .expect("whole-domain ram ra reduction");
 
             let len = cycles / shards;
-            let windows: Vec<(usize, Arc<cudarc::driver::CudaSlice<u32>>)> = (0..shards)
+            let windows: Vec<(usize, Arc<CudaSlice<u32>>)> = (0..shards)
                 .map(|shard| {
                     (
                         0usize,

@@ -1,10 +1,15 @@
+use crate::cuda::common::device::DeviceFrVec;
+use cudarc::driver::LaunchArgs;
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::Fr;
+use jolt_field::JoltField;
 use jolt_riscv::CircuitFlags;
 use jolt_witness::backend::cuda::{
     circuit_flag_bit, DeviceAtomColumns, DeviceTrace, FLAG_BIT_PRODUCT_NEGATIVE,
     FLAG_BIT_SHOULD_BRANCH, FLAG_BIT_SHOULD_JUMP,
 };
+use witness::LAYOUT;
+use witness::VARIABLES;
 
 #[cfg(test)]
 use super::witness::Packed;
@@ -155,7 +160,7 @@ impl DeviceR1csInputs {
         raw: CudaSlice<u32>,
         cycles: usize,
     ) -> Result<Self, CudaError> {
-        let layout = context.upload_u32_slice(&witness::LAYOUT)?;
+        let layout = context.upload_u32_slice(&LAYOUT)?;
         let mut flags = context.alloc_u32(cycles)?;
 
         let count = CudaKernelContext::count_of(cycles)?;
@@ -220,8 +225,8 @@ pub struct LinearForms {
     offsets: Vec<u32>,
     counts: Vec<u32>,
     terms: Vec<u32>,
-    coefficients: Vec<jolt_field::Fr>,
-    constants: Vec<jolt_field::Fr>,
+    coefficients: Vec<Fr>,
+    constants: Vec<Fr>,
 }
 
 impl LinearForms {
@@ -235,10 +240,10 @@ impl LinearForms {
         }
     }
 
-    pub fn push<F: Field>(&mut self, weights: &[F], constant: F) -> Result<(), CudaError> {
-        if weights.len() != witness::VARIABLES {
+    pub fn push<F: JoltField>(&mut self, weights: &[F], constant: F) -> Result<(), CudaError> {
+        if weights.len() != VARIABLES {
             return Err(CudaError::LengthMismatch {
-                expected: witness::VARIABLES,
+                expected: VARIABLES,
                 got: weights.len(),
             });
         }
@@ -250,7 +255,7 @@ impl LinearForms {
             if weight.is_zero() {
                 continue;
             }
-            self.terms.push(witness::LAYOUT[variable]);
+            self.terms.push(LAYOUT[variable]);
             self.coefficients
                 .push(crate::cuda::common::device::require_fr(weight)?);
             count += 1;
@@ -277,12 +282,12 @@ pub struct DeviceLinearForms {
     pub offsets: CudaSlice<u32>,
     pub counts: CudaSlice<u32>,
     pub terms: CudaSlice<u32>,
-    pub coefficients: crate::cuda::common::device::DeviceFrVec,
-    pub constants: crate::cuda::common::device::DeviceFrVec,
+    pub coefficients: DeviceFrVec,
+    pub constants: DeviceFrVec,
 }
 
 impl DeviceLinearForms {
-    pub fn bind_args<'a>(&'a self, builder: &mut cudarc::driver::LaunchArgs<'a>) {
+    pub fn bind_args<'a>(&'a self, builder: &mut LaunchArgs<'a>) {
         let _ = builder.arg(&self.offsets);
         let _ = builder.arg(&self.counts);
         let _ = builder.arg(self.constants.limbs());
@@ -297,9 +302,21 @@ impl DeviceLinearForms {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use super::GATHER_BITS;
+    use super::GATHER_CIRCUIT_ORDER;
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_field::Fr;
+    use jolt_witness::backend::cuda::EXTRA_IMM_HI;
+    use jolt_witness::backend::cuda::EXTRA_IMM_LO;
+    use jolt_witness::backend::cuda::EXTRA_RAM_READ;
+    use jolt_witness::backend::cuda::EXTRA_RAM_WRITE;
+    use jolt_witness::backend::cuda::EXTRA_RD_POST;
+    use jolt_witness::backend::cuda::EXTRA_RS1;
+    use jolt_witness::backend::cuda::EXTRA_RS2;
+    use jolt_witness::backend::cuda::EXTRA_WORDS;
     use jolt_witness::collect_bundles;
+    use witness::NARROW;
+    use witness::WIDE;
 
     use super::super::witness::{self, SpartanOuterWitness};
     use super::DeviceR1csInputs;
@@ -375,26 +392,17 @@ mod tests {
     fn the_kernel_source_agrees_on_the_gather_layout() {
         let source = include_str!("../kernels/spartan_outer.cu");
         for (name, value) in [
-            ("SO_NARROW", witness::NARROW),
-            ("SO_WIDE", witness::WIDE),
-            ("SO_EXTRA_WORDS", jolt_witness::backend::cuda::EXTRA_WORDS),
-            ("SO_EXTRA_RS1", jolt_witness::backend::cuda::EXTRA_RS1),
-            ("SO_EXTRA_RS2", jolt_witness::backend::cuda::EXTRA_RS2),
-            (
-                "SO_EXTRA_RD_POST",
-                jolt_witness::backend::cuda::EXTRA_RD_POST,
-            ),
-            (
-                "SO_EXTRA_RAM_READ",
-                jolt_witness::backend::cuda::EXTRA_RAM_READ,
-            ),
-            (
-                "SO_EXTRA_RAM_WRITE",
-                jolt_witness::backend::cuda::EXTRA_RAM_WRITE,
-            ),
-            ("SO_EXTRA_IMM_LO", jolt_witness::backend::cuda::EXTRA_IMM_LO),
-            ("SO_EXTRA_IMM_HI", jolt_witness::backend::cuda::EXTRA_IMM_HI),
-            ("SO_GATHER_BITS", super::GATHER_BITS),
+            ("SO_NARROW", NARROW),
+            ("SO_WIDE", WIDE),
+            ("SO_EXTRA_WORDS", EXTRA_WORDS),
+            ("SO_EXTRA_RS1", EXTRA_RS1),
+            ("SO_EXTRA_RS2", EXTRA_RS2),
+            ("SO_EXTRA_RD_POST", EXTRA_RD_POST),
+            ("SO_EXTRA_RAM_READ", EXTRA_RAM_READ),
+            ("SO_EXTRA_RAM_WRITE", EXTRA_RAM_WRITE),
+            ("SO_EXTRA_IMM_LO", EXTRA_IMM_LO),
+            ("SO_EXTRA_IMM_HI", EXTRA_IMM_HI),
+            ("SO_GATHER_BITS", GATHER_BITS),
         ] {
             let expected = format!("#define {name} {value}");
             assert!(
@@ -403,8 +411,8 @@ mod tests {
             );
         }
         assert_eq!(
-            super::GATHER_CIRCUIT_ORDER.len() + 2,
-            super::GATHER_BITS,
+            GATHER_CIRCUIT_ORDER.len() + 2,
+            GATHER_BITS,
             "the gather bit map must cover should-branch, should-jump and every circuit flag",
         );
     }

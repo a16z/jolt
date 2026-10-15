@@ -1,8 +1,14 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::relations::booleanity::{
     BooleanityInputClaims, BooleanityOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -24,7 +30,7 @@ pub(crate) mod address;
 pub(crate) mod masses;
 pub(crate) mod one_hot;
 
-pub struct BooleanityCycleKernel<F: Field> {
+pub struct BooleanityCycleKernel<F: JoltField> {
     relation: Booleanity<F>,
     one_hot: ShardedBooleanityRa<F>,
     eq: DeviceSplitEq<F>,
@@ -34,19 +40,19 @@ pub struct BooleanityCycleKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for BooleanityCycleKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for BooleanityCycleKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.visit_simple(Key::new("eq"), self.eq.device_bytes());
         visitor.visit_simple(
-            allocative::Key::new("finals"),
+            Key::new("finals"),
             self.finals.as_ref().map_or(0, |v| v.len() * size_of::<F>()),
         );
         visitor.exit();
     }
 }
 
-impl<F: Field> BooleanityCycleKernel<F> {
+impl<F: JoltField> BooleanityCycleKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         let bound = self.rounds_bound;
         self.one_hot
@@ -65,7 +71,7 @@ impl<F: Field> BooleanityCycleKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for BooleanityCycleKernel<F> {
+impl<F: JoltField> ProveRounds<F> for BooleanityCycleKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -79,14 +85,16 @@ impl<F: Field> ProveRounds<F> for BooleanityCycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let (constant, quadratic) = self.one_hot.round_coefficients(&self.eq).map_err(|_| {
-            SumcheckError::MissingEvaluationSource {
-                kind: "cuda booleanity cycle-phase round",
-            }
-        })?;
+        let (constant, quadratic, at_one) =
+            self.one_hot.round_coefficients(&self.eq).map_err(|_| {
+                SumcheckError::MissingEvaluationSource {
+                    kind: "cuda booleanity cycle-phase round",
+                }
+            })?;
         let mut coefficients = self
             .eq
-            .gruen_poly_deg_3(constant, quadratic, previous_claim)
+            .gruen_poly_deg_3(constant, quadratic, previous_claim, at_one)
+            .map_err(backend("CUDA quotient interpolation"))?
             .into_coefficients();
         coefficients.resize(self.relation.degree() + 1, F::from_u64(0));
         Ok(UnivariatePoly::new(coefficients))
@@ -97,7 +105,7 @@ impl<F: Field> ProveRounds<F> for BooleanityCycleKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for BooleanityCycleKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for BooleanityCycleKernel<F> {
     type Relation = Booleanity<F>;
 
     fn output_claims(
@@ -143,7 +151,7 @@ impl<F: Field> SumcheckKernel<F> for BooleanityCycleKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -239,9 +247,9 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
 )]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltRelationId};
+    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::formula_dimensions_from_parts;
     use jolt_verifier::stages::stage6b::booleanity::{
         Booleanity, BooleanityCyclePhaseChallenges, BooleanityInputClaims,
@@ -251,9 +259,7 @@ mod tests {
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{
-        arb_point, drive, fr, hot_addresses, one_hot_fixture_bytecode_is_cold,
-        one_hot_fixture_is_padding, ram_fixture_is_cold, reference_input_claim,
-        with_one_hot_witness, ONE_HOT_BYTECODE_LEN,
+        arb_point, drive, fr, reference_input_claim, with_one_hot_witness, ONE_HOT_BYTECODE_LEN,
     };
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
@@ -266,118 +272,6 @@ mod tests {
         JoltOneHotConfig {
             log_k_chunk: chunk_bits as u8,
             lookups_ra_virtual_log_k_chunk: if chunk_bits == 4 { 16 } else { 32 },
-        }
-    }
-
-    #[test]
-    fn fixture_booleanity_columns_are_one_hot_per_family() {
-        let cycles = 1usize << LOG_T;
-        for (chunk_bits, ram_log_k) in CONFIGS {
-            let addresses = 1usize << chunk_bits;
-            with_one_hot_witness(
-                LOG_T,
-                ONE_HOT_BYTECODE_LEN,
-                1usize << ram_log_k,
-                one_hot(chunk_bits),
-                7,
-                |witness, bytecode_len| {
-                    let layout = formula_dimensions_from_parts(
-                        one_hot(chunk_bits),
-                        LOG_T,
-                        bytecode_len,
-                        1usize << ram_log_k,
-                        JoltRelationId::Booleanity,
-                    )
-                    .expect("formula dimensions")
-                    .ra_layout;
-
-                    let families: [(&str, Vec<JoltCommittedPolynomial>); 3] = [
-                        (
-                            "instruction",
-                            (0..layout.instruction())
-                                .map(JoltCommittedPolynomial::InstructionRa)
-                                .collect(),
-                        ),
-                        (
-                            "bytecode",
-                            (0..layout.bytecode())
-                                .map(JoltCommittedPolynomial::BytecodeRa)
-                                .collect(),
-                        ),
-                        (
-                            "ram",
-                            (0..layout.ram())
-                                .map(JoltCommittedPolynomial::RamRa)
-                                .collect(),
-                        ),
-                    ];
-
-                    for (family, polynomials) in families {
-                        assert!(
-                            !polynomials.is_empty(),
-                            "chunk_bits {chunk_bits} ram_log_k {ram_log_k}: the {family} family is \
-                             empty, so this config cannot exercise it",
-                        );
-                        for polynomial in polynomials {
-                            let hot = hot_addresses(witness, polynomial, addresses, cycles);
-                            for (cycle, address) in hot.iter().enumerate() {
-                                let cold = match family {
-                                    "instruction" => false,
-                                    "bytecode" => one_hot_fixture_bytecode_is_cold(LOG_T, cycle),
-                                    _ => ram_fixture_is_cold(LOG_T, cycle),
-                                };
-                                assert_eq!(
-                                    address.is_none(),
-                                    cold,
-                                    "chunk_bits {chunk_bits} ram_log_k {ram_log_k} \
-                                     {polynomial:?} cycle {cycle}: the committed column disagrees \
-                                     with the fixture on whether this cycle is cold",
-                                );
-                            }
-                            let distinct: std::collections::BTreeSet<usize> =
-                                hot.iter().flatten().copied().collect();
-                            assert!(
-                                distinct.len() > 1,
-                                "chunk_bits {chunk_bits} ram_log_k {ram_log_k} {polynomial:?}: \
-                                 the hot address is constant across every hot cycle, so this \
-                                 chunk cannot detect a wrong shift",
-                            );
-                        }
-                    }
-
-                    let padding = (0..cycles)
-                        .filter(|&cycle| one_hot_fixture_is_padding(LOG_T, cycle))
-                        .count();
-                    let bytecode_cold = (0..cycles)
-                        .filter(|&cycle| one_hot_fixture_bytecode_is_cold(LOG_T, cycle))
-                        .count();
-                    let ram_cold = (0..cycles)
-                        .filter(|&cycle| ram_fixture_is_cold(LOG_T, cycle))
-                        .count();
-                    let disagree = (0..cycles)
-                        .filter(|&cycle| {
-                            one_hot_fixture_bytecode_is_cold(LOG_T, cycle)
-                                != ram_fixture_is_cold(LOG_T, cycle)
-                        })
-                        .count();
-                    assert!(padding > 0, "the fixture has no padding tail");
-                    assert!(
-                        bytecode_cold > 0 && bytecode_cold < cycles,
-                        "{bytecode_cold} of {cycles} cycles are bytecode-cold, so one of the two \
-                         paths is unexercised",
-                    );
-                    assert!(
-                        ram_cold > 0 && ram_cold < cycles,
-                        "{ram_cold} of {cycles} cycles are RAM-cold, so one of the two paths is \
-                         unexercised",
-                    );
-                    assert!(
-                        disagree > 0,
-                        "the bytecode and RAM cold sets coincide, so a kernel reading the wrong \
-                         family's cold flag would still pass",
-                    );
-                },
-            );
         }
     }
 

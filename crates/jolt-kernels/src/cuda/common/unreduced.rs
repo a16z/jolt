@@ -1,11 +1,4 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "implementation target: the address-phase bucket scans wire this once its kernels land"
-    )
-)]
-
+use cudarc::driver::CudaSlice;
 use cudarc::driver::PushKernelArg;
 
 use super::context::CudaKernelContext;
@@ -17,16 +10,16 @@ pub const ACCUM_LIMBS: usize = 7;
 pub(crate) fn alloc_slots(
     context: &CudaKernelContext,
     count: usize,
-) -> Result<cudarc::driver::CudaSlice<u64>, CudaError> {
+) -> Result<CudaSlice<u64>, CudaError> {
     context.alloc_u64(count * 2 * ACCUM_LIMBS)
 }
 
 pub(crate) fn fold_slot_chunks(
     context: &CudaKernelContext,
-    slots: &cudarc::driver::CudaSlice<u64>,
+    slots: &CudaSlice<u64>,
     groups: usize,
     chunks: usize,
-) -> Result<cudarc::driver::CudaSlice<u64>, CudaError> {
+) -> Result<CudaSlice<u64>, CudaError> {
     if chunks == 0 {
         return Err(CudaError::InvariantViolation {
             reason: "a chunked slot fold needs at least one chunk",
@@ -58,7 +51,7 @@ pub(crate) fn fold_slot_chunks(
 
 pub(crate) fn finalize_slots(
     context: &CudaKernelContext,
-    slots: &cudarc::driver::CudaSlice<u64>,
+    slots: &CudaSlice<u64>,
     count: usize,
 ) -> Result<DeviceFrVec, CudaError> {
     if slots.len() != count * 2 * ACCUM_LIMBS {
@@ -81,6 +74,7 @@ pub(crate) fn finalize_slots(
     Ok(out)
 }
 
+#[cfg(test)]
 pub fn mul_u64_accumulate(
     context: &CudaKernelContext,
     values: &DeviceFrVec,
@@ -91,6 +85,7 @@ pub fn mul_u64_accumulate(
     scatter(context, values, multiplicands, 1, buckets, bucket_count)
 }
 
+#[cfg(test)]
 pub fn mul_u128_accumulate(
     context: &CudaKernelContext,
     values: &DeviceFrVec,
@@ -106,6 +101,7 @@ pub fn mul_u128_accumulate(
     scatter(context, values, &words, 2, buckets, bucket_count)
 }
 
+#[cfg(test)]
 fn scatter(
     context: &CudaKernelContext,
     values: &DeviceFrVec,
@@ -167,7 +163,7 @@ fn scatter(
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use proptest::prelude::*;
 
     use super::super::context::shared_context;

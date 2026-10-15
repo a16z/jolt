@@ -349,19 +349,13 @@ macro_rules! source_extension_for_marker {
     (VirtualAdvice) => {
         Some(SourceExtension::JoltCustom)
     };
-    (VirtualAdviceLen) => {
-        Some(SourceExtension::JoltCustom)
-    };
     (VirtualAdviceLoad) => {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualHostIO) => {
         Some(SourceExtension::JoltCustom)
     };
-    (VirtualChangeDivisor) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualZeroExtendWord) => {
@@ -418,6 +412,33 @@ macro_rules! source_extension_for_marker {
     (VirtualSrli) => {
         Some(SourceExtension::JoltCustom)
     };
+    (WindowMaskW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (PextSigned) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (Pext) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (WindowMaskB) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (WindowMaskH) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (ShiftDataB) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (ShiftDataH) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (ShiftDataW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (AlignAddr) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (VirtualXorRot32) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -442,6 +463,33 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRotW7) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualXorRotW22) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotW19) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotW6) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualShiftRightBitmaskW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSrlw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSrliw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSraw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSraiw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotL1) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (FieldAdd) => {
         Some(SourceExtension::FieldInline)
     };
@@ -457,13 +505,19 @@ macro_rules! source_extension_for_marker {
     (FieldAssertEq) => {
         Some(SourceExtension::FieldInline)
     };
-    (FieldLoadFromX) => {
+    (FieldLoadAccumulateFromRegister) => {
         Some(SourceExtension::FieldInline)
     };
-    (FieldStoreToX) => {
+    (FieldAssertZero) => {
         Some(SourceExtension::FieldInline)
     };
     (FieldLoadImm) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldLoadAccumulateFromMemory) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldAdviceLimb) => {
         Some(SourceExtension::FieldInline)
     };
 }
@@ -787,13 +841,7 @@ macro_rules! source_side_effects_for_marker {
     (VirtualAdvice) => {
         false
     };
-    (VirtualAdviceLen) => {
-        false
-    };
-    (VirtualChangeDivisor) => {
-        false
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         false
     };
     (VirtualZeroExtendWord) => {
@@ -850,6 +898,33 @@ macro_rules! source_side_effects_for_marker {
     (VirtualSrli) => {
         false
     };
+    (WindowMaskW) => {
+        false
+    };
+    (PextSigned) => {
+        false
+    };
+    (Pext) => {
+        false
+    };
+    (WindowMaskB) => {
+        false
+    };
+    (WindowMaskH) => {
+        false
+    };
+    (ShiftDataB) => {
+        false
+    };
+    (ShiftDataH) => {
+        false
+    };
+    (ShiftDataW) => {
+        false
+    };
+    (AlignAddr) => {
+        false
+    };
     (VirtualXorRot32) => {
         false
     };
@@ -874,6 +949,33 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRotW7) => {
         false
     };
+    (VirtualXorRotW22) => {
+        false
+    };
+    (VirtualXorRotW19) => {
+        false
+    };
+    (VirtualXorRotW6) => {
+        false
+    };
+    (VirtualShiftRightBitmaskW) => {
+        false
+    };
+    (VirtualSrlw) => {
+        false
+    };
+    (VirtualSrliw) => {
+        false
+    };
+    (VirtualSraw) => {
+        false
+    };
+    (VirtualSraiw) => {
+        false
+    };
+    (VirtualXorRotL1) => {
+        false
+    };
     (FieldAdd) => {
         true
     };
@@ -889,13 +991,19 @@ macro_rules! source_side_effects_for_marker {
     (FieldAssertEq) => {
         true
     };
-    (FieldLoadFromX) => {
+    (FieldLoadAccumulateFromRegister) => {
         true
     };
-    (FieldStoreToX) => {
+    (FieldAssertZero) => {
         true
     };
     (FieldLoadImm) => {
+        true
+    };
+    (FieldLoadAccumulateFromMemory) => {
+        true
+    };
+    (FieldAdviceLimb) => {
         true
     };
 }
@@ -1000,9 +1108,6 @@ macro_rules! jolt_target_extension_for_marker {
     (VirtualAdvice) => {
         Some(JoltTargetExtension::Advice)
     };
-    (VirtualAdviceLen) => {
-        Some(JoltTargetExtension::Advice)
-    };
     (VirtualAdviceLoad) => {
         Some(JoltTargetExtension::Advice)
     };
@@ -1030,10 +1135,7 @@ macro_rules! jolt_target_extension_for_marker {
     (AssertMulUNoOverflow) => {
         Some(JoltTargetExtension::VirtualAssertions)
     };
-    (VirtualChangeDivisor) => {
-        Some(JoltTargetExtension::VirtualArithmetic)
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (VirtualZeroExtendWord) => {
@@ -1087,6 +1189,33 @@ macro_rules! jolt_target_extension_for_marker {
     (VirtualSrli) => {
         Some(JoltTargetExtension::VirtualShifts)
     };
+    (WindowMaskW) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (PextSigned) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (Pext) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (WindowMaskB) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (WindowMaskH) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (ShiftDataB) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (ShiftDataH) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (ShiftDataW) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (AlignAddr) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
     (Andn) => {
         Some(JoltTargetExtension::BitManipulation)
     };
@@ -1117,6 +1246,33 @@ macro_rules! jolt_target_extension_for_marker {
     (VirtualXorRotW7) => {
         Some(JoltTargetExtension::BitManipulation)
     };
+    (VirtualXorRotW22) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRotW19) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRotW6) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualShiftRightBitmaskW) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSrlw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSrliw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSraw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSraiw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualXorRotL1) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
     (FieldAdd) => {
         Some(JoltTargetExtension::FieldInline)
     };
@@ -1132,13 +1288,19 @@ macro_rules! jolt_target_extension_for_marker {
     (FieldAssertEq) => {
         Some(JoltTargetExtension::FieldInline)
     };
-    (FieldLoadFromX) => {
+    (FieldLoadAccumulateFromRegister) => {
         Some(JoltTargetExtension::FieldInline)
     };
-    (FieldStoreToX) => {
+    (FieldAssertZero) => {
         Some(JoltTargetExtension::FieldInline)
     };
     (FieldLoadImm) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldLoadAccumulateFromMemory) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldAdviceLimb) => {
         Some(JoltTargetExtension::FieldInline)
     };
 }
@@ -1198,13 +1360,19 @@ macro_rules! jolt_side_effects_for_marker {
     (FieldAssertEq) => {
         true
     };
-    (FieldLoadFromX) => {
+    (FieldLoadAccumulateFromRegister) => {
         true
     };
-    (FieldStoreToX) => {
+    (FieldAssertZero) => {
         true
     };
     (FieldLoadImm) => {
+        true
+    };
+    (FieldLoadAccumulateFromMemory) => {
+        true
+    };
+    (FieldAdviceLimb) => {
         true
     };
     (Add) => {
@@ -1297,13 +1465,7 @@ macro_rules! jolt_side_effects_for_marker {
     (VirtualAdvice) => {
         false
     };
-    (VirtualAdviceLen) => {
-        false
-    };
-    (VirtualChangeDivisor) => {
-        false
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         false
     };
     (VirtualZeroExtendWord) => {
@@ -1360,6 +1522,33 @@ macro_rules! jolt_side_effects_for_marker {
     (VirtualSrli) => {
         false
     };
+    (WindowMaskW) => {
+        false
+    };
+    (PextSigned) => {
+        false
+    };
+    (Pext) => {
+        false
+    };
+    (WindowMaskB) => {
+        false
+    };
+    (WindowMaskH) => {
+        false
+    };
+    (ShiftDataB) => {
+        false
+    };
+    (ShiftDataH) => {
+        false
+    };
+    (ShiftDataW) => {
+        false
+    };
+    (AlignAddr) => {
+        false
+    };
     (VirtualXorRot32) => {
         false
     };
@@ -1382,6 +1571,33 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRotW7) => {
+        false
+    };
+    (VirtualXorRotW22) => {
+        false
+    };
+    (VirtualXorRotW19) => {
+        false
+    };
+    (VirtualXorRotW6) => {
+        false
+    };
+    (VirtualShiftRightBitmaskW) => {
+        false
+    };
+    (VirtualSrlw) => {
+        false
+    };
+    (VirtualSrliw) => {
+        false
+    };
+    (VirtualSraw) => {
+        false
+    };
+    (VirtualSraiw) => {
+        false
+    };
+    (VirtualXorRotL1) => {
         false
     };
 }
@@ -1685,12 +1901,12 @@ macro_rules! define_jolt_instruction_kind {
         }
 
         impl SourceInstructionKind {
-            pub const fn from_jolt_kind(kind: JoltInstructionKind) -> Option<Self> {
+            pub const fn from_jolt_kind(kind: JoltInstructionKind) -> Self {
                 match kind {
-                    JoltInstruction::Noop(_) => Some(SourceInstruction::Noop(Noop(()))),
+                    JoltInstruction::Noop(_) => SourceInstruction::Noop(Noop(())),
                     $(
                         $(#[$meta])*
-                        JoltInstruction::$marker(_) => Some(SourceInstruction::$marker($marker(()))),
+                        JoltInstruction::$marker(_) => SourceInstruction::$marker($marker(())),
                     )*
                 }
             }
@@ -1712,6 +1928,12 @@ macro_rules! define_jolt_instruction_kind {
                 JoltInstruction::Noop(Noop(()))
             }
         }
+
+        impl From<JoltInstructionKind> for SourceInstructionKind {
+            fn from(kind: JoltInstructionKind) -> Self {
+                Self::from_jolt_kind(kind)
+            }
+        }
     };
 }
 
@@ -1725,6 +1947,11 @@ impl SourceInstructionKind {
     /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
         SourceInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+    /// Value form of `VirtualSignExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_SIGN_EXTEND_WORD: Self =
+        SourceInstruction::VirtualSignExtendWord(VirtualSignExtendWord(()));
+    /// Value form of `VirtualNegateIf`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_NEGATE_IF: Self = SourceInstruction::VirtualNegateIf(VirtualNegateIf(()));
 }
 
 impl JoltInstructionKind {
@@ -1737,6 +1964,11 @@ impl JoltInstructionKind {
     /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
         JoltInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+    /// Value form of `VirtualSignExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_SIGN_EXTEND_WORD: Self =
+        JoltInstruction::VirtualSignExtendWord(VirtualSignExtendWord(()));
+    /// Value form of `VirtualNegateIf`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_NEGATE_IF: Self = JoltInstruction::VirtualNegateIf(VirtualNegateIf(()));
 }
 
 #[cfg(feature = "serialization")]
@@ -1890,13 +2122,17 @@ impl Valid for JoltInstructionKind {
 #[cfg(test)]
 mod tests {
     use super::{JoltInstructionKind, JoltInstructionTag, SourceInstructionKind};
-    use crate::instructions::{JoltInstruction, SourceInstruction, VirtualHostIO};
+    use crate::instructions::{JoltInstruction, VirtualHostIO};
     use std::collections::HashSet;
 
     #[test]
     fn tags_are_stable_for_representative_final_rows() {
         assert_eq!(JoltInstructionKind::NoOp.tag(), JoltInstructionTag(0x0000));
         assert_eq!(JoltInstructionKind::ADD.tag(), JoltInstructionTag(0x0002));
+        assert_eq!(
+            JoltInstructionKind::from_tag(JoltInstructionTag(0x0062)),
+            None
+        );
         assert_eq!(
             JoltInstruction::VirtualHostIO(VirtualHostIO(())).tag(),
             JoltInstructionTag(0x0068)
@@ -1914,6 +2150,10 @@ mod tests {
             let tag = kind.tag();
             assert!(seen.insert(tag), "duplicate tag {tag:?} for {kind:?}");
             assert_eq!(JoltInstructionKind::from_tag(tag), Some(*kind));
+            #[cfg(feature = "field-inline")]
+            if let Some(op) = crate::field_inline_jolt_op(*kind) {
+                assert_eq!(tag, JoltInstructionTag(0x0100 + u16::from(op.tag())));
+            }
         }
     }
 
@@ -1938,24 +2178,6 @@ mod tests {
             assert!(!name.is_empty(), "empty canonical name for {kind:?}");
             assert!(seen.insert(name), "duplicate canonical name {name:?}");
         }
-    }
-
-    #[test]
-    fn source_to_final_mapping_is_partial() {
-        assert_eq!(
-            SourceInstructionKind::ADD.jolt_kind(),
-            Some(JoltInstructionKind::ADD)
-        );
-        assert_eq!(
-            SourceInstruction::VirtualHostIO(VirtualHostIO(())).jolt_kind(),
-            Some(JoltInstruction::VirtualHostIO(VirtualHostIO(())))
-        );
-        assert_eq!(
-            SourceInstructionKind::ADDW.jolt_kind(),
-            Some(JoltInstructionKind::ADDW)
-        );
-        assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
-        assert_eq!(SourceInstructionKind::Unimpl.jolt_kind(), None);
     }
 
     #[test]

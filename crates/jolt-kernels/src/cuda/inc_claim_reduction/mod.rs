@@ -1,8 +1,14 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::relations::claim_reductions::increments::{
     IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -62,22 +68,22 @@ impl NarrowColumns for IncrementFoldColumns {
     }
 }
 
-pub struct IncClaimReductionKernel<F: Field> {
+pub struct IncClaimReductionKernel<F: JoltField> {
     rounds: PrefixSuffixRounds<F>,
     total: usize,
     bound: usize,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for IncClaimReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for IncClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("rounds"), self.rounds.device_bytes());
+        visitor.visit_simple(Key::new("rounds"), self.rounds.device_bytes());
         visitor.exit();
     }
 }
 
-impl<F: Field> ProveRounds<F> for IncClaimReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for IncClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.total
     }
@@ -100,7 +106,7 @@ impl<F: Field> ProveRounds<F> for IncClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for IncClaimReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for IncClaimReductionKernel<F> {
     type Relation = IncClaimReduction<F>;
 
     fn output_claims(
@@ -129,7 +135,7 @@ impl<F: Field> SumcheckKernel<F> for IncClaimReductionKernel<F> {
     }
 }
 
-fn increment_windows<F: Field>(
+fn increment_windows<F: JoltField>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
@@ -166,7 +172,7 @@ fn increment_windows<F: Field>(
     Ok(out)
 }
 
-impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -229,7 +235,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TraceDimensions};
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
     use proptest::prelude::*;
 

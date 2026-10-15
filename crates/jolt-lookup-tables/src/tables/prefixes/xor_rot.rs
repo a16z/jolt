@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -7,7 +7,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum XorRotPrefix<const ROTATION: usize> {}
 
-impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotPrefix<ROTATION> {
+impl<const ROTATION: usize, F: JoltField> SparseDensePrefix<F> for XorRotPrefix<ROTATION> {
     fn default_checkpoint() -> F {
         F::zero()
     }
@@ -24,15 +24,6 @@ impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotPrefix<ROTA
         let (x, y) = b.uninterleave();
         let xor_val = u64::from(x) ^ u64::from(y);
 
-        // Each XOR bit at original position `p` maps to rotated position
-        // `(p + ROTATION) % XLEN`. The phase bits correspond to original
-        // positions starting at some offset. At binary points, we compute
-        // the XOR and rotate the result into the correct output positions.
-        //
-        // The phase's x/y bits occupy positions that, after XOR and rotation,
-        // need to be shifted to their final bit positions. The suffix bits
-        // haven't been bound yet, so the phase XOR value gets rotated by
-        // the appropriate amount.
         let shift = if suffix_len / 2 >= ROTATION {
             suffix_len / 2 - ROTATION
         } else {

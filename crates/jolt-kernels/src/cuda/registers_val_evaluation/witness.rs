@@ -1,5 +1,7 @@
 #[cfg(test)]
-use jolt_witness::witnesses::{RdAddress, RdInc};
+use crate::cuda::registers_read_write::witness::RdAddress;
+#[cfg(test)]
+use jolt_witness::witnesses::RdInc;
 #[cfg(test)]
 use jolt_witness::WitnessBundle;
 
@@ -37,8 +39,9 @@ pub fn device_columns(
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_witness::witnesses::{RdAddress, RdInc};
+    use crate::cuda::registers_read_write::witness::RdAddress;
+    use jolt_field::{Fr, Ring};
+    use jolt_witness::witnesses::RdInc;
 
     use super::{device_columns, RegistersValEvaluationWitness};
     use crate::cuda::common::context::shared_context;

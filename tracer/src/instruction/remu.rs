@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask   = 0xfe00707f,
     match  = 0x02007033,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
 impl REMU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <REMU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <REMU as RISCVInstruction>::RamAccess) {
         let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
         let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]);
         cpu.write_register(

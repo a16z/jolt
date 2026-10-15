@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
@@ -30,7 +30,7 @@ pub struct DeviceBytecodeRa {
 }
 
 impl DeviceBytecodeRa {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         pc: Arc<CudaSlice<u32>>,
         cycles: usize,
@@ -252,7 +252,7 @@ impl DeviceBytecodeRa {
         Ok(())
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -280,7 +280,10 @@ impl DeviceBytecodeRa {
         Ok(())
     }
 
-    pub fn final_claims<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+    pub fn final_claims<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Vec<F>, CudaError> {
         if self.len() != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
@@ -301,7 +304,7 @@ impl DeviceBytecodeRa {
             .collect()
     }
 
-    pub fn round_evals<F: Field>(
+    pub fn round_evals<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         coefficient: &DeviceFrVec,
@@ -460,7 +463,7 @@ impl ShardedBytecodeRa {
         })
     }
 
-    pub(crate) fn round_evals<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+    pub(crate) fn round_evals<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
         if let Some(shard) = &self.collapsed {
             let context = context_for(shard.ordinal).ok_or(absent())?;
             return shard
@@ -499,7 +502,11 @@ impl ShardedBytecodeRa {
         Ok(total)
     }
 
-    pub(crate) fn bind<F: Field>(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+    pub(crate) fn bind<F: JoltField>(
+        &mut self,
+        challenge: F,
+        bound: usize,
+    ) -> Result<(), CudaError> {
         if let Some(shard) = &mut self.collapsed {
             let context = context_for(shard.ordinal).ok_or(absent())?;
             shard.one_hot.bind(context, challenge)?;
@@ -570,7 +577,7 @@ impl ShardedBytecodeRa {
         Ok(())
     }
 
-    pub(crate) fn final_claims<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+    pub(crate) fn final_claims<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
         let shard = self
             .collapsed
             .as_ref()
@@ -595,9 +602,12 @@ const fn absent() -> CudaError {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use super::BytecodeShard;
+    use super::ShardedBytecodeRa;
+    use super::MAX_LANES;
     use std::sync::Arc;
 
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 
@@ -656,8 +666,8 @@ mod tests {
                 DeviceCoefficient::new(context, &stage_points, &weights, entry, LOG_T)
                     .expect("whole coefficient");
             let len = cycles / shards;
-            let windows: Vec<super::BytecodeShard> = (0..shards)
-                .map(|shard| super::BytecodeShard {
+            let windows: Vec<BytecodeShard> = (0..shards)
+                .map(|shard| BytecodeShard {
                     ordinal: 0,
                     one_hot: build(shard * len, len),
                     coefficient: DeviceCoefficient::new_window(
@@ -672,8 +682,7 @@ mod tests {
                     .expect("window coefficient"),
                 })
                 .collect();
-            let mut got =
-                super::ShardedBytecodeRa::new(windows, LOG_T).expect("sharded bytecode family");
+            let mut got = ShardedBytecodeRa::new(windows, LOG_T).expect("sharded bytecode family");
 
             for round in 0..LOG_T {
                 let want: Vec<Fr> = expected
@@ -764,7 +773,7 @@ mod tests {
             challenges in arb_point(8),
         ) {
             let Some(context) = shared_context() else { return Ok(()); };
-            if chunk_bits * polys > 32 || polys + 1 > super::MAX_LANES {
+            if chunk_bits * polys > 32 || polys + 1 > MAX_LANES {
                 return Ok(());
             }
             let cycles = 1usize << log_t;

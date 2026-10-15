@@ -936,12 +936,13 @@ pub struct ProofTraceRow {
 }
 ```
 
-`crates/jolt-program` already has the equivalent `TraceRow` / `OwnedTrace`
-shape. A future cleanup should make `jolt-prover-legacy` prover inputs consume that
-normalized proof trace instead of `Arc<Vec<Cycle>>`. In that end state, tracer
-execution still owns concrete `Cycle` construction and CPU/RAM side effects,
-but proving code never sees source-only cycle variants and no longer needs to
-adapt each cycle repeatedly with `JoltTraceCycle::try_new`.
+`jolt_riscv::JoltTraceRow` and `jolt_program::execution::TraceData` already
+have the equivalent shape. A future cleanup should make `jolt-prover-legacy`
+prover inputs consume that normalized proof trace instead of
+`Arc<Vec<Cycle>>`. In that end state, tracer execution still owns concrete
+`Cycle` construction and CPU/RAM side effects, but proving code never sees
+source-only cycle variants and no longer needs to adapt each cycle repeatedly
+with `JoltTraceCycle::try_new`.
 
 Expansion bodies are also not moved into `jolt-riscv`, because `jolt-riscv`
 must remain below `jolt-program` in the dependency graph. `jolt-riscv` can expose
@@ -1037,8 +1038,7 @@ The current default source profile should include:
 - `SourceExtension::Zicsr`: `CSRRW` and `CSRRS`;
 - `SourceExtension::RvPrivileged`: `MRET`;
 - `SourceExtension::JoltCustom`: custom decoded source rows such as
-  `VirtualRev8W`, `VirtualAssertEQ`, `VirtualHostIO`, `AdviceLB/LH/LW/LD`, and
-  `VirtualAdviceLen`;
+  `VirtualRev8W`, `VirtualAssertEQ`, `VirtualHostIO`, and `AdviceLB/LH/LW/LD`;
 - `SourceExtension::JoltInline`: source rows whose dispatch payload is keyed by
   `(opcode, funct3, funct7)`.
 
@@ -1054,8 +1054,7 @@ include these `JoltTargetExtension` families:
 - `JoltTargetExtension::ControlFlow`: final branch/jump instructions such as
   `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`, and `FENCE`;
 - `JoltTargetExtension::LoadStore64`: final `LD` and `SD` instructions;
-- `JoltTargetExtension::Advice`: `VirtualAdvice`, `VirtualAdviceLen`, and
-  `VirtualAdviceLoad`;
+- `JoltTargetExtension::Advice`: `VirtualAdvice` and `VirtualAdviceLoad`;
 - `JoltTargetExtension::HostIO`: `VirtualHostIO`;
 - `JoltTargetExtension::VirtualAssertions`: `VirtualAssertEQ`,
   `VirtualAssertLTE`, `VirtualAssertValidDiv0`,
@@ -1063,7 +1062,7 @@ include these `JoltTargetExtension` families:
   `VirtualAssertWordAlignment`, and `VirtualAssertHalfwordAlignment`;
 - `JoltTargetExtension::VirtualArithmetic`: `VirtualMULI`,
   `VirtualMovsign`, `VirtualPow2`, `VirtualPow2I`, `VirtualPow2W`,
-  `VirtualPow2IW`, `VirtualChangeDivisor`, `VirtualChangeDivisorW`,
+  `VirtualPow2IW`, `VirtualNegateIf`,
   `VirtualSignExtendWord`, and `VirtualZeroExtendWord`;
 - `JoltTargetExtension::VirtualShifts`: `VirtualSRL`, `VirtualSRLI`,
   `VirtualSRA`, `VirtualSRAI`, `VirtualShiftRightBitmask`,

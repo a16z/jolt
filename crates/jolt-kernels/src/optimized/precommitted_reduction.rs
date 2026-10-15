@@ -14,9 +14,7 @@
 //! subtle padded-claim round algebra and the 6b→7 carry stays the one
 //! [`PrecommittedReductionCarry`] type: either tier's cycle kernel parks a
 //! carry the other tier's address slot reclaims, and mixed-tier composition
-//! holds by construction. What this module owns is the PREPARE side — the
-//! table builders (ported from
-//! `jolt-prover-legacy/src/zkvm/claim_reductions/{advice,bytecode,program_image}.rs`):
+//! holds by construction. This module owns the table builders:
 //!
 //! - **Advice** (`AdviceClaimReductionProver::initialize`): the eq table is
 //!   built from the LSB-permuted challenges directly (one parallel
@@ -29,12 +27,8 @@
 //!   `2^|r_addr_rw|` RAM-domain eq table the reference tier gathers from.
 //!   The word vector permutes as raw `u64`s and converts to field elements
 //!   in one parallel pass.
-//! - **Bytecode** (`BytecodeClaimReductionProver::initialize`): the per-chunk
-//!   coefficient grids build in parallel (one independent
-//!   [`build_committed_bytecode_chunk_coeffs`] call per chunk over its own
-//!   instruction slice — identical accumulation order per chunk), and the
-//!   chunk-weight value fold and lane-weight eq template are parallel
-//!   per-index maps (legacy folds the value grid with `into_par_iter`).
+//! - **Bytecode** shares the whole-table reduction kernel with the reference
+//!   tier through the shared precommitted layer, including parallel equality-grid construction.
 //!
 //! Every construction is a rearrangement of exact field operations, so the
 //! built tables — and through the shared kernels the round polynomials and
@@ -44,13 +38,12 @@ use std::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::{
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltChallengeId,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    AdviceClaimReductionLayout, JoltAdviceKind, JoltChallengeId, PrecommittedReductionLayout,
+    ProgramImageClaimReductionLayout,
 };
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
-use jolt_riscv::JoltInstructionRow;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
@@ -58,18 +51,16 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
 };
-use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::support::eq_table;
-use crate::committed_program::{
-    build_committed_bytecode_chunk_coeffs, chunk_index_to_lane_cycle, program_image_words_padded,
-};
-use crate::opening::AdviceOpeningEvaluation;
+use crate::committed_program::program_image_words_padded;
+
+use crate::opening::{evaluate_program_image, RamInitialOpening, RamInitialOpeningEvaluation};
 use crate::precommitted_reduction::{
-    lsb_permutation, permute_challenges, permute_coefficients, permute_tables,
+    bytecode_reduction_kernel, lsb_permutation, permute_challenges, permute_coefficients,
     AddressReductionKernel, CycleReductionKernel, PrecommittedReductionCarry,
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
@@ -79,9 +70,9 @@ use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKern
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1 << 10;
 
-/// The precommitted cycle phases and the advice opening evaluation:
+/// The precommitted cycle phases and initial-RAM opening evaluations:
 /// `PrepareKernel` front of the four stage-6b cycle-phase slots plus the
-/// stage-4 `AdviceOpeningEvaluation` slot.
+/// stage-4 `RamInitialOpeningEvaluation` slot.
 pub struct OptimizedPrecommittedCycle;
 
 /// The stage-7 slot server for a precommitted address-phase relation `R`:
@@ -106,7 +97,7 @@ impl<R> OptimizedPrecommittedAddress<R> {
 
 impl<F, R> PrepareKernel<F, R> for OptimizedPrecommittedAddress<R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F> + 'static,
     AddressReductionKernel<F, R>: SumcheckKernel<F, Relation = R>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
@@ -128,36 +119,43 @@ where
     }
 }
 
-// ---------------------------------------------------------------- advice
-
-impl<F: Field> AdviceOpeningEvaluation<F> for OptimizedPrecommittedCycle {
-    #[tracing::instrument(skip_all, name = "OptimizedAdviceOpeningEvaluation::evaluate", fields(kind = ?kind))]
+impl<F: JoltField> RamInitialOpeningEvaluation<F> for OptimizedPrecommittedCycle {
+    #[tracing::instrument(skip_all, name = "OptimizedRamInitialOpeningEvaluation::evaluate")]
     fn evaluate(
         &self,
         _session: &mut ProofSession,
-        kind: JoltAdviceKind,
-        point: &[F],
-        witness: &dyn JoltWitnessOracle<F>,
-    ) -> Result<F, KernelError<F>> {
-        let table = advice_table(witness, kind, point.len())?;
-        let eq = eq_table(point);
-        #[cfg(feature = "parallel")]
-        if table.len() >= PAR_THRESHOLD {
-            return Ok(table
-                .par_iter()
-                .zip(eq)
-                .map(|(value, weight)| *value * weight)
-                .sum());
-        }
-        Ok(table
+        openings: &[RamInitialOpening<'_, F>],
+        witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<Vec<F>, KernelError<F>> {
+        openings
             .iter()
-            .zip(&eq)
-            .map(|(value, weight)| *value * *weight)
-            .sum())
+            .map(|opening| match opening {
+                RamInitialOpening::ProgramImage { layout, point } => {
+                    Ok(evaluate_program_image(layout, point, witness))
+                }
+                RamInitialOpening::Advice { kind, point } => {
+                    let table = advice_table(witness, *kind, point.len())?;
+                    let eq = eq_table(point);
+                    #[cfg(feature = "parallel")]
+                    if table.len() >= PAR_THRESHOLD {
+                        return Ok(table
+                            .par_iter()
+                            .zip(eq)
+                            .map(|(value, weight)| *value * weight)
+                            .sum());
+                    }
+                    Ok(table
+                        .iter()
+                        .zip(&eq)
+                        .map(|(value, weight)| *value * *weight)
+                        .sum())
+                }
+            })
+            .collect()
     }
 }
 
-impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for OptimizedPrecommittedCycle {
+impl<F: JoltField> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for OptimizedPrecommittedCycle {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -172,10 +170,10 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for OptimizedPrecomm
                 .ok_or(KernelError::InvariantViolation {
                     reason: "trusted-advice cycle phase carries no reference opening point",
                 })?;
-        Ok(Box::new(CycleReductionKernel::<
+        Ok(Box::new(advice_reduction_kernel::<
             F,
             TrustedAdviceCyclePhase<F>,
-        >::for_advice(
+        >(
             JoltAdviceKind::Trusted,
             inputs.relation.layout(),
             r_val,
@@ -184,7 +182,7 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for OptimizedPrecomm
     }
 }
 
-impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPrecommittedCycle {
+impl<F: JoltField> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPrecommittedCycle {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -199,10 +197,10 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPreco
                 .ok_or(KernelError::InvariantViolation {
                     reason: "untrusted-advice cycle phase carries no reference opening point",
                 })?;
-        Ok(Box::new(CycleReductionKernel::<
+        Ok(Box::new(advice_reduction_kernel::<
             F,
             UntrustedAdviceCyclePhase<F>,
-        >::for_advice(
+        >(
             JoltAdviceKind::Untrusted,
             inputs.relation.layout(),
             r_val,
@@ -211,45 +209,41 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPreco
     }
 }
 
-/// Optimized-tier constructors for the shared cycle-phase kernel — the
-/// PREPARE-side table builders this module owns.
-impl<F: Field, R> CycleReductionKernel<F, R> {
-    /// The advice reduction's cycle-phase kernel: the advice polynomial as the
-    /// value table and the eq table of the staged RAM value-check point, both in
-    /// Dory opening-round order. The eq table is built from the permuted
-    /// challenges directly — the coefficient permute and the challenge permute
-    /// are the same LSB relabeling, so `permuted_table[i] · permuted_eq[i]` pairs
-    /// exactly as the unpermuted product did.
-    fn for_advice(
-        kind: JoltAdviceKind,
-        layout: &AdviceClaimReductionLayout,
-        r_val: &[F],
-        witness: &dyn JoltWitnessPlane<F>,
-    ) -> Result<Self, KernelError<F>> {
-        let reduction = layout.precommitted().clone();
-        let permutation = reduction.poly_opening_round_permutation_be();
-        if r_val.len() != permutation.len() {
-            return Err(KernelError::InvalidGeometry {
-                reason: format!(
-                    "advice reference point has {} variables, schedule expects {}",
-                    r_val.len(),
-                    permutation.len()
-                ),
-            });
-        }
-        let table = advice_table(witness, kind, permutation.len())?;
-        let (value, eq) = match lsb_permutation(permutation) {
-            Some(old_lsb_to_new_lsb) => (
-                permute_coefficients(&table, &old_lsb_to_new_lsb),
-                eq_table(&permute_challenges(r_val, &old_lsb_to_new_lsb)),
+/// The advice reduction's cycle-phase kernel: the advice polynomial as the
+/// value table and the eq table of the staged RAM value-check point, both in
+/// Dory opening-round order. The eq table is built from the permuted
+/// challenges directly — the coefficient permute and the challenge permute
+/// are the same LSB relabeling, so `permuted_table[i] · permuted_eq[i]` pairs
+/// exactly as the unpermuted product did.
+fn advice_reduction_kernel<F: JoltField, R>(
+    kind: JoltAdviceKind,
+    layout: &AdviceClaimReductionLayout,
+    r_val: &[F],
+    witness: &dyn JoltWitnessPlane<F>,
+) -> Result<CycleReductionKernel<F, R>, KernelError<F>> {
+    let reduction = layout.precommitted().clone();
+    let permutation = reduction.poly_opening_round_permutation_be();
+    if r_val.len() != permutation.len() {
+        return Err(KernelError::InvalidGeometry {
+            reason: format!(
+                "advice reference point has {} variables, schedule expects {}",
+                r_val.len(),
+                permutation.len()
             ),
-            None => (table, eq_table(r_val)),
-        };
-        CycleReductionKernel::new(reduction, value, eq, Vec::new())
+        });
     }
+    let table = advice_table(witness, kind, permutation.len())?;
+    let (value, eq) = match lsb_permutation(permutation) {
+        Some(old_lsb_to_new_lsb) => (
+            permute_coefficients(&table, &old_lsb_to_new_lsb),
+            eq_table(&permute_challenges(r_val, &old_lsb_to_new_lsb)),
+        ),
+        None => (table, eq_table(r_val)),
+    };
+    CycleReductionKernel::new(reduction, value, eq)
 }
 
-fn advice_table<F: Field>(
+fn advice_table<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     kind: JoltAdviceKind,
     expected_vars: usize,
@@ -265,9 +259,9 @@ fn advice_table<F: Field>(
     Ok(table)
 }
 
-// --------------------------------------------------------- program image
-
-impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for OptimizedPrecommittedCycle {
+impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>>
+    for OptimizedPrecommittedCycle
+{
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -279,7 +273,7 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Optimize
     > {
         let layout = inputs.relation.layout();
         let program = witness.program_preprocessing();
-        Ok(Box::new(CycleReductionKernel::for_program_image(
+        Ok(Box::new(program_image_reduction_kernel(
             layout,
             inputs.relation.r_addr_rw(),
             layout.start_index(),
@@ -288,48 +282,41 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Optimize
     }
 }
 
-/// Optimized-tier constructor for the program-image cycle phase.
-impl<F: Field> CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>> {
-    /// The program-image reduction's cycle-phase kernel: the padded word vector
-    /// (permuted as raw `u64`s, converted in one parallel pass) against the
-    /// blocked shifted eq slice.
-    fn for_program_image(
-        layout: &ProgramImageClaimReductionLayout,
-        r_addr_rw: &[F],
-        start_index: usize,
-        bytecode_words: &[u64],
-    ) -> Result<Self, KernelError<F>> {
-        let reduction = layout.precommitted().clone();
-        let words = program_image_words_padded(bytecode_words);
-        let padded_len = words.len();
-        if padded_len != 1usize << reduction.poly_opening_round_permutation_be().len() {
-            return Err(KernelError::TableSizeMismatch {
-                table: "program image words".to_owned(),
-                expected: 1usize << reduction.poly_opening_round_permutation_be().len(),
-                got: padded_len,
-            });
-        }
-        let ram_domain = 1usize << r_addr_rw.len();
-        if start_index >= ram_domain || padded_len > ram_domain {
-            return Err(KernelError::InvalidGeometry {
+fn program_image_reduction_kernel<F: JoltField>(
+    layout: &ProgramImageClaimReductionLayout,
+    r_addr_rw: &[F],
+    start_index: usize,
+    bytecode_words: &[u64],
+) -> Result<CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>>, KernelError<F>> {
+    let reduction = layout.precommitted().clone();
+    let words = program_image_words_padded(bytecode_words);
+    let padded_len = words.len();
+    if padded_len != 1usize << reduction.poly_opening_round_permutation_be().len() {
+        return Err(KernelError::TableSizeMismatch {
+            table: "program image words".to_owned(),
+            expected: 1usize << reduction.poly_opening_round_permutation_be().len(),
+            got: padded_len,
+        });
+    }
+    let ram_domain = 1usize << r_addr_rw.len();
+    if start_index >= ram_domain || padded_len > ram_domain {
+        return Err(KernelError::InvalidGeometry {
                 reason: format!(
                     "program image block [{start_index}, +{padded_len}) cannot index the RAM domain {ram_domain}"
                 ),
             });
-        }
-
-        let shifted_eq = shifted_eq_slice(r_addr_rw, start_index, padded_len);
-        let (words, shifted_eq) =
-            match lsb_permutation(reduction.poly_opening_round_permutation_be()) {
-                Some(old_lsb_to_new_lsb) => (
-                    permute_coefficients(&words, &old_lsb_to_new_lsb),
-                    permute_coefficients(&shifted_eq, &old_lsb_to_new_lsb),
-                ),
-                None => (words, shifted_eq),
-            };
-        let value = convert_words(&words);
-        CycleReductionKernel::new(reduction, value, shifted_eq, Vec::new())
     }
+
+    let shifted_eq = shifted_eq_slice(r_addr_rw, start_index, padded_len);
+    let (words, shifted_eq) = match lsb_permutation(reduction.poly_opening_round_permutation_be()) {
+        Some(old_lsb_to_new_lsb) => (
+            permute_coefficients(&words, &old_lsb_to_new_lsb),
+            permute_coefficients(&shifted_eq, &old_lsb_to_new_lsb),
+        ),
+        None => (words, shifted_eq),
+    };
+    let value = convert_words(&words);
+    CycleReductionKernel::new(reduction, value, shifted_eq)
 }
 
 /// `eq(r_addr, start_index + offset)` for `offset < len`, indices wrapping mod
@@ -338,7 +325,7 @@ impl<F: Field> CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>> {
 /// entries still enter the bound tables, so they must match exactly).
 /// Assembled from maximal aligned power-of-two blocks — `O(len)` total work,
 /// never the `O(2^|r_addr|)` full table.
-fn shifted_eq_slice<F: Field>(r_addr: &[F], start_index: usize, len: usize) -> Vec<F> {
+fn shifted_eq_slice<F: JoltField>(r_addr: &[F], start_index: usize, len: usize) -> Vec<F> {
     let ram_domain = 1usize << r_addr.len();
     let mut out = Vec::with_capacity(len);
     let mut index = start_index & (ram_domain - 1);
@@ -357,8 +344,7 @@ fn shifted_eq_slice<F: Field>(r_addr: &[F], start_index: usize, len: usize) -> V
     out
 }
 
-/// Parallel `u64 → F` conversion of the (already permuted) word vector.
-fn convert_words<F: Field>(words: &[u64]) -> Vec<F> {
+fn convert_words<F: JoltField>(words: &[u64]) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if words.len() >= PAR_THRESHOLD {
         return words.par_iter().map(|&word| F::from_u64(word)).collect();
@@ -366,9 +352,7 @@ fn convert_words<F: Field>(words: &[u64]) -> Vec<F> {
     words.iter().map(|&word| F::from_u64(word)).collect()
 }
 
-// -------------------------------------------------------------- bytecode
-
-impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPrecommittedCycle {
+impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPrecommittedCycle {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -377,126 +361,11 @@ impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPre
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReductionCyclePhase<F>>>, KernelError<F>>
     {
         let program = witness.program_preprocessing();
-        Ok(Box::new(CycleReductionKernel::for_bytecode(
+        Ok(Box::new(bytecode_reduction_kernel(
             inputs.relation.layout(),
             inputs.relation.weights(),
             &program.bytecode.bytecode,
         )?))
-    }
-}
-
-/// Optimized-tier constructor for the committed-bytecode cycle phase.
-impl<F: Field> CycleReductionKernel<F, BytecodeReductionCyclePhase<F>> {
-    /// The committed-bytecode reduction's cycle-phase kernel — the chunk-weight
-    /// value fold over the parallel-built per-chunk grids, the lane-weight eq
-    /// template, and the raw grids as aux tables (their fully bound coefficients
-    /// are the final per-chunk openings).
-    fn for_bytecode(
-        layout: &BytecodeClaimReductionLayout,
-        weights: &BytecodeReductionWeights<F>,
-        bytecode: &[JoltInstructionRow],
-    ) -> Result<Self, KernelError<F>> {
-        let reduction = layout.precommitted().clone();
-        let chunk_coeffs = parallel_chunk_coeffs(bytecode, layout.chunk_count(), layout)?;
-        let chunk_len = chunk_coeffs[0].len();
-        if chunk_len != 1usize << reduction.poly_opening_round_permutation_be().len() {
-            return Err(KernelError::TableSizeMismatch {
-                table: "committed bytecode chunk grid".to_owned(),
-                expected: 1usize << reduction.poly_opening_round_permutation_be().len(),
-                got: chunk_len,
-            });
-        }
-        if weights.chunk_rbc_weights.len() != chunk_coeffs.len() {
-            return Err(KernelError::TableSizeMismatch {
-                table: "bytecode chunk weights".to_owned(),
-                expected: chunk_coeffs.len(),
-                got: weights.chunk_rbc_weights.len(),
-            });
-        }
-
-        let chunk_cycle_len = 1usize << layout.log_bytecode_chunk_size();
-        let eq_cycle = eq_table(&weights.r_bc);
-        let eq_entry = |index: usize| -> F {
-            let (lane, cycle) =
-                chunk_index_to_lane_cycle(index, chunk_cycle_len, layout.trace_order());
-            weights.lane_weights[lane] * eq_cycle[cycle]
-        };
-        let value_entry = |index: usize| -> F {
-            chunk_coeffs
-                .iter()
-                .zip(&weights.chunk_rbc_weights)
-                .map(|(coeffs, weight)| coeffs[index] * *weight)
-                .sum()
-        };
-        #[cfg(feature = "parallel")]
-        let (eq_template, value): (Vec<F>, Vec<F>) = if chunk_len >= PAR_THRESHOLD {
-            (
-                (0..chunk_len).into_par_iter().map(eq_entry).collect(),
-                (0..chunk_len).into_par_iter().map(value_entry).collect(),
-            )
-        } else {
-            (
-                (0..chunk_len).map(eq_entry).collect(),
-                (0..chunk_len).map(value_entry).collect(),
-            )
-        };
-        #[cfg(not(feature = "parallel"))]
-        let (eq_template, value): (Vec<F>, Vec<F>) = (
-            (0..chunk_len).map(eq_entry).collect(),
-            (0..chunk_len).map(value_entry).collect(),
-        );
-
-        let mut tables = Vec::with_capacity(2 + chunk_coeffs.len());
-        tables.push(value);
-        tables.push(eq_template);
-        tables.extend(chunk_coeffs);
-        let mut permuted = permute_tables(&reduction, tables).into_iter();
-        let (value, eq) = match (permuted.next(), permuted.next()) {
-            (Some(value), Some(eq)) => (value, eq),
-            _ => {
-                return Err(KernelError::InvariantViolation {
-                    reason: "bytecode reduction table permutation lost the value/eq tables",
-                });
-            }
-        };
-        CycleReductionKernel::new(reduction, value, eq, permuted.collect())
-    }
-}
-
-/// The per-chunk committed bytecode grids, one independent build per chunk in
-/// parallel: each chunk's rows are a contiguous instruction slice and the
-/// grid indexing is chunk-local, so a single-chunk build over the slice is
-/// coefficient-identical to that chunk of the full build.
-fn parallel_chunk_coeffs<F: Field>(
-    bytecode: &[JoltInstructionRow],
-    chunk_count: usize,
-    layout: &BytecodeClaimReductionLayout,
-) -> Result<Vec<Vec<F>>, KernelError<F>> {
-    if chunk_count == 0 || !bytecode.len().is_multiple_of(chunk_count) {
-        return Err(KernelError::InvalidGeometry {
-            reason: format!(
-                "invalid committed bytecode chunking: {chunk_count} chunks over {} rows",
-                bytecode.len()
-            ),
-        });
-    }
-    let chunk_cycle_len = bytecode.len() / chunk_count;
-    let build = |chunk: usize| -> Result<Vec<F>, KernelError<F>> {
-        let slice = &bytecode[chunk * chunk_cycle_len..(chunk + 1) * chunk_cycle_len];
-        build_committed_bytecode_chunk_coeffs(slice, 1, layout.trace_order())?
-            .into_iter()
-            .next()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "single-chunk bytecode grid build produced no grid",
-            })
-    };
-    #[cfg(feature = "parallel")]
-    {
-        (0..chunk_count).into_par_iter().map(build).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..chunk_count).map(build).collect()
     }
 }
 
@@ -509,32 +378,23 @@ fn parallel_chunk_coeffs<F: Field>(
 /// reference slot reclaims the optimized pipeline's carry and vice versa),
 /// so the mixed-tier composition promise — either tier's stage 6b feeds
 /// either tier's stage 7 — is the very thing the address-phase parity pins.
-#[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test module"
-)]
+#[cfg(all(test, not(feature = "akita")))]
+#[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
 mod tests {
-    use core::fmt::Debug;
-
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
+    use jolt_field::{Fr, Ring};
+    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
+    use jolt_riscv::JoltTraceRow as TraceRow;
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
     use jolt_verifier::stages::relations::SumcheckInputPoints;
-    use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhaseChallenges;
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
     };
-    use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
-        BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
-    };
+    use jolt_verifier::stages::stage7::committed_reduction_address_phase::ProgramImageReductionAddressPhase;
     use jolt_verifier::stages::{CommittedProgramSchedule, PrecommittedSchedule};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, ProgramSource, TraceBackend};
 
@@ -544,23 +404,16 @@ mod tests {
     use crate::ReferenceBackend;
 
     const LOG_T: usize = 2;
-    const LOG_K_CHUNK: usize = 4;
-    /// 16 advice words (4 variables).
+    const LOG_K_CHUNK: usize = 5;
     const TRUSTED_ADVICE_MAX_BYTES: usize = 128;
-    /// 8 advice words (3 variables).
     const UNTRUSTED_ADVICE_MAX_BYTES: usize = 64;
-    const BYTECODE_CHUNK_COUNT: usize = 2;
     const IMAGE_START_INDEX: usize = 3;
-    /// RAM address point length for the program-image relation: domain 32
-    /// comfortably holds the 8-word image block at `IMAGE_START_INDEX`.
     const IMAGE_RAM_VARS: usize = 5;
 
     const MISSING_TRUSTED: &str =
         "stage 6b parked no trusted-advice reduction state for the scheduled address phase";
     const MISSING_UNTRUSTED: &str =
         "stage 6b parked no untrusted-advice reduction state for the scheduled address phase";
-    const MISSING_BYTECODE: &str =
-        "stage 6b parked no bytecode reduction state for the scheduled address phase";
     const MISSING_PROGRAM_IMAGE: &str =
         "stage 6b parked no program-image reduction state for the scheduled address phase";
 
@@ -570,7 +423,7 @@ mod tests {
 
     fn with_fixture<R>(
         trace_order: TracePolynomialOrder,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>, &PrecommittedSchedule) -> R,
+        f: impl FnOnce(&TraceBackend, &PrecommittedSchedule) -> R,
     ) -> R {
         let instructions: Vec<JoltInstructionRow> = (0..3u64)
             .map(|index| JoltInstructionRow {
@@ -628,14 +481,14 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), device, None, None),
+            TraceOutput::new(TraceData::new(rows), device, None, None),
         );
         let backend = TraceBackend::new(config, inputs);
 
         let bytecode_len = backend.program_preprocessing().bytecode.bytecode.len();
         assert!(
-            bytecode_len.is_power_of_two() && bytecode_len.is_multiple_of(BYTECODE_CHUNK_COUNT),
-            "fixture bytecode length {bytecode_len} defeats the chunking"
+            bytecode_len.is_power_of_two(),
+            "fixture bytecode length {bytecode_len} is not padded"
         );
         let program_image_len_words =
             program_image_words_padded(&backend.program_preprocessing().ram.bytecode_words).len();
@@ -647,7 +500,6 @@ mod tests {
             Some(UNTRUSTED_ADVICE_MAX_BYTES),
             Some(CommittedProgramSchedule {
                 bytecode_len,
-                bytecode_chunk_count: BYTECODE_CHUNK_COUNT,
                 program_image_len_words,
                 program_image_start_index: IMAGE_START_INDEX,
             }),
@@ -656,10 +508,6 @@ mod tests {
         f(&backend, &schedule)
     }
 
-    /// Both phases of one kind in lockstep: cycle-phase parity, a
-    /// `park_residue` into each pipeline's session, cross-tier stage-7
-    /// reclaim, address-phase parity. Kind-specific pieces (relations, claim
-    /// extraction) stay with the callers; this drives the shared shape.
     struct PhasePair<'a, RC: ConcreteSumcheck<Fr>, RA: ConcreteSumcheck<Fr>>
     where
         SumcheckInputClaims<Fr, RC>: InputClaims<Fr>,
@@ -669,7 +517,7 @@ mod tests {
         SumcheckOutputClaims<Fr, RA>: OutputClaims<Fr>,
         ConcreteSumcheckChallenges<Fr, RA>: SumcheckChallenges<Fr, JoltChallengeId>,
     {
-        backend: &'a TraceBackend<OwnedTrace>,
+        backend: &'a TraceBackend,
         cycle_relation: &'a RC,
         cycle_claims: &'a SumcheckInputClaims<Fr, RC>,
         cycle_points: &'a SumcheckInputPoints<Fr, RC>,
@@ -683,22 +531,18 @@ mod tests {
 
     impl<RC, RA> PhasePair<'_, RC, RA>
     where
-        RC: ConcreteSumcheck<Fr>,
+        RC: ConcreteSumcheck<Fr> + 'static,
         RA: ConcreteSumcheck<Fr> + 'static,
         SumcheckInputClaims<Fr, RC>: InputClaims<Fr>,
-        SumcheckOutputClaims<Fr, RC>: OutputClaims<Fr> + PartialEq + Debug,
+        SumcheckOutputClaims<Fr, RC>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
         ConcreteSumcheckChallenges<Fr, RC>: SumcheckChallenges<Fr, JoltChallengeId>,
         SumcheckInputClaims<Fr, RA>: InputClaims<Fr>,
-        SumcheckOutputClaims<Fr, RA>: OutputClaims<Fr> + PartialEq + Debug,
+        SumcheckOutputClaims<Fr, RA>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
         ConcreteSumcheckChallenges<Fr, RA>: SumcheckChallenges<Fr, JoltChallengeId>,
         ReferenceBackend: PrepareKernel<Fr, RC>,
         OptimizedPrecommittedCycle: PrepareKernel<Fr, RC>,
         AddressReductionKernel<Fr, RA>: SumcheckKernel<Fr, Relation = RA>,
     {
-        /// Run the pair; `intermediate` extracts the staged handoff claim
-        /// (the address phase's standalone input claim) from the cycle
-        /// output claims. Returns the final address-phase output claims of
-        /// the reference pipeline for kind-specific scrutiny.
         fn run(
             &self,
             cycle_rounds: usize,
@@ -733,7 +577,7 @@ mod tests {
             // kernel: with an address phase scheduled, `output_claims` stages
             // the intermediate `Σ value·eq·scale`, which before any binding
             // IS the input claim. (These kernels never round-check, so the
-            // parity harness's zero-claim probe cannot recover it.)
+            // harness's zero-claim probe cannot recover it.)
             let mut throwaway = <ReferenceBackend as PrepareKernel<Fr, RC>>::prepare(
                 &ReferenceBackend,
                 &mut ProofSession::default(),
@@ -742,6 +586,11 @@ mod tests {
             )
             .unwrap();
             let input_claim = intermediate(&throwaway.output_claims(self.cycle_claims).unwrap());
+            assert_ne!(
+                input_claim,
+                fr(0),
+                "precommitted fixture must have a nonzero cycle claim"
+            );
 
             let cycle_challenges = synthetic_point(cycle_rounds, seed);
             run_lockstep(
@@ -757,6 +606,11 @@ mod tests {
                 "cycle outputs diverged"
             );
             let handoff_claim = intermediate(&reference_outputs);
+            assert_ne!(
+                handoff_claim,
+                fr(0),
+                "precommitted fixture must have a nonzero address claim"
+            );
 
             reference.park_residue(&mut session_ref);
             optimized.park_residue(&mut session_opt);
@@ -912,71 +766,6 @@ mod tests {
         );
     }
 
-    fn bytecode_pair(trace_order: TracePolynomialOrder) {
-        with_fixture(trace_order, |backend, schedule| {
-            let layout = schedule.bytecode.as_ref().unwrap().clone();
-            let dimensions = layout.dimensions();
-            assert!(
-                dimensions.has_address_phase(),
-                "fixture geometry must schedule a bytecode address phase"
-            );
-            let weights = BytecodeReductionWeights {
-                r_bc: synthetic_point(layout.log_bytecode_chunk_size(), 51),
-                chunk_rbc_weights: synthetic_point(layout.chunk_count(), 53),
-                lane_weights: synthetic_point(
-                    jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::COMMITTED_BYTECODE_LANE_CAPACITY,
-                    57,
-                ),
-            };
-            let cycle_relation = BytecodeReductionCyclePhase::new(&layout, weights.clone());
-            let cycle_rounds = dimensions.cycle_phase_total_rounds();
-            let address_rounds = dimensions.address_phase_total_rounds();
-            let cycle_challenges = synthetic_point(cycle_rounds, 13);
-            let cycle_vars = layout
-                .cycle_phase_variable_challenges(&cycle_challenges)
-                .unwrap();
-            let address_relation =
-                BytecodeReductionAddressPhase::new(&layout, Some(weights), cycle_vars);
-            let pair = PhasePair {
-                backend,
-                cycle_relation: &cycle_relation,
-                cycle_claims: &Default::default(),
-                cycle_points: &Default::default(),
-                cycle_challenges_struct: &BytecodeReductionCyclePhaseChallenges { eta: fr(29) },
-                address_relation: &address_relation,
-                address_claims: &Default::default(),
-                address_points: &Default::default(),
-                address_challenges_struct: &Default::default(),
-                missing_carry: MISSING_BYTECODE,
-            };
-            let final_claims = pair.run(
-                cycle_rounds,
-                address_rounds,
-                |claims| {
-                    claims
-                        .intermediate
-                        .expect("cycle phase staged no intermediate")
-                },
-                13,
-            );
-            assert_eq!(
-                final_claims.chunks.len(),
-                layout.chunk_count(),
-                "address phase produced the wrong chunk-opening count"
-            );
-        });
-    }
-
-    #[test]
-    fn bytecode_reduction_phases_match_reference_cycle_major() {
-        bytecode_pair(TracePolynomialOrder::CycleMajor);
-    }
-
-    #[test]
-    fn bytecode_reduction_phases_match_reference_address_major() {
-        bytecode_pair(TracePolynomialOrder::AddressMajor);
-    }
-
     fn program_image_pair(trace_order: TracePolynomialOrder) {
         with_fixture(trace_order, |backend, schedule| {
             let layout = schedule.program_image.as_ref().unwrap().clone();
@@ -1046,41 +835,104 @@ mod tests {
         }
     }
 
-    /// The advice opening evaluation (stage 4) against the reference slot.
     #[test]
-    fn advice_opening_evaluation_matches_reference() {
+    fn initial_ram_openings_preserve_request_order_for_all_presence_combinations() {
         with_fixture(TracePolynomialOrder::CycleMajor, |backend, schedule| {
-            for kind in [JoltAdviceKind::Trusted, JoltAdviceKind::Untrusted] {
-                let vars = schedule
-                    .advice(kind)
-                    .unwrap()
-                    .precommitted()
-                    .poly_opening_round_permutation_be()
-                    .len();
-                let point = synthetic_point(vars, 71);
-                let reference_value = <ReferenceBackend as AdviceOpeningEvaluation<Fr>>::evaluate(
-                    &ReferenceBackend,
-                    &mut ProofSession::default(),
-                    kind,
-                    &point,
-                    backend,
+            let image_point = [fr(0), fr(0), fr(1), fr(0), fr(1)];
+            let trusted_point = synthetic_point(4, 71);
+            let untrusted_point = synthetic_point(3, 83);
+            let trusted_table: Vec<Fr> = backend
+                .oracle_table(ram_val_check_advice_opening(JoltAdviceKind::Trusted).polynomial_id())
+                .unwrap();
+            let untrusted_table: Vec<Fr> = backend
+                .oracle_table(
+                    ram_val_check_advice_opening(JoltAdviceKind::Untrusted).polynomial_id(),
                 )
                 .unwrap();
-                let optimized_value =
-                    <OptimizedPrecommittedCycle as AdviceOpeningEvaluation<Fr>>::evaluate(
+            let trusted = trusted_table
+                .iter()
+                .zip(eq_table(&trusted_point))
+                .map(|(value, weight)| *value * weight)
+                .sum();
+            let untrusted = untrusted_table
+                .iter()
+                .zip(eq_table(&untrusted_point))
+                .map(|(value, weight)| *value * weight)
+                .sum();
+            for mask in 0..8 {
+                let mut openings = Vec::new();
+                let mut expected = Vec::new();
+                if mask & 1 != 0 {
+                    openings.push(RamInitialOpening::ProgramImage {
+                        layout: schedule.program_image.as_ref().unwrap(),
+                        point: &image_point,
+                    });
+                    expected.push(fr(13));
+                }
+                if mask & 2 != 0 {
+                    openings.push(RamInitialOpening::Advice {
+                        kind: JoltAdviceKind::Untrusted,
+                        point: &untrusted_point,
+                    });
+                    expected.push(untrusted);
+                }
+                if mask & 4 != 0 {
+                    openings.push(RamInitialOpening::Advice {
+                        kind: JoltAdviceKind::Trusted,
+                        point: &trusted_point,
+                    });
+                    expected.push(trusted);
+                }
+                for _ in 0..2 {
+                    for evaluator in [
+                        &ReferenceBackend as &dyn RamInitialOpeningEvaluation<Fr>,
                         &OptimizedPrecommittedCycle,
-                        &mut ProofSession::default(),
-                        kind,
-                        &point,
-                        backend,
-                    )
-                    .unwrap();
-                assert_eq!(reference_value, optimized_value);
-                assert_ne!(
-                    reference_value,
-                    Fr::from_u64(0),
-                    "degenerate advice fixture"
-                );
+                    ] {
+                        assert_eq!(
+                            evaluator
+                                .evaluate(&mut ProofSession::default(), &openings, backend)
+                                .unwrap(),
+                            expected,
+                            "presence mask {mask}"
+                        );
+                    }
+                    openings.reverse();
+                    expected.reverse();
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn initial_program_image_uses_ram_offset_and_zero_padding() {
+        with_fixture(TracePolynomialOrder::CycleMajor, |backend, schedule| {
+            let layout = schedule.program_image.as_ref().unwrap();
+            let words = &backend.program_preprocessing().ram.bytecode_words;
+            for address in 0usize..(1 << IMAGE_RAM_VARS) {
+                let point: Vec<_> = (0..IMAGE_RAM_VARS)
+                    .rev()
+                    .map(|bit| fr(((address >> bit) & 1) as u64))
+                    .collect();
+                let openings = [RamInitialOpening::ProgramImage {
+                    layout,
+                    point: &point,
+                }];
+                let expected = address
+                    .checked_sub(IMAGE_START_INDEX)
+                    .and_then(|offset| words.get(offset))
+                    .copied()
+                    .unwrap_or(0);
+                for evaluator in [
+                    &ReferenceBackend as &dyn RamInitialOpeningEvaluation<Fr>,
+                    &OptimizedPrecommittedCycle,
+                ] {
+                    assert_eq!(
+                        evaluator
+                            .evaluate(&mut ProofSession::default(), &openings, backend)
+                            .unwrap(),
+                        vec![fr(expected)]
+                    );
+                }
             }
         });
     }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::BindingOrder;
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
@@ -28,7 +28,7 @@ pub struct DevicePackedRamRa {
 }
 
 impl DevicePackedRamRa {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         packed: Arc<CudaSlice<u32>>,
         cycles: usize,
@@ -213,7 +213,7 @@ impl DevicePackedRamRa {
         Ok(())
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -283,7 +283,10 @@ impl DevicePackedRamRa {
             .collect()
     }
 
-    pub fn final_claims<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+    pub fn final_claims<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Vec<F>, CudaError> {
         if self.len() != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
@@ -308,7 +311,7 @@ impl DevicePackedRamRa {
             .collect()
     }
 
-    pub fn round_evals<F: Field>(
+    pub fn round_evals<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         eq: &DeviceSplitEq<F>,
@@ -330,9 +333,9 @@ impl DevicePackedRamRa {
 
         let half_count = CudaKernelContext::count_of(half)?;
         let blocks = half_count.div_ceil(BLOCK).max(1);
-        let mut partials = context.alloc(self.grid_points() * blocks as usize)?;
+        let mut partials = context.alloc((self.grid_points() + 1) * blocks as usize)?;
         let polys = CudaKernelContext::count_of(self.polys)?;
-        let lanes = CudaKernelContext::count_of(self.grid_points())?;
+        let lanes = CudaKernelContext::count_of(self.grid_points() + 1)?;
         let e_in_arg = CudaKernelContext::count_of(e_in_len)?;
         let num_x_in_bits = e_in_len.max(1).ilog2();
         let e_in = eq.e_in_current();
@@ -416,13 +419,13 @@ impl DevicePackedRamRa {
     }
 }
 
-pub(crate) struct RamRaShard<F: Field> {
+pub(crate) struct RamRaShard<F: JoltField> {
     pub(crate) ordinal: usize,
     pub(crate) one_hot: DevicePackedRamRa,
     pub(crate) eq: DeviceSplitEq<F>,
 }
 
-pub(crate) struct ShardedPackedRamRa<F: Field> {
+pub(crate) struct ShardedPackedRamRa<F: JoltField> {
     shards: Vec<RamRaShard<F>>,
     collapsed: Option<DevicePackedRamRa>,
     chunk_bits: usize,
@@ -430,7 +433,7 @@ pub(crate) struct ShardedPackedRamRa<F: Field> {
     tail_rounds: usize,
 }
 
-impl<F: Field> ShardedPackedRamRa<F> {
+impl<F: JoltField> ShardedPackedRamRa<F> {
     pub(crate) fn new(shards: Vec<RamRaShard<F>>, log_t: usize) -> Result<Self, CudaError> {
         let count = shards.len();
         if count == 0 || !count.is_power_of_two() {
@@ -601,7 +604,7 @@ const fn absent() -> CudaError {
 mod tests {
     use std::sync::Arc;
 
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 

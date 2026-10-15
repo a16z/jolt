@@ -1,0 +1,536 @@
+//! Compile-time Jolt R1CS composition.
+
+// R1CS construction is control-plane code, not hot claim evaluation
+// (specs/verifier-closure-lints.md).
+#![deny(clippy::indexing_slicing, clippy::wildcard_enum_match_arm)]
+
+use jolt_field::JoltField;
+use jolt_poly::{
+    lagrange::{centered_lagrange_evals, centered_lagrange_kernel, CenteredIntegerDomainError},
+    EqPolynomial,
+};
+use thiserror::Error as ThisError;
+
+use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError};
+
+pub mod rv64;
+use rv64::NUM_CONSTRAINTS_PER_CYCLE as RV64_NUM_CONSTRAINTS_PER_CYCLE;
+
+#[cfg(feature = "field-inline")]
+pub mod field_constraints;
+#[cfg(feature = "field-inline")]
+use field_constraints::{
+    NUM_CONSTRAINTS_PER_CYCLE as FIELD_NUM_CONSTRAINTS_PER_CYCLE,
+    NUM_EQ_CONSTRAINTS as FIELD_NUM_EQ_CONSTRAINTS, NUM_FIELD_COLUMNS, ROW_ADVICE_LIMB,
+    ROW_ASSERT_EQ, ROW_ASSERT_ZERO, ROW_FADD, ROW_FINV, ROW_FMUL, ROW_FSUB,
+    ROW_LOAD_ACCUMULATE_FROM_MEMORY, ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM,
+};
+use rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
+
+#[cfg(feature = "field-inline")]
+pub const FIELD_INLINE_COLUMN_BASE: usize = rv64::NUM_VARS_PER_CYCLE;
+
+/// The composed row index where the field-inline eq rows begin: after the rv64 rows.
+#[cfg(feature = "field-inline")]
+pub const FIELD_INLINE_ROW_BASE: usize = RV64_NUM_EQ_CONSTRAINTS;
+
+#[cfg(feature = "field-inline")]
+pub const FIELD_INLINE_APPENDED_COLUMNS: usize = NUM_FIELD_COLUMNS;
+
+#[cfg(feature = "field-inline")]
+pub use field_constraints::NUM_VARS_PER_CYCLE;
+
+#[cfg(not(feature = "field-inline"))]
+pub const NUM_VARS_PER_CYCLE: usize = rv64::NUM_VARS_PER_CYCLE;
+
+#[cfg(feature = "field-inline")]
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize =
+    RV64_NUM_CONSTRAINTS_PER_CYCLE + FIELD_NUM_CONSTRAINTS_PER_CYCLE;
+
+#[cfg(not(feature = "field-inline"))]
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = RV64_NUM_CONSTRAINTS_PER_CYCLE;
+
+#[cfg(feature = "field-inline")]
+pub const SPARTAN_OUTER_ROW_COUNT: usize = RV64_NUM_EQ_CONSTRAINTS + FIELD_NUM_EQ_CONSTRAINTS;
+
+#[cfg(not(feature = "field-inline"))]
+pub const SPARTAN_OUTER_ROW_COUNT: usize = RV64_NUM_EQ_CONSTRAINTS;
+
+pub const SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_OUTER_ROW_COUNT.div_ceil(2);
+pub const SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize =
+    3 * SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE - 3;
+pub const SPARTAN_OUTER_REMAINDER_DEGREE: usize = 3;
+pub const SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT: usize =
+    SPARTAN_OUTER_ROW_COUNT - SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
+
+#[cfg(not(feature = "field-inline"))]
+pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] =
+    [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
+
+#[cfg(feature = "field-inline")]
+pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] = [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    11,
+    14,
+    17,
+    18,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_FADD,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_FSUB,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_FMUL,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_FINV,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_MEMORY,
+];
+
+#[cfg(not(feature = "field-inline"))]
+pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] =
+    [0, 7, 8, 9, 10, 12, 13, 15, 16];
+
+#[cfg(feature = "field-inline")]
+pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] = [
+    0,
+    7,
+    8,
+    9,
+    10,
+    12,
+    13,
+    15,
+    16,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_EQ,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_REGISTER,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_ZERO,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_IMM,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_ADVICE_LIMB,
+];
+
+pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
+    let constraints = rv64::rv64_spartan_outer_constraints();
+    #[cfg(feature = "field-inline")]
+    {
+        append_field_inline_columns(
+            constraints,
+            field_constraints::field_inline_spartan_outer_constraints(),
+        )
+    }
+    #[cfg(not(feature = "field-inline"))]
+    {
+        constraints
+    }
+}
+
+pub fn trace_constraints<F: JoltField>() -> ConstraintMatrices<F> {
+    let constraints = rv64::rv64_trace_constraints();
+    #[cfg(feature = "field-inline")]
+    {
+        append_field_inline_columns(
+            constraints,
+            field_constraints::field_inline_trace_constraints(),
+        )
+    }
+    #[cfg(not(feature = "field-inline"))]
+    {
+        constraints
+    }
+}
+
+pub fn spartan_outer_row_weights<F: JoltField>(
+    uniskip: F,
+    stream: F,
+) -> Result<Vec<F>, CenteredIntegerDomainError> {
+    let lagrange_weights = centered_lagrange_evals(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, uniskip)?;
+    // The row-group arrays are typed to the domain size, so only a short
+    // weight vector could make the zips below drop rows silently.
+    debug_assert_eq!(lagrange_weights.len(), SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
+    let mut weights = vec![F::zero(); SPARTAN_OUTER_ROW_COUNT];
+
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "SPARTAN_OUTER_FIRST_GROUP_ROWS entries are compile-time constants below SPARTAN_OUTER_ROW_COUNT"
+    )]
+    for (&row, &lagrange_weight) in SPARTAN_OUTER_FIRST_GROUP_ROWS.iter().zip(&lagrange_weights) {
+        weights[row] += (F::one() - stream) * lagrange_weight;
+    }
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "SPARTAN_OUTER_SECOND_GROUP_ROWS entries are compile-time constants below SPARTAN_OUTER_ROW_COUNT"
+    )]
+    for (&row, &lagrange_weight) in SPARTAN_OUTER_SECOND_GROUP_ROWS
+        .iter()
+        .zip(&lagrange_weights)
+    {
+        weights[row] += stream * lagrange_weight;
+    }
+
+    Ok(weights)
+}
+
+pub fn spartan_outer_opening_columns() -> Vec<usize> {
+    let columns = (0..rv64::NUM_R1CS_INPUTS)
+        .map(|index| rv64::V_LEFT_INSTRUCTION_INPUT + index)
+        .collect::<Vec<_>>();
+
+    #[cfg(feature = "field-inline")]
+    {
+        let mut columns = columns;
+        columns.extend(
+            FIELD_INLINE_COLUMN_BASE..FIELD_INLINE_COLUMN_BASE + FIELD_INLINE_APPENDED_COLUMNS,
+        );
+        columns
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    columns
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JoltSpartanOuterPublic {
+    TauKernel,
+    AzWeight(usize),
+    BzWeight(usize),
+    AzConstant,
+    BzConstant,
+}
+
+#[derive(Clone, Debug, ThisError, PartialEq, Eq)]
+pub enum JoltSpartanOuterRemainderError {
+    #[error("missing Spartan outer remainder stream challenge")]
+    MissingStreamChallenge,
+    #[error("{0}")]
+    InvalidUniskipDomain(#[from] CenteredIntegerDomainError),
+    #[error("challenge length mismatch: expected {expected}, got {got}")]
+    ChallengeLengthMismatch { expected: usize, got: usize },
+    #[error("{0}")]
+    Matrix(#[from] ConstraintMatrixEvalError),
+    #[error("opening length mismatch: expected {expected}, got {got}")]
+    OpeningLengthMismatch { expected: usize, got: usize },
+    #[error("Spartan outer rows unexpectedly contribute to the C linear form")]
+    UnexpectedCContribution,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JoltSpartanOuterRemainder<F: JoltField> {
+    tau_kernel: F,
+    az_coefficients: Vec<F>,
+    bz_coefficients: Vec<F>,
+    az_constant: F,
+    bz_constant: F,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct JoltSpartanOuterRemainderChallenges<'a, F> {
+    pub tau: &'a [F],
+    pub uniskip: F,
+    pub remainder: &'a [F],
+}
+
+impl<F: JoltField> JoltSpartanOuterRemainder<F> {
+    pub fn new(
+        challenges: JoltSpartanOuterRemainderChallenges<'_, F>,
+    ) -> Result<Self, JoltSpartanOuterRemainderError> {
+        let Some((&r_stream, _)) = challenges.remainder.split_first() else {
+            return Err(JoltSpartanOuterRemainderError::MissingStreamChallenge);
+        };
+
+        let row_weights = spartan_outer_row_weights(challenges.uniskip, r_stream)?;
+        let columns = spartan_outer_opening_columns();
+        let matrices = spartan_outer_constraints::<F>();
+        let weighted = matrices.weighted_columns(&row_weights, &columns)?;
+        if weighted.c.iter().any(|coefficient| !coefficient.is_zero()) {
+            return Err(JoltSpartanOuterRemainderError::UnexpectedCContribution);
+        }
+
+        let constant_contributions =
+            matrices.public_column_contributions(&row_weights, rv64::const_column(), F::one())?;
+        if !constant_contributions.c.is_zero() {
+            return Err(JoltSpartanOuterRemainderError::UnexpectedCContribution);
+        }
+
+        Ok(Self {
+            tau_kernel: spartan_outer_tau_kernel(
+                challenges.tau,
+                challenges.uniskip,
+                challenges.remainder,
+            )?,
+            az_coefficients: weighted.a,
+            bz_coefficients: weighted.b,
+            az_constant: constant_contributions.a,
+            bz_constant: constant_contributions.b,
+        })
+    }
+
+    pub fn expected_output_claim(
+        &self,
+        openings: &[F],
+    ) -> Result<F, JoltSpartanOuterRemainderError> {
+        let expected = self.az_coefficients.len();
+        if openings.len() != expected {
+            return Err(JoltSpartanOuterRemainderError::OpeningLengthMismatch {
+                expected,
+                got: openings.len(),
+            });
+        }
+
+        Ok(self.tau_kernel
+            * eval_linear_form(&self.az_coefficients, self.az_constant, openings)
+            * eval_linear_form(&self.bz_coefficients, self.bz_constant, openings))
+    }
+
+    pub fn public_coefficients(&self) -> Vec<(JoltSpartanOuterPublic, F)> {
+        let count = self.az_coefficients.len();
+        let mut coefficients = Vec::with_capacity(2 * count + 3);
+        coefficients.push((JoltSpartanOuterPublic::TauKernel, self.tau_kernel));
+        for (index, &weight) in self.az_coefficients.iter().enumerate() {
+            coefficients.push((JoltSpartanOuterPublic::AzWeight(index), weight));
+        }
+        for (index, &weight) in self.bz_coefficients.iter().enumerate() {
+            coefficients.push((JoltSpartanOuterPublic::BzWeight(index), weight));
+        }
+        coefficients.push((JoltSpartanOuterPublic::AzConstant, self.az_constant));
+        coefficients.push((JoltSpartanOuterPublic::BzConstant, self.bz_constant));
+        coefficients
+    }
+}
+
+fn spartan_outer_tau_kernel<F: JoltField>(
+    tau: &[F],
+    uniskip: F,
+    remainder_challenges: &[F],
+) -> Result<F, JoltSpartanOuterRemainderError> {
+    let expected = remainder_challenges.len() + 1;
+    if tau.len() != expected {
+        return Err(JoltSpartanOuterRemainderError::ChallengeLengthMismatch {
+            expected,
+            got: tau.len(),
+        });
+    }
+
+    // `tau` is non-empty: `tau.len() == expected >= 1` is checked above.
+    let Some((&tau_high, tau_low)) = tau.split_last() else {
+        return Err(JoltSpartanOuterRemainderError::ChallengeLengthMismatch { expected, got: 0 });
+    };
+    let tau_high_bound_r0 =
+        centered_lagrange_kernel(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, tau_high, uniskip)?;
+    let mut reversed_challenges = remainder_challenges.to_vec();
+    reversed_challenges.reverse();
+    Ok(tau_high_bound_r0 * EqPolynomial::<F>::mle(tau_low, &reversed_challenges))
+}
+
+fn eval_linear_form<F: JoltField>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
+    coefficients
+        .iter()
+        .zip(inputs)
+        .fold(constant, |acc, (&coefficient, &input)| {
+            acc + coefficient * input
+        })
+}
+
+#[cfg(feature = "field-inline")]
+fn append_field_inline_columns<F: JoltField>(
+    base: ConstraintMatrices<F>,
+    extension: ConstraintMatrices<F>,
+) -> ConstraintMatrices<F> {
+    let num_constraints = base.num_constraints + extension.num_constraints;
+    let num_vars = base.num_vars + FIELD_INLINE_APPENDED_COLUMNS;
+
+    let mut a = base.a;
+    let mut b = base.b;
+    let mut c = base.c;
+    a.extend(extension.a);
+    b.extend(extension.b);
+    c.extend(extension.c);
+
+    ConstraintMatrices::new(num_constraints, num_vars, a, b, c)
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "field-inline")]
+    use super::field_constraints::{
+        NUM_VARS_PER_CYCLE as FIELD_NUM_VARS_PER_CYCLE, ROW_FIELD_INV_PRODUCT, ROW_FIELD_PRODUCT,
+        V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT, V_FIELD_RD_VALUE, V_FIELD_RS1_VALUE,
+        V_FIELD_RS2_VALUE,
+    };
+    use super::rv64::NUM_PRODUCT_CONSTRAINTS;
+    #[cfg(feature = "field-inline")]
+    use super::rv64::{flag_column, V_CONST, V_IMM, V_RD_WRITE_VALUE, V_RS1_VALUE};
+    use super::*;
+    use crate::protocols::composed::geometry::{
+        SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+    };
+    #[cfg(feature = "field-inline")]
+    use crate::protocols::field_inline::{
+        geometry::spartan::{
+            outer_output_openings, FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS,
+            FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
+        },
+        FieldInlineVirtualPolynomial,
+    };
+    use jolt_field::Fr;
+    #[cfg(feature = "field-inline")]
+    use jolt_field::Ring;
+    #[cfg(feature = "field-inline")]
+    use jolt_r1cs::SparseRow;
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::CircuitFlags;
+    #[cfg(feature = "field-inline")]
+    use num_traits::Zero;
+
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn default_composed_constraints_match_rv64_shape() {
+        let composed = trace_constraints::<Fr>();
+        let rv64 = rv64::rv64_trace_constraints::<Fr>();
+
+        assert_eq!(composed.num_constraints, rv64.num_constraints);
+        assert_eq!(composed.num_vars, rv64.num_vars);
+        assert_eq!(composed.a, rv64.a);
+        assert_eq!(composed.b, rv64.b);
+        assert_eq!(composed.c, rv64.c);
+        assert_eq!(SPARTAN_PRODUCT_BASE_LANES, NUM_PRODUCT_CONSTRAINTS);
+        assert_eq!(
+            composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
+            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
+        );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_composed_constraints_append_field_shape() {
+        let composed = trace_constraints::<Fr>();
+
+        assert_eq!(composed.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
+        assert_eq!(composed.num_vars, NUM_VARS_PER_CYCLE);
+        assert_eq!(SPARTAN_PRODUCT_BASE_LANES, NUM_PRODUCT_CONSTRAINTS);
+        assert_eq!(
+            composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
+            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
+        );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+    fn field_inline_spartan_openings_match_appended_column_order() {
+        assert_eq!(
+            FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
+            FIELD_INLINE_APPENDED_COLUMNS
+        );
+        assert_eq!(outer_output_openings().len(), FIELD_INLINE_APPENDED_COLUMNS);
+
+        let expected_inputs = [
+            FieldInlineVirtualPolynomial::FieldRs1Value,
+            FieldInlineVirtualPolynomial::FieldRs2Value,
+            FieldInlineVirtualPolynomial::FieldRdValue,
+            FieldInlineVirtualPolynomial::FieldProduct,
+            FieldInlineVirtualPolynomial::FieldInvProduct,
+        ];
+        assert_eq!(FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, expected_inputs);
+
+        let local_columns = [
+            V_FIELD_RS1_VALUE,
+            V_FIELD_RS2_VALUE,
+            V_FIELD_RD_VALUE,
+            V_FIELD_PRODUCT,
+            V_FIELD_INV_PRODUCT,
+        ];
+        for (index, local_column) in local_columns.into_iter().enumerate() {
+            assert_eq!(local_column, FIELD_INLINE_COLUMN_BASE + index);
+        }
+        assert_eq!(
+            spartan_outer_opening_columns()[rv64::NUM_R1CS_INPUTS..],
+            (FIELD_INLINE_COLUMN_BASE..FIELD_INLINE_COLUMN_BASE + FIELD_INLINE_APPENDED_COLUMNS)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+    fn field_inline_composed_constraints_share_constant_column() {
+        let composed = trace_constraints::<Fr>();
+        let mut witness = vec![Fr::zero(); composed.num_vars];
+
+        witness[V_CONST] = Fr::from_u64(1);
+        witness[rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        witness[V_FIELD_RS1_VALUE] = Fr::from_u64(5);
+        witness[V_FIELD_RS2_VALUE] = Fr::from_u64(7);
+        witness[V_FIELD_RD_VALUE] = Fr::from_u64(12);
+        witness[V_FIELD_PRODUCT] = Fr::from_u64(35);
+        witness[V_FIELD_INV_PRODUCT] = Fr::from_u64(60);
+        witness[V_RS1_VALUE] = Fr::from_u64(12);
+        witness[V_RD_WRITE_VALUE] = Fr::from_u64(5);
+        witness[V_IMM] = Fr::from_u64(12);
+        witness[flag_column(CircuitFlags::FieldAdd)] = Fr::from_u64(1);
+
+        assert_eq!(composed.check_witness(&witness), Ok(()));
+    }
+
+    /// Pins the `jolt-claims` composed-lane helpers against this crate's
+    /// field-inline product constraint rows — the R1CS source of truth for the
+    /// two field-inline lanes. Per lane, the helper's left/right factor and input values
+    /// must reproduce the row's `A`/`B`/`C` linear forms on a witness with
+    /// distinct (and deliberately non-satisfying) column values, weighted at
+    /// the composed lane indices following the ordinary lanes.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+    fn composed_lane_helpers_match_field_product_constraint_rows() {
+        use crate::protocols::field_inline::geometry::product::{
+            composed_remainder_factor_contributions, composed_uniskip_input_contribution,
+            selected_product_lanes, FieldProductLaneFactors, FieldProductLaneInputs,
+        };
+
+        let mut z = vec![Fr::zero(); FIELD_NUM_VARS_PER_CYCLE];
+        z[V_CONST] = Fr::from_u64(1);
+        z[V_FIELD_RS1_VALUE] = Fr::from_u64(7);
+        z[V_FIELD_RS2_VALUE] = Fr::from_u64(11);
+        z[V_FIELD_RD_VALUE] = Fr::from_u64(13);
+        z[V_FIELD_PRODUCT] = Fr::from_u64(17);
+        z[V_FIELD_INV_PRODUCT] = Fr::from_u64(19);
+        let inputs = FieldProductLaneInputs {
+            product: z[V_FIELD_PRODUCT],
+            inv_product: z[V_FIELD_INV_PRODUCT],
+        };
+        let factors = FieldProductLaneFactors {
+            rs1_value: z[V_FIELD_RS1_VALUE],
+            rs2_value: z[V_FIELD_RS2_VALUE],
+            rd_value: z[V_FIELD_RD_VALUE],
+        };
+
+        let matrices = field_constraints::field_inline_trace_constraints::<Fr>();
+        let eval_row = |row: &SparseRow<Fr>| {
+            row.iter()
+                .map(|&(column, coefficient)| coefficient * z[column])
+                .sum::<Fr>()
+        };
+        let weights = (1..=SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE as u64)
+            .map(Fr::from_u64)
+            .collect::<Vec<_>>();
+        let lane_rows = [ROW_FIELD_PRODUCT, ROW_FIELD_INV_PRODUCT];
+        assert_eq!(lane_rows.len(), selected_product_lanes().len());
+        let weighted = |rows_of: &dyn Fn(usize) -> Fr| {
+            lane_rows
+                .iter()
+                .enumerate()
+                .map(|(lane, &row)| weights[SPARTAN_PRODUCT_BASE_LANES + lane] * rows_of(row))
+                .sum::<Fr>()
+        };
+        let expected_left = weighted(&|row| eval_row(&matrices.a[row]));
+        let expected_right = weighted(&|row| eval_row(&matrices.b[row]));
+        let expected_input = weighted(&|row| eval_row(&matrices.c[row]));
+
+        assert_eq!(
+            composed_remainder_factor_contributions(&weights, SPARTAN_PRODUCT_BASE_LANES, &factors),
+            Some((expected_left, expected_right)),
+        );
+        assert_eq!(
+            composed_uniskip_input_contribution(&weights, SPARTAN_PRODUCT_BASE_LANES, &inputs),
+            Some(expected_input),
+        );
+    }
+}

@@ -526,6 +526,7 @@ impl CudaKernelContext {
 )]
 mod tests {
     use ark_bn254::{Bn254, Fq12, Fq6, G1Projective, G2Projective};
+    use ark_ec::pairing::MillerLoopOutput;
     use ark_ec::pairing::Pairing;
     use ark_ec::CurveGroup;
     use ark_ff::{BigInt, UniformRand};
@@ -758,10 +759,8 @@ mod tests {
         }
         for (index, (ps, qs)) in shapes(5_200).into_iter().enumerate() {
             let expected = Bn254::multi_pairing(ps.clone(), qs.clone());
-            let got = Bn254::final_exponentiation(ark_ec::pairing::MillerLoopOutput(
-                device_miller(&ps, &qs),
-            ))
-            .expect("the Miller output is non-degenerate");
+            let got = Bn254::final_exponentiation(MillerLoopOutput(device_miller(&ps, &qs)))
+                .expect("the Miller output is non-degenerate");
             assert_eq!(got, expected, "the pairing diverged for shape {index}");
         }
     }

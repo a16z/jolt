@@ -12,24 +12,40 @@
 //! fallback partial backends compose over; it is eager-dense throughout — a
 //! test oracle at harness scale, never a performance path.
 
-use jolt_field::Field;
+#[cfg(feature = "akita")]
+use jolt_akita::TraceOneHotCommitment;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "akita")]
+use jolt_openings::{GroupSetupMetadata, TransparentObjectSetup};
 
 use jolt_sumcheck::{RoundScheduler, SequentialRounds};
 
 use crate::backend::{BuildRoundScheduler, ProofSession};
+#[cfg(not(feature = "akita"))]
 use crate::commitment::ModeStreamingCommitment;
-use crate::JoltBackend;
+use crate::{CommitWitness, JoltBackend};
 
 use self::precommitted_reduction::ReferencePrecommittedAddress;
 use self::spartan_outer::ReferenceOuterRemainder;
 use self::spartan_product::ReferenceProductRemainder;
 
 pub mod advice_claim_reduction;
+#[cfg(feature = "akita")]
+pub mod akita;
 pub mod booleanity;
 pub mod bytecode_claim_reduction;
 pub mod bytecode_read_raf;
+#[cfg(not(feature = "akita"))]
 pub mod commitment;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_claim_reduction;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_inc_claim_reduction;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_read_write_checking;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_val_evaluation;
 pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
@@ -37,6 +53,7 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 pub mod naive;
+#[cfg(not(feature = "akita"))]
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod program_image_claim_reduction;
@@ -47,6 +64,7 @@ pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
 pub mod ram_val_check;
+mod read_write;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;
@@ -59,7 +77,18 @@ pub(crate) mod views;
 /// (each module here hosts its impl next to the kernel it wraps).
 pub struct ReferenceBackend;
 
-impl<F: Field> BuildRoundScheduler<F> for ReferenceBackend {
+/// Whether the active jolt-claims protocol shape is the packed (lattice)
+/// one: the lattice build folds the store val stage into
+/// `NUM_BYTECODE_VAL_STAGES`, so equality with `LATTICE_BYTECODE_VAL_STAGES`
+/// discriminates the shape at runtime. Dependency feature unification can
+/// select this shape without enabling this crate's `akita` feature, so
+/// mode-agnostic relations (the booleanity address phase) branch on this.
+pub(crate) fn lattice_shape() -> bool {
+    jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
+        == jolt_claims::protocols::jolt::lattice::LATTICE_BYTECODE_VAL_STAGES
+}
+
+impl<F: JoltField> BuildRoundScheduler<F> for ReferenceBackend {
     fn build(&self, _session: &mut ProofSession) -> Box<dyn RoundScheduler<F>> {
         Box::new(SequentialRounds)
     }
@@ -67,7 +96,7 @@ impl<F: Field> BuildRoundScheduler<F> for ReferenceBackend {
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The always-present reference backend: every slot served by the naive
@@ -75,12 +104,29 @@ where
     /// against, and the fallback partial backends compose over. Its commit
     /// slot streams, hence the [`ModeStreamingCommitment`] bound — a
     /// reference-implementation requirement, not a seam one.
+    #[cfg(not(feature = "akita"))]
     pub fn reference() -> Self
     where
         PCS: ModeStreamingCommitment,
     {
+        Self::reference_kernels(ReferenceBackend)
+    }
+
+    /// Reference compute kernels with native packed witness commitment.
+    #[cfg(feature = "akita")]
+    pub fn reference() -> Self
+    where
+        PCS: TraceOneHotCommitment + TransparentObjectSetup,
+        PCS::ProverSetup: GroupSetupMetadata,
+    {
+        Self::reference_kernels(ReferenceBackend)
+    }
+
+    /// Reference compute kernels with a caller-supplied commitment implementation.
+    /// Commitment selection is independent of the compute slots.
+    pub fn reference_kernels(commit: impl CommitWitness<F, PCS> + 'static) -> Self {
         Self {
-            commit: Box::new(ReferenceBackend),
+            commit: Box::new(commit),
             round_scheduler: Box::new(ReferenceBackend),
             spartan_outer_uniskip: Box::new(ReferenceBackend),
             spartan_outer_remainder: Box::new(ReferenceOuterRemainder),
@@ -88,17 +134,23 @@ where
             spartan_product_remainder: Box::new(ReferenceProductRemainder),
             ram_read_write: Box::new(ReferenceBackend),
             instruction_claim_reduction: Box::new(ReferenceBackend),
+            #[cfg(feature = "field-inline")]
+            field_registers_claim_reduction: Box::new(ReferenceBackend),
             ram_raf_evaluation: Box::new(ReferenceBackend),
             ram_output_check: Box::new(ReferenceBackend),
             spartan_shift: Box::new(ReferenceBackend),
             instruction_input: Box::new(ReferenceBackend),
             registers_claim_reduction: Box::new(ReferenceBackend),
             registers_read_write: Box::new(ReferenceBackend),
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write: Box::new(ReferenceBackend),
             ram_val_check: Box::new(ReferenceBackend),
-            advice_opening: Box::new(ReferenceBackend),
+            ram_initial_openings: Box::new(ReferenceBackend),
             instruction_read_raf: Box::new(ReferenceBackend),
             ram_ra_claim_reduction: Box::new(ReferenceBackend),
             registers_val_evaluation: Box::new(ReferenceBackend),
+            #[cfg(feature = "field-inline")]
+            field_registers_val_evaluation: Box::new(ReferenceBackend),
             bytecode_read_raf_address: Box::new(ReferenceBackend),
             booleanity_address: Box::new(ReferenceBackend),
             bytecode_read_raf_cycle: Box::new(ReferenceBackend),
@@ -107,6 +159,8 @@ where
             ram_ra_virtualization: Box::new(ReferenceBackend),
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: Box::new(ReferenceBackend),
             trusted_advice_cycle: Box::new(ReferenceBackend),
             untrusted_advice_cycle: Box::new(ReferenceBackend),
             bytecode_reduction_cycle: Box::new(ReferenceBackend),
@@ -124,6 +178,7 @@ where
             program_image_reduction_address: Box::new(ReferencePrecommittedAddress::new(
                 "stage 6b parked no program-image reduction state for the scheduled address phase",
             )),
+            #[cfg(not(feature = "akita"))]
             joint_opening: Box::new(ReferenceBackend),
         }
     }

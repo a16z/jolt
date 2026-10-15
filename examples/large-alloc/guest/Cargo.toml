@@ -1,0 +1,25 @@
+[package]
+name = "large-alloc-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+field-inline = ["jolt/field-inline"]
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
+  "guest-std",
+] }
+libc = "0.2"
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "large-alloc-guest"
+path = "src/main.rs"
+test = false
+bench = false

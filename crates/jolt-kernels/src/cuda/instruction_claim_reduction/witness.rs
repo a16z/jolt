@@ -118,7 +118,7 @@ fn fill(
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_witness::witnesses::{
         LeftInstructionInput, LeftLookupOperand, LookupOutput, RightInstructionInput,
         RightLookupOperand,

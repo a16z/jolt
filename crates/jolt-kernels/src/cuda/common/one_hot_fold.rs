@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use jolt_witness::JoltWitnessPlane;
 
@@ -59,7 +59,7 @@ enum FoldPart {
 }
 
 impl OneHotShards {
-    pub(crate) fn new<F: Field>(
+    pub(crate) fn new<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
@@ -83,6 +83,7 @@ impl OneHotShards {
         Ok(Self { windows, columns })
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) fn from_windows(
         windows: Vec<CycleWindow>,
         columns: Vec<DeviceOneHotColumns>,
@@ -114,7 +115,7 @@ impl OneHotShards {
         })
     }
 
-    pub(crate) fn fold<F: Field>(
+    pub(crate) fn fold<F: JoltField>(
         &self,
         cycle_point: &[F],
         tuning: FoldTuning,
@@ -298,7 +299,7 @@ impl DeviceOneHotColumns {
         1usize << self.chunk_bits
     }
 
-    pub fn fold_cycles<F: Field>(
+    pub fn fold_cycles<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         cycle_point: &[F],
@@ -437,7 +438,7 @@ pub fn affine_table(
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use proptest::prelude::*;
 

@@ -1,8 +1,14 @@
+use crate::ProofSession;
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::PrecommittedClaimReduction;
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use std::marker::PhantomData;
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
@@ -17,17 +23,16 @@ pub struct DeviceRowPlan<'a> {
     pub permute: bool,
 }
 
-pub struct DevicePrecommittedTables<F: Field> {
+pub struct DevicePrecommittedTables<F: JoltField> {
     context: &'static CudaKernelContext,
     packed: DeviceFrVec,
     len: usize,
-    aux: usize,
     scale: F,
     scale_inv: F,
     two_inv: F,
 }
 
-impl<F: Field> DevicePrecommittedTables<F> {
+impl<F: JoltField> DevicePrecommittedTables<F> {
     pub fn from_rows(
         context: &'static CudaKernelContext,
         reduction: &PrecommittedClaimReduction,
@@ -62,7 +67,6 @@ impl<F: Field> DevicePrecommittedTables<F> {
             context,
             packed,
             len,
-            aux: rows.len() - 2,
             scale: F::one(),
             scale_inv: F::one(),
             two_inv: two_inverse::<F>()?,
@@ -248,21 +252,15 @@ impl<F: Field> DevicePrecommittedTables<F> {
         self.require_fully_bound()?;
         Ok(self.rows_to_host(1)?[0][0])
     }
-
-    pub fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
-        let rows = self.rows_to_host(2 + self.aux)?;
-        Ok(rows[2..].iter().map(|row| row[0]).collect())
-    }
 }
 
-fn device_readback<F: Field>(_error: CudaError) -> SumcheckKernelError<F> {
+fn device_readback<F: JoltField>(_error: CudaError) -> SumcheckKernelError<F> {
     SumcheckKernelError::InvariantViolation {
         reason: "CUDA precommitted reduction claim readback failed",
     }
 }
 
-fn two_inverse<F: Field>() -> Result<F, KernelError<F>> {
+fn two_inverse<F: JoltField>() -> Result<F, KernelError<F>> {
     F::from_u64(2)
         .inverse()
         .ok_or(KernelError::InvariantViolation {
@@ -274,40 +272,40 @@ fn is_active(active_rounds: &[usize], round: usize) -> bool {
     active_rounds.binary_search(&round).is_ok()
 }
 
-pub struct DevicePrecommittedReductionCarry<F: Field, R> {
+pub struct DevicePrecommittedReductionCarry<F: JoltField, R> {
     reduction: PrecommittedClaimReduction,
     tables: DevicePrecommittedTables<F>,
-    _relation: std::marker::PhantomData<fn() -> R>,
+    _relation: PhantomData<fn() -> R>,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field, R> allocative::Allocative for DevicePrecommittedReductionCarry<F, R> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField, R> Allocative for DevicePrecommittedReductionCarry<F, R> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
 
-pub struct DeviceCycleReductionKernel<F: Field, R> {
+pub struct DeviceCycleReductionKernel<F: JoltField, R> {
     reduction: PrecommittedClaimReduction,
     tables: DevicePrecommittedTables<F>,
-    _relation: std::marker::PhantomData<fn() -> R>,
+    _relation: PhantomData<fn() -> R>,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field, R> allocative::Allocative for DeviceCycleReductionKernel<F, R> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField, R> Allocative for DeviceCycleReductionKernel<F, R> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
 
-impl<F: Field, R> DeviceCycleReductionKernel<F, R> {
+impl<F: JoltField, R> DeviceCycleReductionKernel<F, R> {
     pub fn new(reduction: PrecommittedClaimReduction, tables: DevicePrecommittedTables<F>) -> Self {
         Self {
             reduction,
             tables,
-            _relation: std::marker::PhantomData,
+            _relation: PhantomData,
         }
     }
 
@@ -327,7 +325,7 @@ impl<F: Field, R> DeviceCycleReductionKernel<F, R> {
         &self.tables
     }
 
-    pub fn park_carry<RA: 'static>(self, session: &mut crate::ProofSession)
+    pub fn park_carry<RA: 'static>(self, session: &mut ProofSession)
     where
         F: 'static,
         R: 'static,
@@ -338,12 +336,12 @@ impl<F: Field, R> DeviceCycleReductionKernel<F, R> {
         session.park(DevicePrecommittedReductionCarry::<F, RA> {
             reduction: self.reduction,
             tables: self.tables,
-            _relation: std::marker::PhantomData,
+            _relation: PhantomData,
         });
     }
 }
 
-impl<F: Field, R> ProveRounds<F> for DeviceCycleReductionKernel<F, R> {
+impl<F: JoltField, R> ProveRounds<F> for DeviceCycleReductionKernel<F, R> {
     fn num_rounds(&self) -> usize {
         self.reduction.cycle_phase_total_rounds()
     }
@@ -376,39 +374,35 @@ impl<F: Field, R> ProveRounds<F> for DeviceCycleReductionKernel<F, R> {
     }
 }
 
-pub struct DeviceAddressReductionKernel<F: Field, R> {
+pub struct DeviceAddressReductionKernel<F: JoltField, R> {
     reduction: PrecommittedClaimReduction,
     tables: DevicePrecommittedTables<F>,
-    _relation: std::marker::PhantomData<fn() -> R>,
+    _relation: PhantomData<fn() -> R>,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field, R> allocative::Allocative for DeviceAddressReductionKernel<F, R> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField, R> Allocative for DeviceAddressReductionKernel<F, R> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
 
-impl<F: Field, R> DeviceAddressReductionKernel<F, R> {
+impl<F: JoltField, R> DeviceAddressReductionKernel<F, R> {
     pub fn new(carry: DevicePrecommittedReductionCarry<F, R>) -> Self {
         Self {
             reduction: carry.reduction,
             tables: carry.tables,
-            _relation: std::marker::PhantomData,
+            _relation: PhantomData,
         }
     }
 
     pub fn final_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         self.tables.final_claim()
     }
-
-    pub fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
-        self.tables.final_aux_claims()
-    }
 }
 
-impl<F: Field, R> ProveRounds<F> for DeviceAddressReductionKernel<F, R> {
+impl<F: JoltField, R> ProveRounds<F> for DeviceAddressReductionKernel<F, R> {
     fn num_rounds(&self) -> usize {
         self.reduction.address_phase_total_rounds()
     }
@@ -441,7 +435,7 @@ impl<F: Field, R> ProveRounds<F> for DeviceAddressReductionKernel<F, R> {
     }
 }
 
-pub fn permuted_eq_point<F: Field>(
+pub fn permuted_eq_point<F: JoltField>(
     reduction: &PrecommittedClaimReduction,
     point: &[F],
 ) -> Result<Vec<Fr>, CudaError> {
@@ -450,72 +444,6 @@ pub fn permuted_eq_point<F: Field>(
         None => point.to_vec(),
     };
     Ok(require_fr_slice(&permuted)?.to_vec())
-}
-
-pub fn scatter_sparse_row(
-    context: &'static CudaKernelContext,
-    indices: &[u32],
-    values: &[Fr],
-    table_len: usize,
-    row: usize,
-    out: &mut DeviceFrVec,
-) -> Result<(), CudaError> {
-    if indices.is_empty() {
-        return Ok(());
-    }
-    if indices.len() != values.len() {
-        return Err(CudaError::LengthMismatch {
-            expected: indices.len(),
-            got: values.len(),
-        });
-    }
-    let device_indices = context.upload_u32_slice(indices)?;
-    let device_values = context.upload(values)?;
-    let count = CudaKernelContext::count_of(indices.len())?;
-    let len = CudaKernelContext::count_of(table_len)?;
-    let row = CudaKernelContext::count_of(row)?;
-    let mut builder = context.stream().launch_builder(context.pcr_scatter());
-    let _ = builder.arg(&device_indices);
-    let _ = builder.arg(device_values.limbs());
-    let _ = builder.arg(&count);
-    let _ = builder.arg(&len);
-    let _ = builder.arg(&row);
-    let _ = builder.arg(out.limbs_mut());
-    // SAFETY: thread `i < count` reads `values[i]` of `device_values`'s `count`
-    // elements and writes `out[row * table_len + indices[i]]`. Every index was
-    // produced by `address_cycle_to_index(lane, chunk_cycle, lane_capacity,
-    // chunk_cycle_len)` with `lane < lane_capacity` and `chunk_cycle <
-    // chunk_cycle_len`, so it is below `table_len = lane_capacity *
-    // chunk_cycle_len`, and `row` indexes an allocated row of `out`. Indices are
-    // pairwise distinct — `for_each_active_lane_value` visits each lane at most
-    // once per instruction and each instruction owns a distinct `chunk_cycle` —
-    // so no two threads write the same element.
-    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-    Ok(())
-}
-
-pub fn fold_chunk_weights(
-    context: &'static CudaKernelContext,
-    chunks: &DeviceFrVec,
-    weights: &DeviceFrVec,
-    chunk_count: usize,
-    table_len: usize,
-) -> Result<DeviceFrVec, CudaError> {
-    let mut out = context.alloc(table_len)?;
-    let count = CudaKernelContext::count_of(table_len)?;
-    let chunks_count = CudaKernelContext::count_of(chunk_count)?;
-    let mut builder = context.stream().launch_builder(context.pcr_value_fold());
-    let _ = builder.arg(chunks.limbs());
-    let _ = builder.arg(weights.limbs());
-    let _ = builder.arg(&chunks_count);
-    let _ = builder.arg(&count);
-    let _ = builder.arg(out.limbs_mut());
-    // SAFETY: thread `i < table_len` reads `chunks[c * table_len + i]` for
-    // `c < chunk_count`, inside `chunks`'s `chunk_count * table_len` elements,
-    // and `weights[c]` of its `chunk_count` elements; it writes only `out[i]` of
-    // the `table_len` just allocated.
-    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-    Ok(out)
 }
 
 pub fn lane_cycle_eq(
@@ -578,53 +506,12 @@ pub fn shifted_block_eq(
     Ok(out)
 }
 
-impl<F: Field> DevicePrecommittedTables<F> {
-    pub fn from_host_tables(
-        context: &'static CudaKernelContext,
-        tables: &crate::precommitted_reduction::PrecommittedTables<F>,
-    ) -> Result<Self, KernelError<F>> {
-        let len = tables.value.len();
-        if tables.eq.len() != len || tables.aux.iter().any(|row| row.len() != len) {
-            return Err(KernelError::InvariantViolation {
-                reason: "a host precommitted carry has rows of differing widths",
-            });
-        }
-        let mut host = Vec::with_capacity((2 + tables.aux.len()) * len);
-        for row in std::iter::once(&tables.value)
-            .chain(std::iter::once(&tables.eq))
-            .chain(tables.aux.iter())
-        {
-            host.extend_from_slice(require_fr_slice(row.evals())?);
-        }
-        Ok(Self {
-            context,
-            packed: context.upload(&host)?,
-            len,
-            aux: tables.aux.len(),
-            scale: tables.scale,
-            scale_inv: tables.scale_inv,
-            two_inv: two_inverse::<F>()?,
-        })
-    }
-}
-
-pub fn reclaim_carry<F: Field, R: 'static>(
-    session: &mut crate::ProofSession,
+pub fn reclaim_carry<F: JoltField, R: 'static>(
+    session: &mut ProofSession,
     missing: &'static str,
 ) -> Result<DeviceAddressReductionKernel<F, R>, KernelError<F>> {
-    if let Some(carry) = session.take::<DevicePrecommittedReductionCarry<F, R>>() {
-        return Ok(DeviceAddressReductionKernel::new(carry));
-    }
-    let host = session
-        .take::<crate::precommitted_reduction::PrecommittedReductionCarry<F, R>>()
-        .ok_or(KernelError::InvariantViolation { reason: missing })?;
-    let context = crate::cuda::require_context::<F>()?;
-    let tables = DevicePrecommittedTables::from_host_tables(context, &host.tables)?;
-    Ok(DeviceAddressReductionKernel::new(
-        DevicePrecommittedReductionCarry {
-            reduction: host.reduction,
-            tables,
-            _relation: std::marker::PhantomData,
-        },
-    ))
+    session
+        .take::<DevicePrecommittedReductionCarry<F, R>>()
+        .map(DeviceAddressReductionKernel::new)
+        .ok_or(KernelError::InvariantViolation { reason: missing })
 }

@@ -12,7 +12,7 @@ console.log(`preprocessing: ${pp.length} bytes`);
 console.log(`proof: ${proof.length} bytes`);
 console.log(`io: ${io.length} bytes`);
 
-const result = verify_fib(pp, proof, io);
+const result = verify_fib(pp, proof, io, new Uint8Array());
 console.log(`verification result: ${result}`);
 
 if (!result) {

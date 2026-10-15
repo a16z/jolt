@@ -1,5 +1,5 @@
-use jolt_field::arkworks::bn254::Fr;
-use jolt_field::{MulPrimitiveInt, RandomSampling};
+use jolt_field::Fr;
+use jolt_field::{Field, Ring};
 
 use crate::objective::{Objective, OptimizationObjective, PerformanceObjective};
 
@@ -14,8 +14,6 @@ pub const MUL_I128: OptimizationObjective =
 
 const NUM_ITERS: usize = 10_000;
 
-// -- mul_u64 --
-
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MulU64Objective;
 
@@ -27,7 +25,7 @@ impl Objective for MulU64Objective {
     }
 
     fn description(&self) -> String {
-        format!("Wall-clock time of Field::mul_u64 ({NUM_ITERS} iterations)")
+        format!("Wall-clock time of JoltField::mul_u64 ({NUM_ITERS} iterations)")
     }
 
     fn setup(&self) -> Self::Setup {
@@ -49,8 +47,6 @@ impl Objective for MulU64Objective {
     }
 }
 
-// -- mul_i64 --
-
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MulI64Objective;
 
@@ -62,7 +58,7 @@ impl Objective for MulI64Objective {
     }
 
     fn description(&self) -> String {
-        format!("Wall-clock time of Field::mul_i64 ({NUM_ITERS} iterations)")
+        format!("Wall-clock time of JoltField::mul_i64 ({NUM_ITERS} iterations)")
     }
 
     fn setup(&self) -> Self::Setup {
@@ -84,8 +80,6 @@ impl Objective for MulI64Objective {
     }
 }
 
-// -- mul_u128 --
-
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MulU128Objective;
 
@@ -97,7 +91,7 @@ impl Objective for MulU128Objective {
     }
 
     fn description(&self) -> String {
-        format!("Wall-clock time of Field::mul_u128 ({NUM_ITERS} iterations)")
+        format!("Wall-clock time of JoltField::mul_u128 ({NUM_ITERS} iterations)")
     }
 
     fn setup(&self) -> Self::Setup {
@@ -119,8 +113,6 @@ impl Objective for MulU128Objective {
     }
 }
 
-// -- mul_i128 --
-
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MulI128Objective;
 
@@ -132,7 +124,7 @@ impl Objective for MulI128Objective {
     }
 
     fn description(&self) -> String {
-        format!("Wall-clock time of Field::mul_i128 ({NUM_ITERS} iterations)")
+        format!("Wall-clock time of JoltField::mul_i128 ({NUM_ITERS} iterations)")
     }
 
     fn setup(&self) -> Self::Setup {

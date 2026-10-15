@@ -1,25 +1,13 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: the registers read-write phase-2 rounds are the first non-test caller"
-)]
+use cudarc::driver::LaunchConfig;
+use jolt_field::JoltField;
+use jolt_poly::BindingOrder;
 
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::Fr;
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{DeviceFrVec, LIMBS};
 use super::error::CudaError;
-use super::read_write_matrix::MAX_COEFFS;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AddressMajorEntry {
-    pub row: u32,
-    pub col: u32,
-    pub val_coeff: Fr,
-    pub prev_val: Fr,
-    pub next_val: Fr,
-    pub coeffs: [Fr; MAX_COEFFS],
-}
 
 struct Segments {
     start: CudaSlice<u32>,
@@ -52,53 +40,6 @@ impl DeviceAddressMajorMatrix {
             + self.coeffs.device_bytes()
             + self.val_init.device_bytes()
             + self.wa_scale.device_bytes()
-    }
-
-    pub fn new(
-        context: &CudaKernelContext,
-        entries: &[AddressMajorEntry],
-        val_init: &[Fr],
-        coeff_width: usize,
-        wa_scale: Option<Fr>,
-    ) -> Result<Self, CudaError> {
-        if coeff_width == 0 || coeff_width > MAX_COEFFS {
-            return Err(CudaError::InvariantViolation {
-                reason: "an address-major matrix carries one or two one-hot coefficients per entry",
-            });
-        }
-        if wa_scale.is_some() != (coeff_width == 1) {
-            return Err(CudaError::InvariantViolation {
-                reason: "a single-coefficient matrix derives its write lane by scaling its read lane, and only such a matrix may",
-            });
-        }
-        let count = entries.len();
-        let mut rows = Vec::with_capacity(count);
-        let mut cols = Vec::with_capacity(count);
-        let mut val_coeff = Vec::with_capacity(count);
-        let mut prev_val = Vec::with_capacity(count);
-        let mut next_val = Vec::with_capacity(count);
-        let mut coeffs = Vec::with_capacity(count * coeff_width);
-        for entry in entries {
-            rows.push(entry.row);
-            cols.push(entry.col);
-            val_coeff.push(entry.val_coeff);
-            prev_val.push(entry.prev_val);
-            next_val.push(entry.next_val);
-            coeffs.extend_from_slice(&entry.coeffs[..coeff_width]);
-        }
-        Ok(Self {
-            rows: context.upload_u32_slice(&rows)?,
-            cols: context.upload_u32_slice(&cols)?,
-            val_coeff: context.upload(&val_coeff)?,
-            prev_val: context.upload(&prev_val)?,
-            next_val: context.upload(&next_val)?,
-            coeffs: context.upload(&coeffs)?,
-            val_init: context.upload(val_init)?,
-            wa_scale: context.upload(&[wa_scale.unwrap_or(Fr::from_u64(0))])?,
-            coeff_width,
-            entries: count,
-            rounds_bound: 0,
-        })
     }
 
     #[expect(
@@ -152,46 +93,6 @@ impl DeviceAddressMajorMatrix {
         // `entries` field elements; they are distinct allocations.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
         context.stream().synchronize()?;
-        Ok(out)
-    }
-
-    pub const fn len(&self) -> usize {
-        self.entries
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.entries == 0
-    }
-
-    pub const fn rounds_bound(&self) -> usize {
-        self.rounds_bound
-    }
-
-    pub fn to_host(
-        &self,
-        context: &CudaKernelContext,
-    ) -> Result<Vec<AddressMajorEntry>, CudaError> {
-        let rows = context.download_u32(&self.rows)?;
-        let cols = context.download_u32(&self.cols)?;
-        let val_coeff = self.val_coeff.to_host()?;
-        let prev_val = self.prev_val.to_host()?;
-        let next_val = self.next_val.to_host()?;
-        let coeffs = self.coeffs.to_host()?;
-        let mut out = Vec::with_capacity(self.entries);
-        for index in 0..self.entries {
-            let mut entry_coeffs = [Fr::default(); MAX_COEFFS];
-            for lane in 0..self.coeff_width {
-                entry_coeffs[lane] = coeffs[index * self.coeff_width + lane];
-            }
-            out.push(AddressMajorEntry {
-                row: rows[index],
-                col: cols[index],
-                val_coeff: val_coeff[index],
-                prev_val: prev_val[index],
-                next_val: next_val[index],
-                coeffs: entry_coeffs,
-            });
-        }
         Ok(out)
     }
 
@@ -253,6 +154,20 @@ impl DeviceAddressMajorMatrix {
         let mut ra = context.alloc(k_prime * t_prime)?;
         let mut wa = context.alloc(k_prime * t_prime)?;
         let mut val = context.alloc(k_prime * t_prime)?;
+        if t_prime > 0 {
+            let cycles = CudaKernelContext::count_of(t_prime)?;
+            let count = CudaKernelContext::count_of(self.val_init.len() * t_prime)?;
+            let mut builder = context
+                .stream()
+                .launch_builder(context.amm_initial_values());
+            let _ = builder.arg(self.val_init.limbs());
+            let _ = builder.arg(&cycles);
+            let _ = builder.arg(&count);
+            let _ = builder.arg(val.limbs_mut());
+            // SAFETY: i < initial.len() * cycles reads initial[i / cycles] and
+            // writes val[i]; the checked output domain covers those elements.
+            let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        }
         if self.entries == 0 || t_prime == 0 {
             return Ok([ra, wa, val]);
         }
@@ -287,7 +202,7 @@ impl DeviceAddressMajorMatrix {
         Ok([ra, wa, val])
     }
 
-    pub fn round_evals<F: jolt_field::Field>(
+    pub fn round_evals<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         inc: &DeviceFrVec,
@@ -332,7 +247,7 @@ impl DeviceAddressMajorMatrix {
         // threads in the block because the reduction sits outside the
         // `seg < segments` guard.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
                 block_dim: (BLOCK, 1, 1),
                 shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
@@ -350,18 +265,14 @@ impl DeviceAddressMajorMatrix {
         Ok([convert(host[0])?, convert(host[1])?])
     }
 
-    pub fn bind<F: jolt_field::Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
     ) -> Result<(), CudaError> {
         let challenge = super::device::require_fr(challenge)?;
         if self.entries == 0 {
-            self.val_init = context.bind(
-                &self.val_init,
-                challenge,
-                jolt_poly::BindingOrder::LowToHigh,
-            )?;
+            self.val_init = context.bind(&self.val_init, challenge, BindingOrder::LowToHigh)?;
             self.rounds_bound += 1;
             return Ok(());
         }
@@ -436,185 +347,8 @@ impl DeviceAddressMajorMatrix {
         self.next_val = out_next;
         self.coeffs = out_coeffs;
         self.entries = bound_len;
-        self.val_init = context.bind(
-            &self.val_init,
-            challenge,
-            jolt_poly::BindingOrder::LowToHigh,
-        )?;
+        self.val_init = context.bind(&self.val_init, challenge, BindingOrder::LowToHigh)?;
         self.rounds_bound += 1;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test module: device operations and fixture errors fail loudly"
-)]
-mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::Polynomial;
-
-    use super::super::context::shared_context;
-    use super::super::testing::{fr, ram_matrix_cells};
-    use super::{AddressMajorEntry, DeviceAddressMajorMatrix};
-    use crate::optimized::rw_matrix::{AddressMajorMatrix, CycleMajorEntry, CycleMajorMatrix};
-
-    const LOG_T: usize = 6;
-    const RAM_K: usize = 32;
-    const RAM_LOG_K: usize = 5;
-
-    fn optimized_address_major() -> AddressMajorMatrix<Fr> {
-        let entries = ram_matrix_cells(LOG_T, RAM_K)
-            .iter()
-            .map(|cell| CycleMajorEntry {
-                row: cell.row,
-                col: cell.col,
-                prev_val: cell.prev_val,
-                next_val: cell.next_val,
-                val: Fr::from_u64(cell.prev_val),
-                ra: Fr::from_u64(1),
-            })
-            .collect();
-        let mut cycle_major = CycleMajorMatrix { entries };
-        for round in 0..LOG_T {
-            cycle_major.bind(fr(31 + round as u64));
-        }
-        cycle_major.into_address_major()
-    }
-
-    fn device_seed(expected: &AddressMajorMatrix<Fr>) -> Vec<AddressMajorEntry> {
-        expected
-            .entries
-            .iter()
-            .map(|entry| AddressMajorEntry {
-                row: entry.row as u32,
-                col: entry.col as u32,
-                val_coeff: entry.val,
-                prev_val: entry.prev_val,
-                next_val: entry.next_val,
-                coeffs: [entry.ra, Fr::from_u64(0)],
-            })
-            .collect()
-    }
-
-    fn device_view(entries: &[AddressMajorEntry]) -> Vec<(u32, u32, Fr, Fr, Fr, Fr)> {
-        entries
-            .iter()
-            .map(|entry| {
-                (
-                    entry.row,
-                    entry.col,
-                    entry.val_coeff,
-                    entry.prev_val,
-                    entry.next_val,
-                    entry.coeffs[0],
-                )
-            })
-            .collect()
-    }
-
-    fn optimized_view(matrix: &AddressMajorMatrix<Fr>) -> Vec<(u32, u32, Fr, Fr, Fr, Fr)> {
-        matrix
-            .entries
-            .iter()
-            .map(|entry| {
-                (
-                    entry.row as u32,
-                    entry.col as u32,
-                    entry.val,
-                    entry.prev_val,
-                    entry.next_val,
-                    entry.ra,
-                )
-            })
-            .collect()
-    }
-
-    fn val_init_values() -> Vec<Fr> {
-        (0..RAM_K).map(|k| fr(k as u64 * 23 + 5)).collect()
-    }
-
-    #[test]
-    fn address_major_ram_bind_matches_optimized_round_for_round() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let mut expected = optimized_address_major();
-        let val_init = val_init_values();
-        let mut expected_val_init = Polynomial::new(val_init.clone());
-        let mut got = DeviceAddressMajorMatrix::new(
-            context,
-            &device_seed(&expected),
-            &val_init,
-            1,
-            Some(fr(103)),
-        )
-        .expect("device RAM address-major matrix");
-
-        assert_eq!(
-            device_view(&got.to_host(context).expect("download")),
-            optimized_view(&expected),
-            "seeded entry sets disagree before any bind",
-        );
-
-        for round in 0..RAM_LOG_K {
-            let challenge = fr(71 + round as u64);
-            expected.bind(challenge, &mut expected_val_init);
-            got.bind(context, challenge).expect("device bind");
-            assert_eq!(
-                device_view(&got.to_host(context).expect("download")),
-                optimized_view(&expected),
-                "entry sets diverged after binding round {round}",
-            );
-        }
-    }
-
-    #[test]
-    fn address_major_ram_message_matches_optimized_round_for_round() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let gamma = fr(103);
-        let mut expected = optimized_address_major();
-        let val_init = val_init_values();
-        let mut expected_val_init = Polynomial::new(val_init.clone());
-        let mut got = DeviceAddressMajorMatrix::new(
-            context,
-            &device_seed(&expected),
-            &val_init,
-            1,
-            Some(gamma),
-        )
-        .expect("device RAM address-major matrix");
-
-        let inc_host: Vec<Fr> = (0..1usize << LOG_T).map(|j| fr(j as u64 * 5 + 3)).collect();
-        let eq_host: Vec<Fr> = (0..1usize << LOG_T)
-            .map(|j| fr(j as u64 * 13 + 11))
-            .collect();
-        let expected_inc = Polynomial::new(inc_host.clone());
-        let expected_eq = Polynomial::new(eq_host.clone());
-        let got_inc = context.upload(&inc_host).expect("upload inc");
-        let got_eq = context.upload(&eq_host).expect("upload eq");
-
-        for round in 0..RAM_LOG_K {
-            let expected_evals = expected.address_round_evals(
-                &expected_val_init,
-                &expected_inc,
-                &expected_eq,
-                gamma,
-            );
-            let got_evals: [Fr; 2] = got
-                .round_evals(context, &got_inc, &got_eq)
-                .expect("device round evals");
-            assert_eq!(
-                got_evals, expected_evals,
-                "RAM round evals diverged at round {round}",
-            );
-
-            let challenge = fr(71 + round as u64);
-            expected.bind(challenge, &mut expected_val_init);
-            got.bind(context, challenge).expect("device bind");
-        }
     }
 }

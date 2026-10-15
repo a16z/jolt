@@ -1,5 +1,7 @@
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::Field;
+#[cfg(test)]
+use jolt_field::Fr;
+use jolt_field::JoltField;
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{fr_limbs, require_fr, DeviceFrVec, LIMBS};
@@ -143,7 +145,7 @@ impl FoldColumn<'_> {
     }
 }
 
-pub fn half_fold<F: Field>(
+pub fn half_fold<F: JoltField>(
     context: &CudaKernelContext,
     column: FoldColumn<'_>,
     weights: &DeviceFrVec,
@@ -170,7 +172,7 @@ pub fn half_fold<F: Field>(
     Ok(out)
 }
 
-pub fn bind_column<F: Field>(
+pub fn bind_column<F: JoltField>(
     context: &CudaKernelContext,
     column: FoldColumn<'_>,
     challenge: F,
@@ -217,10 +219,10 @@ pub fn bind_column<F: Field>(
 pub(crate) fn promote_for_test(
     context: &CudaKernelContext,
     column: FoldColumn<'_>,
-) -> Result<Vec<jolt_field::Fr>, CudaError> {
-    use jolt_field::FromPrimitiveInt;
-    let zero = jolt_field::Fr::from_u64(0);
-    let one = jolt_field::Fr::from_u64(1);
+) -> Result<Vec<Fr>, CudaError> {
+    use jolt_field::Ring;
+    let zero = Fr::from_u64(0);
+    let one = Fr::from_u64(1);
     let evens = bind_column(context, column, zero)?.to_host()?;
     let odds = bind_column(context, column, one)?.to_host()?;
     let mut out = Vec::with_capacity(evens.len() + odds.len());
@@ -236,7 +238,7 @@ pub(crate) fn promote_for_test(
     reason = "the fold's accumulate mode carries its own scale and bias so a \
               multi-column weighted sum lands in one buffer"
 )]
-pub fn half_fold_into<F: Field>(
+pub fn half_fold_into<F: JoltField>(
     context: &CudaKernelContext,
     column: FoldColumn<'_>,
     weights: &DeviceFrVec,
@@ -376,7 +378,7 @@ fn row_fold_into(
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use proptest::prelude::*;
 
     use super::super::context::shared_context;

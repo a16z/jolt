@@ -1,10 +1,7 @@
 //! Lattice-mode symbolic sumcheck relations: the additional (or variant)
 //! relations layered on the base `jolt/` PIOP when committing through the
-//! packed lattice witness. See `specs/lattice-claims.md`.
+//! Akita lattice witness. See `specs/lattice-claims.md`.
 
-pub mod advice_reconstruction;
 pub mod booleanity;
-pub mod bytecode_reconstruction;
-pub mod hamming_weight;
-pub mod program_image_reconstruction;
+pub mod digit_zero;
 pub mod read_raf;

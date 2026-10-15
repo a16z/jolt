@@ -1,11 +1,9 @@
 #![no_main]
-use jolt_field::{AdditiveAccumulator, Fr, ReducingBytes, RingAccumulator, WideAccumulator};
+use jolt_field::{Accumulator, Fr, CanonicalEncoding, WideAccumulator};
 use libfuzzer_sys::fuzz_target;
 use num_traits::Zero;
 
 fuzz_target!(|data: &[u8]| {
-    // Each pair of field elements needs 64 bytes (2 x 32-byte chunks).
-    // Silently skip inputs that don't contain at least one complete pair.
     if data.len() < 64 {
         return;
     }
@@ -16,9 +14,9 @@ fuzz_target!(|data: &[u8]| {
     let pairs = data.len() / 64;
     for i in 0..pairs {
         let offset = i * 64;
-        let a = <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[offset..offset + 32]);
+        let a = <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[offset..offset + 32]);
         let b =
-            <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[offset + 32..offset + 64]);
+            <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[offset + 32..offset + 64]);
 
         acc.fmadd(a, b);
         naive_sum += a * b;

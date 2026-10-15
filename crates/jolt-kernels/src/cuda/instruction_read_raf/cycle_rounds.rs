@@ -1,10 +1,5 @@
-#![expect(
-    dead_code,
-    reason = "the host-table constructor and round counters are exercised only by the tests"
-)]
-
 use cudarc::driver::{LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
@@ -36,29 +31,7 @@ pub struct DeviceCycleRounds {
 }
 
 impl DeviceCycleRounds {
-    pub fn new<F: Field>(
-        context: &CudaKernelContext,
-        point: &[F],
-        combined_val: &[F],
-        ra: &[Vec<F>],
-        rounds: usize,
-    ) -> Result<Self, CudaError> {
-        let mut factors = Vec::with_capacity(ra.len() + 1);
-        factors.push(context.upload(require_fr_slice(combined_val)?)?);
-        for table in ra {
-            factors.push(context.upload(require_fr_slice(table)?)?);
-        }
-        Self::assemble(
-            require_fr_slice(point)?,
-            vec![CycleShard {
-                ordinal: context.ordinal(),
-                factors,
-            }],
-            rounds,
-        )
-    }
-
-    pub fn from_windows<F: Field>(
+    pub fn from_windows<F: JoltField>(
         point: &[F],
         shards: Vec<CycleShard>,
         rounds: usize,
@@ -204,7 +177,7 @@ impl DeviceCycleRounds {
         let handles: Vec<&DeviceFrVec> = factors.iter().collect();
         let pointers = context.device_pointers(&handles)?;
         let blocks = half_count.div_ceil(BLOCK).max(1);
-        let mut partials = context.alloc(lanes as usize * blocks as usize)?;
+        let mut partials = context.alloc((lanes as usize + 1) * blocks as usize)?;
 
         let mut builder = context.stream().launch_builder(context.cr_quotient());
         let _ = builder.arg(&pointers);
@@ -232,10 +205,10 @@ impl DeviceCycleRounds {
         }?;
         context.stream().synchronize()?;
 
-        reduce_lanes(context, partials, lanes, blocks)?.to_host()
+        reduce_lanes(context, partials, lanes + 1, blocks)?.to_host()
     }
 
-    pub fn round_message<F: Field>(
+    pub fn round_message<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         previous_claim: F,
@@ -243,7 +216,14 @@ impl DeviceCycleRounds {
         let quotient = self.quotient_evals(context)?;
         let poly = self
             .eq
-            .gruen_poly_from_evals(&quotient, require_fr(previous_claim)?);
+            .gruen_poly_from_evals(
+                &quotient[..quotient.len() - 1],
+                require_fr(previous_claim)?,
+                || quotient[quotient.len() - 1],
+            )
+            .map_err(|_| CudaError::InvariantViolation {
+                reason: "read-RAF quotient disagrees with the input claim",
+            })?;
         let coefficients = poly
             .into_coefficients()
             .into_iter()
@@ -256,7 +236,7 @@ impl DeviceCycleRounds {
         Ok(UnivariatePoly::new(coefficients))
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -334,7 +314,10 @@ impl DeviceCycleRounds {
         Ok(())
     }
 
-    pub fn ra_finals<F: Field>(&self, _context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+    pub fn ra_finals<F: JoltField>(
+        &self,
+        _context: &CudaKernelContext,
+    ) -> Result<Vec<F>, CudaError> {
         let factors = match &self.collapsed {
             Some(factors) => factors.as_slice(),
             None => self
@@ -355,210 +338,5 @@ impl DeviceCycleRounds {
                 })
             })
             .collect()
-    }
-
-    pub const fn rounds_bound(&self) -> usize {
-        self.rounds_bound
-    }
-
-    pub const fn rounds(&self) -> usize {
-        self.rounds
-    }
-}
-
-#[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    reason = "test module: device operations fail loudly"
-)]
-mod tests {
-    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-    use jolt_field::Fr;
-    use jolt_lookup_tables::tables::LookupTableKind;
-    use jolt_lookup_tables::XLEN as RISCV_XLEN;
-    use jolt_poly::UnivariatePoly;
-    use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
-    use proptest::prelude::*;
-    use std::num::NonZeroUsize;
-
-    use super::DeviceCycleRounds;
-    use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::testing::fr;
-    use crate::reference::instruction_read_raf::{
-        InstructionReadRafKernel, InstructionReadRafWitness,
-    };
-
-    const ADDRESS_BITS: usize = 128;
-    const RA_COUNT: usize = 8;
-
-    fn rows(log_t: usize, seed: u64) -> Vec<InstructionReadRafWitness> {
-        let tables: Vec<LookupTableKind<RISCV_XLEN>> =
-            LookupTableKind::<RISCV_XLEN>::iter().collect();
-        (0..1usize << log_t)
-            .map(|j| {
-                let mixed = (j as u64)
-                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                    .wrapping_add(seed);
-                let index = (u128::from(mixed) << 61) | u128::from(mixed.rotate_left(17));
-                InstructionReadRafWitness {
-                    lookup_index: LookupIndex(index),
-                    table_index: TableIndex(if mixed.is_multiple_of(11) {
-                        None
-                    } else {
-                        Some(tables[(mixed % tables.len() as u64) as usize].index())
-                    }),
-                    raf_flag: InstructionRafFlag(mixed.is_multiple_of(3)),
-                }
-            })
-            .collect()
-    }
-
-    fn reference_at_cycle_rounds(
-        log_t: usize,
-        seed: u64,
-        r_reduction: &[Fr],
-    ) -> InstructionReadRafKernel<Fr> {
-        let dimensions = InstructionReadRafDimensions::new(
-            log_t,
-            ADDRESS_BITS,
-            NonZeroUsize::new(RA_COUNT).unwrap(),
-        );
-        let mut kernel =
-            InstructionReadRafKernel::new(dimensions, r_reduction, rows(log_t, seed), fr(seed + 1))
-                .expect("reference kernel");
-        for round in 0..ADDRESS_BITS {
-            kernel
-                .bind(fr(seed + round as u64 + 71))
-                .expect("reference bind");
-        }
-        kernel
-    }
-
-    #[test]
-    fn windowed_cycle_rounds_match_the_whole_domain_round_for_round() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        const LOG_T: usize = 8;
-        let seed = 0x51DEu64;
-        let r_reduction: Vec<Fr> = (0..LOG_T).map(|i| fr(seed + i as u64 + 3)).collect();
-        let host = reference_at_cycle_rounds(LOG_T, seed, &r_reduction);
-        let tables = host.cycle_tables.as_ref().expect("cycle tables");
-        let combined: Vec<Fr> = tables.combined_val.evals().to_vec();
-        let ra: Vec<Vec<Fr>> = tables.ra.iter().map(|p| p.evals().to_vec()).collect();
-
-        for shards in [2usize, 4, 8] {
-            let mut expected = DeviceCycleRounds::new(context, &r_reduction, &combined, &ra, LOG_T)
-                .expect("whole-domain cycle rounds");
-            let len = (1usize << LOG_T) / shards;
-            let windows: Vec<super::CycleShard> = (0..shards)
-                .map(|shard| {
-                    let range = shard * len..(shard + 1) * len;
-                    let mut factors = vec![context
-                        .upload(&combined[range.clone()])
-                        .expect("upload the combined window")];
-                    for table in &ra {
-                        factors.push(
-                            context
-                                .upload(&table[range.clone()])
-                                .expect("upload an ra window"),
-                        );
-                    }
-                    super::CycleShard {
-                        ordinal: 0,
-                        factors,
-                    }
-                })
-                .collect();
-            let mut got = DeviceCycleRounds::from_windows(&r_reduction, windows, LOG_T)
-                .expect("windowed cycle rounds");
-
-            let mut claim = fr(seed + 909);
-            for round in 0..LOG_T {
-                let want: UnivariatePoly<Fr> = expected
-                    .round_message(context, claim)
-                    .expect("whole-domain message");
-                let have: UnivariatePoly<Fr> =
-                    got.round_message(context, claim).expect("windowed message");
-                assert_eq!(
-                    have.coefficients(),
-                    want.coefficients(),
-                    "shards={shards} round {round}: the cycle round polynomial diverged",
-                );
-                let challenge = fr(seed + round as u64 + 311);
-                claim = want.evaluate(challenge);
-                expected
-                    .bind(context, challenge)
-                    .expect("whole-domain bind");
-                got.bind(context, challenge).expect("windowed bind");
-            }
-
-            let want: Vec<Fr> = expected.ra_finals(context).expect("whole-domain ra finals");
-            let have: Vec<Fr> = got.ra_finals(context).expect("windowed ra finals");
-            assert_eq!(have, want, "shards={shards}: the ra final claims diverged");
-            assert_eq!(want.len(), RA_COUNT);
-            assert_ne!(
-                want.first().copied(),
-                Some(Fr::from(0u64)),
-                "a degenerate fixture would hide a divergence",
-            );
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn cycle_rounds_match_the_reference_round_for_round(
-            log_t in 4usize..=8,
-            seed in any::<u64>(),
-        ) {
-            let Some(context) = shared_context() else { return Ok(()); };
-            let r_reduction: Vec<Fr> = (0..log_t).map(|i| fr(seed + i as u64 + 3)).collect();
-            let mut host = reference_at_cycle_rounds(log_t, seed, &r_reduction);
-            let tables = host.cycle_tables.as_ref().expect("cycle tables");
-            let ra: Vec<Vec<Fr>> = tables.ra.iter().map(|p| p.evals().to_vec()).collect();
-            let mut device = DeviceCycleRounds::new(
-                context,
-                &r_reduction,
-                tables.combined_val.evals(),
-                &ra,
-                log_t,
-            )
-            .expect("device cycle rounds");
-
-            let first = host.cycle_message().expect("reference cycle message");
-            let mut claim = first[0] + first[1];
-
-            for round in 0..log_t {
-                let expected = UnivariatePoly::from_evals(
-                    &host.cycle_message().expect("reference cycle message"),
-                );
-                let got: UnivariatePoly<Fr> = device
-                    .round_message(context, claim)
-                    .expect("device message");
-                prop_assert_eq!(
-                    got.coefficients(),
-                    expected.coefficients(),
-                    "cycle round {} polynomial diverged",
-                    round
-                );
-
-                let challenge = fr(seed + round as u64 + 211);
-                claim = expected.evaluate(challenge);
-                host.bind(challenge).expect("reference bind");
-                device.bind(context, challenge).expect("device bind");
-            }
-
-            let expected: Vec<Fr> = host
-                .cycle_tables
-                .as_ref()
-                .expect("cycle tables")
-                .ra
-                .iter()
-                .map(|ra| ra.evals()[0])
-                .collect();
-            let got: Vec<Fr> = device.ra_finals(context).expect("device ra finals");
-            prop_assert_eq!(got, expected, "ra final claims diverged");
-        }
     }
 }

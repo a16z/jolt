@@ -19,7 +19,6 @@ pub(crate) const NEEDED_REGISTERS: usize = 11;
 /// Output (8 u64 words) will be written to the memory rs3 points to
 struct BigIntMulSequenceBuilder {
     asm: InlineExpansionBuilder,
-    /// Virtual registers used by the sequence
     vr: [InlineRegister; NEEDED_REGISTERS],
     operands: InlineOperands,
 }
@@ -33,16 +32,12 @@ impl BigIntMulSequenceBuilder {
         Ok(BigIntMulSequenceBuilder { asm, vr, operands })
     }
 
-    /// Register indices for operands and temporaries
-    // LHS
     fn a(&self, i: usize) -> u8 {
         *self.vr[i]
     }
-    // RHS
     fn b(&self, i: usize) -> u8 {
         *self.vr[INPUT_LIMBS + i]
     }
-    // Results
     fn s(&self, i: usize) -> u8 {
         *self.vr[INPUT_LIMBS + INPUT_LIMBS + (i % 2)]
     }
@@ -51,7 +46,6 @@ impl BigIntMulSequenceBuilder {
         *self.vr[INPUT_LIMBS + INPUT_LIMBS + 2]
     }
 
-    /// Builds the complete multiplication sequence
     fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         for i in 0..INPUT_LIMBS {
             self.asm
@@ -66,16 +60,14 @@ impl BigIntMulSequenceBuilder {
         // Inline finalization ensures that s0 and s1 start at zero
         // Thus no explicit initialization is needed
 
-        // 0th limb is just a multiplication with no carry
         self.asm.emit_r(Kind::MUL, self.s(0), self.a(0), self.b(0));
-        self.asm.emit_s(Kind::SD, self.operands.rs3, self.s(0), 0); // Store 0th limb immediately
+        self.asm.emit_s(Kind::SD, self.operands.rs3, self.s(0), 0);
 
         // 1st limb is 0 and doesn't receive a carry from the 0th limb
         // so initialize it with the upper half of A[0] * B[0]
         self.asm
             .emit_r(Kind::MULHU, self.s(1), self.a(0), self.b(0));
 
-        // For each output limb R[k]
         for k in 1..OUTPUT_LIMBS {
             // alternate between s0 and s1 for accumulating results and carries to minimize register usage
             // overwrite carry register on first addition, then accumulate into it for subsequent additions
@@ -86,22 +78,15 @@ impl BigIntMulSequenceBuilder {
                     if i == 0 && j == 0 {
                         continue; // skip the A[0] * B[0] term which is already handled
                     }
-                    // add all lower(A[i] * B[j]) where i+j = k
                     if i + j == k {
-                        // t = low part of A[i] * B[j]
                         self.asm.emit_r(Kind::MUL, self.t(), self.a(i), self.b(j));
-                    // add all upper(A[i] * B[j]) where i+j = k-1
                     } else if i + j == k - 1 {
-                        // t = high part of A[i] * B[j]
                         self.asm.emit_r(Kind::MULHU, self.t(), self.a(i), self.b(j));
                     }
-                    // handle carry propagation
                     if i + j == k || i + j == k - 1 {
-                        // add product to accumulator
                         self.asm.emit_r(Kind::ADD, self.s(k), self.s(k), self.t());
                         // A 256x256-bit product has no carry above its eighth output limb.
                         if k + 1 < OUTPUT_LIMBS {
-                            // test for a carry and either set or accumulate it
                             if overwrite_carry {
                                 self.asm
                                     .emit_r(Kind::SLTU, self.s(k + 1), self.s(k), self.t());
@@ -111,13 +96,11 @@ impl BigIntMulSequenceBuilder {
                                     .emit_r(Kind::ADD, self.s(k + 1), self.t(), self.s(k + 1));
                             }
                         }
-                        // after the first addition, we need to accumulate carries instead of overwriting them
                         overwrite_carry = false;
                     }
                 }
             }
 
-            // store the accumulated result limb
             self.asm
                 .emit_s(Kind::SD, self.operands.rs3, self.s(k), k as i64 * 8);
         }

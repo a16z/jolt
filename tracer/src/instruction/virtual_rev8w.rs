@@ -1,3 +1,4 @@
+use crate::instruction::registers::t::RegisterStateT;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatT,
+    registers = RegisterStateT,
     ram = ()
 );
 
 impl VirtualRev8W {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualRev8W as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualRev8W as RISCVInstruction>::RamAccess) {
         let v = cpu.x[self.operands.rs1 as usize] as u64;
         cpu.write_register(self.operands.rd as usize, rev8w(v) as i64);
     }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 
@@ -14,13 +14,13 @@ use super::half_fold::{half_fold, half_fold_into, FoldColumn, NarrowColumn, Summ
 use super::sum_of_products::{DeviceSumOfProducts, SumOfProducts};
 
 #[derive(Clone, Debug)]
-pub struct PrefixSuffixPair<F: Field> {
+pub struct PrefixSuffixPair<F: JoltField> {
     pub prefix: Vec<F>,
     pub suffix: Vec<F>,
 }
 
 #[derive(Clone, Debug)]
-pub struct PrefixSuffixGroup<F: Field> {
+pub struct PrefixSuffixGroup<F: JoltField> {
     pub pairs: Vec<PrefixSuffixPair<F>>,
     pub columns: Vec<(usize, F)>,
     pub constant: F,
@@ -40,7 +40,7 @@ pub const fn prefix_rounds_floor(log_t: usize) -> Option<usize> {
     Some(log_t / 2)
 }
 
-pub fn eq_pair<F: Field>(
+pub fn eq_pair<F: JoltField>(
     point: &[F],
     prefix_rounds: usize,
 ) -> Result<PrefixSuffixPair<F>, CudaError> {
@@ -51,7 +51,7 @@ pub fn eq_pair<F: Field>(
     })
 }
 
-pub fn eq_plus_one_pairs<F: Field>(
+pub fn eq_plus_one_pairs<F: JoltField>(
     point: &[F],
     prefix_rounds: usize,
 ) -> Result<Vec<PrefixSuffixPair<F>>, CudaError> {
@@ -72,13 +72,13 @@ pub fn eq_plus_one_pairs<F: Field>(
     ])
 }
 
-fn shifted<F: Field>(table: &[F]) -> Vec<F> {
+fn shifted<F: JoltField>(table: &[F]) -> Vec<F> {
     let mut out = vec![F::zero(); table.len()];
     out[1..].copy_from_slice(&table[..table.len() - 1]);
     out
 }
 
-fn split_point<F: Field>(point: &[F], prefix_rounds: usize) -> Result<(&[F], &[F]), CudaError> {
+fn split_point<F: JoltField>(point: &[F], prefix_rounds: usize) -> Result<(&[F], &[F]), CudaError> {
     if prefix_rounds == 0 || prefix_rounds >= point.len() {
         return Err(CudaError::InvariantViolation {
             reason: "a prefix-suffix split needs at least one variable on each side",
@@ -87,7 +87,7 @@ fn split_point<F: Field>(point: &[F], prefix_rounds: usize) -> Result<(&[F], &[F
     Ok(point.split_at(point.len() - prefix_rounds))
 }
 
-fn window_accumulators<F: Field>(
+fn window_accumulators<F: JoltField>(
     context: &CudaKernelContext,
     window: &PrefixSuffixWindow,
     groups: &[PrefixSuffixGroup<F>],
@@ -220,7 +220,7 @@ pub struct PrefixSuffixWindow {
     pub suffix_len: usize,
 }
 
-pub struct PrefixSuffixRounds<F: Field> {
+pub struct PrefixSuffixRounds<F: JoltField> {
     context: &'static CudaKernelContext,
     groups: Vec<PrefixSuffixGroup<F>>,
     columns: ColumnSet,
@@ -232,7 +232,7 @@ pub struct PrefixSuffixRounds<F: Field> {
     len: usize,
 }
 
-impl<F: Field> PrefixSuffixRounds<F> {
+impl<F: JoltField> PrefixSuffixRounds<F> {
     #[cfg(feature = "allocative")]
     pub fn device_bytes(&self) -> usize {
         self.columns.device_bytes()
@@ -711,7 +711,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for PrefixSuffixRounds<F> {
+impl<F: JoltField> ProveRounds<F> for PrefixSuffixRounds<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -748,7 +748,7 @@ impl<F: Field> ProveRounds<F> for PrefixSuffixRounds<F> {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix, EqPolynomial, UnivariatePoly};
     use jolt_sumcheck::ProveRounds;
     use proptest::prelude::*;

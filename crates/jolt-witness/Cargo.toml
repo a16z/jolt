@@ -13,11 +13,9 @@ workspace = true
 
 [features]
 default = []
-test-utils = ["dep:common"]
+cuda = ["dep:cudarc"]
+test-utils = []
 parallel = ["dep:rayon", "jolt-utils/parallel"]
-# The device-resident trace walk (backend/cuda). Linkage only: the backend is
-# a value the harness constructs, and the caller injects the CUDA stream.
-cuda = ["dep:cudarc", "dep:common"]
 field-inline = [
   "dep:rayon",
   "jolt-claims/field-inline",
@@ -27,8 +25,8 @@ field-inline = [
 ]
 
 [dependencies]
-common = { workspace = true, features = ["std"], optional = true }
 cudarc = { workspace = true, optional = true }
+common.workspace = true
 jolt-claims.workspace = true
 jolt-witness-derive.workspace = true
 jolt-field.workspace = true
@@ -41,5 +39,4 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-common = { workspace = true, features = ["std"] }
 proptest.workspace = true

@@ -1,13 +1,11 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
-use jolt_program::execution::TraceRow;
-use jolt_riscv::JoltInstruction;
+use jolt_riscv::{JoltInstruction, JoltTraceRow as TraceRow};
 
 use super::{decode_instruction, lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 use crate::RV64_XLEN;
 
-/// Output of the instruction's lookup query.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LookupOutput(pub u64);
 
@@ -21,7 +19,7 @@ pub struct LookupIndex(pub u128);
 pub struct TableIndex(pub Option<usize>);
 
 impl ToField for LookupOutput {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -39,7 +37,7 @@ impl Extract for LookupOutput {
 }
 
 impl ToField for LookupIndex {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u128(self.0)
     }
 }
@@ -62,7 +60,7 @@ impl Extract for TableIndex {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let instruction = decode_instruction(row)?;
+        let instruction = decode_instruction(row);
         Ok(Self(
             <JoltInstruction as InstructionLookupTable<RV64_XLEN>>::lookup_table(&instruction)
                 .map(|kind| kind.index()),

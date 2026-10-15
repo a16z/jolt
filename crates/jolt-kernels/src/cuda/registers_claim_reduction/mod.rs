@@ -1,8 +1,14 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::relations::claim_reductions::registers::{
     RegistersClaimReductionInputClaims, RegistersClaimReductionOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -32,22 +38,22 @@ pub(crate) mod witness;
 
 const COLUMNS: usize = 3;
 
-pub struct RegistersClaimReductionKernel<F: Field> {
+pub struct RegistersClaimReductionKernel<F: JoltField> {
     rounds: PrefixSuffixRounds<F>,
     total: usize,
     bound: usize,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RegistersClaimReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for RegistersClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("rounds"), self.rounds.device_bytes());
+        visitor.visit_simple(Key::new("rounds"), self.rounds.device_bytes());
         visitor.exit();
     }
 }
 
-impl<F: Field> ProveRounds<F> for RegistersClaimReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RegistersClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.total
     }
@@ -70,7 +76,7 @@ impl<F: Field> ProveRounds<F> for RegistersClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RegistersClaimReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RegistersClaimReductionKernel<F> {
     type Relation = RegistersClaimReduction<F>;
 
     fn output_claims(
@@ -125,7 +131,7 @@ impl NarrowColumns for ExtraWordColumns {
         })
     }
 }
-impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -210,6 +216,10 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use super::witness::RegistersClaimReductionWitness;
+    use super::ExtraWordColumns;
+    use super::NarrowColumns;
+    use super::COLUMNS;
     use jolt_claims::protocols::jolt::geometry::claim_reductions::registers::{
         rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced,
     };
@@ -218,7 +228,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltOpeningId, TraceDimensions};
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
     use jolt_witness::JoltWitnessPlane;
     use proptest::prelude::*;
@@ -324,7 +334,7 @@ mod tests {
         };
         with_r1cs_witness(LOG_T, RAM_K, one_hot(), 7, |witness| {
             let cycles = 1usize << LOG_T;
-            let rows: Vec<super::witness::RegistersClaimReductionWitness> =
+            let rows: Vec<RegistersClaimReductionWitness> =
                 jolt_witness::collect_bundles(witness, cycles).expect("reference rows");
             let expected: Vec<Vec<Fr>> = super::witness::device_columns(context, &rows)
                 .expect("host-encoded columns")
@@ -340,15 +350,14 @@ mod tests {
                 cycles,
             )
             .expect("device residency");
-            let narrow = super::ExtraWordColumns {
+            let narrow = ExtraWordColumns {
                 trace,
                 entries: cycles,
             };
             let one = context.upload(&[Fr::from_u64(1)]).expect("upload weight");
-            let got: Vec<Vec<Fr>> = (0..super::COLUMNS)
+            let got: Vec<Vec<Fr>> = (0..COLUMNS)
                 .map(|index| {
-                    let column =
-                        super::NarrowColumns::column(&narrow, index).expect("narrow column");
+                    let column = NarrowColumns::column(&narrow, index).expect("narrow column");
                     half_fold(
                         context,
                         FoldColumn::Narrow(column),

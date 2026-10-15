@@ -325,6 +325,7 @@ device_handle_bulk!(
 
 #[cfg(test)]
 mod tests {
+    use ark_bn254::Fr;
     use ark_ff::UniformRand;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -333,7 +334,7 @@ mod tests {
     use crate::cuda::common::context::shared_context;
 
     fn scalar(rng: &mut ChaCha20Rng) -> ArkFr {
-        ArkFr(ark_bn254::Fr::rand(rng))
+        ArkFr(Fr::rand(rng))
     }
 
     #[test]

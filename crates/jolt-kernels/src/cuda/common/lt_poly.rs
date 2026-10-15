@@ -1,5 +1,5 @@
 use cudarc::driver::PushKernelArg;
-use jolt_field::{Field, Fr, FromPrimitiveInt};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::BindingOrder;
 
 use super::context::CudaKernelContext;
@@ -26,7 +26,7 @@ pub(crate) struct SplitLtView<'a> {
 }
 
 impl DeviceLtPolynomial {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         point: &[F],
         order: BindingOrder,
@@ -34,7 +34,7 @@ impl DeviceLtPolynomial {
         Self::shifted(context, point, order, None)
     }
 
-    pub fn shifted<F: Field>(
+    pub fn shifted<F: JoltField>(
         context: &CudaKernelContext,
         point: &[F],
         order: BindingOrder,
@@ -147,7 +147,7 @@ impl DeviceLtPolynomial {
         Ok(output)
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,

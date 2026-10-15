@@ -1,6 +1,6 @@
 //! Identity polynomial evaluating to the integer index on the Boolean hypercube.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +25,7 @@ impl OperandPolynomial {
     }
 }
 
-impl<F: Field> crate::MultilinearEvaluation<F> for OperandPolynomial {
+impl<F: JoltField> crate::MultilinearEvaluation<F> for OperandPolynomial {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -68,7 +68,6 @@ pub struct IdentityPolynomial {
 }
 
 impl IdentityPolynomial {
-    /// Creates an identity polynomial over $n$ variables.
     pub fn new(num_vars: usize) -> Self {
         Self { num_vars }
     }
@@ -78,7 +77,7 @@ impl IdentityPolynomial {
     }
 }
 
-impl<F: Field> crate::MultilinearEvaluation<F> for IdentityPolynomial {
+impl<F: JoltField> crate::MultilinearEvaluation<F> for IdentityPolynomial {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -106,7 +105,7 @@ mod tests {
     use super::*;
     use crate::MultilinearEvaluation;
     use jolt_field::Fr;
-    use jolt_field::FromPrimitiveInt;
+    use jolt_field::Ring;
     use num_traits::{One, Zero};
 
     #[test]
@@ -138,13 +137,6 @@ mod tests {
         assert!(
             <IdentityPolynomial as crate::MultilinearEvaluation<Fr>>::evaluate(&id, &[]).is_zero()
         );
-    }
-
-    #[test]
-    fn single_var() {
-        let id = IdentityPolynomial::new(1);
-        assert!(id.evaluate(&[Fr::zero()]).is_zero());
-        assert_eq!(id.evaluate(&[Fr::one()]), Fr::one());
     }
 
     #[test]

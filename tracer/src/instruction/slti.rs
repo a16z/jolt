@@ -1,3 +1,4 @@
+use crate::instruction::registers::i::RegisterStateI;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -12,11 +13,12 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00002013,
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 
 impl SLTI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLTI as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLTI as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             match cpu.x[self.operands.rs1 as usize] < normalize_imm(self.operands.imm) {

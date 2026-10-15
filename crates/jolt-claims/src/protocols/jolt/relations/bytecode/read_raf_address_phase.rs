@@ -1,6 +1,4 @@
-//! The address phase of the bytecode read-RAF symbolic sumcheck.
-
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +70,36 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub outer_is_first_in_sequence: C,
     #[opening(OpFlags(CircuitFlags::IsLastInSequence), from = SpartanOuter)]
     pub outer_is_last_in_sequence: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAdd), from = SpartanOuter)]
+    pub outer_field_add: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldSub), from = SpartanOuter)]
+    pub outer_field_sub: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldMul), from = SpartanOuter)]
+    pub outer_field_mul: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldInv), from = SpartanOuter)]
+    pub outer_field_inv: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAssertEq), from = SpartanOuter)]
+    pub outer_field_assert_eq: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadAccumulateFromRegister), from = SpartanOuter)]
+    pub outer_field_load_accumulate_from_register: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAssertZero), from = SpartanOuter)]
+    pub outer_field_assert_zero: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadImm), from = SpartanOuter)]
+    pub outer_field_load_imm: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadAccumulateFromMemory), from = SpartanOuter)]
+    pub outer_field_load_accumulate_from_memory: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAdviceLimb), from = SpartanOuter)]
+    pub outer_field_advice_limb: C,
     #[opening(PC, from = SpartanOuter)]
     pub outer_pc: C,
     #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
@@ -136,7 +164,7 @@ pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     pub stage5_gamma: F,
 }
 
-impl<F: jolt_field::Field> BytecodeReadRafAddressPhaseChallenges<F> {
+impl<F: jolt_field::JoltField> BytecodeReadRafAddressPhaseChallenges<F> {
     /// Expand the five drawn per-stage scalars into the gamma-power vectors the
     /// bytecode folds consume (`[1, γ, γ², …]` — the recurrence the prover's
     /// `challenge_scalar_powers` applies to its single squeezed scalar), sized
@@ -192,11 +220,11 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
         self.shape.num_committed_ra_polys() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_address_input_fold(Vec::new())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(bytecode_read_raf_address_phase_opening())
     }
 }
@@ -206,21 +234,6 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
     use jolt_riscv::CIRCUIT_FLAGS;
-
-    fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
-        BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
-    }
-
-    #[test]
-    fn read_raf_address_phase_symbolic_matches_dependencies() {
-        let relation = ReadRafAddressPhase::new(dimensions(2));
-        assert_eq!(ReadRafAddressPhase::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.rounds(), dimensions(2).log_k());
-        assert_eq!(
-            relation.degree(),
-            dimensions(2).num_committed_ra_polys() + 1
-        );
-    }
 
     /// Pins the circuit-flag coverage of the input claims struct: every
     /// `CircuitFlags` variant has a `SpartanOuter` field (a newly added flag

@@ -59,7 +59,6 @@ struct RealEnv {
 
 impl RealEnv {
     fn new(repo_dir: std::path::PathBuf) -> eyre::Result<Self> {
-        // Fail fast if the working tree is dirty.
         let status_out = Command::new("git")
             .current_dir(&repo_dir)
             .args(["status", "--porcelain"])
@@ -72,7 +71,6 @@ impl RealEnv {
             );
         }
 
-        // Record the base commit so we can export a cumulative patch later.
         let head_out = Command::new("git")
             .current_dir(&repo_dir)
             .args(["rev-parse", "HEAD"])
@@ -80,7 +78,6 @@ impl RealEnv {
         eyre::ensure!(head_out.status.success(), "failed to resolve HEAD");
         let base_commit = String::from_utf8_lossy(&head_out.stdout).trim().to_string();
 
-        // Create an isolated worktree for the optimization run.
         let work_dir = jolt_eval::agent::claude::create_worktree(&repo_dir)
             .map_err(|e| eyre::eyre!("Failed to create optimization worktree: {e}"))?;
         eprintln!("Created optimization worktree at {}", work_dir.display());
@@ -257,7 +254,6 @@ impl OptimizeEnv for RealEnv {
     }
 
     fn finish(&mut self, branch_name: &str) -> Option<String> {
-        // Check whether any commits were added beyond the base.
         let head_out = Command::new("git")
             .current_dir(&self.work_dir)
             .args(["rev-parse", "HEAD"])

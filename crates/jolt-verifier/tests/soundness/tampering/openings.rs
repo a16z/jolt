@@ -19,14 +19,17 @@ use jolt_claims::protocols::jolt::{
     JoltOpeningId,
 };
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 
 #[test]
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tampered_opening_value_reject() {
-    tamper_final_opening_claims(&verifier_fixtures::standard_muldiv_case());
+    for base in verifier_fixtures::ordinary_tamper_bases() {
+        tamper_final_opening_claims(&base);
+    }
+    #[cfg(not(feature = "field-inline"))]
     tamper_final_opening_claims(&verifier_fixtures::standard_advice_consumer_case());
 }
 
@@ -60,17 +63,9 @@ fn stage8_final_opening_ids(base: &verifier_fixtures::VerifierFixtureCase) -> Ve
         dimensions.ra_layout,
         base.trusted_advice_commitment.is_some(),
         base.proof.untrusted_advice_commitment.is_some(),
-        base.preprocessing
-            .program
-            .committed()
-            .map(|committed| committed.bytecode_chunk_count()),
+        base.preprocessing.program.committed().is_some(),
     )
     .into_iter()
     .map(final_opening_id)
     .collect()
 }
-
-#[test]
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[ignore = "opening verification is not wired yet"]
-fn tampered_opening_value_reject() {}

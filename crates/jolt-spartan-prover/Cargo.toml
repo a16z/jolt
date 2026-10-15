@@ -1,0 +1,28 @@
+[package]
+name = "jolt-spartan-prover"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "PCS-generic clear Spartan proving for sparse R1CS"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-r1cs = { path = "../jolt-r1cs", default-features = false }
+jolt-spartan-verifier.workspace = true
+jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
+
+[dev-dependencies]
+jolt-crypto.workspace = true
+jolt-dory.workspace = true
+jolt-hyperkzg.workspace = true
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+] }
+bincode.workspace = true

@@ -13,9 +13,10 @@
 //! [`JoltWitnessOracle`] (the naive interpreter's path — one exhaustive match
 //! over jolt-claims ids, no wildcard) and typed bundles over the streaming
 //! pass. This crate defines **no id vocabulary of its own** — all ids are
-//! jolt-claims'. Every source supports sequential cycle ranges; slice-backed
-//! sources may additionally expose a borrowed row view, while checkpointed
-//! re-emulating sources implement the same surface without one.
+//! jolt-claims'. Row sources support sequential cycle ranges and may expose
+//! random-access views for parallel collection. [`JoltVmWitnessMetadata`] exposes
+//! shapes and program facts without row or polynomial data; unsupported queries
+//! return an unavailable-view error.
 
 // Lets derive-generated `::jolt_witness::...` paths resolve inside this
 // crate's own tests.
@@ -35,15 +36,18 @@ mod shape;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use backend::fixed::FixedBackend;
-pub use backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+#[cfg(all(any(test, feature = "test-utils"), feature = "field-inline"))]
+pub use backend::fixed::FixedFieldInline;
+pub use backend::trace::{
+    JoltVmWitnessConfig, JoltVmWitnessInputs, JoltVmWitnessMetadata, TraceBackend,
+};
 pub use backend::{
-    validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, OneHotSource,
-    ProgramSource,
+    validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, ProgramSource,
 };
 pub use bundle::WitnessBundle;
 pub use consumer::{
-    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RowSource,
-    StreamConsumer,
+    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RandomAccessRows,
+    RowSource, StreamConsumer,
 };
 pub use error::WitnessError;
 pub use shape::{PolynomialEncoding, Shape};
@@ -53,11 +57,9 @@ pub mod __private {
     pub use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial,
     };
-    pub use jolt_program::execution::TraceRow;
+    pub use jolt_riscv::JoltTraceRow as TraceRow;
 }
 
-/// XLEN of the RV64 Jolt VM this crate derives witnesses for.
 pub const RV64_XLEN: usize = 64;
 
-/// Error label for the Jolt VM witness backend.
 pub(crate) const JOLT_VM_LABEL: &str = "jolt_vm";

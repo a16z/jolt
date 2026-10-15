@@ -1,3 +1,16 @@
+use crate::cuda::common::devices::CycleWindow;
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use columns::COLUMNS;
+use columns::IS_FIRST_IN_SEQUENCE;
+use columns::IS_NOOP;
+use columns::IS_VIRTUAL;
+use columns::PC;
+use columns::UNEXPANDED_PC;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::spartan::{
@@ -7,7 +20,7 @@ use jolt_claims::protocols::jolt::relations::spartan::{
     SpartanShiftInputClaims, SpartanShiftOutputClaims,
 };
 use jolt_claims::{OutputClaims, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -36,22 +49,22 @@ pub(crate) mod witness;
 
 const GAMMA_POWERS: usize = 5;
 
-pub struct SpartanShiftKernel<F: Field> {
+pub struct SpartanShiftKernel<F: JoltField> {
     rounds: PrefixSuffixRounds<F>,
     log_t: usize,
     bound: usize,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for SpartanShiftKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for SpartanShiftKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("rounds"), self.rounds.device_bytes());
+        visitor.visit_simple(Key::new("rounds"), self.rounds.device_bytes());
         visitor.exit();
     }
 }
 
-impl<F: Field> ProveRounds<F> for SpartanShiftKernel<F> {
+impl<F: JoltField> ProveRounds<F> for SpartanShiftKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -74,7 +87,7 @@ impl<F: Field> ProveRounds<F> for SpartanShiftKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for SpartanShiftKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for SpartanShiftKernel<F> {
     type Relation = SpartanShift<F>;
 
     fn output_claims(
@@ -92,17 +105,17 @@ impl<F: Field> SumcheckKernel<F> for SpartanShiftKernel<F> {
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
                     reason: "the CUDA Spartan shift column claim readback failed",
                 })?;
-        if claims.len() != columns::COLUMNS {
+        if claims.len() != COLUMNS {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "the CUDA Spartan shift driver returned the wrong number of column claims",
             });
         }
         let slots = [
-            (unexpanded_pc_shift(), columns::UNEXPANDED_PC),
-            (pc_shift(), columns::PC),
-            (is_virtual_shift(), columns::IS_VIRTUAL),
-            (is_first_in_sequence_shift(), columns::IS_FIRST_IN_SEQUENCE),
-            (is_noop_shift(), columns::IS_NOOP),
+            (unexpanded_pc_shift(), UNEXPANDED_PC),
+            (pc_shift(), PC),
+            (is_virtual_shift(), IS_VIRTUAL),
+            (is_first_in_sequence_shift(), IS_FIRST_IN_SEQUENCE),
+            (is_noop_shift(), IS_NOOP),
         ];
         SpartanShiftOutputClaims::from_opening_values(|id| {
             slots
@@ -114,7 +127,7 @@ impl<F: Field> SumcheckKernel<F> for SpartanShiftKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -144,7 +157,7 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
         {
             windows
         } else {
-            vec![crate::cuda::common::devices::CycleWindow {
+            vec![CycleWindow {
                 start: 0,
                 len: cycles,
             }]
@@ -181,16 +194,16 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
             PrefixSuffixGroup {
                 pairs: eq_plus_one_pairs(tau_low, prefix_rounds)?,
                 columns: vec![
-                    (columns::UNEXPANDED_PC, powers[0]),
-                    (columns::PC, powers[1]),
-                    (columns::IS_VIRTUAL, powers[2]),
-                    (columns::IS_FIRST_IN_SEQUENCE, powers[3]),
+                    (UNEXPANDED_PC, powers[0]),
+                    (PC, powers[1]),
+                    (IS_VIRTUAL, powers[2]),
+                    (IS_FIRST_IN_SEQUENCE, powers[3]),
                 ],
                 constant: F::zero(),
             },
             PrefixSuffixGroup {
                 pairs: eq_plus_one_pairs(product_point, prefix_rounds)?,
-                columns: vec![(columns::IS_NOOP, -powers[4])],
+                columns: vec![(IS_NOOP, -powers[4])],
                 constant: powers[4],
             },
         ];

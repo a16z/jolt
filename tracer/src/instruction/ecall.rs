@@ -15,6 +15,8 @@
 //! - The ZeroOS trap trampoline restores mstatus via `csrw` before `mret`,
 //!   so the virtual register always holds the correct value across traps.
 
+use crate::instruction::registers::i::RegisterStateI;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -29,11 +31,12 @@ declare_riscv_instr!(
     mask   = 0xffff_ffff,
     match  = 0x0000_0073,
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 
 impl ECALL {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <ECALL as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <ECALL as RISCVInstruction>::RamAccess) {
         let trap_type = match cpu.privilege_mode {
             PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
             PrivilegeMode::Supervisor => TrapType::EnvironmentCallFromSMode,

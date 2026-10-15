@@ -120,18 +120,20 @@ extern "C" __global__ void sopg_round_kernel(
     unsigned int tid = threadIdx.x;
     unsigned int y = blockIdx.x * blockDim.x + tid;
 
-    u64 acc[2][LIMBS];
-    for (int lane = 0; lane < 2; lane++)
+    u64 acc[3][LIMBS];
+    for (int lane = 0; lane < 3; lane++)
         for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
 
     if (y < half) {
         u64 sum_constant[LIMBS] = {0, 0, 0, 0};
         u64 sum_leading[LIMBS] = {0, 0, 0, 0};
+        u64 sum_one[LIMBS] = {0, 0, 0, 0};
 
         for (unsigned int t = 0; t < terms; t++) {
-            u64 constant[LIMBS], leading[LIMBS];
+            u64 constant[LIMBS], leading[LIMBS], at_one[LIMBS];
             load4(FR_ONE, constant);
             load4(FR_ONE, leading);
+            load4(FR_ONE, at_one);
             for (unsigned int f = term_offsets[t]; f < term_offsets[t + 1]; f++) {
                 unsigned int slot = term_factors[f];
                 const unsigned int *entry = descriptors + slot * 4u;
@@ -139,6 +141,8 @@ extern "C" __global__ void sopg_round_kernel(
                 unsigned long long pair = (unsigned long long)y * 2;
                 hf_load_value(tables[slot], entry[0], entry[1], entry[2], entry[3], pair, lo);
                 hf_load_value(tables[slot], entry[0], entry[1], entry[2], entry[3], pair + 1, hi);
+                fr_mul(at_one, hi, next);
+                store4(at_one, next);
                 fr_sub(hi, lo, diff);
                 fr_mul(constant, lo, next);
                 for (int l = 0; l < LIMBS; l++) constant[l] = next[l];
@@ -146,6 +150,9 @@ extern "C" __global__ void sopg_round_kernel(
                 for (int l = 0; l < LIMBS; l++) leading[l] = next[l];
             }
             u64 weighted[LIMBS], sum[LIMBS];
+            fr_mul(at_one, coefficients + t * LIMBS, weighted);
+            fr_add(sum_one, weighted, sum);
+            store4(sum_one, sum);
             fr_mul(constant, coefficients + t * LIMBS, weighted);
             fr_add(sum_constant, weighted, sum);
             for (int l = 0; l < LIMBS; l++) sum_constant[l] = sum[l];
@@ -165,9 +172,10 @@ extern "C" __global__ void sopg_round_kernel(
         }
         fr_mul(sum_constant, weight, acc[0]);
         fr_mul(sum_leading, weight, acc[1]);
+        fr_mul(sum_one, weight, acc[2]);
     }
 
-    for (unsigned int lane = 0; lane < 2; lane++) {
+    for (unsigned int lane = 0; lane < 3; lane++) {
         store4(scratch + tid * LIMBS, acc[lane]);
         __syncthreads();
         for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {

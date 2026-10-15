@@ -7,7 +7,8 @@ typedef __int128_t i128;
 
 #define KIND_UNMAPPED 0xFFFFu
 #define NO_SEQUENCE 0xFFFFFFFFu
-#define EXTRA_WORDS 10
+#define EXTRA_WORDS 11
+#define X_BYTECODE_PC 10
 #define X_RS1 0
 #define X_RS2 1
 #define X_RD_POST 2
@@ -160,7 +161,46 @@ __device__ __forceinline__ u64 output_of(u32 op, u64 x, i128 y, u128 index, u128
       u64 shift = (u64)(index & 63u);
       return (u64)((((u128)1 << (64ull - shift)) - 1) << shift);
     }
-    default: return rev8w(rs1);
+    case 52: return rev8w(rs1);
+    case 53: return (x >> 63) ? (0ull - yl) : yl;
+    case 54: return half_rot(x, yl, 22u);
+    case 55: return half_rot(x, yl, 19u);
+    case 56: return half_rot(x, yl, 6u);
+    case 57: return x ^ (yl << 1) ^ (yl >> 63);
+    case 58: return (1ull << 32) - (1ull << (index & 31));
+    case 59: {
+      u64 shift = tz64(yl);
+      u32 word = shift >= 32 ? 0u : ((u32)x >> shift);
+      return (u64)(i64)(int)word;
+    }
+    case 60: {
+      u64 shift = tz64(yl);
+      int word = (int)(u32)x;
+      return shift >= 32 ? (word < 0 ? ~0ull : 0ull) : (u64)(i64)(word >> shift);
+    }
+    case 61:
+    case 62: {
+      u64 packed = 0ull;
+      unsigned int count = 0;
+      for (int bit = 63; bit >= 0; --bit) {
+        if ((yl >> bit) & 1ull) {
+          packed = (packed << 1) | ((x >> bit) & 1ull);
+          ++count;
+        }
+      }
+      if (op == 62 && count > 0 && count < 64 && ((packed >> (count - 1)) & 1ull)) {
+        packed |= ~0ull << count;
+      }
+      return packed;
+    }
+    case 63: return 0xffull << (8u * (index & 7u));
+    case 64: return 0xffffull << (8u * (index & 6u));
+    case 65: return 0xffffffffull << (8u * (index & 4u));
+    case 66: return (x + yl) & ~7ull;
+    case 67: return (x & 0xffull) << (8u * (yl & 7u));
+    case 68: return (x & 0xffffull) << (8u * (yl & 6u));
+    case 69: return (x & 0xffffffffull) << (8u * (yl & 4u));
+    default: return 0ull;
   }
 }
 
@@ -223,12 +263,6 @@ extern "C" __global__ void atom_columns_kernel(
     const u64 *extras,
     const u32 *virtual_sequence,
     const u64 *ram_address,
-    const u32 *pc_bucket_offsets,
-    const u32 *pc_sequences,
-    const u64 *pc_values,
-    u32 pc_buckets,
-    u64 ram_start,
-    u64 bytecode_alignment,
     const u32 *kind_flags,
     const u32 *kind_table_index,
     const u8 *kind_input,
@@ -287,22 +321,7 @@ extern "C" __global__ void atom_columns_kernel(
   out_table_index[index] = kind_table_index[kind];
 
   u64 row_address = address[index];
-  u64 mapped_pc = 0ull;
-  if (row_address >= ram_start && (row_address % bytecode_alignment) == 0ull) {
-    u64 bucket = (row_address - ram_start) / bytecode_alignment + 1ull;
-    if (bucket < (u64)pc_buckets) {
-      u32 want = (sequence == NO_SEQUENCE) ? 0u : sequence;
-      u32 begin = pc_bucket_offsets[bucket];
-      u32 end = pc_bucket_offsets[bucket + 1ull];
-      for (u32 entry = begin; entry < end; ++entry) {
-        if (pc_sequences[entry] == want) {
-          mapped_pc = pc_values[entry];
-          break;
-        }
-      }
-    }
-  }
-  out_bytecode_pc[index] = row_is_noop ? 0ull : mapped_pc;
+  out_bytecode_pc[index] = words[X_BYTECODE_PC];
 
   u64 registers = words[X_REGISTERS];
   u64 rs1_slot = registers & 0xFFull;

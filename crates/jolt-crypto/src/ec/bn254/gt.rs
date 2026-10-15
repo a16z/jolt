@@ -3,7 +3,8 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
-use jolt_field::Field;
+use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
+use jolt_field::JoltField;
 
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -55,6 +56,20 @@ impl Default for Bn254GT {
     #[inline(always)]
     fn default() -> Self {
         Self(Fq12::ONE)
+    }
+}
+
+impl CanonicalSerialize for Bn254GT {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.0.serialized_size(compress)
     }
 }
 
@@ -118,7 +133,7 @@ const _: () = {
             self.0 *= rhs.0.inverse().expect("GT element has no inverse");
         }
     }
-}; // end #[allow(clippy::suspicious_*)]
+};
 
 impl Mul for Bn254GT {
     type Output = Self;
@@ -170,14 +185,14 @@ impl JoltGroup for Bn254GT {
     }
 
     #[inline]
-    fn scalar_mul<F: Field>(&self, scalar: &F) -> Self {
+    fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
         // GT exponentiation: self^scalar (written additively as scalar * self).
         let fr = field_to_fr(scalar);
         Self(self.0.pow(fr.into_bigint()))
     }
 
     #[inline]
-    fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self {
+    fn msm<F: JoltField>(bases: &[Self], scalars: &[F]) -> Self {
         // zip would silently truncate to the shorter slice.
         assert_eq!(
             bases.len(),

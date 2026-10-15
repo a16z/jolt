@@ -1,6 +1,6 @@
 use arbitrary::{Arbitrary, Unstructured};
-use jolt_field::arkworks::bn254::Fr;
-use jolt_field::{FromPrimitiveInt, MulPrimitiveInt};
+use jolt_field::Ring;
+use jolt_field::{CanonicalEncoding, Fr};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
@@ -19,7 +19,7 @@ impl<'a> Arbitrary<'a> for FieldMulScalarInput {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let bytes: [u8; 32] = u.arbitrary()?;
         Ok(Self {
-            field: Fr::from_le_bytes_mod_order(&bytes),
+            field: Fr::from_bytes_le_reduced(&bytes),
             u64_scalar: u.arbitrary()?,
             i64_scalar: u.arbitrary()?,
             u128_scalar: u.arbitrary()?,
@@ -28,7 +28,7 @@ impl<'a> Arbitrary<'a> for FieldMulScalarInput {
     }
 }
 
-/// `Field::mul_{u64,i64,u128,i128}` must agree with the reference
+/// `JoltField::mul_{u64,i64,u128,i128}` must agree with the reference
 /// formula `self * Self::from_*(scalar)` for every input.
 #[jolt_eval_macros::invariant(Test, Fuzz)]
 #[derive(Default)]
@@ -43,7 +43,7 @@ impl Invariant for FieldMulScalarInvariant {
     }
 
     fn description(&self) -> String {
-        "The optimized Field::mul_{u64,i64,u128,i128} methods on BN254 Fr \
+        "The optimized JoltField::mul_{u64,i64,u128,i128} methods on BN254 Fr \
          must produce the same result as the reference `self * Self::from_*(n)`."
             .to_string()
     }
@@ -53,7 +53,6 @@ impl Invariant for FieldMulScalarInvariant {
     fn check(&self, _setup: &(), input: FieldMulScalarInput) -> Result<(), CheckError> {
         let f = input.field;
 
-        // mul_u64
         let got = f.mul_u64(input.u64_scalar);
         let expected = f * Fr::from_u64(input.u64_scalar);
         if got != expected {
@@ -66,7 +65,6 @@ impl Invariant for FieldMulScalarInvariant {
             )));
         }
 
-        // mul_i64
         let got = f.mul_i64(input.i64_scalar);
         let expected = f * Fr::from_i64(input.i64_scalar);
         if got != expected {
@@ -79,7 +77,6 @@ impl Invariant for FieldMulScalarInvariant {
             )));
         }
 
-        // mul_u128
         let got = f.mul_u128(input.u128_scalar);
         let expected = f * Fr::from_u128(input.u128_scalar);
         if got != expected {
@@ -92,7 +89,6 @@ impl Invariant for FieldMulScalarInvariant {
             )));
         }
 
-        // mul_i128
         let got = f.mul_i128(input.i128_scalar);
         let expected = f * Fr::from_i128(input.i128_scalar);
         if got != expected {
@@ -110,7 +106,6 @@ impl Invariant for FieldMulScalarInvariant {
 
     fn seed_corpus(&self) -> Vec<FieldMulScalarInput> {
         vec![
-            // Zero field element, zero scalars
             FieldMulScalarInput {
                 field: Fr::from_u64(0),
                 u64_scalar: 0,
@@ -118,7 +113,6 @@ impl Invariant for FieldMulScalarInvariant {
                 u128_scalar: 0,
                 i128_scalar: 0,
             },
-            // Identity
             FieldMulScalarInput {
                 field: Fr::from_u64(1),
                 u64_scalar: 1,
@@ -126,7 +120,6 @@ impl Invariant for FieldMulScalarInvariant {
                 u128_scalar: 1,
                 i128_scalar: 1,
             },
-            // Max unsigned scalars
             FieldMulScalarInput {
                 field: Fr::from_u64(42),
                 u64_scalar: u64::MAX,
@@ -134,7 +127,6 @@ impl Invariant for FieldMulScalarInvariant {
                 u128_scalar: u128::MAX,
                 i128_scalar: i128::MAX,
             },
-            // Min signed scalars
             FieldMulScalarInput {
                 field: Fr::from_u64(7),
                 u64_scalar: 0,
@@ -142,7 +134,6 @@ impl Invariant for FieldMulScalarInvariant {
                 u128_scalar: 0,
                 i128_scalar: i128::MIN,
             },
-            // -1 scalars (should yield field negation)
             FieldMulScalarInput {
                 field: Fr::from_u64(123_456_789),
                 u64_scalar: 0,
@@ -150,7 +141,6 @@ impl Invariant for FieldMulScalarInvariant {
                 u128_scalar: 0,
                 i128_scalar: -1,
             },
-            // Large field element (high bits set)
             FieldMulScalarInput {
                 field: Fr::from_i64(-1),
                 u64_scalar: u64::MAX,
@@ -158,7 +148,6 @@ impl Invariant for FieldMulScalarInvariant {
                 u128_scalar: u128::MAX,
                 i128_scalar: i128::MIN,
             },
-            // Zero field element, non-trivial scalars
             FieldMulScalarInput {
                 field: Fr::from_u64(0),
                 u64_scalar: 42,

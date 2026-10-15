@@ -12,16 +12,16 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RegistersReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
-use jolt_poly::try_eq_mle;
+use jolt_field::JoltField;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage3::{Stage3OutputClaims, Stage3OutputPoints};
 use crate::VerifierError;
 
 /// Wire the consumed opening *values* from stage 3's registers claim-reduction
 /// output. Takes the ZK-agnostic stage-3 output-claims aggregate.
-pub fn registers_read_write_input_values_from_upstream<F: Field>(
+pub fn registers_read_write_input_values_from_upstream<F: JoltField>(
     stage3: &Stage3OutputClaims<F>,
 ) -> RegistersReadWriteInputClaims<F> {
     let reduction = &stage3.registers_claim_reduction;
@@ -35,7 +35,7 @@ pub fn registers_read_write_input_values_from_upstream<F: Field>(
 /// Wire the consumed opening *points* from stage 3's registers claim-reduction
 /// output, all sharing that relation's opening point. Takes the ZK-agnostic
 /// stage-3 output-points aggregate.
-pub fn registers_read_write_input_points_from_upstream<F: Field>(
+pub fn registers_read_write_input_points_from_upstream<F: JoltField>(
     stage3: &Stage3OutputPoints<F>,
 ) -> RegistersReadWriteInputClaims<Vec<F>> {
     let reduction = &stage3.registers_claim_reduction;
@@ -47,13 +47,13 @@ pub fn registers_read_write_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RegistersReadWriteChecking<F: Field> {
+pub struct RegistersReadWriteChecking<F: JoltField> {
     symbolic: relations::registers::ReadWriteChecking,
     register_dimensions: ReadWriteDimensions,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> RegistersReadWriteChecking<F> {
+impl<F: JoltField> RegistersReadWriteChecking<F> {
     pub fn new(register_dimensions: ReadWriteDimensions) -> Self {
         Self {
             symbolic: relations::registers::ReadWriteChecking::new(register_dimensions),
@@ -74,7 +74,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
     type Symbolic = relations::registers::ReadWriteChecking;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -108,22 +108,16 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         _challenges: &RegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RegistersReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            RegistersReadWritePublic::EqCycle => {
-                let fixed_cycle = input_points.rd_write_value();
-                let registers_cycle = output_points
-                    .registers_val()
-                    .get(REGISTER_ADDRESS_BITS..)
-                    .ok_or_else(|| {
-                        public_input_failed(
-                            "register read-write opening point is shorter than the register \
-                             address width",
-                        )
-                    })?;
-                try_eq_mle(fixed_cycle, registers_cycle).map_err(public_input_failed)
-            }
+            RegistersReadWritePublic::EqCycle => derivations::eq_at_cycle(
+                input_points.rd_write_value(),
+                output_points.registers_val(),
+                REGISTER_ADDRESS_BITS,
+                "register",
+            )
+            .map_err(public_input_failed),
         }
     }
 }

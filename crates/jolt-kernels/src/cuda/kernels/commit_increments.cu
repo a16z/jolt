@@ -1,4 +1,4 @@
-#define CI_EXTRA_WORDS 10
+#define CI_EXTRA_WORDS 11
 #define CI_EXTRA_RD_POST 2
 #define CI_EXTRA_RAM_READ 3
 #define CI_EXTRA_RAM_WRITE 4

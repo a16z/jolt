@@ -1,4 +1,4 @@
-#define IRV_LANES 4
+#define IRV_LANES 5
 
 __device__ __forceinline__ unsigned int irv_chunk(const u64 *__restrict__ packed,
                                                   unsigned long long cycle, unsigned int shift,
@@ -149,9 +149,9 @@ extern "C" __global__ void irv_message_sparse_kernel(
         for (int lane = 0; lane < IRV_LANES; lane++) pa_zero(inner[lane]);
 
         for (unsigned int v = 0; v < virtual_polys; v++) {
-            unsigned int base = v * IRV_LANES;
-            u64 a1[LIMBS], a2[LIMBS], a3[LIMBS], a_inf[LIMBS];
-            u64 b1[LIMBS], b2[LIMBS], b3[LIMBS], b_inf[LIMBS];
+            unsigned int base = v * 4;
+            u64 a0[LIMBS], a1[LIMBS], a2[LIMBS], a3[LIMBS], a_inf[LIMBS];
+            u64 b0[LIMBS], b1[LIMBS], b2[LIMBS], b3[LIMBS], b_inf[LIMBS];
 
             for (int side = 0; side < 2; side++) {
                 unsigned int first = base + 2 * side;
@@ -169,8 +169,10 @@ extern "C" __global__ void irv_message_sparse_kernel(
                                      odd);
                 }
                 if (side == 0) {
+                    fr_mul(x0, y0, a0);
                     irv_prod2(x0, x1, y0, y1, a1, a2, a3, a_inf);
                 } else {
+                    fr_mul(x0, y0, b0);
                     irv_prod2(x0, x1, y0, y1, b1, b2, b3, b_inf);
                 }
             }
@@ -179,6 +181,7 @@ extern "C" __global__ void irv_message_sparse_kernel(
             pa_fold_mul_accum(a2, b2, inner[1]);
             pa_fold_mul_accum(a3, b3, inner[2]);
             pa_fold_mul_accum(a_inf, b_inf, inner[3]);
+            pa_fold_mul_accum(a0, b0, inner[4]);
         }
 
         u64 combined[LIMBS];
@@ -209,9 +212,9 @@ extern "C" __global__ void irv_message_dense_kernel(
         for (int lane = 0; lane < IRV_LANES; lane++) pa_zero(inner[lane]);
 
         for (unsigned int v = 0; v < virtual_polys; v++) {
-            unsigned int base = v * IRV_LANES;
-            u64 a1[LIMBS], a2[LIMBS], a3[LIMBS], a_inf[LIMBS];
-            u64 b1[LIMBS], b2[LIMBS], b3[LIMBS], b_inf[LIMBS];
+            unsigned int base = v * 4;
+            u64 a0[LIMBS], a1[LIMBS], a2[LIMBS], a3[LIMBS], a_inf[LIMBS];
+            u64 b0[LIMBS], b1[LIMBS], b2[LIMBS], b3[LIMBS], b_inf[LIMBS];
 
             for (int side = 0; side < 2; side++) {
                 unsigned int first = base + 2 * side;
@@ -224,8 +227,10 @@ extern "C" __global__ void irv_message_dense_kernel(
                     load4(table + (2 * g + 1) * LIMBS, odd);
                 }
                 if (side == 0) {
+                    fr_mul(x0, y0, a0);
                     irv_prod2(x0, x1, y0, y1, a1, a2, a3, a_inf);
                 } else {
+                    fr_mul(x0, y0, b0);
                     irv_prod2(x0, x1, y0, y1, b1, b2, b3, b_inf);
                 }
             }
@@ -234,6 +239,7 @@ extern "C" __global__ void irv_message_dense_kernel(
             pa_fold_mul_accum(a2, b2, inner[1]);
             pa_fold_mul_accum(a3, b3, inner[2]);
             pa_fold_mul_accum(a_inf, b_inf, inner[3]);
+            pa_fold_mul_accum(a0, b0, inner[4]);
         }
 
         u64 combined[LIMBS];

@@ -26,8 +26,8 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rustfmt
           cache: false
@@ -37,23 +37,62 @@ jobs:
   taplo:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install taplo
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
           tool: taplo-cli
       - name: taplo fmt --check
         run: taplo fmt --check
 
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history (blobs lazily fetched) so the diff-scoped rules can
+      # resolve an exact merge base; see scripts/check_style_invariants.py.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: check style invariants
+        run: python3 scripts/check_style_invariants.py --base "origin/${{ github.base_ref || 'main' }}"
+      - name: Test benchmark profile selection
+        run: python3 -m unittest scripts.tests.test_benchmark_profiles -v
+
+  field-stack:
+    name: Shared field feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      - name: Require one jolt-field identity (no akita-field post-cutover)
+        run: scripts/check-shared-field-identity.sh
+      - name: Keep Metal out of the verifier
+        run: scripts/check-metal-isolation.sh
+      - name: Check no backend
+        run: cargo check -p jolt-field --no-default-features
+      - name: Check BN254 backend
+        run: cargo check -p jolt-field --no-default-features --features bn254
+      - name: Test Solinas backend
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas --cargo-quiet
+      - name: Test parallel Solinas backend and device byte views
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas,parallel,bytemuck --cargo-quiet
+      - name: Check combined backends
+        run: cargo check -p jolt-field --no-default-features --features bn254,solinas
+
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: clippy
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: clippy
       - name: cargo clippy --features allocative,host
@@ -74,43 +113,88 @@ jobs:
       - name: cargo clippy -p jolt-verifier --features akita
         run: cargo clippy -p jolt-verifier --all-targets --features akita
       # The akita fixture-driven tamper suite compiles under akita,prover-fixtures
-      # (the real packed prover generates its fixtures). Lint it explicitly.
+      # (the real Akita prover generates its fixtures). Lint it explicitly.
       - name: cargo clippy -p jolt-verifier --features akita,prover-fixtures
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
-      - name: cargo clippy -p jolt-prover-legacy --features akita
-        run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
+      # The modular prover's Akita path: lint alone and with
+      # prover-fixtures so the acceptance suites keep compiling.
+      - name: cargo clippy -p jolt-prover --features akita
+        run: cargo clippy -p jolt-prover --all-targets --features akita
+      - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
+        run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
+      # The Dory arms of the guest x mode matrix and the e2e suites compile
+      # only under prover-fixtures; lint both protocols like the akita pair.
+      - name: cargo clippy -p jolt-prover --features prover-fixtures
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,zk
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,zk
       # The profiling feature gates the profile harness bin and smoke test.
       # The smoke test cannot RUN in CI yet (reference-backend memory — see
-      # the NOTE above the legacy test jobs), but everything behind the
+      # the NOTE above the prover test jobs), but everything behind the
       # feature must keep compiling. Lint it in both flamegraph modes.
       - name: cargo clippy -p jolt-prover --features profiling
         run: cargo clippy -p jolt-prover --all-targets --features profiling
       - name: cargo clippy -p jolt-prover --features profiling,allocative
         run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
+      # The Akita profile harness: the same bin/smoke test driving
+      # akita::prove. Lint both flamegraph modes, like the Dory pair above.
+      - name: cargo clippy -p jolt-prover --features akita,profiling
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling
+      - name: cargo clippy -p jolt-prover --features akita,profiling,allocative
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,allocative
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
+      - name: Check field-inline claim crate without workspace feature unification
+        run: cargo clippy -p jolt-claims --all-targets --features field-inline
       - name: cargo clippy --features field-inline
         run: >
           cargo clippy
           -q
           --message-format=short
           -p jolt-claims
-          -p jolt-r1cs
+          -p jolt-verifier
+          -p jolt-witness
           -p tracer
           -p jolt-program
           -p jolt-riscv
           -p jolt-lookup-tables
+          -p jolt-kernels
+          -p jolt-akita
           --all-targets
           --features field-inline
           --
           -D warnings
-      - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,field-inline
+      # The profile harness under field-inline: the field-inline guest path and
+      # the `field-ops` workload, in both flamegraph modes and both
+      # protocols.
+      - name: cargo clippy -p jolt-prover --features profiling,field-inline
+        run: cargo clippy -p jolt-prover --all-targets --features profiling,field-inline
+      - name: cargo clippy -p jolt-prover --features profiling,allocative,field-inline
+        run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative,field-inline
+      - name: cargo clippy -p jolt-prover --features akita,profiling,field-inline
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,field-inline
+      # The field-inline matrix and specialized e2e suites, plus the
+      # jolt-verifier tamper suite over modular-prover fixtures.
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline,zk
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,zk
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline
+      # The Akita field-inline combination: the full-width increment group rides the
+      # dense-group heterogeneous batch beside advice.
+      - name: cargo clippy -p jolt-verifier --features field-inline,akita
+        run: cargo clippy -p jolt-verifier --all-targets --features field-inline,akita
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline,akita
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline,akita
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline,akita
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,akita
+      - name: cargo clippy -p jolt-sdk --features host,field-inline
         run: >
           cargo clippy
           -q
           --message-format=short
-          -p jolt-prover-legacy
           -p jolt-sdk
           --all-targets
           --features host,field-inline
@@ -120,8 +204,8 @@ jobs:
   machete:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: bnjbvr/cargo-machete@main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: bnjbvr/cargo-machete@135555c9cd9f3b4723dee2766f0cacb99aac092b # main
       - name: cargo machete
         run: cargo machete --with-metadata
 
@@ -129,36 +213,44 @@ jobs:
     name: Build Wasm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: wasm
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
+      # jolt-platform owns the wasm RNG backend (getrandom 0.2 `js`, 0.3
+      # `wasm_js`); the SDK and `jolt build-wasm` reach it through
+      # `jolt-platform/random`. Build it alongside the prover so feature
+      # unification supplies the backend here too, instead of anchoring it in
+      # a library crate.
       - name: Build Wasm
-        working-directory: ./crates/jolt-prover-legacy
-        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
+        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p jolt-prover -p jolt-platform --features jolt-platform/random --release --target wasm32-unknown-unknown
 
   test-prover:
     runs-on: ubuntu-latest
-    name: Test jolt-prover-legacy
+    name: Test jolt-prover
+    # The Dory clear arm of the guest x mode acceptance matrix
+    # (crates/jolt-prover/tests/e2e_matrix.rs) proves real guests here, so
+    # this lane installs the guest toolchain and the jolt CLI like the zk and
+    # akita lanes, which run the same matrix under their protocol.
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -168,32 +260,32 @@ jobs:
           curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
           mkdir -p ~/.zeroos
           tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
-      # --target-dir target shares dependency artifacts with the test build
-      # below (cargo install otherwise compiles everything in a temp dir).
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run jolt-prover-legacy tests
-        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      - name: Run jolt-prover tests
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
 
   trace-equivalence:
     runs-on: ubuntu-latest
     name: Tracer serial/parallel equivalence
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -216,21 +308,23 @@ jobs:
     runs-on: ubuntu-latest
     name: x86 AOT tracer backend (native x86-64)
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       # Guest ELFs link ZeroOS, so building them needs its musl toolchain.
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -251,21 +345,21 @@ jobs:
 
   test-prover-zk:
     runs-on: ubuntu-latest
-    name: Test jolt-prover-legacy (zk)
+    name: Test jolt-prover (zk)
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -278,37 +372,40 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run jolt-prover-legacy tests with zk feature
-        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features zk
-      # The MODULAR prover's ZK acceptance suite: muldiv accept, tamper
-      # reject, advice, and committed-program e2es against the unmodified
-      # jolt-verifier ZK path — the PR's headline feature, otherwise
-      # uncovered (the crate-matrix job runs default features only).
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       - name: Run jolt-prover tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zk
+      # The jolt-verifier ZK fixture suites (completeness, tampering, FS
+      # attacks, statistical independence, proof shape): real BlindFold proofs
+      # from the modular prover, verified through the public API. Until this
+      # step existed they were clippy-only, so the golden BlindFold shape pins
+      # in completeness/zk.rs could go stale without any lane noticing.
+      - name: Run jolt-verifier fixtures with zk feature
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk --test-threads 1 --cargo-quiet
       # The jolt-kernels unit suite in its zk flavor.
       - name: Run jolt-kernels tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
 
   test-prover-akita:
     runs-on: ubuntu-latest
-    name: Test jolt-prover-legacy (akita)
+    name: Test jolt-prover (akita)
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
       # Sole saver for the release-tests shared cache — largest dependency
       # footprint of the group (host + akita at release).
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -321,38 +418,41 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      # The packed-prover e2e suite: muldiv, forced K=256, trusted/untrusted
-      # advice, and committed-program, each proving and verifying over the
-      # Akita lattice PCS (the release-only perf harness stays ignored).
-      - name: Run jolt-prover-legacy tests with akita feature
-        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features akita
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      # The Akita arm of the guest x mode matrix plus the Akita prover
+      # specifics: forced K=256, advice, committed-program, and live tampers.
+      - name: Run jolt-prover tests with akita feature
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
+      - name: Test Akita profiling artifact and CSV names
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
   # wired into CI yet. It proves through the reference backend, whose naive
   # RAM kernels retain ~18 GiB regardless of trace length — past
   # hosted-runner memory. Hook it up as a dedicated job (guest toolchain +
-  # jolt CLI install, mirroring the legacy test jobs above) once an
+  # jolt CLI install, mirroring the prover test jobs above) once an
   # optimized backend fits runner memory.
 
-  test-verifier-akita-fixtures:
+  test-prover-field-inline:
     runs-on: ubuntu-latest
-    name: Test jolt-verifier (akita fixtures)
+    name: Test jolt-prover (field-inline matrix and e2e)
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -365,19 +465,163 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      # e2e_matrix selects field_ops, field_limbs, and muldiv for the
+      # field-inline profile. Run the full package to retain its specialized
+      # parity, tamper, and limb-conversion suites alongside matrix acceptance
+      # in both Dory modes.
+      - name: Run field-inline matrix and specialized suites (clear)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline
+      - name: Run field-inline matrix and specialized suites (zk)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,zk
+      # The example smoke run (no generic example lane runs feature-gated
+      # examples; the ci-bench sweep excludes this one).
+      - name: Run the field-ops example
+        run: cargo run --profile ci -p field-ops --features field-inline
+      # Pins the example's static field-inline row budget, including the
+      # SDK limb conversions' modulus binding.
+      - name: Run the field-ops example tests
+        run: cargo nextest run --cargo-profile ci -p field-ops --features field-inline --cargo-quiet
+
+  test-prover-akita-field-inline:
+    runs-on: ubuntu-latest
+    name: Test jolt-prover (Akita field-inline matrix and e2e)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      # The same field_ops, field_limbs, and muldiv matrix table runs over fp128.
+      # The full package also runs Akita field-inline parity and tamper suites.
+      - name: Run Akita field-inline matrix and specialized suites
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita
+      # The combined-feature verifier unit suite (no fixtures).
+      - name: Run jolt-verifier with field-inline,akita
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features field-inline,akita
+      # The combined-feature kernels unit suite: the composed Akita field-inline
+      # kernels (akita parity tests with the field-inline geometry attached) run only
+      # under this pair.
+      - name: Run jolt-kernels with field-inline,akita
+        run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
+      # The Akita field-inline provisioning checks and verifier fixture suite (the modular
+      # Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
+      # field-inline axis disabled).
+      - name: Run jolt-akita with field-inline
+        run: >-
+          cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
+          -E 'not test(/field_inline_rows_cover_k16_w[248]r2_production_grid/)'
+      - name: Run jolt-verifier with prover-fixtures,field-inline,akita
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
+
+  test-verifier-field-inline-fixtures:
+    runs-on: ubuntu-latest
+    name: Test jolt-verifier (field-inline fixtures)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      # The fixture-driven field-inline suites: valid-fixture acceptance
+      # (completeness/field_inline.rs) and the typed field-inline clear-claim tamper
+      # sweep (tampering/field_inline.rs), backed by fixtures the modular
+      # prover generates at test time.
+      - name: Run jolt-verifier field-inline fixture and tamper suites
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline --test-threads 1
+
+  test-verifier-akita-fixtures:
+    runs-on: ubuntu-latest
+    name: Test jolt-verifier (akita fixtures)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       # The fixture-driven akita suites: valid-fixture acceptance
       # (completeness/akita.rs) and the typed clear-claim, commitment-byte,
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
-      # by fixtures the real packed prover generates at test time.
+      # by fixtures the real Akita prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
 
   typos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: crate-ci/typos@v1.49.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
         with:
           files: .
 
@@ -385,11 +629,11 @@ jobs:
     name: jolt binary check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -397,16 +641,14 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
 
+      - name: Guest function selection invalidates cached builds
+        run: python3 jolt-sdk/tests/guest_function_cache.py
+
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
 
-      - name: Pin jolt-sdk to current commit in Cargo.toml files
-        run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          # Pin jolt-sdk in the host Cargo.toml
-          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
-          # Pin jolt-sdk in the guest Cargo.toml
-          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+      - name: Use checked-out SDK in generated project
+        run: python3 scripts/ci/use_checkout_sdk.py sample_project
 
       - name: Make sure the generated code runs
         working-directory: ./sample_project
@@ -420,16 +662,16 @@ jobs:
     name: WASM Verifier E2E
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
       - name: Build and install jolt CLI
@@ -437,7 +679,7 @@ jobs:
 
       - name: Cache wasm-pack
         id: cache-wasm-pack
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cargo/bin/wasm-pack
           key: wasm-pack-0.13.1
@@ -450,11 +692,8 @@ jobs:
       - name: Generate sample project
         run: jolt new sample_project
 
-      - name: Pin jolt-sdk to current commit
-        run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
-          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+      - name: Use checked-out SDK in generated project
+        run: python3 scripts/ci/use_checkout_sdk.py sample_project
 
       - name: Set up prover and verifier scripts
         run: |
@@ -473,34 +712,38 @@ jobs:
         working-directory: ./sample_project
         run: node verify.mjs
 
-  # Sharded 3-way: the sequential per-crate loop was the CI critical path
+  # Sharded: the sequential per-crate loop was the CI critical path
   # (~18 min). Crates are assigned to shards by discovery index; each crate
   # keeps its own nextest invocation so per-crate feature resolution is
-  # unchanged.
+  # unchanged. jolt-akita's optimized test build alone takes 10-14 min on a
+  # 4-vCPU runner (measured Sep 27, 2026) and made shard 0 the critical path
+  # of the whole run, so it gets a shard of its own.
   test-crates-shard:
     name: Test modular crates (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, akita]
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: dev-tests-${{ matrix.shard }}
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       - name: Discover modular crates
         id: discover
         shell: bash
         run: |
           set -euo pipefail
           pkgs=$(cargo metadata --format-version=1 --no-deps \
-                   | jq -r '.packages[] | select((.manifest_path | startswith("'"$(pwd)"'/crates/")) and .name != "jolt-prover-legacy") | .name' \
+                   | jq -r '.packages[] | select(.manifest_path | startswith("'"$(pwd)"'/crates/")) | .name' \
                    | tr '\n' ' ')
           echo "Found crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
@@ -510,7 +753,13 @@ jobs:
           set -euo pipefail
           i=0
           for pkg in ${{ steps.discover.outputs.pkgs }}; do
-            if (( i % 3 == ${{ matrix.shard }} )); then
+            if [[ "$pkg" == jolt-akita ]]; then
+              shard=akita
+            else
+              shard=$(( i % 3 ))
+            fi
+            i=$((i + 1))
+            if [[ "$shard" == "${{ matrix.shard }}" ]]; then
               features=()
               if cargo metadata --format-version=1 --no-deps \
                    | jq -e --arg pkg "$pkg" '.packages[] | select(.name == $pkg) | .features | has("test-utils")' >/dev/null; then
@@ -518,11 +767,7 @@ jobs:
               fi
               cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
             fi
-            i=$((i + 1))
           done
-      - name: Test lookup table prover ABI
-        if: matrix.shard == 1
-        run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
       # jolt-witness's parallel feature is not a default, so the shard loop
       # above tests only the serial paths; the shipped provers enable it
       # (via jolt-kernels' default), so test the rayon fast paths directly.
@@ -534,6 +779,15 @@ jobs:
       - name: Test jolt-utils with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
+      - name: Test jolt-sumcheck with committed proofs
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
+      - name: Test isolated external sumcheck consumer
+        if: matrix.shard == 0
+        run: cargo nextest run --manifest-path crates/jolt-sumcheck/tests/external-consumer/Cargo.toml --locked --cargo-quiet
+      - name: Check external sumcheck dependency boundary
+        if: matrix.shard == 0
+        run: scripts/check-external-sumcheck.sh
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
@@ -542,7 +796,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo nextest run -p jolt-claims -p jolt-r1cs \
+          cargo nextest run -p jolt-claims -p jolt-host \
+            -p jolt-verifier -p jolt-witness -p jolt-kernels \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
 
@@ -561,31 +816,25 @@ jobs:
             exit 1
           fi
 
-  # The byte-parity ratchet vs the legacy prover: every real byte_diff arm
-  # is behind jolt-prover's prover-fixtures feature (the default crate shard
-  # only discovers the ignored stub), so without this lane optimized
-  # proof/transcript divergence could merge green. Runs the whole
-  # prover-fixtures surface of jolt-prover: the stage-granular muldiv
-  # ratchet, the mode × trace-order whole-proof arms (both backends), the
-  # 2^17 chunk-boundary arm (slice-backed + forced chunk walk), and the
-  # {8, 32} wide one-hot geometry arm.
-  test-byte-parity:
+  # Verifier fixtures build real proofs, verify them through the public
+  # verifier API, and exercise transcript-tampering rejection.
+  test-verifier-fixtures:
     runs-on: ubuntu-latest
-    name: Byte parity vs legacy prover
+    name: Test jolt-verifier (prover fixtures)
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -598,45 +847,27 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run the jolt-prover byte-parity suite
-        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures --cargo-quiet
-
-  test-akita-schedules:
-    name: Akita schedule catalog drift
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
-          cache: false
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-tests
-          save-if: false
-          cache-directories: ~/.cache/dory
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      # Regenerates every checked-in schedule through the planner DP and
-      # compares token streams — guards the generated catalogs against
-      # planner drift. Ignored by default (minutes of DP solves), so it needs
-      # its own lane.
-      - name: Regenerate schedule catalogs through the planner
-        run: cargo nextest run --cargo-profile ci -p jolt-akita --run-ignored all -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
+          tool: nextest
+      - name: Run verifier fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures --test-threads 1 --cargo-quiet
 
   test-inlines:
     name: Test inlines
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: dev-inlines
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       - name: Discover inline crates
         id: discover_inlines
         shell: bash
@@ -660,11 +891,11 @@ jobs:
     name: Jolt SDK Verifier Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -672,7 +903,9 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       - name: Generate test fixtures
         run: bash jolt-sdk/tests/gen-fixtures.sh
       - name: Run SDK verifier tests
@@ -682,11 +915,11 @@ jobs:
     runs-on: ubuntu-latest
     name: Test tracer
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -694,32 +927,47 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       - name: Run tracer tests
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
+      # The Akita chain's two-limb field value encoding on the tracer side.
+      - name: Run tracer tests with field-inline,fp128-field-inline
+        run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet
+      - name: Check field limb macro compile-time bounds
+        run: python3 jolt-sdk/tests/field_limb_compile.py
+      # The guest platform crate the tracer shares with guests, including the
+      # field-inline modulus table and canonicality predicate.
+      - name: Run jolt-platform tests
+        run: cargo nextest run --cargo-profile ci -p jolt-platform --cargo-quiet
 
   zklean-extractor-tests:
     name: ZkLean extractor tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       - name: Run extractor tests
         working-directory: ./zklean-extractor
-        run: cargo test
+        run: cargo nextest run --cargo-quiet
 
   compile-extracted-lean:
     name: Compile extracted Lean
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Extract Jolt ZkLean package
         working-directory: ./zklean-extractor
         run: cargo run --release -- -o -p jolt-zklean
 
   #    - name: Run lake build on the extracted model
-  #      uses: leanprover/lean-action@v1
+  #      uses: leanprover/lean-action@50fcf42d2e460296f1a34b402e990d1b24f8b596 # v1
   #      with:
   #        lake-package-directory: ./zklean-extractor/jolt-zklean
   #        build: true

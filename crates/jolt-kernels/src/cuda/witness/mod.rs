@@ -1,6 +1,16 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_witness::RowSource;
+use jolt_witness::WitnessBundle;
+use jolt_witness::WitnessError;
 use std::sync::{Arc, OnceLock};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_witness::backend::cuda::{DeviceAtomColumns, DeviceTrace};
 use jolt_witness::JoltWitnessPlane;
 
@@ -17,12 +27,12 @@ use crate::{KernelError, ProofSession};
 pub(crate) fn collect_rows<F, B>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
-) -> Result<Vec<B>, jolt_witness::WitnessError>
+) -> Result<Vec<B>, WitnessError>
 where
-    F: Field,
-    B: jolt_witness::WitnessBundle + Copy + Send + Sync,
+    F: JoltField,
+    B: WitnessBundle + Copy + Send + Sync,
 {
-    crate::optimized::support::collect_rows::<F, B>(witness, cycles)
+    crate::optimized::support::collect_rows::<B>(witness, cycles)
 }
 
 pub(crate) struct ResidentTrace {
@@ -59,16 +69,13 @@ impl ResidentTraces {
 }
 
 #[cfg(feature = "allocative")]
-impl allocative::Allocative for ResidentTraces {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl Allocative for ResidentTraces {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for resident in self.devices.iter().flatten() {
+            visitor.visit_simple(Key::new("device_trace"), resident.trace.device_bytes());
             visitor.visit_simple(
-                allocative::Key::new("device_trace"),
-                resident.trace.device_bytes(),
-            );
-            visitor.visit_simple(
-                allocative::Key::new("device_atom_columns"),
+                Key::new("device_atom_columns"),
                 resident.atoms.get().map_or(0, |atoms| atoms.device_bytes()),
             );
         }
@@ -77,7 +84,7 @@ impl allocative::Allocative for ResidentTraces {
 }
 
 #[cfg(test)]
-pub(crate) fn session_device_trace<F: Field>(
+pub(crate) fn session_device_trace<F: JoltField>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
@@ -95,11 +102,29 @@ pub(crate) fn session_device_trace<F: Field>(
     )
 }
 
-pub(crate) fn session_device_trace_window<F: Field>(
+pub(crate) fn session_device_trace_window<F: JoltField>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<DeviceTrace>, KernelError<F>> {
+    session_row_trace_window(
+        context,
+        session,
+        witness,
+        witness.program_preprocessing(),
+        cycles,
+        window,
+    )
+}
+
+pub(crate) fn session_row_trace_window<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn RowSource,
+    preprocessing: &JoltProgramPreprocessing,
+    _cycles: usize,
     window: &CycleWindow,
 ) -> Result<Arc<DeviceTrace>, KernelError<F>> {
     let identity = witness_identity(witness);
@@ -110,22 +135,17 @@ pub(crate) fn session_device_trace_window<F: Field>(
     {
         return Ok(Arc::clone(&resident.trace));
     }
-    let rows = witness.rows().ok_or(KernelError::Unsupported {
-        reason: "the CUDA backend needs a slice-backed trace source to build its device residency",
-    })?;
     let trace = tracing::info_span!(
         "cuda_witness_residency",
         cycles = window.len,
         device = ordinal
     )
     .in_scope(|| {
-        DeviceTrace::upload_window(
+        DeviceTrace::upload_source(
             Arc::clone(context.stream()),
-            rows,
-            cycles,
-            window.start,
-            window.len,
-            witness.program_preprocessing(),
+            witness,
+            window.start..window.start + window.len,
+            preprocessing,
         )
     })?;
     let trace = Arc::new(trace);
@@ -164,7 +184,7 @@ pub(crate) fn park_device_trace(
     );
 }
 
-pub(crate) fn session_window_residency<F: Field>(
+pub(crate) fn session_window_residency<F: JoltField>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
@@ -179,7 +199,7 @@ pub(crate) fn session_window_residency<F: Field>(
 }
 
 #[cfg(test)]
-pub(crate) fn session_atom_columns<F: Field>(
+pub(crate) fn session_atom_columns<F: JoltField>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
@@ -197,7 +217,7 @@ pub(crate) fn session_atom_columns<F: Field>(
     )
 }
 
-pub(crate) fn session_atom_columns_window<F: Field>(
+pub(crate) fn session_atom_columns_window<F: JoltField>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,

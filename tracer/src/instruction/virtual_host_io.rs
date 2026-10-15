@@ -1,3 +1,4 @@
+use crate::instruction::registers::i::RegisterStateI;
 use serde::{Deserialize, Serialize};
 
 use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID};
@@ -11,11 +12,12 @@ declare_riscv_instr!(
     mask   = 0,
     match  = 0,
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 
 impl VirtualHostIO {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualHostIO as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualHostIO as RISCVInstruction>::RamAccess) {
         let call_id = cpu.x[10] as u32;
 
         if call_id == JOLT_ADVICE_WRITE_CALL_ID {

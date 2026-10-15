@@ -11,6 +11,36 @@ cargo run --release -p jolt-prover --features profiling -- \
     profile --name sha2-chain --format chrome
 ```
 
+Run these commands from a Jolt checkout. The command above uses the default
+elliptic-curve backend, [Dory](../../how/dory.md). Add the `akita` Cargo
+feature to use the lattice backend, [Akita](../../how/akita.md):
+
+```bash
+cargo run --release -p jolt-prover --features profiling,akita -- \
+    profile --name fibonacci --backend optimized --format chrome
+```
+
+The `akita` feature selects the protocol for both proving and verification
+at compile time. Jolt's Akita integration currently supports
+non-zero-knowledge proofs only; `akita` and `zk` cannot be enabled together.
+The Akita harness loads its schedule catalogs from
+`crates/jolt-akita/schedules/` by default. Set `JOLT_AKITA_SCHEDULE_DIR` to
+use another directory containing those `.aks` files.
+
+For `profile` with the `akita` feature, `--akita-chunk-profile` selects
+`single` (default), `w2r2`, `w4r2`, or `w8r2`. For example:
+
+```bash
+cargo run --release -p jolt-prover --features profiling,akita -- \
+    profile --name fibonacci --backend optimized --akita-chunk-profile w4r2
+```
+
+Chunked profiles append `_w2r2`, `_w4r2`, or `_w8r2` to the artifact name,
+after the optional `_optimized` suffix, so their latest symlinks remain
+independent. The CSV workload name and `summary.json`'s `run.workload`
+also carry the chunk-profile suffix. Single keeps its existing names.
+The `benchmark` sweep uses Single.
+
 Workloads and default scales (`--scale <log2 trace length>` overrides):
 
 | `--name` | default scale |
@@ -20,17 +50,18 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 | `sha3-chain` | 2^22 |
 | `btreemap` | 2^20 |
 
-`--backend` selects the prover backend (both subcommands): `reference`
+`--backend` selects the kernel implementation for either Dory or Akita
+(both subcommands): `reference`
 (default) is the naive test oracle — absolute numbers are provisional,
 attribution is meaningful relatively — while `optimized` is the performance
-tier (legacy-parity prover performance), slotting into the same
-instrumented seams.
+tier, slotting into the same instrumented seams.
 
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =
-`modular_{workload}_{scale}`, hyphens in the workload mapped to
-underscores; optimized runs append `_optimized`, keeping their artifact set
-next to the reference one), and `benchmark-runs/latest_{trace_name}` is symlinked to the
+`modular_{workload}_{scale}` for Dory or
+`modular_{workload}_akita_{scale}` for Akita, with hyphens in the workload
+mapped to underscores; optimized runs append `_optimized`), and
+`benchmark-runs/latest_{trace_name}` is symlinked to the
 newest successful run — the stable path every example below reads. All
 paths are under the current working directory. The directory name carries
 the run identity, so the files inside use fixed names:
@@ -39,11 +70,17 @@ the run identity, so the files inside use fixed names:
   [Perfetto](https://ui.perfetto.dev/) or query with `trace_processor` SQL.
 - `summary.json` — schema-versioned aggregates (see below).
 
-The run also compiles and traces the guest, proves it, and **verifies the
-proof** as a correctness gate; only `prove()` is measured. The `profiling`
-feature enables the system monitor, so CPU/memory counters render as native
-Perfetto counter tracks directly from the emitted trace — no offline
-post-processing step.
+For example, the W4R2 command above writes its summary to
+`benchmark-runs/latest_modular_fibonacci_akita_16_optimized_w4r2/summary.json`.
+The query examples below use Dory's reference paths; substitute the
+corresponding Akita or optimized path for those runs.
+
+The run also compiles and traces the guest, derives the PCS setup, proves it,
+and verifies the proof. PCS setup and `prove()` are timed separately. The
+verifier is timed once under an explicit host-sized Rayon pool and once under
+an exactly one-worker pool. The `profiling` feature enables the system
+monitor, so CPU/memory counters render as native Perfetto counter tracks
+directly from the emitted trace — no offline post-processing step.
 
 ## Benchmark sweeps
 
@@ -57,12 +94,31 @@ cargo run --release -p jolt-prover --features profiling -- \
 # --benchmarks fibonacci,sha2-chain limits the workload set
 ```
 
+Use the same Cargo feature to sweep Akita workloads:
+
+```bash
+cargo run --release -p jolt-prover --features profiling,akita -- \
+    benchmark --min-scale 18 --max-scale 21 --backend optimized --resume
+```
+
 Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
-in the run directories); render
-them with:
+in the run directories). Akita Single rows append `_akita` to the workload
+name; chunked rows also append `_w2r2`, `_w4r2`, or `_w8r2`, for example
+`fibonacci_akita_w4r2`. The summary table defaults to Single; select a
+chunked profile with `--protocol akita --akita-chunk-profile w4r2`.
+`--resume` checks the selected protocol and kernel implementation's
+artifact path. In addition to prover throughput and proof size, the
+CSV records `setup_time_s`, `verifier_parallel_time_s`,
+`verifier_single_thread_time_s`, and the explicit parallel worker count.
+Existing CSVs using the previous header are migrated in place with empty
+values for these new fields. Render them with:
 
 ```bash
 python3 scripts/benchmark_summary.py     # per-scale table
+python3 scripts/benchmark_summary.py --protocol akita \
+    --metric verifier_single_thread_time_s
+python3 scripts/benchmark_summary.py --protocol akita \
+    --akita-chunk-profile w4r2 --metric prover_time_s
 python3 scripts/plot_benchmarks.py       # speed + proof-size plots
 python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.json)
 ```
@@ -71,7 +127,7 @@ Mind the machine: the reference backend retains ~18 GiB regardless of scale
 and grows steeply with it — large-scale sweeps on the reference backend are
 for big-memory hosts; use `--backend optimized` above small scales.
 
-The span labels are a versioned public schema — taxonomy v1 lives in the
+The span labels are a versioned public schema — the current taxonomy lives in the
 `jolt-profiling` crate docs (`crates/jolt-profiling/src/taxonomy.rs`), the
 normative source for label names, level policy, and the hot-loop rule.
 
@@ -137,6 +193,13 @@ for row in q:
   process-lifetime `getrusage` high-water mark (cannot miss short spikes,
   but includes guest compile/trace); `root.peak_memory_gib` is the max over
   monitor samples inside the root span (prove-only, but sampled at ≥ 50 ms).
+- **RSS under-reports on macOS under memory pressure**, where the kernel
+  compresses cold pages out of the resident set. `peak_footprint_gib` is the
+  process-lifetime peak physical footprint (the "peak memory footprint" of
+  `/usr/bin/time -l`), which counts compressed pages; use it to compare
+  memory across runs. On Linux it equals `peak_rss_gib`. The monitor's
+  `counters.footprint_gib` samples the same measure over time (macOS only);
+  `memory_gib` and `root.peak_memory_gib` remain resident-set based.
 
 ## Overhead and dark-time budgets
 
@@ -170,7 +233,7 @@ self-contained page:
 ```bash
 cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
-open benchmark-runs/latest_modular_fibonacci_13/memory.html
+open benchmark-runs/latest_modular_fibonacci_16/memory.html
 ```
 
 **`memory.html`** is the human view — one time axis carrying
@@ -190,7 +253,7 @@ so heap attribution is one `jq` away:
 ```bash
 jq '.heap | map_values({gib: (.total_bytes / 1073741824),
                         top: (.roots | to_entries | max_by(.value) | .key)})' \
-    benchmark-runs/latest_modular_fibonacci_13/summary.json
+    benchmark-runs/latest_modular_fibonacci_16/summary.json
 ```
 
 One snapshot per driver batch, taken right after every member kernel's
@@ -226,79 +289,3 @@ cargo run -p jolt-eval --bin measure-objectives -- \
 cargo run -p jolt-eval --bin measure-objectives -- \
     --objective telemetry:fibonacci:heap:Stage2Batch_prepared
 ```
-
----
-
-# Legacy prover (jolt-prover-legacy)
-
-The instructions below apply to the legacy monolith until it is deleted.
-
-## Execution profiling
-
-```bash
-cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome
-```
-
-Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `sha3-chain`,
-`fibonacci`, or `btreemap`. Traces are written to
-`benchmark-runs/perfetto_traces/{name}_{timestamp}.json` and viewable in
-[Perfetto](https://ui.perfetto.dev/):
-
-![perfetto](../../imgs/perfetto.png)
-
-### System resource monitoring
-
-```bash
-cargo run --release --features monitor -p jolt-prover-legacy profile --name sha3 --format chrome
-python3 scripts/postprocess_trace.py benchmark-runs/perfetto_traces/*.json
-```
-
-The postprocessing step converts the metrics into counter tracks for
-Perfetto (the legacy pipeline only; the modular pipeline does this at
-flush time).
-
-![metrics-monitor](../../imgs/metrics-monitor.png)
-
-### Fine-grained CPU profiling with pprof
-
-When tracing is insufficiently detailed, you can enable
-[pprof](https://github.com/google/pprof) for fine-grained CPU profiling.
-While execution tracing shows you the high-level stages and their durations
-(based on manually instrumented code), pprof automatically samples your
-entire program at the function level to capture each function call including
-in dependencies.
-
-```bash
-cargo run --release --features pprof -p jolt-prover-legacy profile --name sha3 --format chrome
-```
-
-This will generate multiple `.pb` profile files in `benchmark-runs/pprof/`,
-one for each major stage. To view in your browser:
-
-```bash
-go tool pprof -http=:8080 target/release/jolt-prover-legacy benchmark-runs/pprof/sha3_prove.pb
-```
-
-![pprof-top](../../imgs/pprof-top.png)
-![pprof-flamegraph](../../imgs/pprof-flamegraph.png)
-
-Customize the sampling frequency with `PPROF_FREQ` (default: 100 Hz):
-
-```bash
-PPROF_FREQ=1000 cargo run --release --features pprof -p jolt-prover-legacy profile --name sha3 --format chrome
-```
-
-## Memory profiling
-
-The legacy prover generates [allocative](https://github.com/facebookexperimental/allocative)
-flamegraphs at the start and end of stages 2–7 (see
-`crates/jolt-prover-legacy/src/zkvm/prover.rs`):
-
-```bash
-RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome
-```
-
-This logs memory usage to the command line and outputs SVG files, e.g.
-`stage3_start_flamechart.svg`:
-
-![allocative](../../imgs/allocative.png)

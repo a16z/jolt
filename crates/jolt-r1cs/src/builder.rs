@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::ops::{Add, Neg, Sub};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use thiserror::Error;
 
 use crate::constraint::SparseRow;
@@ -45,7 +45,7 @@ impl<F> LinearCombination<F> {
     }
 }
 
-impl<F: Field> LinearCombination<F> {
+impl<F: JoltField> LinearCombination<F> {
     pub fn one() -> Self {
         Self::constant(F::one())
     }
@@ -74,21 +74,6 @@ impl<F: Field> LinearCombination<F> {
             *coefficient *= scale;
         }
         self
-    }
-
-    #[cfg(test)]
-    pub fn as_constant(&self) -> Option<F> {
-        let mut value = F::zero();
-        for &(variable, coefficient) in &self.terms {
-            if coefficient.is_zero() {
-                continue;
-            }
-            if variable != Variable::ONE {
-                return None;
-            }
-            value += coefficient;
-        }
-        Some(value)
     }
 
     pub fn evaluate(&self, witness: &[Option<F>]) -> Result<F, R1csBuilderError> {
@@ -122,7 +107,7 @@ impl<F: Field> LinearCombination<F> {
     }
 }
 
-impl<F: Field> From<Variable> for LinearCombination<F> {
+impl<F: JoltField> From<Variable> for LinearCombination<F> {
     fn from(variable: Variable) -> Self {
         Self::variable(variable)
     }
@@ -137,7 +122,7 @@ impl<F> Add for LinearCombination<F> {
     }
 }
 
-impl<F: Field> Sub for LinearCombination<F> {
+impl<F: JoltField> Sub for LinearCombination<F> {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -145,7 +130,7 @@ impl<F: Field> Sub for LinearCombination<F> {
     }
 }
 
-impl<F: Field> Neg for LinearCombination<F> {
+impl<F: JoltField> Neg for LinearCombination<F> {
     type Output = Self;
 
     fn neg(mut self) -> Self::Output {
@@ -157,20 +142,20 @@ impl<F: Field> Neg for LinearCombination<F> {
 }
 
 #[derive(Clone, Debug)]
-pub struct R1csBuilder<F: Field> {
+pub struct R1csBuilder<F: JoltField> {
     witness: Vec<Option<F>>,
     a: Vec<SparseRow<F>>,
     b: Vec<SparseRow<F>>,
     c: Vec<SparseRow<F>>,
 }
 
-impl<F: Field> Default for R1csBuilder<F> {
+impl<F: JoltField> Default for R1csBuilder<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: Field> R1csBuilder<F> {
+impl<F: JoltField> R1csBuilder<F> {
     pub fn new() -> Self {
         Self {
             witness: vec![Some(F::one())],
@@ -301,7 +286,7 @@ impl<F: Field> R1csBuilder<F> {
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn builder_checks_satisfied_product() {
@@ -325,27 +310,6 @@ mod tests {
         .into_sparse_row();
 
         assert!(row.is_empty());
-    }
-
-    #[test]
-    fn linear_combination_recognizes_constant_terms() {
-        let constant = LinearCombination::<Fr>::constant(Fr::from_u64(2))
-            + LinearCombination::constant(Fr::from_u64(3))
-            + LinearCombination::variable(Variable::new(7)).scale(Fr::from_u64(0));
-
-        assert_eq!(constant.as_constant(), Some(Fr::from_u64(5)));
-        assert_eq!(
-            LinearCombination::<Fr>::zero().as_constant(),
-            Some(Fr::from_u64(0))
-        );
-    }
-
-    #[test]
-    fn linear_combination_rejects_non_constant_terms() {
-        let non_constant = LinearCombination::<Fr>::constant(Fr::from_u64(2))
-            + LinearCombination::variable(Variable::new(2));
-
-        assert_eq!(non_constant.as_constant(), None);
     }
 
     #[test]

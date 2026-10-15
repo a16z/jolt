@@ -1,9 +1,8 @@
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use tracing::Span;
 
-use jolt_field::Field;
-use jolt_program::execution::TraceRow;
-use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_field::JoltField;
 use jolt_witness::backend::cuda::DeviceTrace;
 
 use super::{
@@ -18,19 +17,17 @@ use crate::KernelError;
 
 pub(super) struct ColumnPlan<'a> {
     pub(super) kinds: &'a [ColumnKind],
-    pub(super) cycles: usize,
     pub(super) one_hot_k: usize,
     pub(super) row_width: usize,
 }
 
 pub(super) struct TraceSource<'a> {
-    pub(super) rows: &'a [TraceRow],
-    pub(super) preprocessing: &'a JoltProgramPreprocessing,
+    pub(super) traces: &'a [Arc<DeviceTrace>],
 }
 
 type ColumnSink<'a, F> = &'a mut dyn FnMut(usize, Vec<JacobianLimbs>) -> Result<(), KernelError<F>>;
 
-pub(super) fn window_columns<F: Field>(
+pub(super) fn window_columns<F: JoltField>(
     context: &CudaKernelContext,
     bases: &DeviceG1Bases,
     hot: &RetainedHotColumns,
@@ -60,7 +57,7 @@ pub(super) fn window_columns<F: Field>(
     Ok(())
 }
 
-fn stitch_column<F: Field>(
+fn stitch_column<F: JoltField>(
     parts: &[&[JacobianLimbs]],
     one_hot: bool,
     one_hot_k: usize,
@@ -115,7 +112,7 @@ impl PartBoard {
         }
     }
 
-    pub(super) fn place<F: Field>(
+    pub(super) fn place<F: JoltField>(
         &mut self,
         part: Tier1Part,
     ) -> Result<Option<(usize, Vec<JacobianLimbs>)>, KernelError<F>> {
@@ -194,13 +191,13 @@ type StitchedColumn = (usize, Vec<JacobianLimbs>);
 type WindowTask<'a, F, PCS, W> =
     DeviceTask<'a, (Vec<(usize, FinishedColumn<PCS>)>, W), KernelError<F>>;
 
-fn coordinate<F: Field>(
+fn coordinate<F: JoltField>(
     parts: Receiver<Tier1Part>,
     plan: &ColumnPlan<'_>,
     blocks: &[usize],
     owner: &[usize],
     senders: Vec<Sender<StitchedColumn>>,
-    parent: &tracing::Span,
+    parent: &Span,
 ) -> Result<(), KernelError<F>> {
     let mut board = PartBoard::new(plan, blocks);
     for part in parts {
@@ -242,7 +239,7 @@ fn consume_tier2<F, PCS>(
     ordinal: usize,
 ) -> Result<Vec<(usize, FinishedColumn<PCS>)>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: DeviceTier1Commitment,
 {
     let mut groups = tier2_groups(selection, counts);
@@ -310,7 +307,7 @@ pub(super) fn pipeline_columns<F, PCS, W, C>(
     producers: Vec<Tier1Producer<'_, F, W>>,
 ) -> Result<PipelineResult<PCS, W>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: DeviceTier1Commitment,
     W: Send,
     C: Fn(usize) -> Option<&'static CudaKernelContext> + Sync,
@@ -361,7 +358,7 @@ where
         .collect();
     drop(parts_tx);
 
-    let parent = tracing::Span::current();
+    let parent = Span::current();
     let stitching = parent.clone();
     std::thread::scope(|scope| {
         let coordinator = scope
@@ -444,29 +441,21 @@ type SplitColumns<PCS> = (
     Vec<WindowHotColumns>,
 );
 
-fn window_trace<F: Field>(
+fn window_trace<F: JoltField>(
     context: &CudaKernelContext,
     plan: &ColumnPlan<'_>,
     source: &TraceSource<'_>,
     window: &CycleWindow,
     ordinal: usize,
 ) -> Result<Arc<DeviceTrace>, KernelError<F>> {
-    let trace = tracing::info_span!(
-        "cuda_commit_window_residency",
-        device = ordinal,
-        cycles = window.len
-    )
-    .in_scope(|| {
-        DeviceTrace::upload_window(
-            Arc::clone(context.stream()),
-            source.rows,
-            plan.cycles,
-            window.start,
-            window.residency(plan.cycles).len,
-            source.preprocessing,
-        )
-    })?;
-    Ok(Arc::new(trace))
+    let _ = (context, plan, window);
+    source
+        .traces
+        .get(ordinal)
+        .cloned()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "commitment partition has no uploaded trace",
+        })
 }
 
 pub(super) fn split_columns<F, PCS>(
@@ -479,7 +468,7 @@ pub(super) fn split_columns<F, PCS>(
     windows: &[CycleWindow],
 ) -> Result<SplitColumns<PCS>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: DeviceTier1Commitment,
 {
     let blocks: Vec<usize> = windows
@@ -565,9 +554,11 @@ where
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use ark_bn254::Fr as ArkFr;
     use ark_bn254::G1Projective;
     use ark_ec::{CurveGroup, PrimeGroup};
     use jolt_field::Fr;
+    use std::ops::Range;
 
     use super::{
         window_columns, ColumnKind, ColumnPlan, CycleWindow, JacobianLimbs, PartBoard, Tier1Part,
@@ -583,7 +574,7 @@ mod tests {
     const ONE_HOT_K: usize = 4;
 
     fn point(scalar: u64) -> G1Projective {
-        G1Projective::generator() * ark_bn254::Fr::from(scalar)
+        G1Projective::generator() * ArkFr::from(scalar)
     }
 
     fn projective(limbs: JacobianLimbs) -> G1Projective {
@@ -637,7 +628,7 @@ mod tests {
             )),
         ];
         let increments: Vec<i128> = (0..CYCLES).map(|cycle| 31 - cycle as i128).collect();
-        let dense = |range: std::ops::Range<usize>| {
+        let dense = |range: Range<usize>| {
             vec![
                 None,
                 Some(
@@ -656,7 +647,6 @@ mod tests {
         let kinds = [selector(0), ColumnKind::RamInc, selector(1)];
         let plan = ColumnPlan {
             kinds: &kinds,
-            cycles: CYCLES,
             one_hot_k: ONE_HOT_K,
             row_width: ROW_WIDTH,
         };
@@ -792,7 +782,7 @@ mod tests {
                 .map(|cycle| salt * 7 + cycle as i128 - 23)
                 .collect()
         };
-        let dense = |range: std::ops::Range<usize>| {
+        let dense = |range: Range<usize>| {
             let column = |salt: i128| {
                 Some(
                     context
@@ -816,7 +806,6 @@ mod tests {
         ];
         let plan = ColumnPlan {
             kinds: &kinds,
-            cycles: CYCLES,
             one_hot_k: ONE_HOT_K,
             row_width: ROW_WIDTH,
         };
@@ -933,7 +922,7 @@ mod tests {
                     got.iter()
                         .zip(&expected)
                         .position(|((commitment, hint), (want, rows))| {
-                            commitment != want || &hint.row_commitments != rows
+                            commitment != want || hint.row_commitments() != rows
                         });
                 assert_eq!(
                     divergence, None,

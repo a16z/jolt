@@ -1,4 +1,4 @@
-#define RRV_MAX_LANES 8
+#define RRV_MAX_LANES 9
 #define RRV_COLD 0xFFFFFFFFu
 
 __device__ __forceinline__ bool rrv_any_hot(const unsigned int *__restrict__ packed,
@@ -46,10 +46,10 @@ extern "C" __global__ void rrv_gather_kernel(const unsigned int *__restrict__ pa
 }
 
 __device__ __forceinline__ void rrv_fold_pair(const u64 *p0, const u64 *p1, unsigned int lanes,
-                                              bool first, u64 prod[RRV_MAX_LANES][LIMBS]) {
+                                              bool first, unsigned int first_point, u64 prod[RRV_MAX_LANES][LIMBS]) {
     u64 delta[LIMBS], cur[LIMBS], scaled[LIMBS];
     fr_sub(p1, p0, delta);
-    for (int l = 0; l < LIMBS; l++) cur[l] = p1[l];
+    for (int l = 0; l < LIMBS; l++) cur[l] = first_point ? p1[l] : p0[l];
 
     for (unsigned int k = 0; k + 1 < lanes; k++) {
         if (k > 0) {
@@ -76,7 +76,7 @@ __device__ __forceinline__ void rrv_fold_pair(const u64 *p0, const u64 *p1, unsi
 
 __device__ __forceinline__ void rrv_pad_degree(unsigned int polys, unsigned int lanes,
                                                u64 prod[RRV_MAX_LANES][LIMBS]) {
-    if (polys < lanes) {
+    if (polys + 1 < lanes) {
         for (int l = 0; l < LIMBS; l++) prod[lanes - 1][l] = 0;
     }
 }
@@ -108,7 +108,7 @@ extern "C" __global__ void rrv_message_sparse_kernel(
                 rrv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask, cycle_even,
                                  p0);
                 rrv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask, cycle_odd, p1);
-                rrv_fold_pair(p0, p1, lanes, p == 0, prod);
+                rrv_fold_pair(p0, p1, lanes, p == 0, 0, prod);
             }
             rrv_pad_degree(polys, lanes, prod);
 
@@ -141,7 +141,7 @@ extern "C" __global__ void rrv_message_dense_kernel(
             u64 p0[LIMBS], p1[LIMBS];
             load4(table + (2 * g) * LIMBS, p0);
             load4(table + (2 * g + 1) * LIMBS, p1);
-            rrv_fold_pair(p0, p1, lanes, p == 0, prod);
+            rrv_fold_pair(p0, p1, lanes, p == 0, 0, prod);
         }
         rrv_pad_degree(polys, lanes, prod);
 

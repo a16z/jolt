@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -20,11 +20,10 @@ impl<const XLEN: usize> LookupTable for UnsignedLessThanTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
-        // \sum_i (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)
         let mut result = F::zero();
         let mut eq_term = F::one();
         for i in 0..XLEN {
@@ -47,7 +46,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedLessThanTabl
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, less_than] = suffixes.try_into().unwrap();
         prefixes[Prefixes::LessThan] * one + prefixes[Prefixes::Eq] * less_than

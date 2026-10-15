@@ -1,11 +1,5 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: the five G1 relations wire this up in step 3, and the \
-              expectation becomes an error the moment the first one does"
-)]
-
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::{Fr, JoltField};
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{require_fr, DeviceFrVec, LIMBS};
@@ -14,20 +8,20 @@ use super::half_fold::FoldColumn;
 use super::primitives::reduce_lanes;
 use super::split_eq::DeviceSplitEq;
 
-pub struct SumOfProducts<F: Field> {
+pub struct SumOfProducts<F: JoltField> {
     offsets: Vec<u32>,
     factors: Vec<u32>,
     coefficients: Vec<F>,
     arity: Option<usize>,
 }
 
-impl<F: Field> Default for SumOfProducts<F> {
+impl<F: JoltField> Default for SumOfProducts<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: Field> SumOfProducts<F> {
+impl<F: JoltField> SumOfProducts<F> {
     pub fn new() -> Self {
         Self {
             offsets: vec![0],
@@ -65,10 +59,6 @@ impl<F: Field> SumOfProducts<F> {
         Ok(())
     }
 
-    pub fn terms(&self) -> usize {
-        self.coefficients.len()
-    }
-
     pub fn uniform_arity(&self) -> Option<usize> {
         match self.arity {
             Some(arity) if arity != usize::MAX => Some(arity),
@@ -82,7 +72,7 @@ impl<F: Field> SumOfProducts<F> {
                 reason: "a sum-of-products form needs at least one term",
             });
         }
-        let coefficients: Vec<jolt_field::Fr> = self
+        let coefficients: Vec<Fr> = self
             .coefficients
             .iter()
             .map(|value| require_fr(*value))
@@ -106,11 +96,12 @@ pub struct DeviceSumOfProducts {
 }
 
 impl DeviceSumOfProducts {
-    pub const fn uniform_arity(&self) -> Option<usize> {
-        self.uniform_arity
+    #[cfg(feature = "allocative")]
+    pub(crate) fn device_bytes(&self) -> usize {
+        self.offsets.num_bytes() + self.factors.num_bytes() + self.coefficients.device_bytes()
     }
 
-    pub fn round_lanes<F: Field>(
+    pub fn round_lanes<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         tables: &[FoldColumn<'_>],
@@ -183,13 +174,13 @@ impl DeviceSumOfProducts {
             .collect()
     }
 
-    pub fn round_gruen_endpoints<F: Field>(
+    pub fn round_gruen_endpoints<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         tables: &[FoldColumn<'_>],
         half: usize,
         eq: &DeviceSplitEq<F>,
-    ) -> Result<(F, F), CudaError> {
+    ) -> Result<(F, F, F), CudaError> {
         if self.uniform_arity.is_none() {
             return Err(CudaError::InvariantViolation {
                 reason: "a Gruen leading-coefficient lane mixes leading coefficients of different \
@@ -229,7 +220,7 @@ impl DeviceSumOfProducts {
         let in_bits = CudaKernelContext::count_of(e_in_len.max(1).ilog2() as usize)?;
         let (pointers, descriptors) = context.device_columns(tables)?;
         let blocks = half_count.div_ceil(BLOCK).max(1);
-        let mut partials = context.alloc(2 * blocks as usize)?;
+        let mut partials = context.alloc(3 * blocks as usize)?;
 
         let mut builder = context.stream().launch_builder(context.sopg_round());
         let _ = builder.arg(&pointers);
@@ -254,8 +245,8 @@ impl DeviceSumOfProducts {
         // otherwise `e_in[y & mask]` / `e_out[y >> in_bits]`, bounded because
         // `in_bits` is `e_in`'s log length and
         // `e_out.len() * e_in_len == half` is checked above. Writes touch only
-        // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 2`, of
-        // `2 * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
+        // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 3`, of
+        // `3 * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
         // `shared_mem_bytes`, and the two block reductions sit outside the
         // `y < half` guard so every thread reaches each `__syncthreads()`.
         let _ = unsafe {
@@ -266,14 +257,18 @@ impl DeviceSumOfProducts {
             })
         }?;
 
-        let totals = reduce_lanes(context, partials, 2, blocks)?;
+        let totals = reduce_lanes(context, partials, 3, blocks)?;
         let host = totals.to_host()?;
         let unsupported = || CudaError::NotImplemented {
             kernel: "CUDA kernels support only the BN254 scalar field",
         };
         let constant = super::device::fr_into(host[0]).ok_or_else(unsupported)?;
         let leading = super::device::fr_into(host[1]).ok_or_else(unsupported)?;
-        Ok((constant, leading))
+        Ok((
+            constant,
+            leading,
+            super::device::fr_into(host[2]).ok_or_else(unsupported)?,
+        ))
     }
 }
 
@@ -283,7 +278,11 @@ impl DeviceSumOfProducts {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use super::super::split_eq::DeviceSplitEq;
+    use super::FoldColumn;
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::BindingOrder;
+    use jolt_poly::GruenSplitEqPolynomial;
     use proptest::prelude::*;
 
     use super::super::context::shared_context;
@@ -352,7 +351,7 @@ mod tests {
                 .iter()
                 .map(|table| context.upload(table).expect("upload table"))
                 .collect();
-            let handles: Vec<_> = uploaded.iter().map(super::FoldColumn::Field).collect();
+            let handles: Vec<_> = uploaded.iter().map(FoldColumn::Field).collect();
 
             let lanes = 3;
             let got: Vec<Fr> = device_form
@@ -410,19 +409,19 @@ mod tests {
                 .iter()
                 .map(|table| context.upload(table).expect("upload table"))
                 .collect();
-            let handles: Vec<_> = uploaded.iter().map(super::FoldColumn::Field).collect();
-            let eq = super::super::split_eq::DeviceSplitEq::<Fr>::new(
+            let handles: Vec<_> = uploaded.iter().map(FoldColumn::Field).collect();
+            let eq = DeviceSplitEq::<Fr>::new(
                 context,
                 &point,
-                jolt_poly::BindingOrder::LowToHigh,
+                BindingOrder::LowToHigh,
             )
             .expect("device split-eq");
-            let host_eq = jolt_poly::GruenSplitEqPolynomial::<Fr>::new(
+            let host_eq = GruenSplitEqPolynomial::<Fr>::new(
                 &point,
-                jolt_poly::BindingOrder::LowToHigh,
+                BindingOrder::LowToHigh,
             );
 
-            let got: (Fr, Fr) = device_form
+            let got: (Fr, Fr, Fr) = device_form
                 .round_gruen_endpoints(context, &handles, cycles / 2, &eq)
                 .expect("device gruen endpoints");
             let expected = cpu_gruen_endpoints(&tables, &terms, cycles / 2, &host_eq);
@@ -434,13 +433,14 @@ mod tests {
         tables: &[Vec<Fr>],
         terms: &[(Fr, Vec<usize>)],
         half: usize,
-        eq: &jolt_poly::GruenSplitEqPolynomial<Fr>,
-    ) -> (Fr, Fr) {
+        eq: &GruenSplitEqPolynomial<Fr>,
+    ) -> (Fr, Fr, Fr) {
         let e_in = eq.e_in_current();
         let e_out = eq.e_out_current();
         let bits = e_in.len().max(1).ilog2();
         let mut constant = Fr::from_u64(0);
         let mut leading = Fr::from_u64(0);
+        let mut one = Fr::from_u64(0);
         for y in 0..half {
             let weight = e_out[y >> bits]
                 * if e_in.len() <= 1 {
@@ -450,22 +450,27 @@ mod tests {
                 };
             let mut sum_constant = Fr::from_u64(0);
             let mut sum_leading = Fr::from_u64(0);
+            let mut sum_one = Fr::from_u64(0);
             for (coefficient, factors) in terms {
                 let mut at_zero = Fr::from_u64(1);
                 let mut delta = Fr::from_u64(1);
+                let mut at_one = Fr::from_u64(1);
                 for &factor in factors {
                     let lo = tables[factor][2 * y];
                     let hi = tables[factor][2 * y + 1];
                     at_zero *= lo;
+                    at_one *= hi;
                     delta *= hi - lo;
                 }
                 sum_constant += *coefficient * at_zero;
+                sum_one += *coefficient * at_one;
                 sum_leading += *coefficient * delta;
             }
             constant += weight * sum_constant;
+            one += weight * sum_one;
             leading += weight * sum_leading;
         }
-        (constant, leading)
+        (constant, leading, one)
     }
 
     #[test]
@@ -474,12 +479,8 @@ mod tests {
             return;
         };
         let point = [fr(3), fr(9)];
-        let eq = super::super::split_eq::DeviceSplitEq::<Fr>::new(
-            context,
-            &point,
-            jolt_poly::BindingOrder::LowToHigh,
-        )
-        .expect("device split-eq");
+        let eq = DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
+            .expect("device split-eq");
         let mut form = SumOfProducts::<Fr>::new();
         form.push(Fr::from_u64(1), &[0]).expect("arity one");
         form.push(Fr::from_u64(1), &[0, 1]).expect("arity two");
@@ -487,10 +488,7 @@ mod tests {
         let table = context
             .upload(&[fr(1), fr(2), fr(3), fr(4)])
             .expect("upload table");
-        let handles = [
-            super::FoldColumn::Field(&table),
-            super::FoldColumn::Field(&table),
-        ];
+        let handles = [FoldColumn::Field(&table), FoldColumn::Field(&table)];
         assert!(
             device_form
                 .round_gruen_endpoints::<Fr>(context, &handles, 2, &eq)
@@ -510,10 +508,7 @@ mod tests {
         assert_eq!(form.uniform_arity(), None);
         let device_form = form.upload(context).expect("upload form");
         let table = context.upload(&[fr(1), fr(2)]).expect("upload table");
-        let handles = [
-            super::FoldColumn::Field(&table),
-            super::FoldColumn::Field(&table),
-        ];
+        let handles = [FoldColumn::Field(&table), FoldColumn::Field(&table)];
         assert!(
             device_form
                 .round_lanes::<Fr>(context, &handles, 1, 1, true, 2)

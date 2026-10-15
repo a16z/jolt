@@ -1,10 +1,11 @@
+use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::relations::registers::{
     RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
@@ -28,7 +29,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 
 pub(crate) mod witness;
 
-impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -96,12 +97,12 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
         Ok(Box::new(DenseProductKernel {
             state: ShardedDenseProduct::new(states)?,
             relation: relation.clone(),
-            field: core::marker::PhantomData,
+            field: PhantomData,
         }))
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RegistersValEvaluation<F>> {
+impl<F: JoltField> SumcheckKernel<F> for DenseProductKernel<F, RegistersValEvaluation<F>> {
     type Relation = RegistersValEvaluation<F>;
 
     fn output_claims(
@@ -146,7 +147,11 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RegistersValEvaluatio
                 reason: "CUDA registers value-evaluation has no split-LT factor",
             })?;
         if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+            return Err(SumcheckKernelError::DerivedTableDrift {
+                id: id.into(),
+                expected,
+                got,
+            });
         }
         Ok(())
     }
@@ -165,11 +170,12 @@ mod tests {
         JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial,
     };
     use jolt_claims::{NoChallenges, OutputClaims};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
-    use jolt_witness::{collect_bundles, JoltWitnessPlane, OneHotSource};
+    use jolt_witness::{collect_bundles, JoltWitnessPlane};
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
     use proptest::prelude::*;
+    use std::collections::BTreeSet;
 
     use super::{witness::RegistersValEvaluationWitness, CudaBackend};
     use crate::cuda::common::context::shared_context;
@@ -234,8 +240,7 @@ mod tests {
                 "seed {seed}: {idle} of {cycles} cycles leave rd unwritten, so one of the two \
                  paths is unexercised",
             );
-            let distinct: std::collections::BTreeSet<u8> =
-                rows.iter().filter_map(|row| row.address.0).collect();
+            let distinct: BTreeSet<u8> = rows.iter().filter_map(|row| row.address.0).collect();
             assert!(
                 distinct.len() > 1,
                 "seed {seed}: every rd write targets the same register, so the address column \

@@ -1,14 +1,24 @@
+use crate::cuda::common::address_first::AddressFirst;
+use crate::cuda::common::devices::CycleWindow;
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use device_rows::DeviceRamRows;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamReadWriteInputClaims, RamReadWriteOutputClaims,
 };
 use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_witness::JoltWitnessPlane;
+use witness::RamReadWriteWitness;
 
 use crate::cuda::witness::session_window_residency;
 
@@ -28,8 +38,9 @@ use crate::{
 pub(crate) mod device_rows;
 pub(crate) mod witness;
 
-pub struct RamReadWriteKernel<F: Field> {
+pub struct RamReadWriteKernel<F: JoltField> {
     context: &'static CudaKernelContext,
+    address_first: Option<AddressFirst<F>>,
     relation: RamReadWriteChecking<F>,
     log_t: usize,
     log_k: usize,
@@ -44,40 +55,50 @@ pub struct RamReadWriteKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RamReadWriteKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for RamReadWriteKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("inc"),
+            Key::new("address_first"),
+            self.address_first
+                .as_ref()
+                .map_or(0, AddressFirst::device_bytes),
+        );
+        visitor.visit_simple(
+            Key::new("inc"),
             self.inc.as_ref().map_or(0, DeviceFrVec::device_bytes),
         );
         visitor.visit_simple(
-            allocative::Key::new("cycle_matrix"),
+            Key::new("cycle_matrix"),
             self.cycle
                 .as_ref()
                 .map_or(0, ShardedReadWriteMatrix::device_bytes),
         );
         visitor.visit_simple(
-            allocative::Key::new("address_matrix"),
+            Key::new("address_matrix"),
             self.address
                 .as_ref()
                 .map_or(0, DeviceAddressMajorMatrix::device_bytes),
         );
-        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.visit_simple(Key::new("eq"), self.eq.device_bytes());
         visitor.visit_simple(
-            allocative::Key::new("merged_eq"),
+            Key::new("merged_eq"),
             self.merged_eq.as_ref().map_or(0, DeviceFrVec::device_bytes),
         );
-        visitor.visit_simple(
-            allocative::Key::new("val_init"),
-            self.val_init.len() * size_of::<Fr>(),
-        );
+        visitor.visit_simple(Key::new("val_init"), self.val_init.len() * size_of::<Fr>());
         visitor.exit();
     }
 }
 
-impl<F: Field> RamReadWriteKernel<F> {
+impl<F: JoltField> RamReadWriteKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        if let Some(state) = &mut self.address_first {
+            state
+                .bind(challenge)
+                .map_err(backend("CUDA address-first read/write bind"))?;
+            self.rounds_bound += 1;
+            return Ok(());
+        }
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda RAM read-write bind",
         };
@@ -137,7 +158,7 @@ impl<F: Field> RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -151,17 +172,23 @@ impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
+        if let Some(state) = &self.address_first {
+            return state
+                .round(previous_claim)
+                .map_err(backend("CUDA address-first read/write round"));
+        }
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda RAM read-write round",
         };
         if round < self.log_t {
             let cycle = self.cycle.as_ref().ok_or_else(failed)?;
-            let coeffs: [F; 2] = cycle
+            let coeffs: [F; 3] = cycle
                 .quadratic_coeffs(&self.eq)
                 .map_err(backend("cuda RAM read-write round"))?;
-            return Ok(self
+            return self
                 .eq
-                .gruen_poly_deg_3(coeffs[0], coeffs[1], previous_claim));
+                .gruen_poly_deg_3(coeffs[0], coeffs[1], previous_claim, coeffs[2])
+                .map_err(backend("CUDA read-write quotient interpolation"));
         }
         let address = self.address.as_ref().ok_or_else(failed)?;
         let merged_eq = self.merged_eq.as_ref().ok_or_else(failed)?;
@@ -180,7 +207,7 @@ impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
     type Relation = RamReadWriteChecking<F>;
 
     fn output_claims(
@@ -190,6 +217,15 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
         let remaining = self.relation.symbolic().rounds() - self.rounds_bound;
         if remaining != 0 {
             return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        if let Some(state) = &self.address_first {
+            let [ra, _, val, inc] =
+                state
+                    .final_values()
+                    .map_err(|_| SumcheckKernelError::InvariantViolation {
+                        reason: "CUDA address-first RAM output readback failed",
+                    })?;
+            return Ok(RamReadWriteOutputClaims { val, ra, inc });
         }
         let [ra, val] = self.finals.ok_or(SumcheckKernelError::InvariantViolation {
             reason: "CUDA RAM read-write never materialized its bound tables",
@@ -206,7 +242,7 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -219,7 +255,15 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
         let dimensions = relation.dimensions();
         let log_t = dimensions.log_t();
         let log_k = relation.ram_log_k();
-        if dimensions.phase1_num_rounds() != log_t || dimensions.phase2_num_rounds() != log_k {
+        dimensions
+            .validate_phase_split()
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "read/write phase split exceeds its dimensions",
+            })?;
+        if dimensions.phase1_num_rounds() == 0 && dimensions.phase2_num_rounds() == log_k {
+            return prepare_address_first(session, witness, inputs);
+        }
+        if dimensions.phase1_num_rounds() != log_t && dimensions.phase2_num_rounds() != 0 {
             return Err(KernelError::Unsupported {
                 reason: "CUDA RAM read-write checking supports only the default read-write \
                          config (phase 1 = all cycle rounds, phase 2 = all address rounds)",
@@ -244,8 +288,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
                 reason: "a RAM read-write window names an absent device",
             })?;
             let (trace, _) = session_window_residency(device, session, witness, cycles, window)?;
-            let rows =
-                device_rows::DeviceRamRows::from_device(&trace, 1usize << log_k, window.len)?;
+            let rows = DeviceRamRows::from_device(&trace, 1usize << log_k, window.len)?;
             cycle_shards.push(CycleShard {
                 ordinal,
                 matrix: rows.matrix(device, gamma)?,
@@ -259,10 +302,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
                 )?,
             });
         }
-        let val_init = require_fr_slice(
-            &witness.oracle_table(JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamValInit))?,
-        )?
-        .to_vec();
+        let val_init = initial_memory(witness, cycles, 1usize << log_k)?;
         if val_init.len() != 1usize << log_k {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM initial-state table does not span the address domain",
@@ -271,6 +311,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
 
         Ok(Box::new(RamReadWriteKernel {
             context,
+            address_first: None,
             relation: relation.clone(),
             log_t,
             log_k,
@@ -286,19 +327,105 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
     }
 }
 
+fn initial_memory<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    addresses: usize,
+) -> Result<Vec<Fr>, KernelError<F>> {
+    use jolt_witness::{WitnessBundle, WitnessError};
+    let mut initial = witness.oracle_table(JoltPolynomialId::Virtual(
+        JoltVirtualPolynomial::RamValFinal,
+    ))?;
+    if initial.len() != addresses {
+        return Err(KernelError::InvariantViolation {
+            reason: "RAM final-state table has the wrong address domain",
+        });
+    }
+    let mut seen = vec![false; addresses];
+    witness.visit_chunks(0..cycles, 1 << 14, &mut |rows, _, env| {
+        for row in rows {
+            let access = RamReadWriteWitness::from_row(row, None, env)?;
+            let Some(address) = access.address.0 else {
+                continue;
+            };
+            let address =
+                usize::try_from(address).map_err(|_| WitnessError::InvalidWitnessData {
+                    label: "CUDA initial RAM",
+                    reason: "RAM address exceeds usize".to_owned(),
+                })?;
+            let visited =
+                seen.get_mut(address)
+                    .ok_or_else(|| WitnessError::InvalidWitnessData {
+                        label: "CUDA initial RAM",
+                        reason: "RAM access exceeds the address domain".to_owned(),
+                    })?;
+            if !*visited {
+                initial[address] = F::from_u64(access.read_value.0);
+                *visited = true;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(require_fr_slice(&initial)?.to_vec())
+}
+
+fn prepare_address_first<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, RamReadWriteChecking<F>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>> {
+    let context = require_context()?;
+    let relation = inputs.relation;
+    let log_t = relation.dimensions().log_t();
+    let log_k = relation.ram_log_k();
+    let cycles = 1usize << log_t;
+    let window = CycleWindow {
+        start: 0,
+        len: cycles,
+    };
+    let (trace, _) = session_window_residency(context, session, witness, cycles, &window)?;
+    let rows = DeviceRamRows::from_device(&trace, 1usize << log_k, cycles)?;
+    let val_init = initial_memory(witness, cycles, 1usize << log_k)?;
+    let state = AddressFirst::new(
+        context,
+        rows.matrix(context, require_fr(inputs.challenges.gamma)?)?,
+        rows.inc(context)?,
+        &val_init,
+        relation.product_tau_low(),
+        inputs.challenges.gamma,
+    )?;
+    Ok(Box::new(RamReadWriteKernel {
+        context,
+        address_first: Some(state),
+        relation: relation.clone(),
+        log_t,
+        log_k,
+        cycle: None,
+        address: None,
+        inc: None,
+        eq: DeviceSplitEq::new(context, &[], BindingOrder::LowToHigh)?,
+        merged_eq: None,
+        val_init: Vec::new(),
+        finals: None,
+        rounds_bound: 0,
+    }))
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use super::device_rows::DeviceRamRows;
+    use super::witness::RamReadWriteWitness;
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial,
     };
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_program::execution::{RamAccess, RamRead, RamWrite, TraceRow};
+    use jolt_field::{Fr, Ring};
+    use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RamRead, RamWrite};
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteChecking, RamReadWriteInputClaims,
     };
@@ -320,6 +447,7 @@ mod tests {
         ra: Vec<Fr>,
         inc: Vec<Fr>,
         val_init: Vec<Fr>,
+        val_final: Vec<Fr>,
     }
 
     fn fixture(seed: u64) -> Fixture {
@@ -372,10 +500,12 @@ mod tests {
                 RamAccess::NoOp => {}
             }
 
-            rows.push(TraceRow {
-                ram_access: access,
-                ..TraceRow::default()
-            });
+            rows.push(crate::cuda::common::testing::synthetic_row(
+                Default::default(),
+                Default::default(),
+                access,
+                1,
+            ));
         }
 
         Fixture {
@@ -384,6 +514,7 @@ mod tests {
             ra,
             inc,
             val_init,
+            val_final: state.into_iter().map(Fr::from_u64).collect(),
         }
     }
 
@@ -394,18 +525,16 @@ mod tests {
         };
         let plane = witness(7);
         let cycles = 1usize << LOG_T;
-        let rows: Vec<super::witness::RamReadWriteWitness> =
+        let rows: Vec<RamReadWriteWitness> =
             jolt_witness::collect_bundles(&plane, cycles).expect("reference RAM rows");
-        let expected = super::device_rows::DeviceRamRows::upload(context, &rows)
-            .expect("host-encoded RAM rows");
+        let expected = DeviceRamRows::upload(context, &rows).expect("host-encoded RAM rows");
 
         let mut session = ProofSession::default();
         let trace =
             crate::cuda::witness::session_device_trace::<Fr>(context, &mut session, &plane, cycles)
                 .expect("device residency");
-        let got =
-            super::device_rows::DeviceRamRows::from_device(&trace, 1usize << RAM_LOG_K, cycles)
-                .expect("device-gathered RAM rows");
+        let got = DeviceRamRows::from_device(&trace, 1usize << RAM_LOG_K, cycles)
+            .expect("device-gathered RAM rows");
 
         let expected_address = context.download_u32(expected.address()).expect("download");
         assert!(
@@ -455,6 +584,13 @@ mod tests {
             .expect("insert ram_val_init");
         backend
             .insert(
+                JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamValFinal),
+                Shape::new(RAM_LOG_K, PolynomialEncoding::Dense),
+                f.val_final,
+            )
+            .expect("insert RAM final values");
+        backend
+            .insert(
                 JoltPolynomialId::Committed(JoltCommittedPolynomial::RamInc),
                 Shape::new(LOG_T, PolynomialEncoding::Dense),
                 f.inc,
@@ -473,7 +609,7 @@ mod tests {
             let mut writes = 0usize;
 
             for (cycle, row) in f.rows.iter().enumerate() {
-                let touched = match row.ram_access {
+                let touched = match row.ram_access() {
                     RamAccess::Read(read) => {
                         let word = (read.address / 8) as usize;
                         assert_eq!(

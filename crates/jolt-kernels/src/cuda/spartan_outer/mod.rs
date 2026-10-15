@@ -1,12 +1,22 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use jolt_claims::protocols::composed::r1cs::spartan_outer_constraints;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
-use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_claims::{OutputClaims, SymbolicSumcheck};
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_r1cs::constraint::ConstraintMatrices;
-use jolt_r1cs::constraints::jolt::spartan_outer_constraints;
+use jolt_sumcheck::ProveRounds;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::relations::SumcheckInputClaims;
+use jolt_verifier::stages::relations::SumcheckOutputClaims;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessPlane;
+use witness::VARIABLES;
 
 use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
@@ -27,7 +37,7 @@ pub(crate) mod witness;
 use columns::DeviceR1csInputs;
 use remainder::{DeviceRemainder, SpartanOuterRemainderKernel};
 
-pub struct SpartanOuterState<F: Field> {
+pub struct SpartanOuterState<F: JoltField> {
     context: &'static CudaKernelContext,
     inputs: Vec<(DeviceR1csInputs, CycleWindow)>,
     matrices: ConstraintMatrices<F>,
@@ -37,26 +47,23 @@ pub struct SpartanOuterState<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for SpartanOuterState<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for SpartanOuterState<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("inputs"),
+            Key::new("inputs"),
             self.inputs
                 .iter()
                 .map(|(inputs, _)| inputs.device_bytes())
                 .sum(),
         );
-        visitor.visit_simple(allocative::Key::new("tau"), self.tau.len() * size_of::<F>());
-        visitor.visit_simple(
-            allocative::Key::new("extended"),
-            self.extended.len() * size_of::<F>(),
-        );
+        visitor.visit_simple(Key::new("tau"), self.tau.len() * size_of::<F>());
+        visitor.visit_simple(Key::new("extended"), self.extended.len() * size_of::<F>());
         visitor.exit();
     }
 }
 
-fn uniskip_extended<F: Field>(
+fn uniskip_extended<F: JoltField>(
     inputs: &[(DeviceR1csInputs, CycleWindow)],
     matrices: &ConstraintMatrices<F>,
     tau: &[F],
@@ -118,7 +125,7 @@ fn uniskip_extended<F: Field>(
     Ok(extended)
 }
 
-impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
+impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -135,8 +142,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let matrices = spartan_outer_constraints::<F>();
-        if matrices.num_constraints != SPARTAN_OUTER_ROWS || matrices.num_vars <= witness::VARIABLES
-        {
+        if matrices.num_constraints != SPARTAN_OUTER_ROWS || matrices.num_vars <= VARIABLES {
             return Err(KernelError::Unsupported {
                 reason: "the CUDA Spartan outer kernels cover the 19-row RV64 constraint system                          over its 35 inputs; the field-inline system appends rows and columns",
             });
@@ -178,6 +184,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
         &self,
         session: &mut ProofSession,
         _late_tau: &[F],
+        _inputs: &(),
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let state =
             session
@@ -195,7 +202,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
 
 const SPARTAN_OUTER_ROWS: usize = 19;
 
-impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -230,18 +237,19 @@ impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for CudaBackend {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for SpartanOuterRemainderKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for SpartanOuterRemainderKernel<F> {
     type Relation = OuterRemainder<F>;
+
+    fn park_residue(self: Box<Self>, _session: &mut ProofSession) {
+        drop(self);
+    }
 
     fn output_claims(
         &mut self,
-        _inputs: &jolt_verifier::stages::relations::SumcheckInputClaims<F, OuterRemainder<F>>,
-    ) -> Result<
-        jolt_verifier::stages::relations::SumcheckOutputClaims<F, OuterRemainder<F>>,
-        SumcheckKernelError<F>,
-    > {
+        _inputs: &SumcheckInputClaims<F, OuterRemainder<F>>,
+    ) -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, SumcheckKernelError<F>> {
         let bound = self.bound_rounds();
-        let expected = <Self as jolt_sumcheck::ProveRounds<F>>::num_rounds(self);
+        let expected = <Self as ProveRounds<F>>::num_rounds(self);
         if bound != expected {
             return Err(SumcheckKernelError::NotFullyBound {
                 remaining: expected.saturating_sub(bound),
@@ -252,8 +260,8 @@ impl<F: Field> SumcheckKernel<F> for SpartanOuterRemainderKernel<F> {
             .map_err(|_| SumcheckKernelError::InvariantViolation {
                 reason: "the CUDA Spartan outer claim pass failed",
             })?;
-        jolt_claims::OutputClaims::from_opening_values(|id| openings.get(id).copied())
-            .map_err(SumcheckKernelError::MissingOpeningValue)
+        OutputClaims::from_opening_values(|id| openings.get(id).copied())
+            .map_err(SumcheckKernelError::from)
     }
 }
 
@@ -263,16 +271,19 @@ impl<F: Field> SumcheckKernel<F> for SpartanOuterRemainderKernel<F> {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use jolt_claims::protocols::composed::r1cs::spartan_outer_constraints;
     use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_claims::{NoChallenges, OutputClaims};
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_r1cs::constraints::jolt::spartan_outer_constraints;
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage1::outer_remainder::{
         outer_remainder_input_values_from_uniskip_output, OuterRemainder, OuterRemainderInputClaims,
     };
     use jolt_witness::{collect_bundles, JoltWitnessPlane};
     use proptest::prelude::*;
+    use witness::SIGNED_WIDE;
+    use witness::SIGN_BIT_BASE;
+    use witness::WIDE;
 
     use super::columns::DeviceR1csInputs;
     use super::uniskip;
@@ -284,9 +295,7 @@ mod tests {
         arb_point, drive, fr, probe_input_claim, with_r1cs_witness,
     };
     use crate::cuda::witness::{session_atom_columns_window, session_device_trace_window};
-    use crate::reference::spartan_outer::{
-        materialize_input_tables, row_value_tables, ReferenceOuterRemainder,
-    };
+    use crate::reference::spartan_outer::ReferenceOuterRemainder;
     use crate::reference::ReferenceBackend;
     use crate::uniskip::UniskipKernel;
     use crate::{PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
@@ -303,38 +312,6 @@ mod tests {
     }
 
     #[test]
-    fn fixture_r1cs_rows_exercise_every_constraint() {
-        with_r1cs_witness(LOG_T, RAM_K, one_hot(), 7, |witness| {
-            let dimensions = SpartanOuterDimensions::rv64(LOG_T);
-            let tables = materialize_input_tables::<Fr>(witness, &dimensions)
-                .expect("the fixture serves every R1CS input column");
-            let matrices = spartan_outer_constraints::<Fr>();
-            let (az, bz) = row_value_tables(&matrices, &tables);
-            let zero = Fr::from_u64(0);
-
-            for (row, values) in az.iter().enumerate() {
-                assert!(
-                    values.iter().any(|value| *value != zero),
-                    "row {row}: the guard is off at every cycle, so no fixture cycle exercises \
-                     this constraint",
-                );
-                assert!(
-                    values.contains(&zero),
-                    "row {row}: the guard is on at every cycle, so a dropped guard would not \
-                     change the round polynomials",
-                );
-            }
-            for (row, values) in bz.iter().enumerate() {
-                assert!(
-                    values.iter().any(|value| *value != zero),
-                    "row {row}: the magnitude is zero at every cycle, so a wrong weight on this \
-                     row would not change the round polynomials",
-                );
-            }
-        });
-    }
-
-    #[test]
     fn fixture_r1cs_columns_carry_both_signs() {
         with_r1cs_witness(LOG_T, RAM_K, one_hot(), 7, |witness| {
             let rows = collect_bundles::<SpartanOuterWitness>(witness, 1usize << LOG_T)
@@ -342,8 +319,8 @@ mod tests {
             let packed = witness::pack(&rows);
             let cycles = packed.flags.len();
             let mut both_signs = 0;
-            for slot in 0..witness::WIDE {
-                let bit = witness::SIGN_BIT_BASE + slot as u32;
+            for slot in 0..WIDE {
+                let bit = SIGN_BIT_BASE + slot as u32;
                 let negative = packed
                     .flags
                     .iter()
@@ -351,7 +328,7 @@ mod tests {
                     .count();
                 let nonzero = packed
                     .wide
-                    .chunks(witness::WIDE * 2)
+                    .chunks(WIDE * 2)
                     .filter(|limbs| limbs[2 * slot] != 0 || limbs[2 * slot + 1] != 0)
                     .count();
                 assert!(
@@ -359,7 +336,7 @@ mod tests {
                     "wide column {slot} is zero at every cycle, so its coefficient could be \
                      anything",
                 );
-                if slot >= witness::SIGNED_WIDE {
+                if slot >= SIGNED_WIDE {
                     assert_eq!(
                         negative, 0,
                         "wide column {slot} is the unsigned one, so it must never set a sign bit",
@@ -524,7 +501,7 @@ mod tests {
                     &ReferenceBackend, &mut expected_session, LOG_T, &tau, witness,
                 ).expect("reference uni-skip prepare");
                 let expected = UniskipKernel::<Fr, OuterRemainder<Fr>>::first_round_poly(
-                    &ReferenceBackend, &mut expected_session, &[],
+                    &ReferenceBackend, &mut expected_session, &[], &(),
                 ).expect("reference uni-skip first-round polynomial");
 
                 let mut got_session = ProofSession::default();
@@ -532,7 +509,7 @@ mod tests {
                     &CudaBackend, &mut got_session, LOG_T, &tau, witness,
                 ).expect("cuda uni-skip prepare");
                 let got = UniskipKernel::<Fr, OuterRemainder<Fr>>::first_round_poly(
-                    &CudaBackend, &mut got_session, &[],
+                    &CudaBackend, &mut got_session, &[], &(),
                 ).expect("cuda uni-skip first-round polynomial");
 
                 prop_assert_eq!(

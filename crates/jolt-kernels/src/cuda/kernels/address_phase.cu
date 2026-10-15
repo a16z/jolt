@@ -1,9 +1,8 @@
 #define AP_CHUNK_LEN 8
 #define AP_CHUNK_SIZE 256
 #define AP_RAF_LANES 6
-#define AP_MAX_SUFFIXES 4
+#define AP_MAX_SUFFIXES 5
 #define AP_HINT_POINTS 2
-#define AP_PREFIX_COUNT 46
 #define AP_NO_TABLE 0xFFFFFFFFu
 #define AP_SKIP 0xFFFFFFFFu
 
@@ -348,9 +347,10 @@ __device__ __forceinline__ void ap_extension(const u64 *__restrict__ column,
 
 extern "C" __global__ void ap_round_message_hinted_kernel(
     const u64 *__restrict__ prefixes,
+    unsigned int prefix_count,
     const unsigned int *__restrict__ prefix_ids,
     const unsigned int *__restrict__ suffix_slots,
-    const unsigned int *__restrict__ scales,
+    const u64 *__restrict__ scales,
     const unsigned int *__restrict__ term_offsets,
     const unsigned int *__restrict__ term_counts,
     const u64 *__restrict__ suffixes,
@@ -393,15 +393,15 @@ extern "C" __global__ void ap_round_message_hinted_kernel(
                         if (prefix != 0xFFFFFFFFu) {
                             u64 p[LIMBS], product[LIMBS];
                             unsigned long long slot =
-                                ((unsigned long long)(c == 0u ? 0u : 1u) * AP_PREFIX_COUNT +
+                                ((unsigned long long)(c == 0u ? 0u : 1u) * prefix_count +
                                  prefix) * half + b;
                             load4(prefixes + slot * LIMBS, p);
                             fr_mul(value, p, product);
                             store4(value, product);
                         }
-                        if (scales[term] != 0u) {
+                        {
                             u64 s[LIMBS], scaled[LIMBS];
-                            cmb_scale(scales[term], s);
+                            load4(scales + (unsigned long long)term * LIMBS, s);
                             fr_mul(value, s, scaled);
                             store4(value, scaled);
                         }

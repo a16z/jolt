@@ -1,7 +1,6 @@
 use core::slice;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-// JOLT in ASCII padded with 1s
 const SEED: u64 = 0x11114A4F4C541111;
 static mut RNG: Option<StdRng> = None;
 
@@ -24,7 +23,7 @@ pub unsafe fn sys_rand(dest: *mut u8, len: usize) {
         // SAFETY: Direct field access, no shared reference created
         match RNG {
             Some(ref mut rng) => rng.fill_bytes(dest),
-            None => unreachable!(), // just in case
+            None => unreachable!(),
         }
     }
 }

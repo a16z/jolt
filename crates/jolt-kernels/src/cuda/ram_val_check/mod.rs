@@ -1,9 +1,10 @@
+use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::BindingOrder;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
@@ -26,7 +27,7 @@ use crate::{
 
 pub(crate) mod witness;
 
-impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -90,12 +91,12 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
         Ok(Box::new(DenseProductKernel {
             state: ShardedDenseProduct::new(states)?,
             relation: relation.clone(),
-            field: core::marker::PhantomData,
+            field: PhantomData,
         }))
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamValCheck<F>> {
+impl<F: JoltField> SumcheckKernel<F> for DenseProductKernel<F, RamValCheck<F>> {
     type Relation = RamValCheck<F>;
 
     fn output_claims(
@@ -143,7 +144,11 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamValCheck<F>> {
                 reason: "CUDA RAM value-check has no split-LT factor",
             })?;
         if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+            return Err(SumcheckKernelError::DerivedTableDrift {
+                id: id.into(),
+                expected,
+                got,
+            });
         }
         Ok(())
     }
@@ -163,13 +168,14 @@ mod tests {
         JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial, TraceDimensions,
     };
     use jolt_claims::{OutputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
     use jolt_witness::{
-        collect_bundles, FixedBackend, JoltWitnessOracle, JoltWitnessPlane, OneHotSource,
-        PolynomialEncoding, Shape,
+        collect_bundles, FixedBackend, JoltWitnessOracle, JoltWitnessPlane, PolynomialEncoding,
+        Shape,
     };
     use proptest::prelude::*;
+    use std::collections::BTreeSet;
 
     use super::{witness::RamValCheckWitness, CudaBackend};
     use crate::cuda::common::context::shared_context;
@@ -255,8 +261,7 @@ mod tests {
                 rows.iter().any(|row| row.inc.0 == 0),
                 "seed {seed}: no cycle carries an idle increment",
             );
-            let distinct: std::collections::BTreeSet<u64> =
-                rows.iter().filter_map(|row| row.address.0).collect();
+            let distinct: BTreeSet<u64> = rows.iter().filter_map(|row| row.address.0).collect();
             assert!(
                 distinct.len() > 1,
                 "seed {seed}: every hot cycle targets the same address, so the address column \

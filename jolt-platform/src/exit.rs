@@ -1,7 +1,3 @@
-//! Exit functionality for Jolt guests
-//!
-//! Provides clean program termination that the Jolt emulator can detect.
-
 /// Exit the program.
 ///
 /// Enters an infinite loop (`j .`) which the Jolt emulator detects via PC stall

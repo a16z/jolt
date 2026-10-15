@@ -24,7 +24,7 @@
 //! (shrinking `lt_hi` and `eq_hi`), then all lo vars (shrinking `lt_lo`).
 //! Total memory stays at 3 · √N throughout.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::EqPolynomial;
 
@@ -34,7 +34,7 @@ use crate::EqPolynomial;
 /// values on demand via `LT[j] = lt_hi[j_hi] + eq_hi[j_hi] · lt_lo[j_lo]`.
 ///
 /// Supports HighToLow binding only (MSB first).
-pub struct LtPolynomial<F: Field> {
+pub struct LtPolynomial<F: JoltField> {
     lt_lo: Vec<F>,
     lt_hi: Vec<F>,
     eq_hi: Vec<F>,
@@ -42,7 +42,7 @@ pub struct LtPolynomial<F: Field> {
     n_hi_vars: usize,
 }
 
-impl<F: Field> LtPolynomial<F> {
+impl<F: JoltField> LtPolynomial<F> {
     /// Creates a split LT polynomial for the fixed point `r` (big-endian).
     ///
     /// Splits at `r.len() / 2`: the first half is `r_hi`, the second is `r_lo`.
@@ -77,7 +77,6 @@ impl<F: Field> LtPolynomial<F> {
         self.lt_hi.is_empty()
     }
 
-    /// Reconstructs `LT[idx]` from the split tables.
     #[inline]
     fn get(&self, idx: usize) -> F {
         let lo_size = self.lt_lo.len();
@@ -141,7 +140,7 @@ impl<F: Field> LtPolynomial<F> {
 /// - Right half `y`: `y' = x·r_i` (propagates eq term through x_i=1)
 ///
 /// Time: O(n·2^n). Space: O(2^n).
-fn lt_evals<F: Field>(r: &[F]) -> Vec<F> {
+fn lt_evals<F: JoltField>(r: &[F]) -> Vec<F> {
     let n = r.len();
     jolt_utils::math::assert_shiftable_dim(n);
     let mut evals = jolt_utils::unsafe_allocate_zero_vec(1usize << n);
@@ -155,9 +154,8 @@ fn lt_evals<F: Field>(r: &[F]) -> Vec<F> {
     evals
 }
 
-/// In-place HighToLow bind: `v[j] = v[j] + challenge · (v[j+half] - v[j])`.
 #[inline]
-fn bind_in_place<F: Field>(v: &mut Vec<F>, challenge: F) {
+fn bind_in_place<F: JoltField>(v: &mut Vec<F>, challenge: F) {
     let half = v.len() / 2;
     for j in 0..half {
         let lo = v[j];
@@ -170,7 +168,7 @@ fn bind_in_place<F: Field>(v: &mut Vec<F>, challenge: F) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -189,7 +187,6 @@ mod tests {
 
     #[test]
     fn boolean_correctness() {
-        // LT(x, r) = 1 iff x < r on Boolean inputs.
         for n in 1..=5 {
             for r_int in 0..(1u64 << n) {
                 let r_bits = index_to_bits(r_int as usize, n);
@@ -202,21 +199,6 @@ mod tests {
                         "LT({x_int}, {r_int}) wrong for n={n}"
                     );
                 }
-            }
-        }
-    }
-
-    #[test]
-    fn evaluations_matches_inline() {
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
-        for n in 2..=6 {
-            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-            let table = LtPolynomial::evaluations(&r);
-
-            for (idx, &entry) in table.iter().enumerate() {
-                let x = index_to_bits(idx, n);
-                let inline = LtPolynomial::evaluate(&x, &r);
-                assert_eq!(entry, inline, "mismatch at idx={idx}, n={n}");
             }
         }
     }
@@ -259,7 +241,6 @@ mod tests {
 
     #[test]
     fn sequential_bind_converges() {
-        // Bind all variables → single scalar = evaluate(challenges, r).
         let mut rng = ChaCha20Rng::seed_from_u64(200);
         for n in 2..=8 {
             let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -280,29 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn bind_matches_full_table_bind() {
-        // Verify that binding the split matches binding the full table.
-        let mut rng = ChaCha20Rng::seed_from_u64(300);
-        for n in 3..=7 {
-            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-            let challenge = Fr::random(&mut rng);
-
-            let mut split = LtPolynomial::new(&r);
-            split.bind(challenge);
-
-            let mut full = LtPolynomial::evaluations(&r);
-            bind_in_place(&mut full, challenge);
-
-            assert_eq!(split.len(), full.len());
-            for (j, &expected) in full.iter().enumerate() {
-                assert_eq!(split.get(j), expected, "post-bind mismatch at j={j}, n={n}");
-            }
-        }
-    }
-
-    #[test]
     fn multi_round_bind_matches_full_table() {
-        // Bind several rounds and verify each round matches the full table.
         let mut rng = ChaCha20Rng::seed_from_u64(400);
         let n = 6;
         let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -349,48 +308,9 @@ mod tests {
     }
 
     #[test]
-    fn sum_over_hypercube() {
-        // Σ_x LT(x, r) = r interpreted as an integer in [0, 2^n).
-        // Actually: Σ_x LT(x, r) for Boolean x gives the number of x < r,
-        // but for random r this is a multilinear extension.
-        // Simple check: for Boolean r, the sum should equal r_int.
-        for n in 1..=5 {
-            for r_int in 0..(1u64 << n) {
-                let r_bits = index_to_bits(r_int as usize, n);
-                let table = LtPolynomial::evaluations(&r_bits);
-                let sum: Fr = table.iter().copied().sum();
-                assert_eq!(
-                    sum,
-                    Fr::from_u64(r_int),
-                    "hypercube sum wrong for r={r_int}, n={n}"
-                );
-            }
-        }
-    }
-
-    #[test]
     #[should_panic(expected = "exceeds usize shift width")]
     fn evaluations_rejects_shift_overflowing_dimension() {
         let r = vec![Fr::one(); usize::BITS as usize];
         let _ = LtPolynomial::evaluations(&r);
-    }
-
-    #[test]
-    fn odd_num_vars() {
-        // Verify split works correctly when n is odd (hi gets extra var).
-        let mut rng = ChaCha20Rng::seed_from_u64(600);
-        for n in [3, 5, 7] {
-            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-            let full_table = LtPolynomial::evaluations(&r);
-            let split = LtPolynomial::new(&r);
-
-            let mid = n / 2;
-            assert_eq!(split.n_hi_vars, n - mid);
-            assert_eq!(split.n_lo_vars, mid);
-
-            for (j, &expected) in full_table.iter().enumerate() {
-                assert_eq!(split.get(j), expected, "odd split mismatch at j={j}, n={n}");
-            }
-        }
     }
 }

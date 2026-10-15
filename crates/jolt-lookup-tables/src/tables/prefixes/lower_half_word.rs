@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -7,7 +7,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum LowerHalfWordPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for LowerHalfWordPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for LowerHalfWordPrefix {
     fn default_checkpoint() -> F {
         F::zero()
     }

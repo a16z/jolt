@@ -1,6 +1,5 @@
 use super::GuestConfig;
 
-/// Fibonacci guest: computes fib(n).
 pub struct Fibonacci(pub u32);
 
 impl Default for Fibonacci {

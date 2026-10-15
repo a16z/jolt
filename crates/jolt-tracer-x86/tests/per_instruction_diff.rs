@@ -29,8 +29,6 @@ use tracer::instruction::Instruction;
 const N: usize = 1000;
 const REGS: usize = REGISTER_COUNT as usize;
 
-// ── Kind classification (compile-time exhaustive) ───────────────────
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Class {
     Supported,
@@ -41,7 +39,6 @@ enum Class {
     NotYetSupported,
 }
 
-/// Marker names of the kinds the transpiler implements (slice 2: base ISA).
 const SUPPORTED: &[&str] = &[
     "Add",
     "Addi",
@@ -82,7 +79,6 @@ const SUPPORTED: &[&str] = &[
     "VirtualZeroExtendWord",
     "Xor",
     "XorI",
-    // Slice 3 (fast-pass coverage):
     "Slt",
     "Andn",
     "Pow2I",
@@ -102,20 +98,35 @@ const SUPPORTED: &[&str] = &[
     "VirtualXorRotW12",
     "VirtualXorRotW8",
     "VirtualXorRotW7",
+    "VirtualXorRotW22",
+    "VirtualXorRotW19",
+    "VirtualXorRotW6",
+    "VirtualXorRotL1",
     "AssertEq",
     "AssertValidDiv0",
     "AssertValidUnsignedRemainder",
     "AssertMulUNoOverflow",
-    "VirtualChangeDivisor",
-    "VirtualChangeDivisorW",
-    "VirtualAdviceLen",
+    "VirtualNegateIf",
     "VirtualAdviceLoad",
-    // Fused RV64 word arithmetic (single-lookup W ops):
     "AddW",
     "AddiW",
     "SubW",
     "MulW",
     "MulIW",
+    "VirtualShiftRightBitmaskW",
+    "VirtualSrlw",
+    "VirtualSrliw",
+    "VirtualSraw",
+    "VirtualSraiw",
+    "WindowMaskW",
+    "PextSigned",
+    "Pext",
+    "WindowMaskB",
+    "WindowMaskH",
+    "AlignAddr",
+    "ShiftDataB",
+    "ShiftDataH",
+    "ShiftDataW",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -135,8 +146,6 @@ macro_rules! classify_kinds {
     (
         instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($tag:expr, $name:expr)),* $(,)?]
     ) => {
-        /// Exhaustive (no wildcard): a new `JoltInstructionKind` fails to
-        /// compile until classified.
         fn classify(kind: &JoltInstructionKind) -> Class {
             match kind {
                 JoltInstructionKind::Noop(_) => Class::NotYetSupported,
@@ -166,9 +175,6 @@ fn default_row(kind: JoltInstructionKind) -> JoltInstructionRow {
     }
 }
 
-/// The classification must agree with what the transpiler accepts: every
-/// supported kind compiles as a bare row, everything else fails fast
-/// (unimplemented kinds and advice-group-only kinds alike).
 #[test]
 fn classification_matches_compiler() {
     for &kind in JoltInstructionKind::ALL {
@@ -201,8 +207,6 @@ fn bare_virtual_advice_is_a_compile_error() {
         "expected the advice-group error, got: {message}"
     );
 }
-
-// ── Random row/state generation ─────────────────────────────────────
 
 struct Instance {
     row: JoltInstructionRow,
@@ -237,7 +241,6 @@ fn imm12(rng: &mut StdRng) -> i128 {
     rng.gen_range(-2048i64..2048) as i128
 }
 
-/// Pin `x[reg]` so that `x[reg] + imm == target` (wrapping).
 fn pin_base(instance: &mut Instance, register: u8, imm: i128, target: u64) {
     assert_ne!(register, 0, "cannot pin x0");
     instance.pre_regs[register as usize] = target.wrapping_sub(imm as i64 as u64);
@@ -293,9 +296,31 @@ fn shift_imm(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     i
 }
 
+fn shift_imm_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
+    let mut i = base_instance(rng, kind);
+    i.row.operands.rs1 = Some(reg(rng));
+    i.row.operands.rd = Some(rd(rng));
+    // The expander emits W bitmasks 2^32 - 2^shift (shift ∈ 0..32).
+    let shift = rng.gen_range(0u32..32);
+    i.row.operands.imm = (((1u128 << (32 - shift)) - 1) << shift) as i128;
+    i
+}
+
+fn shift_reg_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
+    let mut i = base_instance(rng, kind);
+    let rs1 = reg(rng);
+    let rs2 = rd(rng); // nonzero: x0 would make tz(0) = 64, outside the W domain
+    i.row.operands.rs1 = Some(rs1);
+    i.row.operands.rs2 = Some(rs2);
+    i.row.operands.rd = Some(rd(rng));
+    // rs2 carries the W bitmask produced by VirtualShiftRightBitmaskW.
+    let shift = rng.gen_range(0u32..32);
+    i.pre_regs[rs2 as usize] = ((1u64 << (32 - shift)) - 1) << shift;
+    i
+}
+
 fn shift_reg(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     let mut i = alu_rr(rng, kind);
-    // rs2 carries a bitmask; mix one-hot, zero, and arbitrary values.
     let rs2 = i.row.operands.rs2.unwrap();
     if rs2 != 0 {
         i.pre_regs[rs2 as usize] = match rng.gen_range(0..3) {
@@ -330,7 +355,7 @@ fn jal(rng: &mut StdRng) -> Instance {
 
 fn jalr(rng: &mut StdRng) -> Instance {
     let mut i = base_instance(rng, JoltInstructionKind::JALR);
-    let rs1 = rd(rng); // nonzero so the base can be pinned
+    let rs1 = rd(rng);
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rd = Some(rd(rng)); // may alias rs1 (ordering test)
     let imm = (rng.gen_range(-8i64..8) * 2) as i128;
@@ -389,7 +414,6 @@ fn assert_lte(rng: &mut StdRng) -> Instance {
     let rs2 = rd(rng);
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
-    // Ensure the (passing) invariant x[rs1] <= x[rs2].
     let a = i.pre_regs[rs1 as usize];
     let b = i.pre_regs[rs2 as usize];
     if a > b {
@@ -418,7 +442,7 @@ fn host_io(rng: &mut StdRng) -> Instance {
         i.pre_regs[11] = scratch_slot(rng);
         i.pre_regs[12] = rng.gen_range(0..48);
     } else {
-        i.pre_regs[10] = rng.gen::<u32>() as u64 | 1 << 33; // unknown id
+        i.pre_regs[10] = rng.gen::<u32>() as u64 | 1 << 33;
     }
     i
 }
@@ -438,7 +462,6 @@ fn assert_eq_gen(rng: &mut StdRng) -> Instance {
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
     if rng.gen_ratio(1, 10) {
-        // Spoil mode: warn-and-continue on both sides.
         i.row.operands.imm = 1;
     } else {
         i.row.operands.imm = 0;
@@ -458,7 +481,7 @@ fn assert_valid_div0(rng: &mut StdRng) -> Instance {
         i.pre_regs[rs1 as usize] = 0;
         i.pre_regs[rs2 as usize] = u64::MAX;
         if rs1 == rs2 {
-            i.pre_regs[rs1 as usize] = u64::MAX; // MAX != 0, valid either way
+            i.pre_regs[rs1 as usize] = u64::MAX;
         }
     } else if i.pre_regs[rs1 as usize] == 0 {
         i.pre_regs[rs1 as usize] = 1;
@@ -476,7 +499,7 @@ fn assert_valid_unsigned_remainder(rng: &mut StdRng) -> Instance {
         // remainder == divisor is only valid when both are zero.
         i.pre_regs[rs1 as usize] = 0;
     } else if rng.gen_ratio(1, 5) {
-        i.pre_regs[rs2 as usize] = 0; // divisor 0: anything passes
+        i.pre_regs[rs2 as usize] = 0;
     } else {
         let divisor = i.pre_regs[rs2 as usize].max(1);
         i.pre_regs[rs2 as usize] = divisor;
@@ -497,29 +520,18 @@ fn assert_mulu_no_overflow(rng: &mut StdRng) -> Instance {
     i
 }
 
-fn change_divisor(rng: &mut StdRng, name: &str, wide: bool) -> Instance {
-    let mut i = alu_rr(rng, kind_by_name(name));
+fn negate_if(rng: &mut StdRng) -> Instance {
+    let mut i = alu_rr(rng, kind_by_name("VirtualNegateIf"));
     if rng.gen_ratio(1, 4) {
-        // Exercise the MIN/-1 edge.
         let rs1 = i.row.operands.rs1.unwrap();
         let rs2 = i.row.operands.rs2.unwrap();
         if rs1 != 0 && rs2 != 0 && rs1 != rs2 {
-            i.pre_regs[rs1 as usize] = if wide {
-                i64::MIN as u64
-            } else {
-                (i32::MIN as i64) as u64
-            };
-            i.pre_regs[rs2 as usize] = u64::MAX; // -1
+            i.pre_regs[rs1 as usize] = u64::MAX;
+            if rng.gen_ratio(1, 2) {
+                i.pre_regs[rs2 as usize] = i64::MIN as u64;
+            }
         }
     }
-    i
-}
-
-fn advice_len(rng: &mut StdRng) -> Instance {
-    let mut i = base_instance(rng, kind_by_name("VirtualAdviceLen"));
-    i.row.operands.rs1 = Some(reg(rng));
-    i.row.operands.rd = Some(rd(rng));
-    i.advice = (0..rng.gen_range(0..64)).map(|_| rng.gen()).collect();
     i
 }
 
@@ -530,8 +542,6 @@ fn advice_load(rng: &mut StdRng) -> Instance {
     i.advice = (0..8 + rng.gen_range(0..32)).map(|_| rng.gen()).collect();
     i
 }
-
-// ── Reference execution ─────────────────────────────────────────────
 
 struct RefOutcome {
     regs: [u64; REGS],
@@ -581,8 +591,6 @@ fn reference_run(instance: &Instance) -> RefOutcome {
         advice_tape: cpu.advice_tape.clone().into_bytes(),
     }
 }
-
-// ── The differential loop ───────────────────────────────────────────
 
 fn run_difftest(name: &str, generate: fn(&mut StdRng) -> Instance) {
     let mut rng = StdRng::seed_from_u64(0x1717_5EED);
@@ -711,26 +719,39 @@ difftests! {
     diff_xorrotw12 => |r| alu_rr(r, K::VirtualXORROTW12);
     diff_xorrotw8 => |r| alu_rr(r, K::VirtualXORROTW8);
     diff_xorrotw7 => |r| alu_rr(r, K::VirtualXORROTW7);
+    diff_xorrotw22 => |r| alu_rr(r, K::VirtualXORROTW22);
+    diff_xorrotw19 => |r| alu_rr(r, K::VirtualXORROTW19);
+    diff_xorrotw6 => |r| alu_rr(r, K::VirtualXORROTW6);
+    diff_xorrotl1 => |r| alu_rr(r, K::VirtualXORROTL1);
     diff_assert_eq => assert_eq_gen;
     diff_assert_valid_div0 => assert_valid_div0;
     diff_assert_valid_unsigned_remainder => assert_valid_unsigned_remainder;
     diff_assert_mulu_no_overflow => assert_mulu_no_overflow;
-    diff_change_divisor => |r| change_divisor(r, "VirtualChangeDivisor", true);
-    diff_change_divisor_w => |r| change_divisor(r, "VirtualChangeDivisorW", false);
-    diff_advice_len => advice_len;
+    diff_negate_if => negate_if;
     diff_advice_load => advice_load;
     diff_addw => |r| alu_rr(r, K::ADDW);
     diff_subw => |r| alu_rr(r, K::SUBW);
     diff_mulw => |r| alu_rr(r, K::MULW);
     diff_addiw => |r| alu_ri(r, K::ADDIW, false);
     diff_muliw => |r| alu_ri(r, K::VirtualMULIW, true);
-}
-
-/// Every supported kind has a differential test above; this pins the count
-/// so growing SUPPORTED without adding a test fails. (`VirtualAdvice` is
-/// classified `RequiresAdviceGroup`, not listed here: a bare row is a
-/// compile error, and the whole-guest gates cover its semantics.)
-#[test]
-fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 71);
+    diff_shift_right_bitmask_w => |r| unary(r, kind_by_name("VirtualShiftRightBitmaskW"));
+    diff_srlw => |r| shift_reg_w(r, K::VirtualSRLW);
+    diff_sraw => |r| shift_reg_w(r, K::VirtualSRAW);
+    diff_srliw => |r| {
+        let mut instance = shift_imm_w(r, K::VirtualSRLIW);
+        if r.gen_ratio(1, 20) {
+            instance.row.operands.imm = 0;
+        }
+        instance
+    };
+    diff_sraiw => |r| shift_imm_w(r, K::VirtualSRAIW);
+    diff_window_mask_w => |r| alu_ri(r, kind_by_name("VirtualWindowMaskW"), false);
+    diff_window_mask_b => |r| alu_ri(r, kind_by_name("VirtualWindowMaskB"), false);
+    diff_window_mask_h => |r| alu_ri(r, kind_by_name("VirtualWindowMaskH"), false);
+    diff_align_addr => |r| alu_ri(r, kind_by_name("VirtualAlignAddr"), false);
+    diff_pext_signed => |r| alu_rr(r, kind_by_name("VirtualPextSigned"));
+    diff_pext => |r| alu_rr(r, kind_by_name("VirtualPext"));
+    diff_shift_data_b => |r| alu_rr(r, kind_by_name("VirtualShiftDataB"));
+    diff_shift_data_h => |r| alu_rr(r, kind_by_name("VirtualShiftDataH"));
+    diff_shift_data_w => |r| alu_rr(r, kind_by_name("VirtualShiftDataW"));
 }

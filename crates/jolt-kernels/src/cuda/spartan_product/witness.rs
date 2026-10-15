@@ -182,6 +182,7 @@ pub fn sample_rows(seed: u64, cycles: usize) -> Vec<SpartanProductWitness> {
 
 #[cfg(test)]
 mod tests {
+    use super::SpartanProductWitness;
     use super::{
         sample_rows, BRANCH_BIT, JUMP_BIT, NEXT_IS_NOOP_BIT, SIGN_BIT_BASE,
         VIRTUAL_INSTRUCTION_BIT, WRITE_LOOKUP_OUTPUT_TO_RD_BIT,
@@ -192,7 +193,7 @@ mod tests {
     #[test]
     fn sample_rows_exercise_the_sign_and_wide_paths() {
         let rows = sample_rows(7, CYCLES);
-        let right = |row: &super::SpartanProductWitness| row.right_instruction_input.0;
+        let right = |row: &SpartanProductWitness| row.right_instruction_input.0;
 
         assert!(
             rows.iter().any(|row| right(row) < 0),

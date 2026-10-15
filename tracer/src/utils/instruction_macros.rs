@@ -5,18 +5,18 @@ macro_rules! declare_riscv_instr {
       mask    = $mask:expr,
       match   = $match_:expr,
       format  = $format:ty,
-      ram     = $ram:ty $(,)?
+      registers = $registers:ty,
+      ram     = $ram:ty $(, { $($extra:item)* })? $(,)?
   ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram);
+        $crate::declare_riscv_instr!(@inner $name, $mask, $match_, $format, $registers, $ram $(, { $($extra)* })?);
     };
-    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty) => {
+    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $registers:ty, $ram:ty $(, { $($extra:item)* })?) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,
             pub operands: $format,
             pub virtual_sequence_remaining: Option<u16>,
             pub is_first_in_sequence: bool,
-            /// Set if instruction is C-Type
             pub is_compressed: bool,
         }
 
@@ -25,7 +25,8 @@ macro_rules! declare_riscv_instr {
             const MATCH: u32 = $match_;
 
             type Format = $format;
-            type RAMAccess = $ram;
+            type RegisterState = $registers;
+            type RamAccess = $ram;
 
             fn operands(&self) -> &Self::Format {
                 &self.operands
@@ -74,9 +75,11 @@ macro_rules! declare_riscv_instr {
                 }
             }
 
-            fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RAMAccess) {
+            fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RamAccess) {
                 self.exec(cpu, ram)
             }
+
+            $($($extra)*)?
         }
 
         impl From<$crate::instruction::SourceInstructionRow> for $name {

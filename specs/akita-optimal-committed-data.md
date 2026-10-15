@@ -1,6 +1,6 @@
-# Optimal committed-data form for the packed (Akita) path
+# Historical investigation: optimal Akita committed-data form
 
-> **Status 2026-07-16**: superseded in part by the #1683 distillation
+> **Historical status 2026-07-16**: superseded in part by the #1683 distillation
 > (`specs/akita-1683-distillation.md`): OneHotTrace now commits as the native
 > one-hot group and opens at one common point (no packed union, no
 > reduction sumcheck), K=16 below 2^25 with jolt-owned schedule catalogs.
@@ -136,7 +136,7 @@ Two corrections this table forced on our intuitions:
 | K=2^16 fusion (`log_k_chunk = 16`) | ~4.5 s | ones ×0.52, `n_a`→7 | chunk-65536 preset + regenerated schedules; u16 indices exist upstream |
 | ~~sparse-unit union on de-tiered backend~~ | ~~1–2 s?~~ | small-`num_vars` kernel constant | **measured DEAD below: 72 s commit / 112 s open at 33v** |
 | **committed-symbols mode (the optimal path)** | **~2.8 s stock, ~1 s with a bit-aware backend preset/kernel** | commit the bit-planes (2^23 cells, m ≈ 2^17) via the dense path: per symbol `n_a·D` mults/8 ≈ 144 add-eq vs one-hot's 384 (2.7× stock); unit-norm sizing + narrow-CRT accumulation close the rest | opening gains a degree-9 one-hot-evaluation sumcheck leg + bit-booleanity |
-| multi-group merge of advice/ProgramOneHot (orthogonal) | −0.5–1 s of opens | upstream #275 | protocol plumbing only |
+| grouped opening for advice + direct program objects | implemented | native precommitted-group batch | protocol plumbing only |
 
 ### The committed-symbols co-design, in one paragraph
 
@@ -193,7 +193,7 @@ floor against the measured breakdown (commit 7.5 + open 4.7 + reduction 1.9
 | one-hot accumulate vectorization (NEON, accumulator batching, narrow-CRT) | akita, kernel-only | commit → 2–3.5 s | medium-high (6× over arithmetic floor is measured) |
 | `n_a` sizing at 28v (6 → 5?) under the 138-bit tables | akita, config | ×0.83 on commit, partial on open | unknown — estimator question |
 | open-phase parallelization (~1.5× utilization today) | akita, same proof bytes | open → 1.5–2.5 s | medium |
-| multi-group merge of advice/ProgramOneHot (#275) | jolt plumbing | −0.5–1 s | high |
+| grouped opening for advice + direct program objects | jolt plumbing | implemented | measured by current pipeline |
 | ~~reduction sweep-halving (paired rounds)~~ | jolt | **measured neutral** — the sweep is bound by split-eq table accesses (4/position paired vs 2×2 single), not arithmetic; object-parallel rounds also measured neutral earlier. The reduction window (~1.9 s) is access-bound from every angle | — |
 | PIOP stage polish | jolt | −0.3–0.5 s | medium |
 
@@ -252,8 +252,9 @@ the lattice booleanity / hamming-weight-1 machinery becomes partially
 redundant (~1–2 s candidate), but it reshapes the claim flow feeding the
 leaves — its own iteration.
 
-**Phase 4 — multi-group merge (orthogonal).** Advice/ProgramOneHot into the same
-commitment via upstream #275 (~0.5–1 s of singleton opens).
+**Phase 4 — grouped opening (implemented).** Dense advice, direct bytecode
+chunks, and the program image are precommitted groups of the same native Akita
+opening as `OneHotTrace`.
 
 **Backend co-dev track (parallel, `../akita`):** audited schedule entries
 for the `(23, ~29)` dense keys; NEON on the one-hot accumulate (fallback
@@ -276,37 +277,47 @@ item** (unit-norm preset + narrow-CRT bit kernel + schedule regen); Phase 4
 is jolt plumbing over existing upstream APIs. NEON and the fusion preset
 remain akita-side fallback tracks.
 
-## Current state and code map (for the cleanup phase)
+## Current state and code map
 
-The pipeline today: `OneHotTrace` is one native Akita commitment group of
-uniform row-major `K x T` one-hot columns. Every column opens at the same
-`(cycle || address)` point in one backend batch proof. `ProgramOneHot` and the
-advice byte columns remain separate singleton objects.
+The measurements and proposals above describe historical formats. The current
+protocol is specified in [Akita Native Trace Batching](akita-native-trace-batching.md).
+`OneHotTrace` is one native commitment group containing the actual trace columns,
+with each polynomial in `(cycle || address)` order. There are no selector slots
+or selector challenge for the trace. Instruction, bytecode, digit, and carry
+columns omit the public digit-zero row; Stage 7 recenters their semantic claims
+around that row. RAM columns retain digit zero on cycles with a remappable RAM
+access.
+Stage 8 binds the common point and ordered evaluations, then passes those claims
+to Akita's native batch opening.
 
-The single-polynomial layout experiment was rejected. Packing the semantic
-columns into a new Boolean column axis required power-of-two zero padding and
-raised the polynomial arity by six or seven variables. At `T = 2^20`, the
-result took 47.52 s to prove versus the earlier 6.97 s grouped baseline, while
-verification remained 23.59 ms. The extra arity, not padding alone, destroys
-the native one-hot schedule economics. There is therefore no column-axis fold
-and no additional sumcheck.
+Advice objects retain singleton dense prefix layouts. Committed programs use one
+direct bounded-dense `ProgramBytecode` object for the whole table plus one direct
+`ProgramImageInit` object. Each auxiliary logical polynomial is zero-prefix
+embedded only to Akita's physical arity floor. These objects join the native trace
+group in one role-bound opening. Field-inline additionally contributes one
+full-width field-register increment group.
+
+Production traces use K=16, actual widths 51–64, and column arities 16–34.
+K=256 native trace rows cover explicit adapter, benchmark, and override fixtures.
+Single, W2R2, W4R2, and W8R2 profiles preserve first-fold cycle locality; later
+recursive ownership alignment remains tracked by Akita #175.
 
 | piece | where |
 |---|---|
-| compact-source column assembly (`assemble_one_hot_trace`) | `jolt-prover-legacy/src/zkvm/packed.rs` |
-| prove pipeline (one native grouped opening) | `jolt-prover-legacy/src/zkvm/packed.rs` |
-| layout and point mapping (`address‖cycle` → `cycle‖address`) | `jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
-| reduction sumcheck + grouped native tail (`prove/verify_packed_openings`, `PackedObjectGroup`, `open_batch`) | `jolt-openings/src/packing.rs` |
-| owned backend adapter (`commit_one_hot_group_owned`, `open_one_hot_group_from_hint`) | `jolt-akita/src/{scheme,adapters}.rs` |
-| verifier mirror | `jolt-verifier/src/stages/stage8/packed.rs` |
-| flavor/measurement bench (`flavor_bench`, `BENCH_*` env knobs) | `jolt-akita/src/scheme.rs` |
-| packed config (`K=16` or `K=256`, selected like Dory) | `jolt-prover-legacy/src/zkvm/config.rs`, `preprocessing.rs` |
+| compact-source column assembly (`assemble_one_hot_trace_rows`) | `crates/jolt-prover/src/akita/witness.rs` |
+| native trace kernels and shared row traversal | `crates/jolt-akita/src/trace_onehot/` |
+| prove pipeline (one batch over the native trace group and precommitted objects) | `crates/jolt-prover/src/akita/` |
+| ordered trace columns and point mapping (`address‖cycle` → `cycle‖address`) | `crates/jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
+| auxiliary prefix layouts (`PrefixPackedObjectPlan`) | `crates/jolt-claims/src/protocols/jolt/lattice/packing.rs` |
+| backend group commit and batch opening | `crates/jolt-akita/src/{scheme,native_batching}.rs` |
+| verifier mirror | `crates/jolt-verifier/src/stages/stage8/akita.rs` |
+| profile harness | `crates/jolt-prover/src/profile.rs` |
+| Akita configuration and frozen schedule catalogs | `crates/jolt-prover/src/config.rs`, `crates/jolt-akita/src/{configs,schedule_registry}.rs` |
 
-The `akita-*` deps build from the local `../akita` clone (committed on this
-branch for co-design; pin a fork rev before the branch travels). (This spec
-lives in `specs/` — the repo `.gitignore` swallows `docs/` directories.)
+The workspace pins the `akita-*` crates to revision `83574331d4e51f8cce1d8689d05592fa4ef4c138`
+in the root `Cargo.toml`.
 
-## Status (2026-07-14): paused at the decision gate
+## Historical status (2026-07-14): paused at the decision gate
 
 Optimization is paused with the state at ~17 s (1.27× dory). The cheap
 jolt-side knobs are exhausted (see the floor table); what remains is:
@@ -323,20 +334,13 @@ jolt-side knobs are exhausted (see the floor table); what remains is:
    existed, and the next format (bit-planes) is on the table, so the
    abstraction should make strategy changes cheap.
 
-## Engineering debt tracked for future PRs
+## Historical engineering debt (2026-07-14)
 
-Identified during the 2026-07-14 simplification pass; each is a
-self-contained PR candidate.
+Identified during the 2026-07-14 simplification pass. The legacy prover and
+`AkitaPackedScheme` mentioned below have since been removed; these notes describe
+the old implementation, not the current native batching pipeline.
 
-1. **Fold the byte-column reconstruction twins.** `advice_bytes.rs`
-   (untrusted + trusted) and `program_image_reconstruction.rs` are three
-   instances of one protocol object (γ-batched byte-column reconstruction
-   over `(byte ‖ place)` with a pre-bound word point), and the verifier's
-   `stage8/reconstruction.rs` mirrors all three. Parameterizing one instance
-   over `(kind, claim source)` is ~−350 lines prover-side and ~−300–400
-   verifier-side, and the bit-plane strategy will want the parameterized
-   form anyway.
-2. **Narrow the legacy prover's PCS bounds.** `JoltCpuProver` and its main
+1. **Narrow the legacy prover's PCS bounds.** `JoltCpuProver` and its main
    impl demand `StreamingCommitmentScheme + ZkEvalCommitment` for
    everything, so the packed path must stub both (the `AkitaPackedScheme`
    panic shims). The packed path only uses `gen_from_elf`,
@@ -345,7 +349,7 @@ self-contained PR candidate.
    and zk-eval shims and decouples future packed provers from the base
    commit pipeline. Deferred: the method-closure move is ~1,000 lines of
    shared-file surgery, wrong to bundle with other changes.
-3. Smaller items: `indexed_family` hoist in base `clear_claims` (~−40);
+2. Smaller items: `indexed_family` hoist in base `clear_claims` (~−40);
    stage-7 address-phase scheduling triplication (needs a shared trait or
    local macro — judged not clearly better today); `Arc`'d commitment bytes
    (clone cost is ~ms; churn not yet justified).

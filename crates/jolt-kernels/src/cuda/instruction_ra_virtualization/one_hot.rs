@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::BindingOrder;
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
@@ -24,7 +24,7 @@ pub struct DevicePackedRa {
 }
 
 impl DevicePackedRa {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         packed: Arc<CudaSlice<u64>>,
         cycles: usize,
@@ -239,7 +239,7 @@ impl DevicePackedRa {
         Ok(())
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -284,7 +284,10 @@ impl DevicePackedRa {
             .collect()
     }
 
-    pub fn final_claims<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+    pub fn final_claims<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Vec<F>, CudaError> {
         if self.len() != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
@@ -309,12 +312,12 @@ impl DevicePackedRa {
             .collect()
     }
 
-    pub fn round_evals<F: Field>(
+    pub fn round_evals<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         virtual_polys: usize,
-        eq: &crate::cuda::common::split_eq::DeviceSplitEq<F>,
-    ) -> Result<[F; 4], CudaError> {
+        eq: &DeviceSplitEq<F>,
+    ) -> Result<[F; 5], CudaError> {
         let half = self.len() / 2;
         if half == 0 {
             return Err(CudaError::LengthMismatch {
@@ -332,7 +335,7 @@ impl DevicePackedRa {
 
         let half_count = CudaKernelContext::count_of(half)?;
         let blocks = half_count.div_ceil(BLOCK).max(1);
-        let mut partials = context.alloc(4 * blocks as usize)?;
+        let mut partials = context.alloc(5 * blocks as usize)?;
         let groups = CudaKernelContext::count_of(virtual_polys)?;
         let e_in_arg = CudaKernelContext::count_of(e_in_len)?;
         let num_x_in_bits = e_in_len.max(1).ilog2();
@@ -401,9 +404,9 @@ impl DevicePackedRa {
         }
         context.stream().synchronize()?;
 
-        let totals = crate::cuda::common::primitives::reduce_lanes(context, partials, 4, blocks)?;
+        let totals = crate::cuda::common::primitives::reduce_lanes(context, partials, 5, blocks)?;
         let host = totals.to_host()?;
-        let mut evals = [F::from_u64(0); 4];
+        let mut evals = [F::from_u64(0); 5];
         for (slot, value) in evals.iter_mut().zip(host) {
             *slot =
                 crate::cuda::common::device::fr_into(value).ok_or(CudaError::NotImplemented {
@@ -414,13 +417,13 @@ impl DevicePackedRa {
     }
 }
 
-pub(crate) struct PackedRaShard<F: Field> {
+pub(crate) struct PackedRaShard<F: JoltField> {
     pub(crate) ordinal: usize,
     pub(crate) one_hot: DevicePackedRa,
     pub(crate) eq: DeviceSplitEq<F>,
 }
 
-pub(crate) struct ShardedPackedRa<F: Field> {
+pub(crate) struct ShardedPackedRa<F: JoltField> {
     shards: Vec<PackedRaShard<F>>,
     collapsed: Option<DevicePackedRa>,
     chunk_bits: usize,
@@ -428,7 +431,7 @@ pub(crate) struct ShardedPackedRa<F: Field> {
     tail_rounds: usize,
 }
 
-impl<F: Field> ShardedPackedRa<F> {
+impl<F: JoltField> ShardedPackedRa<F> {
     pub(crate) fn new(shards: Vec<PackedRaShard<F>>, log_t: usize) -> Result<Self, CudaError> {
         let count = shards.len();
         if count == 0 || !count.is_power_of_two() {
@@ -475,23 +478,23 @@ impl<F: Field> ShardedPackedRa<F> {
         &self,
         virtual_polys: usize,
         whole_eq: &DeviceSplitEq<F>,
-    ) -> Result<[F; 4], CudaError> {
+    ) -> Result<[F; 5], CudaError> {
         if let Some(collapsed) = &self.collapsed {
             let context = context_for(0).ok_or(absent())?;
             return collapsed.round_evals(context, virtual_polys, whole_eq);
         }
-        let tasks: Vec<DeviceTask<'_, [F; 4], CudaError>> = self
+        let tasks: Vec<DeviceTask<'_, [F; 5], CudaError>> = self
             .shards
             .iter()
             .map(|shard| {
-                let task: DeviceTask<'_, [F; 4], CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, [F; 5], CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
                     shard.one_hot.round_evals(context, virtual_polys, &shard.eq)
                 });
                 task
             })
             .collect();
-        let mut total = [F::zero(); 4];
+        let mut total = [F::zero(); 5];
         for part in fan_out(tasks)? {
             for (lane, addend) in total.iter_mut().zip(part) {
                 *lane += addend;
@@ -589,6 +592,8 @@ const fn absent() -> CudaError {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use super::PackedRaShard;
+    use super::ShardedPackedRa;
     use std::sync::Arc;
 
     use jolt_field::Fr;
@@ -647,8 +652,8 @@ mod tests {
                 DeviceSplitEq::<Fr>::new(context, &cycle_point, BindingOrder::LowToHigh)
                     .expect("whole split-eq");
             let len = cycles / shards;
-            let windows: Vec<super::PackedRaShard<Fr>> = (0..shards)
-                .map(|shard| super::PackedRaShard {
+            let windows: Vec<PackedRaShard<Fr>> = (0..shards)
+                .map(|shard| PackedRaShard {
                     ordinal: 0,
                     one_hot: build(shard * len, len),
                     eq: DeviceSplitEq::<Fr>::new_window(
@@ -661,16 +666,16 @@ mod tests {
                     .expect("window split-eq"),
                 })
                 .collect();
-            let mut got = super::ShardedPackedRa::new(windows, LOG_T).expect("sharded one-hot");
+            let mut got = ShardedPackedRa::new(windows, LOG_T).expect("sharded one-hot");
             let mut got_eq =
                 DeviceSplitEq::<Fr>::new(context, &cycle_point, BindingOrder::LowToHigh)
                     .expect("tail split-eq");
 
             for round in 0..LOG_T {
-                let want: [Fr; 4] = expected
+                let want: [Fr; 5] = expected
                     .round_evals(context, POLYS / 4, &expected_eq)
                     .expect("whole round evals");
-                let have: [Fr; 4] = got
+                let have: [Fr; 5] = got
                     .round_evals(POLYS / 4, &got_eq)
                     .expect("sharded round evals");
                 assert_eq!(

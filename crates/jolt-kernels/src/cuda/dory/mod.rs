@@ -7,9 +7,16 @@ mod routines;
 #[cfg(not(feature = "zk"))]
 mod tier2;
 
+#[cfg(not(feature = "zk"))]
+use crate::cuda::commitment::FinishedColumn;
+#[cfg(not(feature = "zk"))]
+use crate::cuda::common::context::CudaKernelContext;
+use ark_bn254::Fr as Bn254Fr;
 use dory::backends::arkworks::ArkFr;
 use dory::mode::Transparent;
 use dory::setup::ProverSetup;
+use handle::DeviceG1;
+use handle::DeviceG2;
 use jolt_crypto::{Bn254G1, Commitment, VectorCommitment};
 use jolt_field::Fr;
 use jolt_openings::{
@@ -18,7 +25,9 @@ use jolt_openings::{
 };
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
-use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
+use jolt_verifier::{
+    CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
+};
 #[cfg(all(feature = "parallel", not(feature = "zk")))]
 use rayon::prelude::*;
 
@@ -44,8 +53,8 @@ fn resident_prover_setup(setup: &DoryProverSetup, bases: usize) -> ProverSetup<C
     ProverSetup {
         g1_vec: handle::store_frozen(&g1),
         g2_vec: handle::store_frozen_g2(&g2),
-        h1: handle::DeviceG1::store(&setup.0.h1.0),
-        h2: handle::DeviceG2::store(&setup.0.h2.0),
+        h1: DeviceG1::store(&setup.0.h1.0),
+        h2: DeviceG2::store(&setup.0.h2.0),
         ht: setup.0.ht.into(),
     }
 }
@@ -70,18 +79,22 @@ impl CudaDoryScheme {
     {
         let program = match source.program {
             ProgramPreprocessing::Full(full) => ProgramPreprocessing::Full(full),
-            ProgramPreprocessing::Committed(_) => {
-                return Err(CudaError::NotImplemented {
-                    kernel: "CudaDoryScheme cannot adopt a committed-program preprocessing",
+            ProgramPreprocessing::Committed(data) => {
+                ProgramPreprocessing::Committed(CommittedProgramPreprocessing {
+                    meta: data.meta,
+                    memory_layout: data.memory_layout,
+                    max_padded_trace_length: data.max_padded_trace_length,
+                    program_image_commitment: data.program_image_commitment,
+                    bytecode_commitment: data.bytecode_commitment,
+                    trace_order: data.trace_order,
                 })
             }
         };
-        Ok(JoltVerifierPreprocessing::new(
-            program,
-            source.preprocessing_digest,
-            source.pcs_setup,
-            source.vc_setup,
-        ))
+        JoltVerifierPreprocessing::new(program, source.pcs_setup, source.vc_setup).map_err(|_| {
+            CudaError::InvariantViolation {
+                reason: "CUDA verifier preprocessing could not derive the program digest",
+            }
+        })
     }
 }
 
@@ -90,13 +103,13 @@ impl DeviceTier1Commitment for CudaDoryScheme {
 
     #[cfg(not(feature = "zk"))]
     fn tier2_selected(
-        context: &crate::cuda::common::context::CudaKernelContext,
+        context: &CudaKernelContext,
         setup: &Self::ProverSetup,
         columns: &[Vec<JacobianLimbs>],
         selection: &[usize],
-    ) -> Result<Vec<(usize, crate::cuda::commitment::FinishedColumn<Self>)>, CudaError> {
+    ) -> Result<Vec<(usize, FinishedColumn<Self>)>, CudaError> {
         let commitments = tier2::tier2_selected(context, setup, columns, selection)?;
-        let blind = <Fr as jolt_field::FromPrimitiveInt>::from_u64(0);
+        let blind = <Fr as jolt_field::Ring>::from_u64(0);
         let hints =
             tracing::info_span!("cuda_commit_hints", columns = selection.len()).in_scope(|| {
                 #[cfg(feature = "parallel")]
@@ -127,7 +140,10 @@ impl DeviceTier1Commitment for CudaDoryScheme {
             .map(|((index, commitment), partial)| {
                 Ok((
                     index,
-                    (commitment, DoryHint::new(partial.row_commitments, blind)),
+                    (
+                        commitment,
+                        DoryHint::from_parts(partial.row_commitments, blind),
+                    ),
                 ))
             })
             .collect()
@@ -189,19 +205,21 @@ impl CommitmentScheme for CudaDoryScheme {
         let adapter = DorySourceAdapter::new(poly);
 
         let (row_commitments, commit_blind) = match hint {
-            Some(hint) => (
-                hint.row_commitments
-                    .into_iter()
-                    .map(|point| point.into_inner())
-                    .collect::<Vec<_>>(),
-                ArkFr(hint.commit_blind.into()),
-            ),
+            Some(hint) => {
+                let (rows, blind) = hint.into_parts();
+                (
+                    rows.into_iter()
+                        .map(|point| point.into_inner())
+                        .collect::<Vec<_>>(),
+                    ArkFr(blind.into()),
+                )
+            }
             None => (
                 compute_row_commitments(poly, setup)?
                     .into_iter()
                     .map(|point| point.0)
                     .collect(),
-                ArkFr(ark_bn254::Fr::from(0u64)),
+                ArkFr(Bn254Fr::from(0u64)),
             ),
         };
 
@@ -256,28 +274,6 @@ impl CommitmentScheme for CudaDoryScheme {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         DoryScheme::verify(commitment, point, eval, proof, setup, transcript)
-    }
-
-    fn open_batch(
-        polynomials: &[&dyn MultilinearPoly<Self::Field>],
-        point: &[Self::Field],
-        evaluations: &[Self::Field],
-        setup: &Self::ProverSetup,
-        hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<Self::Proof, OpeningsError> {
-        DoryScheme::open_batch(polynomials, point, evaluations, setup, hint, transcript)
-    }
-
-    fn verify_batch(
-        commitment: &Self::Output,
-        point: &[Self::Field],
-        evaluations: &[Self::Field],
-        proof: &Self::Proof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(), OpeningsError> {
-        DoryScheme::verify_batch(commitment, point, evaluations, proof, setup, transcript)
     }
 }
 
@@ -448,7 +444,7 @@ impl ZkStreamingCommitment for CudaDoryScheme {
 )]
 mod tests {
     use jolt_crypto::Bn254G1;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr, Ring};
     use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
     use jolt_poly::Polynomial;
     use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -492,9 +488,9 @@ mod tests {
             .enumerate()
             .map(|(index, &rows)| {
                 let start = 1 + index as u64 * (PROVE_WIDE_ROWS as u64 + 1);
-                DoryHint::new(
+                DoryHint::from_parts(
                     walked_row_commitments(rows, start),
-                    <Fr as RandomSampling>::random(&mut rng),
+                    <Fr as Field>::random(&mut rng),
                 )
             })
             .collect()
@@ -502,18 +498,19 @@ mod tests {
 
     fn assert_hints_match(got: &DoryHint, expected: &DoryHint, label: &str) {
         assert_eq!(
-            got.row_commitments.len(),
-            expected.row_commitments.len(),
+            got.row_commitments().len(),
+            expected.row_commitments().len(),
             "{label}: combined row count diverged",
         );
         assert_eq!(
-            got.commit_blind, expected.commit_blind,
+            got.commit_blind(),
+            expected.commit_blind(),
             "{label}: combined commit blind diverged",
         );
         let divergence = got
-            .row_commitments
+            .row_commitments()
             .iter()
-            .zip(&expected.row_commitments)
+            .zip(expected.row_commitments())
             .position(|(got, expected)| got != expected);
         assert_eq!(divergence, None, "{label}: combined row diverged");
     }
@@ -554,9 +551,9 @@ mod tests {
             .map(|&count| {
                 let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
                 let (_, hint) = DoryScheme::commit(poly.evaluations(), &setup).unwrap();
-                let mut hint = hint;
-                hint.row_commitments.truncate(count.max(1));
-                hint
+                let (mut rows, blind) = hint.into_parts();
+                rows.truncate(count.max(1));
+                DoryHint::from_parts(rows, blind)
             })
             .collect()
     }
@@ -564,7 +561,7 @@ mod tests {
     fn scalars(count: usize, seed: u64) -> Vec<Fr> {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
         (0..count)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect()
     }
 
@@ -611,7 +608,7 @@ mod tests {
 
         assert_hints_match(&got, &expected, "prove scale");
         assert_eq!(
-            got.row_commitments.len(),
+            got.row_commitments().len(),
             PROVE_WIDE_ROWS,
             "the combined hint must be padded out to the widest source hint",
         );
@@ -628,7 +625,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
         let point: Vec<Fr> = (0..NUM_VARS)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -638,7 +635,7 @@ mod tests {
             DoryScheme::commit(poly.evaluations(), &prover_setup).expect("dory commit");
         assert_eq!(commitment, expected_commitment);
         assert_eq!(hint, expected_hint);
-        assert_eq!(hint.row_commitments.len(), opening_rows(NUM_VARS));
+        assert_eq!(hint.row_commitments().len(), opening_rows(NUM_VARS));
 
         let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
         assert_eq!(proof, expected, "the proof diverged from DoryScheme's");
@@ -667,7 +664,7 @@ mod tests {
 
             let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
             let point: Vec<Fr> = (0..num_vars)
-                .map(|_| <Fr as RandomSampling>::random(&mut rng))
+                .map(|_| <Fr as Field>::random(&mut rng))
                 .collect();
             let eval = poly.evaluate(&point);
 
@@ -706,7 +703,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
         let point: Vec<Fr> = (0..NUM_VARS)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -741,15 +738,16 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(PROVE_SCALE_VARS, &mut rng);
         let point: Vec<Fr> = (0..PROVE_SCALE_VARS)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
         let rows = opening_rows(PROVE_SCALE_VARS);
-        let mut hint = shaped_hints(&[rows], 12)
+        let hint = shaped_hints(&[rows], 12)
             .pop()
             .expect("one shaped hint was requested");
-        hint.commit_blind = Fr::from_u64(0);
+        let (hint_rows, _) = hint.into_parts();
+        let hint = DoryHint::from_parts(hint_rows, Fr::from_u64(0));
 
         let (got, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
         assert_eq!(

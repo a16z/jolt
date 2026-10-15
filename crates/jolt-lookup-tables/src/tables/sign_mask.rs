@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -25,7 +25,7 @@ impl<const XLEN: usize> LookupTable for SignMaskTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let sign_bit = r[0];
@@ -44,7 +44,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignMaskTable<XLEN> 
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         let [one] = suffixes.try_into().unwrap();
         let ones: u64 = ((1u128 << XLEN) - 1) as u64;
         F::from_u64(ones) * prefixes[Prefixes::LeftOperandMsb] * one

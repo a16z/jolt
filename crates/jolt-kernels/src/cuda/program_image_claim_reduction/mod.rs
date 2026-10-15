@@ -1,5 +1,5 @@
 use jolt_claims::protocols::jolt::{PrecommittedReductionLayout, ProgramImageClaimReductionLayout};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     ProgramImageReductionCyclePhase, ProgramImageReductionCyclePhaseOutputClaims,
@@ -21,7 +21,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-fn program_image_tables<F: Field>(
+fn program_image_tables<F: JoltField>(
     context: &'static CudaKernelContext,
     layout: &ProgramImageClaimReductionLayout,
     r_addr_rw: &[F],
@@ -76,7 +76,7 @@ fn program_image_tables<F: Field>(
     )
 }
 
-impl<F: Field> SumcheckKernel<F>
+impl<F: JoltField> SumcheckKernel<F>
     for DeviceCycleReductionKernel<F, ProgramImageReductionCyclePhase<F>>
 {
     type Relation = ProgramImageReductionCyclePhase<F>;
@@ -95,7 +95,7 @@ impl<F: Field> SumcheckKernel<F>
     }
 }
 
-impl<F: Field> SumcheckKernel<F>
+impl<F: JoltField> SumcheckKernel<F>
     for DeviceAddressReductionKernel<F, ProgramImageReductionAddressPhase<F>>
 {
     type Relation = ProgramImageReductionAddressPhase<F>;
@@ -110,7 +110,7 @@ impl<F: Field> SumcheckKernel<F>
     }
 }
 
-impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -138,7 +138,7 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for CudaBack
     }
 }
 
-impl<F: Field> PrepareKernel<F, ProgramImageReductionAddressPhase<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, ProgramImageReductionAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -187,7 +187,6 @@ mod tests {
 
     const LOG_K_CHUNK: usize = 4;
     const BYTECODE_ROWS: usize = 50;
-    const BYTECODE_CHUNKS: usize = 2;
     const IMAGE_WORDS: usize = 1024;
     const MIN_BYTECODE_ADDRESS: u64 = 0x8000_0000;
     const RAM_LOG_K: usize = 12;
@@ -203,7 +202,6 @@ mod tests {
             Some(4096),
             Some(CommittedProgramSchedule {
                 bytecode_len,
-                bytecode_chunk_count: BYTECODE_CHUNKS,
                 program_image_len_words: IMAGE_WORDS,
                 program_image_start_index: start_index,
             }),
@@ -357,13 +355,15 @@ mod tests {
 
                 let mut expected_session = ProofSession::default();
                 let mut got_session = ProofSession::default();
-                for session in [&mut expected_session, &mut got_session] {
+                for (cuda, session) in [(false, &mut expected_session), (true, &mut got_session)] {
                     let cycle_relation =
                         ProgramImageReductionCyclePhase::<Fr>::new(layout, r_addr_rw.clone());
                     let cycle_claims = ProgramImageReductionCyclePhaseInputClaims::default();
                     let cycle_points = ProgramImageReductionCyclePhaseInputClaims::default();
                     let cycle_challenges = NoChallenges::default();
-                    let mut cycle_kernel = ReferenceBackend
+                    let backend: &dyn PrepareKernel<Fr, ProgramImageReductionCyclePhase<Fr>> =
+                        if cuda { &CudaBackend } else { &ReferenceBackend };
+                    let mut cycle_kernel = backend
                         .prepare(
                             session,
                             &plane,

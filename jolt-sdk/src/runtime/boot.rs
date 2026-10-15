@@ -11,6 +11,9 @@ macro_rules! debug_writeln {
     };
 }
 
+#[cfg(target_os = "none")]
+use zeroos::foundation::ops::MemoryOps;
+
 extern "C" {
     static __heap_start: u8;
     static __heap_end: u8;
@@ -33,6 +36,22 @@ pub extern "C" fn __platform_bootstrap() {
     debug_writeln!("[BOOT] __platform_bootstrap (jolt-platform)");
 
     zeroos::initialize();
+
+    // no_std guests: register the O(1) size-class allocator BEFORE kinit (the
+    // registered ops receive the heap). This is the only registration —
+    // no_std builds enable just zeroos's `memory` feature, so `initialize()`
+    // above registers no allocator and `linked_list_allocator` stays out of
+    // the guest binary. Motivation and measurements in
+    // `jolt_platform::size_class_alloc`. std/musl guests keep ZeroOS's
+    // linked-list allocator (musl's malloc manages its own arenas over
+    // mmap/brk).
+    #[cfg(target_os = "none")]
+    zeroos::foundation::register_memory(MemoryOps {
+        init: jolt_platform::size_class_alloc::init,
+        alloc: jolt_platform::size_class_alloc::alloc,
+        dealloc: jolt_platform::size_class_alloc::dealloc,
+        realloc: jolt_platform::size_class_alloc::realloc,
+    });
 
     {
         let heap_start = core::ptr::addr_of!(__heap_start) as usize;
@@ -106,22 +125,17 @@ pub extern "C" fn __platform_bootstrap() {
 
 #[cfg(feature = "zeroos-vfs-device-console")]
 mod console {
-    use jolt_platform::putchar;
+    use jolt_platform::write_bytes;
     use zeroos::vfs;
 
     pub fn jolt_console_write(_file: *mut u8, buf: *const u8, count: usize) -> isize {
-        // Debug output disabled
-        unsafe {
-            let slice = core::slice::from_raw_parts(buf, count);
-            for &byte in slice {
-                putchar(byte);
-            }
+        if !buf.is_null() && count > 0 {
+            write_bytes(unsafe { core::slice::from_raw_parts(buf, count) });
         }
         count as isize
     }
 
     pub fn register_console_fd(fd: i32, ops: &'static vfs::FileOps) {
-        // Debug output disabled
         let _ = vfs::register_fd(
             fd,
             vfs::FdEntry {

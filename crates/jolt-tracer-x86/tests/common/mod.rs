@@ -31,7 +31,11 @@ pub fn setup(package: &str, func: &str, input: Vec<u8>) -> Option<(JoltProgram, 
 }
 
 fn guest_elf(package: &str, func: &str) -> Option<Vec<u8>> {
-    let target_dir = format!("/tmp/jolt-guest-targets/{package}-{func}");
+    let target_dir = std::env::temp_dir()
+        .join("jolt-guest-targets")
+        .join(format!("{package}-{func}"))
+        .to_string_lossy()
+        .into_owned();
     let output = match std::process::Command::new("jolt")
         .args([
             "build",

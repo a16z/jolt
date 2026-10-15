@@ -1,4 +1,4 @@
-use jolt_prover_legacy::field::JoltField;
+use jolt_field::JoltField;
 #[cfg(test)]
 use std::collections::HashMap;
 
@@ -18,7 +18,6 @@ pub struct Environment<'a, F> {
     pub vars: &'a [F],
 }
 
-/// A [`JoltField`] that can be used to write a ZKLean representation of a computation.
 pub trait ZkLeanReprField: JoltField + Sized {
     fn register(name: char, size: usize) -> Vec<Self>;
 
@@ -38,5 +37,6 @@ use proptest::prelude::*;
 
 #[cfg(test)]
 pub fn arb_field_elem<F: JoltField>() -> impl Strategy<Value = F> {
-    proptest::collection::vec(any::<u8>(), F::NUM_BYTES).prop_map(|bytes| F::from_bytes(&bytes))
+    proptest::collection::vec(any::<u8>(), F::NUM_BYTES)
+        .prop_map(|bytes| F::from_bytes_le_reduced(&bytes))
 }

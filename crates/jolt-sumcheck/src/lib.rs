@@ -10,6 +10,19 @@
 //! polynomial $s_i(X)$ and the verifier checks $s_i(0) + s_i(1)$ against
 //! the running sum, then sets $r_i$ and recurses.
 //!
+//! # Binary fields
+//!
+//! [`BatchPrelude`], [`prove_batch`] with [`ClearSumcheckRecorder`], Boolean
+//! round checks, and the full and compressed clear verifiers support
+//! characteristic 2. Members construct their round polynomials in coefficient
+//! form; interpolation over consecutive integers is not supported there.
+//! Mixed-length batches use the padding contract on [`BatchPrelude`], including
+//! its output multiplier when checking the final oracle evaluations.
+//! [`CenteredIntegerDomain`] and the uni-skip provers reject domains whose
+//! integer points collide in the field, before transcript absorption. Thus
+//! binary fields support integer-domain sizes 1 and 2, but reject larger sizes.
+//! The committed recorder and R1CS lowering are not supported over binary fields.
+//!
 //! # Crate structure
 //!
 //! | Module | Purpose |
@@ -61,9 +74,16 @@
 //! ```text
 //! jolt-field      ─┐
 //! jolt-poly       ─┼─> jolt-sumcheck
-//! jolt-transcript ─┤
-//! jolt-crypto     ─┘
+//! jolt-transcript ─┘
+//!
+//! optional: jolt-crypto (`committed`), jolt-r1cs (`r1cs`)
 //! ```
+//!
+//! Polynomial and clear sumcheck arithmetic is generic over
+//! [`Field`](jolt_field::Field). Stock clear transcript adapters additionally
+//! require [`AppendToTranscript`](jolt_transcript::AppendToTranscript) where
+//! field values are absorbed. Optimized Jolt kernels and commitment backends
+//! retain their stronger capability bounds at their own integration points.
 //!
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
@@ -93,12 +113,11 @@ pub mod prover;
 pub mod r1cs;
 pub mod recorder;
 pub mod round_proof;
-pub mod scalar;
 pub mod verifier;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "committed"))]
 mod round_scheduler_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "committed"))]
 mod tests;
 
 /// Transcript label used for ordinary sumcheck round polynomials.
@@ -121,18 +140,21 @@ where
 
 pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
+#[cfg(feature = "committed")]
+pub use committed::CommittedSumcheckBuilder;
 pub use committed::{
     BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedRound,
-    CommittedRoundWitness, CommittedSumcheckBuilder, CommittedSumcheckConsistency,
-    CommittedSumcheckProof, CommittedSumcheckWitness, VerifiedCommittedRound,
+    CommittedRoundWitness, CommittedSumcheckConsistency, CommittedSumcheckProof,
+    CommittedSumcheckWitness, VerifiedCommittedRound,
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
+#[cfg(feature = "committed")]
+pub use prover::prove_uniskip_committed;
 pub use prover::{
-    prove_batch, prove_uniskip_clear, prove_uniskip_committed, MemberFinish, MemberRound,
-    ProveRounds, ProvedBatch, ProvedUniskip, ProvedUniskipCommitted, RoundScheduler,
-    SequentialRounds,
+    prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
+    ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
 };
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
@@ -140,9 +162,8 @@ pub use r1cs::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
-pub use recorder::{
-    ClearSumcheckRecorder, CommittedSumcheckRecorder, RecordedSumcheck, SumcheckRecorder,
-};
+#[cfg(feature = "committed")]
+pub use recorder::CommittedSumcheckRecorder;
+pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
-pub use scalar::SumcheckScalar;
 pub use verifier::SumcheckVerifier;

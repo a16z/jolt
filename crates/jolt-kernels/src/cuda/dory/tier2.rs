@@ -159,7 +159,9 @@ pub(crate) fn tier2_selected(
     reason = "test module: PCS and device operations fail loudly"
 )]
 mod tests {
+    use ark_bn254::G1Projective;
     use ark_ec::PrimeGroup;
+    use jolt_dory::DoryProverSetup;
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_openings::StreamingCommitment;
 
@@ -171,7 +173,7 @@ mod tests {
 
     const NUM_VARS: usize = 8;
 
-    fn limbs(point: &ark_bn254::G1Projective) -> JacobianLimbs {
+    fn limbs(point: &G1Projective) -> JacobianLimbs {
         JacobianLimbs {
             x: point.x.0 .0,
             y: point.y.0 .0,
@@ -180,7 +182,7 @@ mod tests {
     }
 
     fn columns(shape: &[usize]) -> Vec<Vec<JacobianLimbs>> {
-        let step = ark_bn254::G1Projective::generator();
+        let step = G1Projective::generator();
         let mut walk = step;
         shape
             .iter()
@@ -200,10 +202,7 @@ mod tests {
             .collect()
     }
 
-    fn reference(
-        setup: &jolt_dory::DoryProverSetup,
-        source: &[Vec<JacobianLimbs>],
-    ) -> Vec<DoryCommitment> {
+    fn reference(setup: &DoryProverSetup, source: &[Vec<JacobianLimbs>]) -> Vec<DoryCommitment> {
         source
             .iter()
             .map(|rows| {

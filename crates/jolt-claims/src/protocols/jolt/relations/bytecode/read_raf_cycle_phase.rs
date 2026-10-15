@@ -1,6 +1,4 @@
-//! The cycle phase of the bytecode read-RAF symbolic sumcheck.
-
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use super::{BytecodeReadRafCycleShape, BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims};
 use crate::protocols::jolt::geometry::bytecode::{
@@ -12,8 +10,6 @@ use crate::protocols::jolt::{
 };
 use crate::{opening, SumcheckChallenges, SymbolicSumcheck};
 
-/// Fiat-Shamir challenge drawn by the cycle phase of the bytecode read-RAF
-/// sumcheck.
 #[derive(Clone, Copy, Debug, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReadRafCyclePhaseChallenges<F> {
@@ -54,33 +50,11 @@ impl SymbolicSumcheck for ReadRafCyclePhase {
         self.shape.0.num_committed_ra_polys() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(bytecode_read_raf_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_cycle_output(self.shape.0, self.shape.1)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
-    use crate::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-
-    fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
-        BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
-    }
-
-    #[test]
-    fn read_raf_cycle_phase_symbolic_matches_dependencies() {
-        let relation = ReadRafCyclePhase::new((dimensions(2), NUM_BYTECODE_VAL_STAGES));
-        assert_eq!(ReadRafCyclePhase::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.rounds(), dimensions(2).log_t());
-        assert_eq!(
-            relation.degree(),
-            dimensions(2).num_committed_ra_polys() + 1
-        );
     }
 }

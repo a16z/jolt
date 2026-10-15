@@ -1,8 +1,15 @@
+use crate::cuda::common::devices::CycleWindow;
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionInputInputClaims, InstructionInputOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -27,7 +34,7 @@ pub(crate) mod witness;
 use columns::{ColumnShard, DeviceInstructionColumns, ShardedInstructionColumns};
 use rounds::{Basis, RoundBasis};
 
-pub struct InstructionInputKernel<F: Field> {
+pub struct InstructionInputKernel<F: JoltField> {
     context: &'static CudaKernelContext,
     relation: InstructionInput<F>,
     columns: ShardedInstructionColumns<F>,
@@ -37,19 +44,19 @@ pub struct InstructionInputKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for InstructionInputKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for InstructionInputKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("finals"),
+            Key::new("finals"),
             self.finals.as_ref().map_or(0, |v| v.len() * size_of::<F>()),
         );
-        visitor.visit_simple(allocative::Key::new("columns"), self.columns.device_bytes());
+        visitor.visit_simple(Key::new("columns"), self.columns.device_bytes());
         visitor.exit();
     }
 }
 
-impl<F: Field> InstructionInputKernel<F> {
+impl<F: JoltField> InstructionInputKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         let bound = self.rounds_bound;
         self.columns
@@ -70,7 +77,7 @@ impl<F: Field> InstructionInputKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for InstructionInputKernel<F> {
+impl<F: JoltField> ProveRounds<F> for InstructionInputKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -101,7 +108,7 @@ impl<F: Field> ProveRounds<F> for InstructionInputKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for InstructionInputKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for InstructionInputKernel<F> {
     type Relation = InstructionInput<F>;
 
     fn output_claims(
@@ -140,7 +147,7 @@ impl<F: Field> SumcheckKernel<F> for InstructionInputKernel<F> {
     }
 }
 
-pub(crate) fn prepare_with_basis<F: Field>(
+pub(crate) fn prepare_with_basis<F: JoltField>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     inputs: &ProverInputs<'_, F, InstructionInput<F>>,
@@ -160,7 +167,7 @@ pub(crate) fn prepare_with_basis<F: Field>(
     let windows = if basis == RoundBasis::Gruen {
         witness_windows(cycles)
     } else {
-        vec![crate::cuda::common::devices::CycleWindow {
+        vec![CycleWindow {
             start: 0,
             len: cycles,
         }]
@@ -191,7 +198,7 @@ pub(crate) fn prepare_with_basis<F: Field>(
     })
 }
 
-impl<F: Field> PrepareKernel<F, InstructionInput<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -222,7 +229,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltOpeningId, TraceDimensions};
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage3::outputs::InstructionInput;
     use jolt_witness::JoltWitnessPlane;
     use proptest::prelude::*;

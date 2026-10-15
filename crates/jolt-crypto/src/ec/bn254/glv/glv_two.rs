@@ -6,12 +6,12 @@
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::AdditiveGroup;
 use ark_ff::{BigInteger, PrimeField};
-use ark_std::Zero;
+use ark_std::{cfg_iter, cfg_iter_mut, Zero};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::decomp_2d::{decompose_scalar_2d, glv_endomorphism};
 
-/// Shamir's trick for 2-point scalar multiplication with sign handling.
 pub(crate) fn shamir_glv_mul_2d(
     bases: &[G1Projective; 2],
     coeffs: &[<Fr as PrimeField>::BigInt; 2],
@@ -45,8 +45,6 @@ pub(crate) fn shamir_glv_mul_2d(
     result
 }
 
-/// Precomputed Shamir lookup table for 2D GLV: all 16 combinations
-/// of [P, λ(P)] with sign bits.
 struct PrecomputedShamir2Table {
     table: [G1Projective; 16],
 }
@@ -55,7 +53,7 @@ impl PrecomputedShamir2Table {
     fn new(bases: &[G1Projective; 2]) -> Self {
         let mut table = [G1Projective::zero(); 16];
 
-        table.par_iter_mut().enumerate().for_each(|(idx, point)| {
+        cfg_iter_mut!(table).enumerate().for_each(|(idx, point)| {
             let point_mask = idx & 0x3;
             let sign_mask = idx >> 2;
 
@@ -84,7 +82,6 @@ impl PrecomputedShamir2Table {
     }
 }
 
-/// Shamir's trick using precomputed table.
 fn shamir_glv_mul_2d_precomputed(
     table: &PrecomputedShamir2Table,
     coeffs: &[<Fr as PrimeField>::BigInt; 2],
@@ -153,8 +150,7 @@ impl FixedBasePrecomputedG1 {
     }
 
     fn mul_scalars(&self, scalars: &[Fr]) -> Vec<G1Projective> {
-        scalars
-            .par_iter()
+        cfg_iter!(scalars)
             .map(|&scalar| self.mul_scalar(scalar))
             .collect()
     }

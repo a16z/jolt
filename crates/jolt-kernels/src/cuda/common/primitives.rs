@@ -1,5 +1,6 @@
+use cudarc::driver::CudaFunction;
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_poly::BindingOrder;
 
 use super::context::{CudaKernelContext, BLOCK, BLOCK as BLOCK_SIZE};
@@ -40,7 +41,7 @@ pub(crate) fn reduce_lanes(
 impl CudaKernelContext {
     fn binary_op(
         &self,
-        kernel: &cudarc::driver::CudaFunction,
+        kernel: &CudaFunction,
         left: &DeviceFrVec,
         right: &DeviceFrVec,
     ) -> Result<DeviceFrVec, CudaError> {
@@ -73,7 +74,7 @@ impl CudaKernelContext {
 
     fn scalar_op(
         &self,
-        kernel: &cudarc::driver::CudaFunction,
+        kernel: &CudaFunction,
         values: &DeviceFrVec,
         scalar: Fr,
     ) -> Result<DeviceFrVec, CudaError> {
@@ -249,7 +250,7 @@ impl CudaKernelContext {
             // to `partials[blockIdx.x]`, and `partials` holds exactly `blocks`
             // elements, so writes are one-per-block and non-aliasing.
             let _ = unsafe {
-                builder.launch(cudarc::driver::LaunchConfig {
+                builder.launch(LaunchConfig {
                     grid_dim: (blocks, 1, 1),
                     block_dim: (BLOCK_SIZE, 1, 1),
                     shared_mem_bytes: 0,
@@ -542,7 +543,7 @@ impl CudaKernelContext {
         // `input[i]` and writes `out[i]`, both `count` u32s, and only the last
         // thread of each block writes `block_sums[blockIdx.x]` of `blocks` u32s.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
                 block_dim: (BLOCK_SIZE, 1, 1),
                 shared_mem_bytes: 0,
@@ -562,7 +563,7 @@ impl CudaKernelContext {
         // `blocks` u32s and read-modify-writes only `out[i]` of `count` u32s,
         // one thread per element.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
                 block_dim: (BLOCK_SIZE, 1, 1),
                 shared_mem_bytes: 0,
@@ -594,7 +595,7 @@ impl CudaKernelContext {
         // Only the last thread of each block writes `block_sums[blockIdx.x]`,
         // and `block_sums` holds exactly `blocks` u32s.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
                 block_dim: (BLOCK_SIZE, 1, 1),
                 shared_mem_bytes: 0,
@@ -619,7 +620,7 @@ impl CudaKernelContext {
         // element, so the update is unsynchronized but never contended. Threads
         // with `i >= count` return first.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
                 block_dim: (BLOCK_SIZE, 1, 1),
                 shared_mem_bytes: 0,
@@ -636,7 +637,7 @@ impl CudaKernelContext {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial};
     use proptest::collection::vec;
     use proptest::prelude::*;
@@ -684,7 +685,7 @@ mod tests {
             for (chunk, limb) in bytes.chunks_exact_mut(8).zip(limbs) {
                 chunk.copy_from_slice(&limb.to_le_bytes());
             }
-            Fr::from_le_bytes_mod_order(&bytes)
+            <ark_bn254::Fr as ark_ff::PrimeField>::from_le_bytes_mod_order(&bytes).into()
         })
     }
 

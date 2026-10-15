@@ -1,4 +1,21 @@
+#[cfg(feature = "field-inline")]
+use crate::commitment::FieldInlineWitnessCommitment;
+#[cfg(feature = "field-inline")]
+use crate::optimized::OptimizedBackend;
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
+#[cfg(feature = "field-inline")]
+use jolt_witness::JoltWitnessPlane;
+use partition::ColumnPlan;
+use partition::TraceSource;
 use std::sync::{mpsc, Arc};
+use tracing::Span;
 
 use ark_bn254::{Fq, G1Affine, G1Projective};
 use ark_ec::CurveGroup;
@@ -9,11 +26,14 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_crypto::Bn254G1;
 use jolt_dory::DoryScheme;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
+use crate::commitment::CommittedColumnsWitness;
+use crate::trace_column::TracePlacement;
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::backend::cuda::{DeviceTrace, HotSource};
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane};
+use jolt_witness::{collect_bundles, JoltWitnessOracle, RowSource};
 
 use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
@@ -30,10 +50,8 @@ use super::{require_context, CudaBackend};
 use crate::commitment::{
     finish_streamed, CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment,
 };
-use crate::cuda::witness::{
-    park_device_trace, session_device_trace_window, session_resident_trace,
-};
-use crate::reference::commitment::{column_kinds, ColumnKind, MaterializedColumn};
+use crate::cuda::witness::{park_device_trace, session_resident_trace, session_row_trace_window};
+use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, ProofSession};
 
 pub type FinishedColumn<PCS> = (
@@ -133,7 +151,7 @@ pub(super) const fn increment_kind(kind: ColumnKind) -> Option<IncrementKind> {
     }
 }
 
-pub(super) fn dense_columns_from_trace<F: Field>(
+pub(super) fn dense_columns_from_trace<F: JoltField>(
     context: &CudaKernelContext,
     trace: &DeviceTrace,
     kinds: &[ColumnKind],
@@ -152,7 +170,7 @@ pub(super) fn dense_columns_from_trace<F: Field>(
 
 type HotColumnBuild = Vec<Option<(CudaSlice<u32>, usize)>>;
 
-fn hot_columns_from_trace<F: Field>(
+fn hot_columns_from_trace<F: JoltField>(
     trace: &DeviceTrace,
     kinds: &[ColumnKind],
     one_hot_k: usize,
@@ -212,9 +230,9 @@ fn hot_columns_from_trace<F: Field>(
     Ok(retained)
 }
 
-fn park_hot_columns<F: Field>(
+fn park_hot_columns(
     session: &mut ProofSession,
-    source: &dyn JoltWitnessPlane<F>,
+    source: &dyn RowSource,
     ordinal: usize,
     ids: &[JoltCommittedPolynomial],
     window: &CycleWindow,
@@ -248,17 +266,19 @@ struct HotPlan<'a> {
     window: &'a CycleWindow,
 }
 
-fn device_hot_columns<F: Field>(
+fn device_hot_columns<F: JoltField>(
     context: &'static CudaKernelContext,
     session: &mut ProofSession,
-    source: &dyn JoltWitnessPlane<F>,
+    source: &dyn RowSource,
     cycles: usize,
     plan: &HotPlan<'_>,
+    preprocessing: &JoltProgramPreprocessing,
 ) -> Result<(RetainedHotColumns, Arc<DeviceTrace>), KernelError<F>> {
-    let trace = session_device_trace_window(
+    let trace = session_row_trace_window::<F>(
         context,
         session,
         source,
+        preprocessing,
         cycles,
         &plan.window.residency(cycles),
     )?;
@@ -317,10 +337,10 @@ struct ResidentBases {
 }
 
 #[cfg(feature = "allocative")]
-impl allocative::Allocative for ResidentBases {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl Allocative for ResidentBases {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("bases"), self.bases.device_bytes());
+        visitor.visit_simple(Key::new("bases"), self.bases.device_bytes());
         visitor.exit();
     }
 }
@@ -332,7 +352,7 @@ fn device_bases<'a, F, PCS>(
     count: usize,
 ) -> Result<&'a DeviceG1Bases, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: DeviceTier1Commitment,
 {
     let stale = session
@@ -357,7 +377,7 @@ fn finish<F, PCS>(
     id: JoltCommittedPolynomial,
 ) -> Result<WitnessCommitment<PCS>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: DeviceTier1Commitment,
 {
     let partial = PCS::partial_from_rows(setup, rows)?;
@@ -369,19 +389,19 @@ where
     })
 }
 
-impl<F, PCS> CommitWitness<F, PCS> for CudaBackend
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F> + DeviceTier1Commitment,
-{
-    fn commit_witness(
-        &self,
+impl CudaBackend {
+    fn commit_source<F, PCS>(
         session: &mut ProofSession,
-        source: &dyn JoltWitnessPlane<F>,
+        source: &dyn RowSource,
+        preprocessing: &JoltProgramPreprocessing,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
-    ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
+    ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F> + DeviceTier1Commitment,
+    {
         let context = require_context::<F>()?;
         let kinds = column_kinds::<F>(ids, grid)?;
         let cycles = 1usize << grid.log_t;
@@ -426,6 +446,7 @@ where
                                 one_hot_k,
                                 window: device_window,
                             },
+                            preprocessing,
                         )
                     })
                 })
@@ -433,26 +454,41 @@ where
             let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
                 .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
             if PCS::BATCHES_TIER2 {
-                let plan = partition::ColumnPlan {
+                let plan = ColumnPlan {
                     kinds: &kinds,
-                    cycles,
                     one_hot_k,
                     row_width,
                 };
-                let rows = source.rows().ok_or(KernelError::Unsupported {
-                    reason: "the CUDA backend needs a slice-backed trace source to commit a \
-                             cycle-major grid",
-                })?;
+                let traces = windows
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, window)| {
+                        if ordinal == 0 {
+                            if let Some(trace) = &resident {
+                                return Ok(Arc::clone(trace));
+                            }
+                        }
+                        let device = super::common::context::context_for(ordinal).ok_or(
+                            KernelError::InvariantViolation {
+                                reason: "missing commitment device",
+                            },
+                        )?;
+                        let resident_window = window.residency(cycles);
+                        Ok(Arc::new(DeviceTrace::upload_source(
+                            Arc::clone(device.stream()),
+                            source,
+                            resident_window.start..resident_window.start + resident_window.len,
+                            preprocessing,
+                        )?))
+                    })
+                    .collect::<Result<Vec<_>, KernelError<F>>>()?;
                 let host_bases = PCS::tier1_bases(setup, row_width)?;
                 let (columns, traces, hots) = partition::split_columns::<F, PCS>(
                     setup,
                     bases,
                     resident,
                     &plan,
-                    &partition::TraceSource {
-                        rows,
-                        preprocessing: source.program_preprocessing(),
-                    },
+                    &TraceSource { traces: &traces },
                     &host_bases,
                     &windows,
                 )?;
@@ -490,7 +526,7 @@ where
             })?;
             let dense = tracing::info_span!("cuda_commit_increments", cycles)
                 .in_scope(|| dense_columns_from_trace::<F>(context, &trace, &kinds, cycles))?;
-            let parent = tracing::Span::current();
+            let parent = Span::current();
             let (tx, rx) = mpsc::channel::<(usize, Vec<JacobianLimbs>)>();
             let mut tier1 = Ok(());
             let tier2 = std::thread::scope(|scope| {
@@ -566,19 +602,71 @@ where
 
         let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
             .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
+        let rows = collect_bundles::<CommittedColumnsWitness>(source, cycles)?;
+        let placement = TracePlacement::new(grid);
         kinds
             .iter()
             .zip(ids)
             .map(|(&kind, &id)| {
-                let mut consumers = (MaterializedColumn::<F>::begin(kind, grid),);
-                stream_witnesses(source, 0..cycles, row_width, &mut consumers)?;
-                let table = consumers.0.table;
+                let mut table = vec![F::zero(); 1usize << grid.total_vars];
+                for (cycle, row) in rows.iter().enumerate() {
+                    if kind.is_one_hot() {
+                        if let Some(address) = kind.hot_address(row) {
+                            table[placement.index(cycle, address)] = F::one();
+                        }
+                    } else {
+                        table[placement.index(cycle, 0)] = F::from_i128(kind.increment(row));
+                    }
+                }
                 let rows = tracing::info_span!("cuda_commit_tier1_dense")
                     .in_scope(|| device_rows::<F>(context, bases, &table, row_width))?;
                 tracing::info_span!("cuda_commit_tier2")
                     .in_scope(|| finish::<F, PCS>(setup, &rows, id))
             })
             .collect()
+    }
+}
+
+impl<F, PCS> CommitWitness<F, PCS> for CudaBackend
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F> + DeviceTier1Commitment,
+{
+    #[cfg(feature = "field-inline")]
+    fn commit_field_inline_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn JoltWitnessPlane<F>,
+        ids: &[FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+        OptimizedBackend.commit_field_inline_witness(session, source, ids, grid, setup)
+    }
+
+    fn commit_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn RowSource,
+        ids: &[JoltCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
+        let mut committed = None;
+        source.visit_chunks(0..1, 1, &mut |_, _, env| {
+            committed = Some(Self::commit_source::<F, PCS>(
+                session,
+                source,
+                env.cuda_preprocessing(),
+                ids,
+                grid,
+                setup,
+            ));
+            Ok(())
+        })?;
+        committed.ok_or(KernelError::InvariantViolation {
+            reason: "commitment source supplied no witness environment",
+        })?
     }
 
     fn commit_advice(
@@ -599,7 +687,7 @@ where
     }
 }
 
-fn device_rows<F: Field>(
+fn device_rows<F: JoltField>(
     context: &'static CudaKernelContext,
     bases: &DeviceG1Bases,
     table: &[F],
@@ -627,6 +715,8 @@ fn device_rows<F: Field>(
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use super::HotPlan;
+    use super::COLD;
     #[cfg(not(feature = "zk"))]
     use jolt_claims::protocols::jolt::JoltAdviceKind;
     use jolt_claims::protocols::jolt::{
@@ -637,6 +727,13 @@ mod tests {
     use jolt_field::Fr;
     #[cfg(not(feature = "zk"))]
     use jolt_openings::CommitmentScheme;
+    use jolt_witness::backend::cuda::EXTRA_RAM_READ;
+    use jolt_witness::backend::cuda::EXTRA_RAM_WRITE;
+    use jolt_witness::backend::cuda::EXTRA_RD_POST;
+    use jolt_witness::backend::cuda::EXTRA_RD_PRE;
+    use jolt_witness::backend::cuda::EXTRA_REGISTERS;
+    use jolt_witness::backend::cuda::EXTRA_WORDS;
+    use jolt_witness::backend::cuda::REGISTER_ABSENT;
     use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 
     #[cfg(not(feature = "zk"))]
@@ -870,28 +967,13 @@ mod tests {
     fn the_increment_kernel_source_agrees_on_the_packed_layout() {
         let source = include_str!("../kernels/commit_increments.cu");
         for (name, value) in [
-            ("CI_EXTRA_WORDS", jolt_witness::backend::cuda::EXTRA_WORDS),
-            (
-                "CI_EXTRA_RD_POST",
-                jolt_witness::backend::cuda::EXTRA_RD_POST,
-            ),
-            (
-                "CI_EXTRA_RAM_READ",
-                jolt_witness::backend::cuda::EXTRA_RAM_READ,
-            ),
-            (
-                "CI_EXTRA_RAM_WRITE",
-                jolt_witness::backend::cuda::EXTRA_RAM_WRITE,
-            ),
-            (
-                "CI_EXTRA_REGISTERS",
-                jolt_witness::backend::cuda::EXTRA_REGISTERS,
-            ),
-            ("CI_EXTRA_RD_PRE", jolt_witness::backend::cuda::EXTRA_RD_PRE),
-            (
-                "CI_REGISTER_ABSENT",
-                jolt_witness::backend::cuda::REGISTER_ABSENT as usize,
-            ),
+            ("CI_EXTRA_WORDS", EXTRA_WORDS),
+            ("CI_EXTRA_RD_POST", EXTRA_RD_POST),
+            ("CI_EXTRA_RAM_READ", EXTRA_RAM_READ),
+            ("CI_EXTRA_RAM_WRITE", EXTRA_RAM_WRITE),
+            ("CI_EXTRA_REGISTERS", EXTRA_REGISTERS),
+            ("CI_EXTRA_RD_PRE", EXTRA_RD_PRE),
+            ("CI_REGISTER_ABSENT", REGISTER_ABSENT as usize),
         ] {
             let expected = format!("#define {name} {value}");
             assert!(
@@ -913,13 +995,12 @@ mod tests {
             let ids = trace_ids(witness);
             let kinds = super::column_kinds::<Fr>(&ids, grid).expect("column kinds");
             let plane = witness as &dyn JoltWitnessPlane<Fr>;
-            let rows = crate::optimized::support::collect_rows::<Fr, CommittedColumnsWitness>(
-                plane, cycles,
-            )
-            .expect("reference rows");
+            let rows =
+                crate::optimized::support::collect_rows::<CommittedColumnsWitness>(plane, cycles)
+                    .expect("reference rows");
 
             let mut session = ProofSession::default();
-            let trace = super::session_device_trace_window(
+            let trace = crate::cuda::witness::session_device_trace_window(
                 context,
                 &mut session,
                 plane,
@@ -982,23 +1063,30 @@ mod tests {
             let ids = trace_ids(witness);
             let kinds = super::column_kinds::<Fr>(&ids, grid).expect("column kinds");
             let plane = witness as &dyn JoltWitnessPlane<Fr>;
-            let rows = crate::optimized::support::collect_rows::<Fr, CommittedColumnsWitness>(
-                plane, cycles,
-            )
-            .expect("reference rows");
+            let rows =
+                crate::optimized::support::collect_rows::<CommittedColumnsWitness>(plane, cycles)
+                    .expect("reference rows");
 
             let mut session = ProofSession::default();
+            let mut preprocessing = None;
+            plane
+                .visit_chunks(0..1, 1, &mut |_, _, env| {
+                    preprocessing = Some(env.cuda_preprocessing().clone());
+                    Ok(())
+                })
+                .expect("preprocessing");
             let (hot, _) = super::device_hot_columns::<Fr>(
                 context,
                 &mut session,
                 plane,
                 cycles,
-                &super::HotPlan {
+                &HotPlan {
                     kinds: &kinds,
                     ids: &ids,
                     one_hot_k,
                     window: &super::whole_domain(cycles),
                 },
+                &preprocessing.expect("witness preprocessing"),
             )
             .expect("device hot columns");
 
@@ -1016,12 +1104,9 @@ mod tests {
                 one_hot_columns += 1;
                 let expected: Vec<u32> = rows
                     .iter()
-                    .map(|row| {
-                        kind.hot_address(row)
-                            .map_or(super::COLD, |address| address as u32)
-                    })
+                    .map(|row| kind.hot_address(row).map_or(COLD, |address| address as u32))
                     .collect();
-                cold_seen |= expected.contains(&super::COLD);
+                cold_seen |= expected.contains(&COLD);
                 assert!(
                     expected.iter().any(|&address| address != expected[0]),
                     "{:?}: every cycle shares one address, so a chunk kernel that ignored the \

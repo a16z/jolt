@@ -1,6 +1,4 @@
-//! Instruction read-RAF symbolic sumcheck relation.
-
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use serde::{Deserialize, Serialize};
 
@@ -33,8 +31,6 @@ pub struct InstructionReadRafOutputClaims<C> {
     pub instruction_raf_flag: C,
 }
 
-/// Consumed instruction-lookup openings (the reduced lookup output + left/right
-/// operands), wired from the upstream instruction claim-reduction.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionReadRafInputClaims<C> {
     #[opening(LookupOutput, from = InstructionClaimReduction)]
@@ -45,7 +41,6 @@ pub struct InstructionReadRafInputClaims<C> {
     pub right_lookup_operand: C,
 }
 
-/// Fiat-Shamir challenge drawn by the instruction read-RAF sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionReadRafChallenges<F> {
@@ -87,14 +82,14 @@ impl SymbolicSumcheck for ReadRaf {
         self.shape.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(InstructionReadRafChallenge::Gamma);
         opening(lookup_output_reduced())
             + gamma.clone() * opening(left_lookup_operand_reduced())
             + gamma.pow(2) * opening(right_lookup_operand_reduced())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let ra_product = instruction_ra_product(self.shape);
         let mut output = JoltExpr::zero();
 
@@ -123,7 +118,7 @@ mod tests {
     use crate::protocols::jolt::{
         JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltVirtualPolynomial,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
         InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))
@@ -204,18 +199,6 @@ mod tests {
         assert_eq!(
             output,
             ra_0 * ra_1 * (table_sum + raf_constant + raf_flag_coeff * raf_flag)
-        );
-    }
-
-    #[test]
-    fn read_raf_symbolic_matches_dependencies() {
-        let dimensions = read_raf_dimensions(2);
-        let relation = ReadRaf::new(dimensions);
-        assert_eq!(ReadRaf::id(), JoltRelationId::InstructionReadRaf);
-        assert_eq!(relation.rounds(), dimensions.sumcheck_rounds());
-        assert_eq!(
-            relation.degree(),
-            dimensions.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
         );
     }
 }

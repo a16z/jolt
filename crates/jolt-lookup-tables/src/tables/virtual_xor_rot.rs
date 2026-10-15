@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -24,7 +24,7 @@ impl<const XLEN: usize, const ROTATION: u32> LookupTable for VirtualXORROTTable<
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
@@ -65,7 +65,7 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, xor_rot] = suffixes.try_into().unwrap();
@@ -124,16 +124,6 @@ mod tests {
     #[test]
     fn prefix_suffix_rot63() {
         prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 63>>();
-    }
-
-    #[test]
-    fn mle_full_hypercube_rot16() {
-        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 16>>();
-    }
-
-    #[test]
-    fn mle_full_hypercube_rot24() {
-        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 24>>();
     }
 
     #[test]

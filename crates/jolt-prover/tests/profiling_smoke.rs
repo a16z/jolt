@@ -1,17 +1,19 @@
 //! E2e smoke test for the profile harness: one in-process fibonacci run
 //! must emit both telemetry artifacts, the summary must parse through the
-//! strict schema structs, and every taxonomy-v1 label that fires on all
+//! strict schema structs, and every current taxonomy label that fires on all
 //! proves must be present in the trace — so a silent span rename fails CI
 //! rather than drifting.
 //!
 //! Scale 2^13 — fibonacci's minimum guest scale. Label coverage is
-//! scale-independent.
+//! scale-independent. Compiled with the `akita` feature the same run drives
+//! the Akita prover and asserts its presence set (and the `_akita`-suffixed
+//! artifact names).
 //!
 //! NOT wired into CI yet: the reference backend's naive RAM kernels retain
 //! ~18 GiB regardless of trace length (`ram_K` is priced off the guest's
 //! default 32 MB heap, not the trace), which exceeds hosted-runner memory.
-//! Hook up a dedicated `rust.yml` job (guest toolchain + jolt CLI, like the
-//! legacy test jobs) once an optimized backend fits runner memory.
+//! Hook up a dedicated `rust.yml` job with the guest toolchain and jolt CLI
+//! once an optimized backend fits runner memory.
 //!
 //! Run explicitly (needs the guest toolchain, like the byte-diff harness):
 //! `cargo nextest run -p jolt-prover --features profiling -E 'binary(profiling_smoke)'`
@@ -19,8 +21,11 @@
 #![cfg(feature = "profiling")]
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaChunkProfile;
 use jolt_profiling::summary::ProfileSummary;
 use jolt_profiling::taxonomy;
+use jolt_profiling::taxonomy::{CONFIG_DERIVATION_SPAN, ROOT_SPAN, TAXONOMY_VERSION};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
 use serde_json::Value;
 
@@ -31,21 +36,24 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        #[cfg(feature = "akita")]
+        akita_chunk_profile: AkitaChunkProfile::Single,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");
-    // Artifacts are grouped into a per-run directory
-    // (benchmark-runs/{timestamp}_modular_fibonacci_13/), with the
-    // `latest_` link pointing at this run; the directory name carries the
-    // run identity, so the files inside use fixed names.
+    let stem = if cfg!(feature = "akita") {
+        "modular_fibonacci_akita_13"
+    } else {
+        "modular_fibonacci_13"
+    };
     assert_eq!(trace_path.file_name().unwrap(), "trace.json");
     assert_eq!(summary_path.file_name().unwrap(), "summary.json");
     assert_eq!(summary_path.parent(), trace_path.parent());
     let run_dir = trace_path.parent().unwrap();
     let dir_name = run_dir.file_name().unwrap().to_str().unwrap();
     let (timestamp, rest) = dir_name.split_at(15);
-    assert_eq!(rest, "_modular_fibonacci_13", "run dir: {dir_name}");
+    assert_eq!(rest, format!("_{stem}"), "run dir: {dir_name}");
     assert!(
         timestamp.chars().enumerate().all(|(i, c)| if i == 8 {
             c == '-'
@@ -55,7 +63,7 @@ fn profile_run_emits_conformant_artifacts() {
         "timestamp prefix: {timestamp}"
     );
     assert_eq!(
-        std::fs::canonicalize("benchmark-runs/latest_modular_fibonacci_13").unwrap(),
+        std::fs::canonicalize(format!("benchmark-runs/latest_{stem}")).unwrap(),
         std::fs::canonicalize(run_dir).unwrap(),
         "latest link resolves to this run"
     );
@@ -69,12 +77,14 @@ fn profile_run_emits_conformant_artifacts() {
     let summary: ProfileSummary =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
 
-    // Every always-present taxonomy-v1 label fired, for the mode this
+    // Every always-present current taxonomy label fired, for the mode this
     // prover was compiled in — the `zk` feature swaps the uni-skip and
-    // stage-8 opening seams for their committed siblings. (`commit_advice`
-    // and `AdviceOpeningEvaluation::evaluate` are exempt: fibonacci
-    // exercises no advice.)
-    let mode = if cfg!(feature = "zk") {
+    // stage-8 opening seams for their committed siblings, and the `akita`
+    // feature swaps the commitment seams for the Akita set. (The advice
+    // seams are exempt: fibonacci exercises no advice.)
+    let mode = if cfg!(feature = "akita") {
+        taxonomy::ProverMode::Akita
+    } else if cfg!(feature = "zk") {
         taxonomy::ProverMode::Zk
     } else {
         taxonomy::ProverMode::Clear
@@ -84,19 +94,43 @@ fn profile_run_emits_conformant_artifacts() {
         .filter(|e| e.get("ph").and_then(Value::as_str) == Some("B"))
         .filter_map(|e| e.get("name").and_then(Value::as_str))
         .collect();
-    let missing: Vec<&str> = taxonomy::always_present_spans(mode)
+    let labels = taxonomy::always_present_spans(mode);
+    #[cfg(feature = "field-inline")]
+    let labels: Vec<_> = labels
+        .into_iter()
+        .chain(taxonomy::field_inline_spans(mode).iter().copied())
+        .collect();
+    let missing: Vec<&str> = labels
         .into_iter()
         .filter(|label| !emitted.contains(label))
         .collect();
     assert!(
         missing.is_empty(),
-        "missing taxonomy-v1 labels: {missing:?}"
+        "missing taxonomy-v{} labels: {missing:?}",
+        TAXONOMY_VERSION
     );
 
-    // Headline summary sanity: root present with a positive wall time and
-    // every stage rolled up with boundary RSS from the StageMemoryLayer.
+    // Configuration belongs to this harness's prelude, outside the prove span.
+    let span_time = |label: &str, phase: &str| {
+        trace
+            .iter()
+            .find(|event| {
+                event.get("name").and_then(Value::as_str) == Some(label)
+                    && event.get("ph").and_then(Value::as_str) == Some(phase)
+            })
+            .and_then(|event| event.get("ts").and_then(Value::as_f64))
+            .expect("profile prelude and prove spans have begin/end timestamps")
+    };
+    let config_start = span_time(CONFIG_DERIVATION_SPAN, "B");
+    let config_end = span_time(CONFIG_DERIVATION_SPAN, "E");
+    assert!(config_start <= config_end);
+    assert!(config_end <= span_time(ROOT_SPAN, "B"));
+    assert!(summary.spans.contains_key(CONFIG_DERIVATION_SPAN));
+    assert!(!emitted.contains("ProverConfig::derive_compact"));
+    assert_eq!(summary.taxonomy_version, TAXONOMY_VERSION);
+
     let root = summary.root.expect("root summary");
-    assert_eq!(root.label, taxonomy::ROOT_SPAN);
+    assert_eq!(root.label, ROOT_SPAN);
     assert!(root.wall_time_ns > 0);
     assert!(root.dark_time_fraction >= 0.0 && root.dark_time_fraction <= 1.0);
     assert_eq!(summary.stages.len(), taxonomy::STAGE_SPANS.len());
@@ -104,9 +138,8 @@ fn profile_run_emits_conformant_artifacts() {
     assert_eq!(summary.run.workload, "fibonacci");
     assert_eq!(summary.run.scale_log2, 13);
     assert!(summary.peak_rss_gib.is_some());
+    assert!(summary.peak_footprint_gib.is_some());
 
-    // The counter rewrite ran: no raw `counters.*` events survive in the
-    // trace, and the monitor's samples aggregated into the summary.
     assert!(trace.iter().all(|e| {
         e.get("args")
             .and_then(Value::as_object)

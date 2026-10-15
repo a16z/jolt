@@ -5,6 +5,8 @@ use super::outputs::{Stage8ClearOutput, Stage8ZkOutput};
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(feature = "akita")]
+use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
 use crate::stages::{stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims};
 use crate::{
@@ -14,6 +16,8 @@ use crate::{
     verifier::CheckedInputs,
     VerifierError,
 };
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltOpeningId;
@@ -22,16 +26,16 @@ use jolt_claims::protocols::jolt::{
     geometry::{
         committed_openings::{
             commitment_embedding_scale, final_opening_id, final_opening_point,
-            final_opening_polynomial_order, FinalOpeningPointInputs,
+            final_opening_polynomial_order, CommitmentEmbedding, FinalOpeningPointInputs,
         },
         ra::JoltRaPolynomialLayout,
     },
-    JoltCommittedPolynomial, JoltRelationId,
+    JoltCommittedPolynomial, JoltRelationId, TracePolynomialOrder,
 };
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{
@@ -47,9 +51,11 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
-/// [`batch_entries`] wiring.
-pub struct Stage8BatchEntry<'a, F: Field, C> {
-    pub id: JoltOpeningId,
+/// [`batch_entries`] wiring. The id is the composite [`ComposedOpeningId`] so
+/// the composed plan can carry the field-inline entry alongside the jolt ones
+/// (under `field-inline`, spliced by the stage-8 `field_inline` seam).
+pub struct Stage8BatchEntry<'a, F: JoltField, C> {
+    pub id: ComposedOpeningId,
     pub commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
     pub opening_claim: Option<F>,
@@ -75,7 +81,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
@@ -141,6 +147,7 @@ where
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
         layout,
+        proof.trace_polynomial_order,
         trusted_advice_commitment,
         &opening_point,
         hamming_opening_point.as_slice(),
@@ -148,7 +155,20 @@ where
         &precommitted_finals,
         clear_claims,
     )?;
-    let opening_ids: Vec<JoltOpeningId> = entries.iter().map(|entry| entry.id).collect();
+    #[cfg(feature = "field-inline")]
+    let entries = {
+        let mut entries = entries;
+        super::field_inline::splice_final_opening(
+            &mut entries,
+            &proof.commitments,
+            proof.trace_polynomial_order,
+            &opening_point,
+            stage6_points.field_registers_inc_opening_point(),
+            clear_claims.map(|(stage6, _)| stage6.field_registers_inc_claim_reduction.rd_inc),
+        )?;
+        entries
+    };
+    let opening_ids: Vec<ComposedOpeningId> = entries.iter().map(|entry| entry.id).collect();
 
     if checked.zk {
         let gamma_powers = transcript.challenge_scalar_powers(entries.len());
@@ -268,6 +288,7 @@ pub fn batch_entries<'a, F, PCS, VC>(
     commitments: &'a JoltCommitments<PCS::Output>,
     untrusted_advice_commitment: Option<&'a PCS::Output>,
     layout: JoltRaPolynomialLayout,
+    trace_order: TracePolynomialOrder,
     trusted_advice_commitment: Option<&'a PCS::Output>,
     opening_point: &[F],
     hamming_opening_point: &[F],
@@ -276,7 +297,7 @@ pub fn batch_entries<'a, F, PCS, VC>(
     clear_claims: Option<(&Stage6bOutputClaims<F>, &Stage7OutputClaims<F>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
 {
@@ -292,12 +313,10 @@ where
         layout,
         include_trusted,
         include_untrusted,
-        committed_program.map(|committed| committed.bytecode_chunk_count()),
+        committed_program.is_some(),
     );
 
-    // Resolves one member of an indexed one-hot RA family: its commitment from
-    // the family's commitment list and, in clear mode, its opening claim.
-    fn ra_family_entry<'c, F: Field, O>(
+    fn ra_family_entry<'c, F: JoltField, O>(
         commitment_list: &'c [O],
         claim_list: Option<&[F]>,
         index: usize,
@@ -312,20 +331,19 @@ where
                 claims
                     .get(index)
                     .copied()
-                    .ok_or(VerifierError::MissingOpeningClaim { id })
+                    .ok_or(VerifierError::MissingOpeningClaim { id: id.into() })
             })
             .transpose()?;
         Ok((commitment, opening_claim))
     }
 
-    // Pairs a precommitted polynomial's final opening with its commitment.
-    fn precommitted_entry<'c, F: Field, O>(
+    fn precommitted_entry<'c, F: JoltField, O>(
         opening: Option<&'c PrecommittedFinalOpening<F>>,
         commitment: Option<&'c O>,
         polynomial: JoltCommittedPolynomial,
         id: JoltOpeningId,
     ) -> Result<(&'c O, &'c [F], Option<F>), VerifierError> {
-        let opening = opening.ok_or(VerifierError::MissingOpeningClaim { id })?;
+        let opening = opening.ok_or(VerifierError::MissingOpeningClaim { id: id.into() })?;
         let commitment =
             commitment.ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
         Ok((commitment, opening.point.as_slice(), opening.opening_claim))
@@ -398,10 +416,9 @@ where
                     polynomial,
                     id,
                 )?,
-                JoltCommittedPolynomial::BytecodeChunk(index) => precommitted_entry(
+                JoltCommittedPolynomial::ProgramBytecode => precommitted_entry(
                     precommitted_final(polynomial),
-                    committed_program
-                        .and_then(|committed| committed.bytecode_chunk_commitments.get(index)),
+                    committed_program.map(|committed| &committed.bytecode_commitment),
                     polynomial,
                     id,
                 )?,
@@ -411,21 +428,11 @@ where
                     polynomial,
                     id,
                 )?,
-                JoltCommittedPolynomial::UnsignedIncChunk(_)
-                | JoltCommittedPolynomial::UnsignedIncMsb
-                | JoltCommittedPolynomial::TrustedAdviceBytes
-                | JoltCommittedPolynomial::UntrustedAdviceBytes
-                | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
-                | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
-                | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
-                | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
-                | JoltCommittedPolynomial::BytecodeRafFlag { .. }
-                | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
-                | JoltCommittedPolynomial::BytecodeImmBytes { .. }
-                | JoltCommittedPolynomial::ProgramImageBytes => {
-                    // Lattice-mode polynomials open through the packed opening
-                    // (`stage8::packed` / `verify_packed_openings`), never the
-                    // homomorphic stage 8 RLC batch.
+                JoltCommittedPolynomial::Reserved4(retired) => match retired {},
+                JoltCommittedPolynomial::BalancedIncDigit(_)
+                | JoltCommittedPolynomial::BalancedIncCarry => {
+                    // Lattice-mode polynomials open through the fixed-prefix
+                    // path in `stage8::akita`, never the homomorphic RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
                         reason: format!(
                             "polynomial {polynomial:?} is not part of the stage 8 prover order"
@@ -433,11 +440,39 @@ where
                     });
                 }
             };
+        let embedding = match polynomial {
+            JoltCommittedPolynomial::RamInc
+            | JoltCommittedPolynomial::RdInc
+            | JoltCommittedPolynomial::InstructionRa(_)
+            | JoltCommittedPolynomial::BytecodeRa(_)
+            | JoltCommittedPolynomial::RamRa(_) => CommitmentEmbedding::Trace {
+                order: trace_order,
+                log_t: inc_opening_point.len(),
+            },
+            JoltCommittedPolynomial::TrustedAdvice
+            | JoltCommittedPolynomial::UntrustedAdvice
+            | JoltCommittedPolynomial::ProgramBytecode
+            | JoltCommittedPolynomial::ProgramImageInit => CommitmentEmbedding::Precommitted,
+            JoltCommittedPolynomial::Reserved4(retired) => match retired {},
+            JoltCommittedPolynomial::BalancedIncDigit(_)
+            | JoltCommittedPolynomial::BalancedIncCarry => {
+                return Err(VerifierError::FinalOpeningBatchFailed {
+                    reason: "Akita objects have no homomorphic embedding".to_string(),
+                });
+            }
+        };
         entries.push(Stage8BatchEntry {
-            id,
+            id: id.into(),
             commitment,
             opening_claim,
-            scale: commitment_embedding_scale(opening_point, own_point),
+            scale: commitment_embedding_scale(opening_point, own_point, embedding).ok_or_else(
+                || VerifierError::FinalOpeningBatchFailed {
+                    reason: format!(
+                        "opening point of {polynomial:?} is not embedded in the unified final \
+                         opening point"
+                    ),
+                },
+            )?,
         });
     }
     Ok(entries)
@@ -448,6 +483,10 @@ fn require_commitment_layout<C>(
     commitments: &JoltCommitments<C>,
     layout: JoltRaPolynomialLayout,
 ) -> Result<(), VerifierError> {
+    // The field-inline commitment payload is part of the expected layout: the composed final
+    // opening cannot assemble without the `FieldRdInc` commitment.
+    #[cfg(feature = "field-inline")]
+    super::field_inline::require_commitment(commitments)?;
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "layout totals are small per-polynomial chunk counts; the sum cannot overflow usize"
@@ -483,6 +522,144 @@ fn require_commitment_layout<C>(
     Ok(())
 }
 
+#[cfg(all(test, not(feature = "akita"), feature = "field-inline"))]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use jolt_claims::protocols::composed::ComposedOpeningId;
+    use jolt_claims::protocols::jolt::geometry::committed_openings::{
+        final_opening_id, final_opening_polynomial_order,
+    };
+    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+    use jolt_field::{Fr, Ring};
+
+    fn layout() -> JoltRaPolynomialLayout {
+        JoltRaPolynomialLayout::new(2, 1, 2).unwrap()
+    }
+
+    fn base_entries(include_advice: bool) -> Vec<Stage8BatchEntry<'static, Fr, ()>> {
+        final_opening_polynomial_order(layout(), include_advice, include_advice, false)
+            .into_iter()
+            .map(|polynomial| Stage8BatchEntry {
+                id: final_opening_id(polynomial).into(),
+                commitment: &(),
+                opening_claim: None,
+                scale: Fr::from_u64(1),
+            })
+            .collect()
+    }
+
+    fn jolt_id(polynomial: JoltCommittedPolynomial) -> ComposedOpeningId {
+        final_opening_id(polynomial).into()
+    }
+
+    /// With field-inline enabled, the composed plan is exactly the spec's field-inline
+    /// final-opening order — `RamInc@Inc`, `RdInc@Inc`,
+    /// `FieldRdInc@FieldRegistersIncClaimReduction`, then the RA families and the advice
+    /// entries (`specs/field-inline-protocol.md`, "Stage 6 Composition" / the stage-8
+    /// final-opening order block).
+    #[test]
+    fn field_inline_final_opening_plan_matches_the_spec_order() {
+        use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
+        use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
+
+        let commitments = JoltCommitments::new((), (), vec![(), ()], vec![(), ()], vec![()])
+            .with_field_inline(FieldInlineCommitments {
+                field_registers: FieldRegistersCommitments { rd_inc: () },
+            });
+        let opening_point = [2u64, 3, 5].map(Fr::from_u64);
+        let field_point = [3u64, 5].map(Fr::from_u64);
+
+        let mut entries = base_entries(true);
+        crate::stages::stage8::field_inline::splice_final_opening(
+            &mut entries,
+            &commitments,
+            TracePolynomialOrder::CycleMajor,
+            &opening_point,
+            &field_point,
+            Some(Fr::from_u64(7)),
+        )
+        .unwrap();
+
+        let ids: Vec<ComposedOpeningId> = entries.iter().map(|entry| entry.id).collect();
+        let expected = vec![
+            jolt_id(JoltCommittedPolynomial::RamInc),
+            jolt_id(JoltCommittedPolynomial::RdInc),
+            field_rd_inc_reduced().into(),
+            jolt_id(JoltCommittedPolynomial::InstructionRa(0)),
+            jolt_id(JoltCommittedPolynomial::InstructionRa(1)),
+            jolt_id(JoltCommittedPolynomial::BytecodeRa(0)),
+            jolt_id(JoltCommittedPolynomial::RamRa(0)),
+            jolt_id(JoltCommittedPolynomial::RamRa(1)),
+            jolt_id(JoltCommittedPolynomial::TrustedAdvice),
+            jolt_id(JoltCommittedPolynomial::UntrustedAdvice),
+        ];
+        assert_eq!(ids, expected);
+
+        // The spliced entry mirrors RdInc's embedding treatment: the same dense embedding
+        // helper over the field-inline reduction's own point.
+        let spliced = entries
+            .iter()
+            .find(|entry| entry.id == field_rd_inc_reduced().into())
+            .unwrap();
+        assert_eq!(spliced.scale, (Fr::from_u64(1) - opening_point[0]));
+        assert_eq!(spliced.opening_claim, Some(Fr::from_u64(7)));
+
+        let mut without_advice = base_entries(false);
+        crate::stages::stage8::field_inline::splice_final_opening(
+            &mut without_advice,
+            &commitments,
+            TracePolynomialOrder::CycleMajor,
+            &opening_point,
+            &field_point,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            without_advice.get(2).map(|entry| entry.id),
+            Some(field_rd_inc_reduced().into())
+        );
+    }
+
+    #[test]
+    fn field_inline_splice_fails_closed() {
+        use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
+
+        let opening_point = [2u64, 3].map(Fr::from_u64);
+        let without_payload = JoltCommitments::new((), (), Vec::new(), Vec::new(), Vec::new());
+        assert!(matches!(
+            crate::stages::stage8::field_inline::splice_final_opening(
+                &mut base_entries(false),
+                &without_payload,
+                TracePolynomialOrder::CycleMajor,
+                &opening_point,
+                &opening_point,
+                None,
+            ),
+            Err(VerifierError::MissingProofPayload {
+                field: "commitments.field_inline"
+            })
+        ));
+
+        let commitments = JoltCommitments::new((), (), Vec::new(), Vec::new(), Vec::new())
+            .with_field_inline(FieldInlineCommitments {
+                field_registers: FieldRegistersCommitments { rd_inc: () },
+            });
+        let mut anchorless: Vec<Stage8BatchEntry<'_, Fr, ()>> = Vec::new();
+        assert!(matches!(
+            crate::stages::stage8::field_inline::splice_final_opening(
+                &mut anchorless,
+                &commitments,
+                TracePolynomialOrder::CycleMajor,
+                &opening_point,
+                &opening_point,
+                None,
+            ),
+            Err(VerifierError::FinalOpeningBatchFailed { .. })
+        ));
+    }
+}
+
 #[cfg(feature = "akita")]
 #[expect(
     clippy::too_many_arguments,
@@ -496,41 +673,33 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
+    stage4: &Stage4Output<F, VC::Output>,
     stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     PCS::Output: Clone + AppendToTranscript + super::OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: super::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    // The reconstruction phase settles auxiliary word/chunk claims against
-    // their committed one-hot decompositions.
-    let reconstruction = super::reconstruction::verify(
-        checked,
-        proof.stages.reconstruction_sumcheck_proof.as_ref(),
-        &proof.clear_claims()?.reconstruction,
-        transcript,
-        stage6.clear()?,
-        stage7.clear()?,
-    )?;
-
-    // OneHotTrace then opens natively at its shared point; reconstruction leaves are
-    // discharged by separate auxiliary packed openings.
-    super::packed::verify(
+    super::akita::verify(
         formula_dimensions,
         proof.one_hot_config,
         preprocessing,
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
+        #[cfg(feature = "field-inline")]
+        proof.field_inc_commitment.as_ref(),
         &proof.joint_opening_proof,
         transcript,
+        &checked.precommitted,
+        stage4.clear()?,
+        stage6.clear()?,
         stage7.clear()?,
-        &reconstruction,
     )?;
 
     Ok(Stage8Output::Clear)

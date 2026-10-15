@@ -1,5 +1,3 @@
-//! Wrapper types bridging dory-pcs to jolt-openings.
-
 use std::io::Cursor;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -9,7 +7,7 @@ use dory::backends::arkworks::{
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
 use jolt_field::Fr;
 use jolt_transcript::{AppendToTranscript, Transcript};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Caps the upstream `Vec::with_capacity(num_rounds)` allocation against
 /// attacker-supplied round counts during proof deserialization. Real Dory
@@ -58,7 +56,7 @@ impl AppendToTranscript for DoryCommitment {
     }
 }
 
-impl<F: jolt_field::Field> HomomorphicCommitment<F> for DoryCommitment {
+impl<F: jolt_field::JoltField> HomomorphicCommitment<F> for DoryCommitment {
     #[inline]
     fn add(c1: &Self, c2: &Self) -> Self {
         Self(<Bn254GT as HomomorphicCommitment<F>>::add(&c1.0, &c2.0))
@@ -85,20 +83,17 @@ impl<'de> Deserialize<'de> for DoryProof {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
         if buf.len() > MAX_SERIALIZED_PROOF_BYTES {
-            return Err(serde::de::Error::custom(format!(
+            return Err(Error::custom(format!(
                 "Dory proof ({} bytes) exceeds maximum ({MAX_SERIALIZED_PROOF_BYTES})",
                 buf.len()
             )));
         }
-        validate_proof_round_count(&buf).map_err(serde::de::Error::custom)?;
+        validate_proof_round_count(&buf).map_err(Error::custom)?;
         let mut cursor = Cursor::new(&buf[..]);
-        let proof =
-            ArkDoryProof::deserialize_compressed(&mut cursor).map_err(serde::de::Error::custom)?;
+        let proof = ArkDoryProof::deserialize_compressed(&mut cursor).map_err(Error::custom)?;
         // Canonical encoding: a valid parse must consume the entire buffer.
         if cursor.position() != buf.len() as u64 {
-            return Err(serde::de::Error::custom(
-                "Dory proof encoding has trailing bytes",
-            ));
+            return Err(Error::custom("Dory proof encoding has trailing bytes"));
         }
         Ok(Self(proof))
     }
@@ -106,6 +101,27 @@ impl<'de> Deserialize<'de> for DoryProof {
 
 #[derive(Clone)]
 pub struct DoryProverSetup(pub ArkworksProverSetup);
+
+impl Serialize for DoryProverSetup {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        canonical_serialize(&self.0, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DoryProverSetup {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let mut cursor = Cursor::new(&buf[..]);
+        let setup =
+            ArkworksProverSetup::deserialize_compressed(&mut cursor).map_err(Error::custom)?;
+        if cursor.position() != buf.len() as u64 {
+            return Err(Error::custom(
+                "Dory prover setup encoding has trailing bytes",
+            ));
+        }
+        Ok(Self(setup))
+    }
+}
 
 #[derive(Clone)]
 pub struct DoryVerifierSetup(pub ArkworksVerifierSetup);
@@ -119,21 +135,41 @@ impl Serialize for DoryVerifierSetup {
 impl<'de> Deserialize<'de> for DoryVerifierSetup {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        validate_verifier_setup_structure(&buf).map_err(serde::de::Error::custom)?;
+        validate_verifier_setup_structure(&buf).map_err(Error::custom)?;
         ArkworksVerifierSetup::deserialize_compressed(&buf[..])
-            .map_err(serde::de::Error::custom)
+            .map_err(Error::custom)
             .map(Self)
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DoryHint {
-    pub row_commitments: Vec<Bn254G1>,
-    pub commit_blind: Fr,
+    pub(crate) row_commitments: Vec<Bn254G1>,
+    pub(crate) commit_blind: Fr,
 }
 
 impl DoryHint {
-    pub fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
+    #[cfg(feature = "cuda")]
+    pub fn from_parts(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
+        Self::new(row_commitments, commit_blind)
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn row_commitments(&self) -> &[Bn254G1] {
+        &self.row_commitments
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn commit_blind(&self) -> Fr {
+        self.commit_blind
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn into_parts(self) -> (Vec<Bn254G1>, Fr) {
+        (self.row_commitments, self.commit_blind)
+    }
+
+    pub(crate) fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
         Self {
             row_commitments,
             commit_blind,
@@ -247,7 +283,7 @@ fn validate_proof_round_count(buf: &[u8]) -> Result<(), String> {
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use jolt_field::RandomSampling;
+    use jolt_field::Field;
     use jolt_openings::CommitmentScheme;
     use jolt_poly::Polynomial;
     use jolt_transcript::Transcript;
@@ -286,7 +322,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let (commitment, hint) =
@@ -318,8 +354,6 @@ mod tests {
         );
     }
 
-    /// Wraps `bytes` in the outer serde byte layer and asserts `T`'s
-    /// deserializer rejects them with `needle` in the error message.
     fn assert_rejected_with<T: for<'de> Deserialize<'de>>(bytes: &[u8], needle: &str) {
         let encoded = serde_json::to_vec(&bytes).expect("encode crafted bytes");
         let err = serde_json::from_slice::<T>(&encoded)
@@ -361,7 +395,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -403,7 +437,7 @@ mod tests {
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -429,7 +463,7 @@ mod tests {
         let prover_setup = crate::DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 

@@ -1,7 +1,12 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use core::marker::PhantomData;
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -107,7 +112,7 @@ impl ShardedDenseProduct {
         self.bound
     }
 
-    pub(crate) fn toom_evals<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+    pub(crate) fn toom_evals<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
         if let Some((ordinal, collapsed)) = &self.collapsed {
             let context = context_for(*ordinal).ok_or(absent())?;
             return collapsed.toom_evals(context);
@@ -145,7 +150,7 @@ impl ShardedDenseProduct {
         Ok(total)
     }
 
-    pub(crate) fn bind<F: Field>(&mut self, challenge: F) -> Result<(), CudaError> {
+    pub(crate) fn bind<F: JoltField>(&mut self, challenge: F) -> Result<(), CudaError> {
         self.bound += 1;
         if let Some((ordinal, collapsed)) = &mut self.collapsed {
             let context = context_for(*ordinal).ok_or(absent())?;
@@ -261,7 +266,7 @@ impl ShardedDenseProduct {
         Ok((context_for(*ordinal).ok_or(absent())?, collapsed))
     }
 
-    pub(crate) fn factor_finals<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+    pub(crate) fn factor_finals<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
         let (context, collapsed) = self.tail()?;
         let mut finals: Vec<F> = collapsed.factor_finals(context)?;
         if self.assembled && self.lt_column {
@@ -272,7 +277,7 @@ impl ShardedDenseProduct {
         Ok(finals)
     }
 
-    pub(crate) fn lt_final<F: Field>(&self) -> Result<Option<F>, CudaError> {
+    pub(crate) fn lt_final<F: JoltField>(&self) -> Result<Option<F>, CudaError> {
         let (context, collapsed) = self.tail()?;
         if !self.assembled {
             return collapsed.lt_final(context);
@@ -378,11 +383,14 @@ impl DeviceDenseProduct {
         Ok((handles, materialized))
     }
 
-    pub fn toom_evals<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+    pub fn toom_evals<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Vec<F>, CudaError> {
         self.round_lanes(context, 1, true, self.degree)
     }
 
-    fn round_lanes<F: Field>(
+    fn round_lanes<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         first_point: u32,
@@ -404,10 +412,7 @@ impl DeviceDenseProduct {
         let mut partials = context.alloc(lanes as usize * blocks as usize)?;
 
         let empty = context.alloc(1)?;
-        let lt_view = self
-            .lt
-            .as_ref()
-            .map(super::lt_poly::DeviceLtPolynomial::view);
+        let lt_view = self.lt.as_ref().map(DeviceLtPolynomial::view);
         let has_lt = u32::from(lt_view.is_some());
         let (lt_lo, lt_hi, eq_hi, lt_shift, lo_bits, lo_mask) = match &lt_view {
             Some(view) => (
@@ -468,7 +473,7 @@ impl DeviceDenseProduct {
             .collect()
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -490,7 +495,7 @@ impl DeviceDenseProduct {
         Ok(())
     }
 
-    pub fn factor_finals<F: Field>(
+    pub fn factor_finals<F: JoltField>(
         &self,
         context: &CudaKernelContext,
     ) -> Result<Vec<F>, CudaError> {
@@ -548,7 +553,10 @@ impl DeviceDenseProduct {
         })
     }
 
-    pub fn lt_final<F: Field>(&self, context: &CudaKernelContext) -> Result<Option<F>, CudaError> {
+    pub fn lt_final<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Option<F>, CudaError> {
         let Some(lt) = &self.lt else {
             return Ok(None);
         };
@@ -561,21 +569,21 @@ impl DeviceDenseProduct {
     }
 }
 
-pub struct DenseProductKernel<F: Field, R> {
+pub struct DenseProductKernel<F: JoltField, R> {
     pub(crate) state: ShardedDenseProduct,
     pub(crate) relation: R,
-    pub(crate) field: core::marker::PhantomData<F>,
+    pub(crate) field: PhantomData<F>,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field, R> allocative::Allocative for DenseProductKernel<F, R> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField, R> Allocative for DenseProductKernel<F, R> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
 
-impl<F: Field, R> DenseProductKernel<F, R> {
+impl<F: JoltField, R> DenseProductKernel<F, R> {
     pub(crate) fn finals(&self) -> Result<Vec<F>, CudaError> {
         self.state.factor_finals()
     }
@@ -587,7 +595,7 @@ impl<F: Field, R> DenseProductKernel<F, R> {
 
 impl<F, R> ProveRounds<F> for DenseProductKernel<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -635,7 +643,7 @@ where
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial};
 
     use super::super::context::shared_context;

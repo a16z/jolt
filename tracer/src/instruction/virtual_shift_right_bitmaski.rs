@@ -1,3 +1,4 @@
+use crate::instruction::registers::j::RegisterStateJ;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,6 +10,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatJ,
+    registers = RegisterStateJ,
     ram = ()
 );
 
@@ -16,7 +18,7 @@ impl VirtualShiftRightBitmaskI {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        _: &mut <VirtualShiftRightBitmaskI as RISCVInstruction>::RAMAccess,
+        _: &mut <VirtualShiftRightBitmaskI as RISCVInstruction>::RamAccess,
     ) {
         let shift = self.operands.imm % 64;
         let ones = (1u128 << (64 - shift)) - 1;

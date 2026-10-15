@@ -19,6 +19,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
+mod asm;
 pub mod error;
 pub mod execution;
 pub mod expand;

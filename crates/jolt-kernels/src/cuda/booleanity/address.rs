@@ -1,5 +1,11 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -18,7 +24,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-pub struct BooleanityAddressKernel<F: Field> {
+pub struct BooleanityAddressKernel<F: JoltField> {
     context: &'static CudaKernelContext,
     relation: BooleanityAddressPhase<F>,
     masses: DeviceBooleanityMasses,
@@ -27,15 +33,15 @@ pub struct BooleanityAddressKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for BooleanityAddressKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for BooleanityAddressKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.visit_simple(Key::new("eq"), self.eq.device_bytes());
         visitor.exit();
     }
 }
 
-impl<F: Field> BooleanityAddressKernel<F> {
+impl<F: JoltField> BooleanityAddressKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.masses.bind(self.context, challenge).map_err(|_| {
             SumcheckError::MissingEvaluationSource {
@@ -48,7 +54,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for BooleanityAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -62,15 +68,18 @@ impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let (at_zero, leading) = self
-            .masses
-            .round_lanes(self.context, &self.eq)
-            .map_err(|_| SumcheckError::MissingEvaluationSource {
-                kind: "cuda booleanity address-phase round",
-            })?;
+        let (at_zero, leading, at_one) =
+            self.masses
+                .round_lanes(self.context, &self.eq)
+                .map_err(|_| SumcheckError::MissingEvaluationSource {
+                    kind: "cuda booleanity address-phase round",
+                })?;
         let mut coefficients = self
             .eq
-            .gruen_poly_deg_3(at_zero, leading, previous_claim)
+            .gruen_poly_deg_3(at_zero, leading, previous_claim, at_one)
+            .map_err(crate::cuda::common::error::backend(
+                "CUDA quotient interpolation",
+            ))?
             .into_coefficients();
         coefficients.resize(self.relation.degree() + 1, F::from_u64(0));
         Ok(UnivariatePoly::new(coefficients))
@@ -81,7 +90,7 @@ impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     type Relation = BooleanityAddressPhase<F>;
 
     fn output_claims(
@@ -109,7 +118,7 @@ impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -175,17 +184,19 @@ pub(crate) mod fixture_support {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
-    use jolt_program::execution::{JoltProgram, OwnedTrace, RamAccess, TraceOutput, TraceRow};
+    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
     use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
+    use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess};
+    use jolt_riscv::{RamRead, RamWrite};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use std::sync::Arc;
     use strum::IntoEnumIterator;
-    use tracer::instruction::{Cycle, RAMRead, RAMWrite};
+    use tracer::instruction::Cycle;
 
     pub(crate) const SLOTS: usize = 31;
 
@@ -209,8 +220,8 @@ pub(crate) mod fixture_support {
         (cycle * SLOT_STRIDE) % SLOTS
     }
 
-    pub(crate) const fn row_ram_address(row: &TraceRow) -> u64 {
-        match row.ram_access {
+    pub(crate) fn row_ram_address(row: &TraceRow) -> u64 {
+        match row.ram_access() {
             RamAccess::Read(read) => read.address,
             RamAccess::Write(write) => write.address,
             RamAccess::NoOp => 0,
@@ -248,13 +259,17 @@ pub(crate) mod fixture_support {
 
     fn set_ram(cycle: &mut Cycle, address: u64, value: u64) {
         match cycle {
-            Cycle::LD(inner) => inner.ram_access = RAMRead { address, value },
+            Cycle::LD(inner) => {
+                inner.ram_access = RamRead { address, value };
+                inner.register_state.rd.1 = value;
+            }
             Cycle::SD(inner) => {
-                inner.ram_access = RAMWrite {
+                inner.ram_access = RamWrite {
                     address,
                     pre_value: value,
                     post_value: value ^ 0x55,
-                }
+                };
+                inner.register_state.rs2 = value ^ 0x55;
             }
             _ => {}
         }
@@ -272,7 +287,7 @@ pub(crate) mod fixture_support {
         ram_k: usize,
         one_hot: JoltOneHotConfig,
         seed: u64,
-        body: impl FnOnce(&TraceBackend<OwnedTrace>, &Fixture) -> R,
+        body: impl FnOnce(&TraceBackend, &Fixture) -> R,
     ) -> R {
         let memory_layout = MemoryLayout::new(&MemoryConfig {
             program_size: Some(1 << 12),
@@ -312,7 +327,7 @@ pub(crate) mod fixture_support {
         let rows: Vec<TraceRow> = trace
             .iter()
             .map(|cycle| {
-                tracer::trace_row_from_cycle(*cycle)
+                tracer::cycle_to_trace_row(cycle, &bytecode.pc_map)
                     .expect("every fixture cycle converts to a modular trace row")
             })
             .collect();
@@ -324,12 +339,7 @@ pub(crate) mod fixture_support {
             max_padded_trace_length: cycles,
         });
         let program = Arc::new(JoltProgram::default());
-        let output = TraceOutput::new(
-            OwnedTrace::new(rows.clone()),
-            Default::default(),
-            None,
-            None,
-        );
+        let output = TraceOutput::new(TraceData::new(rows.clone()), Default::default(), None, None);
         let backend = TraceBackend::new(
             JoltVmWitnessConfig::new(log_t, ram_k, one_hot),
             JoltVmWitnessInputs::new(&program, &preprocessing, output),
@@ -352,11 +362,13 @@ pub(crate) mod fixture_support {
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use jolt_riscv::RamAccess;
+    use jolt_witness::JoltWitnessPlane;
     use std::collections::BTreeSet;
 
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltRelationId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::formula_dimensions_from_parts;
     use jolt_verifier::stages::stage6a::booleanity::{
         BooleanityAddressPhase, BooleanityAddressPhaseChallenges, BooleanityAddressPhaseInputClaims,
@@ -455,10 +467,7 @@ mod tests {
             let mut ram_hot = 0usize;
             let mut ram_cold = 0usize;
             for (index, (cycle, row)) in fixture.trace.iter().zip(&fixture.rows).enumerate() {
-                let mapped = fixture
-                    .bytecode
-                    .get_pc(&row.instruction)
-                    .expect("every fixture row has a bytecode mapping");
+                let mapped = row.pc() as usize;
                 assert_eq!(
                     mapped,
                     slot_for_cycle(index) + 1,
@@ -469,7 +478,11 @@ mod tests {
                 let address = row_ram_address(row);
                 assert_eq!(
                     address,
-                    cycle.ram_access().address() as u64,
+                    match cycle.ram_access() {
+                        RamAccess::Read(r) => r.address,
+                        RamAccess::Write(w) => w.address,
+                        RamAccess::NoOp => 0,
+                    },
                     "cycle {index}: the modular row and the tracer cycle disagree on the RAM \
                      address",
                 );
@@ -530,13 +543,13 @@ mod tests {
         claims: BooleanityAddressPhaseInputClaims<Fr>,
         challenges: BooleanityAddressPhaseChallenges<Fr>,
         points: BooleanityAddressPhaseInputClaims<Vec<Fr>>,
-        witness: &'a dyn jolt_witness::JoltWitnessPlane<Fr>,
+        witness: &'a dyn JoltWitnessPlane<Fr>,
         chunk_bits: usize,
     }
 
     fn parity_setup<'a>(
         geometry: &Geometry,
-        witness: &'a dyn jolt_witness::JoltWitnessPlane<Fr>,
+        witness: &'a dyn JoltWitnessPlane<Fr>,
         code_size: usize,
         ram_k: usize,
     ) -> Parity<'a> {

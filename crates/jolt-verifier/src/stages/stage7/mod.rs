@@ -1,5 +1,3 @@
-//! Stage 7 verifier entry point.
-
 pub mod advice_address_phase;
 pub mod committed_reduction_address_phase;
 pub mod hamming_weight_claim_reduction;

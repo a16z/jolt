@@ -1,14 +1,18 @@
+#[cfg(all(feature = "cuda", not(feature = "akita")))]
+use crate::cuda::CudaError;
 use crate::SumcheckKernelError;
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
+use jolt_claims::protocols::composed::ComposedOpeningId;
+use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::MissingOpeningValue;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 use jolt_sumcheck::SumcheckError;
+use jolt_verifier::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use jolt_verifier::VerifierError;
 use jolt_witness::WitnessError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum KernelError<F: FieldCore> {
+pub enum KernelError<F: Field> {
     #[error(transparent)]
     Witness(#[from] WitnessError),
 
@@ -48,16 +52,16 @@ pub enum KernelError<F: FieldCore> {
 
     /// A relation's output expression references an opening with no table.
     #[error("no table for opening {id:?}")]
-    MissingOpeningTable { id: JoltOpeningId },
+    MissingOpeningTable { id: ComposedOpeningId },
 
     /// A relation's output expression references a derived term with no table.
     #[error("no table for derived term {id:?}")]
-    MissingDerivedTable { id: JoltDerivedId },
+    MissingDerivedTable { id: VerifierDerivedId },
 
     /// A relation's output expression references a challenge the drawn
     /// `Challenges` struct does not carry.
     #[error("no drawn challenge for {id:?}")]
-    MissingChallenge { id: JoltChallengeId },
+    MissingChallenge { id: VerifierChallengeId },
 
     /// A leaf table's evaluation count disagrees with the relation's rounds.
     #[error("table for {table} has {got} evaluations, expected {expected}")]
@@ -75,20 +79,20 @@ pub enum KernelError<F: FieldCore> {
     /// reach the wire instead. Covers the id-as-summand-leaf case too: a leaf
     /// requires a table, which lands here.
     #[error("table supplied for consumed input claim {id:?}")]
-    ConsumedClaimShadowed { id: JoltOpeningId },
+    ConsumedClaimShadowed { id: ComposedOpeningId },
 
     /// A capability the kernel does not implement yet. Recoverable in
     /// principle: a caller may retry the slot against a different backend.
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
 
-    #[cfg(feature = "cuda")]
-    #[error(transparent)]
-    Cuda(#[from] crate::cuda::CudaError),
-
     /// A contract the kernel's inputs must uphold (witness shape, point
     /// geometry, internal state) was violated — a bug, never a capability
     /// gap, so never worth retrying against another backend.
     #[error("kernel invariant violated: {reason}")]
     InvariantViolation { reason: &'static str },
+
+    #[cfg(all(feature = "cuda", not(feature = "akita")))]
+    #[error(transparent)]
+    Cuda(#[from] CudaError),
 }

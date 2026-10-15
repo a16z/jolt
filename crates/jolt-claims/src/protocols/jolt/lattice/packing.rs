@@ -1,132 +1,385 @@
-//! Canonical auxiliary-object packings and the native `OneHotTrace` column registry.
+//! Canonical fixed-capacity prefix layouts for Akita commitment objects.
 //!
-//! `jolt-openings::PrefixPacking` is the single source of truth for slot
-//! assignment within auxiliary advice and committed-program objects. `OneHotTrace`
-//! is not prefix-packed: [`one_hot_trace_columns`] returns its exact ordered columns.
+//! The physical packing primitive lives in `jolt-openings`. This module owns
+//! Jolt's semantic column order, zero-prefix embeddings, and layout digests.
 
-use jolt_lookup_tables::{LookupTableKind, XLEN};
-use jolt_openings::PrefixPacking;
-use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
-use jolt_utils::Math;
+use std::collections::BTreeMap;
 
-use super::super::geometry::dimensions::REGISTER_ADDRESS_BITS;
-use super::super::geometry::ra::JoltRaPolynomialLayout;
-use super::super::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
-use super::geometry::{
-    byte_num_vars, word_byte_num_vars, LatticeGeometryError, UnsignedIncChunking,
+use blake2::{digest::consts::U32, Blake2b, Digest};
+use jolt_field::JoltField;
+use jolt_lookup_tables::XLEN;
+use jolt_openings::{
+    CommitmentGroupRole, EvaluationClaim, OpeningsError, PrefixPackedClaims, PrefixPackedLayout,
 };
+use jolt_poly::eq_index_msb;
+
+use super::super::geometry::claim_reductions::bytecode::bytecode_total_vars;
+use super::super::geometry::ra::JoltRaPolynomialLayout;
+use super::super::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
+use super::geometry::{BalancedIncChunking, LatticeGeometryError};
+
+pub use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
 
 /// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
-/// `Ra` families, unsigned-inc chunks, and MSB — as semantic columns of one
-/// packed one-hot polynomial.
-/// Advice byte columns are their own commitment objects
-/// ([`advice_bytes_packing`]).
+/// `Ra` families, balanced increment chunks, and signed carry as semantic
+/// columns of one native commitment batch. Instruction, bytecode, and increment
+/// columns omit row zero; RAM commits every row.
+/// Advice word columns are their own commitment objects
+/// ([`advice_packing_plan`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OneHotTraceShape {
     pub ra_layout: JoltRaPolynomialLayout,
     pub log_t: usize,
     /// Shared one-hot chunk size: the address bits of each `Ra` family and
-    /// the width of each unsigned-inc chunk (equal by the shared-final-point
+    /// the width of each increment digit (equal by the shared-final-point
     /// convention).
     pub log_k_chunk: usize,
 }
 
-/// Shape of the preprocessing-time packed commitment (`ProgramOneHot`,
-/// committed-program mode): the per-lane bytecode decompositions and program
-/// image bytes. All public or verifier-trusted, so their one-hot structure
-/// is checked offline rather than by in-protocol relations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PrecommittedPackingShape {
-    pub bytecode_chunks: usize,
-    /// Log of the row count of one bytecode chunk.
-    pub log_bytecode_rows: usize,
-    /// Byte places of one immediate lane (the field's canonical byte width).
-    pub imm_byte_width: usize,
-    pub program_image_log_words: Option<usize>,
+/// One physical fixed-capacity prefix-packed polynomial and the logical
+/// arity of each semantic column before zero-prefix embedding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrefixPackedObjectPlan {
+    role: CommitmentGroupRole,
+    packing: PrefixPackedLayout<JoltCommittedPolynomial>,
+    logical_num_vars: BTreeMap<JoltCommittedPolynomial, usize>,
+    layout_digest: [u8; 32],
+}
+
+/// Direct committed-program layouts: whole bytecode followed by the initial image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecommittedPackingPlan {
+    pub bytecode: PrefixPackedObjectPlan,
+    pub program_image: PrefixPackedObjectPlan,
 }
 
 /// Returns the canonical ordered one-hot columns of `OneHotTrace`.
 pub fn one_hot_trace_columns(
     shape: &OneHotTraceShape,
 ) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
-    let chunking = UnsignedIncChunking::new(shape.log_k_chunk)?;
-    let mut polynomials = shape.ra_layout.committed_polynomials().collect::<Vec<_>>();
-    polynomials.extend((0..chunking.chunk_count()).map(JoltCommittedPolynomial::UnsignedIncChunk));
-    polynomials.push(JoltCommittedPolynomial::UnsignedIncMsb);
+    let chunking = BalancedIncChunking::new(shape.log_k_chunk)?;
+    if !matches!(shape.log_k_chunk, 4 | 8) {
+        return Err(LatticeGeometryError::UnsupportedOneHotTraceChunkWidth {
+            chunk_width: shape.log_k_chunk,
+        });
+    }
+    let instruction_columns = 2 * XLEN / shape.log_k_chunk;
+    if shape.ra_layout.instruction() != instruction_columns {
+        return Err(
+            LatticeGeometryError::UnexpectedOneHotTraceInstructionColumns {
+                chunk_width: shape.log_k_chunk,
+                actual: shape.ra_layout.instruction(),
+                expected: instruction_columns,
+            },
+        );
+    }
+    let mut polynomials = (0..instruction_columns)
+        .map(JoltCommittedPolynomial::InstructionRa)
+        .collect::<Vec<_>>();
+    polynomials.extend((0..chunking.chunk_count()).map(JoltCommittedPolynomial::BalancedIncDigit));
+    polynomials.push(JoltCommittedPolynomial::BalancedIncCarry);
+    polynomials.extend((0..shape.ra_layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa));
+    polynomials.extend((0..shape.ra_layout.ram()).map(JoltCommittedPolynomial::RamRa));
     Ok(polynomials)
 }
 
-/// Registers the canonical precommitted polynomial ordering and returns the
-/// packing.
-pub fn precommitted_packing(
-    shape: &PrecommittedPackingShape,
-) -> Result<PrefixPacking<JoltCommittedPolynomial>, LatticeGeometryError> {
-    Ok(PrefixPacking::new(precommitted_polynomials(shape)?)?)
+/// Whole-bytecode and initial-image objects, each with its own local arity.
+pub fn committed_program_packing_plan(
+    bytecode_len: usize,
+    program_image_len_words: usize,
+    trace_order: TracePolynomialOrder,
+) -> Result<PrecommittedPackingPlan, LatticeGeometryError> {
+    let bytecode_vars = bytecode_total_vars(bytecode_len)
+        .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+    let image_words = program_image_len_words
+        .checked_next_power_of_two()
+        .ok_or_else(|| {
+            OpeningsError::InvalidSetup("program-image word count overflows".to_owned())
+        })?
+        .max(2);
+    let image_vars = image_words.ilog2() as usize;
+    if bytecode_vars > DIRECT_PROGRAM_MAX_PHYSICAL_VARS
+        || image_vars > DIRECT_PROGRAM_MAX_PHYSICAL_VARS
+    {
+        return Err(OpeningsError::InvalidSetup(format!(
+            "direct committed-program arity exceeds {DIRECT_PROGRAM_MAX_PHYSICAL_VARS} variables"
+        ))
+        .into());
+    }
+    Ok(PrecommittedPackingPlan {
+        bytecode: PrefixPackedObjectPlan::new_with_trace_order(
+            direct_program_role(JoltCommittedPolynomial::ProgramBytecode, 2)?,
+            b"program-bytecode-whole-v1",
+            vec![(JoltCommittedPolynomial::ProgramBytecode, bytecode_vars)],
+            trace_order,
+        )?,
+        program_image: PrefixPackedObjectPlan::new(
+            direct_program_role(JoltCommittedPolynomial::ProgramImageInit, 3)?,
+            b"program-image-init-v1",
+            vec![(JoltCommittedPolynomial::ProgramImageInit, image_vars)],
+        )?,
+    })
 }
 
-/// Registers an advice byte column as its own single-slot packing: advice is
-/// committed per kind as a standalone object (untrusted per proof, trusted
-/// precommitted), each carrying one byte one-hot column at the identity slot.
-/// Routing every commitment object through a packing keeps the
-/// packed-opening machinery uniform across objects.
-pub fn advice_bytes_packing(
+pub const ADVICE_MIN_PHYSICAL_VARS: usize = 14;
+pub const ADVICE_MAX_PHYSICAL_VARS: usize = 34;
+pub const DIRECT_PROGRAM_MAX_PHYSICAL_VARS: usize = 34;
+
+/// Single-column advice-word layout, padded through empty prefix slots
+/// when its logical arity is below Akita's dense schedule floor.
+pub fn advice_packing_plan(
     kind: JoltAdviceKind,
     word_vars: usize,
-) -> Result<PrefixPacking<JoltCommittedPolynomial>, LatticeGeometryError> {
-    Ok(PrefixPacking::new([(
-        JoltCommittedPolynomial::advice_bytes(kind),
-        word_byte_num_vars(word_vars),
-    )])?)
+) -> Result<PrefixPackedObjectPlan, LatticeGeometryError> {
+    let physical_vars = word_vars.max(ADVICE_MIN_PHYSICAL_VARS);
+    if physical_vars > ADVICE_MAX_PHYSICAL_VARS {
+        return Err(OpeningsError::InvalidSetup(format!(
+            "advice physical arity {physical_vars} is outside the supported {}..={} range",
+            ADVICE_MIN_PHYSICAL_VARS, ADVICE_MAX_PHYSICAL_VARS
+        ))
+        .into());
+    }
+    let selector_vars = physical_vars - word_vars;
+    let slot_capacity = 1usize.checked_shl(selector_vars as u32).ok_or_else(|| {
+        OpeningsError::InvalidSetup("advice slot capacity exceeds usize".to_owned())
+    })?;
+    let polynomial = match kind {
+        JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
+        JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
+    };
+    Ok(PrefixPackedObjectPlan::new_with_slot_capacity(
+        kind.group_role(),
+        b"advice-dense-words-v2",
+        vec![(polynomial, word_vars)],
+        slot_capacity,
+    )?)
 }
 
-fn precommitted_polynomials(
-    shape: &PrecommittedPackingShape,
-) -> Result<Vec<(JoltCommittedPolynomial, usize)>, LatticeGeometryError> {
-    let log_rows = shape.log_bytecode_rows;
-    let selector_vars = REGISTER_ADDRESS_BITS + log_rows;
-    let lookup_vars = LookupTableKind::<XLEN>::COUNT.log_2() + log_rows;
+impl PrefixPackedObjectPlan {
+    fn new(
+        role: CommitmentGroupRole,
+        domain: &[u8],
+        columns: Vec<(JoltCommittedPolynomial, usize)>,
+    ) -> Result<Self, OpeningsError> {
+        let slot_capacity = columns.len().next_power_of_two();
+        Self::new_with_slot_capacity(role, domain, columns, slot_capacity)
+    }
 
-    let mut polynomials = Vec::new();
-    for chunk in 0..shape.bytecode_chunks {
-        polynomials.extend(BytecodeRegisterLane::ALL.into_iter().map(|lane| {
-            (
-                JoltCommittedPolynomial::BytecodeRegisterSelector { chunk, lane },
-                selector_vars,
-            )
-        }));
-        polynomials.extend((0..NUM_CIRCUIT_FLAGS).map(|flag| {
-            (
-                JoltCommittedPolynomial::BytecodeCircuitFlag { chunk, flag },
-                log_rows,
-            )
-        }));
-        polynomials.extend((0..NUM_INSTRUCTION_FLAGS).map(|flag| {
-            (
-                JoltCommittedPolynomial::BytecodeInstructionFlag { chunk, flag },
-                log_rows,
-            )
-        }));
-        polynomials.push((
-            JoltCommittedPolynomial::BytecodeLookupSelector { chunk },
-            lookup_vars,
+    fn new_with_slot_capacity(
+        role: CommitmentGroupRole,
+        domain: &[u8],
+        columns: Vec<(JoltCommittedPolynomial, usize)>,
+        slot_capacity: usize,
+    ) -> Result<Self, OpeningsError> {
+        if columns.is_empty() {
+            return Err(OpeningsError::InvalidSetup(
+                "prefix-packed object requires at least one column".to_string(),
+            ));
+        }
+        let packed_logical_num_vars = columns
+            .iter()
+            .map(|(_, num_vars)| *num_vars)
+            .max()
+            .ok_or_else(|| {
+                OpeningsError::InvalidSetup(
+                    "prefix-packed object requires at least one column".to_string(),
+                )
+            })?;
+        let slot_capacity = slot_capacity.max(crate::lattice::min_dense_slot_capacity(
+            columns.len(),
+            packed_logical_num_vars,
         ));
-        polynomials.push((JoltCommittedPolynomial::BytecodeRafFlag { chunk }, log_rows));
-        polynomials.push((
-            JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk },
-            word_byte_num_vars(log_rows),
-        ));
-        polynomials.push((
-            JoltCommittedPolynomial::BytecodeImmBytes { chunk },
-            byte_num_vars(shape.imm_byte_width, log_rows)?,
-        ));
+        let ids = columns.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let packing = PrefixPackedLayout::new(packed_logical_num_vars, slot_capacity, ids)?;
+        let logical_num_vars = columns.iter().copied().collect::<BTreeMap<_, _>>();
+        if logical_num_vars.len() != columns.len() {
+            return Err(OpeningsError::InvalidSetup(
+                "prefix-packed object contains a duplicate column".to_string(),
+            ));
+        }
+        let layout_digest = packed_object_layout_digest(domain, &packing, &logical_num_vars, None)?;
+        Ok(Self {
+            role,
+            packing,
+            logical_num_vars,
+            layout_digest,
+        })
     }
-    if let Some(log_words) = shape.program_image_log_words {
-        polynomials.push((
-            JoltCommittedPolynomial::ProgramImageBytes,
-            word_byte_num_vars(log_words),
-        ));
+
+    fn new_with_trace_order(
+        role: CommitmentGroupRole,
+        domain: &[u8],
+        columns: Vec<(JoltCommittedPolynomial, usize)>,
+        trace_order: TracePolynomialOrder,
+    ) -> Result<Self, OpeningsError> {
+        let mut plan = Self::new(role, domain, columns)?;
+        plan.layout_digest = packed_object_layout_digest(
+            domain,
+            &plan.packing,
+            &plan.logical_num_vars,
+            Some(trace_order),
+        )?;
+        Ok(plan)
     }
-    Ok(polynomials)
+
+    pub const fn packing(&self) -> &PrefixPackedLayout<JoltCommittedPolynomial> {
+        &self.packing
+    }
+
+    pub const fn group_role(&self) -> CommitmentGroupRole {
+        self.role
+    }
+
+    pub const fn layout_digest(&self) -> [u8; 32] {
+        self.layout_digest
+    }
+
+    pub fn logical_num_vars(&self, id: JoltCommittedPolynomial) -> Option<usize> {
+        self.logical_num_vars.get(&id).copied()
+    }
+
+    /// Aligns suffix-compatible logical claims at the widest point. A shorter
+    /// polynomial is embedded under a zero prefix, so its evaluation is
+    /// multiplied by `eq(common_prefix, 0)`.
+    pub fn packed_claims<F: JoltField>(
+        &self,
+        claims: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+    ) -> Result<PrefixPackedClaims<F>, OpeningsError> {
+        let common_num_vars = self.packing.logical_num_vars();
+        let common_point = self
+            .packing
+            .ids()
+            .iter()
+            .find_map(|id| {
+                (self.logical_num_vars(*id) == Some(common_num_vars))
+                    .then(|| claims.get(id))
+                    .flatten()
+            })
+            .ok_or_else(|| {
+                OpeningsError::InvalidBatch(
+                    "prefix-packed object is missing a widest logical claim".to_string(),
+                )
+            })?
+            .point
+            .as_slice()
+            .to_vec();
+
+        let evaluations = self
+            .packing
+            .ids()
+            .iter()
+            .map(|id| {
+                let claim = claims.get(id).ok_or_else(|| {
+                    OpeningsError::InvalidBatch(format!("missing prefix-packed claim for {id:?}"))
+                })?;
+                let own_num_vars = self.logical_num_vars(*id).ok_or_else(|| {
+                    OpeningsError::InvalidBatch(format!(
+                        "missing logical arity for prefix-packed claim {id:?}"
+                    ))
+                })?;
+                if claim.point.len() != own_num_vars {
+                    return Err(OpeningsError::InvalidBatch(format!(
+                        "claim for {id:?} has {} variables, expected {own_num_vars}",
+                        claim.point.len()
+                    )));
+                }
+                let prefix_len = common_num_vars - own_num_vars;
+                if &common_point[prefix_len..] != claim.point.as_slice() {
+                    return Err(OpeningsError::InvalidBatch(format!(
+                        "claim for {id:?} is not a suffix of the common packed point"
+                    )));
+                }
+                Ok(eq_index_msb(&common_point[..prefix_len], 0) * claim.value)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PrefixPackedClaims::new(
+            self.layout_digest,
+            common_point,
+            evaluations,
+        ))
+    }
+}
+
+fn direct_program_role(
+    id: JoltCommittedPolynomial,
+    order: usize,
+) -> Result<CommitmentGroupRole, OpeningsError> {
+    let order = u64::try_from(order).map_err(|_| {
+        OpeningsError::InvalidSetup("direct program role order exceeds u64".to_owned())
+    })?;
+    match id {
+        JoltCommittedPolynomial::ProgramBytecode => Ok(CommitmentGroupRole::new(
+            order,
+            b"program_bytecode",
+            "program-bytecode",
+        )),
+        JoltCommittedPolynomial::ProgramImageInit => Ok(CommitmentGroupRole::new(
+            order,
+            b"program_image_init",
+            "program-image-init",
+        )),
+        _ => Err(OpeningsError::InvalidSetup(
+            "direct program role requires a committed-program polynomial".to_owned(),
+        )),
+    }
+}
+
+impl PrecommittedPackingPlan {
+    pub fn objects(&self) -> impl Iterator<Item = &PrefixPackedObjectPlan> {
+        [&self.bytecode, &self.program_image].into_iter()
+    }
+}
+
+fn packed_object_layout_digest(
+    domain: &[u8],
+    packing: &PrefixPackedLayout<JoltCommittedPolynomial>,
+    logical_num_vars: &BTreeMap<JoltCommittedPolynomial, usize>,
+    trace_order: Option<TracePolynomialOrder>,
+) -> Result<[u8; 32], OpeningsError> {
+    let mut hasher = Blake2b::<U32>::new();
+    hasher.update(b"jolt/akita/fixed-prefix-object/v1");
+    hasher.update((domain.len() as u64).to_le_bytes());
+    hasher.update(domain);
+    hasher.update([trace_order.map_or(u8::MAX, |order| order.transcript_scalar() as u8)]);
+    append_usize(&mut hasher, packing.logical_num_vars());
+    append_usize(&mut hasher, packing.packed_num_vars());
+    append_usize(&mut hasher, packing.slot_capacity());
+    append_usize(&mut hasher, packing.ids().len());
+    for id in packing.ids() {
+        append_packed_object_id(&mut hasher, *id)?;
+        append_usize(
+            &mut hasher,
+            *logical_num_vars.get(id).ok_or_else(|| {
+                OpeningsError::InvalidSetup("missing logical column arity".to_string())
+            })?,
+        );
+    }
+    Ok(hasher.finalize().into())
+}
+
+fn append_packed_object_id(
+    hasher: &mut Blake2b<U32>,
+    id: JoltCommittedPolynomial,
+) -> Result<(), OpeningsError> {
+    let (tag, index, secondary) = match id {
+        JoltCommittedPolynomial::TrustedAdvice => (10, 0, 0),
+        JoltCommittedPolynomial::UntrustedAdvice => (11, 0, 0),
+        JoltCommittedPolynomial::ProgramBytecode => (14, 0, 0),
+        JoltCommittedPolynomial::ProgramImageInit => (13, 0, 0),
+        other => {
+            return Err(OpeningsError::InvalidSetup(format!(
+                "unsupported polynomial {other:?} in packed object layout"
+            )))
+        }
+    };
+    hasher.update([tag]);
+    append_usize(hasher, index);
+    append_usize(hasher, secondary);
+    Ok(())
+}
+
+fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
+    hasher.update((value as u64).to_le_bytes());
 }
 
 #[cfg(test)]
@@ -136,18 +389,9 @@ mod tests {
 
     fn one_hot_trace_shape() -> OneHotTraceShape {
         OneHotTraceShape {
-            ra_layout: JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
+            ra_layout: JoltRaPolynomialLayout::new(16, 1, 1).unwrap(),
             log_t: 5,
             log_k_chunk: 8,
-        }
-    }
-
-    fn precommitted_shape() -> PrecommittedPackingShape {
-        PrecommittedPackingShape {
-            bytecode_chunks: 2,
-            log_bytecode_rows: 6,
-            imm_byte_width: 16,
-            program_image_log_words: Some(10),
         }
     }
 
@@ -155,27 +399,80 @@ mod tests {
     fn one_hot_trace_columns_cover_every_committed_lattice_polynomial() {
         let columns = one_hot_trace_columns(&one_hot_trace_shape()).unwrap();
 
-        // 4 Ra polynomials + 8 inc chunks + msb.
-        assert_eq!(columns.len(), 4 + 8 + 1);
+        assert_eq!(columns.len(), 16 + 8 + 1 + 2);
         assert_eq!(columns[0], JoltCommittedPolynomial::InstructionRa(0));
-        assert!(columns.contains(&JoltCommittedPolynomial::UnsignedIncChunk(7)));
-        assert_eq!(
-            columns.last(),
-            Some(&JoltCommittedPolynomial::UnsignedIncMsb)
-        );
+        assert!(columns.contains(&JoltCommittedPolynomial::BalancedIncDigit(7)));
+        assert_eq!(columns[16], JoltCommittedPolynomial::BalancedIncDigit(0));
+        assert_eq!(columns[24], JoltCommittedPolynomial::BalancedIncCarry);
+        assert_eq!(columns[25], JoltCommittedPolynomial::BytecodeRa(0));
+        assert_eq!(columns.last(), Some(&JoltCommittedPolynomial::RamRa(0)));
     }
 
-    /// Each advice byte column is its own commitment object: a single-slot
-    /// packing whose slot is the whole domain (empty prefix).
     #[test]
-    fn advice_bytes_packing_is_the_identity_slot() {
+    fn advice_packing_uses_the_schedule_floor() {
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
-            let packing = advice_bytes_packing(kind, 4).unwrap();
-            assert_eq!(packing.iter().count(), 1);
-            let slot = &packing[&JoltCommittedPolynomial::advice_bytes(kind)];
-            assert!(slot.prefix.is_empty());
-            assert_eq!(slot.num_vars, 8 + 3 + 4);
+            let id = match kind {
+                JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
+                JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
+            };
+            let plan = advice_packing_plan(kind, 9).unwrap();
+            assert_eq!(plan.packing().ids().len(), 1);
+            assert_eq!(plan.packing().ids(), &[id]);
+            assert_eq!(plan.packing().selector_num_vars(), 5);
+            assert_eq!(plan.packing().logical_num_vars(), 9);
+            assert_eq!(plan.packing().packed_num_vars(), 14);
+            assert_eq!(plan.packing().slot_capacity(), 32);
+            assert_eq!(plan.logical_num_vars(id), Some(9));
+
+            let large = advice_packing_plan(kind, 20).unwrap();
+            assert_eq!(large.packing().selector_num_vars(), 0);
+            assert_eq!(large.packing().packed_num_vars(), 20);
+            assert_eq!(large.packing().slot_capacity(), 1);
         }
+    }
+
+    #[test]
+    fn tiny_precommitted_objects_pad_slot_capacity_to_the_planner_floor() {
+        for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
+            let plan = advice_packing_plan(kind, 0).unwrap();
+            assert_eq!(plan.packing().ids().len(), 1);
+            assert_eq!(plan.packing().logical_num_vars(), 0);
+            assert_eq!(plan.packing().slot_capacity(), 1 << 14);
+            assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
+        }
+
+        let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 13).unwrap();
+        assert_eq!(plan.packing().logical_num_vars(), 13);
+        assert_eq!(plan.packing().slot_capacity(), 2);
+        assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
+
+        let plan = advice_packing_plan(JoltAdviceKind::Trusted, 14).unwrap();
+        assert_eq!(plan.packing().slot_capacity(), 1);
+        assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
+
+        let image_plan =
+            committed_program_packing_plan(128, 2, TracePolynomialOrder::CycleMajor).unwrap();
+        let image = &image_plan.program_image;
+        assert_eq!(image.packing().logical_num_vars(), 1);
+        assert_eq!(image.packing().slot_capacity(), 1 << 13);
+        assert_eq!(image.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
+    }
+
+    #[test]
+    fn padded_capacity_claims_reduce_to_the_slot_zero_embedding() {
+        use jolt_field::{Fr, Ring};
+
+        let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 9).unwrap();
+        let id = JoltCommittedPolynomial::UntrustedAdvice;
+        let point = (0..plan.packing().logical_num_vars())
+            .map(|index| Fr::from_u64(index as u64 + 3))
+            .collect::<Vec<_>>();
+        let value = Fr::from_u64(41);
+        let claims = BTreeMap::from([(id, EvaluationClaim::new(point.clone(), value))]);
+
+        let packed = plan.packed_claims(&claims).unwrap();
+        assert_eq!(packed.point(), point.as_slice());
+        assert_eq!(packed.evaluations(), &[value]);
     }
 
     #[test]
@@ -191,34 +488,62 @@ mod tests {
     }
 
     #[test]
-    fn precommitted_packing_covers_every_bytecode_lane() {
-        let packing = precommitted_packing(&precommitted_shape()).unwrap();
+    fn precommitted_packing_has_whole_bytecode_and_image() {
+        let plan =
+            committed_program_packing_plan(128, 513, TracePolynomialOrder::CycleMajor).unwrap();
+        assert_eq!(plan.objects().count(), 2);
+        assert_eq!(
+            plan.bytecode.packing().ids(),
+            [JoltCommittedPolynomial::ProgramBytecode]
+        );
+        assert_eq!(plan.bytecode.packing().logical_num_vars(), 16);
+        let role = plan.bytecode.group_role();
+        assert_eq!(role.order(), 2);
+        assert_eq!(role.transcript_label(), b"program_bytecode");
+        assert_eq!(role.transcript_index(), None);
+        assert_eq!(
+            plan.program_image.packing().ids(),
+            [JoltCommittedPolynomial::ProgramImageInit]
+        );
+        assert_eq!(plan.program_image.group_role().order(), 3);
+        assert_eq!(
+            plan.program_image
+                .logical_num_vars(JoltCommittedPolynomial::ProgramImageInit),
+            Some(10)
+        );
+    }
 
-        let per_chunk = 3 + NUM_CIRCUIT_FLAGS + NUM_INSTRUCTION_FLAGS + 4;
-        assert_eq!(packing.iter().count(), 2 * per_chunk + 1);
-        assert_eq!(
-            packing[&JoltCommittedPolynomial::BytecodeRegisterSelector {
-                chunk: 1,
-                lane: BytecodeRegisterLane::Rd,
-            }]
-                .num_vars,
-            REGISTER_ADDRESS_BITS + 6,
+    #[test]
+    fn committed_program_plan_rejects_invalid_public_dimensions() {
+        for rows in [0, 3, 127] {
+            assert!(
+                committed_program_packing_plan(rows, 2, TracePolynomialOrder::CycleMajor).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn bytecode_layout_digest_binds_trace_order() {
+        let cycle =
+            committed_program_packing_plan(128, 2, TracePolynomialOrder::CycleMajor).unwrap();
+        let address =
+            committed_program_packing_plan(128, 2, TracePolynomialOrder::AddressMajor).unwrap();
+        assert_ne!(
+            cycle.bytecode.layout_digest(),
+            address.bytecode.layout_digest()
         );
-        assert_eq!(
-            packing[&JoltCommittedPolynomial::BytecodeCircuitFlag { chunk: 0, flag: 0 }].num_vars,
-            6
+    }
+
+    #[test]
+    fn direct_program_plan_rejects_arity_above_34() {
+        assert!(
+            committed_program_packing_plan(1 << 26, 2, TracePolynomialOrder::CycleMajor).is_err()
         );
-        assert_eq!(
-            packing[&JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk: 1 }].num_vars,
-            8 + 3 + 6
+        assert!(
+            committed_program_packing_plan(2, 1 << 35, TracePolynomialOrder::CycleMajor).is_err()
         );
-        assert_eq!(
-            packing[&JoltCommittedPolynomial::BytecodeImmBytes { chunk: 0 }].num_vars,
-            8 + 4 + 6
-        );
-        assert_eq!(
-            packing[&JoltCommittedPolynomial::ProgramImageBytes].num_vars,
-            8 + 3 + 10
-        );
+        let boundary =
+            committed_program_packing_plan(1 << 25, 2, TracePolynomialOrder::CycleMajor).unwrap();
+        assert_eq!(boundary.bytecode.packing().packed_num_vars(), 34);
     }
 }

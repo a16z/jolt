@@ -1,3 +1,5 @@
+use super::half_fold::FoldColumn;
+use cudarc::driver::DeviceRepr;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -54,10 +56,9 @@ pub struct CudaKernelContext {
     ram_ra_fold_suffix: CudaFunction,
     ram_ra_fold_prefix: CudaFunction,
     ram_ra_phase1_round: CudaFunction,
+    #[cfg(test)]
     sfx_eval_batch: CudaFunction,
-    pfx_update_checkpoints: CudaFunction,
     pfx_mle_round: CudaFunction,
-    pfx_default_checkpoints: CudaFunction,
     ap_raf_keys: CudaFunction,
     ap_table_keys: CudaFunction,
     ap_histogram: CudaFunction,
@@ -74,6 +75,7 @@ pub struct CudaKernelContext {
     ap_flag_keys: CudaFunction,
     ap_flag_sums: CudaFunction,
     ap_raf_flag_sum: CudaFunction,
+    #[cfg(test)]
     unr_mul_scatter: CudaFunction,
     unr_reduce: CudaFunction,
     unr_fold_chunks: CudaFunction,
@@ -84,6 +86,7 @@ pub struct CudaKernelContext {
     rwm_message: CudaFunction,
     rwm_square_lut: CudaFunction,
     rwm_deref_coeffs: CudaFunction,
+    rwm_permute_words: CudaFunction,
     rs2_claim: CudaFunction,
     amm_segment_flags: CudaFunction,
     amm_segment_bounds: CudaFunction,
@@ -91,6 +94,7 @@ pub struct CudaKernelContext {
     amm_merge: CudaFunction,
     amm_message: CudaFunction,
     amm_materialize: CudaFunction,
+    amm_initial_values: CudaFunction,
     amm_lift: CudaFunction,
     fr_delta_u64: CudaFunction,
     rrw_flags: CudaFunction,
@@ -110,15 +114,25 @@ pub struct CudaKernelContext {
     brc_gather: CudaFunction,
     brc_message_sparse: CudaFunction,
     brc_message_dense: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     brr_coefficient: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     brr_gather: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     brr_message_sparse: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     brr_message_dense: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     so_gather: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     so_shift: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     so_uniskip: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     so_factors: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     gruen_pair_message: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     so_claims: CudaFunction,
     sop_round: CudaFunction,
     msm_fq_add: CudaFunction,
@@ -186,8 +200,6 @@ pub struct CudaKernelContext {
     opening_one_hot_embed: CudaFunction,
     opening_one_hot_fold: CudaFunction,
     pcr_round: CudaFunction,
-    pcr_scatter: CudaFunction,
-    pcr_value_fold: CudaFunction,
     pcr_lane_eq: CudaFunction,
     pcr_shift_eq: CudaFunction,
     pcr_place_row: CudaFunction,
@@ -199,12 +211,19 @@ pub struct CudaKernelContext {
     ss_packed_columns: CudaFunction,
     bap_bind_squared: CudaFunction,
     bap_message: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     brap_one_hot: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     brap_term: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     brap_message: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     sp_gather: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     sp_matrix: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     sp_factors: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     sp_claims: CudaFunction,
     ohf_fold: CudaFunction,
     ohf_reduce: CudaFunction,
@@ -217,7 +236,9 @@ pub struct CudaKernelContext {
 impl CudaKernelContext {
     pub fn new(ordinal: usize) -> Result<Self, CudaError> {
         let context = DriverContext::new(ordinal)?;
-        let stream = context.default_stream();
+        // Explicit streams make cudarc bind the owning context before freeing
+        // buffers retired by main's background-drop workers.
+        let stream = context.new_stream()?;
         let module = context.load_module(Ptx::from_binary(KERNEL_CUBIN.to_vec()))?;
         Ok(Self {
             ordinal,
@@ -249,10 +270,9 @@ impl CudaKernelContext {
             ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
             ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
+            #[cfg(test)]
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
-            pfx_update_checkpoints: module.load_function("pfx_update_checkpoints_kernel")?,
             pfx_mle_round: module.load_function("pfx_mle_round_kernel")?,
-            pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
             ap_raf_keys: module.load_function("ap_raf_keys_kernel")?,
             ap_table_keys: module.load_function("ap_table_keys_kernel")?,
             ap_histogram: module.load_function("ap_histogram_kernel")?,
@@ -269,6 +289,7 @@ impl CudaKernelContext {
             ap_flag_keys: module.load_function("ap_flag_keys_kernel")?,
             ap_flag_sums: module.load_function("ap_flag_sums_kernel")?,
             ap_raf_flag_sum: module.load_function("ap_raf_flag_sum_kernel")?,
+            #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             unr_reduce: module.load_function("unr_reduce_kernel")?,
             unr_fold_chunks: module.load_function("unr_fold_chunks_kernel")?,
@@ -279,6 +300,7 @@ impl CudaKernelContext {
             rwm_message: module.load_function("rwm_message_kernel")?,
             rwm_square_lut: module.load_function("rwm_square_lut_kernel")?,
             rwm_deref_coeffs: module.load_function("rwm_deref_coeffs_kernel")?,
+            rwm_permute_words: module.load_function("rwm_permute_words_kernel")?,
             rs2_claim: module.load_function("rs2_claim_kernel")?,
             amm_segment_flags: module.load_function("amm_segment_flags_kernel")?,
             amm_segment_bounds: module.load_function("amm_segment_bounds_kernel")?,
@@ -286,6 +308,7 @@ impl CudaKernelContext {
             amm_merge: module.load_function("amm_merge_kernel")?,
             amm_message: module.load_function("amm_message_kernel")?,
             amm_materialize: module.load_function("amm_materialize_kernel")?,
+            amm_initial_values: module.load_function("amm_initial_values_kernel")?,
             amm_lift: module.load_function("amm_lift_kernel")?,
             fr_delta_u64: module.load_function("fr_delta_u64_kernel")?,
             rrw_flags: module.load_function("rrw_flags_kernel")?,
@@ -305,15 +328,25 @@ impl CudaKernelContext {
             brc_gather: module.load_function("brc_gather_kernel")?,
             brc_message_sparse: module.load_function("brc_message_sparse_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             brr_coefficient: module.load_function("brr_coefficient_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             brr_gather: module.load_function("brr_gather_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             brr_message_sparse: module.load_function("brr_message_sparse_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             brr_message_dense: module.load_function("brr_message_dense_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             so_gather: module.load_function("so_gather_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             so_shift: module.load_function("so_shift_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             so_uniskip: module.load_function("so_uniskip_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             so_factors: module.load_function("so_factors_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             gruen_pair_message: module.load_function("gruen_pair_message_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             so_claims: module.load_function("so_claims_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
             msm_fq_add: module.load_function("msm_fq_add_kernel")?,
@@ -384,8 +417,6 @@ impl CudaKernelContext {
             opening_one_hot_embed: module.load_function("opening_one_hot_embed_kernel")?,
             opening_one_hot_fold: module.load_function("opening_one_hot_fold_kernel")?,
             pcr_round: module.load_function("pcr_round_kernel")?,
-            pcr_scatter: module.load_function("pcr_scatter_kernel")?,
-            pcr_value_fold: module.load_function("pcr_value_fold_kernel")?,
             pcr_lane_eq: module.load_function("pcr_lane_eq_kernel")?,
             pcr_shift_eq: module.load_function("pcr_shift_eq_kernel")?,
             pcr_place_row: module.load_function("pcr_place_row_kernel")?,
@@ -397,12 +428,19 @@ impl CudaKernelContext {
             ss_packed_columns: module.load_function("ss_packed_columns_kernel")?,
             bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
             bap_message: module.load_function("bap_message_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             brap_one_hot: module.load_function("brap_one_hot_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             brap_term: module.load_function("brap_term_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             brap_message: module.load_function("brap_message_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             sp_gather: module.load_function("sp_gather_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             sp_matrix: module.load_function("sp_matrix_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             sp_factors: module.load_function("sp_factors_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
             sp_claims: module.load_function("sp_claims_kernel")?,
             ohf_fold: module.load_function("ohf_fold_kernel")?,
             ohf_reduce: module.load_function("ohf_reduce_kernel")?,
@@ -503,6 +541,7 @@ impl CudaKernelContext {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn upload_u16_slice(&self, values: &[u16]) -> Result<CudaSlice<u16>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
@@ -569,10 +608,7 @@ impl CudaKernelContext {
         Ok(self.stream.alloc_zeros::<u8>(len)?)
     }
 
-    fn alloc_unset<T: cudarc::driver::DeviceRepr>(
-        &self,
-        len: usize,
-    ) -> Result<CudaSlice<T>, CudaError> {
+    fn alloc_unset<T: DeviceRepr>(&self, len: usize) -> Result<CudaSlice<T>, CudaError> {
         // SAFETY: `alloc` leaves the elements unset, which every caller of this
         // helper is required to tolerate: each writes all of `len` before any
         // read, or reads only positions it wrote. Nothing here observes the
@@ -680,42 +716,52 @@ impl CudaKernelContext {
         &self.brc_message_sparse
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn brr_coefficient(&self) -> &CudaFunction {
         &self.brr_coefficient
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn brr_gather(&self) -> &CudaFunction {
         &self.brr_gather
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn brr_message_sparse(&self) -> &CudaFunction {
         &self.brr_message_sparse
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn brr_message_dense(&self) -> &CudaFunction {
         &self.brr_message_dense
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_gather(&self) -> &CudaFunction {
         &self.so_gather
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_shift(&self) -> &CudaFunction {
         &self.so_shift
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_uniskip(&self) -> &CudaFunction {
         &self.so_uniskip
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_factors(&self) -> &CudaFunction {
         &self.so_factors
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn gruen_pair_message(&self) -> &CudaFunction {
         &self.gruen_pair_message
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_claims(&self) -> &CudaFunction {
         &self.so_claims
     }
@@ -764,14 +810,17 @@ impl CudaKernelContext {
         &self.bap_message
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn brap_one_hot(&self) -> &CudaFunction {
         &self.brap_one_hot
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn brap_term(&self) -> &CudaFunction {
         &self.brap_term
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn brap_message(&self) -> &CudaFunction {
         &self.brap_message
     }
@@ -996,14 +1045,6 @@ impl CudaKernelContext {
         &self.pcr_round
     }
 
-    pub(crate) const fn pcr_scatter(&self) -> &CudaFunction {
-        &self.pcr_scatter
-    }
-
-    pub(crate) const fn pcr_value_fold(&self) -> &CudaFunction {
-        &self.pcr_value_fold
-    }
-
     pub(crate) const fn pcr_lane_eq(&self) -> &CudaFunction {
         &self.pcr_lane_eq
     }
@@ -1028,18 +1069,22 @@ impl CudaKernelContext {
         &self.hf_bind_low_to_high
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn sp_gather(&self) -> &CudaFunction {
         &self.sp_gather
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn sp_matrix(&self) -> &CudaFunction {
         &self.sp_matrix
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn sp_factors(&self) -> &CudaFunction {
         &self.sp_factors
     }
 
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn sp_claims(&self) -> &CudaFunction {
         &self.sp_claims
     }
@@ -1076,20 +1121,13 @@ impl CudaKernelContext {
         &self.ram_ra_phase1_round
     }
 
+    #[cfg(test)]
     pub(crate) const fn sfx_eval_batch(&self) -> &CudaFunction {
         &self.sfx_eval_batch
     }
 
     pub(crate) const fn pfx_mle_round(&self) -> &CudaFunction {
         &self.pfx_mle_round
-    }
-
-    pub(crate) const fn pfx_update_checkpoints(&self) -> &CudaFunction {
-        &self.pfx_update_checkpoints
-    }
-
-    pub(crate) const fn pfx_default_checkpoints(&self) -> &CudaFunction {
-        &self.pfx_default_checkpoints
     }
 
     pub(crate) const fn ap_raf_keys(&self) -> &CudaFunction {
@@ -1156,6 +1194,7 @@ impl CudaKernelContext {
         &self.ap_raf_flag_sum
     }
 
+    #[cfg(test)]
     pub(crate) const fn unr_mul_scatter(&self) -> &CudaFunction {
         &self.unr_mul_scatter
     }
@@ -1182,6 +1221,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn rwm_square_lut(&self) -> &CudaFunction {
         &self.rwm_square_lut
+    }
+
+    pub(crate) const fn rwm_permute_words(&self) -> &CudaFunction {
+        &self.rwm_permute_words
     }
 
     pub(crate) const fn rwm_deref_coeffs(&self) -> &CudaFunction {
@@ -1214,6 +1257,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn amm_message(&self) -> &CudaFunction {
         &self.amm_message
+    }
+
+    pub(crate) const fn amm_initial_values(&self) -> &CudaFunction {
+        &self.amm_initial_values
     }
 
     pub(crate) const fn amm_materialize(&self) -> &CudaFunction {
@@ -1290,7 +1337,7 @@ impl CudaKernelContext {
 
     pub(crate) fn device_columns(
         &self,
-        columns: &[super::half_fold::FoldColumn<'_>],
+        columns: &[FoldColumn<'_>],
     ) -> Result<(CudaSlice<u64>, CudaSlice<u32>), CudaError> {
         let mut pointers = Vec::with_capacity(columns.len());
         let mut descriptors = Vec::with_capacity(columns.len() * 4);
@@ -1413,7 +1460,7 @@ fn pool() -> &'static [CudaKernelContext] {
                 Err(error) => {
                     if ordinal == 0 {
                         tracing::warn!(
-                            "CUDA unavailable, falling back to the reference backend: {error}"
+                            "CUDA device initialization failed: {error}"
                         );
                     } else {
                         tracing::warn!(

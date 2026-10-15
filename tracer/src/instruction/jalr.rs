@@ -1,3 +1,4 @@
+use crate::instruction::registers::i::RegisterStateI;
 use serde::{Deserialize, Serialize};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
@@ -9,13 +10,14 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00000067,
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 
 impl JALR {
     // cpu.pc is pre-incremented by 4 (or 2 for compressed) in tick_operate() before execution,
     // self.address is the instruction address.
-    fn exec(&self, cpu: &mut Cpu, _: &mut <JALR as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <JALR as RISCVInstruction>::RamAccess) {
         let tmp = cpu.sign_extend(cpu.pc as i64);
         cpu.pc = (cpu.x[self.operands.rs1 as usize].wrapping_add(normalize_imm(self.operands.imm))
             as u64)

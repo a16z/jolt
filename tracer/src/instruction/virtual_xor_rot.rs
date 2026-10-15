@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use super::{RISCVInstruction, RISCVTrace};
@@ -11,11 +12,12 @@ macro_rules! declare_xorrot {
             mask = 0,
             match = 0,
             format = FormatR,
+            registers = RegisterStateR,
             ram = ()
         );
 
         impl $name {
-            fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RAMAccess) {
+            fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RamAccess) {
                 let xor_result = cpu.x[self.operands.rs1 as usize] ^ cpu.x[self.operands.rs2 as usize];
                 let rotated = xor_result.rotate_right($rotation);
                 cpu.write_register(self.operands.rd as usize, rotated as i64);

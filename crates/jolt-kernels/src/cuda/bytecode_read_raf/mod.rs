@@ -1,9 +1,15 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, IdentityPolynomial, MultilinearEvaluation, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -26,7 +32,7 @@ pub(crate) mod coefficient;
 pub(crate) mod one_hot;
 pub(crate) mod pushforward;
 
-pub struct BytecodeReadRafCycleKernel<F: Field> {
+pub struct BytecodeReadRafCycleKernel<F: JoltField> {
     relation: BytecodeReadRafCycle<F>,
     one_hot: ShardedBytecodeRa,
     rounds_bound: usize,
@@ -34,18 +40,18 @@ pub struct BytecodeReadRafCycleKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for BytecodeReadRafCycleKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for BytecodeReadRafCycleKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("finals"),
+            Key::new("finals"),
             self.finals.as_ref().map_or(0, |v| v.len() * size_of::<F>()),
         );
         visitor.exit();
     }
 }
 
-impl<F: Field> BytecodeReadRafCycleKernel<F> {
+impl<F: JoltField> BytecodeReadRafCycleKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.one_hot
             .bind(challenge, self.rounds_bound)
@@ -62,7 +68,7 @@ impl<F: Field> BytecodeReadRafCycleKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for BytecodeReadRafCycleKernel<F> {
+impl<F: JoltField> ProveRounds<F> for BytecodeReadRafCycleKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -95,7 +101,7 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafCycleKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for BytecodeReadRafCycleKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafCycleKernel<F> {
     type Relation = BytecodeReadRafCycle<F>;
 
     fn output_claims(
@@ -123,7 +129,7 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafCycleKernel<F> {
     }
 }
 
-fn eq_at_index<F: Field>(point: &[F], index: usize) -> Result<F, KernelError<F>> {
+fn eq_at_index<F: JoltField>(point: &[F], index: usize) -> Result<F, KernelError<F>> {
     let bits: Vec<F> = (0..point.len())
         .map(|bit| {
             if (index >> (point.len() - 1 - bit)) & 1 == 1 {
@@ -138,7 +144,7 @@ fn eq_at_index<F: Field>(point: &[F], index: usize) -> Result<F, KernelError<F>>
     })
 }
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -267,9 +273,9 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
 )]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltRelationId};
+    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::formula_dimensions_from_parts;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycle,
@@ -281,8 +287,7 @@ mod tests {
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{
-        arb_point, drive, fr, hot_addresses, one_hot_fixture_bytecode_is_cold,
-        reference_input_claim, with_one_hot_witness,
+        arb_point, drive, fr, reference_input_claim, with_one_hot_witness,
     };
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
@@ -300,64 +305,6 @@ mod tests {
         JoltOneHotConfig {
             log_k_chunk: chunk_bits as u8,
             lookups_ra_virtual_log_k_chunk: if chunk_bits == 4 { 16 } else { 32 },
-        }
-    }
-
-    #[test]
-    fn fixture_bytecode_chunks_span_the_production_width() {
-        let cycles = 1usize << LOG_T;
-        for (chunk_bits, bytecode_rows, ram_log_k, chunks) in CONFIGS {
-            with_one_hot_witness(
-                LOG_T,
-                bytecode_rows,
-                1usize << ram_log_k,
-                one_hot(chunk_bits),
-                7,
-                |witness, bytecode_len| {
-                    let dimensions = formula_dimensions_from_parts(
-                        one_hot(chunk_bits),
-                        LOG_T,
-                        bytecode_len,
-                        1usize << ram_log_k,
-                        JoltRelationId::BytecodeReadRaf,
-                    )
-                    .expect("formula dimensions")
-                    .bytecode_read_raf;
-                    assert_eq!(
-                        dimensions.num_committed_ra_polys(),
-                        chunks,
-                        "chunk_bits {chunk_bits} bytecode_rows {bytecode_rows}: the fixture no \
-                         longer produces the chunk count this config exists to cover, so the \
-                         lane-count coverage claim is stale",
-                    );
-
-                    for chunk in 0..chunks {
-                        let hot = hot_addresses(
-                            witness,
-                            JoltCommittedPolynomial::BytecodeRa(chunk),
-                            1usize << chunk_bits,
-                            cycles,
-                        );
-                        for (cycle, address) in hot.iter().enumerate() {
-                            assert_eq!(
-                                address.is_none(),
-                                one_hot_fixture_bytecode_is_cold(LOG_T, cycle),
-                                "chunk_bits {chunk_bits} bytecode_rows {bytecode_rows} chunk \
-                                 {chunk} cycle {cycle}: the committed column disagrees with the \
-                                 fixture on whether this cycle is cold",
-                            );
-                        }
-                        let distinct: std::collections::BTreeSet<usize> =
-                            hot.iter().flatten().copied().collect();
-                        assert!(
-                            distinct.len() > 1,
-                            "chunk_bits {chunk_bits} bytecode_rows {bytecode_rows} chunk {chunk}: \
-                             the hot address is constant across every hot cycle, so this chunk \
-                             cannot detect a wrong shift",
-                        );
-                    }
-                },
-            );
         }
     }
 

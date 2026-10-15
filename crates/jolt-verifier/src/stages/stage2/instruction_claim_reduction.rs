@@ -24,9 +24,9 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
-use jolt_poly::try_eq_mle;
+use jolt_field::JoltField;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
@@ -35,7 +35,7 @@ use crate::VerifierError;
 /// sumcheck. (Verifier-side constructor for the moved
 /// [`InstructionClaimReductionInputClaims`] — it reads the verifier-only
 /// [`Stage1ClearOutput`], so it cannot live in `jolt-claims`.)
-pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
+pub fn instruction_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> InstructionClaimReductionInputClaims<F> {
     let outer = &stage1.output_values.outer_remainder;
@@ -49,12 +49,12 @@ pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct InstructionClaimReduction<F: Field> {
+pub struct InstructionClaimReduction<F: JoltField> {
     symbolic: relations::claim_reductions::instruction::ClaimReduction,
     tau_low: Vec<F>,
 }
 
-impl<F: Field> InstructionClaimReduction<F> {
+impl<F: JoltField> InstructionClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, tau_low: Vec<F>) -> Self {
         Self {
             symbolic: relations::claim_reductions::instruction::ClaimReduction::new(
@@ -76,7 +76,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
     type Symbolic = relations::claim_reductions::instruction::ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -94,7 +94,7 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &InstructionClaimReductionInputClaims<Vec<F>>,
     ) -> Result<InstructionClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        let opening_point = derivations::reversed(sumcheck_point);
         Ok(InstructionClaimReductionOutputClaims {
             lookup_output: opening_point.clone(),
             left_lookup_operand: opening_point.clone(),
@@ -112,13 +112,11 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         _challenges: &InstructionClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The reduced openings share one opening point; bind it against the low
-            // product remainder challenges (`tau_low`).
             InstructionClaimReductionPublic::EqSpartan => {
-                try_eq_mle(output_points.left_lookup_operand(), &self.tau_low)
+                derivations::eq_at_point(output_points.left_lookup_operand(), &self.tau_low)
                     .map_err(public_input_failed)
             }
         }

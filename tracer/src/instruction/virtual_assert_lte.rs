@@ -1,3 +1,4 @@
+use crate::instruction::registers::b::RegisterStateB;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatB,
+    registers = RegisterStateB,
     ram = ()
 );
 
 impl VirtualAssertLTE {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertLTE as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertLTE as RISCVInstruction>::RamAccess) {
         assert!(
             cpu.x[self.operands.rs1 as usize] as u64 <= cpu.x[self.operands.rs2 as usize] as u64
         );

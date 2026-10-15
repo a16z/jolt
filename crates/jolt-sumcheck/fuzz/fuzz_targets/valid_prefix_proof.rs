@@ -22,7 +22,7 @@
 
 #![no_main]
 
-use jolt_field::{Fr, ReducingBytes};
+use jolt_field::{Fr, CanonicalEncoding};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
@@ -33,7 +33,6 @@ const MAX_NUM_VARS: usize = 8;
 const MAX_DEGREE: usize = 6;
 
 fuzz_target!(|data: &[u8]| {
-    // Header: 1 byte num_vars + 1 byte degree + 1 byte valid_rounds + 32 bytes claimed_sum.
     if data.len() < 3 + SCALAR_BYTES {
         return;
     }
@@ -56,7 +55,6 @@ fuzz_target!(|data: &[u8]| {
 
     for round in 0..num_vars {
         if round < valid_rounds {
-            // Need `degree` scalars: c_0 + (degree - 1) high-order coefficients.
             let needed = SCALAR_BYTES * degree;
             if cursor + needed > data.len() {
                 return;
@@ -122,8 +120,6 @@ fuzz_target!(|data: &[u8]| {
     );
 
     if valid_rounds == num_vars {
-        // Proof is valid by construction across every round. The verifier
-        // MUST accept and return the same running sum we computed.
         let eval_claim = result.expect("fully valid proof must verify");
         assert_eq!(
             eval_claim.value, running_sum,
@@ -138,5 +134,5 @@ fuzz_target!(|data: &[u8]| {
 #[inline]
 fn read_scalar(bytes: &[u8]) -> Fr {
     debug_assert_eq!(bytes.len(), SCALAR_BYTES);
-    <Fr as ReducingBytes>::from_le_bytes_mod_order(bytes)
+    <Fr as CanonicalEncoding>::from_bytes_le_reduced(bytes)
 }

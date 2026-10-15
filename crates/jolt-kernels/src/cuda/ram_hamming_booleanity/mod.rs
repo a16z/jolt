@@ -1,8 +1,14 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -25,7 +31,7 @@ pub(crate) mod hamming_weight;
 #[cfg(test)]
 pub(crate) mod witness;
 
-pub struct RamHammingBooleanityKernel<F: Field> {
+pub struct RamHammingBooleanityKernel<F: JoltField> {
     relation: RamHammingBooleanity<F>,
     weights: ShardedHammingWeight<F>,
     eq: DeviceSplitEq<F>,
@@ -34,15 +40,15 @@ pub struct RamHammingBooleanityKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RamHammingBooleanityKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for RamHammingBooleanityKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.visit_simple(Key::new("eq"), self.eq.device_bytes());
         visitor.exit();
     }
 }
 
-impl<F: Field> RamHammingBooleanityKernel<F> {
+impl<F: JoltField> RamHammingBooleanityKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         let bound = self.rounds_bound;
         self.weights
@@ -61,7 +67,7 @@ impl<F: Field> RamHammingBooleanityKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamHammingBooleanityKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamHammingBooleanityKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -75,14 +81,16 @@ impl<F: Field> ProveRounds<F> for RamHammingBooleanityKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let (constant, quadratic) = self.weights.round_coefficients(&self.eq).map_err(|_| {
-            SumcheckError::MissingEvaluationSource {
-                kind: "cuda RAM Hamming-booleanity round",
-            }
-        })?;
+        let (constant, quadratic, at_one) =
+            self.weights.round_coefficients(&self.eq).map_err(|_| {
+                SumcheckError::MissingEvaluationSource {
+                    kind: "cuda RAM Hamming-booleanity round",
+                }
+            })?;
         let mut coefficients = self
             .eq
-            .gruen_poly_deg_3(constant, quadratic, previous_claim)
+            .gruen_poly_deg_3(constant, quadratic, previous_claim, at_one)
+            .map_err(backend("CUDA quotient interpolation"))?
             .into_coefficients();
         coefficients.resize(self.relation.degree() + 1, F::from_u64(0));
         Ok(UnivariatePoly::new(coefficients))
@@ -93,7 +101,7 @@ impl<F: Field> ProveRounds<F> for RamHammingBooleanityKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamHammingBooleanityKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamHammingBooleanityKernel<F> {
     type Relation = RamHammingBooleanity<F>;
 
     fn output_claims(
@@ -113,7 +121,7 @@ impl<F: Field> SumcheckKernel<F> for RamHammingBooleanityKernel<F> {
     }
 }
 
-fn hamming_shards<F: Field>(
+fn hamming_shards<F: JoltField>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
@@ -143,7 +151,7 @@ fn hamming_shards<F: Field>(
     Ok(out)
 }
 
-impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -186,12 +194,15 @@ impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for CudaBackend {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use super::witness::RamHammingBooleanityWitness;
+    use super::FLAG_BIT_RAM_HAMMING;
     use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
     use jolt_claims::protocols::jolt::relations::ram::RamHammingBooleanityInputClaims;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TraceDimensions};
     use jolt_claims::{NoChallenges, OutputClaims};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
+    use jolt_witness::JoltWitnessPlane;
     use proptest::prelude::*;
 
     use super::CudaBackend;
@@ -244,10 +255,9 @@ mod tests {
         };
         let cycles = 1usize << LOG_T;
         with_ram_witness(LOG_T, RAM_K, one_hot(), 19, |witness| {
-            let rows = crate::optimized::support::collect_rows::<
-                Fr,
-                super::witness::RamHammingBooleanityWitness,
-            >(witness, cycles)
+            let rows = crate::optimized::support::collect_rows::<RamHammingBooleanityWitness>(
+                witness, cycles,
+            )
             .expect("reference rows");
             let expected = super::witness::packed_weights(&rows);
             assert!(
@@ -259,7 +269,7 @@ mod tests {
             let trace = crate::cuda::witness::session_device_trace(
                 context,
                 &mut ProofSession::default(),
-                witness as &dyn jolt_witness::JoltWitnessPlane<Fr>,
+                witness as &dyn JoltWitnessPlane<Fr>,
                 cycles,
             )
             .expect("device residency");
@@ -267,7 +277,7 @@ mod tests {
             let got = context
                 .download_u64(
                     &trace
-                        .flag_bit_column(&columns.flags, super::FLAG_BIT_RAM_HAMMING)
+                        .flag_bit_column(&columns.flags, FLAG_BIT_RAM_HAMMING)
                         .expect("flag bit column"),
                 )
                 .expect("download");

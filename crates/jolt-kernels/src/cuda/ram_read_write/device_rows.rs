@@ -186,8 +186,8 @@ impl DeviceRamRows {
 )]
 mod tests {
     use common::jolt_device::MemoryLayout;
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_program::execution::{RamAccess, RamRead, RamWrite, TraceRow};
+    use jolt_field::{Fr, Ring};
+    use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RamRead, RamWrite};
     use jolt_witness::witnesses::{
         Extract, RamInc, RamReadValue, RamWriteValue, RemappedRamAddress, ToField, WitnessEnv,
     };
@@ -229,10 +229,12 @@ mod tests {
                         post_value: 12,
                     }),
                 };
-                TraceRow {
-                    ram_access: access,
-                    ..TraceRow::default()
-                }
+                crate::cuda::common::testing::synthetic_row(
+                    Default::default(),
+                    Default::default(),
+                    access,
+                    1,
+                )
             })
             .collect()
     }
@@ -240,12 +242,12 @@ mod tests {
     fn bundles(rows: &[TraceRow], layout: &MemoryLayout) -> Vec<RamReadWriteWitness> {
         rows.iter()
             .map(|row| {
-                let address = match row.ram_access {
+                let address = match row.ram_access() {
                     RamAccess::Read(read) => Some(read.address),
                     RamAccess::Write(write) => Some(write.address),
                     RamAccess::NoOp => None,
                 };
-                let (read_value, write_value) = match row.ram_access {
+                let (read_value, write_value) = match row.ram_access() {
                     RamAccess::Read(read) => (read.value, read.value),
                     RamAccess::Write(write) => (write.pre_value, write.post_value),
                     RamAccess::NoOp => (0, 0),

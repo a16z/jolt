@@ -14,10 +14,13 @@
 //! per-cycle bytecode indices) comes off the witness plane's typed stage-6
 //! rows — both fetched inside `prepare`, never staged here.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::ComposedClaims;
+
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_field::JoltField;
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -31,19 +34,20 @@ use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::batch::Stage6aBuildParts;
 use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhaseInputClaims;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage6a::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
 use jolt_verifier::stages::stage6a::outputs::{
     Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutputClaims,
     Stage6aSumchecks,
 };
 use jolt_verifier::CheckedInputs;
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 6a's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 6b consumes.
-pub struct Stage6aProverOutput<F: Field, C> {
+pub struct Stage6aProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6aOutputClaims<F>,
     pub clear_output: Stage6aClearOutput<F>,
@@ -55,8 +59,7 @@ pub struct Stage6aProverOutput<F: Field, C> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage6a<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
@@ -66,11 +69,10 @@ pub fn prove_stage6a<F, PCS, VC, T>(
     stage3: &Stage3ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage6aProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -82,11 +84,6 @@ where
         JoltRelationId::BytecodeReadRaf,
     )?;
 
-    // The batch, through the verifier's own promoted constructor: the relation
-    // carries the upstream cycle/register points and the entry index (full
-    // geometry at construction) — the kernel's read path. Committed-program
-    // mode stages the five raw bound `Val_s` values as extra wire claims; the
-    // sumcheck itself is unchanged.
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
     let entry_bytecode_index = preprocessing
         .verifier
@@ -103,6 +100,12 @@ where
         stage4_points: &stage4.output_points,
         stage5_points: &stage5.output_points,
     })?;
+    #[cfg(feature = "field-inline")]
+    let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_geometry(
+        sumchecks,
+        &stage4.output_points,
+        &stage5.output_points,
+    );
     // The generated per-member draw, mirroring the verifier: the bytecode
     // member's six squeezes (the fold gamma plus the five per-stage gammas),
     // then the booleanity member's override (the reference-address pad draw
@@ -112,23 +115,42 @@ where
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
     let input_points = sumchecks.empty_input_points();
-    let inputs = Stage6aInputClaims {
-        bytecode_read_raf: bytecode_read_raf_address_phase_input_values_from_upstream(
-            &stage1.output_values,
-            &stage2.output_values,
-            &stage3.output_values,
+    let bytecode_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
+        &stage1.output_values,
+        &stage2.output_values,
+        &stage3.output_values,
+        &stage4.output_values,
+        &stage5.output_values,
+    );
+    // The Akita build folds the four reduced `Inc` claims into the bytecode
+    // address-phase input at the fused-inc consumer stage slots — the same
+    // wrapper the verifier's `stage6a::verify` applies.
+    #[cfg(feature = "akita")]
+    let bytecode_input_values =
+        jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
+            base: bytecode_input_values,
+            inc: jolt_verifier::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
+                &stage2.output_values,
+                &stage4.output_values,
+                &stage5.output_values,
+            ),
+        };
+    #[cfg(feature = "field-inline")]
+    let bytecode_input_values = ComposedClaims {
+        base: bytecode_input_values,
+        field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
             &stage4.output_values,
             &stage5.output_values,
         ),
+    };
+    let inputs = Stage6aInputClaims {
+        bytecode_read_raf: bytecode_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
-
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &address_challenges,
@@ -151,4 +173,116 @@ where
         #[cfg(feature = "zk")]
         committed_witness,
     })
+}
+
+/// Clear round-trips with field-inline enabled of the stage-6a recipe against the verifier's own
+/// public constituents — `stage6a::verify`'s clear body (the batch built by
+/// the promoted `build_from_parts` with the field-register access geometry on the bytecode
+/// member, the field-inline appendage composition, the composed input claim with its
+/// gamma-power extension) on a twin transcript positioned by the stage-1..5
+/// replays, on the field-active arithmetic trace: the appendage openings are
+/// nonzero, so the address kernel's field-inline stage-value legs are exercised for
+/// real (round 0's engine check pins the composed input claim to the
+/// summand).
+#[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod field_inline_round_trip {
+    use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::{Fr, Ring};
+    use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
+
+    use super::*;
+    use crate::recorder::ProofMode;
+    use crate::stages::field_inline_fixtures::{
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
+        test_prover_config, test_public_io, twins,
+    };
+
+    #[test]
+    fn field_arithmetic_stage6a_round_trips_the_composed_verifier() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
+        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let config = test_prover_config();
+        let public_io = test_public_io();
+        let checked = test_checked_inputs();
+        let preprocessing = field_arithmetic_preprocessing();
+
+        let mut prover_transcript = Blake2bTranscript::new(b"stage6a-field-inline");
+        let (((stage1, stage2, stage3), stage4), stage5) = FixtureProver {
+            backend: &mut context,
+            mode: &mode,
+            config: &config,
+            public_io: &public_io,
+            checked: &checked,
+            preprocessing: &preprocessing,
+            transcript: &mut prover_transcript,
+        }
+        .through_stage5();
+        let out = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &mut context,
+            &mode,
+            &checked,
+            &config,
+            &preprocessing,
+            &stage1.clear_output,
+            &stage2.clear_output,
+            &stage3.clear_output,
+            &stage4.clear_output,
+            &stage5.clear_output,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        // The field-active premise: the appendage the composed input claim folds
+        // carries nonzero openings (the trace executes field-inline instructions), so
+        // the round trip exercises the extension for real rather than the
+        // zero-fold degenerate case.
+        let appendage = field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
+            &stage4.clear_output.output_values,
+            &stage5.clear_output.output_values,
+        );
+        let zero = Fr::from_u64(0);
+        assert!(appendage.rd_wa_read_write != zero);
+
+        let mut transcript = Blake2bTranscript::new(b"stage6a-field-inline");
+        twins::replay_stage1(&mut transcript, &stage1);
+        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
+        twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
+        twins::replay_stage4(
+            &mut transcript,
+            &config,
+            &checked,
+            &preprocessing,
+            &stage2,
+            &stage3,
+            &stage4,
+        );
+        twins::replay_stage5(
+            &mut transcript,
+            &config,
+            &checked,
+            &preprocessing,
+            &stage2,
+            &stage4,
+            &stage5,
+        );
+        twins::replay_stage6a(
+            &mut transcript,
+            &config,
+            &checked,
+            &preprocessing,
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            &out,
+        );
+
+        assert_eq!(transcript.state(), prover_transcript.state());
+    }
 }

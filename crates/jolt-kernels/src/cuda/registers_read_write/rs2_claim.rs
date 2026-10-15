@@ -1,11 +1,11 @@
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr_slice};
 use crate::cuda::common::error::CudaError;
 
-pub fn rs2_ra_claim_window<F: Field>(
+pub fn rs2_ra_claim_window<F: JoltField>(
     context: &CudaKernelContext,
     indices: &CudaSlice<u32>,
     cycles: usize,
@@ -55,7 +55,7 @@ pub fn rs2_ra_claim_window<F: Field>(
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use rand::rngs::StdRng;
     use rand::{RngCore, SeedableRng};

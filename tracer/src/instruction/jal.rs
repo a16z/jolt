@@ -1,3 +1,4 @@
+use crate::instruction::registers::j::RegisterStateJ;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -11,16 +12,16 @@ declare_riscv_instr!(
     mask   = 0x0000_007f,
     match  = 0x0000_006f,
     format = FormatJ,
+    registers = RegisterStateJ,
     ram    = ()
 );
 
 impl JAL {
     // cpu.pc is pre-incremented by 4 (or 2 for compressed) in tick_operate() before execution,
     // self.address is the instruction address.
-    fn exec(&self, cpu: &mut Cpu, _: &mut <JAL as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <JAL as RISCVInstruction>::RamAccess) {
         if self.operands.rd != 0 {
             if self.operands.rd == 1 {
-                // Track function call if we're saving a return address (rd != 0)
                 cpu.track_call(self.address);
             }
             cpu.write_register(self.operands.rd as usize, cpu.sign_extend(cpu.pc as i64));

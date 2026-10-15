@@ -9,14 +9,12 @@ fn memory_ops() -> (i32, u32, i32, u32) {
     unsafe {
         let ptr = data.as_mut_ptr();
 
-        // Store Byte (SB instruction)
         asm!(
             "sb {value}, 0({ptr})",
             ptr = in(reg) ptr,
             value = in(reg) 0x12,
         );
 
-        // Load Byte Signed (LB instruction)
         let mut val_lb: i32 = 0;
         asm!(
             "lb {val}, 0({ptr})",
@@ -24,7 +22,6 @@ fn memory_ops() -> (i32, u32, i32, u32) {
             val = out(reg) val_lb,
         );
 
-        // Load Byte Unsigned (LBU instruction)
         let mut val_lbu: u32 = 0;
         asm!(
             "lbu {val}, 1({ptr})",
@@ -32,14 +29,12 @@ fn memory_ops() -> (i32, u32, i32, u32) {
             val = out(reg) val_lbu,
         );
 
-        // Store Halfword (SH instruction)
         asm!(
             "sh {value}, 2({ptr})",
             ptr = in(reg) ptr,
             value = in(reg) 0x3456,
         );
 
-        // Load Halfword Signed (LH instruction)
         let mut val_lh: i32 = 0;
         asm!(
             "lh {val}, 2({ptr})",
@@ -47,7 +42,6 @@ fn memory_ops() -> (i32, u32, i32, u32) {
             val = out(reg) val_lh,
         );
 
-        // Load Halfword Unsigned (LHU instruction)
         let mut val_lhu: u32 = 0;
         asm!(
             "lhu {val}, 4({ptr})",

@@ -1,9 +1,9 @@
 use common::jolt_device::JoltDevice;
 
-use super::{MemoryImage, TraceError, TraceInputs, TraceOutput, TraceRow};
+use super::{MemoryImage, TraceData, TraceError, TraceInputs, TraceOutput};
 
 pub trait ExecutionBackend {
-    type Trace: TraceSource;
+    type Trace;
 
     fn trace(
         &mut self,
@@ -12,26 +12,12 @@ pub trait ExecutionBackend {
     ) -> Result<TraceOutput<Self::Trace>, TraceError>;
 }
 
-pub trait TraceSource {
-    fn next_row(&mut self) -> Option<TraceRow>;
-
-    /// The full row sequence as one slice, if this source can serve it.
-    ///
-    /// Contract: the slice must equal exactly what the remaining `next_row`
-    /// calls would yield — a partially consumed source must return `None`
-    /// rather than a slice that includes already-consumed rows.
-    fn rows(&self) -> Option<&[TraceRow]> {
-        None
-    }
-}
-
 /// Two-pass chunked execution: a fast checkpointing pass over the whole
 /// program, then parallel per-chunk replay.
 ///
-/// This is the producer-side contract for streaming consumers
-/// (`jolt-witness` deliberately makes random access to trace rows
-/// inexpressible so that a checkpointed, re-emulating trace source can
-/// implement every signature honestly).
+/// This is the producer-side contract for streaming consumers. Proof adapters
+/// that require retained random access must retain each replayed
+/// [`TraceData`] instead of copying chunks into another full trace allocation.
 pub trait ChunkedExecutionBackend: ExecutionBackend {
     /// Everything needed to deterministically re-execute one chunk,
     /// independent of every other chunk.
@@ -56,10 +42,9 @@ pub trait ChunkedExecutionBackend: ExecutionBackend {
     /// padding rows; padding stays the consumer's job, as in the existing
     /// `RowSource` contract). Takes `&self` so disjoint chunks can be
     /// replayed in parallel, in any order.
-    fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError>;
+    fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<TraceData, TraceError>;
 }
 
-/// Result of a [`ChunkedExecutionBackend::execute`] fast pass.
 pub struct ExecutionSummary<C> {
     pub checkpoints: Vec<C>,
     pub trace_len: usize,

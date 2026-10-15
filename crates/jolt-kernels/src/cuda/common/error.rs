@@ -1,5 +1,7 @@
 use cudarc::driver::DriverError;
 use cudarc::nvrtc::CompileError;
+use jolt_field::JoltField;
+use jolt_sumcheck::SumcheckError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -32,11 +34,9 @@ impl From<CompileError> for CudaError {
     }
 }
 
-pub(crate) fn backend<F: jolt_field::FieldCore>(
-    kind: &'static str,
-) -> impl Fn(CudaError) -> jolt_sumcheck::SumcheckError<F> {
-    move |error| jolt_sumcheck::SumcheckError::BackendFailure {
-        kind,
-        reason: error.to_string(),
+pub(crate) fn backend<F: JoltField>(kind: &'static str) -> impl Fn(CudaError) -> SumcheckError<F> {
+    move |error| {
+        tracing::error!(operation = kind, error = %error, "CUDA round evaluation failed");
+        SumcheckError::MissingEvaluationSource { kind }
     }
 }

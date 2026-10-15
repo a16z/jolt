@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use std::fmt::Debug;
 
 use super::group::JoltGroup;
@@ -14,12 +14,11 @@ use super::group::JoltGroup;
 /// is Fq12 multiplication. See `Bn254GT` for the mapping.
 pub trait PairingGroup: Clone + Debug + Eq + Sync + Send + 'static {
     /// Scalar field for G1 and G2 (e.g., BN254 Fr).
-    type ScalarField: Field;
+    type ScalarField: JoltField;
     type G1: JoltGroup;
     type G2: JoltGroup;
     type GT: JoltGroup;
 
-    /// Computes the bilinear pairing `e(g1, g2)`.
     #[must_use]
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT;
 

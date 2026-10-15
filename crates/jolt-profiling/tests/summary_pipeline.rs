@@ -1,7 +1,3 @@
-//! Fixture-trace tests for the flush-time summary pipeline: counter
-//! conversion, aggregation semantics (self time, dark time, stage windows),
-//! trace/summary consistency, and schema drift.
-
 #![cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 #![expect(clippy::unwrap_used)]
 
@@ -11,6 +7,7 @@ use jolt_profiling::summary::{
     SummaryContext, SUMMARY_SCHEMA_JSON,
 };
 use jolt_profiling::taxonomy;
+use jolt_profiling::PeakMemory;
 use serde_json::Value;
 
 const FIXTURE: &str = include_str!("fixtures/simple_trace.json");
@@ -36,17 +33,21 @@ fn fixture_stage_rows() -> Vec<StageMemoryRow> {
     }]
 }
 
+fn fixture_peak() -> PeakMemory {
+    PeakMemory {
+        rss_bytes: Some(4 * GIB as u64),
+        footprint_bytes: Some(6 * GIB as u64),
+    }
+}
+
 fn fixture_summary(events: &[Value]) -> ProfileSummary {
     build_summary(
         events,
         &fixture_context(),
         &fixture_stage_rows(),
-        Some(4 * GIB as u64),
+        fixture_peak(),
         1_700_000_000,
         Some("abc1234".to_string()),
-        // Exercise the heap section through the same strict-schema tests:
-        // one snapshot parsed from a folded-stacks blob, as the allocative
-        // lane would supply.
         [(
             "Stage2Batch_prepared".to_string(),
             parse_folded("KernelA;opening_tables 6442450944\nKernelA;derived_tables 2147483648\nProofSession 1024\n"),
@@ -62,15 +63,12 @@ fn counter_events_convert_to_chrome_counter_tracks() {
     let original_len = events.len();
     let converted = convert_counter_events(events);
 
-    // 3 monitor instants carrying 4 counter samples total → 4 "C" events.
     let counters: Vec<&Value> = converted
         .iter()
         .filter(|e| e.get("ph").and_then(Value::as_str) == Some("C"))
         .collect();
     assert_eq!(counters.len(), 4);
     assert_eq!(converted.len(), original_len - 3 + 4);
-    // No raw counter instants survive; non-counter instants (the
-    // `heap_snapshot` marker) pass through untouched.
     assert!(converted.iter().all(|e| {
         e.get("args")
             .and_then(Value::as_object)
@@ -95,7 +93,6 @@ fn counter_events_convert_to_chrome_counter_tracks() {
         memory[0].get("args").and_then(|a| a.get("memory_gib")),
         Some(&Value::from(1.0))
     );
-    // Placement metadata survives the rewrite.
     assert_eq!(memory[0].get("ts"), Some(&Value::from(500.0)));
     assert_eq!(memory[0].get("tid"), Some(&Value::from(3)));
 }
@@ -105,7 +102,6 @@ fn aggregation_computes_totals_self_and_dark_time() {
     let summary = fixture_summary(&fixture_events());
 
     let span = |label: &str| summary.spans.get(label).unwrap();
-    // Inclusive totals.
     assert_eq!(span("jolt_prover::prove").total_ns, 2_500_000);
     assert_eq!(span("prove_stage0").total_ns, 900_000);
     assert_eq!(span("commit_witness").total_ns, 500_000);
@@ -122,7 +118,6 @@ fn aggregation_computes_totals_self_and_dark_time() {
     assert_eq!(span("EqPolynomial::evals").total_ns, 100_000);
     assert_eq!(span("EqPolynomial::evals").self_ns, 100_000);
 
-    // Dark time at the root: 2500µs wall − (900 + 1000)µs stage children.
     let root = summary.root.as_ref().unwrap();
     assert_eq!(root.label, taxonomy::ROOT_SPAN);
     assert_eq!(root.wall_time_ns, 2_500_000);
@@ -139,22 +134,20 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     let stage0 = &summary.stages[0];
     assert_eq!(stage0.label, "prove_stage0");
     assert_eq!(stage0.wall_time_ns, 900_000);
-    // Boundary RSS from the StageMemoryLayer row: 1 GiB → 2 GiB.
     assert_eq!(stage0.rss_open_gib, Some(1.0));
     assert_eq!(stage0.rss_close_gib, Some(2.0));
     assert_eq!(stage0.rss_delta_gib, Some(1.0));
-    // Only the ts=500 sample falls inside [100, 1000].
     assert_eq!(stage0.peak_memory_gib, Some(1.0));
 
     let stage1 = &summary.stages[1];
     assert_eq!(stage1.label, "prove_stage1");
     assert_eq!(stage1.wall_time_ns, 1_000_000);
-    // No StageMemoryRow for stage 1 → nullable boundary fields.
     assert_eq!(stage1.rss_open_gib, None);
     assert_eq!(stage1.rss_delta_gib, None);
     assert_eq!(stage1.peak_memory_gib, Some(3.0));
 
     assert_eq!(summary.peak_rss_gib, Some(4.0));
+    assert_eq!(summary.peak_footprint_gib, Some(6.0));
     let memory = summary.counters.get("memory_gib").unwrap();
     assert_eq!(memory.samples, 3);
     assert_eq!(memory.max, 3.0);
@@ -163,8 +156,6 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(cpu.samples, 1);
 }
 
-/// Trace/summary consistency: the summary is a deterministic aggregation of
-/// the trace's events, and the counter rewrite does not change it.
 #[test]
 fn summary_is_invariant_under_counter_conversion() {
     let raw = fixture_summary(&fixture_events());
@@ -175,9 +166,6 @@ fn summary_is_invariant_under_counter_conversion() {
     );
 }
 
-/// Taxonomy conformance over the fixture: stage labels are taxonomy members,
-/// the root span carries its required field, and the always-present label
-/// set is internally consistent.
 #[test]
 fn fixture_labels_conform_to_taxonomy() {
     let events = fixture_events();
@@ -210,7 +198,6 @@ fn fixture_labels_conform_to_taxonomy() {
             .iter()
             .any(|l| taxonomy::ADVICE_SEAM_SPANS.contains(l)));
     }
-    // The mode seams are disjoint siblings: exactly one pair per mode.
     let clear = taxonomy::always_present_spans(taxonomy::ProverMode::Clear);
     let zk = taxonomy::always_present_spans(taxonomy::ProverMode::Zk);
     assert!(taxonomy::CLEAR_MODE_SPANS
@@ -250,14 +237,13 @@ fn repeated_stage_labels_pair_rows_by_occurrence() {
         &events,
         &fixture_context(),
         &rows,
-        None,
+        PeakMemory::default(),
         0,
         None,
         Default::default(),
     );
 
     assert_eq!(summary.stages.len(), 2);
-    // First close (100→200µs) gets row 0, second (300→700µs) row 1.
     assert_eq!(summary.stages[0].wall_time_ns, 100_000);
     assert_eq!(summary.stages[0].rss_open_gib, Some(1.0));
     assert_eq!(summary.stages[0].rss_close_gib, Some(2.0));
@@ -266,9 +252,6 @@ fn repeated_stage_labels_pair_rows_by_occurrence() {
     assert_eq!(summary.stages[1].rss_delta_gib, Some(2.0));
 }
 
-/// The flush-time I/O wrapper: counter events rewritten in the trace (via
-/// temp file + rename — no `.tmp` residue), the caller-sampled peak RSS
-/// carried into the summary, both artifacts parseable afterwards.
 #[test]
 fn finalize_trace_rewrites_and_summarizes_atomically() {
     let dir = std::env::temp_dir().join(format!(
@@ -283,17 +266,12 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
     let trace_path = dir.join("trace.json");
     std::fs::write(&trace_path, FIXTURE).unwrap();
 
-    let (out_path, summary) = jolt_profiling::summary::finalize_trace(
-        &trace_path,
-        &fixture_context(),
-        Some(4 * GIB as u64),
-    )
-    .unwrap();
+    let (out_path, summary) =
+        jolt_profiling::summary::finalize_trace(&trace_path, &fixture_context(), fixture_peak())
+            .unwrap();
 
     assert_eq!(out_path, summary_path(&trace_path));
     assert_eq!(summary.peak_rss_gib, Some(4.0));
-    // The rewrite converted every counter instant into a "C" event
-    // (non-counter instants like `heap_snapshot` pass through).
     let rewritten: Vec<Value> =
         serde_json::from_str(&std::fs::read_to_string(&trace_path).unwrap()).unwrap();
     assert!(rewritten.iter().all(|e| {
@@ -301,16 +279,15 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
             .and_then(Value::as_object)
             .is_none_or(|args| !args.keys().any(|k| k.starts_with("counters.")))
     }));
-    // Atomic replacement leaves no temp files behind.
     assert!(std::fs::read_dir(&dir).unwrap().all(|entry| !entry
         .unwrap()
         .file_name()
         .to_string_lossy()
         .ends_with(".tmp")));
-    // The written summary parses through the strict schema structs.
     let reparsed: ProfileSummary =
         serde_json::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
     assert_eq!(reparsed.peak_rss_gib, Some(4.0));
+    assert_eq!(reparsed.peak_footprint_gib, Some(6.0));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -325,9 +302,6 @@ fn summary_round_trips_through_strict_schema_structs() {
     assert_eq!(reparsed.spans.len(), summary.spans.len());
 }
 
-/// The driver's `heap_snapshot` instant events situate each snapshot on the
-/// trace clock: the fixture fires one for `Stage2Batch_prepared` at
-/// 1350 µs, and the root opens at 0 — so the joined `at_ns` is 1.35 ms.
 #[test]
 fn heap_snapshots_join_their_instant_events() {
     let summary = fixture_summary(&fixture_events());

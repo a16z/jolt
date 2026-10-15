@@ -3,6 +3,8 @@ use jolt_riscv::{CircuitFlags, InstructionFlags as InstructionFlagKind};
 use jolt_witness::backend::cuda::{
     circuit_flag_bit, instruction_flag_bit, DeviceAtomColumns, FLAG_BIT_NEXT_IS_NOOP,
 };
+use witness::CLAIM_LAYOUT;
+use witness::SIGN_BIT_BASE;
 
 #[cfg(test)]
 use super::witness::Packed;
@@ -39,7 +41,7 @@ impl DeviceProductColumns {
         let mut wide = context.alloc_u64(cycles * WIDE * 2)?;
         let mut flags = context.alloc_u32(cycles)?;
         let sources = context.upload_u32_slice(&Self::gather_bit_sources()?)?;
-        let sign_base = witness::SIGN_BIT_BASE;
+        let sign_base = SIGN_BIT_BASE;
 
         let count = CudaKernelContext::count_of(cycles)?;
         let mut builder = context.stream().launch_builder(context.sp_gather());
@@ -64,7 +66,7 @@ impl DeviceProductColumns {
             narrow,
             wide,
             flags,
-            layout: context.upload_u32_slice(&witness::CLAIM_LAYOUT)?,
+            layout: context.upload_u32_slice(&CLAIM_LAYOUT)?,
             cycles,
         })
     }
@@ -97,7 +99,7 @@ impl DeviceProductColumns {
             narrow: context.upload_u64_slice(&packed.narrow)?,
             wide: context.upload_u64_slice(&packed.wide)?,
             flags: context.upload_u32_slice(&packed.flags)?,
-            layout: context.upload_u32_slice(&witness::CLAIM_LAYOUT)?,
+            layout: context.upload_u32_slice(&CLAIM_LAYOUT)?,
             cycles,
         })
     }

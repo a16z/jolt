@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use ark_serialize::CanonicalSerialize;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_field::{FixedBytes, Fr};
+use jolt_field::{CanonicalBytes, Fr};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -601,7 +601,7 @@ fn selected_positions(len: usize) -> Vec<usize> {
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn field_low_u64(value: Fr) -> u64 {
-    let bytes = value.to_bytes_array();
+    let bytes = value.to_bytes_le_vec();
     u64::from_le_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ])
@@ -695,8 +695,3 @@ fn two_sample_chi_squared(a: &[usize], b: &[usize]) -> f64 {
         })
         .sum()
 }
-
-#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
-#[test]
-#[ignore = "enable --features prover-fixtures,zk and run with --release to generate fresh ZK proof samples"]
-fn zk_muldiv_jolt_proof_components_are_statistically_independent() {}

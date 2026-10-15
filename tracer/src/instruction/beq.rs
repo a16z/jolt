@@ -1,3 +1,4 @@
+use crate::instruction::registers::b::RegisterStateB;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00000063,
     format = FormatB,
+    registers = RegisterStateB,
     ram    = ()
 );
 
 impl BEQ {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <BEQ as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <BEQ as RISCVInstruction>::RamAccess) {
         if cpu.sign_extend(cpu.x[self.operands.rs1 as usize])
             == cpu.sign_extend(cpu.x[self.operands.rs2 as usize])
         {

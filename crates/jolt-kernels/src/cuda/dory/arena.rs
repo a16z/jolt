@@ -518,6 +518,11 @@ pub(super) fn g2_point(limbs: &[u64]) -> G2Projective {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use ark_bn254::Fr;
+    use ark_bn254::G1Affine;
+    use ark_bn254::G1Projective;
+    use ark_bn254::G2Affine;
+    use ark_bn254::G2Projective;
     use ark_ff::UniformRand;
     use dory::backends::arkworks::ArkFr;
     use dory::primitives::arithmetic::DoryRoutines;
@@ -555,9 +560,7 @@ mod tests {
 
     fn scalars(count: usize, seed: u64) -> Vec<ArkFr> {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
-        (0..count)
-            .map(|_| ArkFr(ark_bn254::Fr::rand(&mut rng)))
-            .collect()
+        (0..count).map(|_| ArkFr(Fr::rand(&mut rng))).collect()
     }
 
     #[test]
@@ -610,9 +613,9 @@ mod tests {
         let bases: Vec<_> = (0..len)
             .map(|index| {
                 if index % 37 == 0 {
-                    ark_bn254::G1Projective::default()
+                    G1Projective::default()
                 } else {
-                    ark_bn254::G1Projective::rand(&mut rng)
+                    G1Projective::rand(&mut rng)
                 }
             })
             .collect();
@@ -634,8 +637,8 @@ mod tests {
         drop(guard);
 
         assert_eq!(
-            ark_bn254::G1Affine::from(got),
-            ark_bn254::G1Affine::from(expected.0),
+            G1Affine::from(got),
+            G1Affine::from(expected.0),
             "a {len}-base split G1 MSM diverged from reference Dory",
         );
     }
@@ -653,9 +656,9 @@ mod tests {
         let bases: Vec<_> = (0..len)
             .map(|index| {
                 if index % 37 == 0 {
-                    ark_bn254::G2Projective::default()
+                    G2Projective::default()
                 } else {
-                    ark_bn254::G2Projective::rand(&mut rng)
+                    G2Projective::rand(&mut rng)
                 }
             })
             .collect();
@@ -677,8 +680,8 @@ mod tests {
         drop(guard);
 
         assert_eq!(
-            ark_bn254::G2Affine::from(got),
-            ark_bn254::G2Affine::from(expected.0),
+            G2Affine::from(got),
+            G2Affine::from(expected.0),
             "a {len}-base split G2 MSM diverged from reference Dory",
         );
     }
@@ -730,12 +733,8 @@ mod tests {
         };
 
         let mut rng = ChaCha20Rng::seed_from_u64(1_301);
-        let ps: Vec<_> = (0..pairs)
-            .map(|_| ark_bn254::G1Projective::rand(&mut rng))
-            .collect();
-        let qs: Vec<_> = (0..pairs)
-            .map(|_| ark_bn254::G2Projective::rand(&mut rng))
-            .collect();
+        let ps: Vec<_> = (0..pairs).map(|_| G1Projective::rand(&mut rng)).collect();
+        let qs: Vec<_> = (0..pairs).map(|_| G2Projective::rand(&mut rng)).collect();
         let g1 = store_all(&ps);
         let g2 = store_all_g2(&qs);
         let g1_base = span(&g1).expect("a contiguous G1 pair span");
@@ -776,12 +775,8 @@ mod tests {
         );
 
         let mut rng = ChaCha20Rng::seed_from_u64(97);
-        let g1: Vec<_> = (0..len)
-            .map(|_| ark_bn254::G1Projective::rand(&mut rng))
-            .collect();
-        let g2: Vec<_> = (0..len)
-            .map(|_| ark_bn254::G2Projective::rand(&mut rng))
-            .collect();
+        let g1: Vec<_> = (0..len).map(|_| G1Projective::rand(&mut rng)).collect();
+        let g2: Vec<_> = (0..len).map(|_| G2Projective::rand(&mut rng)).collect();
 
         let bases = store_all(&g1);
         let mut vs = store_all(&g1);

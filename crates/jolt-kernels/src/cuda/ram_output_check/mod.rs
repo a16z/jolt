@@ -1,10 +1,15 @@
+use crate::cuda::common::address_rounds::AddressRounds;
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamOutputCheckChallenges, RamOutputCheckInputClaims, RamOutputCheckOutputClaims,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -21,7 +26,7 @@ use rounds::DeviceOutputCheck;
 
 mod rounds;
 
-pub struct RamOutputCheckKernel<F: Field> {
+pub struct RamOutputCheckKernel<F: JoltField> {
     context: &'static CudaKernelContext,
     relation: RamOutputCheck<F>,
     state: DeviceOutputCheck<F>,
@@ -29,14 +34,14 @@ pub struct RamOutputCheckKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RamOutputCheckKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for RamOutputCheckKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
 
-impl<F: Field> RamOutputCheckKernel<F> {
+impl<F: JoltField> RamOutputCheckKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.state.bind(self.context, challenge).map_err(|_| {
             SumcheckError::MissingEvaluationSource {
@@ -48,7 +53,7 @@ impl<F: Field> RamOutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamOutputCheckKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamOutputCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -78,14 +83,14 @@ impl<F: Field> ProveRounds<F> for RamOutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamOutputCheckKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamOutputCheckKernel<F> {
     type Relation = RamOutputCheck<F>;
 
     fn output_claims(
         &mut self,
         _inputs: &RamOutputCheckInputClaims<F>,
     ) -> Result<RamOutputCheckOutputClaims<F>, SumcheckKernelError<F>> {
-        let remaining = self.relation.symbolic().rounds() - self.rounds_bound;
+        let remaining = self.relation.read_write_dimensions().log_k() - self.rounds_bound;
         if remaining != 0 {
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
@@ -118,14 +123,18 @@ impl<F: Field> SumcheckKernel<F> for RamOutputCheckKernel<F> {
             let expected =
                 relation.derive_output_term(&id, input_points, output_points, challenges)?;
             if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+                return Err(SumcheckKernelError::DerivedTableDrift {
+                    id: id.into(),
+                    expected,
+                    got,
+                });
             }
         }
         Ok(())
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -136,13 +145,6 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for CudaBackend {
         let relation = inputs.relation;
         let address_point = inputs.challenges.output_address.as_slice();
         let ram_log_k = address_point.len();
-        if relation.read_write_dimensions().output_check_rounds() != ram_log_k {
-            return Err(KernelError::Unsupported {
-                reason: "the CUDA RAM output check supports only the default read-write config \
-                         (phase 1 = all cycle rounds)",
-            });
-        }
-
         let addresses = 1usize << ram_log_k;
         let public_memory = relation.public_memory();
         let mut val_io = vec![F::zero(); addresses];
@@ -175,12 +177,16 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for CudaBackend {
         }
 
         let state = DeviceOutputCheck::new(context, &io_mask, &val_final, &val_io, address_point)?;
-        Ok(Box::new(RamOutputCheckKernel {
-            context,
-            relation: relation.clone(),
-            state,
-            rounds_bound: 0,
-        }))
+        AddressRounds::wrap(
+            Box::new(RamOutputCheckKernel {
+                context,
+                relation: relation.clone(),
+                state,
+                rounds_bound: 0,
+            }),
+            relation.read_write_dimensions(),
+            relation.symbolic().rounds(),
+        )
     }
 }
 
@@ -197,14 +203,13 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_program::execution::{
-        JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, TraceOutput, TraceRow,
-    };
+    use jolt_field::{Fr, Ring};
+    use jolt_program::execution::{JoltProgram, MemoryImage, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, PublicIoMemory, RAMPreprocessing,
     };
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RamRead, RamWrite};
     use jolt_verifier::stages::stage2::ram_output_check::{
         RamOutputCheck, RamOutputCheckChallenges, RamOutputCheckInputClaims,
     };
@@ -281,19 +286,17 @@ mod tests {
                         post_value: value + 1,
                     }),
                 };
-                TraceRow {
+                crate::cuda::common::testing::synthetic_row(
                     instruction,
-                    ram_access: access,
-                    ..TraceRow::default()
-                }
+                    Default::default(),
+                    access,
+                    1,
+                )
             })
             .collect()
     }
 
-    fn with_output_check_witness<R>(
-        ram_k: usize,
-        body: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
-    ) -> R {
+    fn with_output_check_witness<R>(ram_k: usize, body: impl FnOnce(&TraceBackend) -> R) -> R {
         let instruction = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::XOR,
             address: 0x8000_0000,
@@ -323,7 +326,7 @@ mod tests {
         });
         let program = Arc::new(JoltProgram::default());
         let trace = TraceOutput::new(
-            OwnedTrace::new(output_rows(instruction, lowest, ram_k)),
+            TraceData::new(output_rows(instruction, lowest, ram_k)),
             witness_device,
             Some(final_memory()),
             None,

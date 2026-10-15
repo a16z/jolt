@@ -84,7 +84,7 @@ extern "C" __global__ void brr_message_sparse_kernel(
         u64 c0[LIMBS], c1[LIMBS];
         load4(coefficient + (unsigned long long)(2 * g) * LIMBS, c0);
         load4(coefficient + (unsigned long long)(2 * g + 1) * LIMBS, c1);
-        rrv_fold_pair(c0, c1, lanes, true, prod);
+        rrv_fold_pair(c0, c1, lanes, true, 1, prod);
 
         for (unsigned int p = 0; p < polys; p++) {
             unsigned int shift = chunk_bits * (polys - 1 - p);
@@ -92,7 +92,7 @@ extern "C" __global__ void brr_message_sparse_kernel(
             u64 p0[LIMBS], p1[LIMBS];
             rrv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask, cycle_even, p0);
             rrv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask, cycle_odd, p1);
-            rrv_fold_pair(p0, p1, lanes, false, prod);
+            rrv_fold_pair(p0, p1, lanes, false, 1, prod);
         }
 
         brr_accumulate(lanes, prod, acc);
@@ -120,14 +120,14 @@ extern "C" __global__ void brr_message_dense_kernel(
         u64 c0[LIMBS], c1[LIMBS];
         load4(coefficient + (unsigned long long)(2 * g) * LIMBS, c0);
         load4(coefficient + (unsigned long long)(2 * g + 1) * LIMBS, c1);
-        rrv_fold_pair(c0, c1, lanes, true, prod);
+        rrv_fold_pair(c0, c1, lanes, true, 1, prod);
 
         for (unsigned int p = 0; p < polys; p++) {
             const u64 *row = dense + (unsigned long long)p * 2 * half * LIMBS;
             u64 p0[LIMBS], p1[LIMBS];
             load4(row + (unsigned long long)(2 * g) * LIMBS, p0);
             load4(row + (unsigned long long)(2 * g + 1) * LIMBS, p1);
-            rrv_fold_pair(p0, p1, lanes, false, prod);
+            rrv_fold_pair(p0, p1, lanes, false, 1, prod);
         }
 
         brr_accumulate(lanes, prod, acc);

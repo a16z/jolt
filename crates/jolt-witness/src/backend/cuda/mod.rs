@@ -1,3 +1,15 @@
+use crate::witnesses::WitnessEnv;
+use cudarc::driver::CudaSlice;
+use cudarc::driver::CudaView;
+use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_riscv::CircuitFlags;
+use jolt_riscv::InstructionFlags;
+#[cfg(not(feature = "field-inline"))]
+pub(crate) use jolt_riscv::RV64IMAC_JOLT as CUDA_PROFILE;
+#[cfg(feature = "field-inline")]
+pub(crate) use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE as CUDA_PROFILE;
+use tables::TABLE_INDEX_ABSENT as TablesTableIndexAbsent;
+
 mod descriptors;
 mod device;
 mod packed;
@@ -13,21 +25,21 @@ pub use packed::{
 };
 
 pub struct DeviceAtomColumns {
-    pub flags: cudarc::driver::CudaSlice<u32>,
-    pub table_index: cudarc::driver::CudaSlice<u32>,
-    pub bytecode_pc: cudarc::driver::CudaSlice<u64>,
-    pub rd_pre_value: cudarc::driver::CudaSlice<u64>,
-    pub rs1_address: cudarc::driver::CudaSlice<u32>,
-    pub rs2_address: cudarc::driver::CudaSlice<u32>,
-    pub rd_address: cudarc::driver::CudaSlice<u32>,
-    pub rd_inc: cudarc::driver::CudaSlice<u64>,
-    pub ram_inc: cudarc::driver::CudaSlice<u64>,
-    pub left_instruction_input: cudarc::driver::CudaSlice<u64>,
-    pub right_instruction_input: cudarc::driver::CudaSlice<u64>,
-    pub left_lookup_operand: cudarc::driver::CudaSlice<u64>,
-    pub right_lookup_operand: cudarc::driver::CudaSlice<u64>,
-    pub lookup_output: cudarc::driver::CudaSlice<u64>,
-    pub product_magnitude: cudarc::driver::CudaSlice<u64>,
+    pub flags: CudaSlice<u32>,
+    pub table_index: CudaSlice<u32>,
+    pub bytecode_pc: CudaSlice<u64>,
+    pub rd_pre_value: CudaSlice<u64>,
+    pub rs1_address: CudaSlice<u32>,
+    pub rs2_address: CudaSlice<u32>,
+    pub rd_address: CudaSlice<u32>,
+    pub rd_inc: CudaSlice<u64>,
+    pub ram_inc: CudaSlice<u64>,
+    pub left_instruction_input: CudaSlice<u64>,
+    pub right_instruction_input: CudaSlice<u64>,
+    pub left_lookup_operand: CudaSlice<u64>,
+    pub right_lookup_operand: CudaSlice<u64>,
+    pub lookup_output: CudaSlice<u64>,
+    pub product_magnitude: CudaSlice<u64>,
 }
 
 impl DeviceAtomColumns {
@@ -71,16 +83,16 @@ pub const FLAG_BIT_PRODUCT_NEGATIVE: u32 = 26;
 
 pub const REGISTER_ADDRESS_ABSENT: u32 = u32::MAX;
 
-pub const TABLE_INDEX_ABSENT: u32 = tables::TABLE_INDEX_ABSENT;
+pub const TABLE_INDEX_ABSENT: u32 = TablesTableIndexAbsent;
 
 pub use tables::{PACK_CIRCUIT_ORDER, PACK_INSTRUCTION_ORDER};
 
-pub fn circuit_flag_bit(flag: jolt_riscv::CircuitFlags) -> Option<u32> {
+pub fn circuit_flag_bit(flag: CircuitFlags) -> Option<u32> {
     let slot = PACK_CIRCUIT_ORDER.iter().position(|&entry| entry == flag)?;
     Some(FLAG_BIT_CIRCUIT_BASE + slot as u32)
 }
 
-pub fn instruction_flag_bit(flag: jolt_riscv::InstructionFlags) -> Option<u32> {
+pub fn instruction_flag_bit(flag: InstructionFlags) -> Option<u32> {
     let slot = PACK_INSTRUCTION_ORDER
         .iter()
         .position(|&entry| entry == flag)?;
@@ -88,18 +100,25 @@ pub fn instruction_flag_bit(flag: jolt_riscv::InstructionFlags) -> Option<u32> {
 }
 
 pub struct NarrowColumn {
-    pub column: cudarc::driver::CudaSlice<u32>,
+    pub column: CudaSlice<u32>,
     pub span: usize,
     pub first: u64,
 }
 
 pub enum HotSource<'a> {
-    Interleaved(cudarc::driver::CudaView<'a, u64>),
-    Word(cudarc::driver::CudaView<'a, u32>),
+    Interleaved(CudaView<'a, u64>),
+    Word(CudaView<'a, u32>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DeviceTraceColumn {
     MappedPcWord,
     RemappedRamWord { addresses: usize },
+}
+
+impl WitnessEnv<'_> {
+    /// Program metadata used when uploading streamed trace rows to CUDA.
+    pub fn cuda_preprocessing(&self) -> &JoltProgramPreprocessing {
+        self.preprocessing
+    }
 }

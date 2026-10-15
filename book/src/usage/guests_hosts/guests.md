@@ -97,10 +97,8 @@ Host (`src/main.rs`):
 ```rust
 use jolt_sdk::PrivateInput;
 
-let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-let blindfold_setup = prover_preprocessing.blindfold_setup();
 let verifier_preprocessing =
-    guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, Some(blindfold_setup));
+    guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
 
 // Prover receives the private input
 let (output, proof, io_device) = prove_fib(PrivateInput::new(50));
@@ -119,7 +117,7 @@ By default, the prover reveals polynomial evaluations in the clear. To produce *
 
 `PrivateInput<T>` is always available in the guest. If you use `UntrustedAdvice<T>` without `zk`, the verifier won't receive the inputs, but the proof itself does not hide them cryptographically.
 
-The generated `preprocess_verifier_*` function always takes three arguments: `shared`, `generators`, and `Option<BlindfoldSetup<Bn254Curve>>`. Pass `Some(blindfold_setup)` when using `zk` mode, or `None` otherwise.
+The generated `verifier_preprocessing_from_prover_*` function derives the correct clear or ZK verifier view from the compiled prover preprocessing.
 
 ### Advice inputs vs. runtime advice
 
@@ -219,3 +217,13 @@ By default, the guest program is compiled with optimization level 3 to attempt t
 To change this optimization level, set the `JOLT_GUEST_OPT` environment variable to one of the allowed values: `0`, `1`, `2`, `3`, `s`, or `z`.
 
 A common choice is `z` which optimizes for code size, at the cost of a larger number of instructions executed.
+
+## Foreign guest toolchains
+
+Guests do not have to be Rust: any toolchain that produces a bare-metal `riscv64imac-unknown-none-elf` binary can target Jolt (for example, [jolt-go](https://github.com/sputn1ck/jolt-go) proves guests written in Go). The guest environment is plain RV64IMAC with memory-mapped I/O and a PC-stall exit; the contract a foreign toolchain must satisfy is mostly in the linker script and a few ELF conventions.
+
+- **Memory layout.** The program image is loaded at `0x8000_0000` (`RAM_START_ADDRESS`). The host computes `program_end` as the maximum `sh_addr + sh_size` over all ELF sections at or above that address — `.bss` included — and uses `program_size = program_end - RAM_START_ADDRESS` in `MemoryLayout::new` (`common/src/jolt_device.rs`) with no alignment or rounding. The 128-byte stack canary, the stack, and the heap are placed immediately after `program_end`, so a foreign linker script must derive its stack and heap symbols from the same section-end arithmetic or the guest and host will disagree about where those regions live. The canonical layout is the linker script `jolt build` links guests with (template: `src/linker.ld.template` in the Jolt repo); mirror it, keeping `.bss` as the last allocated section. Do not mirror the output of `jolt generate linker` — that command emits a different, zeroos-oriented layout that places the stack at the top of RAM and even defines a `tohost` symbol.
+
+- **Atomics.** The A extension is fully implemented as virtual instruction sequences, so `lr`/`sc` and the AMO instructions work unmodified. Execution is single-hart and deterministic, which makes cooperative (green-thread) runtimes work as-is.
+
+- **Do not define a `tohost` symbol.** The tracer recognizes [riscv-tests](https://github.com/riscv-software-src/riscv-tests) binaries by the presence of a `tohost` symbol and switches into test mode: the binary is treated as a riscv-tests program rather than a Jolt guest, and emulator memory is sized to a fixed test capacity instead of the program + canary + stack + heap total from `MemoryLayout::new`, so a larger guest's stack and heap may not fit. The tracer logs a warning when an ELF with a configured `JoltDevice` triggers this, but the fix is to not emit the symbol in the first place.

@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::ram::{ram_inc_val_check, ram_ra_val_check};
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, LtPolynomial, Polynomial};
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_witness::JoltWitnessPlane;
@@ -28,7 +28,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, RamValCheck<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -46,7 +46,6 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for ReferenceBackend {
             });
         }
         let (r_address, r_cycle) = ram_val_point.split_at(relation.ram_log_k());
-        // The address-bound `ra` slice, folded from the full `(K × T)` grid.
         let ra_folded = address_fold(
             witness,
             ram_ra_val_check(),

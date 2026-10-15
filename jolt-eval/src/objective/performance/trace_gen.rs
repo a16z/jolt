@@ -1,6 +1,6 @@
 use common::constants::RAM_START_ADDRESS;
+use jolt_host::Program;
 use jolt_program::execution::{JoltProgram, TraceInputs};
-use jolt_prover_legacy::host::Program;
 use tracer::TracerBackend;
 
 use crate::guests::GuestConfig;
@@ -19,6 +19,9 @@ pub struct TraceGenSetup {
 /// Builds the guest and constructs the modular-seam artifacts without tracing.
 pub fn build_trace_setup<G: GuestConfig>(guest: &G) -> (JoltProgram, TraceInputs) {
     let mut host_program = Program::new(guest.package());
+    if let Some(func) = guest.func() {
+        host_program.set_func(func);
+    }
     let mut memory_config = guest.memory_config();
     host_program.set_memory_config(memory_config);
     let program = host_program
@@ -96,12 +99,12 @@ impl<G: GuestConfig> TraceGenObjective<G> {
         std::hint::black_box(output.trace.rows().len())
     }
 
-    /// The same trace without the `Cycle` to `TraceRow` conversion, i.e. the
+    /// The same trace without the `Cycle` to `JoltTraceRow` conversion, i.e. the
     /// raw `tracer::trace` call that `TracerBackend::trace` wraps.
     ///
     /// WHY this exists: the conversion pass dominates the seam (measured at
     /// 74% for fibonacci and 86% for sha2-chain), and a backend that emits
-    /// `TraceRow` directly skips it entirely. Reporting only the seam total
+    /// `JoltTraceRow` directly skips it entirely. Reporting only the seam total
     /// would let a backend bank that share as if it were codegen speedup, so
     /// AC8/AC9 ratios are only interpretable against both numbers: `reference`
     /// bounds the end-to-end win, `reference_raw` isolates the part that is
@@ -112,7 +115,7 @@ impl<G: GuestConfig> TraceGenObjective<G> {
 }
 
 /// Raw `tracer::trace`: the call `TracerBackend::trace` wraps, without the
-/// `Cycle` to `TraceRow` conversion that follows it. Shared by the Criterion
+/// `Cycle` to `JoltTraceRow` conversion that follows it. Shared by the Criterion
 /// `reference_raw` id and the `trace-gen-baseline` harness so both time the
 /// same thing.
 pub fn raw_trace_cycles(program: &JoltProgram, inputs: &TraceInputs) -> usize {
@@ -137,7 +140,6 @@ impl<G: GuestConfig + 'static> Objective for TraceGenObjective<G> {
 
     fn setup(&self) -> TraceGenSetup {
         let (program, inputs) = build_trace_setup(&self.guest);
-        // One un-timed trace to learn the row count for throughput reporting.
         let mut backend = TracerBackend::new();
         let output = program
             .trace_with(&mut backend, inputs.clone())
@@ -156,24 +158,5 @@ impl<G: GuestConfig + 'static> Objective for TraceGenObjective<G> {
 
     fn units(&self) -> Option<&str> {
         Some("s")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::guests::{Fibonacci, Sha2Chain};
-
-    use super::*;
-
-    #[test]
-    fn names() {
-        assert_eq!(
-            TraceGenObjective::new(Fibonacci(400000)).name(),
-            "trace_gen_fibonacci_400000"
-        );
-        assert_eq!(
-            TraceGenObjective::new(Sha2Chain::profiling_default()).name(),
-            "trace_gen_sha2_chain_4446"
-        );
     }
 }

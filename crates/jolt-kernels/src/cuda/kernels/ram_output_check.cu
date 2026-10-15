@@ -6,8 +6,8 @@ extern "C" __global__ void roc_message_kernel(const u64 *__restrict__ tables, un
     extern __shared__ u64 scratch[];
     unsigned long long g = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
 
-    u64 acc[OHF_MAX_LANES][LIMBS];
-    for (int lane = 0; lane < OHF_MAX_LANES; lane++)
+    u64 acc[3][LIMBS];
+    for (int lane = 0; lane < 3; lane++)
         for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
 
     if (g < half) {
@@ -36,7 +36,9 @@ extern "C" __global__ void roc_message_kernel(const u64 *__restrict__ tables, un
         eq_split_weight(e_in, e_in_len, e_out, num_x_in_bits, g, weight);
         fr_mul(constant, weight, acc[0]);
         fr_mul(quadratic, weight, acc[1]);
+        fr_mul(io1, v1, constant);
+        fr_mul(constant, weight, acc[2]);
     }
 
-    lane_block_reduce(scratch, 2, acc, partials);
+    lane_block_reduce(scratch, 3, acc, partials);
 }

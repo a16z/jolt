@@ -15,7 +15,7 @@
 //! verifier-side `append_openings` is a thin consumer of [`OutputClaims::opening_values`],
 //! so it cannot disagree with the canonical order defined here.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use thiserror::Error;
 
 use crate::protocols::jolt::{JoltChallengeId, JoltOpeningId};
@@ -59,7 +59,7 @@ pub struct MissingOpeningValue<O: core::fmt::Debug> {
 ///
 /// Generic over the opening-id type `O` (defaulting to [`JoltOpeningId`]) so the
 /// trait can live in the framework half and be reused by other protocol families.
-pub trait OutputClaims<F: Field, O = JoltOpeningId> {
+pub trait OutputClaims<F: JoltField, O = JoltOpeningId> {
     /// Produced opening scalars in canonical (field-declaration) order. Built from
     /// [`canonical_order`](Self::canonical_order) + [`resolve_output`](Self::resolve_output),
     /// both derived from the same fields, so `opening_values()[k]` is exactly
@@ -111,7 +111,7 @@ pub trait OutputClaims<F: Field, O = JoltOpeningId> {
 /// (populated by explicit cross-stage wiring).
 ///
 /// Generic over the opening-id type `O` (defaulting to [`JoltOpeningId`]).
-pub trait InputClaims<F: Field, O = JoltOpeningId> {
+pub trait InputClaims<F: JoltField, O = JoltOpeningId> {
     /// The consumed opening ids in canonical (field-declaration) order. Takes
     /// `&self` because `Vec`/`Option` fields make the length and presence
     /// instance-dependent.
@@ -129,7 +129,7 @@ pub trait InputClaims<F: Field, O = JoltOpeningId> {
 /// reads each field's value directly.
 ///
 /// Generic over the challenge-id type `C` (defaulting to [`JoltChallengeId`]).
-pub trait SumcheckChallenges<F: Field, C = JoltChallengeId>: Sized {
+pub trait SumcheckChallenges<F: JoltField, C = JoltChallengeId>: Sized {
     /// Build this `Challenges` struct from already-drawn Fiat-Shamir scalars,
     /// consuming one value per field in canonical (field-declaration) order.
     ///
@@ -159,7 +159,7 @@ pub trait SumcheckChallenges<F: Field, C = JoltChallengeId>: Sized {
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct NoChallenges<F>(::core::marker::PhantomData<F>);
 
-impl<F: Field, C> SumcheckChallenges<F, C> for NoChallenges<F> {
+impl<F: JoltField, C> SumcheckChallenges<F, C> for NoChallenges<F> {
     fn from_transcript_values<I: Iterator<Item = F>>(
         _values: I,
     ) -> Result<Self, ChallengeDrawError> {
@@ -181,10 +181,8 @@ pub struct NoOutputs<C>(::core::marker::PhantomData<C>);
 #[expect(clippy::unwrap_used)]
 mod sumcheck_challenges_tests {
     use crate::protocols::jolt::{BooleanityChallenge, JoltChallengeId, RamReadWriteChallenge};
-    // The `SumcheckChallenges` re-export from the crate root covers both the trait
-    // (type namespace) and the derive macro (macro namespace).
     use crate::{ChallengeDrawError, SumcheckChallenges};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -204,7 +202,6 @@ mod sumcheck_challenges_tests {
             challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
             Some(fr(7)),
         );
-        // An unrelated id (different sub-enum) resolves to `None`.
         assert_eq!(
             challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
             None,
@@ -226,7 +223,6 @@ mod sumcheck_challenges_tests {
             booleanity: fr(2),
         };
 
-        // Same `Gamma` leaf name, different sub-enum → resolves to the right field.
         assert_eq!(
             challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
             Some(fr(1)),
@@ -239,8 +235,6 @@ mod sumcheck_challenges_tests {
 
     #[test]
     fn from_transcript_values_fills_fields_in_declaration_order() {
-        // Two values populate `ram` then `booleanity` (declaration order); extra
-        // stream values are ignored.
         let challenges: MultiChallenge<Fr> =
             MultiChallenge::from_transcript_values([fr(1), fr(2), fr(3)].into_iter()).unwrap();
         assert_eq!(
@@ -255,7 +249,6 @@ mod sumcheck_challenges_tests {
 
     #[test]
     fn from_transcript_values_errors_when_stream_runs_dry() {
-        // One value cannot fill the two scalar fields; the error reports progress.
         let result = MultiChallenge::<Fr>::from_transcript_values([fr(1)].into_iter());
         assert_eq!(
             result.err(),

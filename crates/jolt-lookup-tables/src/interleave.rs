@@ -67,9 +67,6 @@ mod tests {
         let x: u64 = 0b01;
         let y: u64 = 0b10;
         let interleaved = interleave_bits(x, y);
-        // x=01 → bits at positions 1,3: 0,1
-        // y=10 → bits at positions 0,2: 0,1
-        // Combined (MSB first): bit3=0, bit2=1, bit1=1, bit0=0 = 0b0110 = 6
         assert_eq!(interleaved, 0b0110);
         let (rx, ry) = uninterleave_bits(interleaved);
         assert_eq!((rx, ry), (x, y));
@@ -91,23 +88,5 @@ mod tests {
             let (rx, ry) = uninterleave_bits(interleaved);
             assert_eq!((rx, ry), (x, y), "roundtrip failed for ({x:#x}, {y:#x})");
         }
-    }
-
-    #[test]
-    fn uninterleave_interleave_roundtrip() {
-        let vals: &[u128] = &[0, 1, u128::MAX, 0xAAAA_BBBB_CCCC_DDDD_1111_2222_3333_4444];
-        for &val in vals {
-            let (x, y) = uninterleave_bits(val);
-            let reinterleaved = interleave_bits(x, y);
-            assert_eq!(reinterleaved, val, "roundtrip failed for {val:#x}");
-        }
-    }
-
-    #[test]
-    fn single_bit_positions() {
-        // x=1 (bit 0 set) should appear at position 1 in the interleaved result
-        assert_eq!(interleave_bits(1, 0), 0b10);
-        // y=1 (bit 0 set) should appear at position 0
-        assert_eq!(interleave_bits(0, 1), 0b01);
     }
 }

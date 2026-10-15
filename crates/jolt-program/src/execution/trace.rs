@@ -1,11 +1,19 @@
+use std::{num::NonZeroU64, sync::Arc};
+
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_riscv::{JoltCycle, JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
-use std::sync::Arc;
+use jolt_riscv::{
+    CircuitFlags, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow, RV64IMAC_JOLT,
+};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+use super::{ExecutionBackend, TraceError};
+
+mod data;
 
 #[cfg(feature = "field-inline")]
-use crate::field_inline::FieldInlineTraceData;
-
-use super::{ExecutionBackend, TraceError, TraceSource};
+pub use data::FieldEvent;
+pub use data::TraceData;
 
 /// A Jolt-ready program built from an RV64 ELF image.
 ///
@@ -24,7 +32,6 @@ pub struct JoltProgram {
     pub program_end: u64,
     /// ELF entry point.
     pub entry_address: u64,
-    /// Selected instruction legality/profile for this program.
     pub profile: JoltInstructionProfile,
 }
 
@@ -36,13 +43,25 @@ impl Default for JoltProgram {
 
 impl JoltProgram {
     pub fn from_elf_bytes(elf_bytes: Vec<u8>) -> Self {
+        Self::from_elf_bytes_with_profile(elf_bytes, RV64IMAC_JOLT)
+    }
+
+    /// [`Self::from_elf_bytes`] under an explicit instruction profile. The
+    /// profile is load-bearing beyond decode: the field-inline witness plane
+    /// fails closed on field-inline trace data unless the program declares a
+    /// profile that enables field-inline, so such guests must be constructed
+    /// through here.
+    pub fn from_elf_bytes_with_profile(
+        elf_bytes: Vec<u8>,
+        profile: JoltInstructionProfile,
+    ) -> Self {
         Self {
             elf_bytes,
             expanded_bytecode: Vec::new(),
             memory_init: Vec::new(),
             program_end: 0,
             entry_address: 0,
-            profile: RV64IMAC_JOLT,
+            profile,
         }
     }
 
@@ -159,71 +178,6 @@ impl TraceInputs {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RegisterRead {
-    pub register: u8,
-    pub value: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RegisterWrite {
-    pub register: u8,
-    pub pre_value: u64,
-    pub post_value: u64,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RegisterState {
-    pub rs1: Option<RegisterRead>,
-    pub rs2: Option<RegisterRead>,
-    pub rd: Option<RegisterWrite>,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RamRead {
-    pub address: u64,
-    pub value: u64,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RamWrite {
-    pub address: u64,
-    pub pre_value: u64,
-    pub post_value: u64,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub enum RamAccess {
-    Read(RamRead),
-    Write(RamWrite),
-    #[default]
-    NoOp,
-}
-
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
@@ -233,74 +187,98 @@ pub struct MemoryImage {
     pub bytes: Vec<(u64, u8)>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(feature = "field-inline"), derive(Copy))]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct TraceRow {
-    pub instruction: JoltInstructionRow,
-    pub registers: RegisterState,
-    pub ram_access: RamAccess,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: Option<Arc<FieldInlineTraceData>>,
+/// Bounds of nonzero RAM byte addresses. Zero denotes no access; an empty
+/// accumulator has no bounds. Partial summaries can be merged in any order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RamAddressBounds {
+    bounds: Option<(NonZeroU64, NonZeroU64)>,
 }
 
-impl JoltCycle for TraceRow {
-    type Instruction = JoltInstructionRow;
-
-    #[inline]
-    fn instruction(&self) -> Self::Instruction {
-        self.instruction
+impl RamAddressBounds {
+    /// Accept externally collected bounds if the minimum does not exceed the
+    /// maximum. This does not validate against a program's memory layout.
+    pub fn try_new(bounds: Option<(NonZeroU64, NonZeroU64)>) -> Result<Self, TraceError> {
+        if bounds.is_some_and(|(min, max)| min > max) {
+            return Err(TraceError::InvalidRamBounds);
+        }
+        Ok(Self { bounds })
     }
 
-    #[inline]
-    fn rs1_val(&self) -> Option<u64> {
-        self.registers.rs1.map(|read| read.value)
-    }
-
-    #[inline]
-    fn rs2_val(&self) -> Option<u64> {
-        self.registers.rs2.map(|read| read.value)
-    }
-
-    #[inline]
-    fn rd_vals(&self) -> Option<(u64, u64)> {
-        self.registers
-            .rd
-            .map(|write| (write.pre_value, write.post_value))
-    }
-
-    #[inline]
-    fn ram_access_address(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Read(read) => Some(read.address),
-            RamAccess::Write(write) => Some(write.address),
-            RamAccess::NoOp => None,
+    pub fn observe(&mut self, address: u64) {
+        if let Some(address) = NonZeroU64::new(address) {
+            let (min, max) = self.bounds.get_or_insert((address, address));
+            *min = (*min).min(address);
+            *max = (*max).max(address);
         }
     }
 
-    #[inline]
-    fn ram_read_value(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Read(read) => Some(read.value),
-            RamAccess::Write(write) => Some(write.pre_value),
-            RamAccess::NoOp => None,
-        }
+    #[must_use]
+    pub fn merge(mut self, other: Self) -> Self {
+        self.bounds = match (self.bounds, other.bounds) {
+            (Some((min, max)), Some((other_min, other_max))) => {
+                Some((min.min(other_min), max.max(other_max)))
+            }
+            (bounds, None) | (None, bounds) => bounds,
+        };
+        self
     }
 
-    #[inline]
-    fn ram_write_value(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Write(write) => Some(write.post_value),
-            RamAccess::Read(_) | RamAccess::NoOp => None,
+    pub fn min(&self) -> Option<NonZeroU64> {
+        self.bounds.map(|(min, _)| min)
+    }
+
+    pub fn max(&self) -> Option<NonZeroU64> {
+        self.bounds.map(|(_, max)| max)
+    }
+}
+
+/// Execution facts independent of trace storage and commitment-scheme padding.
+/// `trace_length` excludes padding added by a proving adapter. Addresses are
+/// byte addresses excluding zero; both bounds are `None` when there is no
+/// nonzero RAM access. The producer must cover every
+/// read and write, including accesses that leave memory unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExecutionDimensions {
+    pub trace_length: usize,
+    /// Whether the final unpadded row has the protocol jump flag.
+    pub ends_in_jump: bool,
+    pub ram_bounds: RamAddressBounds,
+}
+
+#[cfg(feature = "parallel")]
+const PARALLEL_SUMMARIZE_MIN_ROWS: usize = 1 << 16;
+
+impl ExecutionDimensions {
+    /// Summarize existing rows. Execution backends can instead collect
+    /// these facts while producing rows and return them with an opaque handle.
+    pub fn from_rows(rows: &[JoltTraceRow]) -> Self {
+        let observe = |mut bounds: RamAddressBounds, row: &JoltTraceRow| {
+            bounds.observe(row.ram_address());
+            bounds
+        };
+        #[cfg(feature = "parallel")]
+        let ram_bounds = if rows.len() >= PARALLEL_SUMMARIZE_MIN_ROWS {
+            rows.par_iter()
+                .fold(RamAddressBounds::default, observe)
+                .reduce(RamAddressBounds::default, RamAddressBounds::merge)
+        } else {
+            rows.iter().fold(RamAddressBounds::default(), observe)
+        };
+        #[cfg(not(feature = "parallel"))]
+        let ram_bounds = rows.iter().fold(RamAddressBounds::default(), observe);
+        Self {
+            trace_length: rows.len(),
+            ends_in_jump: rows
+                .last()
+                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+            ram_bounds,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct TraceOutput<T> {
+pub struct TraceOutput<T = Arc<TraceData>> {
+    pub dimensions: ExecutionDimensions,
     pub trace: T,
     pub device: JoltDevice,
     pub final_memory: Option<MemoryImage>,
@@ -310,16 +288,20 @@ pub struct TraceOutput<T> {
 }
 
 impl<T> TraceOutput<T> {
+    /// Dimensions are explicit so rebuilding or padding an output preserves
+    /// the execution facts without scanning or requiring trace rows.
     /// `advice_tape` is a required parameter so that a backend (or a
     /// rebuild of an existing output) cannot silently discard a populated
     /// tape — the seam this field exists to plug.
-    pub fn new(
+    pub fn with_dimensions(
+        dimensions: ExecutionDimensions,
         trace: T,
         device: JoltDevice,
         final_memory: Option<MemoryImage>,
         advice_tape: Option<Vec<u8>>,
     ) -> Self {
         Self {
+            dimensions,
             trace,
             device,
             final_memory,
@@ -328,53 +310,123 @@ impl<T> TraceOutput<T> {
     }
 }
 
-#[derive(Default, Debug, Clone)]
-pub struct OwnedTrace {
-    rows: Arc<Vec<TraceRow>>,
-    next: usize,
+impl TraceOutput<Arc<TraceData>> {
+    /// Summarize retained rows when the producer has not already collected dimensions.
+    pub fn new(
+        trace: TraceData,
+        device: JoltDevice,
+        final_memory: Option<MemoryImage>,
+        advice_tape: Option<Vec<u8>>,
+    ) -> Self {
+        Self::with_dimensions(
+            ExecutionDimensions::from_rows(trace.proof_rows()),
+            Arc::new(trace),
+            device,
+            final_memory,
+            advice_tape,
+        )
+    }
 }
 
-impl OwnedTrace {
-    pub fn new(rows: Vec<TraceRow>) -> Self {
-        Self {
-            rows: Arc::new(rows),
-            next: 0,
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "test module")]
+mod dimension_tests {
+    use super::*;
+
+    #[test]
+    fn external_ram_bounds_must_be_ordered() {
+        for (min, max) in [(16, 8), (u64::MAX, 1)] {
+            assert!(matches!(
+                RamAddressBounds::try_new(Some((
+                    NonZeroU64::new(min).expect("nonzero minimum"),
+                    NonZeroU64::new(max).expect("nonzero maximum"),
+                ))),
+                Err(TraceError::InvalidRamBounds)
+            ));
+        }
+        for pair in [
+            None,
+            Some((8, 8)),
+            Some((8, 16)),
+            Some((u64::MAX, u64::MAX)),
+        ] {
+            let bounds = RamAddressBounds::try_new(pair.map(|(min, max)| {
+                (
+                    NonZeroU64::new(min).expect("nonzero minimum"),
+                    NonZeroU64::new(max).expect("nonzero maximum"),
+                )
+            }))
+            .expect("valid bounds");
+            assert_eq!(
+                (
+                    bounds.min().map(NonZeroU64::get),
+                    bounds.max().map(NonZeroU64::get)
+                ),
+                (pair.map(|(min, _)| min), pair.map(|(_, max)| max))
+            );
         }
     }
 
-    pub fn rows(&self) -> &[TraceRow] {
-        self.rows.as_slice()
-    }
-
-    pub fn into_rows(self) -> Vec<TraceRow> {
-        match Arc::try_unwrap(self.rows) {
-            Ok(rows) => rows,
-            Err(rows) => rows.as_ref().clone(),
+    #[test]
+    fn ram_bounds_merge_empty_and_nonzero_partitions() {
+        for (addresses, expected) in [
+            ([0, 0, 0, 0, 0], (None, None)),
+            (
+                [0, u64::MAX, 0, u64::MAX, 0],
+                (Some(u64::MAX), Some(u64::MAX)),
+            ),
+            ([0, 17, 0, 9, u64::MAX], (Some(9), Some(u64::MAX))),
+        ] {
+            for split in 0..=addresses.len() {
+                let mut left = RamAddressBounds::default();
+                let mut right = RamAddressBounds::default();
+                for &address in addresses.iter().take(split) {
+                    left.observe(address);
+                }
+                for &address in addresses.iter().skip(split) {
+                    right.observe(address);
+                }
+                let merged = left.merge(right);
+                assert_eq!(merged, right.merge(left));
+                assert_eq!(
+                    (
+                        merged.min().map(NonZeroU64::get),
+                        merged.max().map(NonZeroU64::get)
+                    ),
+                    expected
+                );
+                assert_eq!(merged.merge(RamAddressBounds::default()), merged);
+            }
         }
     }
-}
 
-impl From<Vec<TraceRow>> for OwnedTrace {
-    fn from(rows: Vec<TraceRow>) -> Self {
-        Self::new(rows)
-    }
-}
-
-impl TraceSource for OwnedTrace {
-    fn next_row(&mut self) -> Option<TraceRow> {
-        // `TraceRow` is `Copy` only without `field-inline` (which adds a non-`Copy` `Arc`
-        // field), so the row is copied or cloned to match the active build.
-        #[cfg(not(feature = "field-inline"))]
-        let row = self.rows.get(self.next).copied();
-        #[cfg(feature = "field-inline")]
-        let row = self.rows.get(self.next).cloned();
-        self.next += usize::from(row.is_some());
-        row
-    }
-
-    fn rows(&self) -> Option<&[TraceRow]> {
-        // Pristine sources only: after `next_row` consumption the full slice
-        // would diverge from the remaining stream.
-        (self.next == 0).then(|| self.rows.as_slice())
+    #[test]
+    fn execution_backend_can_return_an_opaque_trace() {
+        struct OpaqueTrace(u64);
+        struct Backend;
+        impl ExecutionBackend for Backend {
+            type Trace = OpaqueTrace;
+            fn trace(
+                &mut self,
+                _: &JoltProgram,
+                _: TraceInputs,
+            ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+                Ok(TraceOutput::with_dimensions(
+                    ExecutionDimensions {
+                        trace_length: 17,
+                        ..Default::default()
+                    },
+                    OpaqueTrace(42),
+                    JoltDevice::default(),
+                    None,
+                    None,
+                ))
+            }
+        }
+        let output = JoltProgram::default()
+            .trace_with(&mut Backend, TraceInputs::default())
+            .expect("valid execution dimensions");
+        assert_eq!(output.dimensions.trace_length, 17);
+        assert_eq!(output.trace.0, 42);
     }
 }

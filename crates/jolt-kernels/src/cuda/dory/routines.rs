@@ -1,3 +1,5 @@
+use ark_bn254::G1Projective;
+use ark_bn254::G2Projective;
 use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};
 use jolt_field::Fr;
 
@@ -84,7 +86,7 @@ fn resident_fixed_base_g2(base: &DeviceG2, scalars: &[ArkFr]) -> Result<Vec<Devi
         return Ok(Vec::new());
     }
     let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
-    let out = store_all_g2(&vec![ark_bn254::G2Projective::default(); scalars.len()]);
+    let out = store_all_g2(&vec![G2Projective::default(); scalars.len()]);
     let (Some(base_offset), Some(out_offset)) = (span_g2(&[*base]), span_g2(&out)) else {
         return Err(CudaError::InvariantViolation {
             reason: "a resident G2 fixed-base scaling needs a contiguous output span",
@@ -102,7 +104,7 @@ fn resident_msm(bases: &[DeviceG1], scalars: &[ArkFr]) -> Result<DeviceG1, CudaE
         });
     }
     let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
-    let out = store_all(&[ark_bn254::G1Projective::default()]);
+    let out = store_all(&[G1Projective::default()]);
     let (Some(base_offset), Some(out_offset)) = (span(bases), span(&out)) else {
         return Err(CudaError::InvariantViolation {
             reason: "a resident G1 MSM needs a contiguous base span and one output slot",
@@ -216,7 +218,7 @@ fn resident_msm_g2(bases: &[DeviceG2], scalars: &[ArkFr]) -> Result<DeviceG2, Cu
         });
     }
     let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
-    let out = store_all_g2(&[ark_bn254::G2Projective::default()]);
+    let out = store_all_g2(&[G2Projective::default()]);
     let (Some(base_offset), Some(out_offset)) = (span_g2(bases), span_g2(&out)) else {
         return Err(CudaError::InvariantViolation {
             reason: "a resident G2 MSM needs a contiguous base span and one output slot",
@@ -311,6 +313,11 @@ impl DoryRoutines<DeviceG2> for CudaG2Routines {
 
 #[cfg(test)]
 mod tests {
+    use ark_bn254::Fr;
+    use ark_bn254::G1Affine;
+    use ark_bn254::G1Projective;
+    use ark_bn254::G2Affine;
+    use ark_bn254::G2Projective;
     use ark_ff::UniformRand;
     use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};
     use dory::primitives::arithmetic::DoryRoutines;
@@ -338,9 +345,9 @@ mod tests {
         (0..count)
             .map(|index| {
                 if index % 41 == 0 {
-                    ArkG1(ark_bn254::G1Projective::default())
+                    ArkG1(G1Projective::default())
                 } else {
-                    ArkG1(ark_bn254::G1Projective::rand(&mut rng))
+                    ArkG1(G1Projective::rand(&mut rng))
                 }
             })
             .collect()
@@ -348,7 +355,7 @@ mod tests {
 
     fn weight(seed: u64) -> ArkFr {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
-        ArkFr(ark_bn254::Fr::rand(&mut rng))
+        ArkFr(Fr::rand(&mut rng))
     }
 
     const SHAPES: [usize; 5] = [1, 2, 129, 1024, 4096];
@@ -357,7 +364,7 @@ mod tests {
 
     const G2_SHAPES: [usize; 4] = [1, 2, 129, 1024];
 
-    fn affine(points: &[ArkG1]) -> Vec<ark_bn254::G1Affine> {
+    fn affine(points: &[ArkG1]) -> Vec<G1Affine> {
         points.iter().map(|point| point.0.into()).collect()
     }
 
@@ -500,15 +507,15 @@ mod tests {
         (0..count)
             .map(|index| {
                 if index % 41 == 0 {
-                    ArkG2(ark_bn254::G2Projective::default())
+                    ArkG2(G2Projective::default())
                 } else {
-                    ArkG2(ark_bn254::G2Projective::rand(&mut rng))
+                    ArkG2(G2Projective::rand(&mut rng))
                 }
             })
             .collect()
     }
 
-    fn affine_g2(points: &[ArkG2]) -> Vec<ark_bn254::G2Affine> {
+    fn affine_g2(points: &[ArkG2]) -> Vec<G2Affine> {
         points.iter().map(|point| point.0.into()).collect()
     }
 
@@ -517,9 +524,9 @@ mod tests {
         (0..count)
             .map(|index| {
                 if index % 17 == 0 {
-                    ArkFr(ark_bn254::Fr::from(0u64))
+                    ArkFr(Fr::from(0u64))
                 } else {
-                    ArkFr(ark_bn254::Fr::rand(&mut rng))
+                    ArkFr(Fr::rand(&mut rng))
                 }
             })
             .collect()

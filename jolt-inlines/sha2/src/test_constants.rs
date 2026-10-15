@@ -1,4 +1,3 @@
-/// Common test vectors used across multiple SHA-256 tests
 pub struct TestVectors;
 
 pub type Sha256Block = [u32; 16];
@@ -31,12 +30,10 @@ impl TestVectors {
         ]
     }
 
-    /// Create a zero block for testing
     pub fn zero_block() -> Sha256Block {
         [0u32; 16]
     }
 
-    /// Create an all-ones block for testing  
     pub fn all_ones_block() -> Sha256Block {
         [0xFFFFFFFF; 16]
     }
@@ -67,8 +64,6 @@ pub mod nist_vectors {
         0x1837a9d8,
     ];
 
-    /// NIST test vector: Pattern block (000102030405...3e3f) compressed with initial IV
-    /// This is the pattern 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f repeated
     pub const NIST_PATTERN_BLOCK: Sha256Block = [
         0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f, 0x10111213, 0x14151617, 0x18191a1b,
         0x1c1d1e1f, 0x20212223, 0x24252627, 0x28292a2b, 0x2c2d2e2f, 0x30313233, 0x34353637,

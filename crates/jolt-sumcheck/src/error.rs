@@ -1,22 +1,14 @@
-//! Error types for sumcheck protocol verification failures.
+use jolt_field::Field;
 
-use jolt_field::FieldCore;
-
-/// Errors that can occur during sumcheck verification.
-///
-/// Each variant corresponds to a distinct failure mode in the sumcheck
-/// protocol, enabling the caller to diagnose exactly where verification
-/// diverged.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum SumcheckError<F: FieldCore> {
+pub enum SumcheckError<F: Field> {
     /// Round check failed: the domain sum did not match the expected value
     /// carried forward from the previous round.
     #[error("round {round}: expected sum {expected}, got {actual}")]
     RoundCheckFailed {
         /// Zero-indexed round number where the check failed.
         round: usize,
-        /// The expected sum.
         expected: F,
         /// The computed domain sum.
         actual: F,
@@ -39,6 +31,44 @@ pub enum SumcheckError<F: FieldCore> {
         /// Number of rounds that would need round polynomials.
         max_num_vars: usize,
     },
+
+    /// A batch member declared more rounds than the batch contains.
+    #[error(
+        "batch member {member} has {rounds} rounds, exceeding the batch's {max_num_vars} rounds"
+    )]
+    BatchMemberRoundsOutOfRange {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// Round count declared for this member.
+        rounds: usize,
+        /// The batch's total round count.
+        max_num_vars: usize,
+    },
+
+    /// The field implementation cannot represent this batch's padding scale.
+    #[error("batch member {member} requires unsupported padding exponent {exponent}")]
+    BatchPaddingExponentOutOfRange {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// `max_num_vars - rounds`, which `Ring::mul_pow_2` cannot represent above 255.
+        exponent: usize,
+    },
+
+    #[error(
+        "batch member {member}: activation window overflow for offset {offset}, rounds {rounds}"
+    )]
+    BatchMemberWindowOverflow {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// The member's activation offset.
+        offset: usize,
+        /// The member's round count.
+        rounds: usize,
+    },
+
+    /// Adding one to the declared degree overflowed `usize`.
+    #[error("sumcheck degree {degree} cannot be represented with its coefficient count")]
+    DegreeOverflow { degree: usize },
 
     /// A round polynomial encoded in compressed form had fewer than two
     /// coefficients, so there is no linear term to omit. Any valid
@@ -80,7 +110,6 @@ pub enum SumcheckError<F: FieldCore> {
         got: usize,
     },
 
-    /// A round witness did not contain any coefficients.
     #[error("round polynomial must contain at least one coefficient")]
     EmptyRoundCoefficients,
 
@@ -94,23 +123,9 @@ pub enum SumcheckError<F: FieldCore> {
         kind: &'static str,
     },
 
-    /// A device-backend operation failed inside a prover round. The sumcheck
-    /// engine cannot name backend error types, so the backend's own message is
-    /// carried as text rather than discarded.
-    #[error("{kind} failed in the device backend: {reason}")]
-    BackendFailure {
-        /// Which prover step failed, named by the backend.
-        kind: &'static str,
-        /// The backend error's `Display` output.
-        reason: String,
-    },
-
-    /// A vector-commitment setup cannot commit to any values.
     #[error("vector-commitment setup has zero capacity")]
     ZeroCommitmentCapacity,
 
-    /// A round polynomial has more coefficients than the vector-commitment
-    /// setup can commit to.
     #[error("round polynomial has {coefficients} coefficients, but vector-commitment capacity is {capacity}")]
     RoundExceedsCommitmentCapacity {
         /// Number of coefficients in the offending round polynomial.
@@ -140,7 +155,6 @@ pub enum SumcheckError<F: FieldCore> {
         got: usize,
     },
 
-    /// A batch member's activation window extends past the batch's last round.
     #[error(
         "batch member {member}: window [{offset}, {offset} + {rounds}) exceeds {max_num_vars} rounds"
     )]
@@ -206,4 +220,8 @@ pub enum SumcheckError<F: FieldCore> {
         /// Total number of available batched challenges.
         total: usize,
     },
+
+    /// Consecutive integer domain points have colliding images in the field.
+    #[error("integer sumcheck domain of size {domain_size} is not distinct in the field")]
+    IntegerDomainNotDistinct { domain_size: usize },
 }

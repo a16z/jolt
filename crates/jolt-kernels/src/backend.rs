@@ -1,34 +1,50 @@
-//! The runtime seam: [`JoltBackend`] is the value `jolt-prover` proves
-//! against — one boxed object-safe slot per kernel entry — and
+//! The runtime seam: [`JoltBackend`] is the reusable kernel registry,
+//! bound to execution data through [`KernelContext`], and
 //! [`ProofSession`] is the backend-owned state with proof lifetime. Swapping
 //! a kernel implementation, mixing implementations per slot, running two
 //! backends side by side, and choosing a configuration from the hardware are
-//! all value construction, never compilation. See
+//! value construction within the compiled protocol (Akita or Dory). See
 //! `specs/clean-slate-prover.md`, "The backend seam".
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+#[cfg(all(feature = "allocative", feature = "field-inline"))]
 use std::sync::Arc;
 
-use jolt_claims::protocols::jolt::JoltChallengeId;
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::JoltPolynomialId;
+use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
-};
+#[cfg(not(feature = "akita"))]
+use jolt_poly::MultilinearPoly;
+#[cfg(feature = "allocative")]
+use jolt_poly::Polynomial;
+use jolt_poly::UnivariatePoly;
+use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_verifier::stages::stage3::outputs::{
     InstructionInput, RegistersClaimReduction, SpartanShift,
 };
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
@@ -40,6 +56,8 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
 };
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
@@ -51,21 +69,28 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use jolt_sumcheck::RoundScheduler;
 
-use crate::commitment::CommitWitness;
+#[cfg(feature = "akita")]
+use crate::akita::commitment::WitnessCommitRequest;
 use crate::kernel::{ProverInputs, SumcheckKernel};
-use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
+#[cfg(not(feature = "akita"))]
+use crate::opening::JointOpeningPolynomials;
+use crate::opening::{RamInitialOpening, RamInitialOpeningEvaluation};
 use crate::uniskip::UniskipKernel;
-use crate::KernelError;
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+use crate::FieldInlineWitnessCommitment;
+#[cfg(not(feature = "akita"))]
+use crate::{opening::PrecommittedOpeningTables, CommitmentGrid};
+use crate::{CommitWitness, KernelError, WitnessCommitment};
 
 /// Factory behind [`JoltBackend::round_scheduler`]: stage fronts mint one
 /// scheduler per stage via `build`. Takes [`ProofSession`] so a device
 /// traversal shares the carry its kernels park in `prepare`, and so
 /// per-proof state cannot leak onto the long-lived backend.
-pub trait BuildRoundScheduler<F: Field> {
+pub trait BuildRoundScheduler<F: JoltField> {
     fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
 }
 
@@ -83,9 +108,8 @@ pub trait BuildRoundScheduler<F: Field> {
 /// fronts, typed-row witnesses, precommitted phase spans, commit, joint
 /// opening) keep hand-shaped traits in their own modules.
 ///
-/// Also the registry seam: `jolt-prover`'s generated stage drivers bound
-/// their kernel source `B` by one `PrepareKernel<F, R>` per batch member, so
-/// a registry is any type implementing it per slot. Never implemented by
+/// The internal registry seam: the coordinator uses [`KernelContext`],
+/// and [`KernelContext`] supplies its bound witness to these slots. Never implemented by
 /// hand for [`JoltBackend`]: `#[derive(KernelSlots)]` emits one impl per
 /// `Box<dyn PrepareKernel<F, R>>` field, delegating to that field, so the
 /// field's own type is the relation→slot mapping and registry and resolution
@@ -95,13 +119,13 @@ pub trait BuildRoundScheduler<F: Field> {
 /// field yields no impl). That match is single-bound: a `Box<dyn
 /// PrepareKernel<F, R> + Send>` (any extra bound) is silently skipped and
 /// surfaces the same distant way.
+// No claim-trait where-clauses: `R: ConcreteSumcheck<F>` already implies them
+// (the ConcreteSumcheck where-clauses are elaborated at every use site), and
+// the relation-family-generic spellings would restate them for nothing.
 pub trait PrepareKernel<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     fn prepare(
         &self,
@@ -112,6 +136,12 @@ where
 }
 
 /// The kernel registry: one independently swappable slot per kernel entry.
+///
+/// The `akita` feature selects packed witness commitment;
+/// otherwise commitment streams per polynomial and uses the joint-opening slot.
+/// Both protocols share the same compute slots and reference/optimized constructors.
+/// Bind one execution with [`Self::with_witness`] before proving. The binding
+/// borrows this registry, which can be reused across independent proofs.
 ///
 /// `F` and `PCS` are deployment constants, not swap targets — the PCS traits
 /// are structurally non-object-safe and their associated types are wire
@@ -125,28 +155,35 @@ where
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
     pub round_scheduler: Box<dyn BuildRoundScheduler<F>>,
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
-    pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,
+    pub spartan_product_uniskip:
+        Box<dyn UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>>,
     pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_claim_reduction: Box<dyn PrepareKernel<F, FieldRegistersClaimReduction<F>>>,
     pub ram_raf_evaluation: Box<dyn PrepareKernel<F, RamRafEvaluation<F>>>,
     pub ram_output_check: Box<dyn PrepareKernel<F, RamOutputCheck<F>>>,
     pub spartan_shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
     pub instruction_input: Box<dyn PrepareKernel<F, InstructionInput<F>>>,
     pub registers_claim_reduction: Box<dyn PrepareKernel<F, RegistersClaimReduction<F>>>,
     pub registers_read_write: Box<dyn PrepareKernel<F, RegistersReadWriteChecking<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write: Box<dyn PrepareKernel<F, FieldRegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
-    pub advice_opening: Box<dyn AdviceOpeningEvaluation<F>>,
+    pub ram_initial_openings: Box<dyn RamInitialOpeningEvaluation<F>>,
     pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_val_evaluation: Box<dyn PrepareKernel<F, FieldRegistersValEvaluation<F>>>,
     pub bytecode_read_raf_address: Box<dyn PrepareKernel<F, BytecodeReadRafAddressPhase<F>>>,
     pub booleanity_address: Box<dyn PrepareKernel<F, BooleanityAddressPhase<F>>>,
     pub bytecode_read_raf_cycle: Box<dyn PrepareKernel<F, BytecodeReadRafCycle<F>>>,
@@ -155,6 +192,9 @@ where
     pub ram_ra_virtualization: Box<dyn PrepareKernel<F, RamRaVirtualization<F>>>,
     pub instruction_ra_virtualization: Box<dyn PrepareKernel<F, InstructionRaVirtualization<F>>>,
     pub inc_claim_reduction: Box<dyn PrepareKernel<F, IncClaimReduction<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_inc_claim_reduction:
+        Box<dyn PrepareKernel<F, FieldRegistersIncClaimReduction<F>>>,
     pub trusted_advice_cycle: Box<dyn PrepareKernel<F, TrustedAdviceCyclePhase<F>>>,
     pub untrusted_advice_cycle: Box<dyn PrepareKernel<F, UntrustedAdviceCyclePhase<F>>>,
     pub bytecode_reduction_cycle: Box<dyn PrepareKernel<F, BytecodeReductionCyclePhase<F>>>,
@@ -166,30 +206,237 @@ where
     pub bytecode_reduction_address: Box<dyn PrepareKernel<F, BytecodeReductionAddressPhase<F>>>,
     pub program_image_reduction_address:
         Box<dyn PrepareKernel<F, ProgramImageReductionAddressPhase<F>>>,
+    #[cfg(not(feature = "akita"))]
     pub joint_opening: Box<dyn JointOpeningPolynomials<F>>,
 }
 
-impl<F, PCS> JoltBackend<F, PCS>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F>,
-{
-    /// Open the proof-scoped session that slot state lives in. One session
-    /// per proof; drop it when the proof is assembled.
-    pub fn begin_proof(&self) -> ProofSession {
-        ProofSession::default()
+/// A reusable kernel registry bound to one execution. The coordinator borrows
+/// this context mutably; its working session stays bound to the witness.
+/// The witness is mandatory and private; only kernel implementations receive it.
+/// Full proving consumes this binding and its session; the registry remains
+/// reusable across independent executions.
+pub struct KernelContext<'a, F: JoltField, B: ?Sized> {
+    registry: &'a B,
+    witness: Box<dyn JoltWitnessPlane<F> + 'a>,
+    session: ProofSession,
+}
+
+impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
+    /// Bind execution data and its initial state without copying trace rows.
+    /// The caller must supply state belonging to this witness. After binding,
+    /// dispatch uses only this session, which cannot be replaced or extracted.
+    pub fn new(
+        registry: &'a B,
+        witness: impl JoltWitnessPlane<F> + 'a,
+        session: ProofSession,
+    ) -> Self {
+        Self {
+            registry,
+            witness: Box::new(witness),
+            session,
+        }
+    }
+
+    /// Inspect proof-local state without detaching it from this execution.
+    pub fn session(&self) -> &ProofSession {
+        &self.session
+    }
+
+    /// Release the completed execution, dropping retained kernel state in the background.
+    pub fn finish(self) {
+        crate::mem::drop_in_background_thread(self.session);
+    }
+
+    pub fn park_residue<R: ConcreteSumcheck<F> + 'static>(
+        &mut self,
+        kernel: Box<dyn SumcheckKernel<F, Relation = R>>,
+    ) {
+        kernel.park_residue(&mut self.session);
+    }
+
+    /// Check the bound witness's declared polynomial support before dispatch.
+    /// This queries shapes only, without requesting polynomial tables or trace rows.
+    pub fn validate_servable(
+        &self,
+        ids: impl IntoIterator<Item = JoltPolynomialId>,
+    ) -> Result<(), WitnessError> {
+        jolt_witness::validate_servable(self.witness.as_ref(), ids)
+    }
+
+    /// Prepare a kernel using this proof's execution data.
+    pub fn prepare<R>(
+        &mut self,
+        inputs: ProverInputs<'_, F, R>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>
+    where
+        R: ConcreteSumcheck<F>,
+        B: PrepareKernel<F, R>,
+    {
+        self.registry
+            .prepare(&mut self.session, self.witness.as_ref(), inputs)
     }
 }
 
-/// [`Allocative`](allocative::Allocative) when the `allocative` feature is
-/// on, vacuous otherwise. Everything stored in a [`ProofSession`] must be
-/// heap-measurable so the profile harness's per-stage flamegraphs can
-/// attribute the cross-stage carries — the dominant retained memory — rather
-/// than an opaque `Box<dyn Any>`.
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltBackend<F, PCS> {
+    /// Borrow the registry for a proof with owned or borrowed execution data.
+    pub fn with_witness<'a>(
+        &'a self,
+        witness: impl JoltWitnessPlane<F> + 'a,
+    ) -> KernelContext<'a, F, Self> {
+        KernelContext::new(self, witness, ProofSession::default())
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> KernelContext<'_, F, JoltBackend<F, PCS>> {
+    pub fn build_round_scheduler(&mut self) -> Box<dyn RoundScheduler<F>> {
+        self.registry.round_scheduler.build(&mut self.session)
+    }
+
+    pub fn outer_uniskip_poly(&mut self) -> Result<UnivariatePoly<F>, KernelError<F>> {
+        self.registry
+            .spartan_outer_uniskip
+            .first_round_poly(&mut self.session, &[], &())
+    }
+
+    pub fn product_uniskip_poly(
+        &mut self,
+        late_tau: &[F],
+        inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
+    ) -> Result<UnivariatePoly<F>, KernelError<F>> {
+        self.registry
+            .spartan_product_uniskip
+            .first_round_poly(&mut self.session, late_tau, inputs)
+    }
+
+    pub fn prepare_outer_uniskip(&mut self, log_t: usize, tau: &[F]) -> Result<(), KernelError<F>> {
+        self.registry.spartan_outer_uniskip.prepare(
+            &mut self.session,
+            log_t,
+            tau,
+            self.witness.as_ref(),
+        )
+    }
+
+    pub fn prepare_product_uniskip(
+        &mut self,
+        log_t: usize,
+        tau: &[F],
+    ) -> Result<(), KernelError<F>> {
+        self.registry.spartan_product_uniskip.prepare(
+            &mut self.session,
+            log_t,
+            tau,
+            self.witness.as_ref(),
+        )
+    }
+
+    pub fn evaluate_ram_initial_openings(
+        &mut self,
+        openings: &[RamInitialOpening<'_, F>],
+    ) -> Result<Vec<F>, KernelError<F>> {
+        self.registry.ram_initial_openings.evaluate(
+            &mut self.session,
+            openings,
+            self.witness.as_ref(),
+        )
+    }
+
+    #[cfg(feature = "akita")]
+    pub fn commit_witness(
+        &mut self,
+        request: WitnessCommitRequest<'_, PCS>,
+    ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        self.registry
+            .commit
+            .commit_witness(&mut self.session, self.witness.as_ref(), request)
+    }
+
+    #[cfg(not(feature = "akita"))]
+    pub fn commit_witness(
+        &mut self,
+        ids: &[JoltCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
+        self.registry.commit.commit_witness(
+            &mut self.session,
+            self.witness.as_ref(),
+            ids,
+            grid,
+            setup,
+        )
+    }
+
+    #[cfg(all(feature = "field-inline", not(feature = "akita")))]
+    pub fn commit_field_inline_witness(
+        &mut self,
+        ids: &[FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+        self.registry.commit.commit_field_inline_witness(
+            &mut self.session,
+            self.witness.as_ref(),
+            ids,
+            grid,
+            setup,
+        )
+    }
+
+    #[cfg(not(feature = "akita"))]
+    pub fn commit_advice(
+        &mut self,
+        id: JoltCommittedPolynomial,
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        self.registry.commit.commit_advice(
+            &mut self.session,
+            self.witness.as_ref(),
+            id,
+            grid,
+            setup,
+        )
+    }
+
+    #[cfg(all(feature = "field-inline", not(feature = "akita")))]
+    pub fn prepare_field_inline_opening(
+        &mut self,
+        grid: CommitmentGrid,
+    ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>> {
+        self.registry.joint_opening.prepare_field_inline(
+            &mut self.session,
+            self.witness.as_ref(),
+            grid,
+        )
+    }
+
+    #[cfg(not(feature = "akita"))]
+    pub fn prepare_joint_opening(
+        &mut self,
+        polynomials: &[JoltCommittedPolynomial],
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
+        grid: CommitmentGrid,
+    ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+        self.registry.joint_opening.prepare(
+            &mut self.session,
+            self.witness.as_ref(),
+            polynomials,
+            precommitted_tables,
+            grid,
+        )
+    }
+}
+
+/// [`Allocative`] when the `allocative` feature is on, vacuous otherwise.
+/// Everything stored in a [`ProofSession`] must be heap-measurable so the
+/// profile harness's per-stage flamegraphs can attribute the cross-stage
+/// carries — the dominant retained memory — rather than an opaque
+/// `Box<dyn Any>`.
 #[cfg(feature = "allocative")]
-pub trait MaybeAllocative: allocative::Allocative {}
+pub trait MaybeAllocative: Allocative {}
 #[cfg(feature = "allocative")]
-impl<T: allocative::Allocative + ?Sized> MaybeAllocative for T {}
+impl<T: Allocative + ?Sized> MaybeAllocative for T {}
 /// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
 /// is on, vacuous otherwise.
 #[cfg(not(feature = "allocative"))]
@@ -201,13 +448,13 @@ impl<T: ?Sized> MaybeAllocative for T {}
 /// a monomorphized visitor captured at insertion — where the concrete type
 /// is still known — so heap flamegraphs can see through the `dyn Any`.
 struct Carry {
-    value: Box<dyn Any>,
+    value: Box<dyn Any + Send>,
     #[cfg(feature = "allocative")]
-    visit: fn(&dyn Any, &mut allocative::Visitor<'_>),
+    visit: fn(&dyn Any, &mut Visitor<'_>),
 }
 
 impl Carry {
-    fn new<T: Any + MaybeAllocative>(value: T) -> Self {
+    fn new<T: Any + MaybeAllocative + Send>(value: T) -> Self {
         Self {
             value: Box::new(value),
             #[cfg(feature = "allocative")]
@@ -216,56 +463,61 @@ impl Carry {
     }
 }
 
-/// Visits one carry's concrete value, keyed by its type name (the frame
-/// label in the rendered flamegraph).
 #[cfg(feature = "allocative")]
-fn visit_carry<T: Any + allocative::Allocative>(
-    value: &dyn Any,
-    visitor: &mut allocative::Visitor<'_>,
-) {
+fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) {
     if let Some(value) = value.downcast_ref::<T>() {
-        visitor.visit_field(allocative::Key::new(std::any::type_name::<T>()), value);
+        visitor.visit_field(Key::new(std::any::type_name::<T>()), value);
     }
 }
 
-/// Allocator-reserved bytes behind a `Vec` of flat elements. Field elements
-/// carry no per-element heap (true of every production field), so parked
-/// kernels can size their tables arithmetically — no `F: Allocative` bound
-/// leaking into the generic reference impls that park them.
+/// Bytes an element table reserved, for element types that own no heap but
+/// carry no `Allocative` impl: the witness rows, selectors, opening ids, and
+/// prefix evaluations owned by jolt-claims, jolt-lookup-tables, and
+/// jolt-witness. Deriving `Allocative` across those crates to reach a handful
+/// of flat tables buys nothing the arithmetic does not.
+///
+/// Scalar tables need none of this — `F: JoltField` implies `F: Allocative`,
+/// so `Vec<F>` renders through the native impl.
 #[cfg(feature = "allocative")]
-pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
-    v.capacity() * size_of::<T>()
+pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor<'_>) {
+    const { assert!(!std::mem::needs_drop::<T>()) };
+    visitor.visit_simple(Key::new("elements"), values.capacity() * size_of::<T>());
 }
 
-#[cfg(feature = "allocative")]
-pub(crate) fn arc_vec_heap_bytes<T>(v: &Arc<Vec<T>>) -> usize {
-    size_of::<Vec<T>>() + v.capacity() * size_of::<T>()
+/// [`visit_heap_free_elements`] through an `Arc`: the shared buffer's bytes are
+/// reported by whichever holder the visitor reaches. Used by the session-shared field
+/// register rows.
+#[cfg(all(feature = "allocative", feature = "field-inline"))]
+pub(crate) fn visit_shared_heap_free_elements<T>(values: &Arc<Vec<T>>, visitor: &mut Visitor<'_>) {
+    visit_heap_free_elements(values, visitor);
 }
 
-/// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
-/// inner reservation.
+/// [`visit_heap_free_elements`] for a table keyed by a foreign type.
+///
+/// Sized arithmetically from `capacity()`; the key's own bytes ride along
+/// with the tuple spine.
 #[cfg(feature = "allocative")]
-pub(crate) fn nested_vec_heap_bytes<T>(v: &Vec<Vec<T>>) -> usize {
-    v.capacity() * size_of::<Vec<T>>()
-        + v.iter()
-            .map(|inner| inner.capacity() * size_of::<T>())
-            .sum::<usize>()
-}
-
-/// Heap bytes behind a dense polynomial's evaluation table, by `len()` —
-/// [`Polynomial`](jolt_poly::Polynomial) exposes no capacity. Exact at the
-/// mid-stage snapshot (taken before any binding, when freshly built tables
-/// have `len == capacity`); undercounts the truncated slack of bound state.
-#[cfg(feature = "allocative")]
-pub(crate) fn poly_heap_bytes<T>(poly: &jolt_poly::Polynomial<T>) -> usize {
-    poly.len() * size_of::<T>()
-}
-
-/// [`poly_heap_bytes`] summed over a table list, plus the outer spine.
-#[cfg(feature = "allocative")]
-pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usize {
-    polys.capacity() * size_of::<jolt_poly::Polynomial<T>>()
-        + polys.iter().map(poly_heap_bytes).sum::<usize>()
+pub(crate) fn visit_keyed_polys<K, T>(
+    tables: &Vec<(K, Vec<Polynomial<T>>)>,
+    visitor: &mut Visitor<'_>,
+) {
+    visitor.visit_simple(
+        Key::new("spine"),
+        tables.capacity() * size_of::<(K, Vec<Polynomial<T>>)>(),
+    );
+    visitor.visit_simple(
+        Key::new("tables"),
+        tables
+            .iter()
+            .map(|(_, polys)| {
+                polys.capacity() * size_of::<Polynomial<T>>()
+                    + polys
+                        .iter()
+                        .map(|poly| poly.len() * size_of::<T>())
+                        .sum::<usize>()
+            })
+            .sum(),
+    );
 }
 
 /// Backend-owned state with proof lifetime, opaque to orchestration.
@@ -273,8 +525,7 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
 /// Slots stash and share private state keyed by a backend-private type, so
 /// per-slot mixing of backend families cannot collide: witness-upload
 /// residency, cross-member shared tables, and cross-stage carries all live
-/// here, invisible to the stage recipes that thread `&mut ProofSession`
-/// through every slot call.
+/// here; the execution context supplies the session to each slot.
 ///
 /// Inserted state must be [`MaybeAllocative`]: under the `allocative`
 /// feature the session captures a per-entry visitor, so per-stage heap
@@ -282,22 +533,9 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
 #[derive(Default)]
 pub struct ProofSession {
     state: HashMap<TypeId, Carry>,
-    witness: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl ProofSession {
-    /// Retain the proof's witness plane for kernels whose state outlives
-    /// their `prepare` borrow.
-    pub fn set_witness<F: Field>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
-        self.witness = Some(Box::new(witness));
-    }
-
-    /// The retained witness plane for `F`, when the proof was started from
-    /// an owned plane.
-    pub fn witness<F: Field>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
-        self.witness.as_ref()?.downcast_ref()
-    }
-
     /// The calling backend's private state, created by `init` on first
     /// access. `T` is the backend-private key: choose one type per backend
     /// family.
@@ -305,7 +543,7 @@ impl ProofSession {
         clippy::expect_used,
         reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
     )]
-    pub fn state_or_insert_with<T: Any + MaybeAllocative>(
+    pub fn state_or_insert_with<T: Any + MaybeAllocative + Send>(
         &mut self,
         init: impl FnOnce() -> T,
     ) -> &mut T {
@@ -332,7 +570,7 @@ impl ProofSession {
     /// missing or stale carry is a proof-time
     /// [`KernelError`](crate::KernelError), the accepted cost of keeping
     /// every batch member uniform.
-    pub fn park<T: Any + MaybeAllocative>(&mut self, value: T) {
+    pub fn park<T: Any + MaybeAllocative + Send>(&mut self, value: T) {
         let _ = self.state.insert(TypeId::of::<T>(), Carry::new(value));
     }
 
@@ -356,8 +594,8 @@ impl ProofSession {
 /// attribute the parked kernel tables — the dominant retained memory —
 /// keyed by their type names.
 #[cfg(feature = "allocative")]
-impl allocative::Allocative for ProofSession {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl Allocative for ProofSession {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for carry in self.state.values() {
             (carry.visit)(carry.value.as_ref(), &mut visitor);
@@ -397,7 +635,7 @@ mod kernel_slots_derive_tests {
     // delegation is unrepresentable.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
-    struct ToyRegistry<F: Field> {
+    struct ToyRegistry<F: JoltField> {
         label: String,
         shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
         slot_count: usize,

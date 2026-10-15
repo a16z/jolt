@@ -1,12 +1,8 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: the registers read-write vertical is the first non-test caller"
-)]
-
-use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::{Field, Fr, FromPrimitiveInt};
+use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::BindingOrder;
 
+use super::address_major_matrix::DeviceAddressMajorMatrix;
 use super::context::{context_for, CudaKernelContext, BLOCK};
 use super::device::{require_fr, DeviceFrVec, LIMBS};
 use super::devices::{fan_out, DeviceTask};
@@ -32,6 +28,7 @@ pub struct CoeffTables {
     pub values: [Vec<Fr>; MAX_COEFFS],
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LutEntry {
     pub row: u32,
@@ -153,6 +150,7 @@ impl DeviceReadWriteMatrix {
             + self.wa_scale.device_bytes()
     }
 
+    #[cfg(test)]
     pub fn new(
         context: &CudaKernelContext,
         entries: &[MatrixEntry],
@@ -220,6 +218,7 @@ impl DeviceReadWriteMatrix {
         })
     }
 
+    #[cfg(test)]
     pub fn new_indexed(
         context: &CudaKernelContext,
         entries: &[LutEntry],
@@ -281,6 +280,7 @@ impl DeviceReadWriteMatrix {
         })
     }
 
+    #[cfg(test)]
     pub fn coeff_tables(&self) -> Result<Option<CoeffTables>, CudaError> {
         if !self.indexed {
             return Ok(None);
@@ -409,16 +409,9 @@ impl DeviceReadWriteMatrix {
         })
     }
 
-    pub const fn len(&self) -> usize {
-        self.entries
-    }
-
+    #[cfg(test)]
     pub const fn is_empty(&self) -> bool {
         self.entries == 0
-    }
-
-    pub const fn rounds_bound(&self) -> usize {
-        self.rounds_bound
     }
 
     pub fn to_host(&self, context: &CudaKernelContext) -> Result<Vec<MatrixEntry>, CudaError> {
@@ -494,14 +487,14 @@ impl DeviceReadWriteMatrix {
         &self,
         context: &CudaKernelContext,
         val_init: &[Fr],
-    ) -> Result<super::address_major_matrix::DeviceAddressMajorMatrix, CudaError> {
+    ) -> Result<DeviceAddressMajorMatrix, CudaError> {
         if self.entries > val_init.len() {
             return Err(CudaError::InvariantViolation {
                 reason: "transposing a read-write matrix needs its cycle variables fully bound",
             });
         }
         self.require_direct()?;
-        super::address_major_matrix::DeviceAddressMajorMatrix::from_parts(
+        DeviceAddressMajorMatrix::from_parts(
             context,
             context.clone_u32(&self.rows)?,
             context.clone_u32(&self.cols)?,
@@ -516,14 +509,70 @@ impl DeviceReadWriteMatrix {
         )
     }
 
-    pub fn quadratic_coeffs<F: jolt_field::Field>(
+    pub(crate) fn into_address_first(
+        mut self,
+        context: &CudaKernelContext,
+        val_init: &[Fr],
+    ) -> Result<DeviceAddressMajorMatrix, CudaError> {
+        self.deref_coeffs(context)?;
+        let rows = context.download_u32(&self.rows)?;
+        let cols = context.download_u32(&self.cols)?;
+        let count = CudaKernelContext::count_of(self.entries)?;
+        let mut order: Vec<u32> = (0..count).collect();
+        order.sort_unstable_by_key(|&index| (cols[index as usize], rows[index as usize]));
+        let sorted_rows: Vec<_> = order.iter().map(|&i| rows[i as usize]).collect();
+        let sorted_cols: Vec<_> = order.iter().map(|&i| cols[i as usize]).collect();
+        let order = context.upload_u32_slice(&order)?;
+        let permute = |input: &CudaSlice<u64>, width: usize| -> Result<CudaSlice<u64>, CudaError> {
+            let mut out = context.alloc_u64(self.entries * width)?;
+            if self.entries > 0 {
+                let width = CudaKernelContext::count_of(width)?;
+                let words = CudaKernelContext::count_of(out.len())?;
+                let mut builder = context.stream().launch_builder(context.rwm_permute_words());
+                let _ = builder.arg(input);
+                let _ = builder.arg(&order);
+                let _ = builder.arg(&width);
+                let _ = builder.arg(&words);
+                let _ = builder.arg(&mut out);
+                // SAFETY: order is a permutation of 0..entries. Each thread
+                // copies one word from the same-width entry into a distinct slot.
+                let _ = unsafe { builder.launch(CudaKernelContext::launch_config(words)) }?;
+            }
+            Ok(out)
+        };
+        let values = DeviceFrVec::from_parts(
+            context.stream().clone(),
+            permute(self.val_coeff.limbs(), LIMBS)?,
+            self.entries,
+        );
+        let coeffs = DeviceFrVec::from_parts(
+            context.stream().clone(),
+            permute(self.coeffs.limbs(), self.coeff_width * LIMBS)?,
+            self.entries * self.coeff_width,
+        );
+        DeviceAddressMajorMatrix::from_parts(
+            context,
+            context.upload_u32_slice(&sorted_rows)?,
+            context.upload_u32_slice(&sorted_cols)?,
+            &values,
+            &permute(&self.prev_val, 1)?,
+            &permute(&self.next_val, 1)?,
+            &coeffs,
+            val_init,
+            &self.wa_scale,
+            self.coeff_width,
+            self.entries,
+        )
+    }
+
+    pub fn quadratic_coeffs<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         inc: &DeviceFrVec,
-        eq: &super::split_eq::DeviceSplitEq<F>,
-    ) -> Result<[F; 2], CudaError> {
+        eq: &DeviceSplitEq<F>,
+    ) -> Result<[F; 3], CudaError> {
         if self.entries == 0 {
-            return Ok([F::from_u64(0), F::from_u64(0)]);
+            return Ok([F::zero(); 3]);
         }
         let (segment_count, seg) = self.segments(context)?;
         let segments = CudaKernelContext::count_of(segment_count)?;
@@ -534,7 +583,7 @@ impl DeviceReadWriteMatrix {
         let e_out = eq.e_out_current();
 
         let blocks = segments.div_ceil(BLOCK).max(1);
-        let mut partials = context.alloc(2 * blocks as usize)?;
+        let mut partials = context.alloc(3 * blocks as usize)?;
         let width = CudaKernelContext::count_of(self.coeff_width)?;
 
         let indexed = u32::from(self.indexed);
@@ -573,12 +622,12 @@ impl DeviceReadWriteMatrix {
         // range-checks them and the merge's `(odd << bits) | even` stays inside
         // the squared table. It
         // writes only `partials[lane * gridDim.x + blockIdx.x]`, one slot per
-        // (lane, block) of `2 * blocks`. Shared memory is `BLOCK * LIMBS` u64s,
+        // (lane, block) of `3 * blocks`. Shared memory is `BLOCK * LIMBS` u64s,
         // matching `shared_mem_bytes`, and every `__syncthreads()` is reached by
         // all threads in the block because the reduction sits outside the
         // `seg < segments` guard.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
                 block_dim: (BLOCK, 1, 1),
                 shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
@@ -586,17 +635,17 @@ impl DeviceReadWriteMatrix {
         }?;
         context.stream().synchronize()?;
 
-        let totals = super::primitives::reduce_lanes(context, partials, 2, blocks)?;
+        let totals = super::primitives::reduce_lanes(context, partials, 3, blocks)?;
         let host = totals.to_host()?;
         let convert = |value: Fr| {
             super::device::fr_into(value).ok_or(CudaError::NotImplemented {
                 kernel: "CUDA kernels support only the BN254 scalar field",
             })
         };
-        Ok([convert(host[0])?, convert(host[1])?])
+        Ok([convert(host[0])?, convert(host[1])?, convert(host[2])?])
     }
 
-    pub fn bind<F: jolt_field::Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -605,7 +654,7 @@ impl DeviceReadWriteMatrix {
             self.rounds_bound += 1;
             return Ok(());
         }
-        let challenge = super::device::require_fr(challenge)?;
+        let challenge = require_fr(challenge)?;
         if self.indexed && self.luts.iter().any(DeviceCoeffLut::saturated) {
             self.deref_coeffs(context)?;
         }
@@ -754,21 +803,20 @@ impl DeviceReadWriteMatrix {
     }
 }
 
-pub(crate) struct CycleShard<F: Field> {
+pub(crate) struct CycleShard<F: JoltField> {
     pub(crate) ordinal: usize,
     pub(crate) matrix: DeviceReadWriteMatrix,
     pub(crate) inc: DeviceFrVec,
     pub(crate) eq: DeviceSplitEq<F>,
 }
 
-pub(crate) struct ShardedReadWriteMatrix<F: Field> {
+pub(crate) struct ShardedReadWriteMatrix<F: JoltField> {
     shards: Vec<CycleShard<F>>,
     collapsed: Option<(DeviceReadWriteMatrix, DeviceFrVec)>,
     local_rounds: usize,
-    tail_rounds: usize,
 }
 
-impl<F: Field> ShardedReadWriteMatrix<F> {
+impl<F: JoltField> ShardedReadWriteMatrix<F> {
     #[cfg(feature = "allocative")]
     pub(crate) fn device_bytes(&self) -> usize {
         self.shards
@@ -806,30 +854,28 @@ impl<F: Field> ShardedReadWriteMatrix<F> {
                 shards: Vec::new(),
                 collapsed: Some((shard.matrix, shard.inc)),
                 local_rounds: log_t,
-                tail_rounds: 0,
             });
         }
         Ok(Self {
             shards,
             collapsed: None,
             local_rounds: log_t - tail_rounds,
-            tail_rounds,
         })
     }
 
     pub(crate) fn quadratic_coeffs(
         &self,
         whole_eq: &DeviceSplitEq<F>,
-    ) -> Result<[F; 2], CudaError> {
+    ) -> Result<[F; 3], CudaError> {
         if let Some((matrix, inc)) = &self.collapsed {
             let context = context_for(0).ok_or(absent())?;
             return matrix.quadratic_coeffs(context, inc, whole_eq);
         }
-        let tasks: Vec<DeviceTask<'_, [F; 2], CudaError>> = self
+        let tasks: Vec<DeviceTask<'_, [F; 3], CudaError>> = self
             .shards
             .iter()
             .map(|shard| {
-                let task: DeviceTask<'_, [F; 2], CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, [F; 3], CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
                     shard
                         .matrix
@@ -838,10 +884,11 @@ impl<F: Field> ShardedReadWriteMatrix<F> {
                 task
             })
             .collect();
-        let mut total = [F::zero(), F::zero()];
+        let mut total = [F::zero(); 3];
         for part in fan_out(tasks)? {
             total[0] += part[0];
             total[1] += part[1];
+            total[2] += part[2];
         }
         Ok(total)
     }
@@ -918,8 +965,10 @@ const fn absent() -> CudaError {
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial};
+    use super::CycleShard;
+    use super::ShardedReadWriteMatrix;
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::BindingOrder;
     use proptest::prelude::*;
 
     use super::super::context::shared_context;
@@ -927,8 +976,6 @@ mod tests {
     use super::super::testing::{arb_point, fr, ram_matrix_cells};
     use super::{CoeffTables, DeviceReadWriteMatrix, LutEntry, MatrixEntry, MAX_COEFFS};
     use crate::cuda::registers_read_write::device_rows::register_coeff_tables;
-    use crate::optimized::registers_read_write::sparse::CoeffLut;
-    use crate::optimized::rw_matrix::{CycleMajorEntry, CycleMajorMatrix};
 
     const LOG_T: usize = 6;
     const RAM_K: usize = 32;
@@ -949,7 +996,6 @@ mod tests {
 
     struct RamFixture {
         device: Vec<MatrixEntry>,
-        optimized: Vec<CycleMajorEntry<Fr>>,
     }
 
     fn ram_fixture() -> RamFixture {
@@ -965,18 +1011,7 @@ mod tests {
                 coeffs: [Fr::from_u64(1), Fr::from_u64(0)],
             })
             .collect();
-        let optimized = cells
-            .iter()
-            .map(|cell| CycleMajorEntry {
-                row: cell.row,
-                col: cell.col,
-                prev_val: cell.prev_val,
-                next_val: cell.next_val,
-                val: Fr::from_u64(cell.prev_val),
-                ra: Fr::from_u64(1),
-            })
-            .collect();
-        RamFixture { device, optimized }
+        RamFixture { device }
     }
 
     fn entry_tuples(entries: &[MatrixEntry]) -> Vec<(u32, u32, Fr, u64, u64, Fr)> {
@@ -993,52 +1028,6 @@ mod tests {
                 )
             })
             .collect()
-    }
-
-    fn optimized_tuples(entries: &[CycleMajorEntry<Fr>]) -> Vec<(u32, u32, Fr, u64, u64, Fr)> {
-        entries
-            .iter()
-            .map(|entry| {
-                (
-                    entry.row as u32,
-                    entry.col as u32,
-                    entry.val,
-                    entry.prev_val,
-                    entry.next_val,
-                    entry.ra,
-                )
-            })
-            .collect()
-    }
-
-    #[test]
-    fn device_ram_matrix_bind_matches_optimized_round_for_round() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let fixture = ram_fixture();
-        let mut expected = CycleMajorMatrix {
-            entries: fixture.optimized,
-        };
-        let mut got = DeviceReadWriteMatrix::new(context, &fixture.device, 1, Some(fr(101)))
-            .expect("device RAM matrix");
-
-        assert_eq!(
-            entry_tuples(&got.to_host(context).expect("download")),
-            optimized_tuples(&expected.entries),
-            "seeded entry sets disagree before any bind",
-        );
-
-        for round in 0..LOG_T {
-            let challenge = fr(17 + round as u64);
-            expected.bind(challenge);
-            got.bind(context, challenge).expect("device bind");
-            assert_eq!(
-                entry_tuples(&got.to_host(context).expect("download")),
-                optimized_tuples(&expected.entries),
-                "entry sets diverged after binding round {round}",
-            );
-        }
     }
 
     #[test]
@@ -1060,7 +1049,7 @@ mod tests {
                 .expect("whole split-eq");
 
             let len = cycles / shards;
-            let windows: Vec<super::CycleShard<Fr>> = (0..shards)
+            let windows: Vec<CycleShard<Fr>> = (0..shards)
                 .map(|shard| {
                     let base = (shard * len) as u32;
                     let entries: Vec<MatrixEntry> = fixture
@@ -1072,7 +1061,7 @@ mod tests {
                             ..*entry
                         })
                         .collect();
-                    super::CycleShard {
+                    CycleShard {
                         ordinal: 0,
                         matrix: DeviceReadWriteMatrix::new(context, &entries, 1, Some(gamma))
                             .expect("window matrix"),
@@ -1090,16 +1079,15 @@ mod tests {
                     }
                 })
                 .collect();
-            let mut got =
-                super::ShardedReadWriteMatrix::new(windows, LOG_T).expect("sharded matrix");
+            let mut got = ShardedReadWriteMatrix::new(windows, LOG_T).expect("sharded matrix");
             let mut got_eq = DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
                 .expect("tail split-eq");
 
             for round in 0..LOG_T {
-                let want: [Fr; 2] = whole
+                let want: [Fr; 3] = whole
                     .quadratic_coeffs(context, &whole_inc, &whole_eq)
                     .expect("whole quadratic coeffs");
-                let have: [Fr; 2] = got.quadratic_coeffs(&got_eq).expect("sharded coeffs");
+                let have: [Fr; 3] = got.quadratic_coeffs(&got_eq).expect("sharded coeffs");
                 assert_eq!(
                     have, want,
                     "shards={shards} round {round}: a cycle window's segment sums must add to the \
@@ -1243,10 +1231,10 @@ mod tests {
                     "round {}: entry sets diverged",
                     round,
                 );
-                let want: [Fr; 2] = expected
+                let want: [Fr; 3] = expected
                     .quadratic_coeffs(context, &expected_inc, &expected_eq)
                     .expect("direct quadratic coeffs");
-                let have: [Fr; 2] = got
+                let have: [Fr; 3] = got
                     .quadratic_coeffs(context, &got_inc, &got_eq)
                     .expect("indexed quadratic coeffs");
                 prop_assert_eq!(
@@ -1271,49 +1259,6 @@ mod tests {
     }
 
     #[test]
-    fn indexed_coefficient_tables_square_like_the_optimized_lut() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let gamma = fr(101);
-        let fixture = lut_fixture(11, gamma);
-        let mut got =
-            DeviceReadWriteMatrix::new_indexed(context, &fixture.indexed, &fixture.tables)
-                .expect("indexed matrix");
-        let mut expected: Vec<CoeffLut<Fr>> = fixture
-            .tables
-            .values
-            .iter()
-            .cloned()
-            .map(CoeffLut::new)
-            .collect();
-
-        for round in 0..INDEXED_ROUNDS {
-            let tables = got
-                .coeff_tables()
-                .expect("indexed tables")
-                .expect("the matrix must still index its coefficients");
-            for (lane, want) in expected.iter().enumerate() {
-                assert_eq!(
-                    tables.values[lane], want.values,
-                    "round {round} lane {lane}: the device table diverged from the optimized LUT",
-                );
-            }
-            let challenge = fr(29 + round as u64);
-            got.bind(context, challenge).expect("indexed bind");
-            if round + 1 < INDEXED_ROUNDS {
-                for lut in &mut expected {
-                    lut.bind(challenge);
-                }
-            }
-        }
-        assert!(
-            got.coeff_tables().expect("indexed tables").is_none(),
-            "one more squaring would overflow the u16 index, so the entries must hold field values",
-        );
-    }
-
-    #[test]
     fn an_indexed_matrix_rejects_a_table_whose_zero_slot_is_not_zero() {
         let Some(context) = shared_context() else {
             return;
@@ -1326,57 +1271,5 @@ mod tests {
             DeviceReadWriteMatrix::new_indexed(context, &fixture.indexed, &tables).is_err(),
             "index 0 is the absent merge partner, so its value must be zero",
         );
-    }
-
-    #[test]
-    fn device_ram_quadratic_coeffs_match_optimized_round_for_round() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let fixture = ram_fixture();
-        let gamma = fr(103);
-        let mut expected = CycleMajorMatrix {
-            entries: fixture.optimized,
-        };
-        let mut got = DeviceReadWriteMatrix::new(context, &fixture.device, 1, Some(gamma))
-            .expect("device RAM matrix");
-
-        let inc_host: Vec<Fr> = (0..1usize << LOG_T).map(|j| fr(j as u64 * 5 + 3)).collect();
-        let mut expected_inc = Polynomial::new(inc_host.clone());
-        let mut got_inc = context.upload(&inc_host).expect("upload inc");
-
-        let point: Vec<Fr> = (0..LOG_T).map(|i| fr(61 + i as u64)).collect();
-        let mut expected_eq = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
-        let mut got_eq = DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
-            .expect("device split-eq");
-
-        for round in 0..LOG_T {
-            let e_in = expected_eq.e_in_current();
-            let e_out = expected_eq.e_out_current();
-            let in_bits = e_in.len().trailing_zeros() as usize;
-            let in_mask = e_in.len() - 1;
-            let expected_coeffs = expected.quadratic_coefficients(
-                |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
-                &expected_inc,
-                gamma,
-            );
-            let got_coeffs: [Fr; 2] = got
-                .quadratic_coeffs(context, &got_inc, &got_eq)
-                .expect("device quadratic coeffs");
-            assert_eq!(
-                got_coeffs, expected_coeffs,
-                "RAM quadratic coefficients diverged at round {round}",
-            );
-
-            let challenge = fr(19 + round as u64);
-            expected.bind(challenge);
-            got.bind(context, challenge).expect("device bind");
-            expected_inc.bind_with_order(challenge, BindingOrder::LowToHigh);
-            got_inc = context
-                .bind(&got_inc, challenge, BindingOrder::LowToHigh)
-                .expect("bind device inc");
-            expected_eq.bind(challenge);
-            got_eq.bind(challenge);
-        }
     }
 }

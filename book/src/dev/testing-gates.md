@@ -1,4 +1,52 @@
-# Verifier testing gates
+# Testing gates
+
+## Guest × mode acceptance matrix
+
+`crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
+profile. The ordinary profile has nine cases: muldiv, fibonacci, memory-ops,
+stdlib, sha2, sha3 through both its unaligned and aligned entry points,
+advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`,
+`field_limbs`, and `muldiv`, covering active field operations, the SDK's
+checked limb conversions, and an ordinary guest proved under the field-inline
+protocol with no field activity.
+
+The shared runner checks each guest's output against a natively computed
+value, its panic status, trace bound, and field activity, then proves it with
+the optimized backend. The compiled protocol selects Dory clear by default,
+Dory ZK with `zk`, or Akita with `akita`. The mode is part of every test name
+(`matrix::clear::sha2`, `matrix::zk::field_ops`,
+`matrix::akita::muldiv`). CI runs each profile table in all three
+modes, so a guest added to either table gains all three arms at once.
+Specialized checks (tampering, committed programs, forced one-hot sizes)
+stay in `zk_e2e.rs` and `akita_e2e.rs`; field-inline parity and tampering
+checks stay in `field_inline_e2e.rs` and `akita_field_inline_e2e.rs`; limb
+conversion policy and dishonest-advice checks stay in `field_inline_limbs.rs`.
+
+```bash
+cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
+
+# Field-inline profile
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
+```
+
+Add a guest by appending a row to its profile table: the example crate name,
+its entry function when the crate has several, the `stack_size` from its
+`#[jolt::provable]` attribute when it exceeds the 4 KiB default, `std: true`
+when the guest crate enables `jolt`'s `guest-std` feature, postcard-encoded
+inputs that keep the trace under the row's padded bound (2^16 by default),
+and the postcard-encoded output computed natively in the test. Field cases
+that execute field instructions must also set `field_inline_active: true`.
+
+## Tamper rejection phases
+
+The tamper harness asserts *where* a rejection fires: each manifest target in
+`jolt-verifier`'s tamper manifest documents the verifier phase that is its
+last line of defense, and `assert_verifier_fixture_tamper_rejects` fails if
+the observed rejection maps to a later phase than documented.
 
 ## Fiat-Shamir soundness
 
@@ -42,3 +90,42 @@ JOLT_FS_BLESS=1 cargo nextest run -p jolt-verifier \
 
 Review the resulting diff as a list of new or removed security obligations.
 Never regenerate it merely to make CI pass.
+
+## Akita committed-program batching
+
+Committed-program Akita preprocessing must provision one native grouped
+opening for one whole-bytecode object, the program image, optional advice,
+and the main trace. Committed-program statements have at most 5 groups and
+68 polynomials (including up to 64 trace columns). The schedule
+registry plans only the setup's final arity, with at most four rows for the
+reachable advice-presence combinations. Its 128-row bound applies to one
+provisioning request, not to the process cache.
+
+Run the focused committed-program gate with:
+
+```bash
+cargo nextest run -p jolt-prover muldiv_e2e_akita_committed_program \
+  --features akita,prover-fixtures --cargo-quiet
+```
+
+Run the schedule and catalog gates with:
+
+```bash
+cargo nextest run -p jolt-akita --cargo-quiet
+```
+
+The generic backend still tests larger group-capacity limits independently.
+Bytecode-table chunking is absent in both backends; response chunk profiles and
+address-bit chunking remain active. A whole-bytecode arity above 34 or an
+unsupported schedule must fail preprocessing before dense allocation.
+
+### Field-inline conversion boundaries
+
+`python3 jolt-sdk/tests/field_limb_compile.py` compiles the actual SDK and then
+code-generates separate macro call sites. It checks zero-width and out-of-range
+register rejection after monomorphization, alongside valid boundary calls.
+
+The `field_inline_limbs` prover test binary exercises both matching and foreign
+modulus guest ELFs in the Dory and Akita field-inline lanes. The Dory
+`field_inline_e2e` suite also attempts to prove a trace that advises the modulus
+as the limb representation of zero; the proof path must reject it.

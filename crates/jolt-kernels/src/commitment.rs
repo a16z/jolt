@@ -6,30 +6,40 @@
 //! opening combines the commitments homomorphically, which is only meaningful
 //! when they share row geometry.
 
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
+#[cfg(not(feature = "akita"))]
+use jolt_field::JoltField;
+#[cfg(not(feature = "akita"))]
 use jolt_openings::CommitmentScheme;
-#[cfg(not(feature = "zk"))]
+#[cfg(all(not(feature = "zk"), not(feature = "akita")))]
 use jolt_openings::StreamingCommitment;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_openings::ZkStreamingCommitment;
-use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
-use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane, WitnessBundle};
+#[cfg(not(feature = "akita"))]
+use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+use jolt_witness::JoltWitnessPlane;
+#[cfg(not(feature = "akita"))]
+use jolt_witness::{JoltWitnessOracle, RowSource, WitnessBundle};
 
+#[cfg(not(feature = "akita"))]
 use crate::{KernelError, ProofSession};
 
 /// The per-cycle facts every committed column derives from — the commitment
 /// consumer's bundle. The runtime-arity chunk selection (which `InstructionRa`
 /// chunk of the lookup index, etc.) lives in the consumer, which owns the
 /// proof config; the bundle carries only the trace-derived values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
+#[cfg(not(feature = "akita"))]
+#[derive(Clone, Copy, Debug, WitnessBundle)]
 pub struct CommittedColumnsWitness {
-    #[opening(committed = RdInc)]
     pub rd_inc: RdInc,
-    #[opening(committed = RamInc)]
     pub ram_inc: RamInc,
     pub lookup_index: LookupIndex,
-    pub bytecode_pc: MappedPc,
+    pub bytecode_pc: BytecodePc,
     pub ram_address: RemappedRamAddress,
 }
 
@@ -37,16 +47,17 @@ pub struct CommittedColumnsWitness {
 /// compiled proof mode: transparent finishes without the `zk` feature, hiding
 /// finishes (blinded top-tier commitment, e.g. Dory's masked tier-2) with it.
 /// The mode lives in this trait alias so kernels carry no runtime flag.
-#[cfg(not(feature = "zk"))]
+#[cfg(all(not(feature = "zk"), not(feature = "akita")))]
 pub trait ModeStreamingCommitment: StreamingCommitment {}
-#[cfg(not(feature = "zk"))]
+#[cfg(all(not(feature = "zk"), not(feature = "akita")))]
 impl<PCS: StreamingCommitment> ModeStreamingCommitment for PCS {}
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 pub trait ModeStreamingCommitment: ZkStreamingCommitment {}
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 impl<PCS: ZkStreamingCommitment> ModeStreamingCommitment for PCS {}
 
 /// Finish a streamed dense commitment in the compiled proof mode.
+#[cfg(not(feature = "akita"))]
 pub fn finish_streamed<PCS>(
     partial: PCS::PartialCommitment,
     setup: &PCS::ProverSetup,
@@ -62,6 +73,7 @@ where
 
 /// Finish a streamed column-major one-hot commitment in the compiled proof
 /// mode.
+#[cfg(not(feature = "akita"))]
 pub fn finish_streamed_one_hot<PCS>(
     setup: &PCS::ProverSetup,
     one_hot_k: usize,
@@ -120,8 +132,16 @@ impl CommitmentGrid {
 
 /// One committed witness polynomial: its id, commitment, and the opening hint
 /// the stage-8 joint opening consumes.
+#[cfg(not(feature = "akita"))]
 pub struct WitnessCommitment<PCS: CommitmentScheme> {
     pub id: JoltCommittedPolynomial,
+    pub commitment: PCS::Output,
+    pub hint: PCS::OpeningHint,
+}
+
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+pub struct FieldInlineWitnessCommitment<PCS: CommitmentScheme> {
+    pub id: FieldInlineCommittedPolynomial,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
 }
@@ -136,19 +156,34 @@ pub struct WitnessCommitment<PCS: CommitmentScheme> {
 /// strategy). Advice polynomials are not trace-derived and commit through
 /// [`commit_advice`](Self::commit_advice) instead. Transcript-free: the
 /// caller absorbs the returned commitments.
+#[cfg(not(feature = "akita"))]
 pub trait CommitWitness<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     fn commit_witness(
         &self,
         session: &mut ProofSession,
-        source: &dyn JoltWitnessPlane<F>,
+        source: &dyn RowSource,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>;
+
+    /// Commit the field-inline committed columns in the same embedding grid as the main
+    /// witness, sourced from the plane's field-inline oracle. Fails closed when the
+    /// plane serves none: a build with field-inline enabled proves only field-inline
+    /// witnesses.
+    #[cfg(all(feature = "field-inline", not(feature = "akita")))]
+    fn commit_field_inline_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn JoltWitnessPlane<F>,
+        ids: &[FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>>;
 
     /// Commit one advice polynomial in its dedicated cycle-major grid.
     fn commit_advice(

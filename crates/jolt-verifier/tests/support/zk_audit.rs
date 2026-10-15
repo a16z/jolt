@@ -1,10 +1,8 @@
-//! Shape audits for verifier-native ZK proofs.
-
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::BlindFoldProtocol;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -33,7 +31,7 @@ pub struct ZkBlindFoldProtocolShape {
 impl ZkBlindFoldProtocolShape {
     fn from_protocol<F, C>(protocol: &BlindFoldProtocol<F, C>) -> Self
     where
-        F: Field,
+        F: JoltField,
     {
         Self {
             coefficient_rows: protocol.dimensions.coefficient_rows,
@@ -55,7 +53,7 @@ pub fn audit_zk_blindfold_protocol_shape<F, PCS, VC, T, ZkProof>(
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<ZkBlindFoldProtocolShape, VerifierError>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,

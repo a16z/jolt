@@ -1,6 +1,6 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, interpolate_to_coeffs, poly_mul};
 use jolt_poly::UnivariatePoly;
 
@@ -21,7 +21,7 @@ pub const EXTENDED_SIZE: usize = 2 * PRODUCT_UNISKIP_DOMAIN_SIZE - 1;
 
 pub const STRIP: usize = 4;
 
-pub fn node_field<F: Field>(node: i64) -> F {
+pub fn node_field<F: JoltField>(node: i64) -> F {
     if node >= 0 {
         F::from_u64(node as u64)
     } else {
@@ -29,7 +29,7 @@ pub fn node_field<F: Field>(node: i64) -> F {
     }
 }
 
-pub fn product_matrix_windows<F: Field>(
+pub fn product_matrix_windows<F: JoltField>(
     columns: &[(usize, DeviceProductColumns)],
     tau_low: &[F],
 ) -> Result<Vec<F>, CudaError> {
@@ -62,7 +62,7 @@ pub fn product_matrix_windows<F: Field>(
     Ok(total)
 }
 
-pub fn product_matrix<F: Field>(
+pub fn product_matrix<F: JoltField>(
     context: &CudaKernelContext,
     columns: &DeviceProductColumns,
     tau_low: &[F],
@@ -132,7 +132,7 @@ pub fn product_matrix<F: Field>(
     Ok(matrix)
 }
 
-pub fn first_round_poly<F: Field>(
+pub fn first_round_poly<F: JoltField>(
     matrix: &[F],
     tau_high: F,
 ) -> Result<UnivariatePoly<F>, CudaError> {
@@ -183,7 +183,7 @@ mod tests {
         lookup_output_product, next_is_noop_product, right_instruction_input_product,
     };
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_witness::collect_bundles;
     use jolt_witness::witnesses::ToField;
     use proptest::prelude::*;

@@ -1,4 +1,5 @@
 use super::context::{device_count, enter_device};
+use core::cmp::Reverse;
 
 pub(crate) type DeviceTask<'a, T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'a>;
 
@@ -101,12 +102,7 @@ pub(crate) fn device_windows(cycles: usize, alignment: usize) -> Vec<CycleWindow
 
 pub(crate) fn device_selections(row_counts: &[usize], devices: usize) -> Vec<Vec<usize>> {
     let mut order: Vec<usize> = (0..row_counts.len()).collect();
-    order.sort_by_key(|&index| {
-        (
-            core::cmp::Reverse(row_counts.get(index).copied().unwrap_or(0)),
-            index,
-        )
-    });
+    order.sort_by_key(|&index| (Reverse(row_counts.get(index).copied().unwrap_or(0)), index));
     let mut load = vec![0usize; devices];
     let mut selections: Vec<Vec<usize>> = (0..devices).map(|_| Vec::new()).collect();
     for index in order {

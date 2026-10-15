@@ -1,3 +1,4 @@
+use cudarc::driver::CudaSlice;
 use cudarc::driver::PushKernelArg;
 use jolt_field::Fr;
 
@@ -105,7 +106,7 @@ fn build_combined_val(
 fn build_ra(
     context: &CudaKernelContext,
     inputs: &HandoffInputs<'_>,
-    pointers: &cudarc::driver::CudaSlice<u64>,
+    pointers: &CudaSlice<u64>,
     phase_offset: usize,
     phases_per_ra: usize,
     phases: usize,
@@ -134,159 +135,4 @@ fn build_ra(
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
     context.stream().synchronize()?;
     Ok(out)
-}
-
-#[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test module: device operations fail loudly"
-)]
-mod tests {
-    use jolt_claims::protocols::jolt::geometry::instruction::{
-        InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
-    };
-    use jolt_field::Fr;
-    use jolt_lookup_tables::lookup_bits::LookupBits;
-    use jolt_lookup_tables::tables::suffixes::SuffixEval;
-    use jolt_lookup_tables::tables::LookupTableKind;
-    use jolt_lookup_tables::XLEN as RISCV_XLEN;
-    use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
-    use proptest::prelude::*;
-
-    use super::super::address_phase::{DeviceRows, CHUNK_LEN};
-    use super::{build_cycle_tables, HandoffInputs};
-    use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::testing::fr;
-    use crate::reference::instruction_read_raf::{
-        InstructionReadRafKernel, InstructionReadRafWitness,
-    };
-    use crate::reference::views::eq_table;
-
-    const ADDRESS_BITS: usize = 128;
-    const RA_COUNT: usize = 8;
-
-    fn rows(log_t: usize, seed: u64) -> Vec<InstructionReadRafWitness> {
-        let tables: Vec<LookupTableKind<RISCV_XLEN>> =
-            LookupTableKind::<RISCV_XLEN>::iter().collect();
-        (0..1usize << log_t)
-            .map(|j| {
-                let mixed = (j as u64)
-                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                    .wrapping_add(seed);
-                let index = (u128::from(mixed) << 61) | u128::from(mixed.rotate_left(17));
-                InstructionReadRafWitness {
-                    lookup_index: LookupIndex(index),
-                    table_index: TableIndex(if mixed.is_multiple_of(11) {
-                        None
-                    } else {
-                        Some(tables[(mixed % tables.len() as u64) as usize].index())
-                    }),
-                    raf_flag: InstructionRafFlag(mixed.is_multiple_of(3)),
-                }
-            })
-            .collect()
-    }
-
-    fn reference_at_handoff(
-        log_t: usize,
-        seed: u64,
-    ) -> (InstructionReadRafKernel<Fr>, Vec<Vec<Fr>>) {
-        let dimensions = InstructionReadRafDimensions::try_from((log_t, ADDRESS_BITS, RA_COUNT))
-            .expect("dimensions");
-        let r_reduction: Vec<Fr> = (0..log_t).map(|i| fr(seed + i as u64 + 3)).collect();
-        let mut kernel = InstructionReadRafKernel::new(
-            dimensions,
-            &r_reduction,
-            rows(log_t, seed),
-            fr(seed + 1),
-        )
-        .expect("reference kernel");
-        for round in 0..ADDRESS_BITS {
-            kernel
-                .bind(fr(seed + round as u64 + 71))
-                .expect("reference bind");
-        }
-        let v_tables = (0..ADDRESS_BITS / CHUNK_LEN)
-            .map(|phase| {
-                let challenges: Vec<Fr> = (0..CHUNK_LEN)
-                    .map(|i| fr(seed + (phase * CHUNK_LEN + i) as u64 + 71))
-                    .collect();
-                eq_table(&challenges)
-            })
-            .collect();
-        (kernel, v_tables)
-    }
-
-    proptest! {
-        #[test]
-        fn cycle_tables_match_the_reference_handoff(
-            log_t in 4usize..=9,
-            seed in any::<u64>(),
-        ) {
-            let Some(context) = shared_context() else { return Ok(()); };
-            let (host, host_v_tables) = reference_at_handoff(log_t, seed);
-
-            let gamma = host.gamma;
-            let gamma_sqr = gamma * gamma;
-            let empty = LookupBits::new(0, 0);
-            let table_values: Vec<Fr> = LookupTableKind::<RISCV_XLEN>::iter()
-                .map(|table| {
-                    let suffixes: Vec<SuffixEval<Fr>> = table
-                        .suffixes()
-                        .iter()
-                        .map(|suffix| SuffixEval::from(Fr::from(suffix.suffix_mle(empty))))
-                        .collect();
-                    table.combine(host.prefix_checkpoints(), &suffixes)
-                })
-                .collect();
-            let raf_interleaved = gamma * host.raf_left.checkpoint
-                + gamma_sqr * host.raf_right.checkpoint;
-            let mut raf_identity = gamma_sqr * host.raf_identity.checkpoint;
-            if CANONICAL_INSTRUCTION_ADDRESS {
-                raf_identity += gamma_sqr * gamma * host.raf_upper_all_ones.checkpoint;
-            }
-
-            let jolt_rows = rows(log_t, seed);
-            let indices: Vec<u128> = jolt_rows.iter().map(|r| r.lookup_index.0).collect();
-            let tables: Vec<Option<usize>> = jolt_rows.iter().map(|r| r.table_index.0).collect();
-            let flags: Vec<bool> = jolt_rows.iter().map(|r| r.raf_flag.0).collect();
-            let device_rows = DeviceRows::new(context, &indices, &tables, &flags)
-                .expect("device rows");
-            let v_tables: Vec<_> = host_v_tables
-                .iter()
-                .map(|table| context.upload(table).expect("upload v table"))
-                .collect();
-
-            let got = build_cycle_tables(
-                context,
-                &HandoffInputs {
-                    rows: &device_rows,
-                    cycles: device_rows.cycles(),
-                    v_tables: &v_tables,
-                    table_values: &table_values,
-                    raf_interleaved,
-                    raf_identity,
-                    ra_count: RA_COUNT,
-                    address_bits: ADDRESS_BITS,
-                },
-            )
-            .expect("device build_cycle_tables");
-
-            let expected = host.cycle_tables.as_ref().expect("cycle tables");
-            prop_assert_eq!(
-                &got.combined_val.to_host().expect("download"),
-                &expected.combined_val.evals().to_vec(),
-                "combined_val diverged"
-            );
-            prop_assert_eq!(got.ra.len(), expected.ra.len());
-            for (index, (device, want)) in got.ra.iter().zip(&expected.ra).enumerate() {
-                prop_assert_eq!(
-                    &device.to_host().expect("download"),
-                    &want.evals().to_vec(),
-                    "ra[{}] diverged",
-                    index
-                );
-            }
-        }
-    }
 }

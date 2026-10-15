@@ -4,8 +4,8 @@
 //! program image are committed polynomials. Their two-phase reductions begin in
 //! stage 6b (cycle phase) and, when active address-phase rounds remain, finish
 //! here in stage 7. Each is a self-contained relation object: the bytecode
-//! reduction opens the per-chunk `BytecodeChunk(i)` commitments under the
-//! `ChunkOutputWeight(i)` publics, and the program-image reduction opens
+//! reduction opens whole bytecode in both backends under
+//! the canonical output weights, and the program-image reduction opens
 //! `ProgramImageInit` under a single `FinalScale` public.
 //!
 //! Both publics are functions of the reduction's final opening point — the same
@@ -14,6 +14,7 @@
 //! exactly as stage 4's `RamValCheck` recovers the cycle from its output point.
 
 use jolt_claims::protocols::jolt::relations;
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase as BytecodeAddressPhase;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
     BytecodeReductionAddressPhaseInputClaims, BytecodeReductionAddressPhaseOutputClaims,
 };
@@ -26,24 +27,24 @@ use jolt_claims::protocols::jolt::{
     ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::outputs::BytecodeReductionWeights;
 use crate::VerifierError;
 
 #[derive(Clone)]
-pub struct BytecodeReductionAddressPhase<F: Field> {
-    symbolic: relations::claim_reductions::bytecode::AddressPhase,
+pub struct BytecodeReductionAddressPhase<F: JoltField> {
+    symbolic: BytecodeAddressPhase,
     layout: BytecodeClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
     /// The stage-6b bytecode cycle-phase output weights, consumed only by the
-    /// clear-only `derive_output_term` (`ChunkOutputWeight`). `None` in ZK (BlindFold
+    /// clear-only `derive_output_term` (`OutputWeight`). `None` in ZK (BlindFold
     /// recomputes the weights), where this relation's `derive_output_term` never runs.
     weights: Option<BytecodeReductionWeights<F>>,
 }
 
-impl<F: Field> BytecodeReductionAddressPhase<F> {
+impl<F: JoltField> BytecodeReductionAddressPhase<F> {
     /// `weights` are the stage-6b bytecode cycle-phase outputs (`None` in ZK,
     /// clear-only aux); `cycle_phase_variables` and the layout are known before the
     /// stage-7 sumcheck, so a single construction serves both the input claim and
@@ -54,10 +55,7 @@ impl<F: Field> BytecodeReductionAddressPhase<F> {
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
-            symbolic: relations::claim_reductions::bytecode::AddressPhase::new((
-                layout.dimensions(),
-                layout.chunk_count(),
-            )),
+            symbolic: BytecodeAddressPhase::new(layout.dimensions()),
             layout: layout.clone(),
             cycle_phase_variables,
             weights,
@@ -84,8 +82,8 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
-    type Symbolic = relations::claim_reductions::bytecode::AddressPhase;
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
+    type Symbolic = BytecodeAddressPhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -107,7 +105,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
             .address_phase_opening_point(&self.cycle_phase_variables, sumcheck_point)
             .map_err(bytecode_public_failed)?;
         Ok(BytecodeReductionAddressPhaseOutputClaims {
-            chunks: vec![opening_point; self.layout.chunk_count()],
+            bytecode: opening_point,
         })
     }
 
@@ -118,35 +116,21 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         output_points: &BytecodeReductionAddressPhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
-            chunk_idx,
-        )) = id
-        else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
-        };
-        let opening_point = output_points
-            .chunks()
-            .first()
-            .map(Vec::as_slice)
-            .ok_or_else(|| {
-                bytecode_public_failed("bytecode reduction produced no chunk openings")
-            })?;
-        let weights = self
-            .layout
-            .address_phase_final_output_weights_at_opening_point(
+        if *id != JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::OutputWeight)
+        {
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
+        }
+        self.layout
+            .address_phase_final_output_weight_at_opening_point(
                 self.output_weight_inputs()?,
-                opening_point,
+                output_points.bytecode(),
             )
-            .map_err(bytecode_public_failed)?;
-        weights
-            .get(*chunk_idx)
-            .copied()
-            .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
+            .map_err(bytecode_public_failed)
     }
 }
 
 #[derive(Clone)]
-pub struct ProgramImageReductionAddressPhase<F: Field> {
+pub struct ProgramImageReductionAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::program_image::AddressPhase,
     layout: ProgramImageClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -157,7 +141,7 @@ pub struct ProgramImageReductionAddressPhase<F: Field> {
     reference_opening_point: Option<Vec<F>>,
 }
 
-impl<F: Field> ProgramImageReductionAddressPhase<F> {
+impl<F: JoltField> ProgramImageReductionAddressPhase<F> {
     /// `reference_opening_point` is the RAM address point of the staged
     /// `ProgramImageInitContributionRw` opening (from stage 4), `None` in ZK
     /// (clear-only aux). It and the cycle-phase variables are known before the
@@ -185,7 +169,7 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
     type Symbolic = relations::claim_reductions::program_image::AddressPhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -222,7 +206,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         let JoltDerivedId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
             id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let reference_opening_point = self.reference_opening_point.as_ref().ok_or_else(|| {
             program_image_public_failed(

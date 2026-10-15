@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -7,7 +7,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum OverflowBitsZeroPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for OverflowBitsZeroPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroPrefix {
     fn default_checkpoint() -> F {
         F::one()
     }
@@ -18,8 +18,6 @@ impl<F: Field> SparseDensePrefix<F> for OverflowBitsZeroPrefix {
             return checkpoints[Prefixes::OverflowBitsZero];
         }
 
-        // Overflow region = interleaved positions 0..XLEN.
-        // Phase bits in overflow = top portion of `b`.
         let overflow_bits = if suffix_len >= XLEN {
             u128::from(b)
         } else {

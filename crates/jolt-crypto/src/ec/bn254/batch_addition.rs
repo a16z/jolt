@@ -3,6 +3,8 @@
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+use ark_std::cfg_iter;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::Bn254G1;
@@ -62,8 +64,7 @@ fn batch_g1_additions_multi_affine_inner(
         clippy::indexing_slicing,
         reason = "in-bounds indices are a documented precondition of the public API"
     )]
-    let mut working_sets: Vec<Vec<G1Affine>> = indices_sets
-        .par_iter()
+    let mut working_sets: Vec<Vec<G1Affine>> = cfg_iter!(indices_sets)
         .map(|indices| {
             if indices.is_empty() {
                 vec![G1Affine::identity()]

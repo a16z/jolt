@@ -1,0 +1,421 @@
+use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
+use akita_error::AkitaError;
+use akita_pcs::custom_source::{RootPolyShape, SubringCoefficientPackingPlan};
+use akita_types::FpExtEncoding;
+use jolt_field::{CanonicalEncoding, ExtField, PseudoMersenne, Unreduced, Zero};
+use rayon::prelude::*;
+
+use super::source::{validate_dimension, TraceOneHotColumn};
+use super::{K256_ROW_BATCH, NO_SELECTED_ROW, TASKS_PER_RAYON_WORKER};
+use crate::AkitaField;
+
+#[inline(always)]
+pub(super) fn row_is_committed(selected_row: u8, committed_zero_mask: u64, column: usize) -> bool {
+    selected_row != NO_SELECTED_ROW || committed_zero_mask & (1u64 << column) != 0
+}
+
+pub(super) type AkitaWideRing<const D: usize> =
+    WideCyclotomicRing<<AkitaField as Unreduced>::Wide, D>;
+
+// Canonical reduction on every add costs more than tracking 2^128 wraps and
+// applying 2^128 = MODULUS_OFFSET only when the tile is flushed.
+#[derive(Clone)]
+pub(super) struct DeferredFp128Ring<const D: usize> {
+    pub(super) lo: [u64; D],
+    pub(super) hi: [u64; D],
+    pub(super) wraps: [i16; D],
+}
+
+impl<const D: usize> DeferredFp128Ring<D> {
+    pub(super) fn zero() -> Self {
+        Self {
+            lo: [0; D],
+            hi: [0; D],
+            wraps: [0; D],
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn add_coefficient(&mut self, index: usize, value: AkitaField) {
+        let [value_lo, value_hi] = value.to_limbs();
+        let (lo, carry_lo) = self.lo[index].overflowing_add(value_lo);
+        let (hi, carry_hi) = self.hi[index].carrying_add(value_hi, carry_lo);
+        self.lo[index] = lo;
+        self.hi[index] = hi;
+        self.wraps[index] += i16::from(carry_hi);
+    }
+
+    #[inline(always)]
+    pub(super) fn sub_coefficient(&mut self, index: usize, value: AkitaField) {
+        let [value_lo, value_hi] = value.to_limbs();
+        let (lo, borrow_lo) = self.lo[index].overflowing_sub(value_lo);
+        let (hi, borrow_hi) = self.hi[index].borrowing_sub(value_hi, borrow_lo);
+        self.lo[index] = lo;
+        self.hi[index] = hi;
+        self.wraps[index] -= i16::from(borrow_hi);
+    }
+
+    #[inline(always)]
+    pub(super) fn shift_accumulate(
+        &mut self,
+        source: &CyclotomicRing<AkitaField, D>,
+        shift: usize,
+    ) {
+        debug_assert!(shift < D);
+        let (lo, hi) = source.coefficients().split_at(D - shift);
+        for (index, &value) in lo.iter().enumerate() {
+            self.add_coefficient(index + shift, value);
+        }
+        for (index, &value) in hi.iter().enumerate() {
+            self.sub_coefficient(index, value);
+        }
+    }
+
+    pub(super) fn reduce_and_clear(&mut self) -> CyclotomicRing<AkitaField, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+            let lo = std::mem::take(&mut self.lo[index]);
+            let hi = std::mem::take(&mut self.hi[index]);
+            let wraps = std::mem::take(&mut self.wraps[index]);
+            debug_assert!(usize::from(wraps.unsigned_abs()) <= K256_ROW_BATCH);
+
+            let base = AkitaField::from_u128_reduced(u128::from(lo) | (u128::from(hi) << 64));
+            let correction = AkitaField::from_u128_reduced(
+                u128::from(wraps.unsigned_abs()) * <AkitaField as PseudoMersenne>::OFFSET,
+            );
+            if wraps >= 0 {
+                base + correction
+            } else {
+                base - correction
+            }
+        }))
+    }
+}
+
+/// Visits ring elements within one semantic column segment. Each callback
+/// receives the segment-relative ring index and `(column, coefficient)` pairs
+/// contributed by the same trace rows.
+pub(super) fn visit_segment_ring_range<const D: usize>(
+    source: &TraceOneHotColumn,
+    ring_start: usize,
+    ring_end: usize,
+    mut visit: impl FnMut(usize, &[(usize, usize)]),
+) -> Result<(), AkitaError> {
+    validate_dimension::<D>(source.one_hot_k)?;
+    let segment_rings = source.segment_ring_elems::<D>()?;
+    if ring_start > ring_end || ring_end > segment_rings {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot ring range {ring_start}..{ring_end} exceeds segment size {segment_rings}"
+        )));
+    }
+    let k = source.one_hot_k;
+    let num_columns = source.rows.num_columns();
+    let mut selected_rows = vec![NO_SELECTED_ROW; num_columns];
+    if k >= D {
+        let rings_per_row = k / D;
+        let row_start = ring_start / rings_per_row;
+        let row_end = ring_end.div_ceil(rings_per_row);
+        let mut buckets = vec![Vec::new(); rings_per_row];
+        for row in row_start..row_end.min(source.rows.num_rows()) {
+            source.rows.fill_row(row, &mut selected_rows);
+            let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
+            for bucket in &mut buckets {
+                bucket.clear();
+            }
+            for (column, &hot) in selected_rows.iter().enumerate() {
+                if !row_is_committed(hot, committed_zero_mask, column) {
+                    continue;
+                }
+                let hot = usize::from(hot);
+                if hot >= k {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "trace one-hot row {hot} is outside K={k}"
+                    )));
+                }
+                buckets[hot / D].push((column, hot % D));
+            }
+            for (offset, contributions) in buckets.iter().enumerate() {
+                let ring = row * rings_per_row + offset;
+                if ring_start <= ring && ring < ring_end {
+                    visit(ring, contributions);
+                }
+            }
+        }
+    } else {
+        let rows_per_ring = D / k;
+        let mut contributions = Vec::with_capacity(num_columns * rows_per_ring);
+        for ring in ring_start..ring_end {
+            contributions.clear();
+            for row_offset in 0..rows_per_ring {
+                let row = ring * rows_per_ring + row_offset;
+                if row >= source.rows.num_rows() {
+                    break;
+                }
+                source.rows.fill_row(row, &mut selected_rows);
+                let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
+                for (column, &hot) in selected_rows.iter().enumerate() {
+                    if !row_is_committed(hot, committed_zero_mask, column) {
+                        continue;
+                    }
+                    let hot = usize::from(hot);
+                    if hot >= k {
+                        return Err(AkitaError::InvalidInput(format!(
+                            "trace one-hot row {hot} is outside K={k}"
+                        )));
+                    }
+                    contributions.push((column, row_offset * k + hot));
+                }
+            }
+            visit(ring, &contributions);
+        }
+    }
+    Ok(())
+}
+
+/// Visits K<D ring elements as row indices for the D/K trace rows packed
+/// into each ring. This avoids expanding the row buffer into contribution
+/// tuples when a kernel can consume the indices directly.
+pub(super) fn visit_segment_ring_row_range<const D: usize>(
+    source: &TraceOneHotColumn,
+    ring_start: usize,
+    ring_end: usize,
+    mut visit: impl FnMut(usize, &[u8], &[u64]),
+) -> Result<(), AkitaError> {
+    validate_dimension::<D>(source.one_hot_k)?;
+    if source.one_hot_k >= D {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot row traversal requires K={} < D={D}",
+            source.one_hot_k
+        )));
+    }
+    let segment_rings = source.segment_ring_elems::<D>()?;
+    if ring_start > ring_end || ring_end > segment_rings {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot ring range {ring_start}..{ring_end} exceeds segment size {segment_rings}"
+        )));
+    }
+    let rows_per_ring = D / source.one_hot_k;
+    let num_columns = source.rows.num_columns();
+    if !source.rows.num_rows().is_multiple_of(rows_per_ring) {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot row count {} is not aligned to {rows_per_ring} rows per D={D} ring",
+            source.rows.num_rows()
+        )));
+    }
+    let row_index_count = num_columns.checked_mul(rows_per_ring).ok_or_else(|| {
+        AkitaError::InvalidInput("trace one-hot row-index buffer size overflow".to_string())
+    })?;
+    let mut selected_rows = vec![NO_SELECTED_ROW; row_index_count];
+    let mut committed_zero_masks = vec![0u64; rows_per_ring];
+    for ring in ring_start..ring_end {
+        let row_start = ring * rows_per_ring;
+        let populated_rows = source
+            .rows
+            .num_rows()
+            .saturating_sub(row_start)
+            .min(rows_per_ring);
+        let populated_indices = &mut selected_rows[..populated_rows * num_columns];
+        let populated_masks = &mut committed_zero_masks[..populated_rows];
+        source.rows.fill_rows(row_start, populated_indices);
+        source
+            .rows
+            .fill_committed_digit_zero_masks(row_start, populated_masks);
+        for &hot in populated_indices.iter() {
+            if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
+                return Err(AkitaError::InvalidInput(format!(
+                    "trace one-hot row {hot} is outside K={}",
+                    source.one_hot_k
+                )));
+            }
+        }
+        visit(ring, populated_indices, populated_masks);
+    }
+    Ok(())
+}
+
+pub(super) fn coefficient_packing_partials_columns<E, const D: usize>(
+    source: &TraceOneHotColumn,
+    plan: SubringCoefficientPackingPlan<'_, E>,
+) -> Result<Vec<Vec<AkitaField>>, AkitaError>
+where
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+{
+    plan.validate::<D>(source.num_vars)?;
+    let point = plan.point;
+    let expected = point.num_live_positions();
+    let actual = RootPolyShape::<AkitaField, D>::num_ring_elems(source);
+    if actual != expected {
+        return Err(AkitaError::InvalidSize { expected, actual });
+    }
+
+    let geometry = point.geometry();
+    if E::DEGREE != geometry.extension_degree() {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing field extension degree mismatch".to_string(),
+        ));
+    }
+    let num_blocks = point.num_live_blocks();
+    let subring_dimension = geometry.challenge_subring_dimension();
+    let stride = geometry.subring_embedding_stride();
+    if point.packing_weights().len() != stride {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing weight width disagrees with its geometry".to_string(),
+        ));
+    }
+    let packed_len = num_blocks.checked_mul(subring_dimension).ok_or_else(|| {
+        AkitaError::InvalidInput("coefficient-packing accumulator length overflow".to_string())
+    })?;
+    let _span = tracing::info_span!("trace_onehot_coefficient_packing").entered();
+    let positions_per_block = point.num_positions_per_block();
+    let segment_rings = source.segment_ring_elems::<D>()?;
+    let num_columns = source.rows.num_columns();
+    let position_weights = point.position_weights();
+    let packing_weights = point.packing_weights();
+
+    // Segments and blocks are both powers of two, so a ring range inside one
+    // `span` meets exactly one block per column, at consecutive positions.
+    // Summing position weights per `(column, coefficient)` first leaves one
+    // packing-weight multiplication per coefficient instead of per nonzero.
+    let span = positions_per_block.min(segment_rings);
+    let spans = segment_rings / span;
+    let schedule = trace_block_task_schedule::<D>(source.one_hot_k, span, spans);
+    let partials = (0..spans * schedule.parts)
+        .into_par_iter()
+        .map(|task| {
+            let (part_start, part_end) = schedule.part_range(task % schedule.parts);
+            let ring_start = task / schedule.parts * span + part_start;
+            let ring_end = task / schedule.parts * span + part_end;
+            let first_positions = (0..num_columns)
+                .map(|_| ring_start % positions_per_block)
+                .collect::<Vec<_>>();
+            let mut sums = vec![E::zero(); num_columns * D];
+            visit_segment_ring_range::<D>(source, ring_start, ring_end, |ring, contributions| {
+                let offset = ring - ring_start;
+                for &(column, coefficient) in contributions {
+                    sums[column * D + coefficient] +=
+                        position_weights[first_positions[column] + offset];
+                }
+            })?;
+            let mut blocks = vec![E::zero(); num_columns * subring_dimension];
+            for (column_sums, column_blocks) in sums
+                .chunks_exact(D)
+                .zip(blocks.chunks_exact_mut(subring_dimension))
+            {
+                for (coefficient, sum) in column_sums.iter().enumerate() {
+                    column_blocks[coefficient / stride] +=
+                        *sum * packing_weights[coefficient % stride];
+                }
+            }
+            Ok::<_, AkitaError>((ring_start, blocks))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut packed = vec![E::zero(); packed_len * num_columns];
+    for (ring_start, blocks) in partials {
+        for (column, column_blocks) in blocks.chunks_exact(subring_dimension).enumerate() {
+            let block = column * num_blocks + ring_start / positions_per_block;
+            for (dst, value) in packed[block * subring_dimension..][..subring_dimension]
+                .iter_mut()
+                .zip(column_blocks)
+            {
+                *dst += *value;
+            }
+        }
+    }
+
+    let partial_width = geometry.partial_base_field_width();
+    let output_len = num_blocks.checked_mul(partial_width).ok_or_else(|| {
+        AkitaError::InvalidInput("coefficient-packing output length overflow".to_string())
+    })?;
+    let mut coordinates = vec![vec![AkitaField::zero(); output_len]; num_columns];
+    for (packed_index, coefficient) in packed.into_iter().enumerate() {
+        let column = packed_index / packed_len;
+        let block = (packed_index % packed_len) / subring_dimension;
+        let subring = packed_index % subring_dimension;
+        let extension_coordinates = coefficient.ext_coords();
+        if extension_coordinates.len() != geometry.extension_degree() {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing extension encoding width mismatch".to_string(),
+            ));
+        }
+        for (extension_coordinate, &coordinate) in extension_coordinates.iter().enumerate() {
+            let local_index =
+                geometry.partial_base_field_coordinate_index(extension_coordinate, subring)?;
+            coordinates[column][block * partial_width + local_index] = coordinate;
+        }
+    }
+    Ok(coordinates)
+}
+
+pub(super) fn flush_wide<const D: usize>(
+    wide: &mut [AkitaWideRing<D>],
+    reduced: &mut [CyclotomicRing<AkitaField, D>],
+) {
+    for (wide, reduced) in wide.iter_mut().zip(reduced) {
+        *reduced += std::mem::replace(wide, WideCyclotomicRing::zero()).reduce();
+    }
+}
+
+pub(super) fn flush_deferred_rank<const D: usize>(
+    rank_deferred: &mut [DeferredFp128Ring<D>],
+    reduced: &mut [CyclotomicRing<AkitaField, D>],
+    n_a: usize,
+    a: usize,
+) {
+    for (column, value) in rank_deferred.iter_mut().enumerate() {
+        let index = column * n_a + a;
+        reduced[index] += value.reduce_and_clear();
+    }
+}
+
+pub(super) fn validate_block_geometry(
+    segment_rings: usize,
+    num_columns: usize,
+    num_positions: usize,
+) -> Result<(usize, usize), AkitaError> {
+    if num_positions == 0 || !num_positions.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot positions per block {num_positions} must be a nonzero power of two"
+        )));
+    }
+    let num_blocks = segment_rings
+        .div_ceil(num_positions)
+        .checked_mul(num_columns)
+        .ok_or_else(|| AkitaError::InvalidInput("trace one-hot block count overflow".into()))?;
+    Ok((segment_rings, num_blocks))
+}
+
+pub(super) struct TraceBlockTaskSchedule {
+    num_positions: usize,
+    ring_alignment: usize,
+    pub(super) parts: usize,
+}
+
+impl TraceBlockTaskSchedule {
+    pub(super) fn part_range(&self, part: usize) -> (usize, usize) {
+        debug_assert!(part < self.parts);
+        let aligned_positions = self.num_positions / self.ring_alignment;
+        (
+            part * aligned_positions / self.parts * self.ring_alignment,
+            (part + 1) * aligned_positions / self.parts * self.ring_alignment,
+        )
+    }
+}
+
+pub(super) fn trace_block_task_schedule<const D: usize>(
+    one_hot_k: usize,
+    num_positions: usize,
+    blocks_per_column: usize,
+) -> TraceBlockTaskSchedule {
+    debug_assert!(num_positions > 0);
+    debug_assert!(blocks_per_column > 0);
+    let ring_alignment = (one_hot_k / D).max(1).min(num_positions);
+    debug_assert_eq!(num_positions % ring_alignment, 0);
+    let max_parts = num_positions / ring_alignment;
+    let target_tasks = rayon::current_num_threads()
+        .saturating_mul(TASKS_PER_RAYON_WORKER)
+        .max(1);
+    TraceBlockTaskSchedule {
+        num_positions,
+        ring_alignment,
+        parts: target_tasks.div_ceil(blocks_per_column).clamp(1, max_parts),
+    }
+}

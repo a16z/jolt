@@ -8,9 +8,8 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_hashbench(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_hashbench(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =
-        guest::preprocess_verifier_hashbench(shared_preprocessing, verifier_setup, None);
+        guest::verifier_preprocessing_from_prover_hashbench(&prover_preprocessing);
 
     let prove_hashbench = guest::build_prover_hashbench(program, prover_preprocessing);
     let verify_hashbench = guest::build_verifier_hashbench(verifier_preprocessing);

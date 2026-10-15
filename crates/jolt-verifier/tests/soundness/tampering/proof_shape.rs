@@ -10,7 +10,7 @@ use jolt_verifier::proof::JoltProofClaims;
 use {
     jolt_blindfold::BlindFoldProof,
     jolt_crypto::VectorCommitmentOpening,
-    jolt_field::{Fr, FromPrimitiveInt},
+    jolt_field::{Fr, Ring},
     jolt_sumcheck::CompressedSumcheckProof,
 };
 
@@ -25,22 +25,6 @@ fn mixed_clear_and_committed_stage_proofs_reject_now() {
             case.proof.stages.stage5_sumcheck_proof = jolt_sumcheck::SumcheckProof::Committed(
                 jolt_sumcheck::CommittedSumcheckProof::default(),
             );
-        },
-    );
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-#[test]
-fn mixed_uniskip_stage_proof_rejects_now() {
-    let base = crate::support::verifier_fixtures::standard_muldiv_case();
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        tamper_manifest::required_target("proof.stages.clear_vs_committed"),
-        &base,
-        |case| {
-            case.proof.stages.stage1_uni_skip_first_round_proof =
-                jolt_sumcheck::SumcheckProof::Committed(
-                    jolt_sumcheck::CommittedSumcheckProof::default(),
-                );
         },
     );
 }
@@ -82,11 +66,6 @@ fn clear_stage_in_zk_proof_rejects_now() {
     support::assert_zk_rejects(case.verify());
 }
 
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures to live-generate and tamper verifier-native proofs"]
-fn tampered_mixed_proof_shape_reject() {}
-
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn empty_blindfold_proof() -> BlindFoldProof<Fr, jolt_crypto::Bn254G1> {
     let zero = Fr::from_u64(0);
@@ -115,4 +94,21 @@ fn empty_blindfold_proof() -> BlindFoldProof<Fr, jolt_crypto::Bn254G1> {
         folded_eval_output_openings: Vec::new(),
         folded_eval_blinding_openings: Vec::new(),
     }
+}
+
+#[cfg(feature = "prover-fixtures")]
+#[test]
+fn committed_program_rejects_mismatched_trace_order() {
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_verifier::VerifierError;
+
+    #[cfg(not(feature = "zk"))]
+    let mut case = crate::support::verifier_fixtures::standard_committed_muldiv_case();
+    #[cfg(feature = "zk")]
+    let mut case = crate::support::verifier_fixtures::zk_committed_muldiv_case();
+    case.proof.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
+    assert!(matches!(
+        case.verify(),
+        Err(VerifierError::InvalidCommittedProgram { .. })
+    ));
 }

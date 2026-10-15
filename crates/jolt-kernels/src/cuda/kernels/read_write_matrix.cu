@@ -233,8 +233,8 @@ extern "C" __global__ void rwm_message_kernel(
     unsigned int tid = threadIdx.x;
     unsigned int seg = blockIdx.x * blockDim.x + tid;
 
-    u64 acc[2][LIMBS];
-    for (int lane = 0; lane < 2; lane++)
+    u64 acc[3][LIMBS];
+    for (int lane = 0; lane < 3; lane++)
         for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
 
     if (seg < segments) {
@@ -259,8 +259,8 @@ extern "C" __global__ void rwm_message_kernel(
         u64 scale[LIMBS];
         load4(wa_scale, scale);
 
-        u64 inner[2][2 * PA_SLOTS];
-        for (int lane = 0; lane < 2; lane++) pa_zero(inner[lane]);
+        u64 inner[3][2 * PA_SLOTS];
+        for (int lane = 0; lane < 3; lane++) pa_zero(inner[lane]);
 
         while (i < even_end || j < odd_end) {
             bool take_even;
@@ -354,6 +354,15 @@ extern "C" __global__ void rwm_message_kernel(
             fr_add(val_inf, inc_inf, sum);
             pa_fold_mul_accum(wa_inf, sum, inner[1]);
 
+            u64 ra_1[LIMBS], wa_1[LIMBS], val_1[LIMBS], inc_1[LIMBS];
+            fr_add(ra_0, ra_inf, ra_1);
+            fr_add(wa_0, wa_inf, wa_1);
+            fr_add(val_0, val_inf, val_1);
+            fr_add(inc_0, inc_inf, inc_1);
+            pa_fold_mul_accum(ra_1, val_1, inner[2]);
+            fr_add(val_1, inc_1, sum);
+            pa_fold_mul_accum(wa_1, sum, inner[2]);
+
             if (take_even) i++;
             if (take_odd) j++;
         }
@@ -370,14 +379,14 @@ extern "C" __global__ void rwm_message_kernel(
         u64 combined[LIMBS];
         fr_mul(weight, e_out_eval, combined);
 
-        for (int lane = 0; lane < 2; lane++) {
+        for (int lane = 0; lane < 3; lane++) {
             u64 reduced[LIMBS];
             pa_finalize(inner[lane], reduced);
             fr_mul(reduced, combined, acc[lane]);
         }
     }
 
-    for (int lane = 0; lane < 2; lane++) {
+    for (int lane = 0; lane < 3; lane++) {
         store4(scratch + tid * LIMBS, acc[lane]);
         __syncthreads();
         for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {

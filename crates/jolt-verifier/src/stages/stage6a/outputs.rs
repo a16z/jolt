@@ -1,9 +1,6 @@
-//! Typed inputs consumed and outputs produced by stage 6a (address-phase)
-//! verification.
-
 use jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::SumcheckBatch;
@@ -41,9 +38,25 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// call it directly.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-pub struct Stage6aSumchecks<F: Field> {
+pub struct Stage6aSumchecks<F: JoltField> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,
+}
+
+impl<F: JoltField> Stage6aOutputClaims<F> {
+    /// Project base-protocol claims into the verifier's selected output shape.
+    pub fn from_base(
+        bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims<F>,
+        booleanity: BooleanityAddressPhaseOutputClaims<F>,
+    ) -> Self {
+        Self {
+            #[cfg(feature = "field-inline")]
+            bytecode_read_raf: bytecode_read_raf.into(),
+            #[cfg(not(feature = "field-inline"))]
+            bytecode_read_raf,
+            booleanity,
+        }
+    }
 }
 
 /// The stage-6a Fiat-Shamir draws sampled by the batch's `draw_challenges` but
@@ -54,7 +67,7 @@ pub struct Stage6aSumchecks<F: Field> {
 /// upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct Stage6aCarriedChallenges<F: Field> {
+pub struct Stage6aCarriedChallenges<F: JoltField> {
     /// The bytecode read-RAF address-phase draws (the fold gamma plus the five
     /// per-stage gammas), verbatim. Consumers folding with power vectors expand
     /// them via `stage_gamma_powers`.
@@ -66,7 +79,7 @@ pub struct Stage6aCarriedChallenges<F: Field> {
     pub booleanity: BooleanityAddressPhaseChallenges<F>,
 }
 
-impl<F: Field> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
+impl<F: JoltField> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
     fn from(challenges: &Stage6aChallenges<F>) -> Self {
         Self {
             bytecode_read_raf: challenges.bytecode_read_raf,
@@ -77,7 +90,7 @@ impl<F: Field> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct Stage6aClearOutput<F: Field> {
+pub struct Stage6aClearOutput<F: JoltField> {
     /// The produced address-phase opening *values* (the staged intermediates
     /// and, in committed-program mode, the `BytecodeValClaim` claims), read by
     /// stage 6b as its bytecode/booleanity input claims.
@@ -91,7 +104,7 @@ pub struct Stage6aClearOutput<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6aZkOutput<F: Field, C> {
+pub struct Stage6aZkOutput<F: JoltField, C> {
     pub challenges: Stage6aCarriedChallenges<F>,
     pub consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub output_claims: CommittedOutputClaimOutput<C>,
@@ -101,12 +114,12 @@ pub struct Stage6aZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage6aOutput<F: Field, C> {
+pub enum Stage6aOutput<F: JoltField, C> {
     Clear(Stage6aClearOutput<F>),
     Zk(Stage6aZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage6aOutput<F, C> {
+impl<F: JoltField, C> Stage6aOutput<F, C> {
     /// The produced address-phase opening *points*, available regardless of mode.
     pub fn output_points(&self) -> &Stage6aOutputPoints<F> {
         match self {

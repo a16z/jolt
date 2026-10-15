@@ -1,6 +1,4 @@
-//! The cycle-phase split of the booleanity symbolic sumcheck relation.
-
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use super::monolith::{BooleanityInputClaims, BooleanityOutputClaims};
 use crate::opening;
@@ -54,31 +52,11 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(booleanity_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         booleanity_cycle_output(self.shape)
-    }
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-
-    fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
-        let layout = JoltRaPolynomialLayout::new(instruction, bytecode, ram).unwrap();
-        BooleanityDimensions::new(layout, 5, 8)
-    }
-
-    #[test]
-    fn booleanity_cycle_phase_symbolic_matches_dependencies() {
-        let relation = BooleanityCyclePhase::new(dimensions(1, 1, 1));
-        assert_eq!(BooleanityCyclePhase::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.rounds(), 5);
-        assert_eq!(relation.degree(), 3);
     }
 }

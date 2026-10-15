@@ -1,0 +1,314 @@
+use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
+use akita_error::AkitaError;
+use akita_pcs::custom_source::CommitInnerPlan;
+use akita_types::{AkitaExpandedSetup, RingVec};
+use jolt_field::{Fp128x8i32, Zero};
+use rayon::prelude::*;
+
+use super::digit_windows::{flush_digit_accumulators, DigitWindows};
+use super::source::TraceOneHotColumn;
+use super::traversal::{
+    flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
+    validate_block_geometry, visit_segment_ring_range, visit_segment_ring_row_range,
+    DeferredFp128Ring,
+};
+use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
+use crate::AkitaField;
+
+pub(super) fn commit_columns<const D: usize>(
+    expanded: &AkitaExpandedSetup<AkitaField>,
+    source: &TraceOneHotColumn,
+    plan: CommitInnerPlan,
+) -> Result<Vec<RingVec<AkitaField>>, AkitaError> {
+    let _span = tracing::info_span!(
+        "TraceOneHotColumn::commit_inner",
+        ring_dimension = D,
+        one_hot_k = source.one_hot_k,
+        rows = source.rows.num_rows(),
+        columns = source.rows.num_columns(),
+        n_a = plan.n_a,
+        positions_per_block = plan.num_positions_per_block,
+        inner_digits = plan.num_digits_inner,
+    )
+    .entered();
+    let _prepare_span = tracing::info_span!("trace_onehot_commit_prepare").entered();
+    let segment_rings = source.segment_ring_elems::<D>()?;
+    let (_, num_blocks) = validate_block_geometry(
+        segment_rings,
+        source.num_columns,
+        plan.num_positions_per_block,
+    )?;
+    if plan.num_live_blocks != num_blocks / source.num_columns {
+        return Err(AkitaError::InvalidInput(
+            "trace commitment live-block extent disagrees with its columns".into(),
+        ));
+    }
+    let active_cols = plan
+        .num_positions_per_block
+        .checked_mul(plan.num_digits_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
+    let a_view = expanded
+        .shared_matrix()
+        .ring_view::<D>(plan.n_a, active_cols)?;
+    let a_rows = a_view.rows().collect::<Vec<_>>();
+    let max_per_ring = (D / source.one_hot_k).max(1);
+    drop(_prepare_span);
+
+    let coefficients = if segment_rings >= plan.num_positions_per_block {
+        let blocks_per_column = segment_rings / plan.num_positions_per_block;
+        debug_assert_eq!(
+            blocks_per_column * plan.num_positions_per_block,
+            segment_rings
+        );
+        let schedule = trace_block_task_schedule::<D>(
+            source.one_hot_k,
+            plan.num_positions_per_block,
+            blocks_per_column,
+        );
+        let num_columns = source.rows.num_columns();
+        let _accumulate_span = tracing::info_span!(
+            "trace_onehot_commit_accumulate",
+            num_blocks,
+            blocks_per_column,
+            task_parts = schedule.parts,
+            tasks = blocks_per_column * schedule.parts,
+            active_columns = num_columns,
+            rows_per_ring = D / source.one_hot_k,
+        )
+        .entered();
+        let partials = (0..blocks_per_column * schedule.parts)
+            .into_par_iter()
+            .map(|task| {
+                let trace_block = task / schedule.parts;
+                let part = task % schedule.parts;
+                let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
+                let block_ring_start = trace_block * plan.num_positions_per_block;
+                let (part_start, part_end) = schedule.part_range(part);
+                let ring_start = block_ring_start + part_start;
+                let ring_end = block_ring_start + part_end;
+                let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
+                    && source.one_hot_k == 256
+                    && plan.num_positions_per_block >= source.one_hot_k / D
+                    && num_columns <= u32::BITS as usize;
+                let mut wide = if rank_tiled_k256 || source.one_hot_k < D {
+                    Vec::new()
+                } else {
+                    vec![WideCyclotomicRing::zero(); num_columns * plan.n_a]
+                };
+                let mut budget = 0usize;
+                if source.one_hot_k < D {
+                    let rows_per_ring = D / source.one_hot_k;
+                    let mut windows = DigitWindows::<D>::new();
+                    let mut accumulators = vec![[Fp128x8i32([0; 8]); D]; num_columns * plan.n_a];
+                    let mut shifts = vec![0usize; rows_per_ring];
+                    visit_segment_ring_row_range::<D>(
+                        source,
+                        ring_start,
+                        ring_end,
+                        |ring, selected_rows, committed_zero_masks| {
+                            let position = ring - block_ring_start;
+                            let a_col = position * plan.num_digits_inner;
+                            for (a, a_row) in a_rows.iter().enumerate() {
+                                windows.load(&a_row[a_col]);
+                                for column in 0..num_columns {
+                                    let mut len = 0;
+                                    for (row_offset, (row_indices, &committed_zero_mask)) in
+                                        selected_rows
+                                            .chunks_exact(num_columns)
+                                            .zip(committed_zero_masks)
+                                            .enumerate()
+                                    {
+                                        let hot = row_indices[column];
+                                        shifts[len] =
+                                            row_offset * source.one_hot_k + usize::from(hot);
+                                        len += usize::from(row_is_committed(
+                                            hot,
+                                            committed_zero_mask,
+                                            column,
+                                        ));
+                                    }
+                                    windows.accumulate(
+                                        &mut accumulators[column * plan.n_a + a],
+                                        &shifts[..len],
+                                    );
+                                }
+                            }
+                            budget += rows_per_ring;
+                            if budget >= MAX_WIDE_ACCUMULATIONS {
+                                flush_digit_accumulators(&mut accumulators, &mut reduced);
+                                budget = 0;
+                            }
+                        },
+                    )?;
+                    flush_digit_accumulators(&mut accumulators, &mut reduced);
+                    budget = 0;
+                } else if rank_tiled_k256 {
+                    // Stream one A rank at a time so its destination accumulators fit in cache.
+                    let rings_per_row = source.one_hot_k / D;
+                    debug_assert!(matches!(rings_per_row, 1 | 2 | 4));
+                    debug_assert_eq!(ring_start % rings_per_row, 0);
+                    debug_assert_eq!(ring_end % rings_per_row, 0);
+                    let row_start = ring_start / rings_per_row;
+                    let row_end = ring_end / rings_per_row;
+                    let mut selected_rows = vec![NO_SELECTED_ROW; num_columns];
+                    let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
+                    let mut ring_masks = vec![[0u32; 4]; K256_ROW_BATCH];
+                    let mut rank_deferred = vec![DeferredFp128Ring::zero(); num_columns];
+                    for tile_start in (row_start..row_end).step_by(K256_ROW_BATCH) {
+                        let tile_len = (row_end - tile_start).min(K256_ROW_BATCH);
+                        for row_offset in 0..tile_len {
+                            let row = tile_start + row_offset;
+                            source.rows.fill_row(row, &mut selected_rows);
+                            let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
+                            let masks = &mut ring_masks[row_offset];
+                            *masks = [0; 4];
+                            for (column, &hot) in selected_rows.iter().enumerate() {
+                                if !row_is_committed(hot, committed_zero_mask, column) {
+                                    continue;
+                                }
+                                if usize::from(hot) >= source.one_hot_k {
+                                    return Err(AkitaError::InvalidInput(format!(
+                                        "trace one-hot row {hot} is outside K={}",
+                                        source.one_hot_k
+                                    )));
+                                }
+                                hot_values[row_offset * num_columns + column] = hot;
+                                masks[usize::from(hot) / D] |= 1 << column;
+                            }
+                        }
+                        for (a, a_row) in a_rows.iter().enumerate() {
+                            for row_offset in 0..tile_len {
+                                let trace_row = tile_start + row_offset;
+                                for (ring_offset, &mask) in
+                                    ring_masks[row_offset][..rings_per_row].iter().enumerate()
+                                {
+                                    if mask == 0 {
+                                        continue;
+                                    }
+                                    let ring = trace_row * rings_per_row + ring_offset;
+                                    let position = ring - block_ring_start;
+                                    let a_col = position * plan.num_digits_inner;
+                                    let mut remaining = mask;
+                                    while remaining != 0 {
+                                        let column = remaining.trailing_zeros() as usize;
+                                        remaining &= remaining - 1;
+                                        let hot =
+                                            hot_values[row_offset * num_columns + column] as usize;
+                                        rank_deferred[column]
+                                            .shift_accumulate(&a_row[a_col], hot % D);
+                                    }
+                                }
+                            }
+                            flush_deferred_rank(&mut rank_deferred, &mut reduced, plan.n_a, a);
+                        }
+                    }
+                } else {
+                    visit_segment_ring_range::<D>(
+                        source,
+                        ring_start,
+                        ring_end,
+                        |ring, contributions| {
+                            if contributions.is_empty() {
+                                return;
+                            }
+                            let position = ring - block_ring_start;
+                            let a_col = position * plan.num_digits_inner;
+                            for (a, a_row) in a_rows.iter().enumerate() {
+                                let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
+                                for &(column, coefficient) in contributions {
+                                    a_wide.shift_accumulate_into(
+                                        &mut wide[column * plan.n_a + a],
+                                        coefficient,
+                                    );
+                                }
+                            }
+                            budget += max_per_ring;
+                            if budget >= MAX_WIDE_ACCUMULATIONS {
+                                flush_wide(&mut wide, &mut reduced);
+                                budget = 0;
+                            }
+                        },
+                    )?;
+                }
+                if budget != 0 {
+                    flush_wide(&mut wide, &mut reduced);
+                }
+                Ok::<_, AkitaError>(reduced)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(_accumulate_span);
+        let _merge_span = tracing::info_span!(
+            "trace_onehot_commit_merge_partials",
+            num_blocks,
+            blocks_per_column,
+            task_parts = schedule.parts,
+            active_columns = num_columns,
+            n_a = plan.n_a,
+        )
+        .entered();
+        let block_width = plan.n_a * D;
+        let mut coefficients =
+            vec![vec![AkitaField::zero(); blocks_per_column * block_width]; num_columns];
+        for (task, block_rows) in partials.into_iter().enumerate() {
+            let trace_block = task / schedule.parts;
+            let part = task % schedule.parts;
+            for (column, coefficients) in coefficients.iter_mut().enumerate() {
+                let start = trace_block * block_width;
+                let dst = &mut coefficients[start..start + block_width];
+                let src = block_rows[column * plan.n_a..(column + 1) * plan.n_a]
+                    .iter()
+                    .flat_map(|ring| ring.coefficients());
+                for (dst, src) in dst.iter_mut().zip(src) {
+                    if part == 0 {
+                        *dst = *src;
+                    } else {
+                        *dst += *src;
+                    }
+                }
+            }
+        }
+        coefficients
+    } else {
+        let _accumulate_span = tracing::info_span!(
+            "trace_onehot_commit_accumulate_flat",
+            num_blocks,
+            segment_rings,
+            n_a = plan.n_a,
+        )
+        .entered();
+        let mut wide = vec![WideCyclotomicRing::zero(); num_blocks * plan.n_a];
+        let mut reduced = vec![CyclotomicRing::zero(); num_blocks * plan.n_a];
+        let mut budget = 0usize;
+        visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
+            for &(column, coefficient) in contributions {
+                let block = column;
+                let position = ring;
+                let a_col = position * plan.num_digits_inner;
+                for (a, a_row) in a_rows.iter().enumerate() {
+                    let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
+                    a_wide.shift_accumulate_into(&mut wide[block * plan.n_a + a], coefficient);
+                }
+            }
+            budget += contributions.len();
+            if budget >= MAX_WIDE_ACCUMULATIONS {
+                flush_wide(&mut wide, &mut reduced);
+                budget = 0;
+            }
+        })?;
+        if budget != 0 {
+            flush_wide(&mut wide, &mut reduced);
+        }
+        let mut coefficients = (0..source.num_columns)
+            .map(|_| Vec::with_capacity(plan.n_a * D))
+            .collect::<Vec<_>>();
+        for (index, ring) in reduced.into_iter().enumerate() {
+            coefficients[index / plan.n_a].extend_from_slice(ring.coefficients());
+        }
+        coefficients
+    };
+
+    coefficients
+        .into_iter()
+        .map(|coefficients| RingVec::from_coeffs_with_ring_dim(coefficients, D))
+        .collect()
+}

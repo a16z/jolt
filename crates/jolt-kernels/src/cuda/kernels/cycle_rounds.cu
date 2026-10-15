@@ -10,9 +10,9 @@ extern "C" __global__ void cr_quotient_kernel(
     unsigned int y = blockIdx.x * blockDim.x + tid;
     (void)out_len;
 
-    u64 acc[CR_MAX_FACTORS][LIMBS];
+    u64 acc[CR_MAX_FACTORS + 1][LIMBS];
 #pragma unroll
-    for (int lane = 0; lane < CR_MAX_FACTORS; lane++) {
+    for (int lane = 0; lane <= CR_MAX_FACTORS; lane++) {
         load4(FR_ONE, acc[lane]);
     }
 
@@ -38,10 +38,12 @@ extern "C" __global__ void cr_quotient_kernel(
             store4(cur, hi);
 
 #pragma unroll
-            for (int lane = 0; lane < CR_MAX_FACTORS; lane++) {
-                if ((unsigned int)lane >= factor_count) continue;
+            for (int lane = 0; lane <= CR_MAX_FACTORS; lane++) {
+                if ((unsigned int)lane > factor_count) continue;
                 u64 m[LIMBS], product[LIMBS];
-                if ((unsigned int)lane + 1u == factor_count) {
+                if ((unsigned int)lane == factor_count) {
+                    store4(m, lo);
+                } else if ((unsigned int)lane + 1u == factor_count) {
                     store4(m, diff);
                 } else {
                     store4(m, cur);
@@ -56,8 +58,8 @@ extern "C" __global__ void cr_quotient_kernel(
     }
 
 #pragma unroll
-    for (int lane = 0; lane < CR_MAX_FACTORS; lane++) {
-        if ((unsigned int)lane >= factor_count) continue;
+    for (int lane = 0; lane <= CR_MAX_FACTORS; lane++) {
+        if ((unsigned int)lane > factor_count) continue;
         u64 value[LIMBS] = {0, 0, 0, 0};
         if (y < half) {
 #pragma unroll

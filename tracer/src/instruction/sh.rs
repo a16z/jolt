@@ -1,9 +1,10 @@
+use crate::instruction::registers::s::RegisterStateS;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::Instruction;
-use super::RAMWrite;
+use super::RamWrite;
 
 use super::{format::format_s::FormatS, Cycle, RISCVInstruction, RISCVTrace};
 
@@ -12,11 +13,12 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00001023,
     format = FormatS,
-    ram    = RAMWrite
+    registers = RegisterStateS,
+    ram    = RamWrite
 );
 
 impl SH {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SH as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SH as RISCVInstruction>::RamAccess) {
         *ram_access = cpu
             .mmu
             .store_halfword(

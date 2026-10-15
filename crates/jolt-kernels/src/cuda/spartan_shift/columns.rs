@@ -1,7 +1,8 @@
+use crate::cuda::common::error::CudaError;
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_riscv::{CircuitFlags, InstructionFlags as InstructionFlagKind};
 use jolt_witness::backend::cuda::{circuit_flag_bit, instruction_flag_bit, DeviceTrace};
 
@@ -53,7 +54,7 @@ impl NarrowColumns for ShiftColumns {
     }
 }
 
-pub fn pack_from_device<F: Field>(
+pub fn pack_from_device<F: JoltField>(
     context: &CudaKernelContext,
     trace: Arc<DeviceTrace>,
     pc_words: &CudaSlice<u32>,
@@ -107,11 +108,8 @@ pub fn pack_from_device<F: Field>(
     // destination bits `FLAG_BASE ..= FLAG_BASE + 2` are below 64, so every
     // shift stays in range. Threads with `t >= cycles` return before any access.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }
-        .map_err(crate::cuda::common::error::CudaError::from)?;
-    context
-        .stream()
-        .synchronize()
-        .map_err(crate::cuda::common::error::CudaError::from)?;
+        .map_err(CudaError::from)?;
+    context.stream().synchronize().map_err(CudaError::from)?;
 
     let unmapped = context.download_u64(&unmapped)?;
     if unmapped.first().is_some_and(|&cycle| cycle != u64::MAX) {

@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 
@@ -6,7 +6,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum AndPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for AndPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for AndPrefix {
     fn default_checkpoint() -> F {
         F::zero()
     }

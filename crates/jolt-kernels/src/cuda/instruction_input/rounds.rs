@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, UnivariatePoly};
 
 use super::columns::ShardedInstructionColumns;
@@ -29,7 +29,7 @@ pub enum RoundBasis {
     Gruen,
 }
 
-pub enum Basis<F: Field> {
+pub enum Basis<F: JoltField> {
     EvalPoints {
         eq: DeviceFrVec,
         form: DeviceSumOfProducts,
@@ -40,7 +40,7 @@ pub enum Basis<F: Field> {
     },
 }
 
-impl<F: Field> Basis<F> {
+impl<F: JoltField> Basis<F> {
     pub fn new(
         context: &CudaKernelContext,
         basis: RoundBasis,
@@ -98,8 +98,8 @@ impl<F: Field> Basis<F> {
                 UnivariatePoly::from_evals_toom(&toom).into_coefficients()
             }
             Self::Gruen { eq, form } => {
-                let (constant, leading) = columns.round_endpoints(form, eq)?;
-                eq.gruen_poly_deg_3(constant, leading, previous_claim)
+                let (constant, leading, at_one) = columns.round_endpoints(form, eq)?;
+                eq.gruen_poly_deg_3(constant, leading, previous_claim, at_one)?
                     .into_coefficients()
             }
         };
@@ -108,14 +108,14 @@ impl<F: Field> Basis<F> {
     }
 }
 
-pub(crate) fn gruen_form<F: Field>(
+pub(crate) fn gruen_form<F: JoltField>(
     context: &CudaKernelContext,
     gamma: F,
 ) -> Result<DeviceSumOfProducts, CudaError> {
     leaves(gamma, false)?.upload(context)
 }
 
-fn leaves<F: Field>(gamma: F, with_eq: bool) -> Result<SumOfProducts<F>, CudaError> {
+fn leaves<F: JoltField>(gamma: F, with_eq: bool) -> Result<SumOfProducts<F>, CudaError> {
     let mut form = SumOfProducts::new();
     let one = F::one();
     for (coefficient, flag, value) in [
@@ -139,7 +139,7 @@ fn leaves<F: Field>(gamma: F, with_eq: bool) -> Result<SumOfProducts<F>, CudaErr
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::BindingOrder;
 
     use super::super::columns::{ColumnShard, DeviceInstructionColumns, ShardedInstructionColumns};
@@ -205,7 +205,7 @@ mod tests {
                 .expect("tail split-eq");
 
             for round in 0..LOG_T {
-                let want: (Fr, Fr) = form
+                let want: (Fr, Fr, Fr) = form
                     .round_gruen_endpoints(
                         context,
                         &expected.columns().expect("whole columns"),
@@ -213,7 +213,7 @@ mod tests {
                         &expected_eq,
                     )
                     .expect("whole endpoints");
-                let have: (Fr, Fr) = got
+                let have: (Fr, Fr, Fr) = got
                     .round_endpoints(&form, &got_eq)
                     .expect("sharded endpoints");
                 assert_eq!(

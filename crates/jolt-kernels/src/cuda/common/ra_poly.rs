@@ -1,14 +1,11 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: the stage-5 relations wire this once their kernels land"
-)]
-
+#[cfg(test)]
+use super::device::require_fr_slice;
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::BindingOrder;
 
 use super::context::CudaKernelContext;
-use super::device::{fr_limbs, require_fr, require_fr_slice, DeviceFrVec};
+use super::device::{fr_limbs, require_fr, DeviceFrVec};
 use super::error::CudaError;
 
 pub const COLLAPSE_AFTER_ROUNDS: usize = 3;
@@ -32,7 +29,8 @@ fn reverse_bits(value: usize, bits: usize) -> usize {
 }
 
 impl DeviceRaPolynomial {
-    pub fn new<F: Field>(
+    #[cfg(test)]
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         hot_indices: &[Option<usize>],
         eq_address: &[F],
@@ -67,7 +65,8 @@ impl DeviceRaPolynomial {
         Self::from_words(context, &raw, eq_address, order)
     }
 
-    pub fn from_words<F: Field>(
+    #[cfg(test)]
+    pub fn from_words<F: JoltField>(
         context: &CudaKernelContext,
         words: &[u32],
         eq_address: &[F],
@@ -106,6 +105,7 @@ impl DeviceRaPolynomial {
         })
     }
 
+    #[cfg(test)]
     pub fn from_device_tables(
         context: &CudaKernelContext,
         words: &[u32],
@@ -134,18 +134,11 @@ impl DeviceRaPolynomial {
         self.cycles >> self.rounds_bound
     }
 
-    pub const fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     pub const fn order(&self) -> BindingOrder {
         self.order
     }
 
-    pub const fn rounds_bound(&self) -> usize {
-        self.rounds_bound
-    }
-
+    #[cfg(test)]
     pub const fn is_collapsed(&self) -> bool {
         self.dense.is_some()
     }
@@ -211,7 +204,7 @@ impl DeviceRaPolynomial {
         Ok(output)
     }
 
-    fn split_tables<F: Field>(
+    fn split_tables<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -242,7 +235,7 @@ impl DeviceRaPolynomial {
         Ok(())
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -289,7 +282,7 @@ impl DeviceRaPolynomial {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 

@@ -20,16 +20,16 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId, RegistersClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
-use jolt_poly::try_eq_mle;
+use jolt_field::JoltField;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1BatchOutputClaims;
 use crate::VerifierError;
 
 /// Wire the consumed opening *values* from stage 1's outer sumcheck register
 /// values. Takes the ZK-agnostic stage-1 output-claims aggregate.
-pub fn registers_claim_reduction_input_values_from_upstream<F: Field>(
+pub fn registers_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
 ) -> RegistersClaimReductionInputClaims<F> {
     let outer = &stage1.outer_remainder;
@@ -41,12 +41,12 @@ pub fn registers_claim_reduction_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RegistersClaimReduction<F: Field> {
+pub struct RegistersClaimReduction<F: JoltField> {
     symbolic: relations::claim_reductions::registers::ClaimReduction,
     product_uniskip_tau_low: Vec<F>,
 }
 
-impl<F: Field> RegistersClaimReduction<F> {
+impl<F: JoltField> RegistersClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, product_uniskip_tau_low: Vec<F>) -> Self {
         Self {
             symbolic: relations::claim_reductions::registers::ClaimReduction::new(trace_dimensions),
@@ -59,7 +59,7 @@ impl<F: Field> RegistersClaimReduction<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
     type Symbolic = relations::claim_reductions::registers::ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -84,7 +84,7 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &RegistersClaimReductionInputClaims<Vec<F>>,
     ) -> Result<RegistersClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        let opening_point = derivations::reversed(sumcheck_point);
         Ok(RegistersClaimReductionOutputClaims {
             rd_write_value: opening_point.clone(),
             rs1_value: opening_point.clone(),
@@ -100,17 +100,17 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
         _challenges: &RegistersClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RegistersClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // Every reduction output shares the one opening point.
-            RegistersClaimReductionPublic::EqSpartan => try_eq_mle(
+            RegistersClaimReductionPublic::EqSpartan => derivations::eq_at_point(
                 output_points.rd_write_value(),
                 &self.product_uniskip_tau_low,
             )
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            .map_err(|reason| VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RegistersClaimReduction,
-                reason: error.to_string(),
+                reason,
             }),
         }
     }

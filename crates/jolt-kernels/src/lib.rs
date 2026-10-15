@@ -3,6 +3,9 @@
 //! protocol structure. `jolt-prover` holds orchestration only — every
 //! field-element crunch lives here, behind a slot of the [`JoltBackend`]
 //! registry it proves against.
+//! Bind execution data once with [`JoltBackend::with_witness`]. The coordinator
+//! uses [`KernelContext`] and the backend's commitment/opening methods without
+//! a witness argument; the backend supplies its private view to concrete kernels.
 //!
 //! Kernel APIs consume witness oracles, field elements, and PCS setups —
 //! never a transcript, never Fiat-Shamir — and return canonical values.
@@ -19,7 +22,7 @@
 //! precommitted reduction family in [`precommitted_reduction`] is the
 //! carrier). Only the bespoke slots keep hand-shaped trait modules at the
 //! crate root: the uni-skip fronts ([`uniskip`]), commitment streaming, and
-//! the joint opening. Reference implementations live under [`reference`].
+//! the joint opening. Reference implementations live under [`mod@reference`].
 //! The [`NaiveSumcheckProver`] is the reference tier: it
 //! interprets a relation's output `Expr` with polynomial-valued leaves,
 //! making any relation whose leaves are multilinear provable at harness
@@ -31,24 +34,41 @@
 //! sumcheck round model entirely). See `specs/clean-slate-prover.md`,
 //! "The backend seam".
 //!
-//! The commitment kernel streams PCS commitments of the committed witness
-//! polynomials over the proof's shared embedding grid.
+//! The commitment slot follows the compiled protocol: streamed per-polynomial
+//! commitments for Dory, or one packed witness commitment for Akita.
 
+#[cfg(feature = "akita")]
+pub mod akita;
 mod backend;
 mod commitment;
 pub mod committed_program;
-#[cfg(feature = "cuda")]
+#[cfg(all(feature = "cuda", not(feature = "akita")))]
 pub mod cuda;
 mod error;
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 mod kernel;
+pub mod mem;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;
 pub mod reference;
+#[cfg(any(not(feature = "akita"), feature = "field-inline"))]
+mod trace_column;
 pub mod uniskip;
 
-pub use backend::{BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession};
-pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment};
+#[cfg(feature = "akita")]
+pub use akita::commitment::{CommitWitness, WitnessCommitRequest, WitnessCommitment};
+pub use backend::{
+    BuildRoundScheduler, JoltBackend, KernelContext, MaybeAllocative, PrepareKernel, ProofSession,
+};
+#[cfg(not(feature = "akita"))]
+pub use commitment::finish_streamed;
+pub use commitment::CommitmentGrid;
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+pub use commitment::FieldInlineWitnessCommitment;
+#[cfg(not(feature = "akita"))]
+pub use commitment::{CommitWitness, ModeStreamingCommitment, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;
 pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};

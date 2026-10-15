@@ -1,4 +1,4 @@
-use jolt_witness::witnesses::{LookupIndex, MappedPc, RemappedRamAddress};
+use jolt_witness::witnesses::{LookupIndex, Pc, RemappedRamAddress};
 use jolt_witness::WitnessBundle;
 
 #[cfg(test)]
@@ -10,7 +10,7 @@ use rayon::prelude::*;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
 pub struct OneHotCycleWitness {
     pub lookup: LookupIndex,
-    pub pc: MappedPc,
+    pub pc: Pc,
     pub ram: RemappedRamAddress,
 }
 
@@ -66,12 +66,9 @@ fn fill(
         lookup[2 * index] = index128 as u64;
         lookup[2 * index + 1] = (index128 >> 64) as u64;
 
-        match row.pc.0 {
-            None => pc[index] = COLD,
-            Some(slot) => match u32::try_from(slot) {
-                Ok(packed) if packed != COLD => pc[index] = packed,
-                _ => reject(slot as u128),
-            },
+        match u32::try_from(row.pc.0) {
+            Ok(slot) if slot != COLD => pc[index] = slot,
+            _ => reject(u128::from(row.pc.0)),
         }
 
         match row.ram.0 {

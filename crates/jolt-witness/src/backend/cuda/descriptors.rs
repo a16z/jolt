@@ -292,29 +292,11 @@ pub(crate) fn descriptor(kind: JoltInstructionKind) -> Option<KindDescriptor> {
             output: 48,
             index: 1,
         },
-        JoltInstruction::VirtualAdviceLen(_) => KindDescriptor {
-            input: 3,
-            operand: 8,
-            output: 48,
-            index: 1,
-        },
         JoltInstruction::VirtualAdviceLoad(_) => KindDescriptor {
             input: 3,
             operand: 8,
             output: 48,
             index: 1,
-        },
-        JoltInstruction::VirtualChangeDivisor(_) => KindDescriptor {
-            input: 8,
-            operand: 1,
-            output: 6,
-            index: 0,
-        },
-        JoltInstruction::VirtualChangeDivisorW(_) => KindDescriptor {
-            input: 2,
-            operand: 1,
-            output: 5,
-            index: 0,
         },
         JoltInstruction::VirtualHostIO(_) => KindDescriptor {
             input: 3,
@@ -447,6 +429,142 @@ pub(crate) fn descriptor(kind: JoltInstructionKind) -> Option<KindDescriptor> {
             operand: 1,
             output: 42,
             index: 0,
+        },
+        JoltInstruction::VirtualNegateIf(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 53,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW22(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 54,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW19(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 55,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW6(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 56,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotL1(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 57,
+            index: 0,
+        },
+        JoltInstruction::VirtualShiftRightBitmaskW(_) => KindDescriptor {
+            input: 4,
+            operand: 6,
+            output: 58,
+            index: 1,
+        },
+        JoltInstruction::VirtualSrlw(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 59,
+            index: 0,
+        },
+        JoltInstruction::VirtualSrliw(_) => KindDescriptor {
+            input: 1,
+            operand: 1,
+            output: 59,
+            index: 0,
+        },
+        JoltInstruction::VirtualSraw(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 60,
+            index: 0,
+        },
+        JoltInstruction::VirtualSraiw(_) => KindDescriptor {
+            input: 1,
+            operand: 1,
+            output: 60,
+            index: 0,
+        },
+        JoltInstruction::Pext(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 61,
+            index: 0,
+        },
+        JoltInstruction::PextSigned(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 62,
+            index: 0,
+        },
+        JoltInstruction::WindowMaskB(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 63,
+            index: 1,
+        },
+        JoltInstruction::WindowMaskH(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 64,
+            index: 1,
+        },
+        JoltInstruction::WindowMaskW(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 65,
+            index: 1,
+        },
+        JoltInstruction::AlignAddr(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 66,
+            index: 1,
+        },
+        JoltInstruction::ShiftDataB(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 67,
+            index: 0,
+        },
+        JoltInstruction::ShiftDataH(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 68,
+            index: 0,
+        },
+        JoltInstruction::ShiftDataW(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 69,
+            index: 0,
+        },
+        #[cfg(feature = "field-inline")]
+        JoltInstruction::FieldAdd(_)
+        | JoltInstruction::FieldSub(_)
+        | JoltInstruction::FieldMul(_)
+        | JoltInstruction::FieldInv(_)
+        | JoltInstruction::FieldAssertEq(_)
+        | JoltInstruction::FieldAssertZero(_)
+        | JoltInstruction::FieldLoadImm(_)
+        | JoltInstruction::FieldLoadAccumulateFromRegister(_)
+        | JoltInstruction::FieldLoadAccumulateFromMemory(_) => KindDescriptor {
+            input: 3,
+            operand: 1,
+            output: 0,
+            index: 0,
+        },
+        #[cfg(feature = "field-inline")]
+        JoltInstruction::FieldAdviceLimb(_) => KindDescriptor {
+            input: 3,
+            operand: 8,
+            output: 48,
+            index: 1,
         },
     })
 }

@@ -1,7 +1,12 @@
+use ark_bn254::Fr as ArkFr;
+use jolt_field::JoltField;
+use std::any::TypeId;
+use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
+use ark_ff::BigInt;
 use cudarc::driver::{CudaSlice, CudaStream};
-use jolt_field::{Fr, Limbs};
+use jolt_field::Fr;
 
 use super::error::CudaError;
 use super::xfer_stats::{self, Phase};
@@ -10,7 +15,7 @@ pub const LIMBS: usize = 4;
 
 #[inline]
 fn fr_to_limbs(value: Fr) -> [u64; LIMBS] {
-    value.inner_limbs().0
+    value.inner_limbs()
 }
 
 #[inline]
@@ -20,7 +25,7 @@ pub(crate) fn fr_limbs(value: Fr) -> [u64; LIMBS] {
 
 #[inline]
 fn limbs_to_fr(limbs: [u64; LIMBS]) -> Fr {
-    Fr::from_bigint_unchecked(Limbs(limbs))
+    Fr::from(ArkFr::new_unchecked(BigInt(limbs)))
 }
 
 pub struct DeviceFrVec {
@@ -141,13 +146,13 @@ pub(crate) fn fill_staging(staging: &mut [u64], values: &[Fr]) {
     }
 }
 
-pub(crate) fn require_fr_slice<F: jolt_field::Field>(values: &[F]) -> Result<&[Fr], CudaError> {
+pub(crate) fn require_fr_slice<F: JoltField>(values: &[F]) -> Result<&[Fr], CudaError> {
     as_fr_slice(values).ok_or(CudaError::NotImplemented {
         kernel: "CUDA kernels support only the BN254 scalar field",
     })
 }
 
-pub(crate) fn require_fr<F: jolt_field::Field>(value: F) -> Result<Fr, CudaError> {
+pub(crate) fn require_fr<F: JoltField>(value: F) -> Result<Fr, CudaError> {
     require_fr_slice(std::slice::from_ref(&value))?
         .first()
         .copied()
@@ -157,8 +162,8 @@ pub(crate) fn require_fr<F: jolt_field::Field>(value: F) -> Result<Fr, CudaError
         })
 }
 
-pub fn as_fr_slice<F: jolt_field::Field>(values: &[F]) -> Option<&[Fr]> {
-    if std::any::TypeId::of::<F>() != std::any::TypeId::of::<Fr>() {
+pub fn as_fr_slice<F: JoltField>(values: &[F]) -> Option<&[Fr]> {
+    if TypeId::of::<F>() != TypeId::of::<Fr>() {
         return None;
     }
     // SAFETY: the TypeId check above proves `F == Fr`, so the two slices have
@@ -166,11 +171,11 @@ pub fn as_fr_slice<F: jolt_field::Field>(values: &[F]) -> Option<&[Fr]> {
     Some(unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<Fr>(), values.len()) })
 }
 
-pub fn fr_vec_into<F: jolt_field::Field>(values: Vec<Fr>) -> Option<Vec<F>> {
-    if std::any::TypeId::of::<F>() != std::any::TypeId::of::<Fr>() {
+pub fn fr_vec_into<F: JoltField>(values: Vec<Fr>) -> Option<Vec<F>> {
+    if TypeId::of::<F>() != TypeId::of::<Fr>() {
         return None;
     }
-    let mut values = std::mem::ManuallyDrop::new(values);
+    let mut values = ManuallyDrop::new(values);
     // SAFETY: the TypeId check proves `F == Fr` — identical size and align —
     // so the allocation is valid to reconstitute as `Vec<F>` with the same
     // length and capacity. The original vector is not dropped.
@@ -183,8 +188,8 @@ pub fn fr_vec_into<F: jolt_field::Field>(values: Vec<Fr>) -> Option<Vec<F>> {
     })
 }
 
-pub fn fr_into<F: jolt_field::Field>(value: Fr) -> Option<F> {
-    if std::any::TypeId::of::<F>() != std::any::TypeId::of::<Fr>() {
+pub fn fr_into<F: JoltField>(value: Fr) -> Option<F> {
+    if TypeId::of::<F>() != TypeId::of::<Fr>() {
         return None;
     }
     // SAFETY: the TypeId check proves `F == Fr`, so this reads an `Fr` as the

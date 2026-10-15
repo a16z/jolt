@@ -73,7 +73,6 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
 
     fn fixed_scalar_mul_bases_then_add(bases: &[ArkG1], vs: &mut [ArkG1], scalar: &ArkFr) {
         assert_eq!(bases.len(), vs.len(), "lengths must match");
-        // v[i] = v[i] + scalar * bases[i]
         jolt_optimizations::vector_add_scalar_mul_g1_online(
             g1_slice_mut(vs),
             g1_slice(bases),
@@ -83,7 +82,6 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
 
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG1], addends: &[ArkG1], scalar: &ArkFr) {
         assert_eq!(vs.len(), addends.len(), "lengths must match");
-        // v[i] = scalar * v[i] + addends[i]
         jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
             g1_slice_mut(vs),
             scalar.0,
@@ -123,7 +121,6 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
 
     fn fixed_scalar_mul_bases_then_add(bases: &[ArkG2], vs: &mut [ArkG2], scalar: &ArkFr) {
         assert_eq!(bases.len(), vs.len(), "lengths must match");
-        // v[i] = v[i] + scalar * bases[i]
         jolt_optimizations::vector_add_scalar_mul_g2_online(
             g2_slice_mut(vs),
             g2_slice(bases),
@@ -133,7 +130,6 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
 
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG2], addends: &[ArkG2], scalar: &ArkFr) {
         assert_eq!(vs.len(), addends.len(), "lengths must match");
-        // v[i] = scalar * v[i] + addends[i]
         jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
             g2_slice_mut(vs),
             scalar.0,

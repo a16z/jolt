@@ -1,5 +1,6 @@
+use cudarc::driver::CudaSlice;
 use cudarc::driver::{LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
@@ -8,7 +9,7 @@ use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
-const LANES: usize = 2;
+const LANES: usize = 3;
 
 pub struct DeviceHammingWeight {
     weights: DeviceFrVec,
@@ -27,7 +28,7 @@ impl DeviceHammingWeight {
 
     pub fn from_device(
         context: &CudaKernelContext,
-        weights: &cudarc::driver::CudaSlice<u64>,
+        weights: &CudaSlice<u64>,
         cycles: usize,
     ) -> Result<Self, CudaError> {
         Self::require_power_of_two(cycles)?;
@@ -65,7 +66,7 @@ impl DeviceHammingWeight {
         })
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -81,7 +82,7 @@ impl DeviceHammingWeight {
         Ok(())
     }
 
-    pub fn final_claim<F: Field>(&self) -> Result<F, CudaError> {
+    pub fn final_claim<F: JoltField>(&self) -> Result<F, CudaError> {
         if self.weights.len() != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
@@ -93,11 +94,11 @@ impl DeviceHammingWeight {
         })
     }
 
-    pub fn round_coefficients<F: Field>(
+    pub fn round_coefficients<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         eq: &DeviceSplitEq<F>,
-    ) -> Result<(F, F), CudaError> {
+    ) -> Result<(F, F, F), CudaError> {
         let half = self.weights.len() / 2;
         if half == 0 {
             return Err(CudaError::LengthMismatch {
@@ -161,24 +162,28 @@ impl DeviceHammingWeight {
         };
         let constant = fr_into(host[0]).ok_or_else(unsupported)?;
         let quadratic = fr_into(host[1]).ok_or_else(unsupported)?;
-        Ok((constant, quadratic))
+        Ok((
+            constant,
+            quadratic,
+            fr_into(host[2]).ok_or_else(unsupported)?,
+        ))
     }
 }
 
-pub(crate) struct HammingShard<F: Field> {
+pub(crate) struct HammingShard<F: JoltField> {
     pub(crate) ordinal: usize,
     pub(crate) weights: DeviceHammingWeight,
     pub(crate) eq: DeviceSplitEq<F>,
 }
 
-pub(crate) struct ShardedHammingWeight<F: Field> {
+pub(crate) struct ShardedHammingWeight<F: JoltField> {
     shards: Vec<HammingShard<F>>,
     collapsed: Option<DeviceHammingWeight>,
     local_rounds: usize,
     tail_rounds: usize,
 }
 
-impl<F: Field> ShardedHammingWeight<F> {
+impl<F: JoltField> ShardedHammingWeight<F> {
     pub(crate) fn new(shards: Vec<HammingShard<F>>, log_t: usize) -> Result<Self, CudaError> {
         let count = shards.len();
         if count == 0 || !count.is_power_of_two() {
@@ -217,26 +222,27 @@ impl<F: Field> ShardedHammingWeight<F> {
     pub(crate) fn round_coefficients(
         &self,
         whole_eq: &DeviceSplitEq<F>,
-    ) -> Result<(F, F), CudaError> {
+    ) -> Result<(F, F, F), CudaError> {
         if let Some(collapsed) = &self.collapsed {
             let context = context_for(0).ok_or(absent())?;
             return collapsed.round_coefficients(context, whole_eq);
         }
-        let tasks: Vec<DeviceTask<'_, (F, F), CudaError>> = self
+        let tasks: Vec<DeviceTask<'_, (F, F, F), CudaError>> = self
             .shards
             .iter()
             .map(|shard| {
-                let task: DeviceTask<'_, (F, F), CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, (F, F, F), CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
                     shard.weights.round_coefficients(context, &shard.eq)
                 });
                 task
             })
             .collect();
-        let mut total = (F::zero(), F::zero());
+        let mut total = (F::zero(), F::zero(), F::zero());
         for part in fan_out(tasks)? {
             total.0 += part.0;
             total.1 += part.1;
+            total.2 += part.2;
         }
         Ok(total)
     }
@@ -305,7 +311,7 @@ const fn absent() -> CudaError {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial};
     use proptest::prelude::*;
 
@@ -325,12 +331,13 @@ mod tests {
             .collect()
     }
 
-    fn cpu_coefficients(eq: &GruenSplitEqPolynomial<Fr>, weights: &Polynomial<Fr>) -> (Fr, Fr) {
+    fn cpu_coefficients(eq: &GruenSplitEqPolynomial<Fr>, weights: &Polynomial<Fr>) -> (Fr, Fr, Fr) {
         let e_in = eq.e_in_current();
         let e_out = eq.e_out_current();
         let bits = e_in.len().max(1).ilog2();
         let mut constant = Fr::from_u64(0);
         let mut quadratic = Fr::from_u64(0);
+        let mut at_one = Fr::from_u64(0);
         for g in 0..weights.len() / 2 {
             let weight = e_out[g >> bits]
                 * if e_in.len() <= 1 {
@@ -342,9 +349,10 @@ mod tests {
             let h1 = weights.evals()[2 * g + 1];
             let delta = h1 - h0;
             constant += weight * (h0 * h0 - h0);
+            at_one += weight * (h1 * h1 - h1);
             quadratic += weight * delta * delta;
         }
-        (constant, quadratic)
+        (constant, quadratic, at_one)
     }
 
     proptest! {
@@ -375,7 +383,7 @@ mod tests {
 
             for (round, &challenge) in challenges.iter().take(log_t).enumerate() {
                 let expected = cpu_coefficients(&expected_eq, &expected_weights);
-                let got: (Fr, Fr) = got_weights
+                let got: (Fr, Fr, Fr) = got_weights
                     .round_coefficients(context, &got_eq)
                     .expect("device round coefficients");
                 prop_assert_eq!(

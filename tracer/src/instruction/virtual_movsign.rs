@@ -1,3 +1,4 @@
+use crate::instruction::registers::i::RegisterStateI;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -12,11 +13,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatI,
+    registers = RegisterStateI,
     ram = ()
 );
 
 impl VirtualMovsign {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMovsign as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMovsign as RISCVInstruction>::RamAccess) {
         let val = cpu.x[self.operands.rs1 as usize] as u64;
         cpu.write_register(
             self.operands.rd as usize,

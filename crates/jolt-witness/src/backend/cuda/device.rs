@@ -1,16 +1,20 @@
+use super::packed::EXTRA_KIND_BITS;
+use core::fmt::Display;
+use cudarc::driver::DriverError;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions, Ptx};
-use jolt_program::execution::TraceRow;
-use jolt_program::preprocess::{bytecode::BytecodePCMapper, JoltProgramPreprocessing};
+use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::packed::{PackedTrace, EXTRA_WORDS as PACKED_EXTRA_WORDS};
 use super::tables::kind_tables;
 use super::{DeviceAtomColumns, DeviceTraceColumn, HotSource, NarrowColumn};
 use crate::witnesses::RaChunkSelector;
-use crate::{WitnessError, JOLT_VM_LABEL};
+use crate::{RowSource, WitnessError, JOLT_VM_LABEL};
 
 pub const COLD: u32 = u32::MAX;
 
@@ -72,7 +76,7 @@ fn load_extract_functions(stream: &CudaStream) -> Result<ExtractFunctions, Strin
     let function = |name: &str| {
         module
             .load_function(name)
-            .map_err(|error: cudarc::driver::DriverError| error.to_string())
+            .map_err(|error: DriverError| error.to_string())
     };
     Ok(ExtractFunctions {
         mapped_pc: function("mapped_pc_words_kernel")?,
@@ -93,7 +97,6 @@ pub struct DeviceTrace {
     functions: &'static ExtractFunctions,
     cycles: usize,
     rows: DeviceRows,
-    pc_map: DevicePcMap,
     kinds: DeviceKindTables,
     lowest_ram_address: u64,
 }
@@ -106,13 +109,6 @@ struct DeviceRows {
     extras: CudaSlice<u64>,
 }
 
-struct DevicePcMap {
-    buckets: u32,
-    bucket_offsets: CudaSlice<u32>,
-    sequences: CudaSlice<u32>,
-    values: CudaSlice<u64>,
-}
-
 struct DeviceKindTables {
     input: CudaSlice<u8>,
     operand: CudaSlice<u8>,
@@ -123,78 +119,11 @@ struct DeviceKindTables {
     count: u32,
 }
 
-struct PcMapCsr {
-    bucket_offsets: Vec<u32>,
-    sequences: Vec<u32>,
-    values: Vec<u64>,
-}
-
-fn device_error(reason: impl core::fmt::Display) -> WitnessError {
+fn device_error(reason: impl Display) -> WitnessError {
     WitnessError::InvalidWitnessData {
         label: JOLT_VM_LABEL,
         reason: reason.to_string(),
     }
-}
-
-fn pc_map_csr(preprocessing: &JoltProgramPreprocessing) -> Result<PcMapCsr, WitnessError> {
-    let bytecode = &preprocessing.bytecode;
-    let max_address = bytecode
-        .bytecode
-        .iter()
-        .map(|instruction| instruction.address)
-        .max()
-        .unwrap_or(0);
-    let buckets = if max_address == 0 {
-        1
-    } else {
-        BytecodePCMapper::get_index(max_address)
-            .checked_add(1)
-            .ok_or_else(|| device_error("bytecode bucket count overflows"))?
-    };
-
-    let mut per_bucket: Vec<Vec<(u32, u64)>> = vec![Vec::new(); buckets];
-    for instruction in &bytecode.bytecode {
-        if instruction.address == 0 {
-            continue;
-        }
-        let bucket = BytecodePCMapper::get_index(instruction.address);
-        let sequence = instruction.virtual_sequence_remaining.unwrap_or(0);
-        let pc = bytecode
-            .pc_map
-            .get_pc(instruction.address, sequence)
-            .ok_or_else(|| {
-                device_error(format!(
-                    "bytecode address {:#x} sequence {sequence} has no PC mapping",
-                    instruction.address
-                ))
-            })?;
-        per_bucket
-            .get_mut(bucket)
-            .ok_or_else(|| device_error(format!("bytecode bucket {bucket} exceeds {buckets}")))?
-            .push((u32::from(sequence), pc as u64));
-    }
-
-    let entries = per_bucket.iter().map(Vec::len).sum::<usize>();
-    let mut csr = PcMapCsr {
-        bucket_offsets: Vec::with_capacity(buckets + 1),
-        sequences: Vec::with_capacity(entries),
-        values: Vec::with_capacity(entries),
-    };
-    for bucket in &per_bucket {
-        csr.bucket_offsets.push(
-            u32::try_from(csr.sequences.len())
-                .map_err(|_| device_error("bytecode PC map exceeds a 32-bit entry count"))?,
-        );
-        for &(sequence, pc) in bucket {
-            csr.sequences.push(sequence);
-            csr.values.push(pc);
-        }
-    }
-    csr.bucket_offsets.push(
-        u32::try_from(csr.sequences.len())
-            .map_err(|_| device_error("bytecode PC map exceeds a 32-bit entry count"))?,
-    );
-    Ok(csr)
 }
 
 fn launch_config(count: u32) -> LaunchConfig {
@@ -233,13 +162,38 @@ impl DeviceTrace {
                 ),
             });
         }
-        let domain = cycles;
-        let cycles = len;
+        let mut staging = PackedTrace::with_capacity(len);
+        staging.fill_range(rows, cycles, base, len);
+        Self::upload_packed(stream, staging, preprocessing)
+    }
+
+    pub fn upload_source(
+        stream: Arc<CudaStream>,
+        source: &dyn RowSource,
+        range: Range<usize>,
+        preprocessing: &JoltProgramPreprocessing,
+    ) -> Result<Self, WitnessError> {
+        Self::upload_packed(
+            stream,
+            PackedTrace::from_source(source, range)?,
+            preprocessing,
+        )
+    }
+
+    fn upload_packed(
+        stream: Arc<CudaStream>,
+        staging: PackedTrace,
+        preprocessing: &JoltProgramPreprocessing,
+    ) -> Result<Self, WitnessError> {
+        let cycles = staging.cycles;
         let functions = extract_functions(&stream)?;
-        let csr = pc_map_csr(preprocessing)?;
-        let buckets = u32::try_from(csr.bucket_offsets.len().saturating_sub(1))
-            .map_err(|_| device_error("bytecode PC map exceeds a 32-bit bucket count"))?;
         let tables = kind_tables()?;
+        tables.require_supported(
+            staging
+                .extras
+                .chunks_exact(PACKED_EXTRA_WORDS)
+                .map(|row| row[EXTRA_KIND_BITS] as u16),
+        )?;
 
         let alloc_u8 = |len: usize| stream.alloc_zeros::<u8>(len).map_err(device_error);
         let alloc_u32 = |len: usize| stream.alloc_zeros::<u32>(len).map_err(device_error);
@@ -252,8 +206,6 @@ impl DeviceTrace {
             extras: alloc_u64(cycles * PACKED_EXTRA_WORDS)?,
         };
 
-        let mut staging = PackedTrace::with_capacity(cycles);
-        staging.fill_range(rows, domain, base, cycles);
         stream
             .memcpy_htod(&staging.is_noop, &mut device.is_noop.slice_mut(..))
             .map_err(device_error)?;
@@ -274,14 +226,6 @@ impl DeviceTrace {
             .map_err(device_error)?;
         drop(staging);
 
-        let pc_map = DevicePcMap {
-            buckets,
-            bucket_offsets: stream
-                .clone_htod(&csr.bucket_offsets)
-                .map_err(device_error)?,
-            sequences: stream.clone_htod(&csr.sequences).map_err(device_error)?,
-            values: stream.clone_htod(&csr.values).map_err(device_error)?,
-        };
         let kinds = DeviceKindTables {
             input: stream.clone_htod(&tables.input).map_err(device_error)?,
             operand: stream.clone_htod(&tables.operand).map_err(device_error)?,
@@ -299,7 +243,6 @@ impl DeviceTrace {
             functions,
             cycles,
             rows: device,
-            pc_map,
             kinds,
             lowest_ram_address: preprocessing.memory_layout.get_lowest_address(),
         })
@@ -331,16 +274,13 @@ impl DeviceTrace {
             + self.rows.virtual_sequence.len() * size_of::<u32>()
             + self.rows.ram_address.len() * size_of::<u64>()
             + self.rows.extras.len() * size_of::<u64>();
-        let pc_map = self.pc_map.bucket_offsets.len() * size_of::<u32>()
-            + self.pc_map.sequences.len() * size_of::<u32>()
-            + self.pc_map.values.len() * size_of::<u64>();
         let kinds = self.kinds.input.len()
             + self.kinds.operand.len()
             + self.kinds.output.len()
             + self.kinds.index.len()
             + self.kinds.flags.len() * size_of::<u32>()
             + self.kinds.table_index.len() * size_of::<u32>();
-        rows + pc_map + kinds
+        rows + kinds
     }
 
     fn count(&self) -> Result<u32, WitnessError> {
@@ -427,8 +367,6 @@ impl DeviceTrace {
     #[tracing::instrument(skip_all, name = "cuda_witness_atom_columns", fields(cycles = self.cycles))]
     pub fn atom_columns(&self) -> Result<DeviceAtomColumns, WitnessError> {
         let count = self.count()?;
-        let ram_start = common::constants::RAM_START_ADDRESS;
-        let alignment = common::constants::ALIGNMENT_FACTOR_BYTECODE as u64;
 
         let alloc32 = |len: usize| self.stream.alloc_zeros::<u32>(len).map_err(device_error);
         let alloc64 = |len: usize| self.stream.alloc_zeros::<u64>(len).map_err(device_error);
@@ -457,12 +395,6 @@ impl DeviceTrace {
         let _ = builder.arg(&self.rows.extras);
         let _ = builder.arg(&self.rows.virtual_sequence);
         let _ = builder.arg(&self.rows.ram_address);
-        let _ = builder.arg(&self.pc_map.bucket_offsets);
-        let _ = builder.arg(&self.pc_map.sequences);
-        let _ = builder.arg(&self.pc_map.values);
-        let _ = builder.arg(&self.pc_map.buckets);
-        let _ = builder.arg(&ram_start);
-        let _ = builder.arg(&alignment);
         let _ = builder.arg(&self.kinds.flags);
         let _ = builder.arg(&self.kinds.table_index);
         let _ = builder.arg(&self.kinds.input);
@@ -492,9 +424,7 @@ impl DeviceTrace {
         // of the four two-limb outputs (allocated at `cycles * 2`). It reads
         // index `i` of the row arrays and the `EXTRA_WORDS` consecutive words
         // at `i * EXTRA_WORDS`, plus `is_noop[i + 1]` guarded by
-        // `i + 1 < cycles`. Bucket reads are bounds-checked against
-        // `pc_buckets`, and `bucket_offsets` holds `pc_buckets + 1` entries so
-        // `bucket + 1` is in range. The kind tables, including the four mode
+        // `i + 1 < cycles`. The kind tables, including the four mode
         // tables, are bounds-checked against `count` and each holds `count`
         // entries. `unmapped` is written only by `atomicExch`. Every buffer is
         // a distinct allocation.
@@ -768,29 +698,14 @@ impl DeviceTrace {
     pub fn mapped_pc_words(&self) -> Result<CudaSlice<u32>, WitnessError> {
         let count = self.count()?;
         let (mut out, mut rejected) = self.outputs()?;
-        let buckets = self.pc_map.buckets;
-        let ram_start = common::constants::RAM_START_ADDRESS;
-        let alignment = common::constants::ALIGNMENT_FACTOR_BYTECODE as u64;
 
         let mut builder = self.stream.launch_builder(&self.functions.mapped_pc);
-        let _ = builder.arg(&self.rows.is_noop);
-        let _ = builder.arg(&self.rows.address);
-        let _ = builder.arg(&self.rows.virtual_sequence);
-        let _ = builder.arg(&self.pc_map.bucket_offsets);
-        let _ = builder.arg(&self.pc_map.sequences);
-        let _ = builder.arg(&self.pc_map.values);
-        let _ = builder.arg(&buckets);
-        let _ = builder.arg(&ram_start);
-        let _ = builder.arg(&alignment);
+        let _ = builder.arg(&self.rows.extras);
         let _ = builder.arg(&mut out);
         let _ = builder.arg(&mut rejected);
         let _ = builder.arg(&count);
-        // SAFETY: thread `i < count` writes only `out[i]` and reads only index
-        // `i` of the four row arrays, all of which hold `cycles >= count`
-        // elements. Bucket reads are bounds-checked against `buckets` in the
-        // kernel, and `bucket_offsets` holds `buckets + 1` entries so
-        // `bucket + 1` is in range. `rejected` is a single element mutated only
-        // through `atomicMin`. Every buffer is a distinct allocation.
+        // SAFETY: each thread reads its cached PC from an EXTRA_WORDS-sized
+        // row and writes one output; the rejection scalar uses atomicMin.
         let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
 
         self.finish(out, rejected, "the mapped PC")

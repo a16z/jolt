@@ -1,3 +1,4 @@
+use crate::instruction::registers::i::RegisterStateI;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatI,
+    registers = RegisterStateI,
     ram = ()
 );
 
 impl VirtualPow2 {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPow2 as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPow2 as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             1 << (cpu.x[self.operands.rs1 as usize] as u64 % 64),

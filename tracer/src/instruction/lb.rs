@@ -1,8 +1,9 @@
+use crate::instruction::registers::load::RegisterStateLoad;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{Instruction, RAMRead};
+use super::{Instruction, RamRead};
 
 use super::{format::format_load::FormatLoad, Cycle, RISCVInstruction, RISCVTrace};
 
@@ -11,11 +12,12 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00000003,
     format = FormatLoad,
-    ram    = RAMRead
+    registers = RegisterStateLoad,
+    ram    = RamRead
 );
 
 impl LB {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LB as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LB as RISCVInstruction>::RamAccess) {
         let value = match cpu
             .mmu
             .load(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)

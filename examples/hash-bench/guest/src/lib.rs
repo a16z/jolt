@@ -2,7 +2,6 @@
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
-// Reference implementations
 #[allow(unused_imports)]
 use blake2::Digest as _;
 #[allow(unused_imports)]
@@ -10,13 +9,11 @@ use sha2::Digest as _;
 #[allow(unused_imports)]
 use sha3::Digest as _;
 
-// Inline implementations
 use jolt_inlines_blake2 as blake2_inline;
 use jolt_inlines_blake3 as blake3_inline;
 use jolt_inlines_keccak256 as keccak_inline;
 use jolt_inlines_sha2 as sha2_inline;
 
-/// Test sizes for SHA256, Keccak256, Blake2b (up to 2049B)
 const SIZES: &[usize] = &[
     32, // baseline
     55, 56, // SHA256: max 1 block (55) / min 2 blocks (56), 9-byte padding
@@ -28,7 +25,6 @@ const SIZES: &[usize] = &[
     1023, 1024, 1025, 2047, 2048, 2049,
 ];
 
-/// Blake3 sizes (limited to 64B, single block only)
 const BLAKE3_SIZES: &[usize] = &[
     32, // baseline
     55, 56, // near block boundary
@@ -67,7 +63,6 @@ macro_rules! bench {
     }};
 }
 
-/// Verify: ref == aligned_digest == stream == unaligned_digest
 macro_rules! verify_all {
     ($name:expr, $ref_r:expr, $aligned:expr, $stream:expr, $unaligned:expr) => {
         assert_eq!($ref_r, $aligned, concat!($name, " ref!=aligned"));
@@ -76,7 +71,6 @@ macro_rules! verify_all {
     };
 }
 
-// ============ SHA256 ============
 fn bench_sha256() {
     let mut buf = [0u8; 2049];
     let mut ubuf = [0u8; 2050];
@@ -98,7 +92,6 @@ fn bench_sha256() {
     }
 }
 
-// ============ Keccak256 ============
 fn bench_keccak() {
     let mut buf = [0u8; 2049];
     let mut ubuf = [0u8; 2050];
@@ -123,7 +116,6 @@ fn bench_keccak() {
     }
 }
 
-// ============ Blake2b ============
 fn bench_blake2b() {
     let mut buf = [0u8; 2049];
     let mut ubuf = [0u8; 2050];
@@ -148,7 +140,6 @@ fn bench_blake2b() {
     }
 }
 
-// ============ Blake3 ============
 fn bench_blake3() {
     let mut buf = [0u8; 64];
     let mut ubuf = [0u8; 65];
@@ -170,7 +161,6 @@ fn bench_blake3() {
     }
 }
 
-// ============ Blake3 keyed64 ============
 fn bench_blake3_keyed64() {
     use blake3_inline::{blake3_keyed64, AlignedHash32, BLAKE3_IV};
 
@@ -179,7 +169,6 @@ fn bench_blake3_keyed64() {
     fill(&mut left.0, 401);
     fill(&mut right.0, 402);
 
-    // Reference input: left || right
     let mut input = [0u8; 64];
     input[..32].copy_from_slice(&left.0);
     input[32..].copy_from_slice(&right.0);

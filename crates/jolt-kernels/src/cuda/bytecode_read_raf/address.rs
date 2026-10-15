@@ -1,9 +1,13 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     read_raf_stage_values, BytecodeReadRafStageValueInputs,
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -29,7 +33,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-pub struct BytecodeReadRafAddressKernel<F: Field> {
+pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     context: &'static CudaKernelContext,
     relation: BytecodeReadRafAddressPhase<F>,
     state: DeviceBytecodePushforward,
@@ -37,14 +41,14 @@ pub struct BytecodeReadRafAddressKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for BytecodeReadRafAddressKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for BytecodeReadRafAddressKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
 
-impl<F: Field> BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.state
             .bind(self.context, challenge)
@@ -54,7 +58,7 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -84,7 +88,7 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
 
     fn output_claims(
@@ -117,7 +121,7 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-fn device_bytecode_pc_words<F: Field>(
+fn device_bytecode_pc_words<F: JoltField>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
@@ -130,7 +134,7 @@ fn device_bytecode_pc_words<F: Field>(
 }
 
 #[tracing::instrument(skip_all, name = "brap_pc_shards")]
-fn bytecode_pc_shards<F: Field>(
+fn bytecode_pc_shards<F: JoltField>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
@@ -166,7 +170,7 @@ fn bytecode_pc_shards<F: Field>(
     Ok((OneHotShards::from_windows(windows, columns)?, entry))
 }
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -255,11 +259,12 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend 
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use std::collections::BTreeSet;
 
     use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::formula_dimensions_from_parts;
     use jolt_verifier::stages::stage6a::bytecode_read_raf::{
         BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
@@ -410,12 +415,13 @@ mod tests {
                         stage_cycle_points: stage_cycle_points.clone(),
                         register_read_write_point: register_point.clone(),
                         register_val_evaluation_point: register_point.clone(),
+                        fused_inc_cycle_points: Vec::new(),
                     },
                     entry_bytecode_index,
                 );
                 let claims = BytecodeReadRafAddressPhaseInputClaims::default();
                 let points = BytecodeReadRafAddressPhaseInputClaims::default();
-                let challenge_set = jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges {
+                let challenge_set = BytecodeReadRafAddressPhaseChallenges {
                     gamma: fr(101),
                     stage1_gamma: fr(103),
                     stage2_gamma: fr(107),

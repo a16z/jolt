@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_riscv::InstructionFlags;
 
@@ -13,7 +13,7 @@ use super::super::{
 use super::claim_reductions::instruction::{
     left_instruction_input_reduced, lookup_output_reduced, right_instruction_input_reduced,
 };
-use super::dimensions::{JoltFormulaDimensionsError, JoltFormulaPointError};
+use super::dimensions::{JoltFormulaDimensionsError, PointGeometryError};
 use super::spartan::{
     left_instruction_input_product, lookup_output_product, right_instruction_input_product,
 };
@@ -51,7 +51,7 @@ pub const CANONICAL_INSTRUCTION_ADDRESS: bool = cfg!(feature = "akita");
 /// product. Taking the trailing half instead would both miss the aliases and
 /// reject honest cycles — `SUB(2^64-1, 0)` has index `0x1_FFFF_FFFF_FFFF_FFFF`,
 /// whose low limb is all ones.
-pub fn upper_half_all_ones<F: Field>(r_address: &[F]) -> F {
+pub fn upper_half_all_ones<F: JoltField>(r_address: &[F]) -> F {
     r_address[..r_address.len() / 2]
         .iter()
         .copied()
@@ -93,7 +93,6 @@ mod canonical_address_tests {
         assert_eq!(C, u128::MAX - P + 1);
         assert_eq!(C, 4_294_944_759);
 
-        // (1) every representable alias has an all-ones upper half
         for r in [0u128, 1, 2, C / 2, C - 2, C - 1] {
             let alias = P + r;
             assert_eq!(alias % P, r, "alias for r={r} is not congruent to r");
@@ -111,9 +110,8 @@ mod canonical_address_tests {
         assert!(!upper_all_ones(FIRST_ALL_ONES - 1));
         assert!(upper_all_ones(FIRST_ALL_ONES));
 
-        // Honest bounds for every non-interleaved family stay below that line.
-        let add_max = 2u128 * (u64::MAX as u128); // x + y
-        let sub_max = (u64::MAX as u128) + (1u128 << 64); // x + 2^64 - y
+        let add_max = 2u128 * (u64::MAX as u128);
+        let sub_max = (u64::MAX as u128) + (1u128 << 64);
         let mul_max = (u64::MAX as u128) * (u64::MAX as u128);
         let advice_max = u64::MAX as u128;
         for (name, k) in [
@@ -164,13 +162,13 @@ impl InstructionReadRafDimensions {
         self.instruction_address_bits + self.log_t
     }
 
-    pub fn opening_point<F: Field>(
+    pub fn opening_point<F: JoltField>(
         self,
         challenges: &[F],
-    ) -> Result<InstructionReadRafOpeningPoint<F>, JoltFormulaPointError> {
+    ) -> Result<InstructionReadRafOpeningPoint<F>, PointGeometryError> {
         let expected = self.instruction_address_bits + self.log_t;
         if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected,
                 got: challenges.len(),
             });
@@ -190,7 +188,7 @@ impl InstructionReadRafDimensions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InstructionReadRafOpeningPoint<F: Field> {
+pub struct InstructionReadRafOpeningPoint<F: JoltField> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
@@ -379,7 +377,7 @@ pub(crate) fn weighted_instruction_ra_sum<F>(
     gamma: JoltExpr<F>,
 ) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut sum = JoltExpr::zero();
     for i in 0..dimensions.num_virtual_ra_polys() {
@@ -390,7 +388,7 @@ where
 
 pub(crate) fn instruction_ra_product<F>(dimensions: InstructionReadRafDimensions) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut product = JoltExpr::one();
     for i in 0..dimensions.num_virtual_ra_polys() {
@@ -404,7 +402,7 @@ pub(crate) fn committed_instruction_ra_product<F>(
     virtual_index: usize,
 ) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut product = JoltExpr::one();
     let start = virtual_index * dimensions.num_committed_per_virtual();
@@ -502,7 +500,7 @@ pub fn imm() -> JoltOpeningId {
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn read_raf_rejects_empty_dimensions() {

@@ -1,11 +1,9 @@
-//! Generic digest-based Fiat-Shamir transcript, byte-compatible with
-//! `jolt-prover-legacy`'s hash transcripts.
+//! Generic digest-based Fiat-Shamir transcript for the deployed proof format.
 //!
-//! Provides [`DigestTranscript`], used to verify proofs produced by
-//! `jolt-prover-legacy` provers: appends hash `state || round || payload`, squeezes
-//! hash `state || round`, and challenges use the same decoding paths as
-//! `jolt-prover-legacy`. The spongefish-backed [`crate::SpongeTranscript`] is the
-//! native transcript; this one exists for the core-compat boundary.
+//! Appends hash `state || round || payload`, squeezes hash `state || round`,
+//! and preserves the established challenge decoding. The spongefish-backed
+//! [`crate::SpongeTranscript`] is the native transcript; this one exists for
+//! the proof-format compatibility boundary.
 
 use digest::{consts::U32, Digest};
 
@@ -33,7 +31,7 @@ pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
 impl<D, F> Clone for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn clone(&self) -> Self {
         Self {
@@ -48,13 +46,12 @@ where
 
 /// Exists only because [`Transcript`] requires `Default`.
 ///
-/// WARNING: not byte-compatible with `jolt-prover-legacy`'s derived `Default` (zero
-/// state, no initial hash); use [`Transcript::new`] for core-compatible
-/// transcripts.
+/// WARNING: `Default` does not produce the zero-state transcript used by the
+/// deployed proof format; use [`Transcript::new`] for compatible transcripts.
 impl<D, F> Default for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn default() -> Self {
         Self::new(b"")
@@ -64,7 +61,7 @@ where
 impl<D, F> std::fmt::Debug for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DigestTranscript")
@@ -77,10 +74,10 @@ where
 impl<D, F> DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
-    /// Raw multi-byte squeeze backing jolt-prover-legacy's challenge
-    /// decoding, so its legacy `Transcript` vocabulary can drive this engine
+    /// Raw multi-byte squeeze backing the deployed challenge decoding, so the
+    /// compatibility `Transcript` vocabulary can drive this engine
     /// directly (no state handoffs). Hidden: protocol code squeezes through
     /// the [`Transcript`] challenge methods.
     #[doc(hidden)]
@@ -142,7 +139,7 @@ where
 impl<D, F> Transcript for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     type Challenge = F;
 

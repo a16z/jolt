@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
 
@@ -8,11 +9,12 @@ declare_riscv_instr!(
     mask   = 0xfe00707f,
     match  = 0x4000003b,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
 impl SUBW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SUBW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SUBW as RISCVInstruction>::RamAccess) {
         // ADDW and SUBW are RV64I-only instructions that are defined analogously to ADD and SUB
         // but operate on 32-bit values and produce signed 32-bit results. Overflows are ignored,
         // and the low 32-bits of the result is sign-extended to 64-bits and written to the

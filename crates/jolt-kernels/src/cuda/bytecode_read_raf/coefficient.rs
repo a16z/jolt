@@ -1,5 +1,5 @@
 use cudarc::driver::PushKernelArg;
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::EqPolynomial;
 
 use crate::cuda::common::context::CudaKernelContext;
@@ -11,7 +11,7 @@ pub struct DeviceCoefficient {
 }
 
 impl DeviceCoefficient {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         stage_points: &[Vec<F>],
         weights: &[F],
@@ -77,7 +77,7 @@ impl DeviceCoefficient {
         Ok(Self { values })
     }
 
-    pub fn new_window<F: Field>(
+    pub fn new_window<F: JoltField>(
         context: &CudaKernelContext,
         stage_points: &[Vec<F>],
         weights: &[F],
@@ -187,7 +187,7 @@ impl DeviceCoefficient {
         }
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -204,7 +204,7 @@ impl DeviceCoefficient {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 

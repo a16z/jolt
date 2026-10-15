@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
@@ -14,7 +14,7 @@ pub const COLLAPSE_AFTER_ROUNDS: usize = 5;
 
 pub const PACKED_BITS: usize = 32;
 
-const LANES: usize = 2;
+const LANES: usize = 3;
 
 pub struct DeviceBooleanityRa {
     lookup: Arc<CudaSlice<u64>>,
@@ -31,7 +31,7 @@ pub struct DeviceBooleanityRa {
 }
 
 impl DeviceBooleanityRa {
-    pub fn from_device<F: Field>(
+    pub fn from_device<F: JoltField>(
         context: &CudaKernelContext,
         columns: DeviceTraceColumns,
         cycles: usize,
@@ -114,7 +114,7 @@ impl DeviceBooleanityRa {
         })
     }
 
-    fn eq_table<F: Field>(
+    fn eq_table<F: JoltField>(
         context: &CudaKernelContext,
         chunk_bits: usize,
         address_point: &[F],
@@ -317,7 +317,7 @@ impl DeviceBooleanityRa {
         Ok(())
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -347,7 +347,10 @@ impl DeviceBooleanityRa {
         Ok(())
     }
 
-    pub fn final_claims<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+    pub fn final_claims<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Vec<F>, CudaError> {
         if self.len() != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
@@ -368,11 +371,11 @@ impl DeviceBooleanityRa {
             .collect()
     }
 
-    pub fn round_coefficients<F: Field>(
+    pub fn round_coefficients<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         eq: &DeviceSplitEq<F>,
-    ) -> Result<(F, F), CudaError> {
+    ) -> Result<(F, F, F), CudaError> {
         let half = self.len() / 2;
         if half == 0 {
             return Err(CudaError::LengthMismatch {
@@ -418,8 +421,8 @@ impl DeviceBooleanityRa {
             // `polys * 2 * half` elements — plus `rho[p]`, and `e_in[g & mask]` and
             // `e_out[g >> num_x_in_bits]`, both bounded because
             // `e_out.len() * e_in.len() == half` is checked above. It writes only
-            // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 2`, of
-            // `2 * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
+            // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 3`, of
+            // `3 * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
             // `shared_mem_bytes`, and the block reduction sits outside the `g < half`
             // guard so every thread reaches each `__syncthreads()`.
             let _ = unsafe { builder.launch(config) }?;
@@ -458,8 +461,8 @@ impl DeviceBooleanityRa {
             // `addresses` and `p < polys`, inside `tables`'s
             // `polys * slots * addresses`. `rho`, `e_in` and `e_out` are indexed as in
             // the dense arm, bounded by the same check. It writes only
-            // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 2`, of
-            // `2 * blocks`. Shared memory matches `shared_mem_bytes` and the block
+            // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 3`, of
+            // `3 * blocks`. Shared memory matches `shared_mem_bytes` and the block
             // reduction sits outside the `g < half` guard.
             let _ = unsafe { builder.launch(config) }?;
         }
@@ -476,17 +479,21 @@ impl DeviceBooleanityRa {
         };
         let constant = fr_into(host[0]).ok_or_else(unsupported)?;
         let quadratic = fr_into(host[1]).ok_or_else(unsupported)?;
-        Ok((constant, quadratic))
+        Ok((
+            constant,
+            quadratic,
+            fr_into(host[2]).ok_or_else(unsupported)?,
+        ))
     }
 }
 
-pub(crate) struct BooleanityShard<F: Field> {
+pub(crate) struct BooleanityShard<F: JoltField> {
     pub(crate) ordinal: usize,
     pub(crate) one_hot: DeviceBooleanityRa,
     pub(crate) eq: DeviceSplitEq<F>,
 }
 
-pub(crate) struct ShardedBooleanityRa<F: Field> {
+pub(crate) struct ShardedBooleanityRa<F: JoltField> {
     shards: Vec<BooleanityShard<F>>,
     collapsed: Option<DeviceBooleanityRa>,
     families: [usize; 3],
@@ -495,7 +502,7 @@ pub(crate) struct ShardedBooleanityRa<F: Field> {
     tail_rounds: usize,
 }
 
-impl<F: Field> ShardedBooleanityRa<F> {
+impl<F: JoltField> ShardedBooleanityRa<F> {
     pub(crate) fn new(shards: Vec<BooleanityShard<F>>, log_t: usize) -> Result<Self, CudaError> {
         let count = shards.len();
         if count == 0 || !count.is_power_of_two() {
@@ -544,26 +551,27 @@ impl<F: Field> ShardedBooleanityRa<F> {
     pub(crate) fn round_coefficients(
         &self,
         whole_eq: &DeviceSplitEq<F>,
-    ) -> Result<(F, F), CudaError> {
+    ) -> Result<(F, F, F), CudaError> {
         if let Some(collapsed) = &self.collapsed {
             let context = context_for(0).ok_or(absent())?;
             return collapsed.round_coefficients(context, whole_eq);
         }
-        let tasks: Vec<DeviceTask<'_, (F, F), CudaError>> = self
+        let tasks: Vec<DeviceTask<'_, (F, F, F), CudaError>> = self
             .shards
             .iter()
             .map(|shard| {
-                let task: DeviceTask<'_, (F, F), CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, (F, F, F), CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
                     shard.one_hot.round_coefficients(context, &shard.eq)
                 });
                 task
             })
             .collect();
-        let mut total = (F::zero(), F::zero());
+        let mut total = (F::zero(), F::zero(), F::zero());
         for part in fan_out(tasks)? {
             total.0 += part.0;
             total.1 += part.1;
+            total.2 += part.2;
         }
         Ok(total)
     }
@@ -660,7 +668,9 @@ const fn absent() -> CudaError {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use super::BooleanityShard;
+    use super::ShardedBooleanityRa;
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 
@@ -729,8 +739,8 @@ mod tests {
             )
             .expect("whole split-eq");
             let len = cycles / shards;
-            let windows: Vec<super::BooleanityShard<Fr>> = (0..shards)
-                .map(|shard| super::BooleanityShard {
+            let windows: Vec<BooleanityShard<Fr>> = (0..shards)
+                .map(|shard| BooleanityShard {
                     ordinal: 0,
                     one_hot: build(shard * len, len),
                     eq: DeviceSplitEq::<Fr>::new_window_with_scaling(
@@ -744,8 +754,7 @@ mod tests {
                     .expect("window split-eq"),
                 })
                 .collect();
-            let mut got =
-                super::ShardedBooleanityRa::new(windows, LOG_T).expect("sharded booleanity");
+            let mut got = ShardedBooleanityRa::new(windows, LOG_T).expect("sharded booleanity");
             let mut got_eq = DeviceSplitEq::<Fr>::new_with_scaling(
                 context,
                 &cycle_point,
@@ -755,10 +764,10 @@ mod tests {
             .expect("tail split-eq");
 
             for round in 0..LOG_T {
-                let want: (Fr, Fr) = expected
+                let want: (Fr, Fr, Fr) = expected
                     .round_coefficients(context, &expected_eq)
                     .expect("whole round coefficients");
-                let have: (Fr, Fr) = got
+                let have: (Fr, Fr, Fr) = got
                     .round_coefficients(&got_eq)
                     .expect("sharded round coefficients");
                 assert_eq!(

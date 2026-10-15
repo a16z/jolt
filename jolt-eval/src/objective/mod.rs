@@ -6,9 +6,9 @@ pub mod performance;
 pub mod synthesis;
 pub mod telemetry;
 
+use code_quality::PROOF_SYSTEM_CRATE_DIRS;
 use std::fmt;
 
-/// Error during objective measurement.
 #[derive(Debug, Clone)]
 pub struct MeasurementError {
     pub message: String,
@@ -63,7 +63,6 @@ pub trait Objective: Send + Sync {
     fn run(&self, _setup: Self::Setup) {}
 }
 
-/// Static-analysis objectives.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StaticAnalysisObjective {
     Lloc(code_quality::lloc::LlocObjective),
@@ -75,13 +74,13 @@ impl StaticAnalysisObjective {
     pub fn all() -> Vec<Self> {
         vec![
             Self::Lloc(code_quality::lloc::LlocObjective {
-                target_dir: "crates/jolt-prover-legacy/src",
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
             Self::CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective {
-                target_dir: "crates/jolt-prover-legacy/src",
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
             Self::HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective {
-                target_dir: "crates/jolt-prover-legacy/src",
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
         ]
     }
@@ -130,7 +129,7 @@ impl StaticAnalysisObjective {
     }
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
-        &["crates/jolt-prover-legacy/"]
+        PROOF_SYSTEM_CRATE_DIRS
     }
 }
 
@@ -197,7 +196,7 @@ impl PerformanceObjective {
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
         match self {
-            Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["crates/jolt-prover-legacy/"],
+            Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["crates/jolt-poly/"],
             Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
             Self::MulU64(_) | Self::MulI64(_) | Self::MulU128(_) | Self::MulI128(_) => {
                 &["crates/jolt-field/"]
@@ -220,7 +219,6 @@ pub enum OptimizationObjective {
     Callgrind(callgrind::CallgrindObjective),
 }
 
-// Re-export the const objective keys from their defining modules.
 pub use code_quality::cognitive::COGNITIVE_COMPLEXITY;
 pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
@@ -271,7 +269,6 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.diff_paths(),
             Self::Performance(p) => p.diff_paths(),
-            // The modular prover stack plus the leaf crates it orchestrates.
             Self::Telemetry(_) => &["crates/"],
             // The hot paths the callgrind benches exercise.
             Self::Callgrind(_) => &["crates/jolt-poly/", "crates/jolt-kernels/"],
@@ -335,32 +332,6 @@ pub fn normalized(
 mod tests {
     use super::*;
 
-    struct ConstantObjective {
-        label: &'static str,
-        value: f64,
-    }
-
-    impl Objective for ConstantObjective {
-        type Setup = ();
-        fn name(&self) -> &str {
-            self.label
-        }
-        fn setup(&self) {}
-        fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-            Ok(self.value)
-        }
-    }
-
-    #[test]
-    fn constant_objective() {
-        let obj = ConstantObjective {
-            label: "latency",
-            value: 42.0,
-        };
-        assert_eq!(obj.name(), "latency");
-        assert_eq!(obj.collect_measurement().unwrap(), 42.0);
-    }
-
     #[test]
     fn static_analysis_all_measures() {
         for sa in StaticAnalysisObjective::all() {
@@ -371,6 +342,7 @@ mod tests {
 
     #[test]
     fn optimization_objective_hashmap_key() {
+        use code_quality::PROOF_SYSTEM_CRATE_DIRS;
         use std::collections::HashMap;
         let lloc = LLOC;
         let bind = BIND_LOW_TO_HIGH;
@@ -378,18 +350,16 @@ mod tests {
         m.insert(lloc, 100.0);
         m.insert(bind, 0.5);
 
-        // Same variant with identical inner data looks up successfully.
         let lloc_same = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
-                target_dir: "crates/jolt-prover-legacy/src",
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             },
         ));
         assert_eq!(m[&lloc_same], 100.0);
 
-        // Same variant with different inner data does NOT match.
         let lloc_other = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
-                target_dir: "other/path",
+                crate_dirs: &["other/path"],
             },
         ));
         assert!(!m.contains_key(&lloc_other));

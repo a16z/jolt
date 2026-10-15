@@ -100,14 +100,22 @@ fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), Expansi
 }
 
 #[test]
-fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionError> {
+fn csrrs_rd_zero_rs1_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let input = instruction(SourceInstructionKind::ECALL, Some(0), false);
-    let expanded = rows(expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)?);
+    let mut row = source_row(SourceInstructionKind::CSRRS, Some(0), false);
+    row.operands.rs1 = Some(0);
+    row.operands.imm = 0x300;
+    let expanded = rows(expand_instruction(
+        &SourceInstruction::new(SourceInstructionKind::CSRRS, row),
+        &mut allocator,
+        RV64IMAC_JOLT,
+    )?);
 
-    assert_eq!(expanded.len(), 7);
-    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::AUIPC);
-    assert_eq!(expanded[6].instruction_kind, JoltInstructionKind::JALR);
+    assert_eq!(expanded.len(), 1);
+    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::ADDI);
+    assert_eq!(expanded[0].operands.rd, Some(0));
+    assert_eq!(expanded[0].operands.rs1, Some(0));
+    assert_eq!(expanded[0].operands.imm, 0);
     Ok(())
 }
 
@@ -166,7 +174,7 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
 }
 
 #[test]
-fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
+fn sc_expansions_do_not_use_advice() -> Result<(), ExpansionError> {
     for instruction_kind in [SourceInstructionKind::SCW, SourceInstructionKind::SCD] {
         let mut allocator = ExpansionAllocator::new();
         let expanded = rows(expand_instruction(
@@ -174,14 +182,11 @@ fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
             &mut allocator,
             RV64IMAC_JOLT,
         )?);
-        let advice_position = expanded.iter().position(|instruction| {
-            instruction.instruction_kind
-                == JoltInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(()))
-        });
-
         assert!(
-            matches!(advice_position, Some(position) if position > 1),
-            "RAM-region prelude should precede success advice, got {advice_position:?}"
+            expanded
+                .iter()
+                .all(|row| !matches!(row.instruction_kind, Kind::VirtualAdvice(_))),
+            "SC success must be determined by constrained reservation state"
         );
     }
     Ok(())
@@ -425,6 +430,39 @@ fn source_only_expanders_are_not_target_legal() {
 }
 
 #[test]
+fn rv64i_word_shift_expansions_are_profile_closed() -> Result<(), ExpansionError> {
+    const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
+        source_extensions: &[SourceExtension::Rv64I],
+        inline_extensions: &[],
+    };
+
+    for instruction_kind in [
+        SourceInstructionKind::SRLW,
+        SourceInstructionKind::SRAW,
+        SourceInstructionKind::SRLIW,
+        SourceInstructionKind::SRAIW,
+    ] {
+        assert!(RV64I_ONLY.supports_source(instruction_kind));
+
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = rows(expand_instruction(
+            &instruction(instruction_kind, Some(3), false),
+            &mut allocator,
+            RV64I_ONLY,
+        )?);
+
+        assert!(
+            expanded
+                .iter()
+                .all(|row| RV64I_ONLY.supports_jolt(row.instruction_kind)),
+            "{instruction_kind:?} emitted a helper outside its source profile"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::SLL, Some(3), true);
@@ -454,12 +492,30 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // recursive expansion order and virtual-register reuse regressions without
     // checking a giant expanded-row fixture into the repository.
     //
-    // 16 of the 360 hashes were re-baselined when `expand_address` began wrapping
+    // 16 of the 360 hashes were re-baselined when `emit_address` began wrapping
     // its offset through `format_i_imm`: exactly the `imm = -8` cases for LH/LHU/
     // LW/LWU/SH/SW, the accesses that emit an alignment assert. Byte accesses
     // (no assert) and non-negative offsets (wrap is the identity) are unchanged.
+    //
+    // 18 hashes were re-baselined when LW moved to the fused
+    // VirtualWindowMaskW + VirtualPextSigned extraction: all LW cases, plus
+    // LRW/SCW, which recursively embed the word-load expansion. A further 60
+    // (LB/LBU/LH/LHU/LWU, 12 each) were re-baselined when the remaining loads
+    // moved to their window-mask + parallel-extract sequences.
+    // A further 78 (all six loads, 12 each, plus LRW/SCW) were re-baselined
+    // when VirtualAlignAddr fused the ADDI + ANDI pair and the window masks
+    // began taking the immediate directly, and again when the fused-load
+    // virtual opcodes moved to 0x009a-0x009d after the W-shift tags took
+    // 0x0091-0x0099 (kinds serialize as tags, so renumbering shifts hashes).
+    // A further 27 (SB/SH/SW, 8 each, plus 3 SCW) were re-baselined when the
+    // narrow stores moved to the window-mask + ANDN + shift-data sequences
+    // at tags 0x009e-0x00a0. The six SCW/SCD cases were re-baselined when
+    // success advice was replaced by a deterministic reservation comparison.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
+    // WARNING: guards against accidental truncation when re-baselining (a
+    // filtering rewrite of the fixture must not drop unchanged entries).
+    assert_eq!(cases.len(), 360);
 
     for case in cases {
         let mut allocator = ExpansionAllocator::new();

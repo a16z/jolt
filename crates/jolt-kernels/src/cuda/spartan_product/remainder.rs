@@ -1,3 +1,9 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{
@@ -6,11 +12,12 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
     write_lookup_output_to_rd_product,
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel};
 use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use std::collections::BTreeMap;
+use witness::CLAIM_COLUMNS as WitnessClaimColumns;
 
 use super::columns::DeviceProductColumns;
 use super::witness::{self, BRANCH_BIT, CLAIM_COLUMNS, JUMP_BIT, NEXT_IS_NOOP_BIT, SIGN_BIT_BASE};
@@ -41,7 +48,7 @@ pub fn claim_openings() -> [JoltOpeningId; CLAIM_COLUMNS] {
     ]
 }
 
-pub(crate) struct ProductShard<F: Field> {
+pub(crate) struct ProductShard<F: JoltField> {
     pub(crate) ordinal: usize,
     pub(crate) columns: DeviceProductColumns,
     pub(crate) left: DeviceFrVec,
@@ -49,7 +56,7 @@ pub(crate) struct ProductShard<F: Field> {
     pub(crate) eq: Option<DeviceSplitEq<F>>,
 }
 
-pub struct DeviceProductRemainder<F: Field> {
+pub struct DeviceProductRemainder<F: JoltField> {
     shards: Vec<ProductShard<F>>,
     collapsed: Option<(DeviceFrVec, DeviceFrVec)>,
     eq: DeviceSplitEq<F>,
@@ -58,7 +65,7 @@ pub struct DeviceProductRemainder<F: Field> {
     challenges: Vec<F>,
 }
 
-impl<F: Field> DeviceProductRemainder<F> {
+impl<F: JoltField> DeviceProductRemainder<F> {
     pub fn new(
         context: &CudaKernelContext,
         columns: Vec<(usize, DeviceProductColumns)>,
@@ -243,16 +250,16 @@ impl<F: Field> DeviceProductRemainder<F> {
         Ok(())
     }
 
-    fn endpoints(&self, context: &CudaKernelContext) -> Result<[F; 2], CudaError> {
+    fn endpoints(&self, context: &CudaKernelContext) -> Result<[F; 3], CudaError> {
         if let Some((left, right)) = &self.collapsed {
             return Self::window_endpoints(context, left, right, &self.eq);
         }
         let whole = &self.eq;
-        let tasks: Vec<DeviceTask<'_, [F; 2], CudaError>> = self
+        let tasks: Vec<DeviceTask<'_, [F; 3], CudaError>> = self
             .shards
             .iter()
             .map(|shard| {
-                let task: DeviceTask<'_, [F; 2], CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, [F; 3], CudaError> = Box::new(move || {
                     let device = context_for(shard.ordinal).ok_or(absent())?;
                     let eq = shard.eq.as_ref().unwrap_or(whole);
                     Self::window_endpoints(device, &shard.left, &shard.right, eq)
@@ -260,10 +267,11 @@ impl<F: Field> DeviceProductRemainder<F> {
                 task
             })
             .collect();
-        let mut total = [F::zero(), F::zero()];
+        let mut total = [F::zero(); 3];
         for part in fan_out(tasks)? {
             total[0] += part[0];
             total[1] += part[1];
+            total[2] += part[2];
         }
         Ok(total)
     }
@@ -273,7 +281,7 @@ impl<F: Field> DeviceProductRemainder<F> {
         left: &DeviceFrVec,
         right: &DeviceFrVec,
         eq: &DeviceSplitEq<F>,
-    ) -> Result<[F; 2], CudaError> {
+    ) -> Result<[F; 3], CudaError> {
         let half = left.len() / 2;
         if half == 0 {
             return Err(CudaError::InvariantViolation {
@@ -288,7 +296,7 @@ impl<F: Field> DeviceProductRemainder<F> {
                 reason: "the Spartan product message launch exceeds a u32 block count",
             }
         })?;
-        let mut partials = context.alloc(2 * blocks as usize)?;
+        let mut partials = context.alloc(3 * blocks as usize)?;
 
         let inner_len = CudaKernelContext::count_of(e_in_len)?;
         let bits = CudaKernelContext::count_of(in_bits as usize)?;
@@ -324,14 +332,14 @@ impl<F: Field> DeviceProductRemainder<F> {
             })
         }?;
 
-        let totals = reduce_lanes(context, partials, 2, blocks)?;
+        let totals = reduce_lanes(context, partials, 3, blocks)?;
         let host = totals.to_host()?;
         let convert = |value: Fr| {
             fr_into(value).ok_or(CudaError::NotImplemented {
                 kernel: "CUDA kernels support only the BN254 scalar field",
             })
         };
-        Ok([convert(host[0])?, convert(host[1])?])
+        Ok([convert(host[0])?, convert(host[1])?, convert(host[2])?])
     }
 
     pub fn claims(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
@@ -457,9 +465,9 @@ impl<F: Field> DeviceProductRemainder<F> {
         context: &CudaKernelContext,
     ) -> Result<BTreeMap<JoltOpeningId, F>, CudaError> {
         let claims = self.claims(context)?;
-        if claims.len() != witness::CLAIM_COLUMNS {
+        if claims.len() != WitnessClaimColumns {
             return Err(CudaError::LengthMismatch {
-                expected: witness::CLAIM_COLUMNS,
+                expected: WitnessClaimColumns,
                 got: claims.len(),
             });
         }
@@ -473,19 +481,19 @@ const fn absent() -> CudaError {
     }
 }
 
-pub struct SpartanProductRemainderKernel<F: Field> {
+pub struct SpartanProductRemainderKernel<F: JoltField> {
     context: &'static CudaKernelContext,
     state: DeviceProductRemainder<F>,
     degree: usize,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for SpartanProductRemainderKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for SpartanProductRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         let state = &self.state;
         visitor.visit_simple(
-            allocative::Key::new("columns"),
+            Key::new("columns"),
             state
                 .shards
                 .iter()
@@ -493,7 +501,7 @@ impl<F: Field> allocative::Allocative for SpartanProductRemainderKernel<F> {
                 .sum(),
         );
         visitor.visit_simple(
-            allocative::Key::new("left_right"),
+            Key::new("left_right"),
             state
                 .shards
                 .iter()
@@ -504,7 +512,7 @@ impl<F: Field> allocative::Allocative for SpartanProductRemainderKernel<F> {
                 }),
         );
         visitor.visit_simple(
-            allocative::Key::new("eq"),
+            Key::new("eq"),
             state.eq.device_bytes()
                 + state
                     .shards
@@ -516,7 +524,7 @@ impl<F: Field> allocative::Allocative for SpartanProductRemainderKernel<F> {
     }
 }
 
-impl<F: Field> SpartanProductRemainderKernel<F> {
+impl<F: JoltField> SpartanProductRemainderKernel<F> {
     pub const fn new(
         context: &'static CudaKernelContext,
         state: DeviceProductRemainder<F>,
@@ -538,7 +546,7 @@ impl<F: Field> SpartanProductRemainderKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for SpartanProductRemainderKernel<F> {
+impl<F: JoltField> ProveRounds<F> for SpartanProductRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
         self.state.rounds()
     }
@@ -554,14 +562,15 @@ impl<F: Field> ProveRounds<F> for SpartanProductRemainderKernel<F> {
                 .bind(self.context, challenge)
                 .map_err(backend("cuda Spartan product remainder"))?;
         }
-        let [q0, q2] = self
+        let [q0, q2, q1] = self
             .state
             .endpoints(self.context)
             .map_err(backend("cuda Spartan product remainder"))?;
         let mut coefficients = self
             .state
             .eq
-            .gruen_poly_deg_3(q0, q2, previous_claim)
+            .gruen_poly_deg_3(q0, q2, previous_claim, q1)
+            .map_err(backend("CUDA quotient interpolation"))?
             .into_coefficients();
         coefficients.resize(self.degree + 1, F::zero());
         Ok(UnivariatePoly::new(coefficients))
@@ -583,7 +592,7 @@ impl<F: Field> ProveRounds<F> for SpartanProductRemainderKernel<F> {
 )]
 mod tests {
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_witness::collect_bundles;
     use jolt_witness::witnesses::ToField;
     use proptest::prelude::*;

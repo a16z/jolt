@@ -1,0 +1,336 @@
+//! Stage 8: the joint batched opening — no sumcheck, one homomorphic PCS
+//! batch over every committed polynomial.
+//!
+//! Pure orchestration mirroring `stage8::verify`: the batch entries come from
+//! the verifier's promoted `batch_entries` assembly (the prover passes its
+//! own stage-0 commitments where the verifier passes the proof's), the
+//! unified opening point and per-entry embedding scales are the verifier's
+//! own `final_opening_point` / `commitment_embedding_scale` math, and the
+//! whole transcript sequence — scaled-claim absorbs, one gamma-powers
+//! squeeze, the PCS opening, the final evaluation-claim absorb — is
+//! `HomomorphicBatch::prove_batch`, byte-identical to the verifier's inlined
+//! sequence. The prover-only work is the grid-embedded witness materialization
+//! (the backend's joint-opening slot; advice polynomials block-embed rather
+//! than prefix-embed) and the hint reordering + combination (stage 0 retains
+//! hints in proof-commitment order, advice hints included; the batch runs in
+//! final-opening order, and the ragged advice hints pad with identity rows in
+//! `combine_hints`).
+
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
+use jolt_claims::protocols::jolt::geometry::committed_openings::{
+    final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
+};
+use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
+use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
+use jolt_field::JoltField;
+use std::collections::BTreeMap;
+
+use jolt_kernels::committed_program::{
+    build_committed_bytecode_coeffs, program_image_words_padded,
+};
+use jolt_kernels::opening::PrecommittedOpeningTables;
+use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, KernelError};
+use jolt_lookup_tables::XLEN as RISCV_XLEN;
+#[cfg(not(feature = "zk"))]
+use jolt_openings::BatchOpeningScheme;
+#[cfg(feature = "zk")]
+use jolt_openings::ZkBatchOpeningScheme;
+use jolt_openings::{
+    AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
+    VerifierOpeningClaim, ZkOpeningScheme,
+};
+use jolt_poly::Point;
+use jolt_transcript::Transcript;
+use jolt_verifier::proof::JoltCommitments;
+use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
+use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
+use jolt_verifier::stages::stage8::{batch_entries, precommitted_final_openings};
+use jolt_verifier::{CheckedInputs, VerifierError};
+
+use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
+
+/// Stage 8's output: the joint PCS opening proof (the last wire component of
+/// a clear proof), plus — in ZK builds — the joint evaluation and its blind,
+/// the secrets inside the hiding evaluation commitment that the BlindFold
+/// final-opening binding opens.
+pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
+    pub joint_opening_proof: PCS::Proof,
+    #[cfg(feature = "zk")]
+    pub joint_evaluation: PCS::Field,
+    #[cfg(feature = "zk")]
+    pub evaluation_blind: PCS::Field,
+}
+
+/// Prove stage 8 on `transcript` (positioned at the stage-7 boundary).
+#[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
+#[tracing::instrument(skip_all)]
+pub fn prove_stage8<F, PCS, VC, T>(
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
+    checked: &CheckedInputs,
+    config: &ProverConfig,
+    preprocessing: &JoltProverPreprocessing<PCS, VC>,
+    commitments: &JoltCommitments<PCS::Output>,
+    untrusted_advice_commitment: Option<&PCS::Output>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    hints: impl Into<Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>>,
+    #[cfg(feature = "field-inline")] field_inline_hints: Vec<(
+        FieldInlineCommittedPolynomial,
+        PCS::OpeningHint,
+    )>,
+    stage6b: &Stage6bClearOutput<F>,
+    stage7: &Stage7ClearOutput<F>,
+    transcript: &mut T,
+) -> Result<Stage8ProverOutput<PCS>, ProverError<F>>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic + ZkOpeningScheme<Blind = F>,
+    PCS::Output: HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    let log_t = checked.trace_length.ilog2() as usize;
+    let precommitted = &checked.precommitted;
+    let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
+        log_t,
+        2 * RISCV_XLEN,
+        preprocessing.verifier.program.bytecode_len(),
+        checked.ram_K,
+    ))
+    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::HammingWeightClaimReduction,
+        reason: error.to_string(),
+    })?;
+    let layout = formula_dimensions.ra_layout;
+
+    // The assembly, exactly as `stage8::verify` performs it before any
+    // transcript operation.
+    let hamming_opening_point = stage7
+        .output_points
+        .hamming_weight_opening_point()
+        .map(<[F]>::to_vec)
+        .ok_or(ProverError::InvariantViolation {
+            reason: "stage 7 produced no hamming-weight openings",
+        })?;
+    let inc_opening_point = stage6b.output_points.inc_opening_point();
+    let precommitted_finals = precommitted_final_openings(
+        precommitted,
+        &stage7.output_points,
+        &stage6b.output_points,
+        Some((&stage7.output_values, &stage6b.output_values)),
+    )?;
+    let anchor_points: Vec<&[F]> = precommitted_finals
+        .iter()
+        .map(|opening| opening.point.as_slice())
+        .collect();
+    let opening_point = final_opening_point(FinalOpeningPointInputs {
+        log_t,
+        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
+        trace_order: config.trace_polynomial_order,
+        hamming_weight_opening_point: hamming_opening_point.as_slice(),
+        inc_claim_reduction_opening_point: inc_opening_point,
+        precommitted_anchor_points: &anchor_points,
+    })
+    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+        reason: error.to_string(),
+    })?;
+    let pcs_opening_point = Point::high_to_low(opening_point.clone());
+
+    let entries = batch_entries::<F, PCS, VC>(
+        &preprocessing.verifier,
+        commitments,
+        untrusted_advice_commitment,
+        layout,
+        config.trace_polynomial_order,
+        trusted_advice_commitment,
+        &opening_point,
+        hamming_opening_point.as_slice(),
+        inc_opening_point,
+        &precommitted_finals,
+        Some((&stage6b.output_values, &stage7.output_values)),
+    )?;
+    // The composed plan splice, exactly as `stage8::verify` performs it: the
+    // reduced `FieldRdInc` joins the batch after `RdInc@IncClaimReduction`.
+    #[cfg(feature = "field-inline")]
+    let entries = {
+        let mut entries = entries;
+        jolt_verifier::stages::stage8::field_inline::splice_final_opening(
+            &mut entries,
+            commitments,
+            config.trace_polynomial_order,
+            &opening_point,
+            stage6b.output_points.field_registers_inc_opening_point(),
+            Some(
+                stage6b
+                    .output_values
+                    .field_registers_inc_claim_reduction
+                    .rd_inc,
+            ),
+        )?;
+        entries
+    };
+    let statement: Vec<VerifierOpeningClaim<F, PCS::Output>> = entries
+        .iter()
+        .map(|entry| {
+            let opening_claim = entry.opening_claim.ok_or(ProverError::InvariantViolation {
+                reason: "stage-8 batch entry carries no clear opening claim",
+            })?;
+            Ok(VerifierOpeningClaim {
+                commitment: entry.commitment.clone(),
+                evaluation: EvaluationClaim::new(
+                    pcs_opening_point.clone(),
+                    opening_claim * entry.scale,
+                ),
+            })
+        })
+        .collect::<Result<_, ProverError<F>>>()?;
+
+    // Witness materialization (grid-embedded, batch order) and the hints
+    // reordered from stage 0's proof-commitment order.
+    let include_trusted = precommitted.trusted_advice.is_some();
+    let include_untrusted = precommitted.untrusted_advice.is_some();
+    let order = final_opening_polynomial_order(
+        layout,
+        include_trusted,
+        include_untrusted,
+        precommitted.bytecode.is_some(),
+    );
+    let grid = CommitmentGrid {
+        total_vars: config.commitment_total_vars(
+            preprocessing.verifier.program.memory_layout(),
+            include_trusted,
+            include_untrusted,
+            CommittedProgramCandidates::from_schedule(precommitted),
+        ),
+        log_t,
+        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
+        order: config.trace_polynomial_order,
+    };
+    if grid.total_vars != opening_point.len() {
+        return Err(ProverError::InvariantViolation {
+            reason: "commitment grid width disagrees with the unified opening point",
+        });
+    }
+    // The committed-program polynomials are preprocessing data (not witness
+    // oracles). Let the backend decide whether it needs host coefficient tables.
+    let precommitted_tables: PrecommittedOpeningTables<'_, F> = Box::new(|| {
+        let mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>> = BTreeMap::new();
+        if let Some(bytecode_layout) = &precommitted.bytecode {
+            let program = preprocessing
+                .program()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "full program preprocessing is unavailable",
+                })?;
+            let coeffs = build_committed_bytecode_coeffs::<F>(
+                &program.bytecode.bytecode,
+                bytecode_layout.trace_order(),
+            )?;
+            let _ = precommitted_tables.insert(JoltCommittedPolynomial::ProgramBytecode, coeffs);
+            let image_words = program_image_words_padded(&program.ram.bytecode_words);
+            let _ = precommitted_tables.insert(
+                JoltCommittedPolynomial::ProgramImageInit,
+                image_words.into_iter().map(F::from_u64).collect(),
+            );
+        }
+        Ok(precommitted_tables)
+    });
+    // Backend-neutral kernel-seam span at the call boundary, so every
+    // `JointOpeningPolynomials` implementation inherits it — see the
+    // taxonomy's kernel-seam contract.
+    let polynomials = tracing::info_span!(
+        "JointOpeningPolynomials::prepare",
+        polynomials = order.len(),
+        total_vars = grid.total_vars
+    )
+    .in_scope(|| backend.prepare_joint_opening(&order, precommitted_tables, grid))?;
+    // Move stage-0 hints; cloning would retain every row commitment.
+    let mut hint_by_id: BTreeMap<JoltCommittedPolynomial, PCS::OpeningHint> =
+        hints.into().into_iter().collect();
+    let ordered_hints: Vec<PCS::OpeningHint> = order
+        .iter()
+        .map(|polynomial| {
+            hint_by_id
+                .remove(polynomial)
+                .ok_or(ProverError::InvariantViolation {
+                    reason: "missing stage-0 opening hint for a batched polynomial",
+                })
+        })
+        .collect::<Result<_, _>>()?;
+    jolt_kernels::mem::drop_in_background_thread(hint_by_id);
+
+    // Match the protocol's FieldRdInc splice with its backend-owned polynomial
+    // and stage-0 hint at the same batch position.
+    #[cfg(feature = "field-inline")]
+    let (polynomials, ordered_hints) = {
+        let mut polynomials = polynomials;
+        let mut ordered_hints = ordered_hints;
+        let position = entries
+            .iter()
+            .position(|entry| entry.id == field_rd_inc_reduced().into())
+            .ok_or(ProverError::InvariantViolation {
+                reason: "the final opening batch has no FieldRdInc entry",
+            })?;
+        let column = backend.prepare_field_inline_opening(grid)?;
+        polynomials.insert(position, column);
+        let hint = field_inline_hints
+            .into_iter()
+            .find(|(id, _)| *id == FieldInlineCommittedPolynomial::FieldRdInc)
+            .map(|(_, hint)| hint)
+            .ok_or(ProverError::InvariantViolation {
+                reason: "missing stage-0 opening hint for FieldRdInc",
+            })?;
+        ordered_hints.insert(position, hint);
+        (polynomials, ordered_hints)
+    };
+
+    // The transcript tails are twins of the verifier's two stage-8 arms:
+    // clear absorbs the scaled claims and opens transparently
+    // (`prove_batch`); ZK squeezes the gamma powers without any claim
+    // absorption and opens in hiding mode (`prove_batch_zk`), retaining the
+    // joint evaluation and blind for BlindFold.
+    #[cfg(not(feature = "zk"))]
+    {
+        let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
+            &preprocessing.pcs_setup,
+            statement,
+            polynomials.iter().map(|poly| &**poly).collect(),
+            ordered_hints,
+            transcript,
+        )
+        .map_err(KernelError::<F>::from)?;
+
+        Ok(Stage8ProverOutput {
+            joint_opening_proof,
+        })
+    }
+    #[cfg(feature = "zk")]
+    {
+        let commitments = statement
+            .iter()
+            .map(|claim| claim.commitment.clone())
+            .collect();
+        let evaluations = statement
+            .iter()
+            .map(|claim| claim.evaluation.value)
+            .collect();
+        let opening = HomomorphicBatch::<PCS>::prove_batch_zk(
+            &preprocessing.pcs_setup,
+            pcs_opening_point,
+            commitments,
+            polynomials.iter().map(|poly| &**poly).collect(),
+            ordered_hints,
+            evaluations,
+            transcript,
+        )
+        .map_err(KernelError::<F>::from)?;
+
+        Ok(Stage8ProverOutput {
+            joint_opening_proof: opening.proof,
+            joint_evaluation: opening.joint_evaluation,
+            evaluation_blind: opening.blind,
+        })
+    }
+}

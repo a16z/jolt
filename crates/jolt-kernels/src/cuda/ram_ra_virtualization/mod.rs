@@ -1,9 +1,15 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -23,7 +29,7 @@ use one_hot::{DevicePackedRamRa, RamRaShard, ShardedPackedRamRa};
 
 pub(crate) mod one_hot;
 
-pub struct RamRaVirtualizationKernel<F: Field> {
+pub struct RamRaVirtualizationKernel<F: JoltField> {
     relation: RamRaVirtualization<F>,
     one_hot: ShardedPackedRamRa<F>,
     eq: DeviceSplitEq<F>,
@@ -32,19 +38,19 @@ pub struct RamRaVirtualizationKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RamRaVirtualizationKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for RamRaVirtualizationKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.visit_simple(Key::new("eq"), self.eq.device_bytes());
         visitor.visit_simple(
-            allocative::Key::new("finals"),
+            Key::new("finals"),
             self.finals.as_ref().map_or(0, |v| v.len() * size_of::<F>()),
         );
         visitor.exit();
     }
 }
 
-impl<F: Field> RamRaVirtualizationKernel<F> {
+impl<F: JoltField> RamRaVirtualizationKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         let bound = self.rounds_bound;
         self.one_hot
@@ -63,7 +69,7 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -84,7 +90,8 @@ impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
         })?;
         let mut coefficients = self
             .eq
-            .gruen_poly_from_evals(&evals, previous_claim)
+            .gruen_poly_from_evals(&evals[1..], previous_claim, evals[0])
+            .map_err(backend("CUDA quotient interpolation"))?
             .into_coefficients();
         coefficients.resize(self.relation.degree() + 1, F::from_u64(0));
         Ok(UnivariatePoly::new(coefficients))
@@ -95,7 +102,7 @@ impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
     type Relation = RamRaVirtualization<F>;
 
     fn output_claims(
@@ -118,7 +125,7 @@ impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -218,12 +225,13 @@ mod tests {
         JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
     };
     use jolt_claims::{NoChallenges, OutputClaims};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6b::ram_ra_virtualization::{
         RamRaVirtualization, RamRaVirtualizationInputClaims,
     };
     use jolt_witness::JoltWitnessOracle;
     use proptest::prelude::*;
+    use std::collections::BTreeSet;
 
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
@@ -296,7 +304,7 @@ mod tests {
                         }
                     }
 
-                    let distinct: std::collections::BTreeSet<usize> = hot.iter().copied().collect();
+                    let distinct: BTreeSet<usize> = hot.iter().copied().collect();
                     assert!(
                         distinct.len() > 1,
                         "chunk_bits {chunk_bits} ram_log_k {ram_log_k} chunk {chunk}: hot address \

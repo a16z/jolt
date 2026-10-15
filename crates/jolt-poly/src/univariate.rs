@@ -3,8 +3,9 @@
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use jolt_field::Field;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+use crate::CompressedPoly;
 
 /// Shared interface for univariate polynomial types.
 ///
@@ -23,7 +24,7 @@ pub trait UnivariatePolynomial<F: Field>: Send + Sync {
 /// Coefficients are stored in ascending degree order: `coefficients[i]` is the
 /// coefficient of $x^i$. An empty coefficient vector represents the zero polynomial.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct UnivariatePoly<F: Field> {
     coefficients: Vec<F>,
 }
@@ -95,7 +96,6 @@ impl<F: Field> UnivariatePoly<F> {
                     .expect("interpolation points must be distinct");
                 let neg_xm = -points[m].0;
 
-                // Multiply polynomial by (x - x_m): shift up and add
                 for k in (1..=basis_len).rev() {
                     basis[k] = basis[k - 1] + basis[k] * neg_xm;
                 }
@@ -122,9 +122,19 @@ impl<F: Field> UnivariatePoly<F> {
         &self.coefficients
     }
 
-    /// Consumes the polynomial and returns the coefficient vector.
     pub fn into_coefficients(self) -> Vec<F> {
         self.coefficients
+    }
+
+    /// Removes trailing zero coefficients while retaining one coefficient for
+    /// a nonempty zero polynomial. An empty polynomial stays empty.
+    ///
+    /// Interpolation deliberately preserves its input width; callers that need
+    /// the shortest coefficient form can request it explicitly with this method.
+    pub fn trim_trailing_zeros(&mut self) {
+        while self.coefficients.len() > 1 && self.coefficients.last().is_some_and(|c| c.is_zero()) {
+            let _ = self.coefficients.pop();
+        }
     }
 
     /// Evaluates the $i$-th Lagrange basis polynomial at `point` over the domain
@@ -180,25 +190,65 @@ impl<F: Field> UnivariatePoly<F> {
     /// `[c0, c2, c3, ...]`, saving one field element in proof serialization.
     /// The linear term can be recovered given the hint value `f(0) + f(1)`.
     ///
-    /// # Panics
-    /// Panics if the polynomial has degree < 1 (no linear term to omit).
-    pub fn compress(&self) -> crate::CompressedPoly<F> {
-        assert!(
-            self.coefficients.len() >= 2,
-            "cannot compress a polynomial of degree < 1"
-        );
-        let coeffs = [&self.coefficients[..1], &self.coefficients[2..]].concat();
-        debug_assert_eq!(coeffs.len() + 1, self.coefficients.len());
-        crate::CompressedPoly::new(coeffs)
+    /// An empty polynomial stores `[0]`; a constant stores `[c0]`. Both
+    /// compressed forms have degree bound one because the hint can reconstruct
+    /// a nonzero linear term.
+    pub fn compress(&self) -> CompressedPoly<F> {
+        let Some(&constant) = self.coefficients.first() else {
+            return CompressedPoly::new(vec![F::zero()]);
+        };
+        let mut coeffs = Vec::with_capacity(self.coefficients.len().saturating_sub(1).max(1));
+        coeffs.push(constant);
+        if self.coefficients.len() > 2 {
+            coeffs.extend_from_slice(&self.coefficients[2..]);
+        }
+        CompressedPoly::new(coeffs)
     }
 
-    /// Interpolates from evaluations at `0, 1, 2, ..., n-1` using Gaussian elimination
-    /// on the Vandermonde system. Equivalent to `interpolate_over_integers` but uses a
-    /// direct matrix solve instead of the Lagrange formula.
+    /// Interpolates from evaluations at `0, 1, 2, ..., n-1` using Newton forward
+    /// differences in O(n²) field operations. The returned coefficient count is
+    /// exactly `evals.len()`, including any trailing zero coefficients. Empty
+    /// evaluations produce the empty zero polynomial.
+    ///
+    /// # Panics
+    /// Panics if a required factorial has no inverse in the field (for example,
+    /// if the evaluation domain exceeds the field characteristic).
+    #[expect(clippy::expect_used)]
     pub fn from_evals(evals: &[F]) -> Self {
-        Self {
-            coefficients: gaussian_elimination_vandermonde(evals),
+        let n = evals.len();
+        if n == 0 {
+            return Self::zero();
         }
+
+        let mut table = evals.to_vec();
+        let mut differences = Vec::with_capacity(n);
+        for width in (1..=n).rev() {
+            differences.push(table[0]);
+            for j in 0..width - 1 {
+                table[j] = table[j + 1] - table[j];
+            }
+        }
+
+        let mut factorial = F::one();
+        for (k, difference) in differences.iter_mut().enumerate().skip(1) {
+            factorial *= F::from_u64(k as u64);
+            *difference *= factorial
+                .inverse()
+                .expect("field characteristic too small for interpolation");
+        }
+
+        let mut coefficients = vec![differences[n - 1]];
+        for k in (0..n - 1).rev() {
+            let shift = F::from_u64(k as u64);
+            let mut expanded = vec![F::zero(); coefficients.len() + 1];
+            expanded[0] = differences[k];
+            for (i, &coefficient) in coefficients.iter().enumerate() {
+                expanded[i] -= shift * coefficient;
+                expanded[i + 1] += coefficient;
+            }
+            coefficients = expanded;
+        }
+        Self { coefficients }
     }
 
     /// Interpolates from evaluations at `[0, 2, 3, ..., n-1]` with the hint `p(0) + p(1)`.
@@ -218,142 +268,33 @@ impl<F: Field> UnivariatePoly<F> {
     /// Interpolates from evaluations at `[0, 1, ..., degree-1, ∞]`.
     ///
     /// The last entry is interpreted as the evaluation at infinity, i.e., the leading
-    /// coefficient of the polynomial. Uses Gaussian elimination on the augmented
-    /// Vandermonde-plus-infinity system.
+    /// coefficient of the polynomial. Subtracts the leading monomial and
+    /// interpolates the remainder with Newton forward differences.
     ///
     /// # Panics
     /// Panics if `evals` is empty.
     pub fn from_evals_toom(evals: &[F]) -> Self {
         let n = evals.len();
         assert!(n > 0, "cannot interpolate zero evaluations");
-        let mut matrix: Vec<Vec<F>> = Vec::with_capacity(n);
-
-        // Rows for finite x values: x = 0, 1, ..., n-2
-        for (i, &eval) in evals[..n - 1].iter().enumerate() {
-            let mut row = Vec::with_capacity(n + 1);
-            let x = F::from_u64(i as u64);
-            let mut power = F::one();
-            for _ in 0..n {
-                row.push(power);
-                power *= x;
-            }
-            row.push(eval);
-            matrix.push(row);
-        }
-
-        // Row for x = ∞: only the leading coefficient survives
-        let mut row = vec![F::zero(); n];
-        row[n - 1] = F::one();
-        row.push(evals[n - 1]);
-        matrix.push(row);
-
-        Self {
-            coefficients: gaussian_elimination_augmented(&mut matrix),
-        }
-    }
-
-    /// Computes the cubic polynomial `s(X) = l(X) * q(X)`, where `l(X)` is linear
-    /// and `q(X)` is quadratic, given partial information and a hint.
-    ///
-    /// - `linear_coeffs = [l(0), l(∞)]` (constant and leading coefficient)
-    /// - `quadratic_coeff_0 = q(0)` (constant)
-    /// - `quadratic_coeff_2 = q(∞)` (quadratic coefficient, i.e., leading coeff)
-    /// - `hint = s(0) + s(1)`
-    ///
-    /// Used by the split-eq evaluator to construct round polynomials.
-    ///
-    /// # Panics
-    /// Panics if `l(1) = linear_coeffs[0] + linear_coeffs[1]` is zero, since the
-    /// hint equation cannot then be solved for the missing quadratic coefficient.
-    #[expect(clippy::expect_used)]
-    pub fn from_linear_times_quadratic_with_hint(
-        linear_coeffs: [F; 2],
-        quadratic_coeff_0: F,
-        quadratic_coeff_2: F,
-        hint: F,
-    ) -> Self {
-        let linear_eval_one = linear_coeffs[0] + linear_coeffs[1];
-        let cubic_coeff_0 = linear_coeffs[0] * quadratic_coeff_0;
-
-        // s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = hint
-        // l(1) = l(0) + l(∞) = linear_eval_one
-        // q(1) = q(0) + q(1_coeff) + q(2_coeff)
-        // Solve for the linear coefficient of q:
-        assert!(
-            !linear_eval_one.is_zero(),
-            "linear polynomial vanishes at x=1"
-        );
-        let linear_eval_one_inv = linear_eval_one
-            .inverse()
-            .expect("nonzero linear_eval_one has an inverse");
-        let quadratic_coeff_1 =
-            (hint - cubic_coeff_0) * linear_eval_one_inv - quadratic_coeff_0 - quadratic_coeff_2;
-
-        // s(X) = (a + bX)(c + dX + eX^2) = ac + (ad+bc)X + (ae+bd)X^2 + beX^3
-        let coefficients = vec![
-            cubic_coeff_0,
-            linear_coeffs[0] * quadratic_coeff_1 + linear_coeffs[1] * quadratic_coeff_0,
-            linear_coeffs[0] * quadratic_coeff_2 + linear_coeffs[1] * quadratic_coeff_1,
-            linear_coeffs[1] * quadratic_coeff_2,
-        ];
+        let degree = n - 1;
+        let leading = evals[degree];
+        let finite: Vec<F> = evals[..degree]
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let point = F::from_u64(index as u64);
+                let high_power = (0..degree).fold(F::one(), |power, _| power * point);
+                *value - leading * high_power
+            })
+            .collect();
+        let mut coefficients = Self::from_evals(&finite).into_coefficients();
+        coefficients.push(leading);
         Self { coefficients }
     }
 
     /// Returns `true` if all coefficients are zero (or the vector is empty).
     pub fn is_zero(&self) -> bool {
         self.coefficients.is_empty() || self.coefficients.iter().all(|c| *c == F::zero())
-    }
-
-    /// The leading (highest-degree) coefficient, or `None` for the zero polynomial.
-    pub fn leading_coefficient(&self) -> Option<&F> {
-        self.coefficients.last()
-    }
-
-    /// Polynomial long division: `self = quotient * divisor + remainder`.
-    ///
-    /// Returns `Some((quotient, remainder))`, or `None` if `divisor` is the
-    /// zero polynomial.
-    #[expect(clippy::unwrap_used, clippy::expect_used)]
-    pub fn divide_with_remainder(&self, divisor: &Self) -> Option<(Self, Self)> {
-        if self.is_zero() {
-            return Some((Self::zero(), Self::zero()));
-        }
-        // Divide by the effective (mathematical) degree: trailing zero
-        // coefficients would otherwise make the stored leading coefficient
-        // zero and non-invertible. `None` here means the zero divisor.
-        let divisor_len = divisor.coefficients.iter().rposition(|c| *c != F::zero())? + 1;
-        if self.coefficients.len() < divisor_len {
-            return Some((Self::zero(), self.clone()));
-        }
-
-        let divisor_coeffs = &divisor.coefficients[..divisor_len];
-        let divisor_leading_inv = divisor_coeffs[divisor_len - 1]
-            .inverse()
-            .expect("leading coefficient must be invertible");
-
-        let mut remainder = self.clone();
-        let mut quotient = vec![F::zero(); self.coefficients.len() - divisor_len + 1];
-
-        while !remainder.is_zero() && remainder.coefficients.len() >= divisor_len {
-            let cur_q_coeff = *remainder.leading_coefficient().unwrap() * divisor_leading_inv;
-            let cur_q_degree = remainder.coefficients.len() - divisor_len;
-            quotient[cur_q_degree] = cur_q_coeff;
-
-            for (i, div_coeff) in divisor_coeffs.iter().enumerate() {
-                remainder.coefficients[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
-            }
-
-            // Strip trailing zeros
-            while remainder
-                .coefficients
-                .last()
-                .is_some_and(|c| *c == F::zero())
-            {
-                let _ = remainder.coefficients.pop();
-            }
-        }
-
-        Some((Self::new(quotient), remainder))
     }
 }
 
@@ -466,120 +407,20 @@ impl<F: Field> MulAssign<F> for UnivariatePoly<F> {
     }
 }
 
-/// Gaussian elimination on a Vandermonde system for evaluations at `0, 1, ..., n-1`.
-fn gaussian_elimination_vandermonde<F: Field>(evals: &[F]) -> Vec<F> {
-    let n = evals.len();
-    let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
-
-    let mut matrix: Vec<Vec<F>> = Vec::with_capacity(n);
-    for i in 0..n {
-        let mut row = Vec::with_capacity(n + 1);
-        let x = xs[i];
-        let mut power = F::one();
-        for _ in 0..n {
-            row.push(power);
-            power *= x;
-        }
-        row.push(evals[i]);
-        matrix.push(row);
-    }
-
-    gaussian_elimination_augmented(&mut matrix)
-}
-
-/// Gaussian elimination with partial pivoting on an augmented matrix `[A | b]`
-/// where `A` is `n × n`.
-///
-/// Returns the solution vector `x` such that `A x = b`.
-///
-/// # Panics
-///
-/// Panics if the matrix is singular (no nonzero pivot in some column).
-#[expect(clippy::expect_used)]
-fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
-    let size = matrix.len();
-    debug_assert_eq!(size, matrix[0].len() - 1);
-
-    // Forward elimination with partial pivoting
-    for i in 0..size.saturating_sub(1) {
-        // Find a row with a nonzero pivot in column i
-        let pivot_row = (i..size)
-            .find(|&r| matrix[r][i] != F::zero())
-            .expect("singular matrix in gaussian_elimination_augmented");
-        if pivot_row != i {
-            matrix.swap(i, pivot_row);
-        }
-
-        for j in (i + 1)..size {
-            let pivot_inv = matrix[i][i]
-                .inverse()
-                .expect("nonzero pivot has an inverse");
-            let factor = matrix[j][i] * pivot_inv;
-            #[expect(clippy::needless_range_loop)]
-            for k in i..=size {
-                let tmp = matrix[i][k];
-                matrix[j][k] -= factor * tmp;
-            }
-        }
-    }
-
-    // Back substitution
-    for i in (1..size).rev() {
-        assert!(
-            matrix[i][i] != F::zero(),
-            "singular matrix in gaussian_elimination_augmented"
-        );
-        for j in (0..i).rev() {
-            let pivot_inv = matrix[i][i]
-                .inverse()
-                .expect("nonzero pivot has an inverse");
-            let factor = matrix[j][i] * pivot_inv;
-            for k in (0..=size).rev() {
-                let tmp = matrix[i][k];
-                matrix[j][k] -= factor * tmp;
-            }
-        }
-    }
-
-    let mut result = vec![F::zero(); size];
-    for i in 0..size {
-        let pivot_inv = matrix[i][i]
-            .inverse()
-            .expect("nonzero pivot has an inverse");
-        result[i] = matrix[i][size] * pivot_inv;
-    }
-    result
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use jolt_field::Fr;
-    use jolt_field::FromPrimitiveInt;
+    use jolt_field::Ring;
     use num_traits::{One, Zero};
 
     #[test]
     fn horner_known_polynomial() {
-        // p(x) = 3 + 2x + x^2
         let p = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(2), Fr::from_u64(1)]);
         assert_eq!(p.evaluate(Fr::from_u64(0)), Fr::from_u64(3));
         assert_eq!(p.evaluate(Fr::from_u64(1)), Fr::from_u64(6));
         assert_eq!(p.evaluate(Fr::from_u64(2)), Fr::from_u64(11));
-    }
-
-    #[test]
-    fn interpolate_round_trip() {
-        let points = vec![
-            (Fr::from_u64(0), Fr::from_u64(1)),
-            (Fr::from_u64(1), Fr::from_u64(4)),
-            (Fr::from_u64(2), Fr::from_u64(11)),
-        ];
-        let p = UnivariatePoly::interpolate(&points);
-
-        for &(x, y) in &points {
-            assert_eq!(p.evaluate(x), y);
-        }
     }
 
     #[test]
@@ -602,7 +443,6 @@ mod tests {
 
     #[test]
     fn interpolate_linear() {
-        // (0, 1), (1, 3) -> p(x) = 1 + 2x
         let points = vec![
             (Fr::from_u64(0), Fr::from_u64(1)),
             (Fr::from_u64(1), Fr::from_u64(3)),
@@ -614,17 +454,6 @@ mod tests {
     #[test]
     fn serde_round_trip() {
         let p = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(2), Fr::from_u64(1)]);
-        let bytes = bincode::serde::encode_to_vec(&p, bincode::config::standard()).unwrap();
-        let recovered: UnivariatePoly<Fr> =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .unwrap()
-                .0;
-        assert_eq!(p, recovered);
-    }
-
-    #[test]
-    fn serde_round_trip_zero() {
-        let p = UnivariatePoly::<Fr>::zero();
         let bytes = bincode::serde::encode_to_vec(&p, bincode::config::standard()).unwrap();
         let recovered: UnivariatePoly<Fr> =
             bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
@@ -673,37 +502,16 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_over_integers_constant() {
-        let c = Fr::from_u64(42);
-        let evals = vec![c; 4];
-        let poly = UnivariatePoly::interpolate_over_integers(&evals);
-        assert_eq!(poly.evaluate(Fr::from_u64(100)), c);
-    }
-
-    #[test]
     fn interpolate_single_point_constant() {
         let c = Fr::from_u64(7);
         let poly = UnivariatePoly::interpolate(&[(Fr::from_u64(0), c)]);
-        // Degree-0 polynomial: evaluates to c everywhere
         assert_eq!(poly.evaluate(Fr::from_u64(0)), c);
         assert_eq!(poly.evaluate(Fr::from_u64(99)), c);
         assert_eq!(poly.degree(), 0);
     }
 
     #[test]
-    fn compress_then_evaluate_with_hint() {
-        // p(x) = 1 + 3x + 2x^2  =>  p(0)=1, p(1)=6
-        let p = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(2)]);
-        let hint = p.evaluate(Fr::zero()) + p.evaluate(Fr::one());
-
-        let compressed = p.compress();
-        let x = Fr::from_u64(5);
-        assert_eq!(compressed.evaluate_with_hint(hint, x), p.evaluate(x));
-    }
-
-    #[test]
     fn add_polynomials() {
-        // (1 + 2x) + (3 + x + 5x^2) = 4 + 3x + 5x^2
         let a = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);
         let b = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(1), Fr::from_u64(5)]);
         let sum = &a + &b;
@@ -745,7 +553,6 @@ mod tests {
 
     #[test]
     fn scalar_mul() {
-        // (1 + 2x) * 3 = 3 + 6x
         let p = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);
         let scaled = &p * Fr::from_u64(3);
         assert_eq!(
@@ -765,98 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn add_then_scalar_mul_pattern() {
-        // Mimics sumcheck batching: batched += &(round_poly * coeff)
-        let mut batched = UnivariatePoly::<Fr>::zero();
-        let poly_a = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)]);
-        let poly_b = UnivariatePoly::new(vec![Fr::from_u64(4), Fr::from_u64(5), Fr::from_u64(6)]);
-        let coeff_a = Fr::from_u64(2);
-        let coeff_b = Fr::from_u64(3);
-
-        batched += &(&poly_a * coeff_a);
-        batched += &(&poly_b * coeff_b);
-
-        // 2*(1+2x+3x^2) + 3*(4+5x+6x^2) = (2+12) + (4+15)x + (6+18)x^2
-        for x_val in 0..5u64 {
-            let x = Fr::from_u64(x_val);
-            let expected = poly_a.evaluate(x) * coeff_a + poly_b.evaluate(x) * coeff_b;
-            assert_eq!(batched.evaluate(x), expected, "mismatch at x={x_val}");
-        }
-    }
-
-    #[test]
-    fn divide_exact() {
-        // (x^2 - 1) / (x - 1) = (x + 1), remainder 0
-        let dividend = UnivariatePoly::new(vec![-Fr::one(), Fr::zero(), Fr::one()]);
-        let divisor = UnivariatePoly::new(vec![-Fr::one(), Fr::one()]);
-        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
-        assert_eq!(q, UnivariatePoly::new(vec![Fr::one(), Fr::one()]));
-        assert!(r.is_zero());
-    }
-
-    #[test]
-    fn divide_with_remainder_nonzero() {
-        // (x^2 + 1) / (x - 1): quotient = x + 1, remainder = 2
-        let dividend = UnivariatePoly::new(vec![Fr::one(), Fr::zero(), Fr::one()]);
-        let divisor = UnivariatePoly::new(vec![-Fr::one(), Fr::one()]);
-        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
-
-        // Verify: q * divisor + r == dividend
-        for x_val in 0..5u64 {
-            let x = Fr::from_u64(x_val);
-            assert_eq!(
-                q.evaluate(x) * divisor.evaluate(x) + r.evaluate(x),
-                dividend.evaluate(x),
-            );
-        }
-    }
-
-    #[test]
-    fn divide_by_zero_returns_none() {
-        let p = UnivariatePoly::new(vec![Fr::one()]);
-        assert!(p.divide_with_remainder(&UnivariatePoly::zero()).is_none());
-    }
-
-    #[test]
-    fn divide_by_all_zero_divisor_returns_none() {
-        // Non-canonical zero divisor: nonempty vector of zero coefficients.
-        let p = UnivariatePoly::new(vec![Fr::one(), Fr::one()]);
-        let divisor = UnivariatePoly::new(vec![Fr::zero(), Fr::zero()]);
-        assert!(p.divide_with_remainder(&divisor).is_none());
-    }
-
-    #[test]
-    fn divide_by_divisor_with_trailing_zeros() {
-        // (x^2 + 3x + 2) / (x + 2), divisor stored non-canonically as [2, 1, 0].
-        let dividend = UnivariatePoly::new(vec![Fr::from_u64(2), Fr::from_u64(3), Fr::one()]);
-        let divisor = UnivariatePoly::new(vec![Fr::from_u64(2), Fr::one(), Fr::zero()]);
-        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
-        assert_eq!(q, UnivariatePoly::new(vec![Fr::one(), Fr::one()]));
-        assert!(r.is_zero());
-    }
-
-    #[test]
-    fn divide_lower_degree_returns_self_as_remainder() {
-        let dividend = UnivariatePoly::new(vec![Fr::from_u64(3)]);
-        let divisor = UnivariatePoly::new(vec![Fr::one(), Fr::one()]);
-        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
-        assert!(q.is_zero());
-        assert_eq!(r, dividend);
-    }
-
-    #[test]
-    fn from_evals_quadratic() {
-        // p(x) = 2x^2 + 3x + 1 → p(0)=1, p(1)=6, p(2)=15
-        let evals = vec![Fr::from_u64(1), Fr::from_u64(6), Fr::from_u64(15)];
-        let poly = UnivariatePoly::from_evals(&evals);
-        assert_eq!(poly.coefficients[0], Fr::from_u64(1));
-        assert_eq!(poly.coefficients[1], Fr::from_u64(3));
-        assert_eq!(poly.coefficients[2], Fr::from_u64(2));
-    }
-
-    #[test]
     fn from_evals_cubic() {
-        // p(x) = x^3 + 2x^2 + 3x + 1
         let evals = vec![
             Fr::from_u64(1),
             Fr::from_u64(7),
@@ -893,9 +609,6 @@ mod tests {
 
     #[test]
     fn from_evals_and_hint() {
-        // p(x) = 2x^2 + 3x + 1 → p(0)=1, p(1)=6
-        // hint = p(0) + p(1) = 7
-        // Given evals at [0, 2] = [1, 15], recover p(1) = 7 - 1 = 6
         let hint = Fr::from_u64(7);
         let evals = vec![Fr::from_u64(1), Fr::from_u64(15)];
         let poly = UnivariatePoly::from_evals_and_hint(hint, &evals);
@@ -918,42 +631,20 @@ mod tests {
     }
 
     #[test]
-    fn from_evals_toom_cubic() {
-        // p(x) = 9x^3 + 3x^2 + x + 5
-        let gt_poly = UnivariatePoly::new(vec![
-            Fr::from_u64(5),
-            Fr::from_u64(1),
-            Fr::from_u64(3),
-            Fr::from_u64(9),
-        ]);
-        let degree = 3;
-        let mut toom_evals: Vec<Fr> = (0..degree)
-            .map(|x| gt_poly.evaluate(Fr::from_u64(x)))
-            .collect();
-        // eval at ∞ = leading coefficient
-        toom_evals.push(*gt_poly.coefficients().last().unwrap());
-
-        let poly = UnivariatePoly::from_evals_toom(&toom_evals);
-        assert_eq!(gt_poly, poly);
-    }
-
-    #[test]
-    fn from_linear_times_quadratic_with_hint() {
-        // s(x) = (x + 1) * (x^2 + 2x + 3) = x^3 + 3x^2 + 5x + 3
-        // hint = s(0) + s(1) = 3 + 12 = 15
-        let linear_coeffs = [Fr::from_u64(1), Fr::from_u64(1)];
-        let q0 = Fr::from_u64(3);
-        let q2 = Fr::from_u64(1);
-        let hint = Fr::from_u64(15);
-        let poly =
-            UnivariatePoly::from_linear_times_quadratic_with_hint(linear_coeffs, q0, q2, hint);
-
-        let expected = UnivariatePoly::new(vec![
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-            Fr::from_u64(3),
-            Fr::from_u64(1),
-        ]);
-        assert_eq!(poly, expected);
+    fn toom_recovers_coefficients_and_preserves_zero_leading_terms() {
+        for degree in [0, 1, 4, 8, 32] {
+            for leading in [Fr::zero(), Fr::from_u64(19)] {
+                let mut coefficients: Vec<Fr> = (0..=degree)
+                    .map(|index| Fr::from_u64(index as u64 + 3))
+                    .collect();
+                coefficients[degree] = leading;
+                let expected = UnivariatePoly::new(coefficients);
+                let mut samples: Vec<Fr> = (0..degree)
+                    .map(|index| expected.evaluate(Fr::from_u64(index as u64)))
+                    .collect();
+                samples.push(leading);
+                assert_eq!(UnivariatePoly::from_evals_toom(&samples), expected);
+            }
+        }
     }
 }

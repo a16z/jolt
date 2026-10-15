@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask   = 0xfe00707f,
     match  = 0x02003033,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
 impl MULHU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <MULHU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <MULHU as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             ((cpu.x[self.operands.rs1 as usize] as u64 as u128)

@@ -1,3 +1,4 @@
+use crate::instruction::registers::load::RegisterStateLoad;
 use serde::{Deserialize, Serialize};
 
 use crate::declare_riscv_instr;
@@ -5,7 +6,7 @@ use crate::emulator::cpu::Cpu;
 
 use super::format::format_load::FormatLoad;
 use super::Instruction;
-use super::RAMRead;
+use super::RamRead;
 
 use super::{Cycle, RISCVInstruction, RISCVTrace};
 
@@ -14,11 +15,12 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00005003,
     format = FormatLoad,
-    ram    = RAMRead
+    registers = RegisterStateLoad,
+    ram    = RamRead
 );
 
 impl LHU {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LHU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LHU as RISCVInstruction>::RamAccess) {
         let value = match cpu
             .mmu
             .load_halfword(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)

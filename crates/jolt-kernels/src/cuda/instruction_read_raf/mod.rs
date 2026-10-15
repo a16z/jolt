@@ -4,15 +4,22 @@ mod combine;
 mod cycle_handoff;
 mod cycle_rounds;
 mod prefixes;
+#[cfg(test)]
 mod suffixes;
 
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
 };
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_lookup_tables::lookup_bits::LookupBits;
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::SuffixEval;
@@ -46,7 +53,7 @@ const ADDRESS_BITS: usize = 128;
 const RAF_CHECKPOINTS: usize = 4;
 const HINT_POINTS: usize = 2;
 
-fn raf_initial_checkpoints<F: Field>() -> [F; RAF_CHECKPOINTS] {
+fn raf_initial_checkpoints<F: JoltField>() -> [F; RAF_CHECKPOINTS] {
     let mut checkpoints = [F::zero(); RAF_CHECKPOINTS];
     if CANONICAL_INSTRUCTION_ADDRESS {
         checkpoints[3] = F::one();
@@ -66,7 +73,7 @@ type PreparedWindow = (
     [bool; LookupTableKind::<RISCV_XLEN>::COUNT],
 );
 
-pub struct DeviceInstructionReadRaf<F: Field> {
+pub struct DeviceInstructionReadRaf<F: JoltField> {
     device: Option<DeviceAddressPhase>,
     cycle: Option<DeviceCycleRounds>,
     row_shards: Vec<RowShard>,
@@ -82,27 +89,27 @@ pub struct DeviceInstructionReadRaf<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for DeviceInstructionReadRaf<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for DeviceInstructionReadRaf<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("r_reduction"),
+            Key::new("r_reduction"),
             self.r_reduction.len() * size_of::<Fr>(),
         );
         visitor.visit_simple(
-            allocative::Key::new("cycle_challenges"),
+            Key::new("cycle_challenges"),
             self.cycle_challenges.len() * size_of::<Fr>(),
         );
         visitor.visit_simple(
-            allocative::Key::new("prefix_checkpoints"),
+            Key::new("prefix_checkpoints"),
             self.prefix_checkpoints.len() * size_of::<PrefixEval<F>>(),
         );
         visitor.exit();
     }
 }
 
-impl<F: Field> DeviceInstructionReadRaf<F> {
-    fn field(value: jolt_field::Fr) -> Result<F, SumcheckError<F>> {
+impl<F: JoltField> DeviceInstructionReadRaf<F> {
+    fn field(value: Fr) -> Result<F, SumcheckError<F>> {
         fr_into(value).ok_or(SumcheckError::MissingEvaluationSource {
             kind: "cuda instruction read-RAF field",
         })
@@ -276,7 +283,7 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -294,12 +301,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             });
         }
         let cycles = 1usize << dimensions.log_t();
-        let unsupported = || KernelError::Unsupported {
-            reason: "the CUDA instruction read-RAF kernel supports only the BN254 scalar field",
-        };
-        let r_reduction = require_fr_slice(&inputs.points.lookup_output)
-            .map_err(|_| unsupported())?
-            .to_vec();
+        let r_reduction = require_fr_slice(&inputs.points.lookup_output)?.to_vec();
 
         let windows = witness_windows(cycles);
         let shards = windows.len();
@@ -322,9 +324,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             .map(|((ordinal, shard, trace, atoms, limbs), window)| {
                 let task: DeviceTask<'_, PreparedWindow, KernelError<F>> =
                     Box::new(move || {
-                        let flags = trace
-                            .flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)
-                            .map_err(|_| unsupported())?;
+                        let flags = trace.flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)?;
                         let table_index = shard.download_u32(&atoms.table_index)?;
                         let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
                         for &index in table_index
@@ -341,15 +341,12 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
                                 )? = true;
                             }
                         }
-                        let rows = Arc::new(
-                            DeviceRows::from_device_columns(
-                                limbs,
-                                shard.clone_u32(&atoms.table_index)?,
-                                flags,
-                                window.len,
-                            )
-                            .map_err(|_| unsupported())?,
-                        );
+                        let rows = Arc::new(DeviceRows::from_device_columns(
+                            limbs,
+                            shard.clone_u32(&atoms.table_index)?,
+                            flags,
+                            window.len,
+                        )?);
                         Ok((
                             RowShard {
                                 ordinal,
@@ -359,9 +356,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
                             AddressShard {
                                 ordinal,
                                 rows,
-                                u_evals: shard
-                                    .eq_evals_shard(reduction, ordinal, shards)
-                                    .map_err(|_| unsupported())?,
+                                u_evals: shard.eq_evals_shard(reduction, ordinal, shards)?,
                             },
                             used,
                         ))
@@ -381,8 +376,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             }
         }
 
-        let device = DeviceAddressPhase::with_shards(context, address_shards, &used, ADDRESS_BITS)
-            .map_err(|_| unsupported())?;
+        let device = DeviceAddressPhase::with_shards(context, address_shards, &used, ADDRESS_BITS)?;
 
         Ok(Box::new(DeviceInstructionReadRaf {
             device: Some(device),
@@ -404,7 +398,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
     }
 }
 
-impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
+impl<F: JoltField> ProveRounds<F> for DeviceInstructionReadRaf<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -465,7 +459,7 @@ impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
     }
 }
 
-impl<F: Field> DeviceInstructionReadRaf<F> {
+impl<F: JoltField> DeviceInstructionReadRaf<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         if self.rounds_bound < ADDRESS_BITS {
             let scalar =
@@ -512,7 +506,7 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for DeviceInstructionReadRaf<F> {
+impl<F: JoltField> SumcheckKernel<F> for DeviceInstructionReadRaf<F> {
     type Relation = InstructionReadRaf<F>;
 
     fn output_claims(
@@ -575,7 +569,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_riscv::JoltInstructionKind;
     use jolt_verifier::stages::stage5::InstructionReadRaf;
     use proptest::prelude::*;

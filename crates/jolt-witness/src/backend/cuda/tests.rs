@@ -3,24 +3,42 @@
     reason = "test module: device and fixture errors fail loudly"
 )]
 
+use crate::witnesses::Extract;
+use crate::witnesses::WitnessEnv;
+use crate::WitnessError;
+use jolt_riscv::NUM_CIRCUIT_FLAGS;
+use jolt_riscv::NUM_INSTRUCTION_FLAGS;
 use std::sync::Arc;
 
 use cudarc::driver::{CudaContext, CudaSlice, CudaStream};
-use jolt_program::execution::{OwnedTrace, RegisterState, TraceRow};
-use jolt_riscv::{CircuitFlags, InstructionFlags, JoltInstructionKind};
+
+use jolt_riscv::{CircuitFlags, InstructionFlags, JoltInstructionKind, JoltTraceRow};
 
 use super::packed::{EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2, EXTRA_WORDS};
 use super::*;
 use crate::backend::trace::TraceBackend;
 use crate::backend::ProgramSource;
-use crate::testing::{all_kinds_backend, supported_jolt_kinds};
+mod fixtures;
 use crate::witnesses::{
     BytecodePc, InstructionFlag, InstructionRafFlag, LeftInstructionInput, LeftLookupOperand,
-    LookupIndex, LookupOutput, MappedPc, NextIsNoop, OpFlag, Product, RaChunkSelector,
-    RamHammingWeight, RamInc, RdAddress, RdInc, RemappedRamAddress, RightInstructionInput,
-    RightLookupOperand, ShouldBranch, ShouldJump, TableIndex,
+    LookupIndex, LookupOutput, NextIsNoop, OpFlag, Product, RaChunkSelector, RamHammingWeight,
+    RamInc, RdInc, RemappedRamAddress, RightInstructionInput, RightLookupOperand, ShouldBranch,
+    ShouldJump, TableIndex,
 };
-use crate::{collect_bundles, RowSource, WitnessBundle};
+use crate::{collect_bundles, WitnessBundle};
+use fixtures::{all_kinds_backend, supported_jolt_kinds};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RdAddress(Option<u8>);
+impl Extract for RdAddress {
+    fn extract(
+        row: &JoltTraceRow,
+        _next: Option<&JoltTraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row.rd_index()))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct AtomProbe {
@@ -84,8 +102,8 @@ struct AtomProbe {
 }
 
 impl AtomProbe {
-    fn circuit_flag(&self, flag: CircuitFlags) -> bool {
-        match flag {
+    fn circuit_flag(&self, flag: CircuitFlags) -> Option<bool> {
+        let value = match flag {
             CircuitFlags::AddOperands => self.add_operands.0,
             CircuitFlags::SubtractOperands => self.subtract_operands.0,
             CircuitFlags::MultiplyOperands => self.multiply_operands.0,
@@ -100,7 +118,19 @@ impl AtomProbe {
             CircuitFlags::IsCompressed => self.is_compressed.0,
             CircuitFlags::IsFirstInSequence => self.is_first_in_sequence.0,
             CircuitFlags::IsLastInSequence => self.is_last_in_sequence.0,
-        }
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAdd
+            | CircuitFlags::FieldSub
+            | CircuitFlags::FieldMul
+            | CircuitFlags::FieldInv
+            | CircuitFlags::FieldAssertEq
+            | CircuitFlags::FieldLoadAccumulateFromRegister
+            | CircuitFlags::FieldAssertZero
+            | CircuitFlags::FieldLoadImm
+            | CircuitFlags::FieldLoadAccumulateFromMemory
+            | CircuitFlags::FieldAdviceLimb => return None,
+        };
+        Some(value)
     }
 
     fn instruction_flag(&self, flag: InstructionFlags) -> bool {
@@ -118,7 +148,7 @@ impl AtomProbe {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct ColumnProbe {
     lookup_index: LookupIndex,
-    mapped_pc: MappedPc,
+    bytecode_pc: BytecodePc,
     remapped_ram: RemappedRamAddress,
 }
 
@@ -126,7 +156,7 @@ const RAM_K: usize = 1 << 6;
 
 struct Fixture {
     stream: Arc<CudaStream>,
-    backend: TraceBackend<OwnedTrace>,
+    backend: TraceBackend,
     trace: DeviceTrace,
     cycles: usize,
 }
@@ -134,10 +164,10 @@ struct Fixture {
 fn fixture(seed: u64) -> Option<Fixture> {
     let stream = CudaContext::new(0).ok()?.default_stream();
     let (backend, cycles, kinds) = all_kinds_backend(seed);
-    let physical = backend.rows().expect("the fixture is slice-backed");
+    let physical = backend.trace.trace.proof_rows();
     let present: Vec<_> = physical
         .iter()
-        .map(|row| row.instruction.instruction_kind)
+        .filter_map(|row| row.instruction_kind())
         .collect();
     let missing: Vec<_> = supported_jolt_kinds()
         .into_iter()
@@ -183,17 +213,18 @@ impl Fixture {
         collect_bundles(&self.backend, self.cycles).expect("reference atoms")
     }
 
-    fn row(&self, index: usize) -> TraceRow {
+    fn row(&self, index: usize) -> JoltTraceRow {
         self.backend
-            .rows()
-            .expect("slice-backed")
+            .trace
+            .trace
+            .proof_rows()
             .get(index)
             .copied()
-            .unwrap_or_default()
+            .unwrap_or_else(JoltTraceRow::default)
     }
 
-    fn register(&self, index: usize, slot: impl Fn(&RegisterState) -> Option<u8>) -> u32 {
-        slot(&self.row(index).registers).map_or(REGISTER_ADDRESS_ABSENT, u32::from)
+    fn register(&self, index: usize, slot: impl Fn(&JoltTraceRow) -> Option<u8>) -> u32 {
+        slot(&self.row(index)).map_or(REGISTER_ADDRESS_ABSENT, u32::from)
     }
 
     fn wide(limbs: &[u64], index: usize) -> i128 {
@@ -359,7 +390,7 @@ fn device_atom_columns_match_the_reference_extractors() {
         let bit = |position: u32| mask >> position & 1 == 1;
         for (slot, flag) in PACK_CIRCUIT_ORDER.into_iter().enumerate() {
             assert_eq!(
-                bit(FLAG_BIT_CIRCUIT_BASE + slot as u32),
+                Some(bit(FLAG_BIT_CIRCUIT_BASE + slot as u32)),
                 row.circuit_flag(flag),
                 "{flag:?} at cycle {index}",
             );
@@ -374,7 +405,7 @@ fn device_atom_columns_match_the_reference_extractors() {
         assert_eq!(bit(FLAG_BIT_RAF), row.raf_flag.0, "raf flag at {index}");
         assert_eq!(
             bit(FLAG_BIT_NOOP_ROW),
-            fixture.row(index).instruction.instruction_kind == JoltInstructionKind::NoOp,
+            fixture.row(index).instruction_kind() == Some(JoltInstructionKind::NoOp),
             "noop row at {index}",
         );
         assert_eq!(
@@ -400,26 +431,22 @@ fn device_atom_columns_match_the_reference_extractors() {
         );
         assert_eq!(
             rd_pre[index],
-            fixture
-                .row(index)
-                .registers
-                .rd
-                .map_or(0, |write| write.pre_value),
+            fixture.row(index).rd_pre_value(),
             "rd pre at {index}",
         );
         assert_eq!(
             rs1_address[index],
-            fixture.register(index, |registers| registers.rs1.map(|read| read.register)),
+            fixture.register(index, |row| row.rs1_index()),
             "rs1 address at {index}",
         );
         assert_eq!(
             rs2_address[index],
-            fixture.register(index, |registers| registers.rs2.map(|read| read.register)),
+            fixture.register(index, |row| row.rs2_index()),
             "rs2 address at {index}",
         );
         assert_eq!(
             rd_address[index],
-            fixture.register(index, |registers| registers.rd.map(|write| write.register)),
+            fixture.register(index, |row| row.rd_index()),
             "rd address at {index}",
         );
         assert_eq!(
@@ -512,11 +539,7 @@ fn device_columns_match_the_reference_extractors() {
     for (index, row) in rows.iter().enumerate() {
         let got = u128::from(limbs[2 * index]) | (u128::from(limbs[2 * index + 1]) << 64);
         assert_eq!(got, row.lookup_index.0, "lookup index at {index}");
-        assert_eq!(
-            pc[index],
-            row.mapped_pc.0.map_or(COLD, |slot| slot as u32),
-            "mapped pc at {index}",
-        );
+        assert_eq!(pc[index], row.bytecode_pc.0 as u32, "mapped pc at {index}");
         assert_eq!(
             ram[index],
             row.remapped_ram.0.map_or(COLD, |address| address as u32),
@@ -534,15 +557,10 @@ fn device_extra_word_columns_match_the_trace_rows() {
         (
             EXTRA_RS1,
             "rs1 value",
-            (|row: &TraceRow| row.registers.rs1.map_or(0, |read| read.value))
-                as fn(&TraceRow) -> u64,
+            (|row: &JoltTraceRow| row.rs1_value()) as fn(&JoltTraceRow) -> u64,
         ),
-        (EXTRA_RS2, "rs2 value", |row| {
-            row.registers.rs2.map_or(0, |read| read.value)
-        }),
-        (EXTRA_RD_POST, "rd post value", |row| {
-            row.registers.rd.map_or(0, |write| write.post_value)
-        }),
+        (EXTRA_RS2, "rs2 value", |row| row.rs2_value()),
+        (EXTRA_RD_POST, "rd post value", |row| row.rd_write_value()),
     ] {
         let column = fixture.u64s(
             &fixture
@@ -625,14 +643,32 @@ fn the_flag_bit_accessors_agree_with_the_canonical_order() {
             "{flag:?} resolves to the wrong canonical bit",
         );
     }
+    #[cfg(feature = "field-inline")]
+    let unpacked = [
+        CircuitFlags::FieldAdd,
+        CircuitFlags::FieldSub,
+        CircuitFlags::FieldMul,
+        CircuitFlags::FieldInv,
+        CircuitFlags::FieldAssertEq,
+        CircuitFlags::FieldLoadAccumulateFromRegister,
+        CircuitFlags::FieldAssertZero,
+        CircuitFlags::FieldLoadImm,
+        CircuitFlags::FieldLoadAccumulateFromMemory,
+        CircuitFlags::FieldAdviceLimb,
+    ];
+    #[cfg(not(feature = "field-inline"))]
+    let unpacked: [CircuitFlags; 0] = [];
+    for flag in unpacked {
+        assert_eq!(circuit_flag_bit(flag), None);
+    }
     assert_eq!(
-        PACK_CIRCUIT_ORDER.len(),
-        jolt_riscv::NUM_CIRCUIT_FLAGS,
-        "a circuit flag was added to the enum without a canonical bit, so it silently has none",
+        PACK_CIRCUIT_ORDER.len() + unpacked.len(),
+        NUM_CIRCUIT_FLAGS,
+        "every circuit flag must be packed or explicitly delegated",
     );
     assert_eq!(
         PACK_INSTRUCTION_ORDER.len(),
-        jolt_riscv::NUM_INSTRUCTION_FLAGS,
+        NUM_INSTRUCTION_FLAGS,
         "an instruction flag was added to the enum without a canonical bit",
     );
 }

@@ -1,5 +1,5 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
@@ -21,7 +21,7 @@ pub struct DeviceBytecodePushforward {
     len: usize,
 }
 
-pub struct PushforwardInputs<'a, F: Field> {
+pub struct PushforwardInputs<'a, F: JoltField> {
     pub stage_cycle_points: &'a [Vec<F>; STAGES],
     pub stage_values: &'a [[F; STAGES]],
     pub entry_trace_index: usize,
@@ -31,7 +31,7 @@ pub struct PushforwardInputs<'a, F: Field> {
 
 impl DeviceBytecodePushforward {
     #[tracing::instrument(skip_all, name = "brap_pushforward")]
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         shards: &OneHotShards,
         inputs: PushforwardInputs<'_, F>,
@@ -196,7 +196,10 @@ impl DeviceBytecodePushforward {
         self.len
     }
 
-    pub fn round_lanes<F: Field>(&self, context: &CudaKernelContext) -> Result<(F, F), CudaError> {
+    pub fn round_lanes<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<(F, F), CudaError> {
         let half = self.len / 2;
         if half == 0 {
             return Err(CudaError::LengthMismatch {
@@ -246,7 +249,7 @@ impl DeviceBytecodePushforward {
         Ok((at_zero, at_two))
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -265,7 +268,7 @@ impl DeviceBytecodePushforward {
         Ok(())
     }
 
-    pub fn intermediate_claim<F: Field>(&self) -> Result<F, CudaError> {
+    pub fn intermediate_claim<F: JoltField>(&self) -> Result<F, CudaError> {
         if self.len != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
@@ -289,7 +292,7 @@ impl DeviceBytecodePushforward {
         })
     }
 
-    pub fn val_claims<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+    pub fn val_claims<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
         if self.len != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
@@ -319,7 +322,7 @@ impl DeviceBytecodePushforward {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 

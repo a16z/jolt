@@ -2,25 +2,25 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
     FIELD_REGISTERS_LOG_K,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_program::{
-    execution::{JoltProgram, TraceOutput, TraceRow, TraceSource},
+    execution::{FieldEvent, JoltProgram, TraceData},
     field_inline::{
-        FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
-        FieldRegisterWrite,
+        validate_field_inline_instruction, FieldEncodedValue, FieldInlineTraceData,
+        FieldRegisterRead, FieldRegisterWrite,
     },
     preprocess::JoltProgramPreprocessing,
 };
-use jolt_riscv::{field_inline_operand_shape, FieldInlineOperandShape, FieldInlineXRegisterRole};
+use jolt_riscv::{field_inline_operand_shape, FieldInlineOperandShape, JoltTraceRow};
 use rayon::prelude::*;
 use std::sync::Arc;
 
 use self::witnesses::{
-    decode_value, FieldInvProduct, FieldOpFlag, FieldProduct, FieldRdInc, FieldRdValue,
-    FieldRs1Value, FieldRs2Value, FieldValue,
+    decode_value, FieldInvProduct, FieldProduct, FieldRdInc, FieldRdValue, FieldRs1Value,
+    FieldRs2Value, FieldValue,
 };
 use crate::backend::trace::{checked_pow2, TraceBackend};
-use crate::witnesses::{Extract, ExtractIndexed, WitnessEnv};
+use crate::witnesses::{Extract, WitnessEnv};
 use crate::{PolynomialEncoding, Shape, WitnessError};
 
 pub mod witnesses;
@@ -29,75 +29,233 @@ pub mod witnesses;
 pub const FIELD_INLINE_LABEL: &str = "jolt_vm.field_inline";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FieldInlineRegisterReadRow<F: Field> {
+pub struct FieldInlineRegisterReadRow<F: JoltField> {
     pub register: u8,
     pub value: F,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FieldInlineRegisterWriteRow<F: Field> {
+pub struct FieldInlineRegisterWriteRow<F: JoltField> {
     pub register: u8,
     pub pre_value: F,
     pub post_value: F,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FieldInlineRegisterReadWriteRow<F: Field> {
+pub struct FieldInlineRegisterReadWriteRow<F: JoltField> {
     pub rs1: Option<FieldInlineRegisterReadRow<F>>,
     pub rs2: Option<FieldInlineRegisterReadRow<F>>,
     pub rd: Option<FieldInlineRegisterWriteRow<F>>,
-    pub rd_increment: F,
 }
 
-pub trait FieldInlineRegisterReadWriteRows<F: Field> {
+/// Payload-carrying rows in increasing cycle order; inactive and padding cycles
+/// are absent. Register values have passed the witness boundary validation.
+pub trait FieldInlineRegisterReadWriteRows<F: JoltField> {
     fn field_inline_register_read_write_rows(
         &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
+    ) -> Result<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>, WitnessError>;
+}
+
+/// One field-inline cycle's five appended value/product columns, in
+/// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FieldInlineSpartanRow<F> {
+    pub rs1_value: F,
+    pub rs2_value: F,
+    pub rd_value: F,
+    pub product: F,
+    pub inv_product: F,
+}
+
+impl<F: Copy> FieldInlineSpartanRow<F> {
+    /// The row's five column values in the composed opening-column order.
+    pub fn columns(&self) -> [F; 5] {
+        [
+            self.rs1_value,
+            self.rs2_value,
+            self.rd_value,
+            self.product,
+            self.inv_product,
+        ]
+    }
+}
+
+/// The object-safe field-inline witness surface a prover reads off the witness plane:
+/// shapes and dense tables over the field-inline id vocabulary and (via the
+/// supertrait) the register replay rows the read-write kernels fold.
+/// Deliberately minimal — later units extend it as the field-inline kernels land.
+pub trait FieldInlineWitnessOracle<F: JoltField>:
+    FieldInlineRegisterReadWriteRows<F> + Send + Sync
+{
+    fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError>;
+
+    /// Materializes the oracle's dense field-element evaluations, row-major
+    /// over the domain declared by [`shape`](Self::shape).
+    fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError>;
+
+    /// Read one increment, including zero padding.
+    fn rd_increment_at(&self, cycle: usize) -> Result<F, WitnessError>;
+
+    /// Fill a range within the increment domain without materializing another
+    /// column. Sparse trace providers seek once per range and visit its field
+    /// events in order.
+    fn fill_rd_increments(&self, start: usize, values: &mut [F]) -> Result<(), WitnessError> {
+        let rows = self
+            .shape(FieldInlinePolynomialId::Committed(
+                FieldInlineCommittedPolynomial::FieldRdInc,
+            ))?
+            .rows();
+        let end = start
+            .checked_add(values.len())
+            .filter(|end| *end <= rows)
+            .ok_or_else(|| WitnessError::InvalidDimensions {
+                label: FIELD_INLINE_LABEL,
+                reason: "increment range exceeds trace domain".to_owned(),
+            })?;
+        for (cycle, value) in (start..end).zip(values) {
+            *value = self.rd_increment_at(cycle)?;
+        }
+        Ok(())
+    }
+
+    /// The composed spartan-outer field-inline column values, sparse over the cycle
+    /// domain: `(cycle, row)` pairs sorted strictly increasing by cycle, covering at
+    /// least every cycle where any of the five field-inline columns is non-zero (extra
+    /// all-zero rows are harmless — the columns' values are what the composed kernels
+    /// fold). The default derives the rows from the dense `oracle_table`s so fixture
+    /// oracles stay valid; the trace-backed oracle overrides it with a direct sparse
+    /// walk that never materializes the five dense tables.
+    fn field_inline_spartan_rows(
+        &self,
+    ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
+        use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
+
+        let tables = FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
+            .iter()
+            .map(|&id| self.oracle_table(FieldInlinePolynomialId::Virtual(id)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let cycles = tables.first().map_or(0, Vec::len);
+        if tables.iter().any(|table| table.len() != cycles) {
+            return Err(WitnessError::InvalidDimensions {
+                label: FIELD_INLINE_LABEL,
+                reason: "field-inline spartan column tables disagree on the cycle domain"
+                    .to_owned(),
+            });
+        }
+        let mut rows = Vec::new();
+        for cycle in 0..cycles {
+            let column = |index: usize| tables[index][cycle];
+            let values: Vec<F> = (0..tables.len()).map(column).collect();
+            if values.iter().all(F::is_zero) {
+                continue;
+            }
+            rows.push((
+                cycle,
+                FieldInlineSpartanRow {
+                    rs1_value: values[0],
+                    rs2_value: values[1],
+                    rd_value: values[2],
+                    product: values[3],
+                    inv_product: values[4],
+                },
+            ));
+        }
+        Ok(rows)
+    }
+}
+
+impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness {
+    fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError> {
+        TraceBackedFieldInlineWitness::shape(self, id)
+    }
+
+    fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError> {
+        TraceBackedFieldInlineWitness::oracle_table::<F>(self, id)
+    }
+
+    fn rd_increment_at(&self, cycle: usize) -> Result<F, WitnessError> {
+        if cycle >= self.rows {
+            return Err(WitnessError::InvalidDimensions {
+                label: FIELD_INLINE_LABEL,
+                reason: "increment cycle exceeds trace domain".to_owned(),
+            });
+        }
+        self.trace_data
+            .field_inline(cycle)
+            .map_or(Ok(F::zero()), |data| {
+                FieldRdInc::<F>::extract(data, None, &WitnessEnv::new(&self.preprocessing))
+                    .map(|value| value.0)
+            })
+    }
+
+    fn fill_rd_increments(&self, start: usize, values: &mut [F]) -> Result<(), WitnessError> {
+        values.fill(F::zero());
+        self.scatter_cycle_values(start, values, |data, env| {
+            FieldRdInc::<F>::extract(data, None, env).map(|value| value.0)
+        })
+    }
+
+    /// Direct sparse walk: exactly the rows carrying a field-inline payload,
+    /// decoded once — the five dense tables the trait default would
+    /// materialize never exist. Value-for-value equal to the default (the
+    /// dense extractors read the same payload fields, and a payload row
+    /// is retained even when all its field values are zero).
+    fn field_inline_spartan_rows(
+        &self,
+    ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
+        let mut rows = Vec::with_capacity(self.trace_data.field_events().len());
+        for event in self.trace_data.field_events() {
+            let cycle = event.cycle;
+            let data = &event.data;
+            let value = |encoded: Option<FieldEncodedValue>| {
+                encoded.map_or_else(F::zero, |encoded| decode_value(encoded))
+            };
+            let rs1_value = value(data.rs1.map(|read| read.value));
+            let rs2_value = value(data.rs2.map(|read| read.value));
+            let rd_value = value(data.rd.map(|write| write.post_value));
+            rows.push((
+                cycle,
+                FieldInlineSpartanRow {
+                    rs1_value,
+                    rs2_value,
+                    rd_value,
+                    // Match the dense FieldProduct and FieldInvProduct extractors.
+                    product: rs1_value * rs2_value,
+                    inv_product: rs1_value * rd_value,
+                },
+            ));
+        }
+        Ok(rows)
+    }
 }
 
 pub struct TraceBackedFieldInlineWitness {
     log_t: usize,
     program: Arc<JoltProgram>,
     preprocessing: Arc<JoltProgramPreprocessing>,
-    trace_rows: Vec<TraceRow>,
+    trace_data: Arc<TraceData>,
     rows: usize,
-}
-
-fn collect_trace_rows<T: TraceSource + Clone>(
-    trace: &TraceOutput<T>,
-    rows: usize,
-) -> Result<Vec<TraceRow>, WitnessError> {
-    let mut source = trace.trace.clone();
-    let mut trace_rows = Vec::with_capacity(rows);
-    for _ in 0..rows {
-        let Some(row) = source.next_row() else {
-            return Ok(trace_rows);
-        };
-        trace_rows.push(row);
-    }
-    if source.next_row().is_some() {
-        return Err(WitnessError::InvalidWitnessData {
-            label: FIELD_INLINE_LABEL,
-            reason: "trace length exceeds configured field-inline witness domain".to_owned(),
-        });
-    }
-    Ok(trace_rows)
 }
 
 impl TraceBackedFieldInlineWitness {
-    pub(crate) fn build<T: TraceSource + Clone>(
+    pub(crate) fn build(
         log_t: usize,
         program: &Arc<JoltProgram>,
         preprocessing: &Arc<JoltProgramPreprocessing>,
-        trace: &TraceOutput<T>,
+        trace_data: &Arc<TraceData>,
     ) -> Result<Self, WitnessError> {
         let rows = checked_pow2(log_t)?;
-        let trace_rows = collect_trace_rows(trace, rows)?;
+        if trace_data.proof_len() > rows {
+            return Err(WitnessError::InvalidWitnessData {
+                label: FIELD_INLINE_LABEL,
+                reason: "trace length exceeds configured field-inline witness domain".to_owned(),
+            });
+        }
         let witness = Self {
             log_t,
             program: Arc::clone(program),
             preprocessing: Arc::clone(preprocessing),
-            trace_rows,
+            trace_data: Arc::clone(trace_data),
             rows,
         };
         witness.validate_inputs()?;
@@ -119,56 +277,54 @@ impl TraceBackedFieldInlineWitness {
 
     fn validate_inputs(&self) -> Result<(), WitnessError> {
         if !self.program.profile.supports_field_inline() {
-            for (index, row) in self.trace_rows.iter().enumerate() {
-                if row.field_inline.is_some()
-                    || field_inline_operand_shape(row.instruction.instruction_kind).is_some()
-                {
-                    return Err(invalid_row(
-                        index,
-                        "field-inline trace data exists for an FR-disabled program",
-                    ));
-                }
+            let first_event = self
+                .trace_data
+                .field_events()
+                .first()
+                .map(|event| event.cycle);
+            if let Some((index, _)) =
+                self.trace_data
+                    .proof_rows()
+                    .iter()
+                    .enumerate()
+                    .find(|(index, row)| {
+                        first_event == Some(*index)
+                            || row
+                                .instruction_kind()
+                                .and_then(field_inline_operand_shape)
+                                .is_some()
+                    })
+            {
+                return Err(invalid_row(
+                    index,
+                    "field-inline trace data exists for a program without field-inline",
+                ));
             }
             return Err(WitnessError::UnavailableView {
                 label: FIELD_INLINE_LABEL,
             });
         }
 
-        let metadata = self
-            .preprocessing
-            .bytecode
-            .field_inline
-            .as_ref()
-            .ok_or_else(|| WitnessError::InvalidWitnessData {
-                label: FIELD_INLINE_LABEL,
-                reason: "FR-enabled program is missing field-inline bytecode metadata".to_owned(),
-            })?;
-        metadata
-            .validate(self.preprocessing.bytecode.bytecode.len())
-            .map_err(|error| WitnessError::InvalidWitnessData {
-                label: FIELD_INLINE_LABEL,
-                reason: error.to_string(),
-            })?;
-
-        for (index, row) in self.trace_rows.iter().enumerate() {
-            self.validate_row_shape(index, row)?;
+        let mut events = self.trace_data.field_events().iter().peekable();
+        for (index, row) in self.trace_data.proof_rows().iter().enumerate() {
+            let data = if events.peek().is_some_and(|event| event.cycle == index) {
+                events.next().map(|event| &event.data)
+            } else {
+                None
+            };
+            self.validate_row_shape(index, row, data)?;
         }
-        validate_field_register_state(&self.trace_rows)
+        validate_field_register_state(self.trace_data.field_events())
     }
 
-    fn validate_row_shape(&self, index: usize, row: &TraceRow) -> Result<(), WitnessError> {
-        let shape = field_inline_operand_shape(row.instruction.instruction_kind);
-        let metadata = self
-            .preprocessing
-            .bytecode
-            .field_inline
-            .as_ref()
-            .ok_or_else(|| WitnessError::InvalidWitnessData {
-                label: FIELD_INLINE_LABEL,
-                reason: "FR-enabled program is missing field-inline bytecode metadata".to_owned(),
-            })?;
-
-        match (shape, row.field_inline.as_deref()) {
+    fn validate_row_shape(
+        &self,
+        index: usize,
+        row: &JoltTraceRow,
+        data: Option<&FieldInlineTraceData>,
+    ) -> Result<(), WitnessError> {
+        let shape = row.instruction_kind().and_then(field_inline_operand_shape);
+        match (shape, data) {
             (None, None) => Ok(()),
             (None, Some(_)) => Err(invalid_row(
                 index,
@@ -179,18 +335,26 @@ impl TraceBackedFieldInlineWitness {
                 "field-inline instruction is missing field-inline trace data",
             )),
             (Some(shape), Some(data)) => {
-                let pc = self
-                    .preprocessing
-                    .bytecode
-                    .get_pc(&row.instruction)
-                    .ok_or_else(|| invalid_row(index, "field-inline row has no bytecode pc"))?;
-                let bytecode_row = metadata.rows.get(pc).ok_or_else(|| {
-                    invalid_row(index, "field-inline bytecode pc is out of range")
+                let pc = usize::try_from(row.pc())
+                    .map_err(|_| invalid_row(index, "field-inline bytecode pc is out of range"))?;
+                let bytecode_row =
+                    self.preprocessing
+                        .bytecode
+                        .bytecode
+                        .get(pc)
+                        .ok_or_else(|| {
+                            invalid_row(index, "field-inline bytecode pc is out of range")
+                        })?;
+                validate_field_inline_instruction(bytecode_row).map_err(|error| {
+                    WitnessError::InvalidWitnessData {
+                        label: FIELD_INLINE_LABEL,
+                        reason: error.to_string(),
+                    }
                 })?;
-                if !bytecode_row.active || bytecode_row.op != Some(shape.op) {
+                if bytecode_row != &row.instruction() {
                     return Err(invalid_row(
                         index,
-                        "field-inline trace op does not match bytecode metadata",
+                        "field-inline trace instruction does not match bytecode",
                     ));
                 }
                 validate_trace_data(index, row, shape, *data)
@@ -198,76 +362,79 @@ impl TraceBackedFieldInlineWitness {
         }
     }
 
-    /// Materializes one cycle-domain witness column; rows beyond the trace
-    /// are zero. All per-witness logic lives on `W`.
-    fn materialize_cycle<F: Field, W: Extract + FieldValue<F> + Send>(
+    fn materialize_cycle<F: JoltField, W: Extract<FieldInlineTraceData> + FieldValue<F> + Send>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
-        self.walk_cycles(|row, env| W::extract(row, None, env).map(FieldValue::value))
-    }
-
-    /// [`Self::materialize_cycle`] for indexed witness families.
-    fn materialize_cycle_indexed<F: Field, W: ExtractIndexed<I> + FieldValue<F>, I: Copy + Sync>(
-        &self,
-        index: I,
-    ) -> Result<Vec<F>, WitnessError> {
-        self.walk_cycles(|row, env| {
-            W::extract_indexed(index, row, None, env).map(FieldValue::value)
-        })
-    }
-
-    fn walk_cycles<F: Field>(
-        &self,
-        value: impl Fn(&TraceRow, &WitnessEnv<'_>) -> Result<F, WitnessError> + Sync,
-    ) -> Result<Vec<F>, WitnessError> {
-        let env = WitnessEnv::new(&self.preprocessing);
-        let mut values = vec![F::from_u64(0); self.rows];
+        const CHUNK_SIZE: usize = 1 << 14;
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(self.rows);
         values
-            .par_iter_mut()
-            .zip(self.trace_rows.par_iter())
-            .try_for_each(|(slot, row)| {
-                *slot = value(row, &env)?;
-                Ok(())
+            .par_chunks_mut(CHUNK_SIZE)
+            .enumerate()
+            .try_for_each(|(chunk, values)| {
+                self.scatter_cycle_values(chunk * CHUNK_SIZE, values, |data, env| {
+                    W::extract(data, None, env).map(FieldValue::value)
+                })
             })?;
         Ok(values)
     }
 
-    fn materialize_register_virtual<F: Field>(
+    /// Writes each field event's value into the window `start..start +
+    /// values.len()` and leaves every other slot untouched, so callers pass a
+    /// zeroed window.
+    fn scatter_cycle_values<F: JoltField>(
+        &self,
+        start: usize,
+        values: &mut [F],
+        value: impl Fn(&FieldInlineTraceData, &WitnessEnv<'_>) -> Result<F, WitnessError>,
+    ) -> Result<(), WitnessError> {
+        let end = start
+            .checked_add(values.len())
+            .filter(|end| *end <= self.rows)
+            .ok_or_else(|| WitnessError::InvalidDimensions {
+                label: FIELD_INLINE_LABEL,
+                reason: "increment range exceeds trace domain".to_owned(),
+            })?;
+        let events = self.trace_data.field_events();
+        let first = events.partition_point(|event| event.cycle < start);
+        let env = WitnessEnv::new(&self.preprocessing);
+        for event in events[first..].iter().take_while(|event| event.cycle < end) {
+            values[event.cycle - start] = value(&event.data, &env)?;
+        }
+        Ok(())
+    }
+
+    fn materialize_register_virtual<F: JoltField>(
         &self,
         id: FieldInlineVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
         let register_count = field_register_count();
-        let mut values = vec![F::from_u64(0); self.rows * register_count];
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(self.rows * register_count);
 
         if id == FieldInlineVirtualPolynomial::FieldRegistersVal {
-            let trace_rows = self.trace_rows.as_slice();
-            let trace_len = trace_rows.len();
             values
                 .par_chunks_mut(self.rows)
                 .enumerate()
                 .for_each(|(register, values)| {
                     let mut current = F::zero();
-                    for (cycle, value) in values.iter_mut().take(trace_len).enumerate() {
-                        *value = current;
-                        if let Some(write) = trace_rows[cycle]
-                            .field_inline
-                            .as_deref()
-                            .and_then(|data| data.rd)
-                        {
+                    let mut start = 0;
+                    for event in self.trace_data.field_events() {
+                        if let Some(write) = event.data.rd {
                             if usize::from(write.register) == register {
+                                let end = event.cycle + 1;
+                                values[start..end].fill(current);
                                 current = decode_value(write.post_value);
+                                start = end;
                             }
                         }
                     }
-                    values[trace_len..].fill(current);
+                    values[start..].fill(current);
                 });
             return Ok(values);
         }
 
-        for (cycle, row) in self.trace_rows.iter().enumerate() {
-            let Some(data) = row.field_inline.as_deref() else {
-                continue;
-            };
+        for event in self.trace_data.field_events() {
+            let cycle = event.cycle;
+            let data = &event.data;
             let register = match id {
                 FieldInlineVirtualPolynomial::FieldRs1Ra => data.rs1.map(|read| read.register),
                 FieldInlineVirtualPolynomial::FieldRs2Ra => data.rs2.map(|read| read.register),
@@ -298,8 +465,7 @@ impl TraceBackedFieldInlineWitness {
                 | V::FieldRs2Value
                 | V::FieldRdValue
                 | V::FieldProduct
-                | V::FieldInvProduct
-                | V::FieldOpFlag(_) => {
+                | V::FieldInvProduct => {
                     Ok(Shape::new(self.trace_log_rows(), PolynomialEncoding::Dense))
                 }
                 V::FieldRs1Ra | V::FieldRs2Ra | V::FieldRdWa | V::FieldRegistersVal => Ok(
@@ -309,7 +475,7 @@ impl TraceBackedFieldInlineWitness {
         }
     }
 
-    pub fn oracle_table<F: Field>(
+    pub fn oracle_table<F: JoltField>(
         &self,
         id: FieldInlinePolynomialId,
     ) -> Result<Vec<F>, WitnessError> {
@@ -325,44 +491,34 @@ impl TraceBackedFieldInlineWitness {
                 V::FieldRdValue => self.materialize_cycle::<F, FieldRdValue<F>>(),
                 V::FieldProduct => self.materialize_cycle::<F, FieldProduct<F>>(),
                 V::FieldInvProduct => self.materialize_cycle::<F, FieldInvProduct<F>>(),
-                V::FieldOpFlag(flag) => self.materialize_cycle_indexed::<F, FieldOpFlag, _>(flag),
                 V::FieldRs1Ra | V::FieldRs2Ra | V::FieldRdWa | V::FieldRegistersVal => {
                     self.materialize_register_virtual(virtual_id)
                 }
             },
         }
     }
-
-    pub fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
-        vec![FieldInlineCommittedPolynomial::FieldRdInc]
-    }
 }
 
-impl<F: Field> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWitness {
+impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWitness {
     fn field_inline_register_read_write_rows(
         &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
-        let env = WitnessEnv {
-            preprocessing: &self.preprocessing,
-        };
-        (0..self.rows)
-            .map(|index| {
-                self.trace_rows.get(index).map_or_else(
-                    || Ok(FieldInlineRegisterReadWriteRow::default()),
-                    |row| field_register_row(row, &env),
-                )
-            })
-            .collect()
+    ) -> Result<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>, WitnessError> {
+        Ok(self
+            .trace_data
+            .field_events()
+            .par_iter()
+            .map(|event| (event.cycle, field_register_row(&event.data)))
+            .collect())
     }
 }
 
-impl<T: TraceSource + Clone> TraceBackend<T> {
+impl TraceBackend {
     pub fn field_inline_witness(&self) -> Result<TraceBackedFieldInlineWitness, WitnessError> {
         TraceBackedFieldInlineWitness::build(
             self.config.log_t,
             &self.program,
             &self.preprocessing,
-            &self.trace,
+            &self.trace.trace,
         )
     }
 
@@ -374,7 +530,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
     }
 }
 
-impl<T: TraceSource> TraceBackend<T> {
+impl TraceBackend {
     fn field_inline_view(&self) -> Result<&TraceBackedFieldInlineWitness, WitnessError> {
         self.field_inline
             .as_ref()
@@ -384,22 +540,18 @@ impl<T: TraceSource> TraceBackend<T> {
     }
 }
 
-impl<F: Field, T: TraceSource> FieldInlineRegisterReadWriteRows<F> for TraceBackend<T> {
+impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for TraceBackend {
     fn field_inline_register_read_write_rows(
         &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
+    ) -> Result<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>, WitnessError> {
         self.field_inline_view()?
             .field_inline_register_read_write_rows()
     }
 }
 
-fn field_register_row<F: Field>(
-    row: &TraceRow,
-    env: &WitnessEnv<'_>,
-) -> Result<FieldInlineRegisterReadWriteRow<F>, WitnessError> {
-    let Some(data) = row.field_inline.as_deref() else {
-        return Ok(FieldInlineRegisterReadWriteRow::default());
-    };
+fn field_register_row<F: JoltField>(
+    data: &FieldInlineTraceData,
+) -> FieldInlineRegisterReadWriteRow<F> {
     let rs1 = data.rs1.map(|read| FieldInlineRegisterReadRow {
         register: read.register,
         value: decode_value(read.value),
@@ -413,60 +565,19 @@ fn field_register_row<F: Field>(
         pre_value: decode_value(write.pre_value),
         post_value: decode_value(write.post_value),
     });
-    Ok(FieldInlineRegisterReadWriteRow {
-        rs1,
-        rs2,
-        rd,
-        rd_increment: FieldRdInc::extract(row, None, env)?.0,
-    })
+    FieldInlineRegisterReadWriteRow { rs1, rs2, rd }
 }
 
 fn validate_trace_data(
     index: usize,
-    row: &TraceRow,
+    row: &JoltTraceRow,
     shape: FieldInlineOperandShape,
     data: FieldInlineTraceData,
 ) -> Result<(), WitnessError> {
-    if data.op != Some(shape.op) {
-        return Err(invalid_row(
-            index,
-            "field-inline trace payload op does not match instruction",
-        ));
-    }
-    validate_read(
-        index,
-        "rs1",
-        data.rs1,
-        row.instruction.operands.rs1,
-        shape.reads_fr_rs1,
-    )?;
-    validate_read(
-        index,
-        "rs2",
-        data.rs2,
-        row.instruction.operands.rs2,
-        shape.reads_fr_rs2,
-    )?;
-    validate_write(
-        index,
-        data.rd,
-        row.instruction.operands.rd,
-        shape.writes_fr_rd,
-    )?;
-
-    if data.product.is_some() != shape.requires_product_payload() {
-        return Err(invalid_row(
-            index,
-            "field-inline product payload presence does not match instruction",
-        ));
-    }
-    if data.inv_product.is_some() != shape.requires_inverse_product_payload() {
-        return Err(invalid_row(
-            index,
-            "field-inline inverse product payload presence does not match instruction",
-        ));
-    }
-    validate_bridge(index, row, shape, data)
+    let operands = row.instruction().field_operands();
+    validate_read(index, "rs1", data.rs1, operands.rs1, shape.reads_field_rs1)?;
+    validate_read(index, "rs2", data.rs2, operands.rs2, shape.reads_field_rs2)?;
+    validate_write(index, data.rd, operands.rd, shape.writes_field_rd)
 }
 
 fn validate_read(
@@ -515,71 +626,11 @@ fn validate_write(
     }
 }
 
-fn validate_bridge(
-    index: usize,
-    row: &TraceRow,
-    shape: FieldInlineOperandShape,
-    data: FieldInlineTraceData,
-) -> Result<(), WitnessError> {
-    match (shape.bridge_x_register_role, data.bridge) {
-        (None, None) => Ok(()),
-        (None, Some(_)) => Err(invalid_row(
-            index,
-            "pure field-inline instruction carries bridge payload",
-        )),
-        (
-            Some(FieldInlineXRegisterRole::ReadRs1),
-            Some(FieldInlineBridge::LoadFromX {
-                x_register,
-                x_value,
-                field_value,
-            }),
-        ) => {
-            if Some(x_register) != row.instruction.operands.rs1
-                || Some(x_value) != row.registers.rs1.map(|read| read.value)
-                || Some(field_value) != data.rd.map(|write| write.post_value)
-            {
-                return Err(invalid_row(
-                    index,
-                    "field-inline load bridge payload is inconsistent",
-                ));
-            }
-            Ok(())
-        }
-        (
-            Some(FieldInlineXRegisterRole::WriteRd),
-            Some(FieldInlineBridge::StoreToX {
-                field_register,
-                field_value,
-                x_register,
-                x_value,
-            }),
-        ) => {
-            if Some(field_register) != row.instruction.operands.rs1
-                || Some(field_value) != data.rs1.map(|read| read.value)
-                || Some(x_register) != row.instruction.operands.rd
-                || Some(x_value) != row.registers.rd.map(|write| write.post_value)
-            {
-                return Err(invalid_row(
-                    index,
-                    "field-inline store bridge payload is inconsistent",
-                ));
-            }
-            Ok(())
-        }
-        (Some(_), _) => Err(invalid_row(
-            index,
-            "field-inline bridge instruction is missing bridge payload",
-        )),
-    }
-}
-
-fn validate_field_register_state(rows: &[TraceRow]) -> Result<(), WitnessError> {
+fn validate_field_register_state(events: &[FieldEvent]) -> Result<(), WitnessError> {
     let mut state = vec![FieldEncodedValue::zero(); field_register_count()];
-    for (index, row) in rows.iter().enumerate() {
-        let Some(data) = row.field_inline.as_deref() else {
-            continue;
-        };
+    for event in events {
+        let index = event.cycle;
+        let data = &event.data;
         if let Some(read) = data.rs1 {
             validate_state_value(index, "rs1", &state, read.register, read.value)?;
         }
@@ -627,21 +678,16 @@ fn invalid_row(index: usize, reason: &'static str) -> WitnessError {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::constants::RAM_START_ADDRESS;
-    use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
-    use jolt_claims::protocols::jolt::{
-        JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
-    };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_claims::protocols::jolt::JoltOneHotConfig;
+    use jolt_field::{Fr, Ring};
     use jolt_program::{
-        execution::{
-            JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput,
-        },
+        execution::{JoltProgram, TraceOutput},
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
     };
-    use jolt_riscv::FieldInlineOp;
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
-        RV64IMAC_JOLT, RV64IMAC_JOLT_FIELD_INLINE,
+        RamAccess, RamRead, RegisterRead, RegisterState, RegisterWrite, RV64IMAC_JOLT,
+        RV64IMAC_JOLT_FIELD_INLINE,
     };
 
     use super::*;
@@ -707,15 +753,26 @@ mod tests {
     fn witness(
         program: &Arc<JoltProgram>,
         preprocessing: &Arc<JoltProgramPreprocessing>,
-        rows: Vec<TraceRow>,
+        rows: Vec<JoltTraceRow>,
+        field_events: Vec<FieldEvent>,
         log_t: usize,
-    ) -> super::super::TraceBackend<OwnedTrace> {
-        super::super::TraceBackend::new(
+    ) -> TraceBackend {
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                let instruction = row.instruction();
+                let pc =
+                    u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap();
+                JoltTraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap()
+            })
+            .collect();
+        let data = TraceData::from_parts(rows, field_events).unwrap();
+        TraceBackend::new(
             config(log_t),
             JoltVmWitnessInputs::new(
                 program,
                 preprocessing,
-                TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+                TraceOutput::new(data, Default::default(), None, None),
             ),
         )
     }
@@ -728,15 +785,11 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    fn row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-        TraceRow {
-            instruction,
-            field_inline: Some(data.into()),
-            ..TraceRow::default()
-        }
+    fn row(instruction: JoltInstructionRow, registers: RegisterState) -> JoltTraceRow {
+        JoltTraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap()
     }
 
-    fn load_imm(offset: usize, rd: u8, value: u64) -> (JoltInstructionRow, TraceRow) {
+    fn load_imm(offset: usize, rd: u8, value: u64) -> (JoltInstructionRow, FieldInlineTraceData) {
         let instruction = instruction(
             JoltInstructionKind::FIELD_LOAD_IMM,
             offset,
@@ -745,24 +798,21 @@ mod tests {
             None,
             i128::from(value),
         );
-        let trace_row = row(
-            instruction,
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
-                rd: Some(FieldRegisterWrite {
-                    register: rd,
-                    pre_value: enc(0),
-                    post_value: enc(value),
-                }),
-                ..FieldInlineTraceData::default()
-            },
-        );
-        (instruction, trace_row)
+        let data = FieldInlineTraceData {
+            rs1: None,
+            rs2: None,
+            rd: Some(FieldRegisterWrite {
+                register: rd,
+                pre_value: enc(0),
+                post_value: enc(value),
+            }),
+        };
+        (instruction, data)
     }
 
-    fn arithmetic_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
-        let (load_rs1, row0) = load_imm(0, 2, 5);
-        let (load_rs2, row1) = load_imm(1, 3, 7);
+    fn arithmetic_fixture() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Vec<FieldEvent>) {
+        let (load_rs1, load_rs1_data) = load_imm(0, 2, 5);
+        let (load_rs2, load_rs2_data) = load_imm(1, 3, 7);
         let mul = instruction(
             JoltInstructionKind::FIELD_MUL,
             2,
@@ -771,78 +821,75 @@ mod tests {
             Some(3),
             0,
         );
-        let row2 = row(
-            mul,
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::Mul),
-                rs1: Some(FieldRegisterRead {
-                    register: 2,
-                    value: enc(5),
-                }),
-                rs2: Some(FieldRegisterRead {
-                    register: 3,
-                    value: enc(7),
-                }),
-                rd: Some(FieldRegisterWrite {
-                    register: 1,
-                    pre_value: enc(0),
-                    post_value: enc(35),
-                }),
-                product: Some(enc(35)),
-                ..FieldInlineTraceData::default()
-            },
-        );
-        let store = instruction(
-            JoltInstructionKind::FIELD_STORE_TO_X,
+        let mul_data = FieldInlineTraceData {
+            rs1: Some(FieldRegisterRead {
+                register: 2,
+                value: enc(5),
+            }),
+            rs2: Some(FieldRegisterRead {
+                register: 3,
+                value: enc(7),
+            }),
+            rd: Some(FieldRegisterWrite {
+                register: 1,
+                pre_value: enc(0),
+                post_value: enc(35),
+            }),
+        };
+        let advice = instruction(
+            JoltInstructionKind::FIELD_ADVICE_LIMB,
             3,
             Some(10),
             Some(1),
-            None,
+            Some(0),
             0,
         );
-        let row3 = TraceRow {
-            instruction: store,
-            registers: RegisterState {
-                rd: Some(RegisterWrite {
-                    register: 10,
-                    pre_value: 0,
-                    post_value: 35,
-                }),
-                ..RegisterState::default()
-            },
-            field_inline: Some(
-                FieldInlineTraceData {
-                    op: Some(FieldInlineOp::StoreToX),
-                    rs1: Some(FieldRegisterRead {
-                        register: 1,
-                        value: enc(35),
-                    }),
-                    bridge: Some(FieldInlineBridge::StoreToX {
-                        field_register: 1,
-                        field_value: enc(35),
-                        x_register: 10,
-                        x_value: 35,
-                    }),
-                    ..FieldInlineTraceData::default()
-                }
-                .into(),
-            ),
-            ..TraceRow::default()
+        let advice_registers = RegisterState {
+            rd: Some(RegisterWrite {
+                register: 10,
+                pre_value: 0,
+                post_value: 35,
+            }),
+            ..RegisterState::default()
         };
+        let advice_data = FieldInlineTraceData {
+            rs1: Some(FieldRegisterRead {
+                register: 1,
+                value: enc(35),
+            }),
+            rs2: None,
+            rd: Some(FieldRegisterWrite {
+                register: 0,
+                pre_value: enc(0),
+                post_value: enc(0),
+            }),
+        };
+        let field_events = [load_rs1_data, load_rs2_data, mul_data, advice_data]
+            .into_iter()
+            .enumerate()
+            .map(|(cycle, data)| FieldEvent { cycle, data })
+            .collect();
         (
-            vec![load_rs1, load_rs2, mul, store],
-            vec![row0, row1, row2, row3],
+            vec![load_rs1, load_rs2, mul, advice],
+            vec![
+                row(load_rs1, RegisterState::default()),
+                row(load_rs2, RegisterState::default()),
+                row(mul, RegisterState::default()),
+                row(advice, advice_registers),
+            ],
+            field_events,
         )
     }
 
     fn build_field_provider(
         bytecode: Vec<JoltInstructionRow>,
-        rows: Vec<TraceRow>,
+        rows: Vec<JoltTraceRow>,
+        field_events: Vec<FieldEvent>,
         log_t: usize,
     ) -> TraceBackedFieldInlineWitness {
         let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
         let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
-        let witness = witness(&program, &preprocessing, rows, log_t);
+        let witness = witness(&program, &preprocessing, rows, field_events, log_t);
         witness.field_inline_witness().unwrap()
     }
 
@@ -854,7 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn fr_off_provider_is_absent_without_field_data() {
+    fn field_inline_disabled_rejects_field_inline_trace_payload() {
         let bytecode = vec![instruction(
             JoltInstructionKind::ADDI,
             0,
@@ -865,52 +912,14 @@ mod tests {
         )];
         let program = program(bytecode.clone(), RV64IMAC_JOLT);
         let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
-        let row = TraceRow {
-            instruction: instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3),
-            ..TraceRow::default()
-        };
-        let witness = witness(&program, &preprocessing, vec![row], 2);
-
-        assert_eq!(
-            witness.field_inline_witness().err(),
-            Some(WitnessError::UnavailableView {
-                label: FIELD_INLINE_LABEL,
-            })
+        let (field_instruction, data) = load_imm(0, 1, 3);
+        let witness = witness(
+            &program,
+            &preprocessing,
+            vec![row(field_instruction, RegisterState::default())],
+            vec![FieldEvent { cycle: 0, data }],
+            2,
         );
-    }
-
-    #[test]
-    fn fr_off_rejects_field_inline_trace_payload() {
-        let bytecode = vec![instruction(
-            JoltInstructionKind::ADDI,
-            0,
-            Some(1),
-            Some(2),
-            None,
-            3,
-        )];
-        let program = program(bytecode.clone(), RV64IMAC_JOLT);
-        let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
-        let field_row = row(
-            instruction(
-                JoltInstructionKind::FIELD_LOAD_IMM,
-                0,
-                Some(1),
-                None,
-                None,
-                3,
-            ),
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
-                rd: Some(FieldRegisterWrite {
-                    register: 1,
-                    pre_value: enc(0),
-                    post_value: enc(3),
-                }),
-                ..FieldInlineTraceData::default()
-            },
-        );
-        let witness = witness(&program, &preprocessing, vec![field_row], 2);
 
         assert!(matches!(
             witness.field_inline_witness(),
@@ -919,12 +928,9 @@ mod tests {
     }
 
     #[test]
-    fn committed_order_and_requirements_are_blindfold_retained() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
-
-        let order = provider.committed_order();
-        assert_eq!(order, vec![FieldInlineCommittedPolynomial::FieldRdInc]);
+    fn committed_increment_has_dense_trace_shape() {
+        let (bytecode, rows, field_events) = arithmetic_fixture();
+        let provider = build_field_provider(bytecode, rows, field_events, 3);
 
         let shape = provider
             .shape(FieldInlinePolynomialId::Committed(
@@ -936,22 +942,9 @@ mod tests {
     }
 
     #[test]
-    fn field_rd_inc_materializes_field_deltas_and_padding() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
-        assert_eq!(
-            owned_view(
-                &provider,
-                FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc)
-            ),
-            vec![fr(5), fr(7), fr(35), fr(0), fr(0), fr(0), fr(0), fr(0)]
-        );
-    }
-
-    #[test]
-    fn trace_domain_virtual_views_decode_values_flags_and_products() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
+    fn trace_domain_virtual_views_decode_values_and_products() {
+        let (bytecode, rows, field_events) = arithmetic_fixture();
+        let provider = build_field_provider(bytecode, rows, field_events, 3);
 
         let rd_values = owned_view(
             &provider,
@@ -970,20 +963,12 @@ mod tests {
             FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldProduct),
         );
         assert_eq!(&products[..4], &[fr(0), fr(0), fr(35), fr(0)]);
-
-        let mul_flags = owned_view(
-            &provider,
-            FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldOpFlag(
-                FieldInlineOpFlag::Mul,
-            )),
-        );
-        assert_eq!(&mul_flags[..4], &[fr(0), fr(0), fr(1), fr(0)]);
     }
 
     #[test]
     fn register_domain_virtual_views_are_address_major() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
+        let (bytecode, rows, field_events) = arithmetic_fixture();
+        let provider = build_field_provider(bytecode, rows, field_events, 3);
 
         let registers_val = owned_view(
             &provider,
@@ -1015,144 +1000,130 @@ mod tests {
     }
 
     #[test]
-    fn bridge_rows_keep_rv64_and_field_witnesses_separate() {
-        let load = instruction(
-            JoltInstructionKind::FIELD_LOAD_FROM_X,
-            0,
-            Some(1),
-            Some(5),
-            None,
-            0,
-        );
-        let row0 = TraceRow {
-            instruction: load,
-            registers: RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 5,
-                    value: 11,
+    fn accumulating_loads_read_and_bind_the_nonzero_destination() {
+        for kind in [
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+        ] {
+            let memory_load = kind == JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY;
+            let (seed, seed_data) = load_imm(0, 1, 3);
+            let load = instruction(
+                kind,
+                1,
+                Some(if memory_load { 6 } else { 1 }),
+                Some(5),
+                memory_load.then_some(1),
+                0,
+            );
+            let mut accumulated = enc(11);
+            accumulated.bytes_le[8] = 3;
+            let load_row = JoltTraceRow::new(
+                load,
+                RegisterState {
+                    rs1: Some(RegisterRead {
+                        register: 5,
+                        value: if memory_load { ENTRY } else { 11 },
+                    }),
+                    rd: memory_load.then_some(RegisterWrite {
+                        register: 6,
+                        pre_value: 0,
+                        post_value: 11,
+                    }),
+                    ..RegisterState::default()
+                },
+                if memory_load {
+                    RamAccess::Read(RamRead {
+                        address: ENTRY,
+                        value: 11,
+                    })
+                } else {
+                    RamAccess::NoOp
+                },
+                1,
+            )
+            .unwrap();
+            let load_data = FieldInlineTraceData {
+                rs1: Some(FieldRegisterRead {
+                    register: 1,
+                    value: enc(3),
                 }),
-                ..RegisterState::default()
-            },
-            field_inline: Some(
-                FieldInlineTraceData {
-                    op: Some(FieldInlineOp::LoadFromX),
-                    rd: Some(FieldRegisterWrite {
-                        register: 1,
-                        pre_value: enc(0),
-                        post_value: enc(11),
-                    }),
-                    bridge: Some(FieldInlineBridge::LoadFromX {
-                        x_register: 5,
-                        x_value: 11,
-                        field_value: enc(11),
-                    }),
-                    ..FieldInlineTraceData::default()
-                }
-                .into(),
-            ),
-            ..TraceRow::default()
-        };
-        let store = instruction(
-            JoltInstructionKind::FIELD_STORE_TO_X,
-            1,
-            Some(6),
-            Some(1),
-            None,
-            0,
-        );
-        let row1 = TraceRow {
-            instruction: store,
-            registers: RegisterState {
-                rd: Some(RegisterWrite {
-                    register: 6,
-                    pre_value: 0,
-                    post_value: 11,
+                rs2: None,
+                rd: Some(FieldRegisterWrite {
+                    register: 1,
+                    pre_value: enc(3),
+                    post_value: accumulated,
                 }),
-                ..RegisterState::default()
-            },
-            field_inline: Some(
-                FieldInlineTraceData {
-                    op: Some(FieldInlineOp::StoreToX),
-                    rs1: Some(FieldRegisterRead {
-                        register: 1,
-                        value: enc(11),
-                    }),
-                    bridge: Some(FieldInlineBridge::StoreToX {
-                        field_register: 1,
-                        field_value: enc(11),
-                        x_register: 6,
-                        x_value: 11,
-                    }),
-                    ..FieldInlineTraceData::default()
-                }
-                .into(),
-            ),
-            ..TraceRow::default()
-        };
+            };
+            let bytecode = vec![seed, load];
+            let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
+            let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
+            let rows = vec![row(seed, RegisterState::default()), load_row];
+            let field_events = vec![
+                FieldEvent {
+                    cycle: 0,
+                    data: seed_data,
+                },
+                FieldEvent {
+                    cycle: 1,
+                    data: load_data,
+                },
+            ];
+            let backend = witness(
+                &program,
+                &preprocessing,
+                rows.clone(),
+                field_events.clone(),
+                2,
+            );
+            let provider = backend.field_inline_witness().unwrap();
+            assert!(Arc::ptr_eq(&provider.trace_data, &backend.trace.trace));
+            let registers: Vec<(usize, FieldInlineRegisterReadWriteRow<Fr>)> =
+                provider.field_inline_register_read_write_rows().unwrap();
+            assert_eq!(registers[1].1.rs1.unwrap().value, fr(3));
+            assert_eq!(
+                owned_view(&provider, FieldInlineCommittedPolynomial::FieldRdInc)[1],
+                Fr::from_u128((3u128 << 64) + 8)
+            );
 
-        let bytecode = vec![load, store];
-        let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
-        let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
-        let witness = witness(&program, &preprocessing, vec![row0, row1], 2);
-        let provider = witness.field_inline_witness().unwrap();
-
-        let ordinary = crate::JoltWitnessOracle::<Fr>::oracle_table(
-            &witness,
-            JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
-        )
-        .unwrap();
-        assert_eq!(ordinary, vec![fr(0), fr(11), fr(0), fr(0)]);
-
-        assert_eq!(
-            owned_view(
-                &provider,
-                FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc)
-            ),
-            vec![fr(11), fr(0), fr(0), fr(0)]
-        );
+            for read in [
+                None,
+                Some(FieldRegisterRead {
+                    register: 1,
+                    value: enc(0),
+                }),
+            ] {
+                let mut tampered = field_events.clone();
+                tampered[1].data.rs1 = read;
+                assert!(matches!(
+                    witness(&program, &preprocessing, rows.clone(), tampered, 2)
+                        .field_inline_witness(),
+                    Err(WitnessError::InvalidWitnessData { .. })
+                ));
+            }
+        }
     }
 
     #[test]
     fn validation_rejects_missing_payload_and_inconsistent_state() {
-        let (bytecode, mut rows) = arithmetic_fixture();
-        rows[2].field_inline = None;
+        let (bytecode, rows, mut field_events) = arithmetic_fixture();
+        field_events.retain(|event| event.cycle != 2);
         let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
         let preprocessing = preprocessing(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
-        let missing_payload_witness = witness(&program, &preprocessing, rows, 3);
+        let missing_payload_witness = witness(&program, &preprocessing, rows, field_events, 3);
         assert!(matches!(
             missing_payload_witness.field_inline_witness(),
             Err(WitnessError::InvalidWitnessData { .. })
         ));
 
-        let (_, mut bad_rows) = arithmetic_fixture();
-        let Some(data) = bad_rows[2].field_inline.as_mut() else {
-            return;
-        };
-        Arc::make_mut(data).rs1 = Some(FieldRegisterRead {
+        let (_, rows, mut field_events) = arithmetic_fixture();
+        field_events[2].data.rs1 = Some(FieldRegisterRead {
             register: 2,
             value: enc(6),
         });
-        let inconsistent_state_witness = witness(&program, &preprocessing, bad_rows, 3);
+        let inconsistent_state_witness = witness(&program, &preprocessing, rows, field_events, 3);
         assert!(matches!(
             inconsistent_state_witness.field_inline_witness(),
             Err(WitnessError::InvalidWitnessData { .. })
         ));
-    }
-
-    #[test]
-    fn field_inline_virtual_oracles_describe_dense_views() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
-
-        for id in [
-            FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRegistersVal),
-            FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRdWa),
-            FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldOpFlag(
-                FieldInlineOpFlag::LoadImm,
-            )),
-        ] {
-            let shape = provider.shape(id).unwrap();
-            assert_eq!(shape.encoding, PolynomialEncoding::Dense);
-        }
     }
 }

@@ -1,6 +1,4 @@
-//! Spartan product univariate-skip symbolic sumcheck relation.
-
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::dimensions::{
@@ -80,13 +78,50 @@ impl SymbolicSumcheck for ProductUniskip {
         PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_uniskip_weight(0) * opening(product_outer_opening())
             + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
             + product_uniskip_weight(2) * opening(product_should_jump_outer_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(product_uniskip_opening())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_field::{Fr, Ring};
+
+    #[test]
+    fn input_claims_resolve_by_spartan_outer_ids_in_declaration_order() {
+        let claims = ProductUniskipInputClaims {
+            product: Fr::from_u64(2),
+            should_branch: Fr::from_u64(3),
+            should_jump: Fr::from_u64(5),
+        };
+
+        assert_eq!(
+            claims.canonical_order(),
+            vec![
+                product_outer_opening(),
+                product_should_branch_outer_opening(),
+                product_should_jump_outer_opening(),
+            ],
+        );
+        assert_eq!(
+            claims.resolve_input(&product_outer_opening()),
+            Some(Fr::from_u64(2)),
+        );
+        assert_eq!(
+            claims.resolve_input(&product_should_branch_outer_opening()),
+            Some(Fr::from_u64(3)),
+        );
+        assert_eq!(
+            claims.resolve_input(&product_should_jump_outer_opening()),
+            Some(Fr::from_u64(5)),
+        );
+        assert_eq!(claims.resolve_input(&product_uniskip_opening()), None);
     }
 }

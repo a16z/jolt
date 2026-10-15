@@ -1,3 +1,5 @@
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::{
     geometry::{
         dimensions::TraceDimensions, ram::RamRafEvaluationDimensions,
@@ -7,11 +9,15 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::Transcript;
 
+#[cfg(feature = "field-inline")]
+use super::field_registers_claim_reduction::{
+    field_registers_claim_reduction_input_values_from_upstream, FieldRegistersClaimReduction,
+};
 use super::{
     instruction_claim_reduction::{
         instruction_claim_reduction_input_values_from_upstream, InstructionClaimReduction,
@@ -42,24 +48,24 @@ use crate::{
 /// reduction challenge are extracted mode-agnostically (clear: the single-entry
 /// reduction point; ZK: the committed round challenge) so the batch relations —
 /// `ProductRemainder::new` in particular — can be built before the mode branch.
-struct ProductUniskipStep<F: Field, C> {
+struct ProductUniskipStep<F: JoltField, C> {
     tau_low: Vec<F>,
     tau_high: F,
     challenge: F,
     verified: ProductUniskipVerified<F, C>,
 }
 
-enum ProductUniskipVerified<F: Field, C> {
+enum ProductUniskipVerified<F: JoltField, C> {
     Clear,
     Zk(uniskip::UniskipZk<F, C>),
 }
 
-/// Assemble the stage-2 batch consumed opening *values* from the upstream clear
-/// outputs into the generated `Stage2BatchInputClaims` aggregate. Each per-relation
-/// `*_from_upstream` helper wires which upstream opening feeds which downstream
-/// input. The product-remainder input is the product uni-skip's output claim (a
-/// separate stage-2 sub-sumcheck), not an upstream stage's opening.
-pub fn stage2_batch_input_values_from_upstream<F: Field>(
+/// Assemble the stage-2 batch consumed opening *values* from the upstream clear outputs into
+/// the generated `Stage2BatchInputClaims` aggregate. Each per-relation `*_from_upstream`
+/// helper wires which upstream opening feeds which downstream input. The product-remainder
+/// input is the product uni-skip's output claim (a separate stage-2 sub-sumcheck), not an
+/// upstream stage's opening.
+pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
 ) -> Stage2BatchInputClaims<F> {
@@ -69,6 +75,10 @@ pub fn stage2_batch_input_values_from_upstream<F: Field>(
             product_uniskip_output_claim,
         ),
         instruction_claim_reduction: instruction_claim_reduction_input_values_from_upstream(stage1),
+        #[cfg(feature = "field-inline")]
+        field_registers_claim_reduction: field_registers_claim_reduction_input_values_from_upstream(
+            stage1,
+        ),
         ram_raf_evaluation: ram_raf_evaluation_input_values_from_upstream(stage1),
         ram_output_check: RamOutputCheckInputClaims::default(),
     }
@@ -112,7 +122,7 @@ where
     let uniskip =
         verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
 
-    // Build the five batch relations once, pre-branch; each owns its input/output
+    // Build the batch relations once, pre-branch; each owns its input/output
     // claim algebra (single-sourced with its jolt-claims formula and the BlindFold
     // constraint). The product uni-skip stays hand-coded above.
     let lowest_address = checked.public_io.memory_layout.get_lowest_address();
@@ -138,6 +148,11 @@ where
             trace_dimensions,
             uniskip.tau_low.clone(),
         ),
+        #[cfg(feature = "field-inline")]
+        field_registers_claim_reduction: FieldRegistersClaimReduction::new(
+            FieldRegistersTraceDimensions::new(log_t),
+            uniskip.tau_low.clone(),
+        ),
         ram_raf_evaluation: RamRafEvaluation::new(
             read_write_dimensions,
             raf_dimensions,
@@ -148,17 +163,14 @@ where
         ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
     };
 
-    // Draw each relation's challenges in declaration order: the RAM read-write
-    // gamma, then the instruction claim-reduction gamma (each a single
-    // `challenge_scalar`), then the RAM output-check address reference point
-    // (the last member's `draw_challenges` override — one raw `challenge()` per
-    // RAM address variable, landing after both gammas as the inline draw did).
-    // The drawn challenges feed the input/output claims and populate the stage
-    // aggregate carried downstream.
+    // Draw each relation's challenges in declaration order: the RAM read-write gamma, the
+    // instruction claim-reduction gamma, under `field-inline` the field-inline claim-reduction
+    // gamma (each a single `challenge_scalar`), then the RAM output-check address reference
+    // point (the last member's `draw_challenges` override — one raw `challenge()` per RAM
+    // address variable, landing after the gammas as the inline draw did). The drawn challenges
+    // feed the input/output claims and populate the stage aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    // Every member's input points are empty (each derives its output points from its
-    // own sumcheck point).
     let input_points = sumchecks.empty_input_points();
 
     if checked.zk {
@@ -168,11 +180,13 @@ where
             });
         };
         let consistency = sumchecks.verify_zk(&proof.stages.stage2_sumcheck_proof, transcript)?;
+        // Both modes omit aliases from the canonical member output rows.
+        let output_claim_count = sumchecks.output_claim_count();
         let batch_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage2_sumcheck_proof,
             "stage2_sumcheck_proof",
-            sumchecks.output_claim_count(),
+            output_claim_count,
             JoltRelationId::RamReadWriteChecking,
         )?;
         let output_points =
@@ -225,7 +239,7 @@ where
 /// The product uni-skip's low binding tau_low: the tail (`[1..]`) of stage
 /// 1's raw remainder point, reversed. Shared by `verify_product_uniskip` and
 /// the prove-side stage-2 recipe, so the derivation cannot drift.
-pub fn product_tau_low<F: Field>(
+pub fn product_tau_low<F: JoltField>(
     stage1_remainder: &[F],
     log_t: usize,
 ) -> Result<Vec<F>, VerifierError> {

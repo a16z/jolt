@@ -7,7 +7,7 @@ use jolt_riscv::{
 };
 
 #[cfg(feature = "field-inline")]
-use crate::field_inline::FieldInlineBytecodeMetadata;
+use crate::field_inline::validate_field_inline_instruction;
 use crate::preprocess::PreprocessingError;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -26,8 +26,6 @@ pub struct BytecodePreprocessing {
     /// Maps each unexpanded instruction address to its virtual bytecode index.
     pub pc_map: BytecodePCMapper,
     pub entry_address: u64,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: Option<FieldInlineBytecodeMetadata>,
 }
 
 impl BytecodePreprocessing {
@@ -43,29 +41,20 @@ impl BytecodePreprocessing {
                 ));
             }
             check_store_rd_disjoint(instruction)?;
+            #[cfg(feature = "field-inline")]
+            validate_field_inline_instruction(instruction)?;
         }
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
 
         let code_size = bytecode.len().next_power_of_two().max(2);
         bytecode.resize(code_size, noop_instruction());
-        #[cfg(feature = "field-inline")]
-        let field_inline = if profile.supports_field_inline() {
-            Some(FieldInlineBytecodeMetadata::from_bytecode(
-                &bytecode,
-                profile.fingerprint(),
-            )?)
-        } else {
-            None
-        };
 
         Ok(Self {
             code_size,
             bytecode,
             pc_map,
             entry_address,
-            #[cfg(feature = "field-inline")]
-            field_inline,
         })
     }
 
@@ -74,13 +63,35 @@ impl BytecodePreprocessing {
     }
 
     pub fn get_pc(&self, instruction: &JoltInstructionRow) -> Option<usize> {
-        if instruction.instruction_kind == JoltInstructionKind::NoOp {
-            return Some(0);
-        }
-        self.pc_map.get_pc(
-            instruction.address,
-            instruction.virtual_sequence_remaining.unwrap_or(0),
-        )
+        self.pc_map.get_instruction_pc(instruction)
+    }
+}
+
+/// An address expands to a full descending `virtual_sequence_remaining` run —
+/// `virtual_sequence_length - 1` down to 0 — at consecutive PCs, so these two
+/// fields determine every `(address, vsr) -> pc`. `try_new` rejects any bytecode
+/// that violates it.
+#[repr(C)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(
+        CanonicalSerialize,
+        CanonicalDeserialize,
+        serde::Serialize,
+        serde::Deserialize
+    )
+)]
+struct PcSlot {
+    first_pc: u32,
+    /// Number of bytecode rows the address expands to; 0 marks an unmapped slot,
+    /// which is why `MAX_INLINE_ROWS_PER_SOURCE` stops one short of `u16` range.
+    virtual_sequence_length: u16,
+}
+
+impl PcSlot {
+    const fn is_empty(&self) -> bool {
+        self.virtual_sequence_length == 0
     }
 }
 
@@ -95,47 +106,119 @@ impl BytecodePreprocessing {
     )
 )]
 pub struct BytecodePCMapper {
-    indices: Vec<Vec<(u16, usize)>>,
+    slots: Vec<PcSlot>,
 }
 
 impl BytecodePCMapper {
+    /// Resolves a final instruction against the expanded program, including
+    /// the shared padding slot used by every no-op.
+    pub fn get_instruction_pc(&self, instruction: &JoltInstructionRow) -> Option<usize> {
+        if instruction.instruction_kind == JoltInstructionKind::NoOp {
+            return Some(0);
+        }
+        self.get_pc(
+            instruction.address,
+            instruction.virtual_sequence_remaining.unwrap_or(0),
+        )
+    }
+
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
-        let mut last_pc = 0;
-        // One allocation at the final size; the no-op sentinel lives in the
-        // first bucket (`index_count` is always >= 1).
-        let mut indices = vec![Vec::new(); Self::index_count(bytecode)?];
-        if let Some(first) = indices.first_mut() {
-            first.push((0, last_pc));
+        let mut slots = vec![PcSlot::default(); Self::index_count(bytecode)?];
+        if let Some(first) = slots.first_mut() {
+            first.virtual_sequence_length = 1;
         }
 
-        for instruction in bytecode {
-            if instruction.address == 0 {
+        // The leading no-op sentinel is the only row allowed at address 0.
+        let rows = match bytecode.split_first() {
+            Some((first, rest)) if first.address == 0 => rest,
+            _ => bytecode,
+        };
+
+        let mut last_pc = 0u32;
+        for run in rows.chunk_by(|a, b| a.address == b.address) {
+            let Some((first_row, rest)) = run.split_first() else {
                 continue;
+            };
+            let address = first_row.address;
+            if address == 0 {
+                return Err(PreprocessingError::InvalidBytecodeAddress(0));
             }
+            let bytecode_index = Self::try_get_index(address)?;
+            let virtual_sequence_length =
+                Self::validate_run(bytecode_index, address, first_row, rest)?;
 
-            last_pc += 1;
-            let bytecode_index = Self::try_get_index(instruction.address)?;
-            indices
+            let first_pc = last_pc
+                .checked_add(1)
+                .ok_or(PreprocessingError::BytecodeTooLarge)?;
+            last_pc = first_pc
+                .checked_add(u32::from(virtual_sequence_length - 1))
+                .ok_or(PreprocessingError::BytecodeTooLarge)?;
+
+            let slot = slots
                 .get_mut(bytecode_index)
-                .ok_or(PreprocessingError::InvalidBytecodeAddress(
-                    instruction.address,
-                ))?
-                .push((instruction.virtual_sequence_remaining.unwrap_or(0), last_pc));
+                .ok_or(PreprocessingError::InvalidBytecodeAddress(address))?;
+            if !slot.is_empty() {
+                return Err(PreprocessingError::NonContiguousInlineSequence {
+                    bytecode_index,
+                    address,
+                });
+            }
+            *slot = PcSlot {
+                first_pc,
+                virtual_sequence_length,
+            };
         }
 
-        for (bytecode_index, entries) in indices.iter().enumerate() {
-            Self::validate_indices(bytecode_index, entries)?;
-        }
+        Ok(Self { slots })
+    }
 
-        Ok(Self { indices })
+    fn validate_run(
+        bytecode_index: usize,
+        address: usize,
+        first_row: &JoltInstructionRow,
+        rest: &[JoltInstructionRow],
+    ) -> Result<u16, PreprocessingError> {
+        let first_sequence = first_row.virtual_sequence_remaining.unwrap_or(0);
+        let mut previous_sequence = first_sequence;
+        for row in rest {
+            let sequence = row.virtual_sequence_remaining.unwrap_or(0);
+            let expected_sequence = previous_sequence.checked_sub(1);
+            if expected_sequence != Some(sequence) {
+                return Err(PreprocessingError::InvalidInlineSequence {
+                    bytecode_index,
+                    address,
+                    previous_sequence,
+                    expected_sequence: expected_sequence.unwrap_or(0),
+                    new_sequence: sequence,
+                });
+            }
+            previous_sequence = sequence;
+        }
+        if previous_sequence != 0 {
+            return Err(PreprocessingError::UnterminatedInlineSequence {
+                bytecode_index,
+                address,
+                last_sequence: previous_sequence,
+            });
+        }
+        first_sequence
+            .checked_add(1)
+            .ok_or(PreprocessingError::InlineSequenceTooLong {
+                bytecode_index,
+                address,
+                length: rest.len() + 1,
+            })
     }
 
     pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> Option<usize> {
         let index = Self::try_get_index(address).ok()?;
-        self.indices
-            .get(index)?
-            .iter()
-            .find_map(|(sequence, pc)| (*sequence == virtual_sequence_remaining).then_some(*pc))
+        let slot = *self.slots.get(index)?;
+        // An unmapped slot has length 0, so this also rejects it.
+        if virtual_sequence_remaining >= slot.virtual_sequence_length {
+            return None;
+        }
+        let offset = slot.virtual_sequence_length - 1 - virtual_sequence_remaining;
+        Some(slot.first_pc as usize + offset as usize)
     }
 
     pub fn get_first_pc(&self, address: usize) -> Option<usize> {
@@ -144,7 +227,8 @@ impl BytecodePCMapper {
         } else {
             Self::try_get_index(address).ok()?
         };
-        self.indices.get(index)?.first().map(|(_sequence, pc)| *pc)
+        let slot = *self.slots.get(index)?;
+        (!slot.is_empty()).then_some(slot.first_pc as usize)
     }
 
     fn try_get_index(address: usize) -> Result<usize, PreprocessingError> {
@@ -160,43 +244,6 @@ impl BytecodePCMapper {
         assert!(address >= RAM_START_ADDRESS as usize);
         assert!(address.is_multiple_of(ALIGNMENT_FACTOR_BYTECODE));
         (address - RAM_START_ADDRESS as usize) / ALIGNMENT_FACTOR_BYTECODE + 1
-    }
-
-    const fn address_for_index(index: usize) -> usize {
-        if index == 0 {
-            0
-        } else {
-            RAM_START_ADDRESS as usize + (index - 1) * ALIGNMENT_FACTOR_BYTECODE
-        }
-    }
-
-    fn validate_indices(
-        bytecode_index: usize,
-        entries: &[(u16, usize)],
-    ) -> Result<(), PreprocessingError> {
-        for ((previous_sequence, _), (new_sequence, _)) in
-            entries.iter().zip(entries.iter().skip(1))
-        {
-            let Some(expected_sequence) = previous_sequence.checked_sub(1) else {
-                return Err(PreprocessingError::InvalidInlineSequence {
-                    bytecode_index,
-                    address: Self::address_for_index(bytecode_index),
-                    previous_sequence: *previous_sequence,
-                    expected_sequence: 0,
-                    new_sequence: *new_sequence,
-                });
-            };
-            if *new_sequence != expected_sequence {
-                return Err(PreprocessingError::InvalidInlineSequence {
-                    bytecode_index,
-                    address: Self::address_for_index(bytecode_index),
-                    previous_sequence: *previous_sequence,
-                    expected_sequence,
-                    new_sequence: *new_sequence,
-                });
-            }
-        }
-        Ok(())
     }
 
     fn index_count(bytecode: &[JoltInstructionRow]) -> Result<usize, PreprocessingError> {
@@ -221,9 +268,7 @@ impl BytecodePCMapper {
 /// only ever comes from a `Store`-flagged row) is asserted during witness
 /// generation.
 fn check_store_rd_disjoint(instruction: &JoltInstructionRow) -> Result<(), PreprocessingError> {
-    let decoded = JoltInstruction::try_from(*instruction).unwrap_or(JoltInstruction::Noop(
-        jolt_riscv::instructions::Noop(*instruction),
-    ));
+    let decoded = JoltInstruction::from(*instruction);
     match instruction.operands.rd {
         Some(rd) if decoded.circuit_flags()[CircuitFlags::Store] => {
             Err(PreprocessingError::StoreWritesRd {
@@ -255,10 +300,14 @@ const fn noop_instruction() -> JoltInstructionRow {
 #[expect(clippy::unwrap_used)]
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
+    #[cfg(feature = "field-inline")]
+    use crate::field_inline::FieldInlineInstructionError;
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
         SourceExtension, RV64IMAC_JOLT,
     };
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::{FIELD_REGISTER_COUNT, RV64IMAC_JOLT_FIELD_INLINE};
 
     use super::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
 
@@ -301,25 +350,9 @@ mod tests {
             preprocessing.get_pc(&instruction(0x8000_0004, Some(0))),
             Some(3)
         );
-    }
-
-    #[test]
-    fn rejects_invalid_inline_sequences() {
-        let bytecode = vec![
-            instruction(0x8000_0004, Some(1)),
-            instruction(0x8000_0004, Some(1)),
-        ];
-
-        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
         assert_eq!(
-            err,
-            PreprocessingError::InvalidInlineSequence {
-                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
-                address: 0x8000_0004,
-                previous_sequence: 1,
-                expected_sequence: 0,
-                new_sequence: 1,
-            }
+            preprocessing.get_pc(&instruction(0x8000_0004, Some(3))),
+            None
         );
     }
 
@@ -344,11 +377,78 @@ mod tests {
     }
 
     #[test]
+    fn rejects_interleaved_inline_sequences() {
+        let bytecode = vec![
+            instruction(0x8000_0004, Some(1)),
+            instruction(0x8000_0004, Some(0)),
+            instruction(0x8000_0008, None),
+            instruction(0x8000_0004, Some(0)),
+        ];
+
+        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::NonContiguousInlineSequence {
+                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
+                address: 0x8000_0004,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_inline_sequences() {
+        let bytecode = vec![
+            instruction(0x8000_0004, Some(1)),
+            instruction(0x8000_0008, None),
+        ];
+
+        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::UnterminatedInlineSequence {
+                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
+                address: 0x8000_0004,
+                last_sequence: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_zero_address_outside_sentinel() {
+        let bytecode = vec![
+            instruction(0x8000_0004, None),
+            instruction(0, None),
+            instruction(0x8000_0008, None),
+        ];
+
+        let err =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0004, RV64IMAC_JOLT).unwrap_err();
+        assert_eq!(err, PreprocessingError::InvalidBytecodeAddress(0));
+    }
+
+    #[test]
     fn rejects_invalid_bytecode_addresses() {
         let bytecode = vec![instruction(0x7fff_fffc, None)];
 
         let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
         assert_eq!(err, PreprocessingError::InvalidBytecodeAddress(0x7fff_fffc));
+    }
+
+    /// Every `NoOp` lands on bytecode slot 0 regardless of its address, and
+    /// an instruction with no mapping fails materialization outright. Together
+    /// those make the witness layer's `BytecodePc` total — one column for both
+    /// the read-RAF pushforward and the committed one-hot.
+    #[test]
+    fn noop_maps_to_bytecode_slot_zero() {
+        let bytecode = vec![instruction(0x8000_0000, None)];
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT).unwrap();
+
+        let mut noop = instruction(0x8000_0004, None);
+        noop.instruction_kind = JoltInstructionKind::NoOp;
+        assert_eq!(preprocessing.get_pc(&noop), Some(0));
+
+        assert_eq!(preprocessing.get_pc(&instruction(0x8000_0004, None)), None);
     }
 
     fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltInstructionRow {
@@ -388,7 +488,6 @@ mod tests {
             }
         );
 
-        // The same store without an rd destination passes.
         let mut clean = instruction(0x8000_0000, None);
         clean.instruction_kind = JoltInstructionKind::SD;
         clean.operands = NormalizedOperands {
@@ -422,7 +521,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn fr_off_preprocessing_rejects_field_inline_rows() {
+    fn field_inline_preprocessing_preserves_field_operands() {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::FIELD_MUL;
         row.operands = NormalizedOperands {
@@ -432,79 +531,40 @@ mod tests {
             imm: 0,
         };
 
-        let err =
-            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT).unwrap_err();
+        let preprocessing =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT_FIELD_INLINE)
+                .unwrap();
+        assert_eq!(preprocessing.bytecode[1].field_operands(), row.operands);
         assert_eq!(
-            err,
-            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::FIELD_MUL)
+            preprocessing.bytecode[0].field_operands(),
+            NormalizedOperands::default()
         );
     }
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn fr_on_preprocessing_builds_clean_metadata_for_field_rows() {
-        let mut row = instruction(0x8000_0000, None);
-        row.instruction_kind = JoltInstructionKind::FIELD_MUL;
-        row.operands = NormalizedOperands {
-            rd: Some(1),
-            rs1: Some(2),
-            rs2: Some(3),
-            imm: 0,
-        };
-
-        let preprocessing = BytecodePreprocessing::preprocess(
-            vec![row],
-            0x8000_0000,
-            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
-        )
-        .unwrap();
-        let metadata = preprocessing.field_inline.as_ref().unwrap();
-
-        assert_eq!(metadata.rows.len(), preprocessing.bytecode.len());
-        assert!(!metadata.rows[0].active);
-        assert!(metadata.rows[1].active);
-        assert_eq!(metadata.rows[1].op, Some(jolt_riscv::FieldInlineOp::Mul));
-        assert_eq!(
-            metadata.rows[1].rd.map(jolt_riscv::FieldRegister::index),
-            Some(1)
-        );
-        assert_eq!(
-            metadata.rows[1].rs1.map(jolt_riscv::FieldRegister::index),
-            Some(2)
-        );
-        assert_eq!(
-            metadata.rows[1].rs2.map(jolt_riscv::FieldRegister::index),
-            Some(3)
-        );
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn field_inline_metadata_rejects_out_of_bounds_field_registers() {
+    fn field_inline_preprocessing_rejects_out_of_bounds_field_registers() {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::FIELD_ADD;
         row.operands = NormalizedOperands {
-            rd: Some(jolt_riscv::FIELD_REGISTER_COUNT),
+            rd: Some(FIELD_REGISTER_COUNT),
             rs1: Some(1),
             rs2: Some(2),
             imm: 0,
         };
 
-        let err = BytecodePreprocessing::preprocess(
-            vec![row],
-            0x8000_0000,
-            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
-        )
-        .unwrap_err();
+        let err =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT_FIELD_INLINE)
+                .unwrap_err();
 
         assert!(matches!(
             err,
-            PreprocessingError::InvalidFieldInlineMetadata(
-                crate::field_inline::FieldInlineMetadataError::InvalidFieldRegister {
+            PreprocessingError::InvalidFieldInlineInstruction(
+                FieldInlineInstructionError::InvalidFieldRegister {
                     operand: "rd",
                     register
                 }
-            ) if register == jolt_riscv::FIELD_REGISTER_COUNT
+            ) if register == FIELD_REGISTER_COUNT
         ));
     }
 }

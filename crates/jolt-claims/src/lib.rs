@@ -25,10 +25,14 @@ extern crate self as jolt_claims;
 
 mod claim_data;
 mod claims;
+mod formula_error;
+pub mod lattice;
 mod ops;
 pub mod protocols;
+pub mod r1cs;
 mod sumcheck;
 mod symbolic;
+pub mod twist;
 
 pub use claim_data::{
     ChallengeDrawError, InputClaims, MissingOpeningValue, NoChallenges, NoInputs, NoOutputs,

@@ -1,3 +1,4 @@
+use crate::instruction::registers::i::RegisterStateI;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask   = 0xfc00707f,
     match  = 0x0000501b,
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 
 impl SRLIW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SRLIW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SRLIW as RISCVInstruction>::RamAccess) {
         // SLLIW, SRLIW, and SRAIW are RV64I-only instructions that are analogously defined but
         // operate on 32-bit values and sign-extend their 32-bit results to 64 bits. SLLIW, SRLIW,
         // and SRAIW encodings with imm[5] ≠ 0 are reserved.

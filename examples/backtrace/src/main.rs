@@ -51,11 +51,10 @@ fn run_nostd(target_dir: &str, should_panic: bool) {
         guest_nostd::preprocess_shared_panic_backtrace_nostd(&mut program).unwrap();
     let prover_preprocessing =
         guest_nostd::preprocess_prover_panic_backtrace_nostd(shared_preprocessing.clone());
-    let verifier_preprocessing = guest_nostd::preprocess_verifier_panic_backtrace_nostd(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest_nostd::verifier_preprocessing_from_prover_panic_backtrace_nostd(
+            &prover_preprocessing,
+        );
 
     let prove = guest_nostd::build_prover_panic_backtrace_nostd(program, prover_preprocessing);
     let verify = guest_nostd::build_verifier_panic_backtrace_nostd(verifier_preprocessing);
@@ -91,11 +90,8 @@ fn run_std(target_dir: &str, should_panic: bool) {
         guest_std::preprocess_shared_panic_backtrace_std(&mut program).unwrap();
     let prover_preprocessing =
         guest_std::preprocess_prover_panic_backtrace_std(shared_preprocessing.clone());
-    let verifier_preprocessing = guest_std::preprocess_verifier_panic_backtrace_std(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest_std::verifier_preprocessing_from_prover_panic_backtrace_std(&prover_preprocessing);
 
     let prove = guest_std::build_prover_panic_backtrace_std(program, prover_preprocessing);
     let verify = guest_std::build_verifier_panic_backtrace_std(verifier_preprocessing);

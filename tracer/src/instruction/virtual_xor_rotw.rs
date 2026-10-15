@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use super::{RISCVInstruction, RISCVTrace};
@@ -11,11 +12,12 @@ macro_rules! declare_xorrotw {
             mask = 0,
             match = 0,
             format = FormatR,
+            registers = RegisterStateR,
             ram = ()
         );
 
         impl $name {
-            fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RAMAccess) {
+            fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RamAccess) {
                 let rs1_val = cpu.x[self.operands.rs1 as usize] as u32;
                 let rs2_val = cpu.x[self.operands.rs2 as usize] as u32;
                 let xor_result = rs1_val ^ rs2_val;
@@ -32,3 +34,6 @@ declare_xorrotw!(VirtualXORROTW16, 16);
 declare_xorrotw!(VirtualXORROTW12, 12);
 declare_xorrotw!(VirtualXORROTW8, 8);
 declare_xorrotw!(VirtualXORROTW7, 7);
+declare_xorrotw!(VirtualXORROTW22, 22);
+declare_xorrotw!(VirtualXORROTW19, 19);
+declare_xorrotw!(VirtualXORROTW6, 6);

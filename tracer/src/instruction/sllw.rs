@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask   = 0xfe00707f,
     match  = 0x0000003b | (0b001 << 12),
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
 impl SLLW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLLW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLLW as RISCVInstruction>::RamAccess) {
         // SLLW, SRLW, and SRAW are RV64I-only instructions that are analogously defined but operate
         // on 32-bit values and sign-extend their 32-bit results to 64 bits. The shift amount is
         // given by rs2[4:0].

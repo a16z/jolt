@@ -1,3 +1,4 @@
+use crate::instruction::registers::assert_align::RegisterStateAssert;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,6 +10,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatAssert,
+    registers = RegisterStateAssert,
     ram = ()
 );
 
@@ -16,7 +18,7 @@ impl VirtualAssertHalfwordAlignment {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        _: &mut <VirtualAssertHalfwordAlignment as RISCVInstruction>::RAMAccess,
+        _: &mut <VirtualAssertHalfwordAlignment as RISCVInstruction>::RamAccess,
     ) {
         let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm as i64);
         assert!(

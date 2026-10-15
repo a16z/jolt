@@ -1,28 +1,28 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_riscv::InstructionFlags as InstructionFlagKind;
 use jolt_witness::backend::cuda::{
     instruction_flag_bit, DeviceAtomColumns, DeviceTrace, EXTRA_IMM_HI, EXTRA_IMM_LO, EXTRA_RS1,
     EXTRA_RS2, EXTRA_WORDS,
 };
 
-pub(crate) struct ColumnShard<F: Field> {
+pub(crate) struct ColumnShard<F: JoltField> {
     pub(crate) ordinal: usize,
     pub(crate) columns: DeviceInstructionColumns,
     pub(crate) eq: DeviceSplitEq<F>,
     pub(crate) form: DeviceSumOfProducts,
 }
 
-pub(crate) struct ShardedInstructionColumns<F: Field> {
+pub(crate) struct ShardedInstructionColumns<F: JoltField> {
     shards: Vec<ColumnShard<F>>,
     collapsed: Option<DeviceInstructionColumns>,
     local_rounds: usize,
     tail_rounds: usize,
 }
 
-impl<F: Field> ShardedInstructionColumns<F> {
+impl<F: JoltField> ShardedInstructionColumns<F> {
     #[cfg(feature = "allocative")]
     pub(crate) fn device_bytes(&self) -> usize {
         self.shards
@@ -75,17 +75,17 @@ impl<F: Field> ShardedInstructionColumns<F> {
         &self,
         form: &DeviceSumOfProducts,
         whole_eq: &DeviceSplitEq<F>,
-    ) -> Result<(F, F), CudaError> {
+    ) -> Result<(F, F, F), CudaError> {
         if let Some(collapsed) = &self.collapsed {
             let context = context_for(0).ok_or(absent())?;
             let half = collapsed.len() / 2;
             return form.round_gruen_endpoints(context, &collapsed.columns()?, half, whole_eq);
         }
-        let tasks: Vec<DeviceTask<'_, (F, F), CudaError>> = self
+        let tasks: Vec<DeviceTask<'_, (F, F, F), CudaError>> = self
             .shards
             .iter()
             .map(|shard| {
-                let task: DeviceTask<'_, (F, F), CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, (F, F, F), CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
                     let half = shard.columns.len() / 2;
                     shard.form.round_gruen_endpoints(
@@ -98,10 +98,11 @@ impl<F: Field> ShardedInstructionColumns<F> {
                 task
             })
             .collect();
-        let mut total = (F::zero(), F::zero());
+        let mut total = (F::zero(), F::zero(), F::zero());
         for part in fan_out(tasks)? {
             total.0 += part.0;
             total.1 += part.1;
+            total.2 += part.2;
         }
         Ok(total)
     }
@@ -177,7 +178,7 @@ impl<F: Field> ShardedInstructionColumns<F> {
         Ok(())
     }
 
-    pub(crate) fn finals<G: Field>(&self) -> Result<Vec<G>, CudaError> {
+    pub(crate) fn finals<G: JoltField>(&self) -> Result<Vec<G>, CudaError> {
         self.collapsed
             .as_ref()
             .ok_or(CudaError::InvariantViolation {
@@ -343,7 +344,7 @@ impl DeviceInstructionColumns {
         }
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -418,7 +419,7 @@ impl DeviceInstructionColumns {
         Ok(scalars)
     }
 
-    pub fn finals<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+    pub fn finals<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
         self.scalars()?
             .into_iter()
             .map(|value| {

@@ -1,10 +1,23 @@
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::{Extract, WitnessEnv};
-use jolt_witness::witnesses::{RdAddress, RdWriteValue, Rs1Value, Rs2Value};
+use jolt_witness::witnesses::{RdWriteValue, Rs1Value, Rs2Value};
 use jolt_witness::{WitnessBundle, WitnessError};
 
 use crate::cuda::common::read_write_matrix::MatrixEntry;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RdAddress(pub Option<u8>);
+
+impl Extract for RdAddress {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row.rd_index()))
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RdPreValue(pub u64);
@@ -15,7 +28,7 @@ impl Extract for RdPreValue {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.registers.rd.map_or(0, |write| write.pre_value)))
+        Ok(Self(row.rd_pre_value()))
     }
 }
 
@@ -28,7 +41,7 @@ impl Extract for Rs1Address {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.registers.rs1.map(|read| read.register)))
+        Ok(Self(row.rs1_index()))
     }
 }
 
@@ -41,7 +54,7 @@ impl Extract for Rs2Address {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.registers.rs2.map(|read| read.register)))
+        Ok(Self(row.rs2_index()))
     }
 }
 
@@ -139,7 +152,11 @@ pub fn matrix_entries(rows: &[RegistersReadWriteWitness], gamma: Fr) -> Vec<Matr
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use super::RdAddress;
+    use jolt_field::{Fr, Ring};
+    use jolt_witness::witnesses::RdWriteValue;
+    use jolt_witness::witnesses::Rs1Value;
+    use jolt_witness::witnesses::Rs2Value;
 
     use super::{matrix_entries, RdPreValue, RegistersReadWriteWitness, Rs1Address, Rs2Address};
 
@@ -152,12 +169,12 @@ mod tests {
 
         let row = |rs1: Option<u8>, rs2: Option<u8>, rd: Option<u8>| RegistersReadWriteWitness {
             rs1_address: Rs1Address(rs1),
-            rs1_value: jolt_witness::witnesses::Rs1Value(7),
+            rs1_value: Rs1Value(7),
             rs2_address: Rs2Address(rs2),
-            rs2_value: jolt_witness::witnesses::Rs2Value(9),
-            rd_address: jolt_witness::witnesses::RdAddress(rd),
+            rs2_value: Rs2Value(9),
+            rd_address: RdAddress(rd),
             rd_pre_value: RdPreValue(11),
-            rd_post_value: jolt_witness::witnesses::RdWriteValue(13),
+            rd_post_value: RdWriteValue(13),
         };
 
         let entries = matrix_entries(&[row(Some(5), Some(5), None)], gamma);

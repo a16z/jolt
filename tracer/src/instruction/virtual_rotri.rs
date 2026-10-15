@@ -1,3 +1,4 @@
+use crate::instruction::registers::virtual_right_shift_i::RegisterStateVirtualRightShiftI;
 use serde::{Deserialize, Serialize};
 
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
@@ -10,11 +11,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatVirtualRightShiftI,
+    registers = RegisterStateVirtualRightShiftI,
     ram = ()
 );
 
 impl VirtualROTRI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualROTRI as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualROTRI as RISCVInstruction>::RamAccess) {
         // Extract rotation amount from bitmask: trailing zeros = rotation amount
         let shift = self.operands.imm.trailing_zeros();
 

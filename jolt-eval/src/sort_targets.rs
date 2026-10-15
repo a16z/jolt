@@ -16,7 +16,6 @@ pub fn naive_sort(data: &mut [i32]) {
 /// A sorting routine used as a red-team target.
 pub fn candidate_sort(data: &mut [i32]) {
     if data.len() <= 16 {
-        // Small-array path: insertion sort.
         for i in 1..data.len() {
             let key = data[i];
             let mut j = i;
@@ -27,7 +26,6 @@ pub fn candidate_sort(data: &mut [i32]) {
             data[j] = key;
         }
     } else {
-        // Large-array path: delegate to an optimized routine.
         let last = data.len() - 1;
         data[..last].sort();
     }

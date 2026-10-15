@@ -129,7 +129,13 @@ fn production_sources(workspace: &Path) -> Vec<PackageSource> {
         .filter(|package| {
             matches!(
                 package["name"].as_str(),
-                Some("jolt-verifier" | "jolt-dory" | "jolt-akita")
+                Some(
+                    "jolt-verifier"
+                        | "jolt-dory"
+                        | "jolt-akita"
+                        | "jolt-spartan-verifier"
+                        | "jolt-hyperkzg"
+                )
             )
         })
         .map(|package| package["id"].as_str().expect("seed package id is missing"))
@@ -165,7 +171,6 @@ fn production_sources(workspace: &Path) -> Vec<PackageSource> {
         .into_iter()
         .filter_map(|id| package_by_id.get(id))
         .filter(|package| package["source"].is_null())
-        .filter(|package| package["name"] != "jolt-prover-legacy")
         .filter_map(|package| {
             let manifest = PathBuf::from(
                 package["manifest_path"]
@@ -554,7 +559,10 @@ fn is_challenge_call(name: &str) -> bool {
 }
 
 fn is_absorb_method(name: &str) -> bool {
-    matches!(name, "append" | "append_bytes" | "append_to_transcript")
+    matches!(
+        name,
+        "append" | "append_bytes" | "append_to_transcript" | "append_values"
+    )
 }
 
 fn is_source_type(name: &str) -> bool {

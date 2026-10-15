@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -18,7 +18,7 @@ impl<const XLEN: usize> LookupTable for RangeCheckAlignedTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
@@ -41,7 +41,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for RangeCheckAlignedTab
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         let [one, lower_word, lsb] = suffixes.try_into().unwrap();
         let lower_word_contribution = prefixes[Prefixes::LowerWord] * one + lower_word;
         let lsb_contribution = prefixes[Prefixes::Lsb] * lsb;

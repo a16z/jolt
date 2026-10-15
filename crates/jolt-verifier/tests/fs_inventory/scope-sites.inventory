@@ -9,7 +9,6 @@ jolt-verifier::stages/stage5/verify.rs::verify::jolt_verifier_derive::fs_scope(S
 jolt-verifier::stages/stage6a/verify.rs::verify::jolt_verifier_derive::fs_scope(Stage6a)
 jolt-verifier::stages/stage6b/verify.rs::verify::jolt_verifier_derive::fs_scope(Stage6b)
 jolt-verifier::stages/stage7/verify.rs::verify::jolt_verifier_derive::fs_scope(Stage7)
-jolt-verifier::stages/stage8/reconstruction.rs::verify::jolt_verifier_derive::fs_scope(Reconstruction)
 jolt-verifier::stages/stage8/verify.rs::verify::jolt_verifier_derive::fs_scope(Stage8)
 jolt-verifier::verifier.rs::absorb_commitments::jolt_verifier_derive::fs_scope(Commitments)
 jolt-verifier::verifier.rs::absorb_preamble::jolt_verifier_derive::fs_scope(Preamble)

@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -26,7 +26,7 @@ impl<const XLEN: usize> LookupTable for ValidDiv0Table<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         let mut divisor_is_zero = F::one();
         let mut is_valid_div_by_zero = F::one();
@@ -56,7 +56,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidDiv0Table<XLEN>
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, left_operand_is_zero, div_by_zero] = suffixes.try_into().unwrap();
         one - prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero

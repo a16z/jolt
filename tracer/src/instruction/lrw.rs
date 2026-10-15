@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -6,31 +7,30 @@ use crate::{
 };
 
 use super::format::format_r::FormatR;
-use super::{Cycle, Instruction, RAMRead, RISCVInstruction, RISCVTrace};
+use super::{Cycle, Instruction, RISCVInstruction, RISCVTrace, RamRead};
 
 declare_riscv_instr!(
     name   = LRW,
     mask   = 0xf9f0707f,
     match  = 0x1000202f,
     format = FormatR,
-    ram    = RAMRead
+    registers = RegisterStateR,
+    ram    = RamRead
 );
 
 impl LRW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <LRW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <LRW as RISCVInstruction>::RamAccess) {
         if cpu.is_reservation_set() {
             println!("LRW: Reservation is already set");
         }
 
         let address = cpu.x[self.operands.rs1 as usize] as u64;
 
-        // Load the word from memory
         let value = cpu.mmu.load_word(address);
 
         let write_value = match value {
             Ok((word, _memory_read)) => {
                 cpu.set_reservation(address, ReservationWidth::Word);
-                // Sign extend the 32-bit value
                 word as i32 as i64
             }
             Err(_) => panic!("MMU load error"),

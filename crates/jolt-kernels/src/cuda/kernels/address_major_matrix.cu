@@ -396,3 +396,21 @@ extern "C" __global__ void amm_message_kernel(
         __syncthreads();
     }
 }
+
+extern "C" __global__ void rwm_permute_words_kernel(
+    const u64 *__restrict__ in, const unsigned int *__restrict__ order,
+    unsigned int width, unsigned int words, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < words) out[i] = in[(unsigned long long)order[i / width] * width + i % width];
+}
+
+extern "C" __global__ void amm_initial_values_kernel(
+    const u64 *__restrict__ initial, unsigned int cycles, unsigned int entries,
+    u64 *__restrict__ values) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < entries) {
+        u64 value[LIMBS];
+        load4(initial + (unsigned long long)(i / cycles) * LIMBS, value);
+        store4(values + (unsigned long long)i * LIMBS, value);
+    }
+}

@@ -1,10 +1,10 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
+use jolt_claims::protocols::composed::r1cs::spartan_outer_row_weights;
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, interpolate_to_coeffs, poly_mul};
 use jolt_poly::UnivariatePoly;
 use jolt_r1cs::constraint::ConstraintMatrices;
-use jolt_r1cs::constraints::jolt::spartan_outer_row_weights;
 
 use super::columns::{DeviceR1csInputs, LinearForms};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
@@ -29,7 +29,7 @@ pub fn extended_nodes() -> Vec<(usize, i64)> {
         .collect()
 }
 
-pub fn node_field<F: Field>(node: i64) -> F {
+pub fn node_field<F: JoltField>(node: i64) -> F {
     if node >= 0 {
         F::from_u64(node as u64)
     } else {
@@ -37,7 +37,7 @@ pub fn node_field<F: Field>(node: i64) -> F {
     }
 }
 
-pub fn push_forms<F: Field>(
+pub fn push_forms<F: JoltField>(
     forms: &mut LinearForms,
     matrices: &ConstraintMatrices<F>,
     columns: &[usize],
@@ -63,7 +63,7 @@ pub fn push_forms<F: Field>(
     Ok(())
 }
 
-pub fn extended_evals<F: Field>(
+pub fn extended_evals<F: JoltField>(
     context: &CudaKernelContext,
     inputs: &DeviceR1csInputs,
     matrices: &ConstraintMatrices<F>,
@@ -77,7 +77,7 @@ pub fn extended_evals<F: Field>(
     clippy::too_many_arguments,
     reason = "one cycle window of the uni-skip reduce: the shard index, shard count and window               length all pick out which cycles this device sums over"
 )]
-pub fn extended_evals_window<F: Field>(
+pub fn extended_evals_window<F: JoltField>(
     context: &CudaKernelContext,
     inputs: &DeviceR1csInputs,
     matrices: &ConstraintMatrices<F>,
@@ -164,7 +164,7 @@ pub fn extended_evals_window<F: Field>(
     Ok(values)
 }
 
-pub fn first_round_poly<F: Field>(
+pub fn first_round_poly<F: JoltField>(
     extended: &[F],
     tau_high: F,
 ) -> Result<UnivariatePoly<F>, CudaError> {

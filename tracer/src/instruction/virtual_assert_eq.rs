@@ -1,3 +1,4 @@
+use crate::instruction::registers::b::RegisterStateB;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatB,
+    registers = RegisterStateB,
     ram = ()
 );
 
 impl VirtualAssertEQ {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertEQ as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertEQ as RISCVInstruction>::RamAccess) {
         if self.operands.imm == 0 {
             assert_eq!(
                 cpu.x[self.operands.rs1 as usize],

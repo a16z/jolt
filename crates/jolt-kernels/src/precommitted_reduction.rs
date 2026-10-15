@@ -10,19 +10,17 @@
 //! the phase kernels are generic over the relation, and each kind contributes
 //! one `SumcheckKernel` impl per phase (the typed wire-claim assembly plus,
 //! on the cycle side, the carry parking under the paired address relation's
-//! key). The table BUILDERS live with the backends (the reference ones in
-//! the per-kind `reference::*_claim_reduction` modules), as do the stage-7
+//! key). The whole-bytecode builder lives here; other table builders live
+//! with the backends (the reference ones in the per-kind `reference::*_claim_reduction` modules), as do the stage-7
 //! `PrepareKernel` impls reclaiming the carries
 //! ([`reference::precommitted_reduction`](crate::reference::precommitted_reduction)).
 //! The scalar kinds resolve intermediate-vs-final through
-//! [`CycleReductionKernel::scalar_claim`]; the bytecode kind's chunked shape
-//! spells its resolution out in its own impl.
+//! `CycleReductionKernel::scalar_claim`; bytecode encodes the exclusive
+//! phase state in its output carrier.
 //!
 //! The summand in both phases is `Σ_j value(j) · eq(j)` over tables permuted
-//! into Dory opening-round order, bound low-to-high; `aux` tables (the
-//! per-chunk bytecode polynomials) bind alongside without joining the summand
-//! — their fully bound coefficients are the reduction's final per-chunk
-//! openings. The member is head-aligned (batch offset 0) and participates
+//! into Dory opening-round order, bound low-to-high. The member is head-aligned
+//! (batch offset 0) and participates
 //! only in its schedule's active rounds; on an inactive round inside the
 //! window it emits the constant `claim/2` polynomial and halves its running
 //! `scale`.
@@ -38,16 +36,22 @@
 
 use std::marker::PhantomData;
 
-use jolt_claims::protocols::jolt::PrecommittedClaimReduction;
-use jolt_field::Field;
-use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
+use jolt_claims::protocols::jolt::{
+    BytecodeClaimReductionLayout, PrecommittedClaimReduction, PrecommittedReductionLayout,
+};
+use jolt_field::JoltField;
+use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseOutputClaims,
     ProgramImageReductionCyclePhase, ProgramImageReductionCyclePhaseOutputClaims,
     TrustedAdviceCyclePhase, TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhaseOutputClaims,
 };
+use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 use jolt_verifier::stages::stage7::advice_address_phase::{
     TrustedAdviceAddressPhase, TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhase,
     UntrustedAdviceAddressPhaseOutputClaims,
@@ -59,32 +63,34 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use jolt_verifier::stages::relations::SumcheckInputClaims;
-
+use crate::committed_program::{build_committed_bytecode_coeffs, bytecode_index_to_lane_row};
 use crate::{KernelError, ProofSession, SumcheckKernel, SumcheckKernelError};
 
-/// Tables at least this large run their round loops in parallel; below it
+/// Tables at least this large run their construction and round loops in parallel; below it
 /// rayon dispatch costs more than the work (the naive tier drives these
 /// kernels at harness scale, where the tables are tiny).
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1 << 10;
 
 /// The bound-table state both phase kernels drive: the summand tables, the
-/// aux tables riding alongside, and the running inactive-round scale.
+/// equality table and running inactive-round scale.
 /// `Polynomial`-backed so binds take the library's threshold-gated parallel
 /// path (byte-identical fold: `lo + r·(hi − lo)` pairwise, exact field ops).
-pub(crate) struct PrecommittedTables<F> {
-    pub(crate) value: Polynomial<F>,
-    pub(crate) eq: Polynomial<F>,
-    pub(crate) aux: Vec<Polynomial<F>>,
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct PrecommittedTables<F> {
+    value: Polynomial<F>,
+    eq: Polynomial<F>,
     /// `(1/2)^k` over the `k` inactive rounds ingested so far — the factor the
     /// running claim accumulated relative to the true bound product.
-    pub(crate) scale: F,
-    pub(crate) scale_inv: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    scale: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    scale_inv: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     two_inv: F,
 }
 
-impl<F: Field> PrecommittedTables<F> {
+impl<F: JoltField> PrecommittedTables<F> {
     /// The round polynomial for member-local state: the constant `claim/2` on
     /// an inactive round, else the hinted `{0,1,2}` interpolation (see the
     /// module doc for why the padded claim, not the true sum, feeds `s(1)`).
@@ -150,13 +156,10 @@ impl<F: Field> PrecommittedTables<F> {
         self.round_message(is_active(active_rounds, round), previous_claim)
     }
 
-    /// Ingest the final round's challenge for the phase's schedule.
     fn finish_rounds(&mut self, active_rounds: &[usize], total_rounds: usize, bind: F) {
         self.bind_round(is_active(active_rounds, total_rounds - 1), bind);
     }
 
-    /// Bind a round's challenge: on an active round bind every table, on an
-    /// inactive one fold the halving into the running `scale` instead.
     fn bind_round(&mut self, active: bool, challenge: F) {
         if !active {
             self.scale *= self.two_inv;
@@ -166,13 +169,8 @@ impl<F: Field> PrecommittedTables<F> {
         self.value
             .bind_with_order(challenge, BindingOrder::LowToHigh);
         self.eq.bind_with_order(challenge, BindingOrder::LowToHigh);
-        for table in &mut self.aux {
-            table.bind_with_order(challenge, BindingOrder::LowToHigh);
-        }
     }
 
-    /// The intermediate claim staged at the cycle→address handoff:
-    /// `Σ_i value(i) · eq(i) · scale` over the bound tables.
     fn intermediate_claim(&self) -> F {
         let value = self.value.evals();
         let eq = self.eq.evals();
@@ -203,18 +201,11 @@ impl<F: Field> PrecommittedTables<F> {
 
     /// The fully bound value coefficient — the reduction's final opening
     /// value (the advice/program-image polynomial's own opening; for the
-    /// bytecode reduction, the chunk-weighted fold the per-chunk claims sum
-    /// to). Errors while any variable remains unbound.
+    /// bytecode reduction, the whole-bytecode opening). Errors while any
+    /// variable remains unbound.
     fn final_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.value.evals()[0])
-    }
-
-    /// The fully bound `aux` coefficients — the per-chunk `BytecodeChunk(i)`
-    /// opening values. Errors while any variable remains unbound.
-    fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
-        Ok(self.aux.iter().map(|table| table.evals()[0]).collect())
     }
 }
 
@@ -227,98 +218,42 @@ fn is_active(active_rounds: &[usize], round: usize) -> bool {
 /// [`AddressReductionKernel`] by stage 7's `prepare`. Plain owned data —
 /// parked once, reclaimed once — keyed in the [`ProofSession`] by the
 /// address-phase relation `R` it becomes.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField, R")
+)]
 pub struct PrecommittedReductionCarry<F, R> {
-    pub(crate) reduction: PrecommittedClaimReduction,
-    pub(crate) tables: PrecommittedTables<F>,
-    _relation: PhantomData<fn() -> R>,
-}
-
-// Size arithmetic rather than a derive: neither the relation marker `R` nor
-// `F` may pick up an `Allocative` bound (the generic cycle kernel parks
-// this carry for every `F: Field`). The tables are the memory; the
-// scheduling metadata is attributed by its stack size alone (its
-// round-index vectors are a few hundred bytes, noise next to the tables).
-#[cfg(feature = "allocative")]
-impl<F, R> allocative::Allocative for PrecommittedReductionCarry<F, R> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, polys_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("reduction"),
-            size_of::<PrecommittedClaimReduction>(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("tables.value"),
-            poly_heap_bytes(&self.tables.value),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("tables.eq"),
-            poly_heap_bytes(&self.tables.eq),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("tables.aux"),
-            polys_heap_bytes(&self.tables.aux),
-        );
-        visitor.exit();
-    }
-}
-
-/// The stage-6b cycle-phase batch member for relation `R`: binds the cycle
-/// window, and — per kind — assembles the typed wire claims (resolving
-/// intermediate-vs-final from the schedule) and parks the 6b→7 carry.
-pub struct CycleReductionKernel<F: Field, R> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     reduction: PrecommittedClaimReduction,
     tables: PrecommittedTables<F>,
     _relation: PhantomData<fn() -> R>,
 }
 
-// The two phase kernels share the carry's shape and its size-arithmetic
-// rationale (see the `PrecommittedReductionCarry` impl above).
-#[cfg(feature = "allocative")]
-macro_rules! impl_reduction_kernel_allocative {
-    ($($kernel:ident),+ $(,)?) => {$(
-        impl<F: Field, R> allocative::Allocative for $kernel<F, R> {
-            fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-                use crate::backend::{poly_heap_bytes, polys_heap_bytes};
-                let mut visitor = visitor.enter_self_sized::<Self>();
-                visitor.visit_simple(
-                    allocative::Key::new("reduction"),
-                    size_of::<PrecommittedClaimReduction>(),
-                );
-                visitor.visit_simple(
-                    allocative::Key::new("tables.value"),
-                    poly_heap_bytes(&self.tables.value),
-                );
-                visitor.visit_simple(
-                    allocative::Key::new("tables.eq"),
-                    poly_heap_bytes(&self.tables.eq),
-                );
-                visitor.visit_simple(
-                    allocative::Key::new("tables.aux"),
-                    polys_heap_bytes(&self.tables.aux),
-                );
-                visitor.exit();
-            }
-        }
-    )+};
+/// The stage-6b cycle-phase batch member for relation `R`: binds the cycle
+/// window, and — per kind — assembles the typed wire claims (resolving
+/// intermediate-vs-final from the schedule) and parks the 6b→7 carry.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField, R")
+)]
+pub struct CycleReductionKernel<F: JoltField, R> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    reduction: PrecommittedClaimReduction,
+    tables: PrecommittedTables<F>,
+    _relation: PhantomData<fn() -> R>,
 }
-#[cfg(feature = "allocative")]
-impl_reduction_kernel_allocative!(CycleReductionKernel, AddressReductionKernel);
-
-impl<F: Field, R> CycleReductionKernel<F, R> {
+impl<F: JoltField, R> CycleReductionKernel<F, R> {
     /// Build a member from tables ALREADY permuted into Dory opening-round
-    /// order (see [`lsb_permutation`] / [`permute_coefficients`]).
+    /// order (see `lsb_permutation` / `permute_coefficients`).
     pub fn new(
         reduction: PrecommittedClaimReduction,
         value: Vec<F>,
         eq: Vec<F>,
-        aux: Vec<Vec<F>>,
     ) -> Result<Self, KernelError<F>> {
         let expected = 1usize << reduction.poly_opening_round_permutation_be().len();
-        for (name, len) in std::iter::once(("value", value.len()))
-            .chain(std::iter::once(("eq", eq.len())))
-            .chain(aux.iter().map(|table| ("aux", table.len())))
-        {
+        for (name, len) in [("value", value.len()), ("eq", eq.len())] {
             if len != expected {
                 return Err(KernelError::TableSizeMismatch {
                     table: format!("precommitted reduction {name}"),
@@ -337,7 +272,6 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
             tables: PrecommittedTables {
                 value: Polynomial::new(value),
                 eq: Polynomial::new(eq),
-                aux: aux.into_iter().map(Polynomial::new).collect(),
                 scale: F::one(),
                 scale_inv: F::one(),
                 two_inv,
@@ -353,9 +287,7 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
     /// The schedule-resolved scalar wire claim: the intermediate handoff
     /// claim when the address phase continues, else the final opening. The
     /// single source of the intermediate-vs-final resolution for the
-    /// scalar-shaped kinds (advice, program image); the bytecode kind's
-    /// chunked wire shape spells the same resolution out in its own
-    /// `output_claims`.
+    /// scalar-shaped kinds (advice and program image).
     fn scalar_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         if self.has_address_phase() {
             Ok(self.tables.intermediate_claim())
@@ -367,8 +299,12 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
     /// Park the post-cycle bound state under `RA`'s carry key — the shared
     /// body of the per-kind `park_residue` overrides. A cycle-completed
     /// schedule has no stage-7 member, so it parks nothing.
-    fn park_carry<RA: 'static>(self, session: &mut ProofSession) {
+    fn park_carry<RA: 'static>(self, session: &mut ProofSession)
+    where
+        R: 'static,
+    {
         if !self.has_address_phase() {
+            crate::mem::drop_in_background_thread(self);
             return;
         }
         session.park(PrecommittedReductionCarry::<F, RA> {
@@ -379,7 +315,7 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
     }
 }
 
-impl<F: Field, R> ProveRounds<F> for CycleReductionKernel<F, R> {
+impl<F: JoltField, R> ProveRounds<F> for CycleReductionKernel<F, R> {
     fn num_rounds(&self) -> usize {
         self.reduction.cycle_phase_total_rounds()
     }
@@ -409,13 +345,19 @@ impl<F: Field, R> ProveRounds<F> for CycleReductionKernel<F, R> {
 /// The stage-7 address-phase batch member for relation `R`: resumes binding
 /// from the reclaimed 6b carry (running scale included) and — per kind —
 /// extracts the final openings from the fully bound tables.
-pub struct AddressReductionKernel<F: Field, R> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField, R")
+)]
+pub struct AddressReductionKernel<F: JoltField, R> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     reduction: PrecommittedClaimReduction,
     tables: PrecommittedTables<F>,
     _relation: PhantomData<fn() -> R>,
 }
 
-impl<F: Field, R> AddressReductionKernel<F, R> {
+impl<F: JoltField, R> AddressReductionKernel<F, R> {
     pub fn new(carry: PrecommittedReductionCarry<F, R>) -> Self {
         Self {
             reduction: carry.reduction,
@@ -425,7 +367,7 @@ impl<F: Field, R> AddressReductionKernel<F, R> {
     }
 }
 
-impl<F: Field, R> ProveRounds<F> for AddressReductionKernel<F, R> {
+impl<F: JoltField, R> ProveRounds<F> for AddressReductionKernel<F, R> {
     fn num_rounds(&self) -> usize {
         self.reduction.address_phase_total_rounds()
     }
@@ -452,7 +394,7 @@ impl<F: Field, R> ProveRounds<F> for AddressReductionKernel<F, R> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, TrustedAdviceCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, TrustedAdviceCyclePhase<F>> {
     type Relation = TrustedAdviceCyclePhase<F>;
 
     fn output_claims(
@@ -469,7 +411,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, TrustedAdviceCycleP
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, UntrustedAdviceCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, UntrustedAdviceCyclePhase<F>> {
     type Relation = UntrustedAdviceCyclePhase<F>;
 
     fn output_claims(
@@ -486,26 +428,25 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, UntrustedAdviceCycl
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReductionCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReductionCyclePhase<F>> {
     type Relation = BytecodeReductionCyclePhase<F>;
 
     fn output_claims(
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        // The chunked counterpart of `scalar_claim`: an address phase stages
-        // the intermediate handoff claim (chunks come later, at stage 7); a
-        // cycle-only schedule ends here with the per-chunk openings.
         Ok(if self.has_address_phase() {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: Some(self.tables.intermediate_claim()),
-                chunks: Vec::new(),
-            }
+            BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                BytecodeReductionIntermediateClaims {
+                    intermediate: self.tables.intermediate_claim(),
+                },
+            )
         } else {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: None,
-                chunks: self.tables.final_aux_claims()?,
-            }
+            BytecodeReductionCyclePhaseOutputClaims::Final(
+                BytecodeReductionAddressPhaseOutputClaims {
+                    bytecode: self.tables.final_claim()?,
+                },
+            )
         })
     }
 
@@ -514,7 +455,9 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReductionCy
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F>
+    for CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>>
+{
     type Relation = ProgramImageReductionCyclePhase<F>;
 
     fn output_claims(
@@ -531,7 +474,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, ProgramImageReducti
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, TrustedAdviceAddressPhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for AddressReductionKernel<F, TrustedAdviceAddressPhase<F>> {
     type Relation = TrustedAdviceAddressPhase<F>;
 
     fn output_claims(
@@ -544,7 +487,7 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, TrustedAdviceAddr
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, UntrustedAdviceAddressPhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for AddressReductionKernel<F, UntrustedAdviceAddressPhase<F>> {
     type Relation = UntrustedAdviceAddressPhase<F>;
 
     fn output_claims(
@@ -557,7 +500,9 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, UntrustedAdviceAd
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, BytecodeReductionAddressPhase<F>> {
+impl<F: JoltField> SumcheckKernel<F>
+    for AddressReductionKernel<F, BytecodeReductionAddressPhase<F>>
+{
     type Relation = BytecodeReductionAddressPhase<F>;
 
     fn output_claims(
@@ -565,12 +510,12 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, BytecodeReduction
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(BytecodeReductionAddressPhaseOutputClaims {
-            chunks: self.tables.final_aux_claims()?,
+            bytecode: self.tables.final_claim()?,
         })
     }
 }
 
-impl<F: Field> SumcheckKernel<F>
+impl<F: JoltField> SumcheckKernel<F>
     for AddressReductionKernel<F, ProgramImageReductionAddressPhase<F>>
 {
     type Relation = ProgramImageReductionAddressPhase<F>;
@@ -660,4 +605,36 @@ pub(crate) fn permute_tables<F: Copy + Send + Sync>(
             .collect(),
         None => tables,
     }
+}
+
+pub(crate) fn bytecode_reduction_kernel<F: JoltField>(
+    layout: &BytecodeClaimReductionLayout,
+    weights: &BytecodeReductionWeights<F>,
+    bytecode: &[JoltInstructionRow],
+) -> Result<CycleReductionKernel<F, BytecodeReductionCyclePhase<F>>, KernelError<F>> {
+    let reduction = layout.precommitted().clone();
+    let value = build_committed_bytecode_coeffs(bytecode, layout.trace_order())?;
+    let eq_rows: Vec<F> = EqPolynomial::evals(&weights.r_bc, None);
+    let rows = 1usize << layout.log_rows();
+    let entry = |index| {
+        let (lane, row) = bytecode_index_to_lane_row(index, rows, layout.trace_order());
+        weights.lane_weights[lane] * eq_rows[row]
+    };
+    #[cfg(feature = "parallel")]
+    let eq = {
+        if value.len() >= PAR_THRESHOLD {
+            (0..value.len()).into_par_iter().map(entry).collect()
+        } else {
+            (0..value.len()).map(entry).collect()
+        }
+    };
+    #[cfg(not(feature = "parallel"))]
+    let eq = (0..value.len()).map(entry).collect();
+    let mut tables = permute_tables(&reduction, vec![value, eq]).into_iter();
+    let (Some(value), Some(eq)) = (tables.next(), tables.next()) else {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode permutation lost the value/eq tables",
+        });
+    };
+    CycleReductionKernel::new(reduction, value, eq)
 }

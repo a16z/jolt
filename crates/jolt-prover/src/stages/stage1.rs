@@ -7,13 +7,13 @@
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
 //! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
-use jolt_claims::protocols::jolt::geometry::dimensions::{
-    OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+use jolt_claims::protocols::composed::r1cs::{
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_field::JoltField;
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -26,14 +26,13 @@ use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
 use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{ProverError, StageProver as _};
 
 /// Stage 1's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
-pub struct Stage1ProverOutput<F: Field, C> {
+pub struct Stage1ProverOutput<F: JoltField, C> {
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage1OutputClaims<F>,
@@ -47,15 +46,13 @@ pub struct Stage1ProverOutput<F: Field, C> {
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage1<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     log_t: usize,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -64,24 +61,20 @@ where
     // Backend-neutral kernel-seam spans at the call boundary, so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's
     // kernel-seam contract.
-    tracing::info_span!("SpartanOuterUniskip::prepare").in_scope(|| {
-        backend
-            .spartan_outer_uniskip
-            .prepare(session, log_t, &tau, witness)
-    })?;
+    tracing::info_span!("SpartanOuterUniskip::prepare")
+        .in_scope(|| backend.prepare_outer_uniskip(log_t, &tau))?;
 
     let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
-        .in_scope(|| backend.spartan_outer_uniskip.first_round_poly(session, &[]))?;
+        .in_scope(|| backend.outer_uniskip_poly())?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
-        OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-        OUTER_UNISKIP_DOMAIN_SIZE,
+        SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+        SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
         transcript,
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
 
-    // The generated stage drivers, on the verifier's own batch type.
     let sumchecks = Stage1BatchSumchecks {
         outer_remainder: OuterRemainder::new(
             SpartanOuterDimensions::rv64(log_t),
@@ -97,12 +90,10 @@ where
         ),
     };
 
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &challenges,
@@ -114,20 +105,198 @@ where
     #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof;
 
+    let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
+    let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
     Ok(Stage1ProverOutput {
         uniskip_proof: proved_uniskip.proof,
         sumcheck_proof,
-        claims: Stage1OutputClaims {
-            uniskip_output_claim: proved_uniskip.output_claim,
-            outer: proved.output_claims.clone(),
-        },
-        clear_output: Stage1ClearOutput {
-            output_values: proved.output_claims,
-            output_points: proved.output_points,
-        },
+        claims,
+        clear_output,
         #[cfg(feature = "zk")]
         uniskip_witness: proved_uniskip.witness,
         #[cfg(feature = "zk")]
         committed_witness,
     })
+}
+
+/// Clear round-trips with field-inline enabled of the stage-1 recipe against the verifier's own
+/// public constituents — `stage1::verify`'s clear body step for step (the
+/// tau draw, `uniskip::verify_clear`, the batch relations, the field-inline seam's
+/// attach, `verify_clear`, and the two-part opening absorb), on a twin
+/// transcript. The full `stage1::verify` entrypoint needs an assembled
+/// `JoltProof`, whose joint-opening slot has no test constructor, so this is
+/// the closest public seam; the 32-byte transcript-state equality pins the
+/// absorb order end to end.
+#[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod field_inline_round_trip {
+    use crate::stages::field_inline_fixtures::twins;
+    use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
+    use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
+    use jolt_claims::OutputClaims;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_poly::Polynomial;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::stages::stage2::product_tau_low;
+    use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
+
+    use super::*;
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, LOG_T};
+
+    fn round_trip(trace_backend: TraceBackend) {
+        let witness = trace_backend.with_field_inline().unwrap();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
+        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline");
+        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &mut context,
+            &mode,
+            LOG_T,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        let field_inline_outer = &out.claims.outer.outer_remainder.field_inline;
+
+        // The appendage values are honest evaluations: each field-inline cycle-domain
+        // column's MLE at the stage-1 cycle binding (`tau_low`, the point
+        // stage 2's field-inline wiring consumes).
+        let tau_low = product_tau_low(&out.clear_output.remainder_point(), LOG_T).unwrap();
+        let field_inline_oracle = witness.field_inline().unwrap();
+        for (polynomial, value) in FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
+            .into_iter()
+            .zip(OutputClaims::opening_values(field_inline_outer))
+        {
+            let table = field_inline_oracle
+                .oracle_table(FieldInlinePolynomialId::Virtual(polynomial))
+                .unwrap();
+            assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
+        }
+
+        let mut transcript = Blake2bTranscript::new(b"stage1-field-inline");
+        twins::replay_stage1(&mut transcript, &out);
+
+        assert_eq!(transcript.state(), prover_transcript.state());
+    }
+
+    #[test]
+    fn field_arithmetic_stage1_round_trips_the_composed_verifier() {
+        round_trip(field_arithmetic_backend());
+    }
+}
+
+/// ZK with field-inline enabled: the committed stage-1 shell and the verifier replay. Mirrors
+/// `blindfold.rs`'s hard transcript check at stage scope — the replay runs
+/// `stage1::verify`'s zk body over its public constituents (the tau draw,
+/// `uniskip::verify_zk`, the batch `verify_zk`) and must land on the
+/// prover's forward transcript bytes.
+#[cfg(all(test, feature = "field-inline", feature = "zk"))]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod field_inline_zk {
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
+    use common::jolt_device::JoltDevice;
+    use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::stages::uniskip::{self, UniskipParams};
+    use jolt_verifier::stages::PrecommittedSchedule;
+    use jolt_verifier::CheckedInputs;
+
+    use super::*;
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, ENTRY, LOG_T};
+
+    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
+
+    #[test]
+    fn committed_stage1_shell_carries_the_composed_rows_and_replays() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
+        let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
+        let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
+        let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
+        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &mut context,
+            &mode,
+            LOG_T,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        // The committed shell carries the composed 50 output-claim values
+        // (45 common openings + five field value/product openings), row-committed in
+        // capacity-sized chunks — the shape the verifier's
+        // `composed_output_claim_count` check derives.
+        let total: usize = out
+            .committed_witness
+            .output_claim_rows
+            .iter()
+            .map(Vec::len)
+            .sum();
+        assert_eq!(total, 50);
+        let row_lens: Vec<usize> = out
+            .committed_witness
+            .output_claim_rows
+            .iter()
+            .map(Vec::len)
+            .collect();
+        let expected_row_lens: Vec<usize> = {
+            let mut remaining = 50usize;
+            let mut lens = Vec::new();
+            while remaining > 0 {
+                let take = remaining.min(CAPACITY);
+                lens.push(take);
+                remaining -= take;
+            }
+            lens
+        };
+        assert_eq!(row_lens, expected_row_lens);
+        let committed = out.sumcheck_proof.as_committed().unwrap();
+        assert_eq!(
+            committed.output_claims.commitments.len(),
+            50usize.div_ceil(CAPACITY)
+        );
+
+        let checked = CheckedInputs {
+            public_io: JoltDevice::default(),
+            zk: true,
+            trace_length: 1 << LOG_T,
+            ram_K: 1 << 4,
+            entry_address: ENTRY,
+            preprocessing_digest: [0u8; 32],
+            trusted_advice_commitment_present: false,
+            vc_capacity: Some(CAPACITY),
+            precommitted: PrecommittedSchedule {
+                trusted_advice: None,
+                untrusted_advice: None,
+                bytecode: None,
+                program_image: None,
+            },
+        };
+        let mut transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
+        let tau = draw_spartan_outer_tau(&mut transcript, LOG_T);
+        let uniskip_step = uniskip::verify_zk(
+            &checked,
+            &out.uniskip_proof,
+            &UniskipParams::spartan_outer(),
+            &mut transcript,
+        )
+        .unwrap();
+        let sumchecks = Stage1BatchSumchecks {
+            outer_remainder: OuterRemainder::new(
+                SpartanOuterDimensions::rv64(LOG_T),
+                tau,
+                uniskip_step.challenge,
+            ),
+        };
+        let _consistency = sumchecks
+            .verify_zk(&out.sumcheck_proof, &mut transcript)
+            .unwrap();
+
+        assert_eq!(transcript.state(), prover_transcript.state());
+    }
 }

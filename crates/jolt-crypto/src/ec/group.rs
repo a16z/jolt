@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_transcript::AppendToTranscript;
 use serde::{Deserialize, Serialize};
 
@@ -44,21 +44,17 @@ pub trait JoltGroup:
     + for<'de> Deserialize<'de>
     + AppendToTranscript
 {
-    /// Group identity element.
     #[must_use]
     fn identity() -> Self;
 
-    /// Returns `true` if this element is the identity.
     #[must_use]
     fn is_identity(&self) -> bool;
 
-    /// Returns `self + self`.
     #[must_use]
     fn double(&self) -> Self;
 
-    /// Scalar multiplication: `scalar * self`.
     #[must_use]
-    fn scalar_mul<F: Field>(&self, scalar: &F) -> Self;
+    fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self;
 
     /// Multi-scalar multiplication: `Σᵢ scalars[i] * bases[i]`.
     ///
@@ -67,5 +63,5 @@ pub trait JoltGroup:
     /// Panics if `bases.len() != scalars.len()` (in all build profiles —
     /// backend MSMs silently truncate to the shorter slice otherwise).
     #[must_use]
-    fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self;
+    fn msm<F: JoltField>(bases: &[Self], scalars: &[F]) -> Self;
 }

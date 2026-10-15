@@ -1,18 +1,19 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 
 use super::context::CudaKernelContext;
 use super::device::DeviceFrVec;
 use super::error::CudaError;
 
-pub struct DeviceSplitEq<F: Field> {
+pub struct DeviceSplitEq<F: JoltField> {
     host: GruenSplitEqPolynomial<F>,
     e_in: Vec<DeviceFrVec>,
     e_out: Vec<DeviceFrVec>,
     out_shards: usize,
 }
 
-pub fn split_eq_tables_window<F: Field>(
+#[cfg(not(feature = "field-inline"))]
+pub fn split_eq_tables_window<F: JoltField>(
     context: &CudaKernelContext,
     point: &[F],
     shard: usize,
@@ -47,7 +48,7 @@ pub fn split_eq_tables_window<F: Field>(
     Ok((e_in, e_out, in_bits))
 }
 
-impl<F: Field> DeviceSplitEq<F> {
+impl<F: JoltField> DeviceSplitEq<F> {
     #[cfg(feature = "allocative")]
     pub fn device_bytes(&self) -> usize {
         self.e_in
@@ -223,12 +224,31 @@ impl<F: Field> DeviceSplitEq<F> {
         }
     }
 
-    pub fn gruen_poly_deg_3(&self, q0: F, q2: F, previous_claim: F) -> UnivariatePoly<F> {
-        self.host.gruen_poly_deg_3(q0, q2, previous_claim)
+    pub fn gruen_poly_deg_3(
+        &self,
+        q0: F,
+        q2: F,
+        previous_claim: F,
+        q1: F,
+    ) -> Result<UnivariatePoly<F>, CudaError> {
+        self.host
+            .gruen_poly_deg_3(q0, q2, previous_claim, || q1)
+            .map_err(|_| CudaError::InvariantViolation {
+                reason: "the cubic quotient disagrees with the sumcheck claim",
+            })
     }
 
-    pub fn gruen_poly_from_evals(&self, q_evals: &[F], previous_claim: F) -> UnivariatePoly<F> {
-        self.host.gruen_poly_from_evals(q_evals, previous_claim)
+    pub fn gruen_poly_from_evals(
+        &self,
+        q_evals: &[F],
+        previous_claim: F,
+        q0: F,
+    ) -> Result<UnivariatePoly<F>, CudaError> {
+        self.host
+            .gruen_poly_from_evals(q_evals, previous_claim, || q0)
+            .map_err(|_| CudaError::InvariantViolation {
+                reason: "the Toom quotient disagrees with the sumcheck claim",
+            })
     }
 
     pub fn merge(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
@@ -343,8 +363,8 @@ mod tests {
                 let q2 = fr(round as u64 * 29 + 11);
                 let claim = fr(round as u64 * 7 + 3);
                 prop_assert_eq!(
-                    got.gruen_poly_deg_3(q0, q2, claim).coefficients().to_vec(),
-                    expected.gruen_poly_deg_3(q0, q2, claim).coefficients().to_vec(),
+                    got.gruen_poly_deg_3(q0, q2, claim, fr(1)).expect("device interpolation").coefficients().to_vec(),
+                    expected.gruen_poly_deg_3(q0, q2, claim, || fr(1)).expect("host interpolation").coefficients().to_vec(),
                     "round polynomial diverged at round {}", round
                 );
 

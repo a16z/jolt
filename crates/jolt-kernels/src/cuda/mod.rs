@@ -1,11 +1,15 @@
-use jolt_field::Field;
+use crate::KernelError;
+use crate::ProofSession;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::JoltBackend;
 
 mod advice_claim_reduction;
 mod booleanity;
 mod bytecode_claim_reduction;
+#[cfg(not(feature = "field-inline"))]
 mod bytecode_read_raf;
 mod commitment;
 mod common;
@@ -28,7 +32,9 @@ mod ram_val_check;
 mod registers_claim_reduction;
 mod registers_read_write;
 mod registers_val_evaluation;
+#[cfg(not(feature = "field-inline"))]
 mod spartan_outer;
+#[cfg(not(feature = "field-inline"))]
 mod spartan_product;
 mod spartan_shift;
 mod witness;
@@ -54,30 +60,34 @@ pub fn device_available() -> bool {
     shared_context().is_some()
 }
 
-pub(crate) fn require_context<F: jolt_field::FieldCore>(
-) -> Result<&'static CudaKernelContext, crate::KernelError<F>> {
-    shared_context().ok_or(crate::KernelError::Unsupported {
+pub(crate) fn require_context<F: JoltField>() -> Result<&'static CudaKernelContext, KernelError<F>>
+{
+    shared_context().ok_or(KernelError::Unsupported {
         reason: "no CUDA device is present",
     })
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub fn cuda() -> Self
     where
         PCS: DeviceTier1Commitment,
     {
-        let mut backend = Self::reference();
-        if !device_available() {
-            return backend;
+        let mut backend = Self::optimized();
+        #[cfg(not(feature = "field-inline"))]
+        {
+            backend.bytecode_read_raf_address = Box::new(CudaBackend);
+            backend.bytecode_read_raf_cycle = Box::new(CudaBackend);
+            backend.spartan_outer_uniskip = Box::new(CudaBackend);
+            backend.spartan_outer_remainder = Box::new(CudaBackend);
+            backend.spartan_product_uniskip = Box::new(CudaBackend);
+            backend.spartan_product_remainder = Box::new(CudaBackend);
         }
         backend.booleanity_address = Box::new(CudaBackend);
         backend.booleanity_cycle = Box::new(CudaBackend);
-        backend.bytecode_read_raf_address = Box::new(CudaBackend);
-        backend.bytecode_read_raf_cycle = Box::new(CudaBackend);
         backend.instruction_ra_virtualization = Box::new(CudaBackend);
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
@@ -94,11 +104,7 @@ where
         backend.ram_val_check = Box::new(CudaBackend);
         backend.registers_read_write = Box::new(CudaBackend);
         backend.ram_read_write = Box::new(CudaBackend);
-        backend.spartan_outer_uniskip = Box::new(CudaBackend);
-        backend.spartan_outer_remainder = Box::new(CudaBackend);
         backend.spartan_shift = Box::new(CudaBackend);
-        backend.spartan_product_uniskip = Box::new(CudaBackend);
-        backend.spartan_product_remainder = Box::new(CudaBackend);
         backend.trusted_advice_cycle = Box::new(CudaBackend);
         backend.untrusted_advice_cycle = Box::new(CudaBackend);
         backend.bytecode_reduction_cycle = Box::new(CudaBackend);
@@ -108,29 +114,27 @@ where
         backend.bytecode_reduction_address = Box::new(CudaBackend);
         backend.program_image_reduction_address = Box::new(CudaBackend);
         backend.commit = Box::new(CudaBackend);
-        backend.advice_opening = Box::new(CudaBackend);
+        backend.ram_initial_openings = Box::new(CudaBackend);
         backend.joint_opening = Box::new(CudaBackend);
         backend
     }
 }
 
-pub fn warm_shared_witness<F: jolt_field::Field>(
-    session: &mut crate::ProofSession,
-    witness: &dyn jolt_witness::JoltWitnessPlane<F>,
+pub fn warm_shared_witness<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
     log_t: usize,
-) -> Result<(), crate::KernelError<F>> {
+) -> Result<(), KernelError<F>> {
     let cycles = 1usize << log_t;
     let _ = require_context::<F>()?;
     for (ordinal, window) in self::common::devices::witness_windows(cycles)
         .iter()
         .enumerate()
     {
-        let _device = common::context::enter_device(ordinal);
-        let device = common::context::context_for(ordinal).ok_or(
-            crate::KernelError::InvariantViolation {
-                reason: "a witness warm-up window names an absent device",
-            },
-        )?;
+        let _device = enter_device(ordinal);
+        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "a witness warm-up window names an absent device",
+        })?;
         let _ = self::witness::session_window_residency(device, session, witness, cycles, window)?;
         device.stream().synchronize().map_err(CudaError::from)?;
     }
@@ -143,7 +147,8 @@ pub fn warm_shared_witness<F: jolt_field::Field>(
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use cudarc::driver::CudaContext;
+    use jolt_field::{Fr, Ring};
 
     use super::{as_fr_slice, fr_into, fr_vec_into, shared_context};
 
@@ -162,7 +167,7 @@ mod tests {
 
     #[test]
     fn kernel_source_compiles_when_a_device_is_present() {
-        if cudarc::driver::CudaContext::new(0).is_err() {
+        if CudaContext::new(0).is_err() {
             return;
         }
         assert!(

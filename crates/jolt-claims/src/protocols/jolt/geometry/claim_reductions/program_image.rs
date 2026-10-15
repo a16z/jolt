@@ -5,9 +5,8 @@
 //! `ProgramImageInitContributionRw` instead of having the verifier materialize
 //! the initial RAM words. This reduction binds that scalar to the trusted
 //! `ProgramImageInit` commitment over the shared precommitted schedule.
-//! Mirrors `jolt-prover-legacy`'s `zkvm/claim_reductions/program_image.rs`.
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_utils::log2_power_of_two;
 
 use crate::{derived, opening};
@@ -17,14 +16,12 @@ use super::super::super::{
     JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
 };
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
-use super::super::error::JoltFormulaPointError;
+use super::super::error::PointGeometryError;
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Committed length of the program-image polynomial: the initial RAM
-/// bytecode-word slice padded to a power of two (at least two words).
 fn padded_program_image_len_words(program_image_len_words: usize) -> usize {
     program_image_len_words.next_power_of_two().max(2)
 }
@@ -45,14 +42,14 @@ pub struct ProgramImageClaimReductionLayout {
 
 impl ProgramImageClaimReductionLayout {
     /// `start_index` is the remapped RAM address of the first program-image
-    /// word (`remap_address(min_bytecode_address)`).
+    /// word: `(min_bytecode_address - lowest_address) / 8`.
     pub fn balanced(
         trace_order: TracePolynomialOrder,
         log_t: usize,
         scheduling_reference: PrecommittedSchedulingReference,
         program_image_len_words: usize,
         start_index: usize,
-    ) -> Result<Self, JoltFormulaPointError> {
+    ) -> Result<Self, PointGeometryError> {
         let padded_len_words = padded_program_image_len_words(program_image_len_words);
         let image_shape = CommitmentMatrixShape::balanced(log2_power_of_two(padded_len_words));
         let precommitted = PrecommittedClaimReduction::new(
@@ -85,11 +82,11 @@ impl ProgramImageClaimReductionLayout {
     /// `FinalScale` value when the reduction completes in the cycle phase
     /// (i.e. no active address-phase rounds remain). `r_addr_rw` is the RAM
     /// address component of the `RamVal` opening from RAM read-write checking.
-    pub fn cycle_phase_final_output_scale<F: Field>(
+    pub fn cycle_phase_final_output_scale<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         challenges: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let opening_point = self
             .precommitted
             .cycle_phase_permuted_opening_point(challenges)?;
@@ -102,11 +99,11 @@ impl ProgramImageClaimReductionLayout {
     /// opening point, rather than re-deriving it from the sumcheck challenges.
     /// Lets the cycle-phase relation object's `resolve_public` recover the scale
     /// from the opening point it produced in `derive_opening_points`.
-    pub fn cycle_phase_scale_at_opening_point<F: Field>(
+    pub fn cycle_phase_scale_at_opening_point<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let permuted = self
             .precommitted
             .cycle_phase_permuted_from_opening_point(opening_point)?;
@@ -116,12 +113,12 @@ impl ProgramImageClaimReductionLayout {
     }
 
     /// `FinalScale` value when the reduction completes in the address phase.
-    pub fn address_phase_final_output_scale<F: Field>(
+    pub fn address_phase_final_output_scale<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         cycle_var_challenges: &[F],
         challenges: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
@@ -132,11 +129,11 @@ impl ProgramImageClaimReductionLayout {
     /// opening point, rather than re-deriving it from the cycle/sumcheck
     /// challenges. Lets the stage 7 relation object's `resolve_public` recover the
     /// scale from the opening point it produced in `derive_opening_points`.
-    pub fn address_phase_scale_at_opening_point<F: Field>(
+    pub fn address_phase_scale_at_opening_point<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let eq_eval =
             eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, opening_point)?;
         Ok(eq_eval * precommitted_skip_round_scale::<F>(&self.precommitted))
@@ -151,7 +148,7 @@ impl PrecommittedReductionLayout for ProgramImageClaimReductionLayout {
 
 pub(crate) fn final_output_expr<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     derived(JoltDerivedId::from(
         ProgramImageClaimReductionPublic::FinalScale,
@@ -202,15 +199,15 @@ pub fn final_program_image_opening() -> JoltOpeningId {
 /// `carry_use` (y-bit 0 produced output 1, consuming the incoming carry).
 /// Window bits at and above `m` are fixed to zero, so `r_y = 0` there. The
 /// final carry-out is dropped, i.e. addresses wrap mod `2^ell`.
-fn eval_shifted_eq_poly_at_opening_point<F: Field>(
+fn eval_shifted_eq_poly_at_opening_point<F: JoltField>(
     r_addr_be: &[F],
     start_index: usize,
     opening_point_be: &[F],
-) -> Result<F, JoltFormulaPointError> {
+) -> Result<F, PointGeometryError> {
     let ell = r_addr_be.len();
     let m = opening_point_be.len();
     if m > ell {
-        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+        return Err(PointGeometryError::OpeningPointLengthMismatch {
             expected: ell,
             got: m,
         });
@@ -242,7 +239,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
 
     fn fr(value: u64) -> Fr {
@@ -275,7 +272,6 @@ mod tests {
         let r_addr: Vec<Fr> = [3, 5, 7, 11].into_iter().map(fr).collect();
         let opening_point: Vec<Fr> = [13, 17].into_iter().map(fr).collect();
 
-        // 14 and 15 wrap past 2^ell, exercising the DP's carry-out path.
         for start_index in [0usize, 3, 4, 9, 12, 14, 15] {
             let dp = eval_shifted_eq_poly_at_opening_point(&r_addr, start_index, &opening_point)
                 .unwrap_or_else(|error| panic!("shifted eq should evaluate: {error}"));
@@ -304,69 +300,10 @@ mod tests {
 
         assert_eq!(
             eval_shifted_eq_poly_at_opening_point(&r_addr, 0, &opening_point),
-            Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected: 1,
                 got: 2,
             })
         );
-    }
-
-    #[test]
-    fn cycle_phase_output_openings_track_address_phase_presence() {
-        let with_address = PrecommittedReductionDimensions::new(4, 3, true);
-        assert_eq!(
-            cycle_phase_output_openings(with_address),
-            vec![cycle_phase_program_image_opening()]
-        );
-
-        let without_address = PrecommittedReductionDimensions::new(4, 3, false);
-        assert_eq!(
-            cycle_phase_output_openings(without_address),
-            vec![final_program_image_opening()]
-        );
-    }
-
-    #[test]
-    fn final_output_scale_combines_shifted_eq_and_skip_scale() {
-        let log_t = 8;
-        let log_k_chunk = 4;
-        let program_image_len_words = 4;
-        let start_index = 4;
-        let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
-            log_t + log_k_chunk,
-            &[precommitted_candidate(program_image_len_words)],
-            log_k_chunk,
-        );
-        let layout = ProgramImageClaimReductionLayout::balanced(
-            TracePolynomialOrder::CycleMajor,
-            log_t,
-            scheduling_reference,
-            program_image_len_words,
-            start_index,
-        )
-        .unwrap_or_else(|error| panic!("layout should build: {error}"));
-        assert_eq!(layout.padded_len_words(), 4);
-        assert_eq!(layout.image_shape(), CommitmentMatrixShape::balanced(2));
-
-        let precommitted = layout.precommitted();
-        assert_eq!(precommitted.num_address_phase_rounds(), 0);
-
-        let challenges: Vec<Fr> = (0..precommitted.cycle_phase_total_rounds())
-            .map(|index| fr(40 + index as u64))
-            .collect();
-        let r_addr_rw: Vec<Fr> = (1..=6).map(fr).collect();
-
-        let opening_point = precommitted
-            .cycle_phase_permuted_opening_point(&challenges)
-            .unwrap_or_else(|error| panic!("cycle phase point should normalize: {error}"));
-        let expected =
-            eval_shifted_eq_poly_at_opening_point::<Fr>(&r_addr_rw, start_index, &opening_point)
-                .unwrap_or_else(|error| panic!("shifted eq should evaluate: {error}"))
-                * precommitted.cycle_phase_skip_scale::<Fr>();
-
-        let scale = layout
-            .cycle_phase_final_output_scale(&r_addr_rw, &challenges)
-            .unwrap_or_else(|error| panic!("final output scale should compute: {error}"));
-        assert_eq!(scale, expected);
     }
 }

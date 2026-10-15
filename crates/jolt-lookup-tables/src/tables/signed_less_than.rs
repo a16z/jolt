@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -14,7 +14,6 @@ pub struct SignedLessThanTable<const XLEN: usize>;
 impl<const XLEN: usize> LookupTable for SignedLessThanTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        // Sign-extend the lower XLEN bits to a full i64 before comparing.
         let shift = 64 - XLEN;
         let x_signed = ((x as i64) << shift) >> shift;
         let y_signed = ((y as i64) << shift) >> shift;
@@ -24,7 +23,7 @@ impl<const XLEN: usize> LookupTable for SignedLessThanTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         let x_sign = r[0];
         let y_sign = r[1];
@@ -57,7 +56,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignedLessThanTable<
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, less_than] = suffixes.try_into().unwrap();
         prefixes[Prefixes::LeftOperandMsb] * one - prefixes[Prefixes::RightOperandMsb] * one

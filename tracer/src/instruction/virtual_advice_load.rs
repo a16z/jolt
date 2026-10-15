@@ -1,3 +1,4 @@
+use crate::instruction::registers::j::RegisterStateJ;
 use serde::{Deserialize, Serialize};
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
@@ -11,11 +12,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatJ,
+    registers = RegisterStateJ,
     ram = ()
 );
 
 impl VirtualAdviceLoad {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAdviceLoad as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAdviceLoad as RISCVInstruction>::RamAccess) {
         // Read from advice tape and write to rd register
         // The imm field specifies how many bytes to read (1, 2, 4, or 8)
         let num_bytes = self.operands.imm as usize;

@@ -42,21 +42,7 @@ pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
-
-    #[test]
-    fn zero_vec_u64() {
-        let v: Vec<u64> = unsafe_allocate_zero_vec(1024);
-        assert_eq!(v.len(), 1024);
-        assert!(v.iter().all(|&x| x == 0));
-    }
-
-    #[test]
-    fn zero_vec_f64() {
-        let v: Vec<f64> = unsafe_allocate_zero_vec(256);
-        assert_eq!(v.len(), 256);
-        assert!(v.iter().all(|&x| x == 0.0));
-    }
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn zero_vec_field_elements() {

@@ -5,13 +5,10 @@ use common::{constants, jolt_device::MemoryConfig};
 /// compatibility.
 #[allow(dead_code)]
 pub trait JoltParameterSet {
-    /// The architecture size.
     const XLEN: usize;
-    /// The memory config to use
     const MEMORY_CONFIG: MemoryConfig;
 }
 
-/// The parameters used by Jolt for 32-bit risc-v
 #[derive(Clone)]
 pub struct RV64IParameterSet;
 

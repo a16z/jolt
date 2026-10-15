@@ -1,7 +1,7 @@
 use ark_bn254::{Fq, G1Projective};
 use ark_ff::BigInt;
 use jolt_crypto::Bn254G1;
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_openings::AdditivelyHomomorphic;
 
 use jolt_dory::{DoryHint, DoryScheme};
@@ -34,7 +34,7 @@ fn jolt_g1(point: JacobianLimbs) -> Bn254G1 {
 
 fn fill_row(dst: &mut [JacobianLimbs], hint: &DoryHint, start: usize) {
     for (offset, target) in dst.iter_mut().enumerate() {
-        if let Some(&commitment) = hint.row_commitments.get(start + offset) {
+        if let Some(&commitment) = hint.row_commitments().get(start + offset) {
             *target = jacobian_limbs(commitment);
         }
     }
@@ -102,7 +102,7 @@ pub(super) fn combine_on_device(hints: &[DoryHint], scalars: &[Fr]) -> Result<Do
 
     let rows = hints
         .iter()
-        .map(|hint| hint.row_commitments.len())
+        .map(|hint| hint.row_commitments().len())
         .max()
         .unwrap_or(0);
     if rows == 0 {
@@ -148,10 +148,10 @@ pub(super) fn combine_on_device(hints: &[DoryHint], scalars: &[Fr]) -> Result<Do
         .iter()
         .zip(scalars)
         .fold(Fr::from_u64(0), |acc, (hint, &scalar)| {
-            acc + scalar * hint.commit_blind
+            acc + scalar * hint.commit_blind()
         });
 
-    Ok(DoryHint::new(
+    Ok(DoryHint::from_parts(
         combined.into_iter().map(jolt_g1).collect(),
         blind,
     ))
@@ -163,8 +163,12 @@ pub(super) fn combine_on_device(hints: &[DoryHint], scalars: &[Fr]) -> Result<Do
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use crate::cuda::common::msm::JacobianLimbs;
+    use ark_bn254::Fr as ArkFr;
+    use ark_bn254::G1Projective;
     use ark_ec::PrimeGroup as _;
-    use jolt_field::FromPrimitiveInt as _;
+    use jolt_crypto::Bn254G1;
+    use jolt_field::Ring as _;
 
     use jolt_openings::AdditivelyHomomorphic as _;
 
@@ -179,16 +183,16 @@ mod tests {
     const SHARED_WINDOW_ROWS_PER_DEVICE: usize = 128;
 
     fn hints() -> Vec<DoryHint> {
-        let generator = ark_bn254::G1Projective::generator();
+        let generator = G1Projective::generator();
         (0..HINTS)
             .map(|hint| {
                 let commitments = (0..ROWS)
                     .map(|row| {
-                        let scalar = ark_bn254::Fr::from((hint * ROWS + row + 1) as u64);
-                        jolt_crypto::Bn254G1::from(generator * scalar)
+                        let scalar = ArkFr::from((hint * ROWS + row + 1) as u64);
+                        Bn254G1::from(generator * scalar)
                     })
                     .collect();
-                DoryHint::new(commitments, Fr::from_u64(hint as u64))
+                DoryHint::from_parts(commitments, Fr::from_u64(hint as u64))
             })
             .collect()
     }
@@ -248,24 +252,21 @@ mod tests {
         }
     }
 
-    fn jacobian_limbs_differ(
-        got: crate::cuda::common::msm::JacobianLimbs,
-        expected: crate::cuda::common::msm::JacobianLimbs,
-    ) -> bool {
+    fn jacobian_limbs_differ(got: JacobianLimbs, expected: JacobianLimbs) -> bool {
         super::jolt_g1(got) != super::jolt_g1(expected)
     }
 
     fn shared_window_hints(rows: usize) -> Vec<DoryHint> {
-        let generator = ark_bn254::G1Projective::generator();
+        let generator = G1Projective::generator();
         (0..SHARED_WINDOW_HINTS)
             .map(|hint| {
                 let commitments = (0..rows)
                     .map(|row| {
-                        let scalar = ark_bn254::Fr::from((hint * rows + row + 1) as u64);
-                        jolt_crypto::Bn254G1::from(generator * scalar)
+                        let scalar = ArkFr::from((hint * rows + row + 1) as u64);
+                        Bn254G1::from(generator * scalar)
                     })
                     .collect();
-                DoryHint::new(commitments, Fr::from_u64(hint as u64 + 1))
+                DoryHint::from_parts(commitments, Fr::from_u64(hint as u64 + 1))
             })
             .collect()
     }
@@ -306,18 +307,18 @@ mod tests {
         let got = super::combine_on_device(&hints, &scalars).expect("device hint combination");
         let expected = DoryScheme::combine_hints(hints, &scalars);
         assert_eq!(
-            got.row_commitments.len(),
-            expected.row_commitments.len(),
+            got.row_commitments().len(),
+            expected.row_commitments().len(),
             "row count diverged"
         );
         assert_eq!(
-            got.row_commitments
+            got.row_commitments()
                 .iter()
-                .zip(&expected.row_commitments)
+                .zip(expected.row_commitments())
                 .position(|(got, expected)| got != expected),
             None,
             "the shared window schedule changed a combined row commitment",
         );
-        assert_eq!(got.commit_blind, expected.commit_blind);
+        assert_eq!(got.commit_blind(), expected.commit_blind());
     }
 }

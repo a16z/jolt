@@ -1,5 +1,3 @@
-// #![cfg_attr(feature = "guest", no_std)]
-
 use jolt_sdk::{self as jolt};
 
 extern crate alloc;
@@ -54,7 +52,6 @@ fn verify(bytes: &[u8]) -> u32 {
     end_cycle_tracking("deserialize preprocessing");
 
     start_cycle_tracking("deserialize count of proofs");
-    // Deserialize number of proofs to verify
     let n: u32 = read_record(data_bytes, &mut offset);
     end_cycle_tracking("deserialize count of proofs");
 

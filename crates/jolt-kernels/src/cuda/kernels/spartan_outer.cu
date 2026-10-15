@@ -5,7 +5,7 @@
 #define SO_KIND_NARROW 0u
 #define SO_KIND_WIDE 1u
 #define SO_KIND_FLAG 2u
-#define SO_EXTRA_WORDS 10
+#define SO_EXTRA_WORDS 11
 #define SO_EXTRA_RS1 0
 #define SO_EXTRA_RS2 1
 #define SO_EXTRA_RD_POST 2
@@ -275,8 +275,8 @@ extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
     unsigned long long base =
         ((unsigned long long)blockIdx.x * blockDim.x + threadIdx.x) * (unsigned long long)strip;
 
-    u64 acc[2][LIMBS];
-    for (int lane = 0; lane < 2; lane++)
+    u64 acc[3][LIMBS];
+    for (int lane = 0; lane < 3; lane++)
         for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
 
     for (unsigned int step = 0; step < strip; step++) {
@@ -302,6 +302,11 @@ extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
         fr_add(acc[0], weighted, sum);
         for (int l = 0; l < LIMBS; l++) acc[0][l] = sum[l];
 
+        fr_mul(az1, bz1, product);
+        fr_mul(product, weight, weighted);
+        fr_add(acc[2], weighted, sum);
+        for (int l = 0; l < LIMBS; l++) acc[2][l] = sum[l];
+
         u64 az_inf[LIMBS], bz_inf[LIMBS];
         fr_sub(az1, az0, az_inf);
         fr_sub(bz1, bz0, bz_inf);
@@ -311,7 +316,7 @@ extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
         for (int l = 0; l < LIMBS; l++) acc[1][l] = sum[l];
     }
 
-    so_block_reduce(scratch, 2, acc, partials);
+    so_block_reduce(scratch, 3, acc, partials);
 }
 
 extern "C" __global__ void so_claims_kernel(

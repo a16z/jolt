@@ -3,7 +3,7 @@ use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedClaimReduction,
     PrecommittedReductionLayout,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     TrustedAdviceCyclePhase, TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhase,
@@ -26,7 +26,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-fn advice_tables<F: Field>(
+fn advice_tables<F: JoltField>(
     context: &'static CudaKernelContext,
     witness: &dyn JoltWitnessPlane<F>,
     kind: JoltAdviceKind,
@@ -72,7 +72,7 @@ fn advice_tables<F: Field>(
     )
 }
 
-fn advice_kernel<F: Field, R>(
+fn advice_kernel<F: JoltField, R>(
     session_witness: &dyn JoltWitnessPlane<F>,
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
@@ -84,7 +84,7 @@ fn advice_kernel<F: Field, R>(
     Ok(DeviceCycleReductionKernel::new(reduction, tables))
 }
 
-fn reference_point<F: Field>(
+fn reference_point<F: JoltField>(
     point: Option<&[F]>,
     label: &'static str,
 ) -> Result<Vec<F>, KernelError<F>> {
@@ -93,7 +93,7 @@ fn reference_point<F: Field>(
         .ok_or(KernelError::InvariantViolation { reason: label })
 }
 
-impl<F: Field> SumcheckKernel<F> for DeviceCycleReductionKernel<F, TrustedAdviceCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for DeviceCycleReductionKernel<F, TrustedAdviceCyclePhase<F>> {
     type Relation = TrustedAdviceCyclePhase<F>;
 
     fn output_claims(
@@ -110,7 +110,9 @@ impl<F: Field> SumcheckKernel<F> for DeviceCycleReductionKernel<F, TrustedAdvice
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for DeviceCycleReductionKernel<F, UntrustedAdviceCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F>
+    for DeviceCycleReductionKernel<F, UntrustedAdviceCyclePhase<F>>
+{
     type Relation = UntrustedAdviceCyclePhase<F>;
 
     fn output_claims(
@@ -127,7 +129,9 @@ impl<F: Field> SumcheckKernel<F> for DeviceCycleReductionKernel<F, UntrustedAdvi
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for DeviceAddressReductionKernel<F, TrustedAdviceAddressPhase<F>> {
+impl<F: JoltField> SumcheckKernel<F>
+    for DeviceAddressReductionKernel<F, TrustedAdviceAddressPhase<F>>
+{
     type Relation = TrustedAdviceAddressPhase<F>;
 
     fn output_claims(
@@ -140,7 +144,7 @@ impl<F: Field> SumcheckKernel<F> for DeviceAddressReductionKernel<F, TrustedAdvi
     }
 }
 
-impl<F: Field> SumcheckKernel<F>
+impl<F: JoltField> SumcheckKernel<F>
     for DeviceAddressReductionKernel<F, UntrustedAdviceAddressPhase<F>>
 {
     type Relation = UntrustedAdviceAddressPhase<F>;
@@ -155,7 +159,7 @@ impl<F: Field> SumcheckKernel<F>
     }
 }
 
-impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -176,7 +180,7 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for CudaBackend {
     }
 }
 
-impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -197,7 +201,7 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for CudaBackend {
     }
 }
 
-impl<F: Field> PrepareKernel<F, TrustedAdviceAddressPhase<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, TrustedAdviceAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -212,7 +216,7 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceAddressPhase<F>> for CudaBackend {
     }
 }
 
-impl<F: Field> PrepareKernel<F, UntrustedAdviceAddressPhase<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, UntrustedAdviceAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -348,6 +352,7 @@ mod tests {
     }
 
     fn park_trusted_cycle(
+        backend: &dyn PrepareKernel<Fr, TrustedAdviceCyclePhase<Fr>>,
         session: &mut ProofSession,
         plane: &dyn JoltWitnessPlane<Fr>,
         layout: &AdviceClaimReductionLayout,
@@ -359,7 +364,7 @@ mod tests {
         let claims = TrustedAdviceCyclePhaseInputClaims::default();
         let points = TrustedAdviceCyclePhaseInputClaims::default();
         let challenges = NoChallenges::default();
-        let mut kernel = ReferenceBackend
+        let mut kernel = backend
             .prepare(
                 session,
                 plane,
@@ -382,6 +387,7 @@ mod tests {
     }
 
     fn park_untrusted_cycle(
+        backend: &dyn PrepareKernel<Fr, UntrustedAdviceCyclePhase<Fr>>,
         session: &mut ProofSession,
         plane: &dyn JoltWitnessPlane<Fr>,
         layout: &AdviceClaimReductionLayout,
@@ -393,7 +399,7 @@ mod tests {
         let claims = UntrustedAdviceCyclePhaseInputClaims::default();
         let points = UntrustedAdviceCyclePhaseInputClaims::default();
         let challenges = NoChallenges::default();
-        let mut kernel = ReferenceBackend
+        let mut kernel = backend
             .prepare(
                 session,
                 plane,
@@ -530,8 +536,8 @@ mod tests {
 
             let mut expected_session = ProofSession::default();
             let mut got_session = ProofSession::default();
-            park_trusted_cycle(&mut expected_session, &plane, layout, &r_val, seed, input_claim);
-            park_trusted_cycle(&mut got_session, &plane, layout, &r_val, seed, input_claim);
+            park_trusted_cycle(&ReferenceBackend, &mut expected_session, &plane, layout, &r_val, seed, input_claim);
+            park_trusted_cycle(&CudaBackend, &mut got_session, &plane, layout, &r_val, seed, input_claim);
 
             let relation = TrustedAdviceAddressPhase::<Fr>::new(
                 layout,
@@ -589,8 +595,8 @@ mod tests {
 
             let mut expected_session = ProofSession::default();
             let mut got_session = ProofSession::default();
-            park_untrusted_cycle(&mut expected_session, &plane, layout, &r_val, seed, input_claim);
-            park_untrusted_cycle(&mut got_session, &plane, layout, &r_val, seed, input_claim);
+            park_untrusted_cycle(&ReferenceBackend, &mut expected_session, &plane, layout, &r_val, seed, input_claim);
+            park_untrusted_cycle(&CudaBackend, &mut got_session, &plane, layout, &r_val, seed, input_claim);
 
             let relation = UntrustedAdviceAddressPhase::<Fr>::new(
                 layout,

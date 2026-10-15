@@ -1,5 +1,5 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{
@@ -10,7 +10,7 @@ use crate::cuda::common::one_hot_fold::{FoldTuning, OneHotShards};
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
-const LANES: usize = 2;
+const LANES: usize = 3;
 
 pub struct DeviceBooleanityMasses {
     linear: DeviceFrVec,
@@ -21,7 +21,7 @@ pub struct DeviceBooleanityMasses {
 }
 
 impl DeviceBooleanityMasses {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         shards: &OneHotShards,
         cycle_point: &[F],
@@ -68,11 +68,11 @@ impl DeviceBooleanityMasses {
         self.len
     }
 
-    pub fn round_lanes<F: Field>(
+    pub fn round_lanes<F: JoltField>(
         &self,
         context: &CudaKernelContext,
         eq: &DeviceSplitEq<F>,
-    ) -> Result<(F, F), CudaError> {
+    ) -> Result<(F, F, F), CudaError> {
         let half = self.len / 2;
         if half == 0 {
             return Err(CudaError::LengthMismatch {
@@ -114,7 +114,7 @@ impl DeviceBooleanityMasses {
         // `len == 2 * half` is their current row length — plus `rho[p]` of `polys`,
         // and `e_in[y & mask]` and `e_out[y >> num_x_in_bits]`, both bounded because
         // `e_out.len() * e_in.len() == half` is checked above. It writes only
-        // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 2`, of `2 * blocks`.
+        // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 3`, of `3 * blocks`.
         // Shared memory is `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`, and the
         // block reduction sits outside the `y < half` guard so every thread reaches
         // each `__syncthreads()`.
@@ -138,10 +138,10 @@ impl DeviceBooleanityMasses {
         };
         let at_zero = fr_into(host[0]).ok_or_else(unsupported)?;
         let leading = fr_into(host[1]).ok_or_else(unsupported)?;
-        Ok((at_zero, leading))
+        Ok((at_zero, leading, fr_into(host[2]).ok_or_else(unsupported)?))
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -185,7 +185,7 @@ impl DeviceBooleanityMasses {
         Ok(())
     }
 
-    pub fn booleanity_defect<F: Field>(&self) -> Result<F, CudaError> {
+    pub fn booleanity_defect<F: JoltField>(&self) -> Result<F, CudaError> {
         if self.len != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
@@ -217,7 +217,7 @@ impl DeviceBooleanityMasses {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial};
     use proptest::prelude::*;
 
@@ -305,7 +305,7 @@ mod tests {
         bound: &[Fr],
         eq: &GruenSplitEqPolynomial<Fr>,
         addresses: usize,
-    ) -> (Fr, Fr) {
+    ) -> (Fr, Fr, Fr) {
         let m = bound.len() + 1;
         let mut table = vec![Fr::from_u64(1)];
         for &challenge in bound {
@@ -320,12 +320,15 @@ mod tests {
         let e_out = eq.e_out_current();
         let in_bits = e_in.len().trailing_zeros() as usize;
         let mut at_zero = Fr::from_u64(0);
+        let mut at_one = Fr::from_u64(0);
         let mut leading = Fr::from_u64(0);
         for k_prime in 0..(addresses >> m) {
             let mut inner_zero = Fr::from_u64(0);
+            let mut inner_one = Fr::from_u64(0);
             let mut inner_lead = Fr::from_u64(0);
             for (poly, mass) in masses.iter().enumerate() {
                 let mut sum_zero = Fr::from_u64(0);
+                let mut sum_one = Fr::from_u64(0);
                 let mut sum_lead = Fr::from_u64(0);
                 for k in 0..(1usize << m) {
                     let bit = k >> (m - 1);
@@ -335,16 +338,20 @@ mod tests {
                     sum_lead += infinity;
                     if bit == 0 {
                         sum_zero += infinity - scaled;
+                    } else {
+                        sum_one += infinity - scaled;
                     }
                 }
                 inner_zero += rho[poly] * sum_zero;
+                inner_one += rho[poly] * sum_one;
                 inner_lead += rho[poly] * sum_lead;
             }
             let weight = e_out[k_prime >> in_bits] * e_in[k_prime & (e_in.len() - 1)];
             at_zero += weight * inner_zero;
+            at_one += weight * inner_one;
             leading += weight * inner_lead;
         }
-        (at_zero, leading)
+        (at_zero, leading, at_one)
     }
 
     proptest! {
@@ -411,11 +418,11 @@ mod tests {
                     &eq,
                     addresses,
                 );
-                let (at_zero, leading) = got
+                let (at_zero, leading, at_one) = got
                     .round_lanes::<Fr>(context, &device_eq)
                     .expect("device round lanes");
                 prop_assert_eq!(
-                    (at_zero, leading),
+                    (at_zero, leading, at_one),
                     expected,
                     "round {} lanes diverged", round
                 );

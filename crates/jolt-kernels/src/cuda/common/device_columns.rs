@@ -4,13 +4,19 @@
               implemented for every device buffer type the cache can hold"
 )]
 
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use cudarc::driver::CudaSlice;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_witness::backend::cuda::DeviceTrace;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
@@ -135,11 +141,11 @@ impl DeviceColumns {
 }
 
 #[cfg(feature = "allocative")]
-impl allocative::Allocative for DeviceColumns {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl Allocative for DeviceColumns {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for (key, entry) in &self.entries {
-            visitor.visit_simple(allocative::Key::new(column_key(key.column)), entry.bytes);
+            visitor.visit_simple(Key::new(column_key(key.column)), entry.bytes);
         }
         visitor.exit();
     }
@@ -278,7 +284,7 @@ fn resident_window<F>(
     window: &CycleWindow,
 ) -> Result<(Arc<DeviceTrace>, CycleWindow), KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let trace = session_device_trace_window(context, session, witness, cycles, window)?;
     let resident = CycleWindow {
@@ -296,7 +302,7 @@ pub(crate) fn device_lookup_limbs<F>(
     window: &CycleWindow,
 ) -> Result<Arc<CudaSlice<u64>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
     device_column(
@@ -318,7 +324,7 @@ pub(crate) fn device_pc_words<F>(
     window: &CycleWindow,
 ) -> Result<Arc<CudaSlice<u32>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
     device_column(
@@ -341,7 +347,7 @@ pub(crate) fn device_ram_words<F>(
     addresses: usize,
 ) -> Result<Arc<CudaSlice<u32>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
     device_column(
@@ -365,7 +371,7 @@ pub(crate) fn device_trace_columns<F>(
     ram_addresses: usize,
 ) -> Result<DeviceTraceColumns, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let resident = window.residency(cycles);
     let lookup = if families[0] > 0 {
@@ -392,6 +398,7 @@ where
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use cudarc::driver::CudaSlice;
     use std::sync::Arc;
 
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig};
@@ -667,7 +674,7 @@ mod tests {
         };
         let source = [0u8; 8];
         let mut session = ProofSession::default();
-        let failed = device_column::<_, cudarc::driver::CudaSlice<u32>, CudaError>(
+        let failed = device_column::<_, CudaSlice<u32>, CudaError>(
             &mut session,
             &source,
             current_device(),
@@ -707,8 +714,7 @@ mod tests {
         };
         let cycles = 1usize << LOG_T;
         with_r1cs_witness(LOG_T, RAM_K, one_hot_config(), 19, |witness| {
-            let rows =
-                collect_rows::<Fr, OneHotCycleWitness>(witness, cycles).expect("oracle rows");
+            let rows = collect_rows::<OneHotCycleWitness>(witness, cycles).expect("oracle rows");
             let expected = packed_columns(&rows).expect("host pack");
             assert!(
                 expected.pc.iter().any(|&word| word != expected.pc[0])

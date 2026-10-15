@@ -8,7 +8,7 @@
 //! tests `exit` after each helper call and jumps to the exit stub when
 //! nonzero. Return values travel in rax.
 
-use common::constants::RAM_START_ADDRESS;
+use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 
 use super::state::{AdviceCompute, ExitReason, GuestState, HostContext};
 
@@ -133,8 +133,9 @@ fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: 
     unsafe { (*state.obs_cursor).ram_pre = pre };
 }
 
-/// `Sd` slow path: device-region, unaligned, or out-of-bounds effective
-/// addresses. `JoltDevice::store` also handles the panic/termination bits.
+/// `Sd` slow path: device-region, unaligned, stack-canary, or out-of-bounds
+/// effective addresses. `JoltDevice::store` also handles the
+/// panic/termination bits.
 pub extern "sysv64" fn slow_store_doubleword(
     state: *mut GuestState,
     address: u64,
@@ -150,6 +151,21 @@ pub extern "sysv64" fn slow_store_doubleword(
     }
     if address >= RAM_START_ADDRESS {
         state.fault_addr = address;
+        let offset = address - RAM_START_ADDRESS;
+        if offset.wrapping_sub(state.canary_offset) < STACK_CANARY_SIZE {
+            // Same condition and wording as `Mmu::assert_effective_address`,
+            // which panics here (spec invariant 7 asymmetry).
+            let stack_size = host.device.memory_layout.stack_size;
+            return fail(
+                state,
+                host,
+                format!(
+                    "Stack overflow: attempted to store {address:#X}, which is in the stack \
+                     canary region. Increase stack_size in MemoryConfig (currently \
+                     {stack_size} bytes)."
+                ),
+            );
+        }
         state.exit = ExitReason::FaultOutOfBounds as u64;
         return 0;
     }
@@ -232,41 +248,64 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
         AdviceCompute::Div { code, rs1, rs2 } => {
             let x = state.x[*rs1 as usize] as i64;
             let y = state.x[*rs2 as usize] as i64;
-            let (a, b) = match code {
-                // DIV / REM: [quotient, |remainder|]
+            // One advice value per group; formulas mirror the tracer's
+            // per-variant `trace` implementations (div.rs, rem.rs, …).
+            let quotient = match code {
+                // DIV: signed quotient
                 0 => {
                     if y == 0 {
-                        (u64::MAX, x.unsigned_abs())
+                        u64::MAX
                     } else if x == i64::MIN && y == -1 {
-                        (x as u64, 0)
+                        x as u64
                     } else {
-                        ((x / y) as u64, (x % y).unsigned_abs())
+                        (x / y) as u64
                     }
                 }
-                // DIVW / REMW: 32-bit, quotient sign-extended
+                // REM: quotient magnitude
                 1 => {
+                    if y == 0 {
+                        0
+                    } else if x == i64::MIN && y == -1 {
+                        1 << 63
+                    } else {
+                        (x / y).unsigned_abs()
+                    }
+                }
+                // DIVW: 32-bit signed quotient, sign-extended
+                // (except the overflow case, zero-extended 0x8000_0000)
+                2 => {
                     let x = x as i32;
                     let y = y as i32;
-                    let (q, r) = if y == 0 {
-                        (-1i32, x.unsigned_abs())
+                    if y == 0 {
+                        u64::MAX
                     } else if y == -1 && x == i32::MIN {
-                        (i32::MIN, 0)
+                        0x8000_0000
                     } else {
-                        (x / y, (x % y).unsigned_abs())
-                    };
-                    (q as u64, r as u64)
+                        (x / y) as u64
+                    }
                 }
-                // DIVU / REMU: [quotient]
-                2 => ((x as u64).checked_div(y as u64).unwrap_or(u64::MAX), 0),
+                // REMW: 32-bit quotient magnitude, zero-extended
+                3 => {
+                    let x = x as i32;
+                    let y = y as i32;
+                    if y == 0 {
+                        0
+                    } else if y == -1 && x == i32::MIN {
+                        1 << 31
+                    } else {
+                        u64::from((x / y).unsigned_abs())
+                    }
+                }
+                // DIVU / REMU
+                4 => (x as u64).checked_div(y as u64).unwrap_or(u64::MAX),
                 // DIVUW / REMUW: 32-bit, zero-extended
                 _ => {
                     let x = x as u32;
                     let y = y as u32;
-                    (x.checked_div(y).map_or(u64::from(u32::MAX), u64::from), 0)
+                    x.checked_div(y).map_or(u64::from(u32::MAX), u64::from)
                 }
             };
-            state.advice_slots[0] = a;
-            state.advice_slots[1] = b;
+            state.advice_slots[0] = quotient;
             0
         }
         AdviceCompute::Inline {
@@ -315,12 +354,6 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
             0
         }
     }
-}
-
-/// `VirtualAdviceLen`: bytes left on the advice tape.
-pub extern "sysv64" fn advice_remaining(state: *mut GuestState) -> u64 {
-    let (_state, host) = host_context(state);
-    host.advice_tape.len().saturating_sub(host.advice_cursor) as u64
 }
 
 /// `VirtualAdviceLoad`: read `num_bytes` (1/2/4/8) little-endian from the

@@ -27,10 +27,10 @@ Testing
 
 You can run tests on the internal representation produced by the `zklean-extractor` executable by running the following from the root of the Jolt repo:
 ```sh
-cargo test -p zklean-extractor
+cargo nextest run -p zklean-extractor
 ```
 
 These tests use the [`proptest`](https://docs.rs/proptest/latest/proptest/index.html) library to ensure that extracting a representation of each constraint and MLE and executing it produces the same result as computing the constraint or MLE on its own. By default we run proptest for 256 iterations, however this can be changed on the command line. For example, to run 512 iterations instead, you can run
 ```sh
-PROPTEST_CASES=512 cargo test -p zklean-extractor
+PROPTEST_CASES=512 cargo nextest run -p zklean-extractor
 ```

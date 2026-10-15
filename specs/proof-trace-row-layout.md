@@ -4,10 +4,15 @@
 |-------------|-------|
 | Author(s)   | Quang Dao |
 | Created     | 2026-05-14 |
-| Status      | in progress (foundation implemented) |
+| Status      | historical; superseded by trace-row unification |
 | PR          | follow-up to [#1522](https://github.com/a16z/jolt/pull/1522) |
 
-> **Implementation status (foundation slice).** The accessor API, builder,
+> **Superseded.** [Unified trace rows](./unified-trace-row.md) describes the
+> current constructor, production boundary, and shared execution/proof storage.
+> The constructor and conversion APIs, implementation status, and deferred work
+> below are historical context for the original layout design.
+
+> **Historical implementation status (foundation slice).** The accessor API, builder,
 > parity tests, and one default layout have landed; consumer cutover and the
 > performance gate are deferred follow-ups.
 >
@@ -22,7 +27,11 @@
 >   construction-time range checks for immediates and register ids; loud
 >   `TraceRowError` (a `thiserror` enum) on memory-row contract violations.
 >   `from_components` is the producer contract and depends only on `jolt-riscv`
->   (no `jolt-prover-legacy`, no `tracer`, no lookup tables).
+>   (no `jolt-prover-legacy`, no `tracer`, no lookup tables). `CircuitFlagSet`
+>   uses a `u32`: field-inline appends ten flags to the fourteen base flags.
+>   The row's packed metadata reserves 16 circuit-flag bits in base builds
+>   and 24 with field-inline, followed by six instruction bits and the
+>   immediate sign. Both builds keep the 64-byte layout.
 > - `crates/jolt-lookup-tables/src/traits.rs`: `InstructionLookupTable for
 >   JoltTraceRow`, delegating through the row's cached `instruction_kind()` (this
 >   crate owns `LookupTableKind`, so the accessor cannot live in `jolt-riscv`).

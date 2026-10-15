@@ -1,13 +1,15 @@
-use jolt_program::execution::{RamAccess, TraceRow};
-use jolt_riscv::{JoltInstructionKind, RV64IMAC_JOLT};
+use super::CUDA_PROFILE;
+use jolt_riscv::{CircuitFlags, JoltTraceRow as TraceRow, RamAccess};
+use std::ops::Range;
 
-use crate::{WitnessError, JOLT_VM_LABEL};
+use crate::{RowSource, WitnessError, JOLT_VM_LABEL};
 
 pub const NO_SEQUENCE: u32 = u32::MAX;
 
 pub const RAM_NO_ACCESS: u64 = u64::MAX;
 
-pub const EXTRA_WORDS: usize = 10;
+pub const EXTRA_WORDS: usize = 11;
+pub const EXTRA_BYTECODE_PC: usize = 10;
 
 pub const EXTRA_RS1: usize = 0;
 pub const EXTRA_RS2: usize = 1;
@@ -41,6 +43,48 @@ pub struct PackedTrace {
 const PACK_CHUNK: usize = 1 << 14;
 
 impl PackedTrace {
+    pub fn from_source(source: &dyn RowSource, range: Range<usize>) -> Result<Self, WitnessError> {
+        let len =
+            range
+                .end
+                .checked_sub(range.start)
+                .ok_or_else(|| WitnessError::InvalidDimensions {
+                    label: JOLT_VM_LABEL,
+                    reason: "reversed CUDA trace window".to_owned(),
+                })?;
+        let mut packed = Self::with_capacity(len);
+        let mut offset = 0;
+        source.visit_chunks(range, 1 << 14, &mut |rows, _, _| {
+            let end = offset + rows.len();
+            if end > len {
+                return Err(WitnessError::InvalidDimensions {
+                    label: JOLT_VM_LABEL,
+                    reason: "row source exceeded the CUDA trace window".to_owned(),
+                });
+            }
+            fill(
+                0,
+                rows,
+                &TraceRow::default(),
+                &mut packed.is_noop[offset..end],
+                &mut packed.address[offset..end],
+                &mut packed.virtual_sequence[offset..end],
+                &mut packed.ram_address[offset..end],
+                &mut packed.extras[offset * EXTRA_WORDS..end * EXTRA_WORDS],
+            );
+            offset = end;
+            Ok(())
+        })?;
+        if offset != len {
+            return Err(WitnessError::InvalidDimensions {
+                label: JOLT_VM_LABEL,
+                reason: format!("CUDA trace window expected {len} rows, received {offset}"),
+            });
+        }
+        packed.cycles = len;
+        Ok(packed)
+    }
+
     pub fn with_capacity(cycles: usize) -> Self {
         Self {
             cycles: 0,
@@ -139,55 +183,58 @@ fn fill(
         ram_address[offset] = row_ram_address(row);
 
         let words = &mut extras[offset * EXTRA_WORDS..(offset + 1) * EXTRA_WORDS];
-        words[EXTRA_RS1] = row.registers.rs1.map_or(0, |read| read.value);
-        words[EXTRA_RS2] = row.registers.rs2.map_or(0, |read| read.value);
-        words[EXTRA_RD_POST] = row.registers.rd.map_or(0, |write| write.post_value);
-        words[EXTRA_RAM_READ] = match row.ram_access {
+        let ram_access = row.ram_access();
+        words[EXTRA_RS1] = row.rs1_value();
+        words[EXTRA_RS2] = row.rs2_value();
+        words[EXTRA_RD_POST] = row.rd_write_value();
+        words[EXTRA_RAM_READ] = match ram_access {
             RamAccess::Read(read) => read.value,
             RamAccess::Write(write) => write.pre_value,
             RamAccess::NoOp => 0,
         };
-        words[EXTRA_RAM_WRITE] = match row.ram_access {
+        words[EXTRA_RAM_WRITE] = match ram_access {
             RamAccess::Read(read) => read.value,
             RamAccess::Write(write) => write.post_value,
             RamAccess::NoOp => 0,
         };
-        let imm = row.instruction.operands.imm;
+        let imm = row.imm();
         words[EXTRA_IMM_LO] = imm as u64;
         words[EXTRA_IMM_HI] = (imm >> 64) as u64;
         let register = |slot: Option<u8>| slot.map_or(REGISTER_ABSENT, u64::from);
-        words[EXTRA_REGISTERS] = register(row.registers.rs1.map(|read| read.register))
-            | register(row.registers.rs2.map(|read| read.register)) << 8
-            | register(row.registers.rd.map(|write| write.register)) << 16;
-        words[EXTRA_RD_PRE] = row.registers.rd.map_or(0, |write| write.pre_value);
+        words[EXTRA_REGISTERS] = register(row.rs1_index())
+            | register(row.rs2_index()) << 8
+            | register(row.rd_index()) << 16;
+        words[EXTRA_RD_PRE] = row.rd_pre_value();
+        words[EXTRA_BYTECODE_PC] = row.pc();
+        let circuit_flags = row.circuit_flags();
         words[EXTRA_KIND_BITS] = u64::from(row_kind_index(row))
-            | (u64::from(row.instruction.is_compressed) << BIT_IS_COMPRESSED)
-            | (u64::from(row.instruction.is_first_in_sequence) << BIT_IS_FIRST_IN_SEQUENCE);
+            | (u64::from(circuit_flags.get(CircuitFlags::IsCompressed)) << BIT_IS_COMPRESSED)
+            | (u64::from(circuit_flags.get(CircuitFlags::IsFirstInSequence))
+                << BIT_IS_FIRST_IN_SEQUENCE);
     }
 }
 
 pub(crate) fn row_kind_index(row: &TraceRow) -> u16 {
-    RV64IMAC_JOLT
-        .jolt_dense_index(row.instruction.instruction_kind)
+    row.instruction_kind()
+        .and_then(|kind| CUDA_PROFILE.jolt_dense_index(kind))
         .map_or(KIND_UNMAPPED, |index| index.0)
 }
 
 pub(crate) fn row_is_noop_byte(row: &TraceRow) -> u8 {
-    u8::from(row.instruction.instruction_kind == JoltInstructionKind::NoOp)
+    u8::from(row.is_noop())
 }
 
 pub(crate) fn row_address(row: &TraceRow) -> u64 {
-    row.instruction.address as u64
+    row.unexpanded_pc()
 }
 
 pub(crate) fn row_virtual_sequence(row: &TraceRow) -> u32 {
-    row.instruction
-        .virtual_sequence_remaining
+    row.virtual_sequence_remaining()
         .map_or(NO_SEQUENCE, u32::from)
 }
 
 pub(crate) fn row_ram_address(row: &TraceRow) -> u64 {
-    match row.ram_access {
+    match row.ram_access() {
         RamAccess::Read(read) => read.address,
         RamAccess::Write(write) => write.address,
         RamAccess::NoOp => RAM_NO_ACCESS,
@@ -200,7 +247,7 @@ mod tests {
     #[test]
     fn the_kernel_source_agrees_on_the_row_stride() {
         let source = include_str!("kernels/atoms.cu");
-        let expected = format!("#define EXTRA_WORDS {}", super::EXTRA_WORDS);
+        let expected = format!("#define EXTRA_WORDS {}", EXTRA_WORDS);
         assert!(
             source.contains(&expected),
             "the CUDA sources must declare `{expected}`; a stride mismatch silently makes every \
@@ -208,32 +255,23 @@ mod tests {
         );
     }
 
+    use super::EXTRA_WORDS;
     use super::*;
-    use jolt_program::execution::{RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite};
+    use jolt_riscv::{
+        JoltInstructionKind, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite,
+    };
     use jolt_riscv::{JoltInstructionRow, NormalizedOperands};
     use proptest::prelude::*;
 
+    /// `TraceRow::new` rejects `u16::MAX`, which it reserves as the "no
+    /// virtual sequence" sentinel.
+    const VSR_MAX: u16 = u16::MAX;
+
     fn arb_kind() -> impl Strategy<Value = JoltInstructionKind> {
         prop_oneof![
-            Just(JoltInstructionKind::NoOp),
             Just(JoltInstructionKind::ADD),
             Just(JoltInstructionKind::XOR),
             Just(JoltInstructionKind::MUL),
-        ]
-    }
-
-    fn arb_ram_access() -> impl Strategy<Value = RamAccess> {
-        prop_oneof![
-            Just(RamAccess::NoOp),
-            (any::<u64>(), any::<u64>())
-                .prop_map(|(address, value)| RamAccess::Read(RamRead { address, value })),
-            (any::<u64>(), any::<u64>(), any::<u64>()).prop_map(
-                |(address, pre_value, post_value)| RamAccess::Write(RamWrite {
-                    address,
-                    pre_value,
-                    post_value,
-                })
-            ),
         ]
     }
 
@@ -254,47 +292,119 @@ mod tests {
             })
     }
 
-    fn arb_row() -> impl Strategy<Value = TraceRow> {
+    /// `TraceRow::new` ties the RAM access to the instruction's load/store
+    /// flags, so the generator builds each shape with the registers and RAM
+    /// access the constructor accepts.
+    fn arb_instruction(
+        kind: JoltInstructionKind,
+    ) -> impl Strategy<Value = (JoltInstructionRow, i128)> {
         (
-            arb_kind(),
             any::<u32>(),
-            proptest::option::of(any::<u16>()),
+            proptest::option::of(0..VSR_MAX),
             any::<bool>(),
             any::<bool>(),
-            arb_ram_access(),
             any::<i64>(),
-            arb_registers(),
         )
             .prop_map(
-                |(
-                    instruction_kind,
-                    address,
-                    virtual_sequence_remaining,
-                    is_first_in_sequence,
-                    is_compressed,
-                    ram_access,
-                    imm,
-                    registers,
-                )| {
-                    TraceRow {
-                        instruction: JoltInstructionRow {
-                            instruction_kind,
+                move |(address, virtual_sequence_remaining, is_first, is_compressed, imm)| {
+                    let imm = i128::from(imm);
+                    (
+                        JoltInstructionRow {
+                            instruction_kind: kind,
                             address: address as usize,
                             operands: NormalizedOperands {
-                                imm: i128::from(imm),
+                                imm,
                                 ..NormalizedOperands::default()
                             },
                             virtual_sequence_remaining,
-                            is_first_in_sequence,
+                            is_first_in_sequence: is_first,
                             is_compressed,
                         },
-                        registers,
-                        ram_access,
-                        #[cfg(feature = "field-inline")]
-                        field_inline: None,
-                    }
+                        imm,
+                    )
                 },
             )
+    }
+
+    fn arb_alu_row() -> impl Strategy<Value = TraceRow> {
+        (arb_kind(), arb_registers())
+            .prop_flat_map(|(kind, registers)| {
+                arb_instruction(kind).prop_map(move |(instruction, _)| (instruction, registers))
+            })
+            .prop_map(|(instruction, registers)| {
+                let mut instruction = instruction;
+                instruction.operands.rs1 = registers.rs1.map(|read| read.register);
+                instruction.operands.rs2 = registers.rs2.map(|read| read.register);
+                instruction.operands.rd = registers.rd.map(|write| write.register);
+                TraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap()
+            })
+    }
+
+    fn arb_load_row() -> impl Strategy<Value = TraceRow> {
+        (any::<u64>(), any::<u64>(), any::<u64>())
+            .prop_flat_map(|(rs1_value, address, value)| {
+                arb_instruction(JoltInstructionKind::LD)
+                    .prop_map(move |(instruction, _)| (instruction, rs1_value, address, value))
+            })
+            .prop_map(|(mut instruction, rs1_value, address, value)| {
+                instruction.operands.rs1 = Some(2);
+                instruction.operands.rd = Some(1);
+                TraceRow::new(
+                    instruction,
+                    RegisterState {
+                        rs1: Some(RegisterRead {
+                            register: 2,
+                            value: rs1_value,
+                        }),
+                        rd: Some(RegisterWrite {
+                            register: 1,
+                            pre_value: 0,
+                            post_value: value,
+                        }),
+                        ..Default::default()
+                    },
+                    RamAccess::Read(RamRead { address, value }),
+                    1,
+                )
+                .unwrap()
+            })
+    }
+
+    fn arb_store_row() -> impl Strategy<Value = TraceRow> {
+        (any::<u64>(), any::<u64>(), any::<u64>())
+            .prop_flat_map(|(rs1_value, address, post_value)| {
+                arb_instruction(JoltInstructionKind::SD)
+                    .prop_map(move |(instruction, _)| (instruction, rs1_value, address, post_value))
+            })
+            .prop_map(|(mut instruction, rs1_value, address, post_value)| {
+                instruction.operands.rs1 = Some(2);
+                instruction.operands.rs2 = Some(3);
+                TraceRow::new(
+                    instruction,
+                    RegisterState {
+                        rs1: Some(RegisterRead {
+                            register: 2,
+                            value: rs1_value,
+                        }),
+                        rs2: Some(RegisterRead {
+                            register: 3,
+                            value: post_value,
+                        }),
+                        ..Default::default()
+                    },
+                    RamAccess::Write(RamWrite {
+                        address,
+                        pre_value: 0,
+                        post_value,
+                    }),
+                    1,
+                )
+                .unwrap()
+            })
+    }
+
+    fn arb_row() -> impl Strategy<Value = TraceRow> {
+        prop_oneof![arb_alu_row(), arb_load_row(), arb_store_row()]
     }
 
     proptest! {
@@ -330,27 +440,27 @@ mod tests {
                 let words = &got.extras[index * EXTRA_WORDS..(index + 1) * EXTRA_WORDS];
                 prop_assert_eq!(
                     words[EXTRA_RS1],
-                    expected.registers.rs1.map_or(0, |read| read.value),
+                    expected.rs1_read().map_or(0, |read| read.value),
                     "rs1 at {}", index
                 );
                 prop_assert_eq!(
                     words[EXTRA_RS2],
-                    expected.registers.rs2.map_or(0, |read| read.value),
+                    expected.rs2_read().map_or(0, |read| read.value),
                     "rs2 at {}", index
                 );
                 prop_assert_eq!(
                     words[EXTRA_RD_POST],
-                    expected.registers.rd.map_or(0, |write| write.post_value),
+                    expected.rd_write().map_or(0, |write| write.post_value),
                     "rd post value at {}", index
                 );
-                let (read_value, write_value) = match expected.ram_access {
+                let (read_value, write_value) = match expected.ram_access() {
                     RamAccess::Read(read) => (read.value, read.value),
                     RamAccess::Write(write) => (write.pre_value, write.post_value),
                     RamAccess::NoOp => (0, 0),
                 };
                 prop_assert_eq!(words[EXTRA_RAM_READ], read_value, "ram read at {}", index);
                 prop_assert_eq!(words[EXTRA_RAM_WRITE], write_value, "ram write at {}", index);
-                let imm = expected.instruction.operands.imm;
+                let imm = expected.imm();
                 prop_assert_eq!(words[EXTRA_IMM_LO], imm as u64, "imm low at {}", index);
                 prop_assert_eq!(words[EXTRA_IMM_HI], (imm >> 64) as u64, "imm high at {}", index);
                 prop_assert_eq!(
@@ -360,33 +470,33 @@ mod tests {
                 );
                 prop_assert_eq!(
                     words[EXTRA_KIND_BITS] >> BIT_IS_COMPRESSED & 1 == 1,
-                    expected.instruction.is_compressed,
+                    expected.circuit_flags().get(CircuitFlags::IsCompressed),
                     "is_compressed at {}", index
                 );
                 prop_assert_eq!(
                     words[EXTRA_KIND_BITS] >> BIT_IS_FIRST_IN_SEQUENCE & 1 == 1,
-                    expected.instruction.is_first_in_sequence,
+                    expected.circuit_flags().get(CircuitFlags::IsFirstInSequence),
                     "is_first_in_sequence at {}", index
                 );
                 let register = |slot: Option<u8>| slot.map_or(REGISTER_ABSENT, u64::from);
                 prop_assert_eq!(
                     words[EXTRA_REGISTERS] & 0xFF,
-                    register(expected.registers.rs1.map(|read| read.register)),
+                    register(expected.rs1_read().map(|read| read.register)),
                     "rs1 register at {}", index
                 );
                 prop_assert_eq!(
                     words[EXTRA_REGISTERS] >> 8 & 0xFF,
-                    register(expected.registers.rs2.map(|read| read.register)),
+                    register(expected.rs2_read().map(|read| read.register)),
                     "rs2 register at {}", index
                 );
                 prop_assert_eq!(
                     words[EXTRA_REGISTERS] >> 16 & 0xFF,
-                    register(expected.registers.rd.map(|write| write.register)),
+                    register(expected.rd_write().map(|write| write.register)),
                     "rd register at {}", index
                 );
                 prop_assert_eq!(
                     words[EXTRA_RD_PRE],
-                    expected.registers.rd.map_or(0, |write| write.pre_value),
+                    expected.rd_write().map_or(0, |write| write.pre_value),
                     "rd pre value at {}", index
                 );
             }

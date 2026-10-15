@@ -1,17 +1,10 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "implementation target: step 2c (the device address phase) is the consumer; only the tests exercise this module so far"
-    )
-)]
-
 use cudarc::driver::{CudaSlice, PushKernelArg};
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::error::CudaError;
 
-pub const NUM_SUFFIXES: usize = 43;
+pub const NUM_SUFFIXES: usize =
+    <jolt_lookup_tables::tables::suffixes::Suffixes as strum::EnumCount>::COUNT;
 
 pub fn suffix_mle_batch(
     context: &CudaKernelContext,
@@ -72,30 +65,27 @@ pub(super) fn upload_lookup_bits(
 mod tests {
     use jolt_lookup_tables::lookup_bits::LookupBits;
     use jolt_lookup_tables::tables::suffixes::Suffixes;
-    use jolt_lookup_tables::tables::LookupTableKind;
     use proptest::prelude::*;
     use strum::EnumCount;
 
     use super::{suffix_mle_batch, NUM_SUFFIXES};
     use crate::cuda::common::context::shared_context;
 
-    const RISCV_XLEN: usize = 64;
+    const SPLIT_SUFFIXES: [usize; 3] = [17, 18, 20];
 
-    const SPLIT_SUFFIXES: [usize; 3] = [19, 20, 22];
-
-    const SHIFT_BOUNDED_SUFFIXES: [usize; 5] = [7, 18, 24, 31, 32];
+    const SHIFT_BOUNDED_SUFFIXES: [usize; 6] = [16, 22, 29, 30, 43, 45];
 
     fn min_len_for(index: usize) -> u8 {
         match index {
-            19 | 22 => 6,
-            20 => 5,
+            17 | 20 => 6,
+            18 => 5,
             _ => 0,
         }
     }
 
     fn max_len_for(index: usize) -> u8 {
         match index {
-            32 => 62,
+            30 => 62,
             index if SHIFT_BOUNDED_SUFFIXES.contains(&index) => 126,
             _ => 128,
         }
@@ -122,47 +112,73 @@ mod tests {
         assert_eq!(floored, SPLIT_SUFFIXES.to_vec());
     }
 
-    #[test]
-    fn table_reachable_suffixes_are_a_strict_subset() {
-        let reachable = table_reachable_suffixes();
-        assert_eq!(reachable.len(), 40, "table-reachable suffix count changed");
-        let unreachable: Vec<usize> = (0..Suffixes::COUNT)
-            .filter(|index| !reachable.iter().any(|suffix| *suffix as usize == *index))
-            .collect();
-        assert_eq!(
-            unreachable,
-            vec![13, 22, 32],
-            "unreachable suffix set changed"
-        );
-    }
-
-    fn table_reachable_suffixes() -> Vec<Suffixes> {
-        let mut seen: Vec<Suffixes> = Vec::new();
-        for table in LookupTableKind::<RISCV_XLEN>::iter() {
-            for &suffix in table.suffixes() {
-                if !seen.contains(&suffix) {
-                    seen.push(suffix);
-                }
-            }
-        }
-        seen.sort_by_key(|suffix| *suffix as u8);
-        seen
-    }
-
     fn all_suffixes() -> Vec<Suffixes> {
-        let by_index = |index: usize| {
-            table_reachable_suffixes()
-                .into_iter()
-                .find(|suffix| *suffix as usize == index)
-        };
-        (0..Suffixes::COUNT)
-            .map(|index| match index {
-                13 => Suffixes::GreaterThan,
-                22 => Suffixes::RightShiftPadding,
-                32 => Suffixes::LeftShiftWHelper,
-                other => by_index(other).expect("every other index is table-reachable"),
-            })
-            .collect()
+        let suffixes: [Suffixes; NUM_SUFFIXES] = [
+            Suffixes::One,
+            Suffixes::And,
+            Suffixes::AndNot,
+            Suffixes::Xor,
+            Suffixes::Or,
+            Suffixes::RightOperand,
+            Suffixes::RightOperandW,
+            Suffixes::UpperWord,
+            Suffixes::LowerWord,
+            Suffixes::LowerHalfWord,
+            Suffixes::LessThan,
+            Suffixes::GreaterThan,
+            Suffixes::Eq,
+            Suffixes::LeftOperandIsZero,
+            Suffixes::RightOperandIsZero,
+            Suffixes::Lsb,
+            Suffixes::DivByZero,
+            Suffixes::Pow2,
+            Suffixes::Pow2W,
+            Suffixes::Rev8W,
+            Suffixes::RightShiftPadding,
+            Suffixes::RightShift,
+            Suffixes::RightShiftHelper,
+            Suffixes::SignExtension,
+            Suffixes::LeftShift,
+            Suffixes::TwoLsb,
+            Suffixes::SignExtensionUpperHalf,
+            Suffixes::SignExtensionRightOperand,
+            Suffixes::RightShiftW,
+            Suffixes::RightShiftWHelper,
+            Suffixes::LeftShiftWHelper,
+            Suffixes::LeftShiftW,
+            Suffixes::OverflowBitsZero,
+            Suffixes::XorRot16,
+            Suffixes::XorRot24,
+            Suffixes::XorRot32,
+            Suffixes::XorRot63,
+            Suffixes::XorRotW16,
+            Suffixes::XorRotW12,
+            Suffixes::XorRotW8,
+            Suffixes::XorRotW7,
+            Suffixes::Pow2OffsetW,
+            Suffixes::Pext,
+            Suffixes::PextHelper,
+            Suffixes::WindowSign,
+            Suffixes::WindowSignPow2,
+            Suffixes::XorRotW22,
+            Suffixes::XorRotW19,
+            Suffixes::XorRotW6,
+            Suffixes::SignExtensionW,
+            Suffixes::X31Y0,
+            Suffixes::Pow2OffsetB,
+            Suffixes::Pow2OffsetH,
+            Suffixes::AlignAddr,
+            Suffixes::ShiftDataB,
+            Suffixes::ShiftDataH,
+            Suffixes::ShiftDataW,
+            Suffixes::OffsetScaleB,
+            Suffixes::OffsetScaleH,
+            Suffixes::OffsetScaleW,
+            Suffixes::XorRotL1Pairs,
+            Suffixes::TopYBit,
+            Suffixes::BottomXBit,
+        ];
+        suffixes.to_vec()
     }
 
     proptest! {

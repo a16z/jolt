@@ -18,8 +18,14 @@ pub use cycle_tracking::*;
 pub mod advice;
 pub use advice::*;
 
+mod field_inline;
+pub use field_inline::{FieldInlineModulus, FIELD_INLINE_MODULUS_ENV};
+
 mod spoil;
 pub use spoil::{spoil_proof, UnwrapOrSpoilProof};
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64", test))]
+pub mod size_class_alloc;
 
 #[cfg(all(
     feature = "malloc-shim",

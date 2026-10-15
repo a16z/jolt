@@ -1,8 +1,17 @@
+use crate::cuda::common::address_first::AddressFirst;
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use cudarc::driver::CudaSlice;
+use device_rows::DeviceRegisterRows;
 use jolt_claims::protocols::jolt::relations::registers::{
     RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::{Field, Fr, FromPrimitiveInt};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -27,13 +36,11 @@ pub(crate) mod device_rows;
 pub(crate) mod rs2_claim;
 pub(crate) mod witness;
 
-type PreparedShard<F> = (
-    CycleShard<F>,
-    (usize, cudarc::driver::CudaSlice<u32>, CycleWindow),
-);
+type PreparedShard<F> = (CycleShard<F>, (usize, [CudaSlice<u32>; 2], CycleWindow));
 
-pub struct RegistersReadWriteKernel<F: Field> {
+pub struct RegistersReadWriteKernel<F: JoltField> {
     context: &'static CudaKernelContext,
+    address_first: Option<AddressFirst<F>>,
     relation: RegistersReadWriteChecking<F>,
     log_t: usize,
     log_k: usize,
@@ -43,52 +50,62 @@ pub struct RegistersReadWriteKernel<F: Field> {
     eq: DeviceSplitEq<F>,
     merged_eq: Option<DeviceFrVec>,
     val_init: Vec<Fr>,
-    rs2_windows: Vec<(usize, cudarc::driver::CudaSlice<u32>, CycleWindow)>,
-    gamma: F,
+    read_windows: Vec<(usize, [CudaSlice<u32>; 2], CycleWindow)>,
     challenges: Vec<F>,
     finals: Option<[F; 3]>,
     rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RegistersReadWriteKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for RegistersReadWriteKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("inc"),
+            Key::new("address_first"),
+            self.address_first
+                .as_ref()
+                .map_or(0, AddressFirst::device_bytes),
+        );
+        visitor.visit_simple(
+            Key::new("inc"),
             self.inc.as_ref().map_or(0, DeviceFrVec::device_bytes),
         );
         visitor.visit_simple(
-            allocative::Key::new("cycle_matrix"),
+            Key::new("cycle_matrix"),
             self.cycle
                 .as_ref()
                 .map_or(0, ShardedReadWriteMatrix::device_bytes),
         );
         visitor.visit_simple(
-            allocative::Key::new("address_matrix"),
+            Key::new("address_matrix"),
             self.address
                 .as_ref()
                 .map_or(0, DeviceAddressMajorMatrix::device_bytes),
         );
-        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.visit_simple(Key::new("eq"), self.eq.device_bytes());
         visitor.visit_simple(
-            allocative::Key::new("merged_eq"),
+            Key::new("merged_eq"),
             self.merged_eq.as_ref().map_or(0, DeviceFrVec::device_bytes),
         );
+        visitor.visit_simple(Key::new("val_init"), self.val_init.len() * size_of::<Fr>());
         visitor.visit_simple(
-            allocative::Key::new("val_init"),
-            self.val_init.len() * size_of::<Fr>(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("challenges"),
+            Key::new("challenges"),
             self.challenges.len() * size_of::<F>(),
         );
         visitor.exit();
     }
 }
 
-impl<F: Field> RegistersReadWriteKernel<F> {
+impl<F: JoltField> RegistersReadWriteKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        if let Some(state) = &mut self.address_first {
+            state
+                .bind(challenge)
+                .map_err(backend("CUDA address-first read/write bind"))?;
+            self.rounds_bound += 1;
+            self.challenges.push(challenge);
+            return Ok(());
+        }
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda registers read-write bind",
         };
@@ -120,13 +137,13 @@ impl<F: Field> RegistersReadWriteKernel<F> {
         Ok(())
     }
 
-    fn transition(&mut self) -> Result<(), crate::cuda::common::error::CudaError> {
+    fn transition(&mut self) -> Result<(), CudaError> {
         self.merged_eq = Some(self.eq.merge(self.context)?);
         let (cycle, inc) = self
             .cycle
             .as_mut()
             .and_then(ShardedReadWriteMatrix::take_parts)
-            .ok_or(crate::cuda::common::error::CudaError::InvariantViolation {
+            .ok_or(CudaError::InvariantViolation {
                 reason: "registers read-write phase 1 ended without a cycle-major matrix",
             })?;
         self.cycle = None;
@@ -135,16 +152,14 @@ impl<F: Field> RegistersReadWriteKernel<F> {
         Ok(())
     }
 
-    fn materialize(&mut self) -> Result<(), crate::cuda::common::error::CudaError> {
-        let address = self.address.as_ref().ok_or(
-            crate::cuda::common::error::CudaError::InvariantViolation {
-                reason: "registers read-write phase 2 ended without an address-major matrix",
-            },
-        )?;
+    fn materialize(&mut self) -> Result<(), CudaError> {
+        let address = self.address.as_ref().ok_or(CudaError::InvariantViolation {
+            reason: "registers read-write phase 2 ended without an address-major matrix",
+        })?;
         let [ra, wa, val] = address.materialize(self.context, 1, 1)?;
-        let lift = |device: &DeviceFrVec| -> Result<F, crate::cuda::common::error::CudaError> {
+        let lift = |device: &DeviceFrVec| -> Result<F, CudaError> {
             let value = device.first()?;
-            fr_into(value).ok_or(crate::cuda::common::error::CudaError::NotImplemented {
+            fr_into(value).ok_or(CudaError::NotImplemented {
                 kernel: "CUDA kernels support only the BN254 scalar field",
             })
         };
@@ -153,7 +168,7 @@ impl<F: Field> RegistersReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RegistersReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RegistersReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -167,17 +182,23 @@ impl<F: Field> ProveRounds<F> for RegistersReadWriteKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
+        if let Some(state) = &self.address_first {
+            return state
+                .round(previous_claim)
+                .map_err(backend("CUDA address-first read/write round"));
+        }
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda registers read-write round",
         };
         if round < self.log_t {
             let cycle = self.cycle.as_ref().ok_or_else(failed)?;
-            let coeffs: [F; 2] = cycle
+            let coeffs: [F; 3] = cycle
                 .quadratic_coeffs(&self.eq)
                 .map_err(backend("cuda registers read-write round"))?;
-            return Ok(self
+            return self
                 .eq
-                .gruen_poly_deg_3(coeffs[0], coeffs[1], previous_claim));
+                .gruen_poly_deg_3(coeffs[0], coeffs[1], previous_claim, coeffs[2])
+                .map_err(backend("CUDA read-write quotient interpolation"));
         }
         let address = self.address.as_ref().ok_or_else(failed)?;
         let merged_eq = self.merged_eq.as_ref().ok_or_else(failed)?;
@@ -196,7 +217,7 @@ impl<F: Field> ProveRounds<F> for RegistersReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
     type Relation = RegistersReadWriteChecking<F>;
 
     fn output_claims(
@@ -207,8 +228,18 @@ impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
         if remaining != 0 {
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
-        let [combined_ra, rd_wa, registers_val] =
-            self.finals.ok_or(SumcheckKernelError::InvariantViolation {
+        let first_finals = self
+            .address_first
+            .as_ref()
+            .map(AddressFirst::final_values)
+            .transpose()
+            .map_err(|_| SumcheckKernelError::InvariantViolation {
+                reason: "CUDA address-first register output readback failed",
+            })?;
+        let [_combined_ra, rd_wa, registers_val] = first_finals
+            .map(|[ra, wa, val, _]| [ra, wa, val])
+            .or(self.finals)
+            .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "CUDA registers read-write never materialized its bound tables",
             })?;
         let point = self
@@ -218,48 +249,50 @@ impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
             .map_err(|_| SumcheckKernelError::InvariantViolation {
                 reason: "CUDA registers read-write could not normalize its opening point",
             })?;
-        let shards = self.rs2_windows.len();
-        let tasks: Vec<DeviceTask<'_, F, CudaError>> = self
-            .rs2_windows
+        let shards = self.read_windows.len();
+        let tasks: Vec<DeviceTask<'_, [F; 2], CudaError>> = self
+            .read_windows
             .iter()
-            .map(|(ordinal, indices, window)| {
+            .enumerate()
+            .map(|(shard, (ordinal, indices, window))| {
                 let ordinal = *ordinal;
                 let point = &point;
-                let task: DeviceTask<'_, F, CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, [F; 2], CudaError> = Box::new(move || {
                     let device = context_for(ordinal).ok_or(CudaError::InvariantViolation {
-                        reason: "a registers read-write rs2 window names an absent device",
+                        reason: "a registers read-write read window names an absent device",
                     })?;
-                    rs2_claim::rs2_ra_claim_window(
-                        device,
-                        indices,
-                        window.len,
-                        &point.r_address,
-                        &point.r_cycle,
-                        ordinal,
-                        shards,
-                    )
+                    let evaluate = |indices| {
+                        rs2_claim::rs2_ra_claim_window(
+                            device,
+                            indices,
+                            window.len,
+                            &point.r_address,
+                            &point.r_cycle,
+                            shard,
+                            shards,
+                        )
+                    };
+                    Ok([evaluate(&indices[0])?, evaluate(&indices[1])?])
                 });
                 task
             })
             .collect();
+        let mut rs1_ra = F::zero();
         let mut rs2_ra = F::zero();
-        for part in fan_out(tasks).map_err(|_| SumcheckKernelError::InvariantViolation {
-            reason: "CUDA registers read-write rs2 claim failed",
+        for [rs1, rs2] in fan_out(tasks).map_err(|_| SumcheckKernelError::InvariantViolation {
+            reason: "CUDA registers read-write read claims failed",
         })? {
-            rs2_ra += part;
+            rs1_ra += rs1;
+            rs2_ra += rs2;
         }
-        let gamma_inverse =
-            self.gamma
-                .inverse()
-                .ok_or(SumcheckKernelError::InvariantViolation {
-                    reason: "CUDA registers read-write needs an invertible gamma",
-                })?;
-        let rs1_ra = (combined_ra - self.gamma * self.gamma * rs2_ra) * gamma_inverse;
-        let rd_inc = self
-            .inc
-            .as_ref()
-            .and_then(|inc| inc.first().ok())
-            .and_then(fr_into)
+        let rd_inc = first_finals
+            .map(|values| values[3])
+            .or_else(|| {
+                self.inc
+                    .as_ref()
+                    .and_then(|inc| inc.first().ok())
+                    .and_then(fr_into)
+            })
             .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "CUDA registers read-write increment readback failed",
             })?;
@@ -273,7 +306,7 @@ impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -285,7 +318,15 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
         let dimensions = relation.register_dimensions();
         let log_t = dimensions.log_t();
         let log_k = dimensions.log_k();
-        if dimensions.phase1_num_rounds() != log_t || dimensions.phase2_num_rounds() != log_k {
+        dimensions
+            .validate_phase_split()
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "read/write phase split exceeds its dimensions",
+            })?;
+        if dimensions.phase1_num_rounds() == 0 && dimensions.phase2_num_rounds() == log_k {
+            return prepare_address_first(session, witness, inputs);
+        }
+        if dimensions.phase1_num_rounds() != log_t && dimensions.phase2_num_rounds() != 0 {
             return Err(KernelError::Unsupported {
                 reason: "CUDA registers read-write checking supports only the default \
                          read-write config (phase 1 = all cycle rounds, phase 2 = all address \
@@ -321,9 +362,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
             .zip(windows.iter())
             .map(|((ordinal, device, trace, atoms), window)| {
                 let task: DeviceTask<'_, PreparedShard<F>, CudaError> = Box::new(move || {
-                    let rows = device_rows::DeviceRegisterRows::from_device(
-                        device, &trace, &atoms, window.len,
-                    )?;
+                    let rows = DeviceRegisterRows::from_device(device, &trace, &atoms, window.len)?;
                     let matrix = rows.matrix(device, device_gamma)?;
                     let inc = rows.inc(device)?;
                     let eq = DeviceSplitEq::new_window(
@@ -342,7 +381,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
                         },
                         (
                             ordinal,
-                            rows.into_rs2_address(),
+                            rows.into_read_addresses(),
                             CycleWindow {
                                 start: window.start,
                                 len: window.len,
@@ -355,14 +394,15 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
             .collect();
 
         let mut cycle_shards = Vec::with_capacity(shards);
-        let mut rs2_windows = Vec::with_capacity(shards);
+        let mut read_windows = Vec::with_capacity(shards);
         for (shard, rs2) in fan_out(tasks)? {
             cycle_shards.push(shard);
-            rs2_windows.push(rs2);
+            read_windows.push(rs2);
         }
 
         Ok(Box::new(RegistersReadWriteKernel {
             context: require_context()?,
+            address_first: None,
             relation: relation.clone(),
             log_t,
             log_k,
@@ -372,13 +412,56 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
             eq: DeviceSplitEq::new(require_context()?, r_cycle, BindingOrder::LowToHigh)?,
             merged_eq: None,
             val_init: vec![Fr::from_u64(0); 1usize << log_k],
-            rs2_windows,
-            gamma,
+            read_windows,
             challenges: Vec::with_capacity(log_t + log_k),
             finals: None,
             rounds_bound: 0,
         }))
     }
+}
+
+fn prepare_address_first<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>> {
+    let context = require_context()?;
+    let relation = inputs.relation;
+    let dimensions = relation.register_dimensions();
+    let log_t = dimensions.log_t();
+    let log_k = dimensions.log_k();
+    let cycles = 1usize << log_t;
+    let window = CycleWindow {
+        start: 0,
+        len: cycles,
+    };
+    let (trace, atoms) = session_window_residency(context, session, witness, cycles, &window)?;
+    let rows = DeviceRegisterRows::from_device(context, &trace, &atoms, cycles)?;
+    let state = AddressFirst::new(
+        context,
+        rows.matrix(context, require_fr(inputs.challenges.gamma)?)?,
+        rows.inc(context)?,
+        &vec![Fr::default(); 1usize << log_k],
+        &inputs.points.rd_write_value,
+        F::one(),
+    )?;
+    Ok(Box::new(RegistersReadWriteKernel {
+        context,
+        address_first: Some(state),
+        relation: relation.clone(),
+        log_t,
+        log_k,
+        cycle: None,
+        address: None,
+        inc: None,
+        eq: DeviceSplitEq::new(context, &[], BindingOrder::LowToHigh)?,
+        merged_eq: None,
+        val_init: Vec::new(),
+        finals: None,
+        rounds_bound: 0,
+        read_windows: vec![(0, rows.into_read_addresses(), window)],
+        challenges: Vec::with_capacity(log_t + log_k),
+    }))
 }
 
 #[cfg(test)]
@@ -387,6 +470,8 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use super::device_rows::DeviceRegisterRows;
+    use super::witness::RegistersReadWriteWitness;
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::relations::registers::{
         RegistersReadWriteChallenges, RegistersReadWriteInputClaims,
@@ -395,7 +480,7 @@ mod tests {
         JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial,
     };
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
     use jolt_witness::__private::TraceRow;
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
@@ -419,10 +504,10 @@ mod tests {
         };
         let plane = witness(7);
         let cycles = 1usize << LOG_T;
-        let rows: Vec<super::witness::RegistersReadWriteWitness> =
+        let rows: Vec<RegistersReadWriteWitness> =
             jolt_witness::collect_bundles(&plane, cycles).expect("reference register rows");
-        let expected = super::device_rows::DeviceRegisterRows::upload(context, &rows)
-            .expect("host-encoded register rows");
+        let expected =
+            DeviceRegisterRows::upload(context, &rows).expect("host-encoded register rows");
 
         let mut session = ProofSession::default();
         let trace =
@@ -431,9 +516,8 @@ mod tests {
         let atoms =
             crate::cuda::witness::session_atom_columns::<Fr>(context, &mut session, &plane, cycles)
                 .expect("atom columns");
-        let got =
-            super::device_rows::DeviceRegisterRows::from_device(context, &trace, &atoms, cycles)
-                .expect("device-gathered register rows");
+        let got = DeviceRegisterRows::from_device(context, &trace, &atoms, cycles)
+            .expect("device-gathered register rows");
 
         for (name, got, expected) in [
             ("rs1 address", got.rs1_address(), expected.rs1_address()),
@@ -519,23 +603,29 @@ mod tests {
                 let hot = |grid: &Vec<Fr>, register: usize| grid[register * cycles + cycle];
                 let value = |register: usize| val[register * cycles + cycle];
 
-                for read in [row.registers.rs1, row.registers.rs2].into_iter().flatten() {
+                for (register, value_read) in [
+                    row.rs1_index().map(|k| (k, row.rs1_value())),
+                    row.rs2_index().map(|k| (k, row.rs2_value())),
+                ]
+                .into_iter()
+                .flatten()
+                {
                     assert_eq!(
-                        value(usize::from(read.register)),
-                        Fr::from_u64(read.value),
+                        value(usize::from(register)),
+                        Fr::from_u64(value_read),
                         "seed {seed} cycle {cycle}: val grid disagrees with the read value",
                     );
                     reads += 1;
                 }
-                if let Some(write) = row.registers.rd {
+                if let Some(register) = row.rd_index() {
                     assert_eq!(
-                        value(usize::from(write.register)),
-                        Fr::from_u64(write.pre_value),
+                        value(usize::from(register)),
+                        Fr::from_u64(row.rd_pre_value()),
                         "seed {seed} cycle {cycle}: val grid disagrees with the write pre-value",
                     );
                     assert_eq!(
                         inc[cycle],
-                        Fr::from_u64(write.post_value) - Fr::from_u64(write.pre_value),
+                        Fr::from_u64(row.rd_write_value()) - Fr::from_u64(row.rd_pre_value()),
                         "seed {seed} cycle {cycle}: inc disagrees with the write",
                     );
                     writes += 1;
@@ -547,17 +637,17 @@ mod tests {
                     };
                     assert_eq!(
                         hot(rs1_ra, register),
-                        expect_hot(row.registers.rs1.map(|read| read.register)),
+                        expect_hot(row.rs1_index()),
                         "seed {seed} cycle {cycle} register {register}: rs1_ra grid is wrong",
                     );
                     assert_eq!(
                         hot(rs2_ra, register),
-                        expect_hot(row.registers.rs2.map(|read| read.register)),
+                        expect_hot(row.rs2_index()),
                         "seed {seed} cycle {cycle} register {register}: rs2_ra grid is wrong",
                     );
                     assert_eq!(
                         hot(rd_wa, register),
-                        expect_hot(row.registers.rd.map(|write| write.register)),
+                        expect_hot(row.rd_index()),
                         "seed {seed} cycle {cycle} register {register}: rd_wa grid is wrong",
                     );
                 }

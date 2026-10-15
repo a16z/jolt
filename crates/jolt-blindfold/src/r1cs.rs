@@ -1,7 +1,6 @@
-use jolt_field::Field;
-use jolt_r1cs::{
-    assert_claim_expr_eq, ClaimSourceTable, ClaimSources, LinearCombination, R1csBuilder, Variable,
-};
+use jolt_claims::r1cs::{assert_claim_expr_eq, ClaimSourceTable, ClaimSources};
+use jolt_field::JoltField;
+use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 use jolt_sumcheck::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRoundLayout,
@@ -55,7 +54,7 @@ pub struct FinalOpeningLayout {
 
 impl<F, O, Com, P, Ch> BlindFoldStatement<F, O, Com, P, Ch>
 where
-    F: Field,
+    F: JoltField,
     O: Clone + PartialEq,
     P: Clone + PartialEq,
     Ch: Clone + PartialEq,
@@ -82,7 +81,7 @@ where
 
 impl<F, O, Com, P, Ch> BlindFoldStatement<F, O, Com, P, Ch>
 where
-    F: Field,
+    F: JoltField,
 {
     pub fn build<R>(
         &self,
@@ -245,7 +244,7 @@ where
     }
 }
 
-fn allocate_private_row_scalar<F: Field>(
+fn allocate_private_row_scalar<F: JoltField>(
     builder: &mut R1csBuilder<F>,
     witness_row_len: usize,
 ) -> Variable {
@@ -257,7 +256,7 @@ fn allocate_private_row_scalar<F: Field>(
     variable
 }
 
-fn pad_to_witness_row_boundary<F: Field>(builder: &mut R1csBuilder<F>, witness_row_len: usize) {
+fn pad_to_witness_row_boundary<F: JoltField>(builder: &mut R1csBuilder<F>, witness_row_len: usize) {
     while !(builder.num_vars() - 1).is_multiple_of(witness_row_len) {
         let _ = builder.alloc(F::zero());
     }
@@ -294,7 +293,7 @@ fn allocate_output_claim_rows<F, O, P, Ch, C>(
     witness_row_len: usize,
 ) -> Vec<OutputClaimRowLayout>
 where
-    F: Field,
+    F: JoltField,
 {
     let row_count = stage.output_claim_rows.commitments.commitments.len();
     let row_len = stage.output_claim_rows.row_len;
@@ -325,7 +324,7 @@ fn insert_output_claim_sources<F, O, P, Ch, C>(
     claim_sources: &mut ClaimSourceTable<F, O, P, Ch>,
 ) -> Result<(), Error>
 where
-    F: Field,
+    F: JoltField,
     O: Clone + PartialEq,
 {
     let mut inserted = Vec::<(O, Variable)>::new();
@@ -411,9 +410,10 @@ fn validate_final_opening_count<F, O, P, Ch, C>(
 mod tests {
     use super::*;
     use crate::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};
+    use jolt_claims::r1cs::{ClaimLoweringError, ClaimSourceTable};
     use jolt_claims::{challenge, constant, derived, opening, Expr};
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_r1cs::{ClaimLoweringError, ClaimSourceTable, R1csBuilderError};
+    use jolt_field::{Fr, Ring};
+    use jolt_r1cs::R1csBuilderError;
     use jolt_sumcheck::{
         CommittedOutputClaims, CommittedSumcheckConsistency, SumcheckDomainSpec, SumcheckR1csError,
         SumcheckR1csRoundLayout, SumcheckStatement, VerifiedCommittedRound,

@@ -90,8 +90,6 @@ pub(crate) fn write_memory_viz(
         .collect();
 
     let payload = json!({
-        // Page title: the run directory's name ({timestamp}_{trace_name})
-        // identifies both the workload and the specific run.
         "trace_name": trace_path
             .parent()
             .and_then(Path::file_name)
@@ -117,6 +115,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::memory::PeakMemory;
     use crate::summary::{aggregate_events, build_summary, parse_folded, SummaryContext};
 
     #[test]
@@ -147,7 +146,18 @@ mod tests {
             scale_log2: 13,
             backend: "reference".to_string(),
         };
-        let summary = build_summary(&events, &ctx, &[], Some(1 << 30), 0, None, heap);
+        let summary = build_summary(
+            &events,
+            &ctx,
+            &[],
+            PeakMemory {
+                rss_bytes: Some(1 << 30),
+                footprint_bytes: None,
+            },
+            0,
+            None,
+            heap,
+        );
         let aggregate = aggregate_events(&events, crate::taxonomy::ROOT_SPAN);
 
         let run_dir =

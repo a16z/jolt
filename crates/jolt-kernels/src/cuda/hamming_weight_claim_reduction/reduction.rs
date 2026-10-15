@@ -1,5 +1,5 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
@@ -17,7 +17,7 @@ pub struct DeviceHammingWeightReduction {
 }
 
 impl DeviceHammingWeightReduction {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         shards: &OneHotShards,
         cycle_point: &[F],
@@ -88,7 +88,10 @@ impl DeviceHammingWeightReduction {
         })
     }
 
-    pub fn round_lanes<F: Field>(&self, context: &CudaKernelContext) -> Result<(F, F), CudaError> {
+    pub fn round_lanes<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<(F, F), CudaError> {
         let half = self.len / 2;
         if half == 0 {
             return Err(CudaError::LengthMismatch {
@@ -139,7 +142,7 @@ impl DeviceHammingWeightReduction {
         Ok((at_one, at_infinity))
     }
 
-    pub fn bind<F: Field>(
+    pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
         challenge: F,
@@ -157,15 +160,15 @@ impl DeviceHammingWeightReduction {
         Ok(())
     }
 
-    pub fn reduced_claims<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+    pub fn reduced_claims<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
         Self::row_values(&self.folded, self.len, self.polys)
     }
 
-    pub fn weight_claims<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+    pub fn weight_claims<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
         Self::row_values(&self.weights, self.len, self.polys)
     }
 
-    fn row_values<F: Field>(
+    fn row_values<F: JoltField>(
         table: &DeviceFrVec,
         len: usize,
         polys: usize,

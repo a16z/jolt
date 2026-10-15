@@ -17,7 +17,6 @@ pub const DEFAULT_RS2: u8 = 11;
 pub const DEFAULT_RS3: u8 = 12;
 pub const DEFAULT_IS_COMPRESSED: bool = false;
 
-/// Descriptor for an inline instruction containing its identifying information
 #[derive(Debug, Clone)]
 pub struct InlineDescriptor {
     /// Human-readable name of the inline instruction
@@ -38,12 +37,10 @@ impl InlineDescriptor {
     }
 }
 
-/// Input parameters for instruction sequence generation
 #[derive(Debug, Clone)]
 pub struct SequenceInputs {
     /// Memory address of the instruction
     pub address: u64,
-    /// Whether the instruction is compressed
     pub is_compressed: bool,
     pub rs1: u8,
     pub rs2: u8,
@@ -166,7 +163,6 @@ fn format_instruction_with_placeholders(
     let address_pattern = format!("address: {:#x}", normalized_instr.address);
     formatted = formatted.replace(&address_pattern, "address: $ADDR");
 
-    // Create a mapping of values to their placeholders
     let reg_value_to_placeholder = [
         (sequence_inputs.rs1, "$RS1"),
         (sequence_inputs.rs2, "$RS2"),

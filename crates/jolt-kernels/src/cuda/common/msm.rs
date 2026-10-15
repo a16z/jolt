@@ -1,4 +1,21 @@
+#[expect(
+    clippy::unreadable_literal,
+    clippy::type_complexity,
+    clippy::large_const_arrays,
+    reason = "BN254 G2 endomorphism decomposition constants uploaded to CUDA"
+)]
+mod glv4_table {
+    include!("glv4_table.rs");
+}
+
+use ark_bn254::Fr as ArkFr;
+use ark_ff::BigInt;
+use ark_ff::BigInteger;
+use ark_ff::PrimeField;
+use cudarc::driver::CudaFunction;
+use glv4_table::POWER_OF_2_DECOMPOSITIONS;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use cudarc::driver::{CudaSlice, CudaStream, CudaView, LaunchConfig, PushKernelArg};
 
@@ -244,9 +261,9 @@ const GLV_SCALAR_BITS: usize = 128;
 const GLV4_SCALAR_BITS: usize = 101;
 
 fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
-    static TABLE: std::sync::OnceLock<(Vec<u64>, Vec<u8>)> = std::sync::OnceLock::new();
+    static TABLE: OnceLock<(Vec<u64>, Vec<u8>)> = OnceLock::new();
     let (magnitudes, signs) = TABLE.get_or_init(|| {
-        let rows = jolt_crypto::ec::bn254::glv::constants::POWER_OF_2_DECOMPOSITIONS;
+        let rows = POWER_OF_2_DECOMPOSITIONS;
         let mut magnitudes = Vec::with_capacity(rows.len() * 8);
         let mut signs = Vec::with_capacity(rows.len() * 4);
         for (k0, k1, k2, k3, neg0, neg1, neg2, neg3) in rows {
@@ -264,8 +281,24 @@ fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
 }
 
 fn glv_4d_scalar(scalar: Fr) -> Result<([u64; 16], u32, usize), CudaError> {
-    let ark = ark_bn254::Fr::from(scalar);
-    let (coefficients, positive) = jolt_crypto::ec::bn254::glv::decomp_4d::decompose_scalar_4d(ark);
+    let ark = ArkFr::from(scalar);
+    let bits = PrimeField::into_bigint(ark);
+    let mut sums = [0i128; 4];
+    for (bit, &(k0, k1, k2, k3, n0, n1, n2, n3)) in POWER_OF_2_DECOMPOSITIONS.iter().enumerate() {
+        if BigInteger::get_bit(&bits, bit) {
+            for ((sum, magnitude), negative) in
+                sums.iter_mut().zip([k0, k1, k2, k3]).zip([n0, n1, n2, n3])
+            {
+                *sum += if negative {
+                    -(magnitude as i128)
+                } else {
+                    magnitude as i128
+                };
+            }
+        }
+    }
+    let coefficients = sums.map(|sum| BigInt::<4>::from(sum.unsigned_abs()));
+    let positive = sums.map(|sum| sum >= 0);
     let mut limbs = [0u64; 16];
     let mut signs = 0u32;
     let mut max_bits = 0usize;
@@ -287,18 +320,22 @@ fn glv_4d_scalar(scalar: Fr) -> Result<([u64; 16], u32, usize), CudaError> {
 fn glv_frobenius_coefficients() -> &'static [u64] {
     static COEFFICIENTS: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
     COEFFICIENTS.get_or_init(|| {
-        let coefficients = jolt_crypto::ec::bn254::glv::constants::get_frobenius_coefficients();
+        use ark_ec::bn::BnConfig;
+        use ark_ff::Field;
+        let x = ark_bn254::Config::TWIST_MUL_BY_Q_X;
+        let y = ark_bn254::Config::TWIST_MUL_BY_Q_Y;
+        let mut x_power = x;
+        let mut y_power = y;
         let mut limbs = Vec::with_capacity(48);
-        for value in [
-            coefficients.psi1_coef2,
-            coefficients.psi1_coef3,
-            coefficients.psi2_coef2,
-            coefficients.psi2_coef3,
-            coefficients.psi3_coef2,
-            coefficients.psi3_coef3,
-        ] {
-            limbs.extend_from_slice(&value.c0.0 .0);
-            limbs.extend_from_slice(&value.c1.0 .0);
+        for _ in 0..3 {
+            for value in [x_power, y_power] {
+                limbs.extend_from_slice(&value.c0.0 .0);
+                limbs.extend_from_slice(&value.c1.0 .0);
+            }
+            x_power.frobenius_map_in_place(1);
+            y_power.frobenius_map_in_place(1);
+            x_power *= x;
+            y_power *= y;
         }
         limbs
     })
@@ -493,7 +530,7 @@ impl CudaKernelContext {
 
     fn fq_binary(
         &self,
-        kernel: &cudarc::driver::CudaFunction,
+        kernel: &CudaFunction,
         left: &[[u64; FQ_LIMBS]],
         right: &[[u64; FQ_LIMBS]],
     ) -> Result<Vec<[u64; FQ_LIMBS]>, CudaError> {
@@ -531,7 +568,7 @@ impl CudaKernelContext {
 
     fn g1_binary(
         &self,
-        kernel: &cudarc::driver::CudaFunction,
+        kernel: &CudaFunction,
         left: &[JacobianLimbs],
         right_flat: &[u64],
         right_stride: usize,
@@ -830,7 +867,7 @@ impl CudaKernelContext {
 
     fn axpy_in_place(
         &self,
-        kernel: &cudarc::driver::CudaFunction,
+        kernel: &CudaFunction,
         words: usize,
         buffer: &mut CudaSlice<u64>,
         span: ResidentAxpy,
@@ -1808,7 +1845,7 @@ impl CudaKernelContext {
         let chunks_arg = Self::count_of(chunks)?;
         let blocks = Self::count_of(rows * chunks)?;
         let shared = POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32;
-        let config = cudarc::driver::LaunchConfig {
+        let config = LaunchConfig {
             grid_dim: (blocks, 1, 1),
             block_dim: (POINT_BLOCK, 1, 1),
             shared_mem_bytes: shared,
@@ -1864,7 +1901,7 @@ impl CudaKernelContext {
         // level. Only thread 0 writes, to `out[row]` (12 limbs) of a `rows * 12`
         // u64 buffer distinct from `partials`.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (rows_arg, 1, 1),
                 block_dim: (POINT_BLOCK, 1, 1),
                 shared_mem_bytes: shared,
@@ -1914,7 +1951,7 @@ impl CudaKernelContext {
         // buffer when `chunks == 1` (then `chunk` is always 0), distinct from the
         // input either way.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (Self::count_of(lanes * chunks)?, 1, 1),
                 block_dim: (G2_POINT_BLOCK, 1, 1),
                 shared_mem_bytes: shared,
@@ -1934,7 +1971,7 @@ impl CudaKernelContext {
             // writes, to `out[lane]` of a `lanes`-point buffer distinct from
             // `partials`.
             let _ = unsafe {
-                builder.launch(cudarc::driver::LaunchConfig {
+                builder.launch(LaunchConfig {
                     grid_dim: (lanes_arg, 1, 1),
                     block_dim: (G2_POINT_BLOCK, 1, 1),
                     shared_mem_bytes: shared,
@@ -2682,7 +2719,7 @@ impl CudaKernelContext {
         // from every input, and the class partition makes exactly one writer per
         // slot.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
                 block_dim: (POINT_BLOCK, 1, 1),
                 shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
@@ -2726,7 +2763,7 @@ impl CudaKernelContext {
         // `segments * 12` u64 allocation distinct from every input, so writes
         // are one per warp and non-aliasing.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (segments.div_ceil(warps), 1, 1),
                 block_dim: (POINT_BLOCK, 1, 1),
                 shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
@@ -2823,7 +2860,7 @@ impl CudaKernelContext {
         // `segments * 12` u64 fresh allocation, so writes are one per block and
         // non-aliasing.
         let _ = unsafe {
-            builder.launch(cudarc::driver::LaunchConfig {
+            builder.launch(LaunchConfig {
                 grid_dim: (segment_count, 1, 1),
                 block_dim: (POINT_BLOCK, 1, 1),
                 shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
@@ -3286,7 +3323,7 @@ pub(crate) mod testing {
     }
 
     pub fn ark_fr(value: Fr) -> ArkFr {
-        ArkFr::new_unchecked(BigInt(value.inner_limbs().0))
+        ArkFr::new_unchecked(BigInt(value.inner_limbs()))
     }
 
     pub fn affine_limbs(point: G1Affine) -> AffineLimbs {
@@ -3344,7 +3381,7 @@ pub(crate) mod testing {
             for (chunk, limb) in bytes.chunks_exact_mut(8).zip(limbs) {
                 chunk.copy_from_slice(&limb.to_le_bytes());
             }
-            Fr::from_le_bytes_mod_order(&bytes)
+            Fr::from(ArkFr::from_le_bytes_mod_order(&bytes))
         })
     }
 }
@@ -3355,13 +3392,17 @@ pub(crate) mod testing {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use ark_bn254::{Fq, Fr as ArkFr, G1Affine, G1Projective, G2Projective};
+    use super::CLASS_FLOOR;
+    use super::COLD;
+    use ark_bn254::{Fq, Fq2, Fr as ArkFr, G1Affine, G1Projective, G2Projective};
     use ark_ec::scalar_mul::glv::GLVConfig;
     use ark_ec::scalar_mul::variable_base::msm_i128;
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
+    use ark_ff::BigInt;
+    use ark_ff::BigInteger;
     use ark_ff::{Field, PrimeField, Zero};
     use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use proptest::collection::vec;
     use proptest::prelude::*;
 
@@ -3385,7 +3426,7 @@ mod tests {
         shared_context()
     }
 
-    fn limbs(values: &[ark_bn254::Fq]) -> Vec<[u64; FQ_LIMBS]> {
+    fn limbs(values: &[Fq]) -> Vec<[u64; FQ_LIMBS]> {
         values.iter().copied().map(fq_limbs).collect()
     }
 
@@ -3439,7 +3480,7 @@ mod tests {
                     .wrapping_mul(0x9E37_79B9_7F4A_7C15)
                     .wrapping_add(seed);
                 if mixed.is_multiple_of(5) {
-                    super::COLD
+                    COLD
                 } else {
                     1 + (mixed >> 17) as u32 % (one_hot_k as u32 - 1)
                 }
@@ -3451,7 +3492,7 @@ mod tests {
         let chunk_count = hot.len() / chunk_len;
         let mut counts = vec![0usize; one_hot_k * chunk_count];
         for (column, &address) in hot.iter().enumerate() {
-            if address != super::COLD {
+            if address != COLD {
                 counts[address as usize * chunk_count + column / chunk_len] += 1;
             }
         }
@@ -3472,13 +3513,13 @@ mod tests {
             );
             let hot = csr_hot(cycles, one_hot_k, 31 + index as u64);
             assert!(
-                hot.contains(&super::COLD),
+                hot.contains(&COLD),
                 "geometry {index}: no cold cycle, so a scatter that ignored the sentinel would \
                  pass",
             );
             let counts = csr_segment_counts(&hot, one_hot_k, chunk_len);
             let widest = counts.iter().copied().max().unwrap_or(0);
-            if widest <= super::SMALL_SEGMENT_LIMIT {
+            if widest <= SMALL_SEGMENT_LIMIT {
                 narrow += 1;
             } else {
                 wide += 1;
@@ -3974,7 +4015,7 @@ mod tests {
             };
             let words: Vec<u32> = hot
                 .iter()
-                .map(|row| row.map_or(super::COLD, |address| address as u32))
+                .map(|row| row.map_or(COLD, |address| address as u32))
                 .collect();
             let got = projectives(
                 &context
@@ -4001,7 +4042,7 @@ mod tests {
                 let plan = context
                     .upload_segments(&device_bases, &indices, &counts)
                     .expect("upload segment plan");
-                mixed += usize::from(plan.widest() > super::CLASS_FLOOR);
+                mixed += usize::from(plan.widest() > CLASS_FLOOR);
                 let expected = projectives(
                     &context
                         .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
@@ -4288,11 +4329,11 @@ mod tests {
                 let column = cycle % CHUNK;
                 match cycle / CHUNK {
                     0 => 0,
-                    1 | 2 if cycle / CHUNK == 2 && column == CHUNK - 1 => super::COLD,
+                    1 | 2 if cycle / CHUNK == 2 && column == CHUNK - 1 => COLD,
                     1 | 2 if column < 3 * CHUNK / 4 => 2,
                     1 | 2 => [0, 1, 3][column % 3],
                     3 => u32::from(column >= CHUNK / 2),
-                    4 => super::COLD,
+                    4 => COLD,
                     5 if column < 3 * CHUNK / 4 => 3,
                     5 => (column % 3) as u32,
                     _ => (column % K) as u32,
@@ -4301,7 +4342,7 @@ mod tests {
             .collect();
         let mut histogram = vec![0u32; K * CHUNKS];
         for (cycle, &address) in hot.iter().enumerate() {
-            if address != super::COLD {
+            if address != COLD {
                 histogram[address as usize * CHUNKS + cycle / CHUNK] += 1;
             }
         }
@@ -4334,7 +4375,7 @@ mod tests {
                 .collect();
             let mut sums = vec![0i64; K * CHUNKS];
             for (cycle, &address) in hot.iter().enumerate() {
-                if address != super::COLD {
+                if address != COLD {
                     sums[address as usize * CHUNKS + cycle / CHUNK] += weights[cycle % CHUNK];
                 }
             }
@@ -4512,7 +4553,7 @@ mod tests {
     }
 
     fn limbs_to_ark(limbs: &[u64]) -> ArkFr {
-        ArkFr::from_bigint(ark_ff::BigInt(take_limbs(limbs))).expect("canonical limbs below Fr")
+        ArkFr::from_bigint(BigInt(take_limbs(limbs))).expect("canonical limbs below Fr")
     }
 
     #[test]
@@ -4596,7 +4637,7 @@ mod tests {
     }
 
     fn psi_eigenvalue() -> ArkFr {
-        ArkFr::from_le_bytes_mod_order(&ark_ff::BigInteger::to_bytes_le(&ark_bn254::Fq::MODULUS))
+        ArkFr::from_le_bytes_mod_order(&BigInteger::to_bytes_le(&Fq::MODULUS))
     }
 
     #[test]
@@ -4722,7 +4763,7 @@ mod tests {
 
     fn g2_from_limbs(limbs: &[u64]) -> G2Projective {
         let fq2 = |chunk: &[u64]| {
-            ark_bn254::Fq2::new(
+            Fq2::new(
                 fq_from_limbs(take_limbs(&chunk[..FQ_LIMBS])),
                 fq_from_limbs(take_limbs(&chunk[FQ_LIMBS..])),
             )

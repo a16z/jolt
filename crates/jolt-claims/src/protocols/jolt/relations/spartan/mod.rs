@@ -1,5 +1,3 @@
-//! Spartan symbolic sumcheck relations.
-
 mod outer_remainder;
 mod outer_uniskip;
 mod product_remainder;

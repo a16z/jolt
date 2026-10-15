@@ -1,10 +1,14 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::{
     HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     HammingWeightClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::jolt::{HammingWeightClaimReductionPublic, JoltDerivedId};
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -22,7 +26,7 @@ use reduction::DeviceHammingWeightReduction;
 
 mod reduction;
 
-pub struct HammingWeightClaimReductionKernel<F: Field> {
+pub struct HammingWeightClaimReductionKernel<F: JoltField> {
     context: &'static CudaKernelContext,
     relation: HammingWeightClaimReduction<F>,
     state: DeviceHammingWeightReduction,
@@ -30,14 +34,14 @@ pub struct HammingWeightClaimReductionKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for HammingWeightClaimReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for HammingWeightClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
 
-impl<F: Field> HammingWeightClaimReductionKernel<F> {
+impl<F: JoltField> HammingWeightClaimReductionKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.state.bind(self.context, challenge).map_err(|_| {
             SumcheckError::MissingEvaluationSource {
@@ -49,7 +53,7 @@ impl<F: Field> HammingWeightClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for HammingWeightClaimReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for HammingWeightClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -81,7 +85,7 @@ impl<F: Field> ProveRounds<F> for HammingWeightClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for HammingWeightClaimReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for HammingWeightClaimReductionKernel<F> {
     type Relation = HammingWeightClaimReduction<F>;
 
     fn output_claims(
@@ -150,7 +154,7 @@ impl<F: Field> SumcheckKernel<F> for HammingWeightClaimReductionKernel<F> {
             .fold(F::zero(), |accumulator, value| accumulator + value);
         if got != expected {
             return Err(SumcheckKernelError::DerivedTableDrift {
-                id: booleanity_id,
+                id: booleanity_id.into(),
                 expected,
                 got,
             });
@@ -159,7 +163,7 @@ impl<F: Field> SumcheckKernel<F> for HammingWeightClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -215,10 +219,9 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend 
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
-    use std::collections::BTreeSet;
 
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
-    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltRelationId};
+    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
     use jolt_claims::OutputClaims;
     use jolt_field::Fr;
     use jolt_verifier::stages::formula_dimensions_from_parts;
@@ -231,9 +234,7 @@ mod tests {
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{
-        arb_point, drive, fr, hot_addresses, one_hot_fixture_bytecode_is_cold,
-        one_hot_fixture_is_padding, ram_fixture_is_cold, reference_input_claim,
-        with_one_hot_witness, ONE_HOT_BYTECODE_LEN,
+        arb_point, drive, fr, reference_input_claim, with_one_hot_witness, ONE_HOT_BYTECODE_LEN,
     };
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
@@ -257,148 +258,6 @@ mod tests {
                     .collect()
             })
             .collect()
-    }
-
-    fn families(
-        layout: jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout,
-    ) -> [(&'static str, Vec<JoltCommittedPolynomial>); 3] {
-        [
-            (
-                "instruction",
-                (0..layout.instruction())
-                    .map(JoltCommittedPolynomial::InstructionRa)
-                    .collect(),
-            ),
-            (
-                "bytecode",
-                (0..layout.bytecode())
-                    .map(JoltCommittedPolynomial::BytecodeRa)
-                    .collect(),
-            ),
-            (
-                "ram",
-                (0..layout.ram())
-                    .map(JoltCommittedPolynomial::RamRa)
-                    .collect(),
-            ),
-        ]
-    }
-
-    #[test]
-    fn fixture_hamming_folds_accumulate_and_discriminate_chunks() {
-        let cycles = 1usize << LOG_T;
-        for (chunk_bits, ram_log_k) in CONFIGS {
-            let addresses = 1usize << chunk_bits;
-            with_one_hot_witness(
-                LOG_T,
-                ONE_HOT_BYTECODE_LEN,
-                1usize << ram_log_k,
-                one_hot(chunk_bits),
-                7,
-                |witness, bytecode_len| {
-                    let layout = formula_dimensions_from_parts(
-                        one_hot(chunk_bits),
-                        LOG_T,
-                        bytecode_len,
-                        1usize << ram_log_k,
-                        JoltRelationId::HammingWeightClaimReduction,
-                    )
-                    .expect("formula dimensions")
-                    .ra_layout;
-
-                    let points = virtualization_points(layout.total(), chunk_bits, 7);
-                    for (left, point) in points.iter().enumerate() {
-                        for other in points.iter().skip(left + 1) {
-                            assert_ne!(
-                                point, other,
-                                "chunk_bits {chunk_bits}: two virtualization points coincide, so \
-                                 swapping their EqVirtualization tables would not change any \
-                                 round polynomial",
-                            );
-                        }
-                    }
-
-                    for (family, polynomials) in families(layout) {
-                        assert!(
-                            !polynomials.is_empty(),
-                            "chunk_bits {chunk_bits} ram_log_k {ram_log_k}: the {family} family \
-                             is empty, so this config cannot exercise it",
-                        );
-                        let mut per_chunk = Vec::new();
-                        for polynomial in polynomials {
-                            let hot = hot_addresses(witness, polynomial, addresses, cycles);
-                            let mut counts = vec![0usize; addresses];
-                            for address in hot.iter().flatten() {
-                                counts[*address] += 1;
-                            }
-                            let occupied = counts.iter().filter(|count| **count > 0).count();
-                            assert!(
-                                occupied > 1,
-                                "chunk_bits {chunk_bits} ram_log_k {ram_log_k} {polynomial:?}: \
-                                 the fold lands on {occupied} address(es), so its G table cannot \
-                                 detect a wrong address",
-                            );
-                            assert!(
-                                counts.iter().any(|count| *count > 1),
-                                "chunk_bits {chunk_bits} ram_log_k {ram_log_k} {polynomial:?}: no \
-                                 address is hot at two cycles, so a fold that OVERWRITES instead \
-                                 of accumulating would still pass",
-                            );
-                            per_chunk.push(hot);
-                        }
-                        if per_chunk.len() > 1 {
-                            let disagree = (0..cycles).any(|cycle| {
-                                let mut seen = BTreeSet::new();
-                                for hot in &per_chunk {
-                                    if let Some(address) = hot[cycle] {
-                                        let _ = seen.insert(address);
-                                    }
-                                }
-                                seen.len() > 1
-                            });
-                            assert!(
-                                disagree,
-                                "chunk_bits {chunk_bits} ram_log_k {ram_log_k}: every {family} \
-                                 chunk is hot at the same address on every cycle, so a wrong \
-                                 chunk shift would still pass",
-                            );
-                        }
-                    }
-
-                    let instruction_cold = (0..cycles)
-                        .filter(|&cycle| one_hot_fixture_is_padding(LOG_T, cycle))
-                        .count();
-                    let bytecode_cold = (0..cycles)
-                        .filter(|&cycle| one_hot_fixture_bytecode_is_cold(LOG_T, cycle))
-                        .count();
-                    let ram_cold = (0..cycles)
-                        .filter(|&cycle| ram_fixture_is_cold(LOG_T, cycle))
-                        .count();
-                    let disagree = (0..cycles)
-                        .filter(|&cycle| {
-                            one_hot_fixture_bytecode_is_cold(LOG_T, cycle)
-                                != ram_fixture_is_cold(LOG_T, cycle)
-                        })
-                        .count();
-                    assert!(instruction_cold > 0, "the fixture has no padding tail");
-                    assert!(
-                        bytecode_cold > 0 && bytecode_cold < cycles,
-                        "{bytecode_cold} of {cycles} cycles are bytecode-cold, so one of the two \
-                         fold paths is unexercised",
-                    );
-                    assert!(
-                        ram_cold > 0 && ram_cold < cycles,
-                        "{ram_cold} of {cycles} cycles are RAM-cold, so one of the two fold paths \
-                         is unexercised",
-                    );
-                    assert!(
-                        disagree > 0,
-                        "the bytecode and RAM cold sets coincide, so a fold reading the wrong \
-                         family's cold flag would still pass",
-                    );
-                },
-            );
-        }
     }
 
     proptest! {

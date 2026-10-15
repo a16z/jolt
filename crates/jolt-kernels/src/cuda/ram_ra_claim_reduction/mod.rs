@@ -1,8 +1,12 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -21,21 +25,21 @@ use crate::{
 
 mod reduction;
 
-pub struct RamRaReductionKernel<F: Field> {
+pub struct RamRaReductionKernel<F: JoltField> {
     state: DeviceRamRaReduction,
     relation: RamRaClaimReduction<F>,
     context: &'static CudaKernelContext,
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RamRaReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for RamRaReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -96,7 +100,7 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamRaReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamRaReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.symbolic().rounds()
     }
@@ -135,7 +139,7 @@ impl<F: Field> ProveRounds<F> for RamRaReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamRaReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamRaReductionKernel<F> {
     type Relation = RamRaClaimReduction<F>;
 
     fn output_claims(
@@ -169,10 +173,11 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial, TraceDimensions};
     use jolt_claims::{OutputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
-    use jolt_witness::{FixedBackend, OneHotSource, PolynomialEncoding, Shape};
+    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
     use proptest::prelude::*;
+    use std::collections::BTreeSet;
 
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
@@ -228,8 +233,7 @@ mod tests {
                 "seed {seed}: {cold} of {cycles} cycles are cold, so one of the two paths is \
                  unexercised",
             );
-            let distinct: std::collections::BTreeSet<usize> =
-                hot.iter().filter_map(|address| *address).collect();
+            let distinct: BTreeSet<usize> = hot.iter().filter_map(|address| *address).collect();
             assert!(
                 distinct.len() > 1,
                 "seed {seed}: every hot cycle targets the same address",

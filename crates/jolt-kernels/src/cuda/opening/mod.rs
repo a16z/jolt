@@ -1,13 +1,17 @@
+#[cfg(feature = "field-inline")]
+use crate::optimized::OptimizedBackend;
+use crate::reference::commitment::ColumnKind;
+use jolt_field::Fr;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cudarc::driver::CudaSlice;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+use jolt_field::JoltField;
 use jolt_poly::MultilinearPoly;
-use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
 
 use super::common::context::{context_for, CudaKernelContext};
 use super::common::device::{fr_into, fr_vec_into, require_fr_slice, DeviceFrVec};
@@ -19,7 +23,10 @@ use super::common::error::CudaError;
 use super::{require_context, CudaBackend};
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
 use crate::cuda::witness::{collect_rows, session_atom_columns_window};
-use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
+use crate::opening::{
+    JointOpeningPolynomials, PrecommittedOpeningTables, RamInitialOpening,
+    RamInitialOpeningEvaluation,
+};
 use crate::reference::commitment::column_kinds;
 use crate::reference::views::dense_view;
 use crate::{KernelError, ProofSession};
@@ -65,7 +72,7 @@ struct JointPolynomial<F> {
     grid: CommitmentGrid,
 }
 
-impl<F: Field> JointPolynomial<F> {
+impl<F: JoltField> JointPolynomial<F> {
     fn embed(&self) -> Result<DeviceFrVec, CudaError> {
         let _span =
             tracing::info_span!("cuda_opening_embed", vars = self.grid.total_vars).entered();
@@ -136,7 +143,7 @@ impl<F: Field> JointPolynomial<F> {
                 return shard.column.try_clone();
             }
         }
-        let zero = <jolt_field::Fr as jolt_field::FromPrimitiveInt>::from_u64(0);
+        let zero = <Fr as jolt_field::Ring>::from_u64(0);
         let span = dense_span(shards);
         let mut column = vec![zero; span];
         for shard in shards {
@@ -156,11 +163,7 @@ impl<F: Field> JointPolynomial<F> {
         self.context.upload(&column)
     }
 
-    fn dense_fold(
-        shards: &[DenseShard],
-        left: &[jolt_field::Fr],
-        sigma: usize,
-    ) -> Result<Vec<jolt_field::Fr>, CudaError> {
+    fn dense_fold(shards: &[DenseShard], left: &[Fr], sigma: usize) -> Result<Vec<Fr>, CudaError> {
         let absent = || CudaError::InvariantViolation {
             reason: "a committed increment window names an absent device",
         };
@@ -168,10 +171,10 @@ impl<F: Field> JointPolynomial<F> {
             let device = context_for(shard.ordinal).ok_or_else(absent)?;
             return device.fold_rows_window(&shard.column, shard.base, shard.len, left, sigma);
         }
-        let tasks: Vec<DeviceTask<'_, Vec<jolt_field::Fr>, CudaError>> = shards
+        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = shards
             .iter()
             .map(|shard| {
-                let task: DeviceTask<'_, Vec<jolt_field::Fr>, CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
                     let device = context_for(shard.ordinal).ok_or_else(absent)?;
                     tracing::info_span!("cuda_opening_prefix_fold_window", device = shard.ordinal)
                         .in_scope(|| {
@@ -243,9 +246,9 @@ impl<F: Field> JointPolynomial<F> {
     fn one_hot_fold(
         shards: &[HotShard],
         cycles: usize,
-        left: &[jolt_field::Fr],
+        left: &[Fr],
         sigma: usize,
-    ) -> Result<Vec<jolt_field::Fr>, CudaError> {
+    ) -> Result<Vec<Fr>, CudaError> {
         let absent = || CudaError::InvariantViolation {
             reason: "a committed one-hot window names an absent device",
         };
@@ -254,10 +257,10 @@ impl<F: Field> JointPolynomial<F> {
             return device
                 .one_hot_fold_window(&shard.hot, cycles, shard.base, shard.len, left, sigma);
         }
-        let tasks: Vec<DeviceTask<'_, Vec<jolt_field::Fr>, CudaError>> = shards
+        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = shards
             .iter()
             .map(|shard| {
-                let task: DeviceTask<'_, Vec<jolt_field::Fr>, CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
                     let device = context_for(shard.ordinal).ok_or_else(absent)?;
                     tracing::info_span!("cuda_opening_sparse_fold_window", device = shard.ordinal)
                         .in_scope(|| {
@@ -385,7 +388,7 @@ impl<F: Field> JointPolynomial<F> {
     }
 }
 
-impl<F: Field> MultilinearPoly<F> for JointPolynomial<F> {
+impl<F: JoltField> MultilinearPoly<F> for JointPolynomial<F> {
     fn num_vars(&self) -> usize {
         self.grid.total_vars
     }
@@ -408,7 +411,7 @@ impl<F: Field> MultilinearPoly<F> for JointPolynomial<F> {
     }
 }
 
-fn embed_plan<F: Field>(
+fn embed_plan<F: JoltField>(
     polynomial: JoltCommittedPolynomial,
     table: &[F],
     grid: CommitmentGrid,
@@ -425,7 +428,7 @@ fn embed_plan<F: Field>(
     match polynomial {
         JoltCommittedPolynomial::TrustedAdvice
         | JoltCommittedPolynomial::UntrustedAdvice
-        | JoltCommittedPolynomial::BytecodeChunk(_)
+        | JoltCommittedPolynomial::ProgramBytecode
         | JoltCommittedPolynomial::ProgramImageInit => {
             if !table.len().is_power_of_two() {
                 return Err(KernelError::TableSizeMismatch {
@@ -524,7 +527,7 @@ fn parked_hot_shards<S: ?Sized>(
     Some(shards)
 }
 
-pub(crate) fn sparse_hot_columns<F: Field>(
+pub(crate) fn sparse_hot_columns<F: JoltField>(
     context: &'static CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
@@ -599,7 +602,7 @@ fn hot_address_of(
 fn fill_hot_addresses(
     hot: &mut [u32],
     rows: &[CommittedColumnsWitness],
-    kind: crate::reference::commitment::ColumnKind,
+    kind: ColumnKind,
 ) -> usize {
     use rayon::prelude::*;
 
@@ -614,7 +617,7 @@ fn fill_hot_addresses(
 fn fill_hot_addresses(
     hot: &mut [u32],
     rows: &[CommittedColumnsWitness],
-    kind: crate::reference::commitment::ColumnKind,
+    kind: ColumnKind,
 ) -> usize {
     hot.iter_mut()
         .zip(rows)
@@ -623,10 +626,10 @@ fn fill_hot_addresses(
         .unwrap_or(0)
 }
 
-fn walk_hot_column<F: Field>(
+fn walk_hot_column<F: JoltField>(
     context: &'static CudaKernelContext,
     witness: &dyn JoltWitnessPlane<F>,
-    kind: crate::reference::commitment::ColumnKind,
+    kind: ColumnKind,
     cycles: usize,
     one_hot_k: usize,
 ) -> Result<(CudaSlice<u32>, usize), KernelError<F>> {
@@ -643,7 +646,7 @@ fn walk_hot_column<F: Field>(
     Ok((context.upload_u32_slice(&hot)?, span))
 }
 
-fn increment_plan<F: Field>(
+fn increment_plan<F: JoltField>(
     polynomial: JoltCommittedPolynomial,
     cycles: usize,
     grid: CommitmentGrid,
@@ -661,7 +664,7 @@ fn increment_plan<F: Field>(
     Ok(EmbedPlan::ZeroExtend)
 }
 
-fn increment_columns<F: Field>(
+fn increment_columns<F: JoltField>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     polynomials: &[JoltCommittedPolynomial],
@@ -708,16 +711,27 @@ fn increment_columns<F: Field>(
     Ok(built)
 }
 
-impl<F: Field> JointOpeningPolynomials<F> for CudaBackend {
+impl<F: JoltField> JointOpeningPolynomials<F> for CudaBackend {
+    #[cfg(feature = "field-inline")]
+    fn prepare_field_inline(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        grid: CommitmentGrid,
+    ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>> {
+        OptimizedBackend.prepare_field_inline(session, witness, grid)
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
         let context = require_context::<F>()?;
+        let mut precommitted_tables = precommitted_tables()?;
         let cycles = 1usize << grid.log_t;
         let mut sparse = tracing::info_span!("cuda_opening_sparse_plan")
             .in_scope(|| sparse_hot_columns::<F>(context, session, witness, polynomials, grid))?;
@@ -734,8 +748,8 @@ impl<F: Field> JointOpeningPolynomials<F> for CudaBackend {
                         plan: increment_plan::<F>(polynomial, cycles, grid)?,
                     }
                 } else {
-                    let table = match precommitted_tables.get(&polynomial) {
-                        Some(table) => table.clone(),
+                    let table = match precommitted_tables.remove(&polynomial) {
+                        Some(table) => table,
                         None => dense_view(witness, final_opening_id(polynomial))?,
                     };
                     let plan = embed_plan(polynomial, &table, grid)?;
@@ -751,30 +765,48 @@ impl<F: Field> JointOpeningPolynomials<F> for CudaBackend {
     }
 }
 
-impl<F: Field> AdviceOpeningEvaluation<F> for CudaBackend {
+impl<F: JoltField> RamInitialOpeningEvaluation<F> for CudaBackend {
     fn evaluate(
         &self,
         _session: &mut ProofSession,
-        kind: JoltAdviceKind,
-        point: &[F],
-        witness: &dyn JoltWitnessOracle<F>,
-    ) -> Result<F, KernelError<F>> {
+        openings: &[RamInitialOpening<'_, F>],
+        witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<Vec<F>, KernelError<F>> {
         let context = require_context::<F>()?;
-        let table = dense_view(witness, ram_val_check_advice_opening(kind))?;
-        if table.len() != 1usize << point.len() {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{kind:?} advice"),
-                expected: 1usize << point.len(),
-                got: table.len(),
-            });
-        }
-        let device = context.upload(require_fr_slice(&table)?)?;
-        let eq = context.eq_evals(require_fr_slice(point)?)?;
-        let products = context.mul(&device, &eq)?;
-        let value = context.sum(&products)?;
-        fr_into(value).ok_or(KernelError::Unsupported {
-            reason: "CUDA kernels support only the BN254 scalar field",
-        })
+        openings
+            .iter()
+            .map(|opening| {
+                let (table, point, scale) = match opening {
+                    RamInitialOpening::Advice { kind, point } => (
+                        dense_view(witness, ram_val_check_advice_opening(*kind))?,
+                        *point,
+                        F::one(),
+                    ),
+                    RamInitialOpening::ProgramImage { layout, point } => {
+                        // Main owns sparse segment geometry, including non-aligned image starts.
+                        return Ok(crate::opening::evaluate_program_image(
+                            layout, point, witness,
+                        ));
+                    }
+                };
+                if table.len() != 1usize << point.len() {
+                    return Err(KernelError::TableSizeMismatch {
+                        table: "initial RAM opening".to_owned(),
+                        expected: 1usize << point.len(),
+                        got: table.len(),
+                    });
+                }
+                let device = context.upload(require_fr_slice(&table)?)?;
+                let eq = context.eq_evals(require_fr_slice(point)?)?;
+                let products = context.mul(&device, &eq)?;
+                let value = context.sum(&products)?;
+                fr_into::<F>(value)
+                    .map(|value| value * scale)
+                    .ok_or(KernelError::Unsupported {
+                        reason: "CUDA kernels support only the BN254 scalar field",
+                    })
+            })
+            .collect()
     }
 }
 
@@ -784,6 +816,8 @@ impl<F: Field> AdviceOpeningEvaluation<F> for CudaBackend {
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use super::HotShard;
+    use crate::reference::commitment::ColumnKind;
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -791,7 +825,7 @@ mod tests {
         JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, TracePolynomialOrder,
     };
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::MultilinearPoly;
     use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
     use proptest::prelude::*;
@@ -801,7 +835,7 @@ mod tests {
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::device_columns::{device_columns_for, witness_identity, DeviceColumn};
     use crate::cuda::common::testing::{advice_plane, fr, with_r1cs_witness};
-    use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
+    use crate::opening::{JointOpeningPolynomials, RamInitialOpening, RamInitialOpeningEvaluation};
     use crate::optimized::support::collect_rows;
     use crate::reference::commitment::column_kinds;
     use crate::reference::ReferenceBackend;
@@ -824,7 +858,7 @@ mod tests {
     const PRECOMMITTED_VARS: [(JoltCommittedPolynomial, usize); 4] = [
         (JoltCommittedPolynomial::TrustedAdvice, 9),
         (JoltCommittedPolynomial::UntrustedAdvice, 10),
-        (JoltCommittedPolynomial::BytecodeChunk(0), 12),
+        (JoltCommittedPolynomial::ProgramBytecode, 12),
         (JoltCommittedPolynomial::ProgramImageInit, 11),
     ];
 
@@ -862,7 +896,7 @@ mod tests {
         evaluation: Fr,
     }
 
-    fn hot_addresses(shards: &[super::HotShard]) -> Vec<u32> {
+    fn hot_addresses(shards: &[HotShard]) -> Vec<u32> {
         let mut hot = Vec::new();
         for shard in shards {
             let device = crate::cuda::common::context::context_for(shard.ordinal)
@@ -899,7 +933,13 @@ mod tests {
     ) -> Vec<PolynomialFacts> {
         let order_ids = batch_order(witness, tables);
         let polynomials = backend
-            .prepare(session, witness, &order_ids, tables, probe.grid)
+            .prepare(
+                session,
+                witness,
+                &order_ids,
+                Box::new(|| Ok(tables.clone())),
+                probe.grid,
+            )
             .expect("joint opening polynomials");
         polynomials
             .iter()
@@ -1392,7 +1432,7 @@ mod tests {
                 .filter(|&id| super::is_trace_derived(id))
                 .collect();
             let kinds = column_kinds::<Fr>(&trace_derived, grid).expect("stage 8 kinds");
-            let selectors = |kinds: &[crate::reference::commitment::ColumnKind]| {
+            let selectors = |kinds: &[ColumnKind]| {
                 kinds
                     .iter()
                     .map(|kind| format!("{kind:?}"))
@@ -1404,7 +1444,7 @@ mod tests {
                 "commit and stage 8 assign different chunk selectors to the same ids, so a \
                  column parked under an id would be read as a different chunk",
             );
-            let rows = collect_rows::<Fr, CommittedColumnsWitness>(witness, 1usize << log_t)
+            let rows = collect_rows::<CommittedColumnsWitness>(witness, 1usize << log_t)
                 .expect("oracle rows");
             for (&id, &kind) in trace_derived.iter().zip(&kinds) {
                 let Some(shards) = served.get(&id) else {
@@ -1491,14 +1531,18 @@ mod tests {
     }
 
     fn advice_opening(
-        backend: &dyn AdviceOpeningEvaluation<Fr>,
-        witness: &dyn JoltWitnessOracle<Fr>,
+        backend: &dyn RamInitialOpeningEvaluation<Fr>,
+        witness: &dyn JoltWitnessPlane<Fr>,
         kind: JoltAdviceKind,
         point: &[Fr],
     ) -> Fr {
         backend
-            .evaluate(&mut ProofSession::default(), kind, point, witness)
-            .expect("advice opening")
+            .evaluate(
+                &mut ProofSession::default(),
+                &[RamInitialOpening::Advice { kind, point }],
+                witness,
+            )
+            .expect("advice opening")[0]
     }
 
     fn precommitted_tables(seed: u64) -> BTreeMap<JoltCommittedPolynomial, Vec<Fr>> {
@@ -1628,7 +1672,7 @@ mod tests {
             let Some(_) = shared_context() else { return Ok(()); };
             let fixture = advice_plane(ADVICE_BYTES, seed);
             let vars = fixture.trusted.len().ilog2() as usize;
-            let witness = &fixture.plane as &dyn JoltWitnessOracle<Fr>;
+            let witness = &fixture.plane as &dyn JoltWitnessPlane<Fr>;
             let point: Vec<Fr> = (0..vars)
                 .map(|index| fr(seed ^ (index as u64).wrapping_mul(17).wrapping_add(5)))
                 .collect();

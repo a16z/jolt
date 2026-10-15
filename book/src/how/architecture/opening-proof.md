@@ -2,9 +2,10 @@
 
 The final stage ([stage 8](./architecture.md)) of Jolt is the batched opening proof.
 Over the course of the preceding stages, we obtain polynomial evaluation claims that must be proven using the [polynomial commitment scheme](../appendix/pcs.md)'s opening proof.
-Instead of proving these openings "just-in-time", we **accumulate** them and defer the opening proof to the last stage (see `ProverOpeningAccumulator` and `VerifierOpeningAccumulator` for how this accumulation is implemented).
+Instead of proving these openings "just-in-time", we **accumulate** them and defer the opening proof to the last stage (see `ProverOpeningAccumulator` and `VerifierOpeningAccumulator` in the legacy prover for this accumulation).
 By waiting until the end, we can [batch-prove](../optimizations/batched-openings.md) all of the openings, instead of proving them individually.
-This is important because the [Dory](../dory.md) opening proof is relatively expensive for the prover, so we want to avoid doing it multiple times.
+Jolt supports two commitment backends: the elliptic-curve-based [Dory](../dory.md) backend combines commitments homomorphically, while the lattice-based [Akita](../akita.md) backend uses native column batching and a grouped opening proof.
+Both amortize the cost of proving the accumulated evaluation claims in Stage 8.
 
 ## Claim reduction sumchecks
 
@@ -13,18 +14,18 @@ Throughout the earlier stages of Jolt, various components generate multiple poly
 These claim reduction sumchecks serve two purposes:
 
 1. Reduce the number of claims that need to be virtualized by a subsequent sumcheck. E.g. if the same virtual polynomial $P$ is opened at two different points $r_1$ and $r_2$, a claim reduction can be applied to avoid running two instances of the sumcheck that virtualized $P$. 
-2. Reduce the number of claims that need to be proven via PCS opening proof. While we can leverage the homomorphic properties of Dory in the [Multiple polynomials, same point](../optimizations/batched-openings.md#multiple-polynomials-same-point) subprotocol, we must first reduce multiple opening points to a single, unified opening point.
+2. Reduce the number of claims that need to be proven via PCS opening proof. Dory's homomorphic batching and Akita's native trace batching both use claims at a common point. Akita's independently committed objects can retain their own opening points in the final grouped proof.
 
-The claim reduction sumchecks can be found in `crates/jolt-prover-legacy/src/zkvm/claim_reductions/` and include:
+The claim-reduction formulas live in `crates/jolt-claims/src/protocols/jolt/relations/claim_reductions/`, with prover kernels in `crates/jolt-kernels/src/optimized/`. They include:
 
 - **Instruction lookups** (`instruction_lookups.rs`): Aggregates instruction lookup claims (lookup outputs and operands) from Spartan.
 - **Registers** (`registers.rs`): Reduces register read/write claims (rd, rs1, rs2) from Spartan.
 - **RAM RA** (`ram_ra.rs`): Consolidates the four RAM read-address (RA) claims from various RAM-related sumchecks (raf evaluation, read-write checking, Val evaluation, Val-final evaluation) into a single claim for the RA virtualization sumcheck.
 - **Increments** (`increments.rs`): Reduces claims related to increment checks.
 - **Hamming weight** (`hamming_weight.rs`): Reduces hamming weight-related claims.
-- **Advice** (`advice.rs`): Reduces claims from advice polynomials.
-- **Bytecode** (`bytecode.rs`): Reduces committed bytecode openings into the shared Stage 8 final opening layout.
-- **Program image** (`program_image.rs`): Reduces the committed initial-memory image into the same final opening layout.
+- **Advice** (`advice.rs`, Dory only): Reduces claims from advice polynomials. Akita obtains its advice opening claims directly from Stage 4's RAM value check.
+- **Bytecode** (`bytecode.rs`): Reduces committed bytecode openings for Stage 8.
+- **Program image** (`program_image.rs`): Reduces committed initial-memory image openings for Stage 8.
 
 ### How claim reduction sumchecks work
 
@@ -36,7 +37,15 @@ A claim reduction sumcheck takes multiple polynomial evaluation claims, potentia
    $$\sum_{\mathbf{x}} \text{eq}(\mathbf{r}_1, \mathbf{x}) \cdot P_1(\mathbf{x}) + \gamma \cdot \text{eq}(\mathbf{r}_2, \mathbf{x}) \cdot P_2(\mathbf{x}) + \ldots = v_1 + \gamma \cdot v_2 + \ldots$$
 4. **Output**: Polynomial evaluation claims of the form $P_i(\mathbf{r}') = v'_i$ for a **single**, unified point $\mathbf{r}'$ derived from the sumcheck challenges.
 
-## Final reduction
+## Akita grouped opening
+
+Akita commits the trace as one native `OneHotTrace` group containing the actual one-hot columns. Each column has `log_T + log_K` variables in `(cycle || address)` order. Stage 8 assembles exactly one evaluation per canonical column at the common point; it adds no slot variables and performs no selector reduction. The [native grouped opening](../optimizations/batched-openings.md#native-grouped-openings-akita) proves the ordered evaluations without combining commitments homomorphically.
+
+Advice and committed-program data are independent dense commitment objects: optional untrusted and trusted advice, one whole `ProgramBytecode` object, and a `ProgramImageInit` object. Stage 8 reduces the claims for each object separately, then opens all present objects together with `OneHotTrace` in one native Akita proof. Each group retains its own shape and opening point. The canonical order is untrusted advice, trusted advice, whole bytecode, program image, and finally `OneHotTrace`, omitting absent objects. Group roles, commitments, points, and evaluations are bound to the transcript before the backend proof.
+
+The modular prover implements this in `crates/jolt-prover/src/akita/stage8.rs`, with the verifier counterpart in `crates/jolt-verifier/src/stages/stage8/akita.rs`. `AkitaNativeBatching` in `crates/jolt-akita/src/native_batching.rs` validates the groups and invokes the native backend opening. The Dory matrix embeddings described below apply only to the Dory backend.
+
+## Final reduction with Dory
 
 After the claim reduction sumchecks have consolidated related claims, we perform a final reduction to prepare for the Dory opening. 
 
@@ -47,7 +56,7 @@ Since Dory is an additively homomorphic commitment scheme, the verifier is able 
 
 ### Precommitted polynomials and final opening layout
 
-Most Stage 8 polynomials are **trace-domain** polynomials: their shape is determined by the padded execution trace and the address domain. Some committed polynomials, however, are fixed independently of the trace. Examples include bytecode chunks, the program image, and trusted or untrusted advice. In the implementation these independently committed objects are called **precommitted** polynomials.
+Most Stage 8 polynomials are **trace-domain** polynomials: their shape is determined by the padded execution trace and the address domain. Some committed polynomials, however, are fixed independently of the trace. Examples include whole bytecode in Dory and Akita, the program image, and trusted or untrusted advice. In the implementation these independently committed objects are called **precommitted** polynomials.
 
 The goal of Stage 8 is still the same: every committed polynomial should be opened at one batched Dory proof. The subtlety is that a precommitted polynomial keeps the Dory matrix shape it had when it was committed, while the trace-domain polynomials use Jolt's native trace layout.
 
@@ -250,7 +259,7 @@ r_{\mathrm{inc}}
 \big].
 $$
 
-The implementation is located in `compute_final_opening_point()` in `crates/jolt-prover-legacy/src/zkvm/mod.rs`.
+The implementation is `final_opening_point()` in `crates/jolt-claims/src/protocols/jolt/geometry/committed_openings.rs`; Stage 8 calls it from `crates/jolt-prover/src/dory/stages/stage8.rs`.
 
 #### Embedded Precommitted Polynomials
 

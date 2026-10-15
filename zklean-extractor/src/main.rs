@@ -1,6 +1,3 @@
-//#![feature(iter_intersperse, generic_const_exprs, generic_const_items)]
-//#![allow(incomplete_features)] // Silence warnings for generic_const_exprs
-
 use std::path::PathBuf;
 
 use zklean_extractor::constants::*;
@@ -75,7 +72,7 @@ fn extract_modules<const XLEN: usize>() -> Vec<Box<dyn AsModule>> {
     vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
-        Box::new(ZkLeanSumchecks::<ark_bn254::Fr>::extract::<XLEN>()),
+        Box::new(ZkLeanSumchecks::extract::<XLEN>()),
         Box::new(ZkLeanLookupTables::<XLEN>::extract()),
         Box::new(ZkLeanLookupTableFlags::<XLEN>::extract()),
         Box::new(ZkLeanTests::<XLEN>::extract(&mut rng)),

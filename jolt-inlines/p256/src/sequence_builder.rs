@@ -62,13 +62,13 @@ const P256_NEG_N: [u64; 4] = [
 struct P256Mulq {
     asm: InlineExpansionBuilder,
     a: [InlineRegister; 4],
-    b: Option<[InlineRegister; 4]>, // only allocated if Mul or Div
+    b: Option<[InlineRegister; 4]>,
     w: [InlineRegister; 4],
     p1: InlineRegister,
     p2: InlineRegister,
     p3: InlineRegister,
     aux: InlineRegister,
-    aux2: Option<InlineRegister>, // only allocated if Square
+    aux2: Option<InlineRegister>,
     r: [InlineRegister; 2],
     operands: InlineOperands,
     op_type: MulqType,
@@ -156,13 +156,10 @@ impl P256Mulq {
         })
     }
 
-    // inline sequence function
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        // load a, b, and w
         for i in 0..4 {
             match self.op_type {
                 MulqType::Mul => {
-                    // if mul, load a and b
                     self.asm
                         .emit_ld(Kind::LD, *self.a[i], self.operands.rs1, i as i64 * 8);
                     self.asm.emit_ld(
@@ -173,12 +170,10 @@ impl P256Mulq {
                     );
                 }
                 MulqType::Square => {
-                    // if square load only a
                     self.asm
                         .emit_ld(Kind::LD, *self.a[i], self.operands.rs1, i as i64 * 8);
                 }
                 MulqType::Div => {
-                    // if div load b and
                     self.asm.emit_ld(
                         Kind::LD,
                         *self.b.as_ref().unwrap()[i],
@@ -194,10 +189,7 @@ impl P256Mulq {
             self.asm.emit_j(Kind::VIRTUAL_ADVICE, *self.w[i], 0);
         }
 
-        // load p constants into p1, p2, p3
         if self.is_scalar_field {
-            // Scalar field: p = [0x0C46353D039CDAAF, 0x4319055258E8617B, 0, 0x00000000FFFFFFFF]
-            // p1 = p[0], p2 = p[1], p3 = p[3]
             self.asm.emit_u(Kind::LUI, *self.p1, P256_NEG_N[0]);
             self.asm.emit_u(Kind::LUI, *self.p2, P256_NEG_N[1]);
             self.asm.emit_u(Kind::LUI, *self.p3, P256_NEG_N[3]);
@@ -210,8 +202,6 @@ impl P256Mulq {
             self.asm.emit_u(Kind::LUI, *self.p3, P256_PQ[3]);
         }
 
-        // compute ab + wp into result limbs
-        // special handling for bottom limb r[0]
         match self.op_type {
             MulqType::Square => {
                 self.asm
@@ -227,9 +217,7 @@ impl P256Mulq {
             }
         }
 
-        // add w[0]*p[0] contribution to limb 0, carry into r[1]
         if self.is_scalar_field {
-            // scalar field: p[0] is in p1, use MAC
             self.asm
                 .mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p1, *self.aux);
         } else {
@@ -237,8 +225,6 @@ impl P256Mulq {
             self.asm.adc(*self.r[1], *self.r[0], *self.w[0]);
         }
 
-        // if mul or square, store the lowest limb in rs3
-        // if div, verify that the lowest limb matches the lowest limb of the actual argument a
         match self.op_type {
             MulqType::Div => {
                 self.asm.emit_ld(Kind::LD, *self.aux, self.operands.rs1, 0);
@@ -250,8 +236,6 @@ impl P256Mulq {
             }
         }
 
-        // loop over output limbs 1 through 6
-        // here we ping-pong between r[0] and r[1] as the main limb and carry limb
         for k in 1..7 {
             let mut first = true;
             let rk = *self.r[k % 2];
@@ -261,14 +245,12 @@ impl P256Mulq {
                 // Scalar field: p = [p1, p2, 0, p3]
                 // p[0] in p1, p[1] in p2, p[2] = 0 (skip), p[3] in p3
 
-                // j=0 (p1): i = k, need k < 4
                 if k < 4 {
                     self.asm
                         .mac_low_conditional(!first, rk_next, rk, *self.w[k], *self.p1, *self.aux);
                     first = false;
                 }
 
-                // j=1 (p2): i = k-1, need k-1 in 0..3 => k in 1..4
                 if k >= 1 && k - 1 < 4 {
                     self.asm.mac_low_conditional(
                         !first,
@@ -283,7 +265,6 @@ impl P256Mulq {
 
                 // j=2: p[2] = 0, skip
 
-                // j=3 (p3): i = k-3, need k-3 in 0..3 => k in 3..6
                 if k >= 3 && k - 3 < 4 {
                     self.asm.mac_low_conditional(
                         !first,
@@ -296,7 +277,6 @@ impl P256Mulq {
                     first = false;
                 }
 
-                // j=0 (p1): i = k-1, need k-1 in 0..3 => k in 1..4
                 if k >= 1 && k - 1 < 4 {
                     self.asm.mac_high_conditional(
                         !first,
@@ -309,7 +289,6 @@ impl P256Mulq {
                     first = false;
                 }
 
-                // j=1 (p2): i = k-2, need k-2 in 0..3 => k in 2..5
                 if k >= 2 && k - 2 < 4 {
                     self.asm.mac_high_conditional(
                         !first,
@@ -324,7 +303,6 @@ impl P256Mulq {
 
                 // j=2: p[2] = 0, skip
 
-                // j=3 (p3): i = k-4, need k-4 in 0..3 => k in 4..7, capped at k<=6
                 if k >= 4 && k - 4 < 4 {
                     self.asm.mac_high_conditional(
                         !first,
@@ -340,15 +318,12 @@ impl P256Mulq {
                 // Base field: p = [1, p1, p2, p3]
                 // p[0] = 1 (implicit ADD, high = 0), p[1] in p1, p[2] in p2, p[3] in p3
 
-                // j=0 (p[0]=1): i = k, need k < 4
-                // low(w[k] * 1) = w[k], use ADD
                 if k < 4 {
                     self.asm
                         .add_conditional(!first, rk_next, rk, *self.w[k], *self.aux);
                     first = false;
                 }
 
-                // j=1 (p1): i = k-1, need k-1 in 0..3 => k in 1..4
                 if k >= 1 && k - 1 < 4 {
                     self.asm.mac_low_conditional(
                         !first,
@@ -361,7 +336,6 @@ impl P256Mulq {
                     first = false;
                 }
 
-                // j=2 (p2): i = k-2, need k-2 in 0..3 => k in 2..5
                 if k >= 2 && k - 2 < 4 {
                     self.asm.mac_low_conditional(
                         !first,
@@ -374,7 +348,6 @@ impl P256Mulq {
                     first = false;
                 }
 
-                // j=3 (p3): i = k-3, need k-3 in 0..3 => k in 3..6
                 if k >= 3 && k - 3 < 4 {
                     self.asm.mac_low_conditional(
                         !first,
@@ -390,7 +363,6 @@ impl P256Mulq {
                 // j=0 (p[0]=1): i = k-1
                 // high(w[k-1] * 1) = 0, skip entirely
 
-                // j=1 (p1): i = k-2, need k-2 in 0..3 => k in 2..5
                 if k >= 2 && k - 2 < 4 {
                     self.asm.mac_high_conditional(
                         !first,
@@ -403,7 +375,6 @@ impl P256Mulq {
                     first = false;
                 }
 
-                // j=2 (p2): i = k-3, need k-3 in 0..3 => k in 3..6
                 if k >= 3 && k - 3 < 4 {
                     self.asm.mac_high_conditional(
                         !first,
@@ -416,7 +387,6 @@ impl P256Mulq {
                     first = false;
                 }
 
-                // j=3 (p3): i = k-4, need k-4 in 0..3 => k in 4..7, capped at k<=6
                 if k >= 4 && k - 4 < 4 {
                     self.asm.mac_high_conditional(
                         !first,
@@ -430,7 +400,6 @@ impl P256Mulq {
                 }
             }
 
-            // add all lower(a[i] * b[j]) where i+j = k
             for i in 0..=k {
                 let j = k - i;
                 if i < 4 && j < 4 {
@@ -475,7 +444,6 @@ impl P256Mulq {
                 }
             }
 
-            // add all upper(a[i] * b[j]) where i+j = k-1
             for i in 0..=k - 1 {
                 let j = k - 1 - i;
                 if i < 4 && j < 4 {
@@ -520,10 +488,7 @@ impl P256Mulq {
                 }
             }
 
-            // handle the lower limbs
             if k < 4 {
-                // if mul or square, store the limb in rs3
-                // if div, verify that the lower limbs match the actual argument a
                 match self.op_type {
                     MulqType::Div => {
                         self.asm
@@ -535,7 +500,6 @@ impl P256Mulq {
                             .emit_s(Kind::SD, self.operands.rs3, rk, k as i64 * 8);
                     }
                 }
-            // verify that the upper limbs match w
             } else if k >= 4 {
                 self.asm
                     .emit_b(Kind::VirtualAssertEQ, rk, *self.w[k - 4], 0);
@@ -555,7 +519,6 @@ impl P256Mulq {
         self.asm
             .emit_r(Kind::ADD, *self.r[1], *self.r[1], *self.aux);
 
-        // high(a[3]*b[3]) or high(a[3]*a[3])
         match self.op_type {
             MulqType::Square => {
                 self.asm
@@ -572,7 +535,6 @@ impl P256Mulq {
         }
         jolt_asm!(self.asm, {
             add *self.r[1], *self.r[1], *self.aux;
-            // verify that w[3] matches top limb
             assert_eq *self.r[1], *self.w[3];
             // ensure no overflow
             assert_lte *self.aux, *self.r[1];
@@ -589,7 +551,6 @@ impl P256Mulq {
             }
         }
 
-        // clean up inline
         self.asm.release_many(self.a);
         match self.op_type {
             MulqType::Square => {}
@@ -722,16 +683,13 @@ impl FakeGlvAdvBuilder {
         operands: FormatInline,
         ctx: &mut dyn InlineAdviceContext,
     ) -> Result<P256FakeGlvAdvice, InlineAdviceError> {
-        // Read scalar s from rs1
         let s_addr = ctx.register(operands.rs1 as usize);
         let s_limbs = load_field_element_limbs(ctx, s_addr)?;
 
-        // Read point P from rs2 (8 u64 limbs: x then y)
         let p_addr = ctx.register(operands.rs2 as usize);
         let px = load_field_element_limbs(ctx, p_addr)?;
         let py = load_field_element_limbs(ctx, p_addr + 32)?;
 
-        // Compute R = s * P using arkworks
         use ark_ec::CurveGroup;
         use ark_secp256r1::Projective;
         let s_fr = Fr::new(BigInt(s_limbs));
@@ -744,7 +702,6 @@ impl FakeGlvAdvBuilder {
         let rx: [u64; 4] = r_result.x.into_bigint().0;
         let ry: [u64; 4] = r_result.y.into_bigint().0;
 
-        // Half-GCD decomposition via shared module
         let s_big: NBigInt = Fr::new(BigInt(s_limbs)).into_bigint().into();
         let (a, a_negative, b, b_negative) = crate::fake_glv::decompose_to_u128s(&s_big);
 

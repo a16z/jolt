@@ -3,9 +3,9 @@
 //!
 //! Pure orchestration mirroring `stage4::verify`: the `Val_init`
 //! decomposition (public initial-RAM evaluation + init structure) is built
-//! with the verifier's own promoted helpers; the advice blocks' opening
-//! VALUES are the prover-only work (the advice polynomial evaluated at each
-//! block's address sub-point, staged transcript-silently before the RAM
+//! with the verifier's own promoted helpers; the private opening VALUES
+//! are evaluated through the backend as one batch (program image and advice,
+//! staged transcript-silently before the RAM
 //! value-check gamma draw). The stage's one curated behavior: the batch
 //! carries `no_opening_values`, so the final absorbs use the claims struct's
 //! hand-ordered `opening_values()` (staged advice/program-image openings
@@ -14,16 +14,20 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_field::JoltField;
+use jolt_kernels::opening::RamInitialOpening;
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-use jolt_poly::sparse_segments_mle_msb;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
 use jolt_verifier::stages::stage4::outputs::{
     Stage4ClearOutput, Stage4OutputClaims, Stage4Sumchecks,
 };
@@ -35,14 +39,13 @@ use jolt_verifier::stages::stage4::{
     VerifiedRamValCheckAdviceContribution,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
-pub struct Stage4ProverOutput<F: Field, C> {
+pub struct Stage4ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage4OutputClaims<F>,
     pub clear_output: Stage4ClearOutput<F>,
@@ -54,19 +57,17 @@ pub struct Stage4ProverOutput<F: Field, C> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage4<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage2: &Stage2ClearOutput<F>,
     stage3: &Stage3ClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage4ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -105,62 +106,62 @@ where
     let untrusted_advice_present = !checked.public_io.untrusted_advice.is_empty();
     let init_structure =
         ram_val_check_init_structure(checked, untrusted_advice_present, r_address, public_eval)?;
-    // The committed program-image contribution: the image words' block MLE at
-    // the RAM address point (the public initial-RAM evaluation switched to
-    // inputs-only above, so this staged opening carries the image's share).
+    // Submit all private contributions together so device backends can share
+    // one batch. Only scalar values cross this seam; geometry and transcript
+    // ordering stay with this coordinator.
+    let mut openings = Vec::new();
+    if let Some(point) = init_structure.program_image_point.as_ref() {
+        let layout =
+            checked
+                .precommitted
+                .program_image
+                .as_ref()
+                .ok_or(ProverError::InvariantViolation {
+                    reason: "program-image init contribution without a committed layout",
+                })?;
+        openings.push(RamInitialOpening::ProgramImage { layout, point });
+    }
+    openings.extend(init_structure.advice_blocks.iter().map(|(kind, block)| {
+        RamInitialOpening::Advice {
+            kind: *kind,
+            point: &block.opening_point,
+        }
+    }));
+    let values = if openings.is_empty() {
+        Vec::new()
+    } else {
+        tracing::info_span!("RamInitialOpeningEvaluation::evaluate")
+            .in_scope(|| backend.evaluate_ram_initial_openings(&openings))?
+    };
+    if values.len() != openings.len() {
+        return Err(ProverError::InvariantViolation {
+            reason: "initial RAM opening count does not match the requests",
+        });
+    }
+    let mut values = values.into_iter();
     let program_image_contribution = init_structure
         .program_image_point
         .as_ref()
         .map(|point| {
-            let layout = checked.precommitted.program_image.as_ref().ok_or(
-                ProverError::InvariantViolation {
-                    reason: "program-image init contribution without a committed layout",
-                },
-            )?;
-            let program = preprocessing
-                .program()
-                .ok_or(ProverError::InvariantViolation {
-                    reason: "full program preprocessing is unavailable",
-                })?;
-            let value = sparse_segments_mle_msb(
-                std::iter::once((
-                    layout.start_index() as u128,
-                    program.ram.bytecode_words.as_slice(),
-                )),
-                point,
-            );
+            let value = values.next().ok_or(ProverError::InvariantViolation {
+                reason: "missing program-image initial RAM opening",
+            })?;
             Ok::<_, ProverError<F>>((point.clone(), value))
         })
         .transpose()?;
-    // The advice blocks' opening values: each advice polynomial evaluated at
-    // its block's address sub-point. Staged before the RAM value-check gamma
-    // draw, exactly as legacy's `prover_accumulate_advice` — transcript-silent
-    // on this branch (the claims flush with the stage-4 batch openings).
     let advice_contributions = init_structure
         .advice_blocks
         .iter()
-        .map(|(kind, block)| {
-            // Backend-neutral kernel-seam span at the call boundary — see
-            // the taxonomy's kernel-seam contract.
-            let opening_value =
-                tracing::info_span!("AdviceOpeningEvaluation::evaluate", kind = ?kind).in_scope(
-                    || {
-                        backend.advice_opening.evaluate(
-                            session,
-                            *kind,
-                            &block.opening_point,
-                            witness,
-                        )
-                    },
-                )?;
-            Ok(VerifiedRamValCheckAdviceContribution {
+        .zip(values)
+        .map(
+            |((kind, block), opening_value)| VerifiedRamValCheckAdviceContribution {
                 kind: *kind,
                 selector: block.selector,
                 opening_point: block.opening_point.clone(),
                 opening_value,
-            })
-        })
-        .collect::<Result<Vec<_>, ProverError<F>>>()?;
+            },
+        )
+        .collect();
     let ram_val_check_init = RamValCheckInitialEvaluation {
         public_eval,
         program_image_contribution,
@@ -169,11 +170,17 @@ where
 
     let sumchecks = Stage4Sumchecks {
         registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write: FieldRegistersReadWriteChecking::new(
+            JOLT_VERIFIER_CONFIG
+                .field_inline
+                .read_write_dimensions(log_t),
+        ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
-    // Draws the registers gamma, then the RAM value-check gamma behind its
-    // `b"ram_val_check_gamma"` domain separator (replayed by the relation's
-    // `draw_challenges` override).
+    // Draws the registers gamma, under `field-inline` the field-register read-write gamma,
+    // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
+    // separator (replayed by the relation's `draw_challenges` override).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage4_input_values_from_upstream(
@@ -192,12 +199,10 @@ where
     // at prepare), and the stage's `no_opening_values` absorb order is the
     // batch's hand-written `opening_values` replacement (staged openings
     // first, then registers, then RAM) — the driver's default curation.
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &challenges,
@@ -220,4 +225,284 @@ where
         #[cfg(feature = "zk")]
         committed_witness,
     })
+}
+
+/// Clear round-trips with field-inline enabled of the stage-4 recipe against the verifier's own
+/// public constituents — `stage4::verify`'s clear body step for step (the
+/// `Val_init` decomposition, the three-member batch with the field-register read-write
+/// member, the generated absorb splicing the five field-inline openings) on a twin
+/// transcript positioned by the stage-1..3 replays. The 32-byte
+/// transcript-state equality pins the absorb order end to end. A second test
+/// drives the field-register read-write kernel directly and ties every extracted opening
+/// to a direct MLE evaluation of the witness oracle's tables at the bound
+/// point.
+#[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod field_inline_round_trip {
+    use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use jolt_claims::protocols::field_inline::relations::registers::{
+        FieldRegistersReadWriteChallenges, FieldRegistersReadWriteInputClaims,
+    };
+    use jolt_claims::protocols::field_inline::{
+        FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
+    };
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::{Fr, Ring};
+    use jolt_kernels::ProverInputs;
+    use jolt_poly::EqPolynomial;
+    use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
+    use jolt_verifier::stages::relations::ConcreteSumcheck as _;
+    use jolt_witness::JoltWitnessOracle as _;
+
+    use super::*;
+    use crate::stages::field_inline_fixtures::{
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
+        test_prover_config, test_public_io, twins, LOG_T,
+    };
+
+    #[test]
+    fn field_arithmetic_stage4_round_trips_the_composed_verifier() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
+        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let config = test_prover_config();
+        let public_io = test_public_io();
+        let checked = test_checked_inputs();
+        let preprocessing = field_arithmetic_preprocessing();
+
+        let mut prover_transcript = Blake2bTranscript::new(b"stage4-field-inline");
+        let (stage1, stage2, stage3) = FixtureProver {
+            backend: &mut context,
+            mode: &mode,
+            config: &config,
+            public_io: &public_io,
+            checked: &checked,
+            preprocessing: &preprocessing,
+            transcript: &mut prover_transcript,
+        }
+        .through_stage3();
+        let out = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &mut context,
+            &mode,
+            &checked,
+            &config,
+            &preprocessing,
+            &stage2.clear_output,
+            &stage3.clear_output,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        // The verifier twin (stage4::verify's clear body, shared as the
+        // stage-5+ twins' replay), positioned by the upstream replays.
+        let mut transcript = Blake2bTranscript::new(b"stage4-field-inline");
+        twins::replay_stage1(&mut transcript, &stage1);
+        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
+        twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
+        twins::replay_stage4(
+            &mut transcript,
+            &config,
+            &checked,
+            &preprocessing,
+            &stage2,
+            &stage3,
+            &out,
+        );
+
+        assert_eq!(transcript.state(), prover_transcript.state());
+    }
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    /// `Σ_i eq(point, i) · evals[i]` — the big-endian MLE the oracle grids and
+    /// opening points share.
+    fn mle(evals: &[Fr], point: &[Fr]) -> Fr {
+        EqPolynomial::<Fr>::evals(point, None)
+            .into_iter()
+            .zip(evals)
+            .map(|(eq, value)| eq * *value)
+            .sum()
+    }
+
+    #[test]
+    fn field_register_read_write_kernel_outputs_match_direct_mle() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
+        let oracle = witness.field_inline().unwrap();
+
+        let relation = FieldRegistersReadWriteChecking::<Fr>::new(
+            JOLT_VERIFIER_CONFIG
+                .field_inline
+                .read_write_dimensions(LOG_T),
+        );
+        let r_cycle: Vec<Fr> = (0..LOG_T as u64).map(|i| fr(100 + i)).collect();
+        let table = |id: FieldInlinePolynomialId| oracle.oracle_table(id).unwrap();
+        let cycle_table = |polynomial: FieldInlineVirtualPolynomial| {
+            table(FieldInlinePolynomialId::Virtual(polynomial))
+        };
+        let claims = FieldRegistersReadWriteInputClaims::<Fr> {
+            rd_value: mle(
+                &cycle_table(FieldInlineVirtualPolynomial::FieldRdValue),
+                &r_cycle,
+            ),
+            rs1_value: mle(
+                &cycle_table(FieldInlineVirtualPolynomial::FieldRs1Value),
+                &r_cycle,
+            ),
+            rs2_value: mle(
+                &cycle_table(FieldInlineVirtualPolynomial::FieldRs2Value),
+                &r_cycle,
+            ),
+        };
+        let points = FieldRegistersReadWriteInputClaims::<Vec<Fr>> {
+            rd_value: r_cycle.clone(),
+            rs1_value: r_cycle.clone(),
+            rs2_value: r_cycle.clone(),
+        };
+        let challenges = FieldRegistersReadWriteChallenges { gamma: fr(7) };
+        let mut kernel = context
+            .prepare(ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            })
+            .unwrap();
+
+        let rounds = relation.rounds();
+        let sumcheck_point: Vec<Fr> = (0..rounds as u64).map(|i| fr(200 + i)).collect();
+        let mut previous_claim = relation.input_claim(&claims, &challenges).unwrap();
+        for (round, challenge) in sumcheck_point.iter().enumerate() {
+            let bind = (round > 0).then(|| sumcheck_point[round - 1]);
+            let message = kernel.prove_round(bind, round, previous_claim).unwrap();
+            previous_claim = message.evaluate(*challenge);
+        }
+        kernel
+            .finish_rounds(*sumcheck_point.last().unwrap())
+            .unwrap();
+
+        let outputs = kernel.output_claims(&claims).unwrap();
+        let output_points = relation
+            .derive_opening_points(&sumcheck_point, &points)
+            .unwrap();
+        kernel
+            .validate_derived_tables(&relation, &points, &output_points, &challenges)
+            .unwrap();
+
+        let opening_point = output_points.registers_val();
+        let grid = |polynomial| cycle_table(polynomial);
+        assert_eq!(
+            outputs.registers_val,
+            mle(
+                &grid(FieldInlineVirtualPolynomial::FieldRegistersVal),
+                opening_point
+            )
+        );
+        assert_eq!(
+            outputs.rs1_ra,
+            mle(
+                &grid(FieldInlineVirtualPolynomial::FieldRs1Ra),
+                opening_point
+            )
+        );
+        assert_eq!(
+            outputs.rs2_ra,
+            mle(
+                &grid(FieldInlineVirtualPolynomial::FieldRs2Ra),
+                opening_point
+            )
+        );
+        assert_eq!(
+            outputs.rd_wa,
+            mle(
+                &grid(FieldInlineVirtualPolynomial::FieldRdWa),
+                opening_point
+            )
+        );
+        // `FieldRdInc` is cycle-only; its MLE at the joint point is its MLE at
+        // the cycle sub-point (the address variables integrate out).
+        let inc = table(FieldInlinePolynomialId::Committed(
+            FieldInlineCommittedPolynomial::FieldRdInc,
+        ));
+        let (_, cycle_sub_point) = opening_point.split_at(opening_point.len() - LOG_T);
+        assert_eq!(outputs.rd_inc, mle(&inc, cycle_sub_point));
+
+        let expected = relation
+            .expected_output(&points, &outputs, &output_points, &challenges)
+            .unwrap();
+        assert_eq!(previous_claim, expected);
+    }
+}
+
+/// ZK with field-inline enabled: the stage-4 committed shell carries the curated row count — the
+/// 5 ordinary register openings, the 5 spliced field-register read-write openings, and
+/// the 2 RAM value-check openings (no advice / program-image rows at the
+/// fixture's scale).
+#[cfg(all(test, feature = "field-inline", feature = "zk"))]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod field_inline_zk {
+    use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
+    use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+
+    use super::*;
+    use crate::stages::field_inline_fixtures::{
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
+        test_prover_config, test_public_io,
+    };
+
+    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
+
+    #[test]
+    fn committed_stage4_shell_carries_the_curated_rows() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
+        let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
+        let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
+        let config = test_prover_config();
+        let public_io = test_public_io();
+        let checked = test_checked_inputs();
+        let preprocessing = field_arithmetic_preprocessing();
+
+        let mut transcript = Blake2bTranscript::new(b"stage4-field-inline-zk");
+        let (_stage1, stage2, stage3) = FixtureProver {
+            backend: &mut context,
+            mode: &mode,
+            config: &config,
+            public_io: &public_io,
+            checked: &checked,
+            preprocessing: &preprocessing,
+            transcript: &mut transcript,
+        }
+        .through_stage3();
+        let out = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &mut context,
+            &mode,
+            &checked,
+            &config,
+            &preprocessing,
+            &stage2.clear_output,
+            &stage3.clear_output,
+            &mut transcript,
+        )
+        .unwrap();
+
+        let values: Vec<Fr> = out
+            .committed_witness
+            .output_claim_rows
+            .iter()
+            .flatten()
+            .copied()
+            .collect();
+        assert_eq!(values.len(), 12);
+    }
 }

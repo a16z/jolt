@@ -15,9 +15,9 @@ This skill runs locally or in Claude Code cloud (claude.ai/code) — NOT in CI. 
 - Read CLAUDE.md for project conventions, testing requirements, and architecture.
 - Each phase must complete before the next begins.
 - Parallel execution within phases where possible.
-- If something in the spec is ambiguous, post a PR comment rather than guessing.
+- Resolve routine implementation choices from the spec and repository conventions. For ambiguity affecting correctness, scope, or acceptance criteria, post a focused PR question and continue unaffected work.
 - Do not add features, refactor code, or make improvements beyond the spec.
-- If the spec lacks the `claude-spec-approved` label, warn that it hasn't been analyzed yet (implementation from an unanalyzed spec risks rework), but proceed if the user insists.
+- If the spec lacks the `claude-spec-approved` label, note that it hasn't been analyzed. An explicit user instruction to implement it is sufficient authorization; otherwise request approval.
 </Execution_Policy>
 
 <Steps>
@@ -65,15 +65,17 @@ This skill runs locally or in Claude Code cloud (claude.ai/code) — NOT in CI. 
 
 ## Phase 3: QA
 
-Cycle until all checks pass (up to 5 cycles):
+Run the checks sequentially until all pass (up to 5 cycles). Repeat checks only when a failure or subsequent change requires it; complete the full matrix before handoff.
 
 1. **Format**: `cargo fmt -q`
 2. **Lint** (both modes):
    - `cargo clippy --all --features host --message-format=short -q --all-targets -- -D warnings`
    - `cargo clippy --all --features host,zk --message-format=short -q --all-targets -- -D warnings`
 3. **Test**: Run evaluation criteria from the spec, plus:
-   - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host`
-   - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk`
+   - `cargo nextest run -p jolt-verifier standard_muldiv --features prover-fixtures --cargo-quiet`
+   - `cargo nextest run -p jolt-prover --features prover-fixtures --cargo-quiet`
+   - `cargo nextest run -p jolt-prover --features prover-fixtures,zk --cargo-quiet`
+   - `cargo nextest run -p jolt-prover --features akita,prover-fixtures --cargo-quiet`
    - `cargo nextest run -p jolt-eval --cargo-quiet` — runs every invariant's seed-corpus + random-inputs tests; any named in the spec must pass.
 4. **Fix** any failures and repeat.
 
@@ -81,7 +83,7 @@ If the same error persists 3 times, stop and post a PR comment describing the fu
 
 ## Phase 4: Validate
 
-Run parallel validation:
+Validate the result, reusing Phase 3 results unless subsequent changes invalidate them:
 
 1. **Correctness**: All spec evaluation criteria pass.
 2. **Mechanical checks (jolt-eval)**: For each objective named in the spec's Evaluation → Performance section, run `cargo run -p jolt-eval --bin measure-objectives -- --objective <name>` and confirm it moved in the declared direction (or stayed within the declared tolerance). All invariants named or introduced in the spec's Intent → Invariants section must pass — the Phase 3 `cargo nextest run -p jolt-eval` covers seed corpus + random inputs.

@@ -6,25 +6,22 @@ use std::sync::Arc;
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::{
     field_inline::{
-        FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlinePolynomialId,
-        FieldInlineVirtualPolynomial,
+        FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
     },
-    jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId},
+    jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial},
 };
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_program::{
-    execution::{
-        JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,
-    },
+    execution::{FieldEvent, JoltProgram, TraceData, TraceOutput},
     field_inline::{
-        FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
-        FieldRegisterWrite,
+        FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
     },
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{
-    FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
-    NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_FIELD_INLINE,
+    CircuitFlags, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
+    NormalizedOperands, RamAccess, RegisterRead, RegisterState, RegisterWrite, RV64IMAC_JOLT,
+    RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_witness::{
     field_inline::{TraceBackedFieldInlineWitness, FIELD_INLINE_LABEL},
@@ -88,15 +85,25 @@ fn program(bytecode: Vec<JoltInstructionRow>, profile: JoltInstructionProfile) -
 fn witness(
     program: &Arc<JoltProgram>,
     preprocessing: &Arc<JoltProgramPreprocessing>,
-    rows: Vec<TraceRow>,
+    rows: Vec<JoltTraceRow>,
+    field_events: Vec<FieldEvent>,
     log_t: usize,
-) -> TraceBackend<OwnedTrace> {
+) -> TraceBackend {
+    let rows = rows
+        .into_iter()
+        .map(|row| {
+            let instruction = row.instruction();
+            let pc = u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap();
+            JoltTraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap()
+        })
+        .collect();
+    let data = TraceData::from_parts(rows, field_events).unwrap();
     TraceBackend::new(
         config(log_t),
         JoltVmWitnessInputs::new(
             program,
             preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+            TraceOutput::new(data, Default::default(), None, None),
         ),
     )
 }
@@ -109,15 +116,11 @@ fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
-fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-    TraceRow {
-        instruction,
-        field_inline: Some(data.into()),
-        ..TraceRow::default()
-    }
+fn row(instruction: JoltInstructionRow, registers: RegisterState) -> JoltTraceRow {
+    JoltTraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap()
 }
 
-fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
+fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Vec<FieldEvent>) {
     let load_a = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
         0,
@@ -126,18 +129,18 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
         None,
         13,
     );
-    let row0 = field_row(
-        load_a,
-        FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadImm),
+    let event0 = FieldEvent {
+        cycle: 0,
+        data: FieldInlineTraceData {
+            rs1: None,
+            rs2: None,
             rd: Some(FieldRegisterWrite {
                 register: 1,
                 pre_value: enc(0),
                 post_value: enc(13),
             }),
-            ..FieldInlineTraceData::default()
         },
-    );
+    };
     let load_b = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
         1,
@@ -146,18 +149,18 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
         None,
         17,
     );
-    let row1 = field_row(
-        load_b,
-        FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadImm),
+    let event1 = FieldEvent {
+        cycle: 1,
+        data: FieldInlineTraceData {
+            rs1: None,
+            rs2: None,
             rd: Some(FieldRegisterWrite {
                 register: 2,
                 pre_value: enc(0),
                 post_value: enc(17),
             }),
-            ..FieldInlineTraceData::default()
         },
-    );
+    };
     let mul = instruction(
         JoltInstructionKind::FIELD_MUL,
         2,
@@ -166,10 +169,9 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
         Some(2),
         0,
     );
-    let row2 = field_row(
-        mul,
-        FieldInlineTraceData {
-            op: Some(FieldInlineOp::Mul),
+    let event2 = FieldEvent {
+        cycle: 2,
+        data: FieldInlineTraceData {
             rs1: Some(FieldRegisterRead {
                 register: 1,
                 value: enc(13),
@@ -183,11 +185,14 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
                 pre_value: enc(0),
                 post_value: enc(221),
             }),
-            product: Some(enc(221)),
-            ..FieldInlineTraceData::default()
         },
-    );
-    (vec![load_a, load_b, mul], vec![row0, row1, row2])
+    };
+    let bytecode = vec![load_a, load_b, mul];
+    let rows = bytecode
+        .iter()
+        .map(|&instruction| row(instruction, RegisterState::default()))
+        .collect();
+    (bytecode, rows, vec![event0, event1, event2])
 }
 
 fn owned_view(
@@ -206,14 +211,11 @@ fn field_rd_inc_column(provider: &TraceBackedFieldInlineWitness) -> Vec<Fr> {
 
 #[test]
 fn field_inline_public_provider_materializes_views() {
-    let (bytecode, rows) = public_fixture();
+    let (bytecode, rows, field_events) = public_fixture();
     let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
-    let witness = witness(&program, &preprocessing, rows, 2);
+    let witness = witness(&program, &preprocessing, rows, field_events, 2);
     let provider = witness.field_inline_witness().unwrap();
-
-    let order = provider.committed_order();
-    assert_eq!(order, vec![FieldInlineCommittedPolynomial::FieldRdInc]);
 
     assert_eq!(
         field_rd_inc_column(&provider),
@@ -226,95 +228,61 @@ fn field_inline_public_provider_materializes_views() {
     );
     assert_eq!(&products[..4], &[fr(0), fr(0), fr(221), fr(0)]);
 
-    let mul_flags = owned_view(
-        &provider,
-        FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::Mul,
-        )),
-    );
+    let mul_flags = JoltWitnessOracle::<Fr>::oracle_table(
+        &witness,
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldMul)),
+    )
+    .unwrap();
     assert_eq!(&mul_flags[..4], &[fr(0), fr(0), fr(1), fr(0)]);
-}
-
-#[test]
-fn field_inline_public_provider_is_absent_for_fr_off_programs() {
-    let bytecode = vec![instruction(
-        JoltInstructionKind::ADDI,
-        0,
-        Some(1),
-        Some(2),
-        None,
-        3,
-    )];
-    let program = program(bytecode.clone(), RV64IMAC_JOLT);
-    let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
-    let witness = witness(
-        &program,
-        &preprocessing,
-        vec![TraceRow {
-            instruction: instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3),
-            ..TraceRow::default()
-        }],
-        2,
-    );
-
-    assert_eq!(
-        witness.field_inline_witness().err(),
-        Some(WitnessError::UnavailableView {
-            label: FIELD_INLINE_LABEL,
-        })
-    );
 }
 
 #[test]
 fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
     let load = instruction(
-        JoltInstructionKind::FIELD_LOAD_FROM_X,
+        JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
         0,
         Some(1),
         Some(5),
         None,
         0,
     );
-    let load_row = TraceRow {
-        instruction: load,
-        registers: RegisterState {
+    let load_row = row(
+        load,
+        RegisterState {
             rs1: Some(RegisterRead {
                 register: 5,
                 value: 19,
             }),
             ..RegisterState::default()
         },
-        field_inline: Some(
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadFromX),
-                rd: Some(FieldRegisterWrite {
-                    register: 1,
-                    pre_value: enc(0),
-                    post_value: enc(19),
-                }),
-                bridge: Some(FieldInlineBridge::LoadFromX {
-                    x_register: 5,
-                    x_value: 19,
-                    field_value: enc(19),
-                }),
-                ..FieldInlineTraceData::default()
-            }
-            .into(),
-        ),
-        ..TraceRow::default()
+    );
+    let load_event = FieldEvent {
+        cycle: 0,
+        data: FieldInlineTraceData {
+            rs1: Some(FieldRegisterRead {
+                register: 1,
+                value: enc(0),
+            }),
+            rs2: None,
+            rd: Some(FieldRegisterWrite {
+                register: 1,
+                pre_value: enc(0),
+                post_value: enc(19),
+            }),
+        },
     };
 
-    let store = instruction(
-        JoltInstructionKind::FIELD_STORE_TO_X,
+    let advice = instruction(
+        JoltInstructionKind::FIELD_ADVICE_LIMB,
         1,
         Some(6),
         Some(1),
-        None,
+        Some(0),
         0,
     );
-    let store_row = TraceRow {
-        instruction: store,
-        registers: RegisterState {
+    let advice_row = row(
+        advice,
+        RegisterState {
             rd: Some(RegisterWrite {
                 register: 6,
                 pre_value: 0,
@@ -322,30 +290,33 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
             }),
             ..RegisterState::default()
         },
-        field_inline: Some(
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::StoreToX),
-                rs1: Some(FieldRegisterRead {
-                    register: 1,
-                    value: enc(19),
-                }),
-                bridge: Some(FieldInlineBridge::StoreToX {
-                    field_register: 1,
-                    field_value: enc(19),
-                    x_register: 6,
-                    x_value: 19,
-                }),
-                ..FieldInlineTraceData::default()
-            }
-            .into(),
-        ),
-        ..TraceRow::default()
+    );
+    let advice_event = FieldEvent {
+        cycle: 1,
+        data: FieldInlineTraceData {
+            rs1: Some(FieldRegisterRead {
+                register: 1,
+                value: enc(19),
+            }),
+            rs2: None,
+            rd: Some(FieldRegisterWrite {
+                register: 0,
+                pre_value: enc(0),
+                post_value: enc(0),
+            }),
+        },
     };
 
-    let bytecode = vec![load, store];
+    let bytecode = vec![load, advice];
     let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
-    let witness = witness(&program, &preprocessing, vec![load_row, store_row], 2);
+    let witness = witness(
+        &program,
+        &preprocessing,
+        vec![load_row, advice_row],
+        vec![load_event, advice_event],
+        2,
+    );
     let provider = witness.field_inline_witness().unwrap();
 
     let ordinary = JoltWitnessOracle::<Fr>::oracle_table(
@@ -359,4 +330,61 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
         field_rd_inc_column(&provider),
         vec![fr(19), fr(0), fr(0), fr(0)]
     );
+}
+
+#[test]
+fn plane_accessor_serves_the_attached_field_inline_view() {
+    let (bytecode, rows, field_events) = public_fixture();
+    let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
+    let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
+
+    // Fail-closed default: a field-inline backend without the attached view serves no
+    // field-inline oracle.
+    let detached = witness(
+        &program,
+        &preprocessing,
+        rows.clone(),
+        field_events.clone(),
+        2,
+    );
+    assert!(JoltWitnessOracle::<Fr>::field_inline(&detached).is_none());
+
+    let attached = witness(&program, &preprocessing, rows, field_events, 2)
+        .with_field_inline()
+        .unwrap();
+    let oracle: &dyn JoltWitnessOracle<Fr> = &attached;
+    let provider = oracle.field_inline().unwrap();
+    assert_eq!(
+        provider
+            .oracle_table(FieldInlinePolynomialId::Committed(
+                FieldInlineCommittedPolynomial::FieldRdInc,
+            ))
+            .unwrap(),
+        vec![fr(13), fr(17), fr(221), fr(0)]
+    );
+}
+
+#[test]
+fn plane_accessor_stays_absent_for_profile_without_field_inline() {
+    let instruction = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
+    let bytecode = vec![instruction];
+    let program = program(bytecode.clone(), RV64IMAC_JOLT);
+    let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
+    let backend = witness(
+        &program,
+        &preprocessing,
+        vec![row(instruction, RegisterState::default())],
+        Vec::new(),
+        2,
+    );
+
+    assert!(JoltWitnessOracle::<Fr>::field_inline(&backend).is_none());
+    // The view cannot be attached for a guest without field-inline, so the accessor can
+    // never become Some.
+    assert!(matches!(
+        backend.with_field_inline(),
+        Err(WitnessError::UnavailableView {
+            label: FIELD_INLINE_LABEL,
+        })
+    ));
 }

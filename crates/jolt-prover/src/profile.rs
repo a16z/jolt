@@ -12,14 +12,15 @@
 //!     profile --name fibonacci --format chrome
 //! ```
 //!
-//! Pipeline (promoted from the retired `examples/modular_benchmark.rs`):
-//! legacy-side guest compile/decode (the modular stack has no host
-//! toolchain), legacy preprocessing → verifier preprocessing, modular trace
-//! (`TracerBackend`), derived `ProverConfig`, `TraceBackend` witness,
-//! [`jolt_prover::prove`](crate::prove) over the selected backend, and a full
-//! `jolt_verifier::verify` as the correctness gate. Only `prove` is measured
-//! — guest compilation, tracer execution, and preprocessing are excluded
-//! from every reported metric.
+//! Pipeline: guest compile/decode, modular preprocessing and trace
+//! (`TracerBackend`), derived `ProverConfig`, `TraceBackend` witness, the
+//! compiled protocol's prove over the selected backend — `dory::prove`, or
+//! `akita::prove` on the Akita build (artifact names gain an `_akita`
+//! suffix so the two protocols' runs never collide) — and a full
+//! `jolt_verifier::verify` as the correctness gate. PCS setup, prove, and
+//! verifier latency under explicit host-parallel and single-threaded
+//! pools are measured separately; guest compilation, tracer execution, and
+//! non-PCS preprocessing remain excluded.
 
 #![expect(
     clippy::expect_used,
@@ -30,54 +31,89 @@
 )]
 
 use std::fs;
-use std::io::Write as _;
+use std::io::{Result, Write as _};
+#[cfg(not(feature = "akita"))]
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "akita")]
+use std::result::Result as ParseResult;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
-use common::jolt_device::{JoltDevice, MemoryConfig};
+use common::jolt_device::{MemoryConfig, MemoryLayout};
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaChunkProfile;
+#[cfg(not(feature = "akita"))]
 use jolt_crypto::{Bn254G1, Pedersen};
+#[cfg(not(feature = "akita"))]
 use jolt_dory::DoryScheme;
+#[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
-// Keep the inline libraries linked so their host-side registrations reach the
-// tracer, exactly as the legacy harness does.
+// Keep the inline libraries linked so their host-side registrations reach the tracer.
+#[cfg(all(feature = "field-inline", feature = "akita"))]
+use jolt_akita::AkitaField;
+use jolt_host::{JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
-    format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing_with_trace_path,
+    format_memory_size, report_stage_memory, setup_tracing_with_trace_path, PeakMemory,
     TracingFormat, BYTES_PER_GIB,
 };
-use jolt_program::execution::{
-    ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
-};
-use jolt_prover_legacy::host;
-use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
-use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
-use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
-use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
+use jolt_program::preprocess::JoltProgramPreprocessing;
+#[cfg(feature = "field-inline")]
+use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+type FieldInlineField = Fr;
+#[cfg(all(feature = "field-inline", feature = "akita"))]
+type FieldInlineField = AkitaField;
+#[cfg(not(feature = "akita"))]
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+#[cfg(not(feature = "akita"))]
+use rayon::ThreadPoolBuilder;
 use tracer::execution_backend::TracerBackend;
 
-use crate::{JoltBackend, JoltProverPreprocessing, ProverConfig};
+use crate::JoltBackend;
+use crate::JoltSharedPreprocessing;
+use crate::ProverConfig;
 
-#[cfg(feature = "cuda")]
-mod cuda;
-
-// Empirically measured cycles per operation for RV64IMAC — copied from the
-// legacy harness (`benches/e2e_profiling.rs`) so both harnesses construct
-// identical guest inputs for a given scale.
+// Empirically measured RV64IMAC cycles per operation. These values keep
+// current benchmark scales comparable with prior results.
 const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
-const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
+const SAFETY_MARGIN: f64 = 0.9;
+const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
+const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
 
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
+}
+
+/// The compiled protocol's artifact-name suffix: one compiled harness proves
+/// exactly one protocol, and the Akita runs must never collide with the
+/// homomorphic runs' trace names, `latest_` links, or CSV rows (the Dory
+/// names stay unsuffixed — they are the paths existing consumers key on).
+#[cfg(not(feature = "akita"))]
+const PROTOCOL_SUFFIX: &str = "";
+#[cfg(feature = "akita")]
+const PROTOCOL_SUFFIX: &str = "_akita";
+
+/// The run identity `modular_{workload}{protocol}_{scale}{backend}` — the
+/// trace-name stem shared by the run directory, the `latest_` link (which
+/// the sweep's resume check reads), and the artifact lock. The reference
+/// Dory names stay bare `modular_{workload}_{scale}` — the deterministic
+/// paths `jolt-eval` telemetry reads.
+fn trace_name(workload: Workload, scale: u32, backend: BackendKind) -> String {
+    format!(
+        "modular_{}{PROTOCOL_SUFFIX}_{scale}{}",
+        workload.as_str().replace('-', "_"),
+        backend.trace_suffix()
+    )
 }
 
 /// The scalable workloads the harness supports, with the default scales
@@ -90,6 +126,12 @@ pub enum Workload {
     Sha3Chain,
     #[value(name = "btreemap")]
     BTreeMap,
+    /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
+    /// that exercises the field-inline columns and kernels. Fixed-size (its input does
+    /// not scale), so it is not in the default sweep list.
+    #[cfg(feature = "field-inline")]
+    #[value(name = "field-ops")]
+    FieldOps,
 }
 
 impl Workload {
@@ -100,7 +142,16 @@ impl Workload {
             Self::Sha2Chain => "sha2-chain",
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
+            #[cfg(feature = "field-inline")]
+            Self::FieldOps => "field-ops",
         }
+    }
+
+    /// Whether the guest uses the field-inline SDK surface (and so needs the
+    /// `field-inline` guest feature besides the field-inline instruction profile).
+    #[cfg(feature = "field-inline")]
+    const fn uses_field_inline(self) -> bool {
+        matches!(self, Self::FieldOps)
     }
 
     /// Default log2 trace length when `--scale` is omitted.
@@ -110,12 +161,12 @@ impl Workload {
             Self::Sha2Chain => 22,
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
+            #[cfg(feature = "field-inline")]
+            Self::FieldOps => 16,
         }
     }
 
-    /// The guest input targeting `target` trace cycles — the same mapping as
-    /// the legacy harness's `master_benchmark`.
-    pub fn input(self, target: usize) -> Vec<u8> {
+    fn input(self, target: usize) -> Vec<u8> {
         match self {
             Self::Fibonacci => {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT))
@@ -137,8 +188,23 @@ impl Workload {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP))
                     .expect("serialize input")
             }
+            #[cfg(feature = "field-inline")]
+            Self::FieldOps => eqpoly_inputs(),
         }
     }
+}
+
+/// The eq-MLE guest's inputs: the `(r_i, x_i)` pairs and the expected
+/// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))`, pinned in the compiled
+/// protocol's proof field as four canonical little-endian u64 limbs (the
+/// guest Horner-recomposes them in whatever field it proves over; a 16-byte
+/// field fills the low two limbs). The same shape the field-inline e2e and verifier
+/// fixture generators feed the guest.
+#[cfg(feature = "field-inline")]
+fn eqpoly_inputs() -> Vec<u8> {
+    const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
+    jolt_host::field_inline::eqpoly_inputs::<FieldInlineField>(EQ_PAIRS)
+        .expect("field-ops input encoding")
 }
 
 /// Subscriber stack selector.
@@ -172,8 +238,6 @@ impl OutputFormat {
 pub enum BackendKind {
     Reference,
     Optimized,
-    #[cfg(feature = "cuda")]
-    Cuda,
 }
 
 impl BackendKind {
@@ -185,8 +249,6 @@ impl BackendKind {
         match self {
             Self::Reference => "reference",
             Self::Optimized => "optimized",
-            #[cfg(feature = "cuda")]
-            Self::Cuda => "cuda",
         }
     }
 
@@ -197,9 +259,18 @@ impl BackendKind {
         match self {
             Self::Reference => "",
             Self::Optimized => "_optimized",
-            #[cfg(feature = "cuda")]
-            Self::Cuda => "_cuda",
         }
+    }
+}
+
+#[cfg(feature = "akita")]
+fn parse_akita_chunk_profile(value: &str) -> ParseResult<AkitaChunkProfile, String> {
+    match value {
+        "single" => Ok(AkitaChunkProfile::Single),
+        "w2r2" => Ok(AkitaChunkProfile::Two),
+        "w4r2" => Ok(AkitaChunkProfile::Four),
+        "w8r2" => Ok(AkitaChunkProfile::Eight),
+        _ => Err("expected single, w2r2, w4r2, or w8r2".into()),
     }
 }
 
@@ -211,7 +282,7 @@ pub struct ProfileArgs {
     pub name: Workload,
 
     /// log2 of the max (padded) trace length; per-workload default when
-    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20).
+    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20, field-ops 16).
     #[clap(long)]
     pub scale: Option<u32>,
 
@@ -220,6 +291,42 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
+
+    /// Akita witness chunk profile: single, w2r2, w4r2, or w8r2.
+    #[cfg(feature = "akita")]
+    #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "single")]
+    pub akita_chunk_profile: AkitaChunkProfile,
+}
+
+impl ProfileArgs {
+    #[cfg(feature = "akita")]
+    fn chunk_profile_suffix(&self) -> String {
+        match self.akita_chunk_profile {
+            AkitaChunkProfile::Single => String::new(),
+            profile => format!("_w{}r2", profile.num_chunks()),
+        }
+    }
+
+    fn workload_name(&self) -> String {
+        let name = self.name.as_str().to_string();
+        #[cfg(feature = "akita")]
+        let name = format!("{name}{}", self.chunk_profile_suffix());
+        name
+    }
+
+    fn benchmark_name(&self) -> String {
+        let name = format!("{}{PROTOCOL_SUFFIX}", self.name.as_str());
+        #[cfg(feature = "akita")]
+        let name = format!("{name}{}", self.chunk_profile_suffix());
+        name
+    }
+
+    fn trace_name(&self, scale: u32) -> String {
+        let name = trace_name(self.name, scale, self.backend);
+        #[cfg(feature = "akita")]
+        let name = format!("{name}{}", self.chunk_profile_suffix());
+        name
+    }
 }
 
 /// `benchmark` subcommand arguments: a multi-scale sweep over the workload
@@ -265,7 +372,6 @@ pub struct ProfileArtifacts {
 /// orders of magnitude past any provable trace.
 const MAX_SCALE: u32 = 40;
 
-/// Rejects out-of-range log2 trace lengths before they wrap a shift.
 fn validate_scale(scale: u32) {
     assert!(
         (1..=MAX_SCALE).contains(&scale),
@@ -318,11 +424,7 @@ impl Drop for RunLock {
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
-    let trace_name = format!(
-        "modular_{}_{scale}{}",
-        args.name.as_str().replace('-', "_"),
-        args.backend.trace_suffix()
-    );
+    let trace_name = args.trace_name(scale);
     let _run_lock = RunLock::acquire(&trace_name);
 
     // One directory per run — benchmark-runs/{timestamp}_{trace_name}/ —
@@ -353,11 +455,11 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         )),
     };
 
-    run_workload(args.name, scale, args.backend, &run_dir);
+    run_workload(args, scale, &run_dir);
 
     // The workload's high-water mark, sampled before the flush-time trace
     // parse/rewrite below can inflate it with tooling allocations.
-    let peak_rss = peak_rss_bytes();
+    let peak = PeakMemory::sample();
 
     // Dropping the guards flushes the chrome trace; only then can the
     // flush-time pipeline parse it.
@@ -370,12 +472,12 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     }
 
     let ctx = SummaryContext {
-        workload: args.name.as_str().to_string(),
+        workload: args.workload_name(),
         scale_log2: scale,
         backend: args.backend.as_str().to_string(),
     };
     let (summary_file, summary) =
-        finalize_trace(&trace_path, &ctx, peak_rss).expect("finalize chrome trace");
+        finalize_trace(&trace_path, &ctx, peak).expect("finalize chrome trace");
 
     if let Some(root) = &summary.root {
         println!(
@@ -451,9 +553,8 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
             // A completed run flips the `latest_` link, so its presence is
             // the resume marker (dangling links read as absent).
             let latest_link = format!(
-                "benchmark-runs/latest_modular_{}_{scale}{}",
-                name.replace('-', "_"),
-                args.backend.trace_suffix()
+                "benchmark-runs/latest_{}",
+                trace_name(workload, scale, args.backend)
             );
             if args.resume && std::path::Path::new(&latest_link).exists() {
                 println!("  ⏭ Skipping {name} (found {latest_link})");
@@ -516,154 +617,123 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     failed.is_empty()
 }
 
-fn measure_prove<PCS, W>(
-    backend: &JoltBackend<Fr, PCS>,
-    preprocessing: &JoltProverPreprocessing<PCS, Pedersen<Bn254G1>>,
-    config: &ProverConfig,
-    witness: Arc<W>,
-    public_io: &JoltDevice,
-) -> (Duration, usize)
-where
-    PCS: jolt_openings::CommitmentScheme<Field = Fr>
-        + jolt_openings::AdditivelyHomomorphic
-        + jolt_openings::ZkOpeningScheme<HidingCommitment = Bn254G1, Blind = Fr>,
-    PCS::Output: jolt_transcript::AppendToTranscript + jolt_crypto::HomomorphicCommitment<Fr>,
-    W: jolt_witness::JoltWitnessPlane<Fr> + 'static,
-{
-    let now = Instant::now();
-    let proof = crate::prove::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript, W>(
-        backend,
-        preprocessing,
-        config,
-        None,
-        witness,
-        public_io,
-    )
-    .expect("modular prove");
-    let duration = now.elapsed();
-
-    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
-        .expect("serialize proof")
-        .len();
-
-    // --- Correctness gate (unmeasured): the proof must verify.
-    jolt_verifier::verify::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript>(
-        &preprocessing.verifier,
-        public_io,
-        &proof,
-        None,
-    )
-    .expect("modular proof verifies");
-
-    (duration, proof_size)
+struct ProvenRun {
+    duration: Duration,
+    setup_duration: Duration,
+    verifier_parallel: VerificationRun,
+    verifier_single_threaded: VerificationRun,
+    proof_size: usize,
 }
 
-fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
+struct VerificationRun {
+    duration: Duration,
+    threads: usize,
+}
+
+#[derive(Clone, Copy)]
+enum VerificationMode {
+    Parallel,
+    SingleThreaded,
+}
+
+impl VerificationRun {
+    fn seconds(&self) -> f64 {
+        self.duration.as_secs_f64()
+    }
+}
+
+fn measure_verifier(
+    mode: VerificationMode,
+    threads: usize,
+    verify: impl FnOnce(),
+) -> VerificationRun {
+    let span = match mode {
+        VerificationMode::Parallel => tracing::info_span!("profile_verifier_parallel", threads),
+        VerificationMode::SingleThreaded => {
+            tracing::info_span!("profile_verifier_single_threaded", threads)
+        }
+    };
+    let _guard = span.enter();
+    let now = Instant::now();
+    verify();
+    let duration = now.elapsed();
+    tracing::info!(
+        wall_time_s = duration.as_secs_f64(),
+        "verifier profile complete"
+    );
+    VerificationRun { duration, threads }
+}
+
+fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let contents = fs::read_to_string(path)?;
+    let Some((header, rows)) = contents.split_once('\n') else {
+        return Ok(());
+    };
+    if header != LEGACY_TIMINGS_HEADER {
+        return Ok(());
+    }
+    let mut migrated = String::with_capacity(contents.len() + TIMINGS_HEADER.len());
+    migrated.push_str(TIMINGS_HEADER);
+    migrated.push('\n');
+    for row in rows.lines().filter(|row| !row.is_empty()) {
+        migrated.push_str(row);
+        migrated.push_str(",,,,");
+        migrated.push('\n');
+    }
+    fs::write(path, migrated)
+}
+
+fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
+    let workload = args.name;
+    let backend = args.backend;
     let bench_name = workload.as_str();
+    let backend_label = backend.as_str();
     let max_trace_length = 1usize << scale;
     let bench_target = (max_trace_length as f64 * SAFETY_MARGIN) as usize;
     tracing::info!("Running modular {bench_name} profile at scale 2^{scale}");
 
     let input = workload.input(bench_target);
 
-    // --- Guest + preprocessing (unmeasured): the guest is compiled/decoded
-    // through the legacy host toolchain, and the verifier preprocessing
-    // (program view + digest) comes from the legacy preprocessing exactly as
-    // in the byte-diff tests.
-    let mut program = host::Program::new(&format!("{bench_name}-guest"));
-    let (bytecode, init_memory_state, _, entry_address) = program.decode();
-    let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
+    let mut program = Program::new(&format!("{bench_name}-guest"));
+    #[cfg(feature = "field-inline")]
+    if workload.uses_field_inline() {
+        program.enable_field_inline();
+    }
+    #[cfg(feature = "field-inline")]
+    program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
+    let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
     assert!(
-        legacy_trace.len().next_power_of_two() <= max_trace_length,
+        sizing_trace.len().next_power_of_two() <= max_trace_length,
         "Trace is longer than expected"
     );
-    drop(legacy_trace);
-    let elf_contents = program.get_elf_contents().expect("elf contents");
+    jolt_kernels::mem::drop_in_background_thread(sizing_trace);
     let memory_layout = io_device.memory_layout.clone();
-
-    let program_data =
-        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
-            .expect("legacy preprocess");
-    let shared_preprocessing =
-        JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
-    let legacy_preprocessing = LegacyProverPreprocessing::<
-        jolt_prover_legacy::ark_bn254::Fr,
-        jolt_prover_legacy::curve::Bn254Curve,
-        DoryCommitmentScheme,
-    >::new(shared_preprocessing);
-    let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
-    let program_preprocessing = verifier_preprocessing
-        .program
-        .as_full_arc()
-        .expect("full program preprocessing");
-    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
-
-    // --- Modular trace (unmeasured, like legacy's `gen_from_elf` emulation).
-    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
-    let trace_length = trace_output.trace.rows().len();
-
-    let config = ProverConfig::derive::<Fr>(
-        trace_output.trace.rows(),
-        &memory_layout,
-        verifier_preprocessing.program.min_bytecode_address(),
-        verifier_preprocessing.program.program_image_len_words(),
+    let jolt_program = Arc::new(program.build_jolt_program().expect("build Jolt program"));
+    let program_preprocessing = JoltProgramPreprocessing::new(
+        jolt_program.expanded_bytecode.clone(),
+        jolt_program.memory_init.clone(),
+        memory_layout.clone(),
+        jolt_program.entry_address,
         max_trace_length,
+        program.instruction_profile(),
     )
-    .expect("derive config");
-    let public_io = trace_output.device.clone();
-    let padded_output = pad_trace(trace_output, config.trace_length);
+    .expect("program preprocessing");
 
-    let witness = Arc::new(TraceBackend::new(
-        JoltVmWitnessConfig::new(
-            config.trace_length.ilog2() as usize,
-            config.ram_K,
-            config.one_hot_config,
-        ),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-    ));
+    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    let trace_length = trace_output.trace.proof_len();
 
-    // PCS setup sized like the byte-diff harness: the main one-hot matrix
-    // maxed with both advice candidates (always included in setup sizing,
-    // present or not — the SRS is prefix-stable).
-    let total_vars = (config.one_hot_config.committed_chunk_bits()
-        + config.trace_length.ilog2() as usize)
-        .max(advice_vars(memory_layout.max_trusted_advice_size))
-        .max(advice_vars(memory_layout.max_untrusted_advice_size));
-    let backend_label = backend.as_str();
-
-    // --- The measured window: the full modular prove (witness
-    // materialization, commitment, all sumcheck stages, joint opening). The
-    // `jolt_prover::prove` root span covers exactly this interval; the
-    // Instant is the `--format none` no-subscriber baseline.
-    let (duration, proof_size) = match backend {
-        BackendKind::Reference | BackendKind::Optimized => {
-            let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
-                verifier: verifier_preprocessing,
-                pcs_setup: DoryScheme::setup_prover(total_vars),
-                committed_program: None,
-            };
-            let backend = if matches!(backend, BackendKind::Reference) {
-                JoltBackend::<Fr, DoryScheme>::reference()
-            } else {
-                JoltBackend::<Fr, DoryScheme>::optimized()
-            };
-            measure_prove(
-                &backend,
-                &prover_preprocessing,
-                &config,
-                Arc::clone(&witness),
-                &public_io,
-            )
-        }
-        #[cfg(feature = "cuda")]
-        BackendKind::Cuda => cuda::prove_measured(
-            verifier_preprocessing,
-            total_vars,
-            &config,
-            Arc::clone(&witness),
-            &public_io,
-        ),
-    };
+    let run = prove_workload(
+        &jolt_program,
+        program_preprocessing,
+        trace_output,
+        backend,
+        #[cfg(feature = "akita")]
+        args.akita_chunk_profile,
+    );
+    let (duration, proof_size) = (run.duration, run.proof_size);
 
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
     let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
@@ -675,30 +745,45 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         proving_hz / 1000.0,
         padded_proving_hz / 1000.0,
     );
-    if let Some(peak) = peak_rss_bytes() {
-        println!(
-            "modular {} (2^{}, {backend_label}): Peak RSS {}",
-            bench_name,
-            scale,
-            format_memory_size(peak as f64 / BYTES_PER_GIB),
-        );
+    println!("modular {bench_name} (2^{scale}, {backend_label}): Proof size {proof_size} bytes");
+    println!(
+        "modular {bench_name} (2^{scale}, {backend_label}): PCS setup {:.3}s",
+        run.setup_duration.as_secs_f64(),
+    );
+    println!(
+        "modular {bench_name} (2^{scale}, {backend_label}): Verifier {:.3}ms parallel ({} threads), {:.3}ms single-threaded",
+        run.verifier_parallel.seconds() * 1e3,
+        run.verifier_parallel.threads,
+        run.verifier_single_threaded.seconds() * 1e3,
+    );
+    let peak = PeakMemory::sample();
+    for (label, bytes) in [
+        ("Peak RSS", peak.rss_bytes),
+        ("Peak footprint", peak.footprint_bytes),
+    ] {
+        if let Some(bytes) = bytes {
+            println!(
+                "modular {bench_name} (2^{scale}, {backend_label}): {label} {}",
+                format_memory_size(bytes as f64 / BYTES_PER_GIB),
+            );
+        }
     }
 
-    // The legacy harness's 7 CSV fields plus a trailing backend column, in
-    // the backend-specific run directory. Field 7 (`proof_size_compressed`)
-    // duplicates the raw size exactly as legacy does — its
-    // `prove_example_with_trace` returns `proof_size` for both fields, the
-    // compressed encoding having been retired — so the columns stay
-    // directly comparable across the two harnesses.
+    // Keep the historical columns first; setup and verifier measurements follow.
+    // With no compressed encoding, field 7 repeats the raw proof size.
     let summary_line = format!(
-        "{},{},{:.2},{},{:.2},{},{},{backend_label}\n",
-        bench_name,
+        "{},{},{:.2},{},{:.2},{},{},{backend_label},{:.6},{:.6},{:.6},{}\n",
+        args.benchmark_name(),
         scale,
         duration.as_secs_f64(),
         trace_length.next_power_of_two(),
         padded_proving_hz,
         proof_size,
         proof_size,
+        run.setup_duration.as_secs_f64(),
+        run.verifier_parallel.seconds(),
+        run.verifier_single_threaded.seconds(),
+        run.verifier_parallel.threads,
     );
     let individual_file = run_dir.join("timings.csv");
     if let Err(e) = fs::write(&individual_file, &summary_line) {
@@ -710,14 +795,14 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     // Header on creation: the summary/plot scripts read this by column name.
     // Cross-run by nature, so it lives at the benchmark-runs root rather
     // than inside any run directory.
-    let consolidated = "benchmark-runs/modular_timings.csv";
-    let line = if std::path::Path::new(consolidated).exists() {
+    let consolidated = Path::new("benchmark-runs/modular_timings.csv");
+    if let Err(e) = migrate_legacy_timings_csv(consolidated) {
+        eprintln!("Failed to migrate consolidated timing CSV: {e}");
+    }
+    let line = if consolidated.exists() {
         summary_line
     } else {
-        format!(
-            "benchmark_name,scale,prover_time_s,trace_length,proving_hz,\
-             proof_size,proof_size_compressed,backend\n{summary_line}"
-        )
+        format!("{TIMINGS_HEADER}\n{summary_line}")
     };
     if let Err(e) = fs::OpenOptions::new()
         .create(true)
@@ -729,13 +814,236 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     }
 }
 
-/// Trace the guest through the modular stack (`TracerBackend`), with the
-/// memory config mirrored off the legacy layout — the byte-diff wiring.
-pub fn trace_modular(
+#[cfg(not(feature = "akita"))]
+fn prove_workload(
+    jolt_program: &Arc<JoltProgram>,
+    program_preprocessing: JoltProgramPreprocessing,
+    trace_output: TraceOutput,
+    backend: BackendKind,
+) -> ProvenRun {
+    let memory_layout = program_preprocessing.memory_layout.clone();
+    let max_trace_length = program_preprocessing.max_padded_trace_length;
+
+    let config = ProverConfig::derive_from_dimensions::<Fr>(
+        trace_output.dimensions,
+        &memory_layout,
+        program_preprocessing.ram.min_bytecode_address,
+        program_preprocessing.ram.bytecode_words.len(),
+        max_trace_length,
+    )
+    .expect("derive config");
+    let shared_preprocessing =
+        JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
+    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "dory");
+    let setup_guard = setup_span.enter();
+    let setup_now = Instant::now();
+    let prover_preprocessing =
+        crate::dory::from_shared(shared_preprocessing).expect("Dory preprocessing");
+    let setup_duration = setup_now.elapsed();
+    drop(setup_guard);
+    let program_preprocessing = prover_preprocessing
+        .program_arc()
+        .expect("full program preprocessing");
+    let public_io = trace_output.device.clone();
+    let witness = Arc::new(profile_witness(
+        JoltVmWitnessConfig::new(
+            config.trace_length.ilog2() as usize,
+            config.ram_K,
+            config.one_hot_config,
+        ),
+        JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
+    ));
+
+    let backend = match backend {
+        BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
+    };
+
+    // --- The measured window: the full modular prove (witness
+    // materialization, commitment, all sumcheck stages, joint opening). The
+    // `jolt_prover::prove` root span covers exactly this interval; the
+    // Instant is the `--format none` no-subscriber baseline.
+    let now = Instant::now();
+    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        backend.with_witness(&witness),
+        &prover_preprocessing,
+        &config,
+        None,
+        &public_io,
+    )
+    .expect("modular prove");
+    let duration = now.elapsed();
+
+    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+        .expect("serialize proof")
+        .len();
+
+    let parallel_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    let parallel_pool = ThreadPoolBuilder::new()
+        .num_threads(parallel_threads)
+        .thread_name(|index| format!("jolt-verify-parallel-{index}"))
+        .build()
+        .expect("parallel verifier pool must build");
+    let single_threaded_pool = ThreadPoolBuilder::new()
+        .num_threads(1)
+        .thread_name(|_| "jolt-verify-single".to_string())
+        .build()
+        .expect("single-threaded verifier pool must build");
+    let verify = || {
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &prover_preprocessing.verifier,
+            &public_io,
+            &proof,
+            None,
+        )
+        .expect("modular proof verifies");
+    };
+    let verifier_parallel = parallel_pool
+        .install(|| measure_verifier(VerificationMode::Parallel, parallel_threads, verify));
+    let verifier_single_threaded = single_threaded_pool
+        .install(|| measure_verifier(VerificationMode::SingleThreaded, 1, verify));
+
+    ProvenRun {
+        duration,
+        setup_duration,
+        verifier_parallel,
+        verifier_single_threaded,
+        proof_size,
+    }
+}
+
+#[cfg(feature = "akita")]
+fn prove_workload(
+    jolt_program: &Arc<JoltProgram>,
+    program_preprocessing: JoltProgramPreprocessing,
+    trace_output: TraceOutput,
+    backend: BackendKind,
+    chunk_profile: AkitaChunkProfile,
+) -> ProvenRun {
+    use crate::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use crate::JoltProverPreprocessing;
+    use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_openings::CommitmentScheme;
+    use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
+
+    let backend = match backend {
+        BackendKind::Reference => JoltBackend::reference(),
+        BackendKind::Optimized => JoltBackend::optimized(),
+    };
+
+    let memory_layout = program_preprocessing.memory_layout.clone();
+    let max_trace_length = program_preprocessing.max_padded_trace_length;
+
+    let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
+        trace_output.dimensions,
+        &memory_layout,
+        program_preprocessing.ram.min_bytecode_address,
+        program_preprocessing.ram.bytecode_words.len(),
+        max_trace_length,
+    )
+    .expect("derive config");
+    config.akita_chunk_profile = chunk_profile;
+    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let params = crate::akita::preprocessing::grouped_setup_params(
+        &schedule_artifacts,
+        &program_preprocessing,
+        &config,
+        false,
+        false,
+        &[],
+    )
+    .expect("Akita setup parameters");
+    let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
+    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
+    let setup_guard = setup_span.enter();
+    let setup_now = Instant::now();
+    let (pcs_setup, verifier_setup) = AkitaScheme::setup(params).expect("Akita PCS setup");
+    let setup_duration = setup_now.elapsed();
+    drop(setup_guard);
+    let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
+        verifier: JoltVerifierPreprocessing::new(
+            ProgramPreprocessing::Full(shared.program),
+            verifier_setup,
+            None,
+        )
+        .expect("Akita verifier preprocessing"),
+        pcs_setup,
+        committed_program: None,
+    };
+    let program_preprocessing = prover_preprocessing
+        .program_arc()
+        .expect("full program preprocessing");
+
+    let public_io = trace_output.device.clone();
+    let witness = profile_witness(
+        JoltVmWitnessConfig::new(
+            config.trace_length.ilog2() as usize,
+            config.ram_K,
+            config.one_hot_config,
+        ),
+        JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
+    );
+    // --- The measured window: the full Akita prove (OneHotTrace assembly
+    // and native commit, all sumcheck stages, and the native grouped opening).
+    // The `jolt_prover::prove` root span covers exactly
+    // this interval; the Instant is the `--format none` baseline.
+    let now = Instant::now();
+    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        backend.with_witness(&witness),
+        &prover_preprocessing,
+        &config,
+        None,
+        &public_io,
+    )
+    .expect("modular Akita prove");
+    let duration = now.elapsed();
+
+    let akita_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
+    let akita_opening_unframed_size = proof
+        .joint_opening_proof
+        .unframed_payload_size()
+        .expect("Akita opening component lengths must fit usize");
+    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+        .expect("serialize Akita proof")
+        .len();
+    tracing::info!(
+        akita_proof_body_size,
+        akita_opening_unframed_size,
+        jolt_proof_wire_size = proof_size,
+        "Akita proof sizes"
+    );
+
+    let verify = || {
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            &prover_preprocessing.verifier,
+            &public_io,
+            &proof,
+            None,
+        )
+        .expect("modular Akita proof verifies");
+    };
+    let parallel_threads = jolt_akita::host_parallel_verifier_threads();
+    let verifier_parallel = jolt_akita::with_host_parallel_verifier_backend(|| {
+        measure_verifier(VerificationMode::Parallel, parallel_threads, verify)
+    });
+    let verifier_single_threaded = jolt_akita::with_single_threaded_verifier_backend(|| {
+        measure_verifier(VerificationMode::SingleThreaded, 1, verify)
+    });
+
+    ProvenRun {
+        duration,
+        setup_duration,
+        verifier_parallel,
+        verifier_single_threaded,
+        proof_size,
+    }
+}
+
+fn trace_modular(
     program: &JoltProgram,
-    memory_layout: &common::jolt_device::MemoryLayout,
+    memory_layout: &MemoryLayout,
     inputs: &[u8],
-) -> TraceOutput<OwnedTrace> {
+) -> TraceOutput {
     let memory_config = MemoryConfig {
         max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
         max_trusted_advice_size: memory_layout.max_trusted_advice_size,
@@ -745,41 +1053,19 @@ pub fn trace_modular(
         heap_size: memory_layout.heap_size,
         program_size: Some(memory_layout.program_size),
     };
+    let trace_inputs = TraceInputs::new(inputs.to_vec(), Vec::new(), Vec::new(), memory_config);
     TracerBackend::new()
-        .trace(
-            program,
-            TraceInputs {
-                inputs: inputs.to_vec(),
-                untrusted_advice: Vec::new(),
-                trusted_advice: Vec::new(),
-                memory_config,
-                advice_tape: None,
-            },
-        )
+        .trace(program, trace_inputs)
         .expect("modular trace")
 }
 
-/// Pad to the padded trace length with no-op rows, as legacy does.
-pub fn pad_trace(
-    trace_output: TraceOutput<OwnedTrace>,
-    trace_length: usize,
-) -> TraceOutput<OwnedTrace> {
-    let source = trace_output.trace.rows();
-    let mut rows = Vec::with_capacity(trace_length.max(source.len()));
-    rows.extend_from_slice(source);
-    rows.resize(trace_length, TraceRow::default());
-    TraceOutput::new(
-        OwnedTrace::new(rows),
-        trace_output.device,
-        trace_output.final_memory,
-        trace_output.advice_tape,
-    )
+fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> TraceBackend {
+    let witness = TraceBackend::try_new(config, inputs).expect("trace witness");
+    #[cfg(feature = "field-inline")]
+    let witness = witness.with_field_inline().expect("field-inline witness");
+    witness
 }
 
-/// A word-aligned advice buffer's balanced Dory matrix variable count.
-fn advice_vars(max_advice_size_bytes: u64) -> usize {
-    ((max_advice_size_bytes / 8) as usize)
-        .next_power_of_two()
-        .max(1)
-        .ilog2() as usize
-}
+#[cfg(all(test, feature = "akita"))]
+#[path = "profile/tests.rs"]
+mod tests;

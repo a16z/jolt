@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
 
@@ -8,11 +9,12 @@ declare_riscv_instr!(
     mask   = 0xfe00707f,
     match  = 0x00001033,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
 impl SLL {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLL as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLL as RISCVInstruction>::RamAccess) {
         let mask = 0x3f;
         cpu.write_register(
             self.operands.rd as usize,

@@ -1,3 +1,4 @@
+use crate::instruction::registers::b::RegisterStateB;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,6 +10,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatB,
+    registers = RegisterStateB,
     ram = ()
 );
 
@@ -16,7 +18,7 @@ impl VirtualAssertValidUnsignedRemainder {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        _: &mut <VirtualAssertValidUnsignedRemainder as RISCVInstruction>::RAMAccess,
+        _: &mut <VirtualAssertValidUnsignedRemainder as RISCVInstruction>::RamAccess,
     ) {
         let remainder = cpu.x[self.operands.rs1 as usize] as u64;
         let divisor = cpu.x[self.operands.rs2 as usize] as u64;

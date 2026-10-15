@@ -85,6 +85,8 @@ fn imm_is_nat(name: &str) -> bool {
         name,
         "VirtualSRLI"
             | "VirtualSRAI"
+            | "VirtualSRLIW"
+            | "VirtualSRAIW"
             | "VirtualROTRI"
             | "VirtualROTRIW"
             | "VirtualPow2I"
@@ -98,7 +100,7 @@ fn imm_width(name: &str) -> u32 {
         "BEQ" | "BNE" | "BLT" | "BGE" | "BLTU" | "BGEU" | "VirtualAssertEQ" => 13,
         "AUIPC" => 20,
         "JAL" => 21,
-        "LUI" | "VirtualMULI" | "VirtualAdvice" | "VirtualAdviceLoad" | "VirtualAdviceLen" => 64,
+        "LUI" | "VirtualMULI" | "VirtualMULIW" | "VirtualAdvice" | "VirtualAdviceLoad" => 64,
         _ => 12,
     }
 }
@@ -139,28 +141,25 @@ fn lean_instr(
     let imm = lean_imm(name, o.imm, imm_override);
 
     let args = match name {
-        "ADD"
-        | "SUB"
-        | "MUL"
-        | "MULHU"
-        | "MULHSU"
-        | "OR"
-        | "XOR"
-        | "AND"
-        | "SLT"
-        | "SLTU"
-        | "ANDN"
-        | "VirtualChangeDivisor"
-        | "VirtualChangeDivisorW"
-        | "VirtualSRL"
-        | "VirtualSRA" => format!("{rd} {rs1} {rs2}"),
-        "ADDI" | "ANDI" | "ORI" | "XORI" | "SLTI" | "SLTIU" | "VirtualMULI" | "VirtualSRLI"
-        | "VirtualSRAI" | "VirtualROTRI" | "VirtualROTRIW" => {
+        "ADD" | "ADDW" | "SUB" | "SUBW" | "MUL" | "MULW" | "MULHU" | "MULHSU" | "OR" | "XOR"
+        | "AND" | "SLT" | "SLTU" | "ANDN" | "VirtualNegateIf" | "VirtualSRL" | "VirtualSRA"
+        | "VirtualSRLW" | "VirtualSRAW" | "VirtualPext" | "VirtualPextSigned"
+        | "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" | "VirtualXORROT32"
+        | "VirtualXORROT24" | "VirtualXORROT16" | "VirtualXORROT63" | "VirtualXORROTW16"
+        | "VirtualXORROTW12" | "VirtualXORROTW8" | "VirtualXORROTW7" | "VirtualXORROTW22"
+        | "VirtualXORROTW19" | "VirtualXORROTW6" => {
+            format!("{rd} {rs1} {rs2}")
+        }
+        "ADDI" | "ADDIW" | "ANDI" | "ORI" | "XORI" | "SLTI" | "SLTIU" | "VirtualMULI"
+        | "VirtualMULIW" | "VirtualSRLI" | "VirtualSRAI" | "VirtualSRLIW" | "VirtualSRAIW"
+        | "VirtualROTRI" | "VirtualROTRIW" | "VirtualAlignAddr" | "VirtualWindowMaskB"
+        | "VirtualWindowMaskH" | "VirtualWindowMaskW" => {
             format!("{rd} {rs1} {imm}")
         }
         "VirtualPow2"
         | "VirtualPow2W"
         | "VirtualShiftRightBitmask"
+        | "VirtualShiftRightBitmaskW"
         | "VirtualSignExtendWord"
         | "VirtualZeroExtendWord"
         | "VirtualMovsign"
@@ -170,7 +169,7 @@ fn lean_instr(
             format!("{} {imm} {align_fault}", regidx(o.rs1))
         }
         "SD" | "SB" | "SH" | "SW" => format!("{rs1} {rs2} {imm}"),
-        "VirtualAdvice" | "VirtualAdviceLoad" | "VirtualAdviceLen" => format!("{rd} {imm}"),
+        "VirtualAdvice" | "VirtualAdviceLoad" => format!("{rd} {imm}"),
         "AUIPC" | "JAL" | "LUI" => format!("{rd} {imm}"),
         "JALR" => format!("{rd} {rs1} {imm}"),
         "VirtualAssertValidDiv0"
@@ -178,7 +177,7 @@ fn lean_instr(
         | "VirtualAssertMulUNoOverflow"
         | "VirtualAssertLTE" => format!("{rs1} {rs2}"),
         "VirtualAssertEQ" => format!("{rs1} {rs2} {imm}"),
-        "NoOp" | "FENCE" | "VirtualHostIO" => String::new(),
+        "FENCE" | "VirtualHostIO" => String::new(),
         _ => {
             let mut parts = Vec::new();
             if o.rd.is_some() {
@@ -254,7 +253,24 @@ fn is_word_shift_imm(name: &str) -> bool {
 
 fn has_symbolic_source_imm(kind: SourceInstructionKind) -> bool {
     let name = kind.name();
-    name == "ADDIW" || is_load(name) || is_store(name)
+    is_load(name) || is_store(name)
+}
+
+fn symbolic_shift_imm(
+    source_kind: SourceInstructionKind,
+    row: &JoltInstructionRow,
+) -> Option<String> {
+    let row_name = row.instruction_kind.name();
+    match (source_kind.name(), row_name) {
+        ("SLLI", "VirtualMULI") => Some("(slliMultiplier shamt)".to_string()),
+        ("SRLI", "VirtualSRLI") => Some("(srliBitmask shamt)".to_string()),
+        ("SRAI", "VirtualSRAI") => Some("(sraiBitmask shamt)".to_string()),
+        ("SLLIW", "VirtualMULIW") => Some("(BitVec.ofNat 64 (2 ^ shamt.toNat))".to_string()),
+        ("SRLIW", "VirtualSRLIW") | ("SRAIW", "VirtualSRAIW") => {
+            Some("((1 <<< 32) - (1 <<< shamt.toNat))".to_string())
+        }
+        _ => None,
+    }
 }
 
 fn source_shape(kind: SourceInstructionKind) -> SourceShape {
@@ -379,11 +395,6 @@ fn source_imm_flags(
                 ));
             }
 
-            // if the row.operands.imm is sample_imm
-            // and check_row.operands.imm is check_imm
-            // then the imm in this instruction is NOT hardcoded, and it's the user specified imm.
-            // In this case the lean generator should use "imm" instead of the actual hard-coded
-            // constant in this case.
             let tracks_source_imm =
                 row.operands.imm == sample_imm && check_row.operands.imm == check_imm;
             if row.operands.imm == sample_imm && !tracks_source_imm {
@@ -414,6 +425,8 @@ fn expansion_arm(
     })
 }
 
+// The sail specification has two different kinds of exception for normal load vs atomic load/write.
+// Here we are just hardcoding which instructions produce those errors.
 fn load_class_and_align_fault(kind: SourceInstructionKind) -> (&'static str, &'static str) {
     let name = kind.name();
     let write_or_atomic = name.starts_with("AMO")
@@ -431,13 +444,11 @@ fn load_class_and_align_fault(kind: SourceInstructionKind) -> (&'static str, &'s
 }
 
 fn is_advice_row(name: &str) -> bool {
-    matches!(
-        name,
-        "VirtualAdvice" | "VirtualAdviceLoad" | "VirtualAdviceLen"
-    )
+    matches!(name, "VirtualAdvice" | "VirtualAdviceLoad")
 }
 
 fn render_rows(
+    kind: SourceInstructionKind,
     arm: &ExpansionArm,
     load_class: &str,
     align_fault: &str,
@@ -456,9 +467,11 @@ fn render_rows(
             None
         };
         let source_imm_override = source_imm.then(|| "imm".to_string());
+        let shift_imm_override = symbolic_shift_imm(kind, instruction);
         let imm_override = advice_override
             .as_deref()
-            .or(source_imm_override.as_deref());
+            .or(source_imm_override.as_deref())
+            .or(shift_imm_override.as_deref());
 
         writeln!(
             out,
@@ -477,15 +490,20 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), Box<dyn std::error::E
 
     println!("--- {name} ---");
     if shape.rd {
+        // This instruction writes to a destination register.
+        // In RISC-V writes to x0 turn into no-ops.
+        // In Jolt they are no-ops to RISC-V state but often modify virtual registers
+        // as side-effects.
+        // So we have to model both.
         for (label, rd) in [("rd == x0", 0u8), ("rd != x0", SOURCE_RD)] {
             let arm = expansion_arm(kind, rd)?;
             println!("{label}:");
-            print!("{}", render_rows(&arm, load_class, align_fault, 2)?);
+            print!("{}", render_rows(kind, &arm, load_class, align_fault, 2)?);
         }
     } else {
         let arm = expansion_arm(kind, SOURCE_RD)?;
         println!("no rd:");
-        print!("{}", render_rows(&arm, load_class, align_fault, 2)?);
+        print!("{}", render_rows(kind, &arm, load_class, align_fault, 2)?);
     }
     Ok(())
 }
@@ -543,7 +561,10 @@ fn lean_signature(kind: SourceInstructionKind, advice_count: usize) -> String {
     if !regs.is_empty() {
         groups.push(format!("({} : regidx)", regs.join(" ")));
     }
-    if has_symbolic_source_imm(kind) {
+    if is_shift_imm(kind.name()) {
+        let width = if is_word_shift_imm(kind.name()) { 5 } else { 6 };
+        groups.push(format!("(shamt : BitVec {width})"));
+    } else if has_symbolic_source_imm(kind) {
         groups.push("(imm : BitVec 12)".to_string());
     }
     if advice_count > 0 {
@@ -583,11 +604,11 @@ fn render_definition(kind: SourceInstructionKind) -> Result<String, Box<dyn std:
 
     if let Some(rd_zero) = rd_zero {
         writeln!(out, "  if isX0 rd then")?;
-        out.push_str(&render_rows(&rd_zero, load_class, align_fault, 4)?);
+        out.push_str(&render_rows(kind, &rd_zero, load_class, align_fault, 4)?);
         writeln!(out, "  else")?;
-        out.push_str(&render_rows(&normal, load_class, align_fault, 4)?);
+        out.push_str(&render_rows(kind, &normal, load_class, align_fault, 4)?);
     } else {
-        out.push_str(&render_rows(&normal, load_class, align_fault, 2)?);
+        out.push_str(&render_rows(kind, &normal, load_class, align_fault, 2)?);
     }
     writeln!(out)?;
 
@@ -608,7 +629,7 @@ import JoltBytecode.JoltISA.Expansions.ALU
 Generated by `jolt-lean-gen --lean` from the Rust bytecode expander
 (`expand_instruction`), the source of truth. Do not edit by hand;
 regenerate instead. Each `...ProgramAuto` mirrors the final Jolt rows
-emitted by Rust for the representative source instruction.
+emitted by Rust for its source instruction parameters.
 -/
 
 open Sail PreSail LeanRV64D.Functions

@@ -1,5 +1,6 @@
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
+use jolt_witness::WitnessError;
 
 use jolt_witness::backend::cuda::{
     DeviceAtomColumns, DeviceTrace, EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2,
@@ -26,7 +27,7 @@ pub(crate) fn register_coeff_tables(gamma: Fr) -> CoeffTables {
     }
 }
 
-fn witness_error(_error: jolt_witness::WitnessError) -> CudaError {
+fn witness_error(_error: WitnessError) -> CudaError {
     CudaError::InvariantViolation {
         reason: "the device residency could not serve a packed register column",
     }
@@ -138,8 +139,8 @@ impl DeviceRegisterRows {
         &self.rd_post_value
     }
 
-    pub fn into_rs2_address(self) -> CudaSlice<u32> {
-        self.rs2_address
+    pub fn into_read_addresses(self) -> [CudaSlice<u32>; 2] {
+        [self.rs1_address, self.rs2_address]
     }
 
     pub fn matrix(
@@ -239,10 +240,11 @@ impl DeviceRegisterRows {
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_program::execution::{RegisterRead, RegisterState, RegisterWrite, TraceRow};
+    use crate::cuda::registers_read_write::witness::RdAddress;
+    use jolt_field::{Fr, Ring};
+    use jolt_riscv::{JoltTraceRow as TraceRow, RegisterRead, RegisterState, RegisterWrite};
     use jolt_witness::witnesses::{
-        Extract, RdAddress, RdInc, RdWriteValue, Rs1Value, Rs2Value, ToField, WitnessEnv,
+        Extract, RdInc, RdWriteValue, Rs1Value, Rs2Value, ToField, WitnessEnv,
     };
     use jolt_witness::{FixedBackend, ProgramSource};
 
@@ -311,10 +313,12 @@ mod tests {
                     });
                     state[usize::from(register)] = post_value;
                 }
-                TraceRow {
+                crate::cuda::common::testing::synthetic_row(
+                    Default::default(),
                     registers,
-                    ..TraceRow::default()
-                }
+                    Default::default(),
+                    1,
+                )
             })
             .collect()
     }
@@ -322,13 +326,13 @@ mod tests {
     fn bundles(rows: &[TraceRow]) -> Vec<RegistersReadWriteWitness> {
         rows.iter()
             .map(|row| RegistersReadWriteWitness {
-                rs1_address: Rs1Address(row.registers.rs1.map(|read| read.register)),
-                rs1_value: Rs1Value(row.registers.rs1.map_or(0, |read| read.value)),
-                rs2_address: Rs2Address(row.registers.rs2.map(|read| read.register)),
-                rs2_value: Rs2Value(row.registers.rs2.map_or(0, |read| read.value)),
-                rd_address: RdAddress(row.registers.rd.map(|write| write.register)),
-                rd_pre_value: RdPreValue(row.registers.rd.map_or(0, |write| write.pre_value)),
-                rd_post_value: RdWriteValue(row.registers.rd.map_or(0, |write| write.post_value)),
+                rs1_address: Rs1Address(row.rs1_index()),
+                rs1_value: Rs1Value(row.rs1_value()),
+                rs2_address: Rs2Address(row.rs2_index()),
+                rs2_value: Rs2Value(row.rs2_value()),
+                rd_address: RdAddress(row.rd_index()),
+                rd_pre_value: RdPreValue(row.rd_pre_value()),
+                rd_post_value: RdWriteValue(row.rd_write_value()),
             })
             .collect()
     }

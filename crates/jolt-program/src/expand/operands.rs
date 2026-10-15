@@ -67,12 +67,8 @@ const fn field_inline_handles_rd_zero(instruction_kind: SourceInstructionKind) -
             | SourceInstructionKind::FIELD_SUB
             | SourceInstructionKind::FIELD_MUL
             | SourceInstructionKind::FIELD_INV
-            | SourceInstructionKind::FIELD_LOAD_FROM_X
+            | SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER
             | SourceInstructionKind::FIELD_LOAD_IMM
-            // rd encodes the destination x-register; store-to-x0 is a legal no-op and
-            // must keep rd=x0 rather than take the virtual-register rewrite (which would
-            // produce an out-of-range x-register and fail metadata construction).
-            | SourceInstructionKind::FIELD_STORE_TO_X
     )
 }
 

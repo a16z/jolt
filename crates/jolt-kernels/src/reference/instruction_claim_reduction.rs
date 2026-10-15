@@ -16,7 +16,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::{
     right_instruction_input_reduced, right_lookup_operand_reduced,
 };
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_witness::JoltWitnessPlane;
@@ -26,7 +26,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

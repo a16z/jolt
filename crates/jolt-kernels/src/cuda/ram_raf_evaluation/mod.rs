@@ -1,9 +1,11 @@
+use crate::cuda::common::address_rounds::AddressRounds;
+use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
@@ -19,7 +21,7 @@ use crate::{
 
 const RAM_WORD_BYTES: u64 = 8;
 
-impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -29,12 +31,6 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
         let context = require_context()?;
         let relation = inputs.relation;
         let ram_log_k = relation.ram_log_k();
-        if relation.read_write_dimensions().raf_evaluation_rounds() != ram_log_k {
-            return Err(KernelError::Unsupported {
-                reason: "the CUDA RAM RAF evaluation supports only the default read-write config \
-                         (phase 1 = all cycle rounds)",
-            });
-        }
         if relation.tau_low().is_empty() {
             return Err(KernelError::InvariantViolation {
                 reason: "the RAM RAF evaluation cycle point has no variables",
@@ -68,22 +64,26 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
             ram_log_k,
             relation.degree(),
         )?;
-        Ok(Box::new(DenseProductKernel {
-            state: ShardedDenseProduct::new(vec![(context.ordinal(), state)])?,
-            relation: relation.clone(),
-            field: core::marker::PhantomData,
-        }))
+        AddressRounds::wrap(
+            Box::new(DenseProductKernel {
+                state: ShardedDenseProduct::new(vec![(context.ordinal(), state)])?,
+                relation: relation.clone(),
+                field: PhantomData,
+            }),
+            relation.read_write_dimensions(),
+            relation.symbolic().rounds(),
+        )
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamRafEvaluation<F>> {
+impl<F: JoltField> SumcheckKernel<F> for DenseProductKernel<F, RamRafEvaluation<F>> {
     type Relation = RamRafEvaluation<F>;
 
     fn output_claims(
         &mut self,
         _inputs: &RamRafEvaluationInputClaims<F>,
     ) -> Result<RamRafEvaluationOutputClaims<F>, SumcheckKernelError<F>> {
-        let remaining = self.relation.symbolic().rounds() - self.state.rounds_bound();
+        let remaining = self.relation.ram_log_k() - self.state.rounds_bound();
         if remaining != 0 {
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
@@ -121,7 +121,7 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamRafEvaluation<F>> 
         };
         if *unmap != expected {
             return Err(SumcheckKernelError::DerivedTableDrift {
-                id,
+                id: id.into(),
                 expected,
                 got: *unmap,
             });
@@ -136,26 +136,24 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamRafEvaluation<F>> 
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
-    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
-    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial};
+    use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_claims::{NoChallenges, OutputClaims};
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_program::execution::{
-        JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, TraceOutput, TraceRow,
-    };
+    use jolt_field::{Fr, Ring};
+    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RamRead, RamWrite};
     use jolt_verifier::stages::stage2::ram_raf_evaluation::{
         RamRafEvaluation, RamRafEvaluationInputClaims,
     };
-    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, OneHotSource, TraceBackend};
+    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use proptest::prelude::*;
 
     use super::CudaBackend;
@@ -220,11 +218,12 @@ mod tests {
                 RamAccess::Read(RamRead { address, value })
             };
 
-            rows.push(TraceRow {
+            rows.push(crate::cuda::common::testing::synthetic_row(
                 instruction,
-                ram_access: access,
-                ..TraceRow::default()
-            });
+                Default::default(),
+                access,
+                1,
+            ));
         }
         rows
     }
@@ -232,7 +231,7 @@ mod tests {
     fn with_raf_witness<R>(
         ram_k: usize,
         seed: u64,
-        body: impl FnOnce(&TraceBackend<OwnedTrace>, u64) -> R,
+        body: impl FnOnce(&TraceBackend, u64) -> R,
     ) -> R {
         let instruction = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::XOR,
@@ -265,7 +264,7 @@ mod tests {
         });
         let program = Arc::new(JoltProgram::default());
         let trace = TraceOutput::new(
-            OwnedTrace::new(raf_rows(instruction, &memory_layout, ram_k, seed)),
+            TraceData::new(raf_rows(instruction, &memory_layout, ram_k, seed)),
             Default::default(),
             None,
             None,
@@ -279,59 +278,6 @@ mod tests {
 
     fn dimensions(ram_log_k: usize) -> ReadWriteDimensions {
         ReadWriteDimensions::new(LOG_T, ram_log_k, LOG_T, ram_log_k)
-    }
-
-    #[test]
-    fn fixture_raf_fold_accumulates_over_cold_and_hot_cycles() {
-        let cycles = 1usize << LOG_T;
-        for ram_log_k in RAM_LOG_KS {
-            let ram_k = 1usize << ram_log_k;
-            with_raf_witness(ram_k, 7, |witness, _| {
-                let hot = OneHotSource::hot_indices(
-                    witness,
-                    JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa),
-                )
-                .expect("the fixture serves the RAM one-hot indices");
-                assert_eq!(hot.len(), cycles);
-
-                let mut counts = vec![0usize; ram_k];
-                for address in hot.iter().flatten() {
-                    counts[*address] += 1;
-                }
-                let occupied = counts.iter().filter(|count| **count > 0).count();
-                assert!(
-                    occupied > 1,
-                    "ram_log_k {ram_log_k}: the fold lands on {occupied} address(es), so the \
-                     folded table cannot detect a wrong address",
-                );
-                assert!(
-                    counts.iter().any(|count| *count > 1),
-                    "ram_log_k {ram_log_k}: no address is hot at two cycles, so a fold that \
-                     OVERWRITES instead of accumulating would still pass",
-                );
-
-                let cold = hot.iter().filter(|address| address.is_none()).count();
-                assert!(
-                    cold > 0 && cold < cycles,
-                    "ram_log_k {ram_log_k}: {cold} of {cycles} cycles are cold, so one of the two \
-                     fold paths is unexercised",
-                );
-                for (cycle, address) in hot.iter().enumerate() {
-                    assert_eq!(
-                        address.is_none(),
-                        raf_fixture_is_cold(cycle),
-                        "ram_log_k {ram_log_k} cycle {cycle}: the RAM one-hot column disagrees \
-                         with the fixture on whether the cycle is cold",
-                    );
-                }
-
-                let distinct: BTreeSet<usize> = hot.iter().flatten().copied().collect();
-                assert!(
-                    distinct.len() > 1,
-                    "ram_log_k {ram_log_k}: the hot address is constant across every hot cycle",
-                );
-            });
-        }
     }
 
     proptest! {

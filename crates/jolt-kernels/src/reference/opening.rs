@@ -3,11 +3,9 @@
 //! performance path — an optimized backend returns lazy/sparse or
 //! device-backed implementations).
 
-use std::collections::BTreeMap;
-
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::MultilinearPoly;
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::JoltWitnessPlane;
@@ -16,12 +14,14 @@ use rayon::prelude::*;
 
 use super::views::dense_view;
 use crate::commitment::CommitmentGrid;
-use crate::opening::JointOpeningPolynomials;
+use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
+#[cfg(feature = "field-inline")]
+use crate::{field_inline::FieldIncrementColumn, trace_column::DenseTraceColumnPoly};
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
-impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
+impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
     // The backend-neutral `JointOpeningPolynomials::prepare` span lives at
-    // the stage-8 call boundary (`crates/jolt-prover/src/stages/stage8.rs`),
+    // the Dory stage-8 boundary (`crates/jolt-prover/src/dory/stages/stage8.rs`),
     // so every implementation inherits it — see the taxonomy's kernel-seam
     // contract.
     fn prepare(
@@ -29,15 +29,16 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
         _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+        let mut precommitted_tables = precommitted_tables()?;
         let domain = 1usize << grid.total_vars;
         polynomials
             .iter()
             .map(|&polynomial| {
-                let table = match precommitted_tables.get(&polynomial) {
-                    Some(table) => table.clone(),
+                let table = match precommitted_tables.remove(&polynomial) {
+                    Some(table) => table,
                     None => dense_view(witness, final_opening_id(polynomial))?,
                 };
                 if table.len() > domain {
@@ -48,9 +49,10 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
                     });
                 }
                 let embedded = match polynomial {
+                    JoltCommittedPolynomial::Reserved4(retired) => match retired {},
                     JoltCommittedPolynomial::TrustedAdvice
                     | JoltCommittedPolynomial::UntrustedAdvice
-                    | JoltCommittedPolynomial::BytecodeChunk(_)
+                    | JoltCommittedPolynomial::ProgramBytecode
                     | JoltCommittedPolynomial::ProgramImageInit => {
                         block_embed(&table, grid, polynomial)?
                     }
@@ -67,13 +69,31 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
             })
             .collect()
     }
+
+    #[cfg(feature = "field-inline")]
+    fn prepare_field_inline(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        grid: CommitmentGrid,
+    ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>> {
+        let oracle = witness.field_inline().ok_or(KernelError::Unsupported {
+            reason: "the stage-8 FieldRdInc opening requires a witness plane serving the field-inline oracle",
+        })?;
+        let table = FieldIncrementColumn::resolve(session, oracle, 1usize << grid.log_t)?;
+        let column =
+            DenseTraceColumnPoly::new(table, grid).ok_or(KernelError::InvariantViolation {
+                reason: "FieldRdInc table exceeds the commitment grid",
+            })?;
+        Ok(Box::new(column))
+    }
 }
 
 /// Embed a trace polynomial cycle-block-strided over the address-major grid:
 /// a one-hot table's native `k · T + t` view permutes to `t · cycle_stride +
 /// k · one_hot_stride`; a dense (per-cycle) table sits at each cycle block's
 /// address slot zero.
-fn address_major_embed<F: Field>(
+fn address_major_embed<F: JoltField>(
     table: &[F],
     grid: CommitmentGrid,
     polynomial: JoltCommittedPolynomial,
@@ -147,7 +167,7 @@ fn address_major_embed<F: Field>(
 /// Embed an advice polynomial's balanced matrix into the grid matrix's
 /// top-left block: advice coefficient `row · 2^σ_a + col` lands at grid index
 /// `row · 2^σ_main + col`.
-fn block_embed<F: Field>(
+fn block_embed<F: JoltField>(
     table: &[F],
     grid: CommitmentGrid,
     polynomial: JoltCommittedPolynomial,

@@ -256,7 +256,7 @@ The broader program boundary should be evaluated in the same design pass:
 | Bytecode table padding and PC mapping | Yes; verifier needs metadata derived from bytecode preprocessing; committed-bytecode mode should replace full bytecode rows with trusted commitments outside this crate | `jolt-program::preprocess` |
 | RAM preprocessing from ELF memory bytes | Yes; verifier checks RAM initialization claims against program preprocessing or future program-image commitments | `jolt-program::preprocess` |
 | Memory layout from program size and I/O limits | Yes; verifier validates public I/O sizes and RAM bounds | `common` plus `jolt-program::preprocess` |
-| Program preprocessing digest and serialization | Yes; verifier binds preprocessing or its committed digest to the proof context | `jolt-program::preprocess` |
+| Program preprocessing digest and serialization | Yes; verifier binds preprocessing or its committed digest to the proof context | serialization in `jolt-program::preprocess`; the digest is owned by `jolt-verifier::preprocessing` (`ProgramPreprocessing::digest`) |
 | Jolt-ready program artifact used as a backend input | No for verification from serialized preprocessing; yes for host proving/tracing | `jolt-program` root or `jolt-program::execution` |
 | Stable execution backend trait and neutral trace row contract | No for proof verification; yes for host/SDK dependency isolation | `jolt-program::execution` |
 | PCS verifier setup and optional BlindFold setup | Yes, but these are proof-system setup artifacts rather than program artifacts | stay in `jolt-prover-legacy` verifier or a proof-system setup crate |

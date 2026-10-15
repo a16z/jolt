@@ -1,4 +1,4 @@
-use jolt_prover_legacy::field::JoltField;
+use jolt_field::{Field, Fr};
 use rand_core::RngCore;
 
 use crate::{
@@ -7,8 +7,7 @@ use crate::{
     util::indent,
 };
 
-// XXX Extract this? Or make it generic?
-type TestField = ark_bn254::Fr;
+type TestField = Fr;
 
 #[derive(Debug, Clone)]
 pub struct ZkLeanLookupTableTest<const XLEN: usize> {

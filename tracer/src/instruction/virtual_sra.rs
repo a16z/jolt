@@ -1,3 +1,4 @@
+use crate::instruction::registers::virtual_right_shift_r::RegisterStateVirtualRightShiftR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -11,11 +12,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatVirtualRightShiftR,
+    registers = RegisterStateVirtualRightShiftR,
     ram = ()
 );
 
 impl VirtualSRA {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRA as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRA as RISCVInstruction>::RamAccess) {
         let shift = cpu.x[self.operands.rs2 as usize].trailing_zeros();
         cpu.write_register(
             self.operands.rd as usize,

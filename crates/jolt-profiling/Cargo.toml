@@ -15,12 +15,12 @@ workspace = true
 [features]
 # `summary` is a default so the crate's own dev loop (schema drift-lock
 # tests included) runs it; consumers that only need the subscriber stack
-# (jolt-prover-legacy's `host`, jolt-akita) opt out with
+# (the prover host path and jolt-akita) opt out with
 # `default-features = false` to keep schemars + serde_json out of standard
 # host builds.
 default = ["summary"]
 monitor = ["dep:sysinfo"]
-pprof = ["dep:pprof", "dep:prost"]
+pprof = ["dep:pprof"]
 allocative = ["dep:allocative"]
 # The flush-time summary pipeline (`summary` module): chrome-trace
 # aggregation into the schema-versioned `summary.json`.
@@ -41,8 +41,3 @@ serde = { workspace = true, features = ["derive", "std"], optional = true }
 serde_json = { workspace = true, features = ["std"], optional = true }
 sysinfo = { workspace = true, optional = true }
 pprof = { workspace = true, optional = true }
-prost = { workspace = true, optional = true }
-
-[package.metadata.cargo-machete]
-# prost is required by pprof's prost-codec feature but not directly imported
-ignored = ["prost"]

@@ -1,20 +1,18 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: the instruction read-RAF kernel wires this once it lands"
-)]
-
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_lookup_tables::tables::LookupTableKind;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
+use std::sync::Arc;
 
 use super::address_phase::{
     condense_u_evals, init_raf_buckets, init_raf_columns, init_suffix_columns, DeviceRows,
     RafBuckets, CHUNK_LEN, CHUNK_SIZE, RAF_LANES,
 };
 use super::combine::{combine_terms, CombineTerm};
-use super::prefixes::{default_checkpoints, prefix_mle_round, update_checkpoints, HINT_POINTS};
+use super::prefixes::{
+    default_checkpoints, phase_tables, prefix_mle_round, HINT_POINTS, NUM_PREFIXES,
+};
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_limbs, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
@@ -28,7 +26,7 @@ const NO_PREFIX: u32 = u32::MAX;
 
 pub struct AddressShard {
     pub ordinal: usize,
-    pub rows: std::sync::Arc<DeviceRows>,
+    pub rows: Arc<DeviceRows>,
     pub u_evals: DeviceFrVec,
 }
 
@@ -48,14 +46,14 @@ pub struct DeviceAddressPhase {
 
 struct PhaseTables {
     suffixes: DeviceFrVec,
+    prefixes: DeviceFrVec,
     raf_prefix: DeviceFrVec,
     raf: RafBuckets,
-    columns: usize,
     len: usize,
 }
 
 struct TermLayout {
-    scales: Vec<u32>,
+    scales: Vec<Fr>,
     prefix_ids: Vec<u32>,
     suffix_slots: Vec<u32>,
     offsets: Vec<u32>,
@@ -65,7 +63,7 @@ struct TermLayout {
 
 struct DeviceTermLayout {
     ordinal: usize,
-    scales: CudaSlice<u32>,
+    scales: DeviceFrVec,
     prefix_ids: CudaSlice<u32>,
     suffix_slots: CudaSlice<u32>,
     offsets: CudaSlice<u32>,
@@ -77,7 +75,7 @@ impl TermLayout {
     fn upload(&self, context: &CudaKernelContext) -> Result<DeviceTermLayout, CudaError> {
         Ok(DeviceTermLayout {
             ordinal: context.ordinal(),
-            scales: context.upload_u32_slice(&self.scales)?,
+            scales: context.upload(&self.scales)?,
             prefix_ids: context.upload_u32_slice(&self.prefix_ids)?,
             suffix_slots: context.upload_u32_slice(&self.suffix_slots)?,
             offsets: context.upload_u32_slice(&self.offsets)?,
@@ -104,7 +102,7 @@ fn term_layout(present: &[LookupTableKind<RISCV_XLEN>]) -> Result<TermLayout, Cu
         layout.suffix_bases.push(base);
         base += table.suffixes().len() as u32;
         for term in terms {
-            layout.scales.push(term.scale as u32);
+            layout.scales.push(term.scale);
             layout
                 .prefix_ids
                 .push(term.prefix.map_or(NO_PREFIX, |prefix| prefix as u32));
@@ -115,7 +113,7 @@ fn term_layout(present: &[LookupTableKind<RISCV_XLEN>]) -> Result<TermLayout, Cu
 }
 
 impl DeviceAddressPhase {
-    pub fn new<F: Field>(
+    pub fn new<F: JoltField>(
         context: &CudaKernelContext,
         lookup_index: &[u128],
         table_index: &[Option<usize>],
@@ -123,7 +121,7 @@ impl DeviceAddressPhase {
         r_reduction: &[F],
         address_bits: usize,
     ) -> Result<Self, CudaError> {
-        let rows = std::sync::Arc::new(DeviceRows::new(
+        let rows = Arc::new(DeviceRows::new(
             context,
             lookup_index,
             table_index,
@@ -268,15 +266,20 @@ impl DeviceAddressPhase {
                 context.upload(&totals.suffixes)?,
             )
         };
-        let suffix_count = suffixes.len() / CHUNK_SIZE;
 
         let raf_prefix = self.build_raf_prefix_tables(context, phase)?;
 
+        let prefixes = phase_tables(
+            context,
+            &self.checkpoints,
+            CHUNK_LEN,
+            self.suffix_len(phase)?,
+        )?;
         self.tables = PhaseTables {
             suffixes,
+            prefixes,
             raf_prefix,
             raf,
-            columns: suffix_count,
             len: CHUNK_SIZE,
         };
         self.phase = phase;
@@ -290,23 +293,7 @@ impl DeviceAddressPhase {
         context: &CudaKernelContext,
         half: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let b_len = self.tables.len.trailing_zeros().checked_sub(1).ok_or(
-            CudaError::InvariantViolation {
-                reason: "the address round tables are already fully bound",
-            },
-        )? as usize;
-        prefix_mle_round(
-            context,
-            &self.checkpoints,
-            self.phase_challenges
-                .last()
-                .copied()
-                .unwrap_or(Fr::from(0u64)),
-            self.rounds_bound % 2 == 1,
-            self.rounds_bound,
-            b_len,
-            half,
-        )
+        prefix_mle_round(context, &self.tables.prefixes, half)
     }
 
     #[tracing::instrument(skip_all, name = "ap_build_raf_prefix")]
@@ -358,6 +345,7 @@ impl DeviceAddressPhase {
         let prefixes = self.evaluate_prefixes(context, half)?;
 
         let table_count = CudaKernelContext::count_of(self.present.len())?;
+        let prefix_count = CudaKernelContext::count_of(NUM_PREFIXES)?;
         let half_count = CudaKernelContext::count_of(half)?;
         let stride = CudaKernelContext::count_of(self.tables.len)?;
         let raf_count = CudaKernelContext::count_of(RAF_TERMS)?;
@@ -369,9 +357,10 @@ impl DeviceAddressPhase {
             .stream()
             .launch_builder(context.ap_round_message_hinted());
         let _ = builder.arg(prefixes.limbs());
+        let _ = builder.arg(&prefix_count);
         let _ = builder.arg(&self.layout.prefix_ids);
         let _ = builder.arg(&self.layout.suffix_slots);
-        let _ = builder.arg(&self.layout.scales);
+        let _ = builder.arg(self.layout.scales.limbs());
         let _ = builder.arg(&self.layout.offsets);
         let _ = builder.arg(&self.layout.counts);
         let _ = builder.arg(self.tables.suffixes.limbs());
@@ -428,21 +417,8 @@ impl DeviceAddressPhase {
         self.phase_challenges.push(challenge);
         self.rounds_bound += 1;
 
-        if self.rounds_bound.is_multiple_of(2) {
-            let round = self.rounds_bound - 1;
-            let pair = self.phase_challenges.len().checked_sub(2).ok_or(
-                CudaError::InvariantViolation {
-                    reason: "a checkpoint update pair spans a phase boundary",
-                },
-            )?;
-            let r_x = self.phase_challenges[pair];
-            let r_y = self.phase_challenges[pair + 1];
-            let suffix_len = self.suffix_len(round / CHUNK_LEN)?;
-            self.checkpoints =
-                update_checkpoints(context, &self.checkpoints, r_x, r_y, round, suffix_len)?;
-        }
-
         if self.phase_challenges.len() == CHUNK_LEN {
+            self.checkpoints = self.tables.prefixes.try_clone()?;
             self.v_tables
                 .push(context.eq_evals(&self.phase_challenges)?);
             self.raf_checkpoints = self.tables.raf_prefix.try_clone()?;
@@ -477,6 +453,7 @@ impl PhaseTables {
     fn empty(context: &CudaKernelContext) -> Result<Self, CudaError> {
         Ok(Self {
             suffixes: context.alloc(0)?,
+            prefixes: context.alloc(0)?,
             raf_prefix: context.alloc(0)?,
             raf: RafBuckets {
                 shift_half: context.alloc(0)?,
@@ -486,14 +463,14 @@ impl PhaseTables {
                 identity: context.alloc(0)?,
                 upper_all_ones: context.alloc(0)?,
             },
-            columns: 0,
             len: 0,
         })
     }
 
     fn bind(&mut self, context: &CudaKernelContext, challenge: Fr) -> Result<(), CudaError> {
         let stride = self.len;
-        let mut lanes: Vec<&mut DeviceFrVec> = vec![&mut self.suffixes, &mut self.raf_prefix];
+        let mut lanes: Vec<&mut DeviceFrVec> =
+            vec![&mut self.suffixes, &mut self.prefixes, &mut self.raf_prefix];
         lanes.extend([
             &mut self.raf.shift_half,
             &mut self.raf.shift_full,

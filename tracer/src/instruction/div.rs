@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,11 +10,12 @@ declare_riscv_instr!(
     mask   = 0xfe00707f,
     match  = 0x02004033,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
 impl DIV {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <DIV as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <DIV as RISCVInstruction>::RamAccess) {
         let dividend = cpu.x[self.operands.rs1 as usize];
         let divisor = cpu.x[self.operands.rs2 as usize];
         if divisor == 0 {
@@ -36,20 +38,18 @@ impl RISCVTrace for DIV {
         let x = cpu.x[self.operands.rs1 as usize];
         let y = cpu.x[self.operands.rs2 as usize];
 
-        let (quotient, remainder) = if y == 0 {
-            (u64::MAX, x.unsigned_abs())
+        let quotient = if y == 0 {
+            u64::MAX
         } else if x == cpu.most_negative() && y == -1 {
-            (x as u64, 0)
+            x as u64
         } else {
-            let quotient = x / y;
-            let remainder = (x % y).unsigned_abs();
-            (quotient as u64, remainder)
+            (x / y) as u64
         };
 
         super::trace_inline_sequence_with_advice(
             &Instruction::from(*self),
             cpu,
-            &[quotient, remainder],
+            &[quotient],
             trace,
         );
     }

@@ -1,147 +1,161 @@
-//! Commitment, proof, and setup types for HyperKZG.
-//!
-//! All types are generic over `P: PairingGroup` — no arkworks leakage.
-
-use jolt_crypto::{HomomorphicCommitment, JoltGroup, PairingGroup};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_crypto::{Bn254G1, Bn254G2, JoltGroup};
+use jolt_field::Fr;
+use jolt_transcript::{Transcript, U64Word};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-/// Commitment to a multilinear polynomial: a single G1 element.
-#[derive(Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "P::G1: Serialize",
-    deserialize = "P::G1: for<'a> Deserialize<'a>"
-))]
-pub struct HyperKZGCommitment<P: PairingGroup> {
-    pub(crate) point: P::G1,
-}
-
-impl<P: PairingGroup> Copy for HyperKZGCommitment<P> {}
-
-#[expect(
-    clippy::expl_impl_clone_on_copy,
-    reason = "explicit impl is required because PairingGroup is not bounded by Clone"
-)]
-impl<P: PairingGroup> Clone for HyperKZGCommitment<P> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<P: PairingGroup> std::fmt::Debug for HyperKZGCommitment<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HyperKZGCommitment")
-            .field("point", &self.point)
-            .finish()
-    }
-}
-
-impl<P: PairingGroup> AppendToTranscript for HyperKZGCommitment<P> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.point.append_to_transcript(transcript);
-    }
-
-    fn transcript_payload_len(&self) -> Option<u64> {
-        self.point.transcript_payload_len()
-    }
-}
-
-impl<P: PairingGroup> PartialEq for HyperKZGCommitment<P> {
-    fn eq(&self, other: &Self) -> bool {
-        self.point == other.point
-    }
-}
-
-impl<P: PairingGroup> Eq for HyperKZGCommitment<P> {}
-
-impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
-    #[inline]
-    fn add(c1: &Self, c2: &Self) -> Self {
-        Self {
-            point: <P::G1 as HomomorphicCommitment<F>>::add(&c1.point, &c2.point),
-        }
-    }
-
-    #[inline]
-    fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
-        Self {
-            point: HomomorphicCommitment::linear_combine(&c1.point, &c2.point, scalar),
-        }
-    }
-}
-
-impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
-    fn default() -> Self {
-        Self {
-            point: <P::G1 as JoltGroup>::identity(),
-        }
-    }
-}
-
-/// Opening proof for the HyperKZG protocol.
+/// Public powers from an authenticated BN254 KZG ceremony.
 ///
-/// - `com`: intermediate polynomial commitments from the Gemini folding (ell - 1 elements)
-/// - `w`: KZG witness commitments for the three evaluation points `[r, -r, r^2]`
-/// - `v`: evaluations of all intermediate polynomials at the three points
-///   (`v[t][k]` = polynomial k evaluated at point t)
+/// `g1_powers[j] = beta^j G1`, `beta_g2 = beta G2`. The importer must
+/// authenticate the ceremony and the consistency of these powers. The scheme
+/// checks dimensions and nonidentity setup elements, not ceremony provenance.
+/// Do not pass powers generated with a known or retained `beta`.
+pub struct HyperKZGSetupParams {
+    /// Capacity for honest polynomial tables; not an adversarial degree bound.
+    pub g1_powers: Vec<Bn254G1>,
+    /// Authenticated application/ceremony policy identifier.
+    pub setup_id: [u8; 32],
+    pub g2: Bn254G2,
+    pub beta_g2: Bn254G2,
+}
+
+/// Imported immutable prover powers. Only the checked import constructs this.
+#[derive(Clone, Debug)]
+pub struct HyperKZGProverSetup {
+    pub(crate) g1_powers: Vec<Bn254G1>,
+    pub(crate) verifier: HyperKZGVerifierSetup,
+}
+
+/// Authenticated verification key; proof verification rechecks shape invariants.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "P::G1: Serialize, P::ScalarField: Serialize",
-    deserialize = "P::G1: for<'a> Deserialize<'a>, P::ScalarField: for<'a> Deserialize<'a>"
-))]
-pub struct HyperKZGProof<P: PairingGroup> {
-    pub com: Vec<P::G1>,
-    pub w: [P::G1; 3],
-    pub v: [Vec<P::ScalarField>; 3],
+pub struct HyperKZGVerifierSetup {
+    pub(crate) num_powers: u64,
+    pub(crate) setup_id: [u8; 32],
+    pub(crate) g1: Bn254G1,
+    pub(crate) g2: Bn254G2,
+    pub(crate) beta_g2: Bn254G2,
 }
 
-/// Prover setup: SRS G1 and G2 powers.
-///
-/// G1 powers: `[g1, beta * g1, beta^2 * g1, ..., beta^n * g1]`
-/// G2 powers: `[g2, beta * g2]` (only two needed for KZG verification).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "P::G1: Serialize, P::G2: Serialize",
-    deserialize = "P::G1: for<'a> Deserialize<'a>, P::G2: for<'a> Deserialize<'a>"
-))]
-pub struct HyperKZGProverSetup<P: PairingGroup> {
-    pub(crate) g1_powers: Vec<P::G1>,
-    pub(crate) g2_powers: Vec<P::G2>,
+impl HyperKZGVerifierSetup {
+    pub(crate) fn validate(&self) -> Result<usize, HyperKZGError> {
+        let capacity = usize::try_from(self.num_powers).map_err(|_| HyperKZGError::InvalidSetup)?;
+        if capacity < 2
+            || self.g1.is_identity()
+            || self.g2.is_identity()
+            || self.beta_g2.is_identity()
+        {
+            return Err(HyperKZGError::InvalidSetup);
+        }
+        Ok(capacity)
+    }
+
+    pub(crate) fn check_arity(&self, num_vars: usize) -> Result<usize, HyperKZGError> {
+        let capacity = self.validate()?;
+        let shift = u32::try_from(num_vars).map_err(|_| HyperKZGError::InvalidArity)?;
+        let len = 1usize
+            .checked_shl(shift)
+            .ok_or(HyperKZGError::InvalidArity)?;
+        if num_vars == 0 || len > capacity {
+            return Err(HyperKZGError::InvalidArity);
+        }
+        Ok(len)
+    }
+
+    pub(crate) fn append_statement(
+        &self,
+        commitment: &Bn254G1,
+        point: &[Fr],
+        evaluation: Fr,
+        transcript: &mut impl Transcript<Challenge = Fr>,
+    ) {
+        transcript.append_labeled(b"hyperkzg-binary-bn254-v1", &U64Word(self.num_powers));
+        transcript.append_bytes(&self.setup_id);
+        transcript.append(&self.g1);
+        transcript.append(&self.g2);
+        transcript.append(&self.beta_g2);
+        transcript.append(commitment);
+        transcript.append_values(b"opening-point", point);
+        transcript.append(&evaluation);
+    }
 }
 
-/// Verifier setup: the four G1/G2 elements needed for pairing checks.
-///
-/// - `g1`: generator $g$
-/// - `g2`: generator $h$
-/// - `beta_g2`: $\beta \cdot h$ (for KZG pairing check)
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "P::G1: Serialize, P::G2: Serialize",
-    deserialize = "P::G1: for<'a> Deserialize<'a>, P::G2: for<'a> Deserialize<'a>"
-))]
-pub struct HyperKZGVerifierSetup<P: PairingGroup> {
-    pub(crate) g1: P::G1,
-    pub(crate) g2: P::G2,
-    pub(crate) beta_g2: P::G2,
+/// Binary fold commitments, evaluations at `[r, -r, r^2]`, and KZG witnesses.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HyperKZGProof {
+    pub com: Vec<Bn254G1>,
+    pub v: [Vec<Fr>; 3],
+    pub w: [Bn254G1; 3],
 }
 
-impl<P: PairingGroup> From<&HyperKZGProverSetup<P>> for HyperKZGVerifierSetup<P> {
-    /// # Panics
-    ///
-    /// Panics on a hand-built setup with empty power vectors. The fields are
-    /// public, so the type cannot enforce the invariant itself; every
-    /// generation path (`setup_from_secret`, SRS loading) produces at least
-    /// one G1 power and exactly two G2 powers, and conversion happens at
-    /// setup time, never on the proof-verification path.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "setup-time conversion; all generation paths produce >= 1 G1 and exactly 2 G2 powers (see Panics)"
-    )]
-    fn from(prover: &HyperKZGProverSetup<P>) -> Self {
-        Self {
-            g1: prover.g1_powers[0],
-            g2: prover.g2_powers[0],
-            beta_g2: prover.g2_powers[1],
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum HyperKZGError {
+    #[error("invalid imported HyperKZG setup")]
+    InvalidSetup,
+    #[error("opening arity must be nonzero and fit the setup and address space")]
+    InvalidArity,
+    #[error("polynomial table length disagrees with its arity")]
+    PolynomialShape,
+    #[error("polynomial evaluation disagrees with the opening claim")]
+    WrongEvaluation,
+    #[error("opening proof has the wrong number of fold commitments or evaluations")]
+    ProofShape,
+    #[error("HyperKZG received the degenerate zero challenge")]
+    DegenerateChallenge,
+    #[error("HyperKZG fold equation failed")]
+    Folding,
+    #[error("KZG pairing equation failed")]
+    Pairing,
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test fixture serialization fails loudly"
+)]
+mod tests {
+    use jolt_crypto::Bn254;
+    use jolt_field::{One, Ring, Zero};
+    use jolt_transcript::Blake2bTranscript;
+
+    use super::*;
+    use crate::HyperKZGScheme;
+
+    #[test]
+    fn decoded_verifier_metadata_is_rechecked() {
+        let valid = HyperKZGVerifierSetup {
+            num_powers: 4,
+            setup_id: [1; 32],
+            g1: Bn254::g1_generator(),
+            g2: Bn254::g2_generator(),
+            beta_g2: Bn254::g2_generator().scalar_mul(&Fr::from_u64(7)),
+        };
+        let proof = HyperKZGProof {
+            com: vec![],
+            v: std::array::from_fn(|_| vec![Fr::zero()]),
+            w: [Bn254G1::identity(); 3],
+        };
+        let verify = |key: &HyperKZGVerifierSetup| {
+            HyperKZGScheme::verify_opening(
+                &Bn254G1::identity(),
+                &[Fr::one()],
+                Fr::zero(),
+                &proof,
+                key,
+                &mut Blake2bTranscript::new(b"decoded-key"),
+            )
+        };
+        verify(&valid).unwrap();
+        let mut invalid = std::array::from_fn::<_, 4, _>(|_| valid.clone());
+        let [capacity, g1, g2, beta_g2] = &mut invalid;
+        capacity.num_powers = 0;
+        g1.g1 = Bn254G1::identity();
+        g2.g2 = Bn254G2::identity();
+        beta_g2.beta_g2 = Bn254G2::identity();
+        for key in invalid {
+            let bytes = bincode::serde::encode_to_vec(&key, bincode::config::standard()).unwrap();
+            let (decoded, _): (HyperKZGVerifierSetup, _) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(verify(&decoded), Err(HyperKZGError::InvalidSetup));
         }
     }
 }

@@ -7,7 +7,7 @@
 )]
 
 use jolt_crypto::Bn254G1;
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 use crate::batch::{BatchMember, BatchPrelude};

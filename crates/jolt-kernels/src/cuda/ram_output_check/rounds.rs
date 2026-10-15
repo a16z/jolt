@@ -1,5 +1,5 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, UnivariatePoly};
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
@@ -8,17 +8,17 @@ use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
-const LANES: usize = 2;
+const LANES: usize = 3;
 
 const ROWS: usize = 3;
 
-pub struct DeviceOutputCheck<F: Field> {
+pub struct DeviceOutputCheck<F: JoltField> {
     tables: DeviceFrVec,
     eq: DeviceSplitEq<F>,
     len: usize,
 }
 
-impl<F: Field> DeviceOutputCheck<F> {
+impl<F: JoltField> DeviceOutputCheck<F> {
     pub fn new(
         context: &CudaKernelContext,
         io_mask: &[F],
@@ -84,8 +84,8 @@ impl<F: Field> DeviceOutputCheck<F> {
         // the current row length; plus `e_in[g & mask]` and
         // `e_out[g >> num_x_in_bits]`, both bounded because
         // `e_out.len() * e_in.len() == half` is checked above. It writes only
-        // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 2`, of
-        // `2 * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
+        // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 3`, of
+        // `3 * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
         // `shared_mem_bytes`, and the block reduction sits outside the `g < half`
         // guard so every thread reaches each `__syncthreads()`.
         let _ = unsafe {
@@ -109,9 +109,12 @@ impl<F: Field> DeviceOutputCheck<F> {
         };
         let constant = fr_into(host[0]).ok_or_else(unsupported)?;
         let quadratic = fr_into(host[1]).ok_or_else(unsupported)?;
-        Ok(self
-            .eq
-            .gruen_poly_deg_3(constant, quadratic, previous_claim))
+        self.eq.gruen_poly_deg_3(
+            constant,
+            quadratic,
+            previous_claim,
+            fr_into(host[2]).ok_or_else(unsupported)?,
+        )
     }
 
     pub fn bind(&mut self, context: &CudaKernelContext, challenge: F) -> Result<(), CudaError> {

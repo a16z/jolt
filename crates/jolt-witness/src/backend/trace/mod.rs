@@ -5,12 +5,13 @@ use jolt_claims::protocols::jolt::{
     geometry::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig, JoltVirtualPolynomial,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::LookupTableKind;
 use jolt_program::{
-    execution::{JoltProgram, RamAccess, TraceOutput, TraceRow, TraceSource},
+    execution::{JoltProgram, TraceOutput},
     preprocess::JoltProgramPreprocessing,
 };
+
 use std::sync::Arc;
 
 use crate::backend::ProgramSource;
@@ -19,8 +20,9 @@ use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
 mod advice;
 mod cycle;
-mod one_hot;
+mod metadata;
 mod oracle;
+pub use metadata::JoltVmWitnessMetadata;
 mod ram;
 mod registers;
 
@@ -28,7 +30,6 @@ pub const RV64_LOOKUP_ADDRESS_BITS: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoltVmWitnessConfig {
-    pub retain_trace_rows: bool,
     pub log_t: usize,
     pub ram_k: usize,
     pub one_hot: JoltOneHotConfig,
@@ -52,18 +53,12 @@ impl Default for JoltVmWitnessConfig {
 impl JoltVmWitnessConfig {
     pub fn new(log_t: usize, ram_k: usize, one_hot: JoltOneHotConfig) -> Self {
         Self {
-            retain_trace_rows: false,
             log_t,
             ram_k,
             one_hot,
             include_trusted_advice: false,
             include_untrusted_advice: false,
         }
-    }
-
-    pub const fn retain_trace_rows(mut self, retain_trace_rows: bool) -> Self {
-        self.retain_trace_rows = retain_trace_rows;
-        self
     }
 
     pub const fn with_log_t(mut self, log_t: usize) -> Self {
@@ -82,17 +77,17 @@ impl JoltVmWitnessConfig {
     }
 }
 
-pub struct JoltVmWitnessInputs<T: TraceSource> {
+pub struct JoltVmWitnessInputs {
     pub program: Arc<JoltProgram>,
     pub preprocessing: Arc<JoltProgramPreprocessing>,
-    pub trace: TraceOutput<T>,
+    pub trace: TraceOutput,
 }
 
-impl<T: TraceSource> JoltVmWitnessInputs<T> {
+impl JoltVmWitnessInputs {
     pub fn new(
         program: &Arc<JoltProgram>,
         preprocessing: &Arc<JoltProgramPreprocessing>,
-        trace: TraceOutput<T>,
+        trace: TraceOutput,
     ) -> Self {
         Self {
             program: Arc::clone(program),
@@ -102,33 +97,69 @@ impl<T: TraceSource> JoltVmWitnessInputs<T> {
     }
 }
 
-pub struct TraceBackend<T: TraceSource> {
+/// Retains the producer's rows and payloads without converting or copying them.
+pub struct TraceBackend {
     pub config: JoltVmWitnessConfig,
     pub program: Arc<JoltProgram>,
     pub preprocessing: Arc<JoltProgramPreprocessing>,
-    pub trace: TraceOutput<T>,
+    pub trace: TraceOutput,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness>,
 }
 
-impl<T: TraceSource> ProgramSource for TraceBackend<T> {
+impl ProgramSource for TraceBackend {
     fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
         &self.preprocessing
     }
 }
 
-impl<T: TraceSource> TraceBackend<T> {
-    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<T>) -> Self {
-        Self {
+impl TraceBackend {
+    #[expect(
+        clippy::panic,
+        reason = "infallible convenience constructor for trusted fixtures"
+    )]
+    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> Self {
+        match Self::try_new(config, inputs) {
+            Ok(backend) => backend,
+            Err(error) => panic!("invalid trace: {error}"),
+        }
+    }
+
+    pub fn try_new(
+        config: JoltVmWitnessConfig,
+        inputs: JoltVmWitnessInputs,
+    ) -> Result<Self, WitnessError> {
+        let cycles = checked_pow2(config.log_t)?;
+        let proof_len = inputs.trace.trace.proof_len();
+        if proof_len > cycles {
+            return Err(WitnessError::InvalidWitnessData {
+                label: JOLT_VM_LABEL,
+                reason: format!(
+                    "physical trace has {proof_len} rows but the cycle domain has {cycles}"
+                ),
+            });
+        }
+        Ok(Self {
             config,
             program: inputs.program,
             preprocessing: inputs.preprocessing,
             trace: inputs.trace,
             #[cfg(feature = "field-inline")]
             field_inline: None,
-        }
+        })
     }
 
+    pub fn committed_polynomial_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+        self.metadata().committed_polynomial_order()
+    }
+
+    /// Trace-independent dimensions and program facts for this witness.
+    pub fn metadata(&self) -> JoltVmWitnessMetadata<'_> {
+        JoltVmWitnessMetadata::new(&self.config, &self.preprocessing)
+    }
+}
+
+impl JoltVmWitnessMetadata<'_> {
     pub fn committed_polynomial_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
         let mut order = committed_openings::proof_commitment_order(self.ra_layout()?);
         if self.config.include_trusted_advice {
@@ -235,6 +266,51 @@ impl<T: TraceSource> TraceBackend<T> {
     }
 }
 
+/// Upper bound, in bytes, on a dense `(K × T)` oracle grid materialized by
+/// the trace backend: the RAM and register read-write grids and the one-hot
+/// RA grids. The request grows linearly with the trace length and reaches
+/// hundreds of GiB at profiling scales (`ram_K = 4096`, `log_T = 22`, 32-byte
+/// field: 2^39 bytes). Past this bound the global allocator aborts the
+/// process with an opaque `memory allocation of N bytes failed`; refusing
+/// with a `WitnessError` keeps the failure actionable. 32 GiB admits every
+/// in-tree test and the fibonacci profiling default (scale 16); the larger
+/// documented profiling defaults are refused by design and belong on the
+/// optimized backend. On narrower targets, the allocation limit is capped
+/// at `isize::MAX` bytes instead.
+pub(crate) const MAX_DENSE_GRID_BYTES: usize = match 1_usize.checked_shl(35) {
+    Some(bytes) => bytes,
+    None => isize::MAX as usize,
+};
+
+/// The element count of a dense `addresses × cycles` grid of `F`, refused
+/// with an actionable error when the byte size overflows or exceeds
+/// [`MAX_DENSE_GRID_BYTES`].
+pub(crate) fn checked_dense_grid_len<F>(
+    addresses: usize,
+    cycles: usize,
+) -> Result<usize, WitnessError> {
+    let len = addresses
+        .checked_mul(cycles)
+        .ok_or_else(|| WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: format!("dense grid of {addresses} addresses x {cycles} cycles overflows"),
+        })?;
+    let bytes = len.checked_mul(core::mem::size_of::<F>());
+    match bytes {
+        Some(bytes) if bytes <= MAX_DENSE_GRID_BYTES => Ok(len),
+        _ => Err(WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: format!(
+                "dense grid of {addresses} addresses x {cycles} cycles needs {} bytes \
+                 (> {MAX_DENSE_GRID_BYTES} max); this naive materialization is a test \
+                 oracle sized for small traces — use the optimized backend for larger \
+                 shapes",
+                bytes.map_or_else(|| "overflowing".to_owned(), |bytes| bytes.to_string()),
+            ),
+        }),
+    }
+}
+
 pub(crate) fn checked_pow2(log_rows: usize) -> Result<usize, WitnessError> {
     if log_rows >= usize::BITS as usize {
         return Err(WitnessError::InvalidDimensions {
@@ -261,5 +337,5 @@ fn require_index(index: usize, len: usize) -> Result<(), WitnessError> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test module")]
+#[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
 mod tests;

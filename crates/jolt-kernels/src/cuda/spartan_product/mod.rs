@@ -1,8 +1,17 @@
-use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use jolt_claims::{OutputClaims, SymbolicSumcheck};
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
-use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_sumcheck::ProveRounds;
+use jolt_verifier::stages::relations::SumcheckOutputClaims;
+use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::cuda::witness::session_window_residency;
@@ -23,7 +32,7 @@ pub(crate) mod witness;
 use columns::DeviceProductColumns;
 use remainder::{DeviceProductRemainder, SpartanProductRemainderKernel};
 
-pub struct SpartanProductState<F: Field> {
+pub struct SpartanProductState<F: JoltField> {
     columns: Vec<(usize, DeviceProductColumns)>,
     tau_low: Vec<F>,
     log_t: usize,
@@ -31,22 +40,18 @@ pub struct SpartanProductState<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for SpartanProductState<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for SpartanProductState<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("tau_low"),
-            self.tau_low.len() * size_of::<F>(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("matrix"),
-            self.matrix.len() * size_of::<F>(),
-        );
+        visitor.visit_simple(Key::new("tau_low"), self.tau_low.len() * size_of::<F>());
+        visitor.visit_simple(Key::new("matrix"), self.matrix.len() * size_of::<F>());
         visitor.exit();
     }
 }
 
-impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
+    for CudaBackend
+{
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -88,6 +93,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        _inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -106,7 +112,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
     }
 }
 
-impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for CudaBackend {
+impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -143,18 +149,15 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for CudaBackend {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for SpartanProductRemainderKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for SpartanProductRemainderKernel<F> {
     type Relation = ProductRemainder<F>;
 
     fn output_claims(
         &mut self,
-        _inputs: &jolt_verifier::stages::relations::SumcheckInputClaims<F, ProductRemainder<F>>,
-    ) -> Result<
-        jolt_verifier::stages::relations::SumcheckOutputClaims<F, ProductRemainder<F>>,
-        SumcheckKernelError<F>,
-    > {
+        _inputs: &SumcheckInputClaims<F, ProductRemainder<F>>,
+    ) -> Result<SumcheckOutputClaims<F, ProductRemainder<F>>, SumcheckKernelError<F>> {
         let bound = self.bound_rounds();
-        let expected = <Self as jolt_sumcheck::ProveRounds<F>>::num_rounds(self);
+        let expected = <Self as ProveRounds<F>>::num_rounds(self);
         if bound != expected {
             return Err(SumcheckKernelError::NotFullyBound {
                 remaining: expected.saturating_sub(bound),
@@ -165,8 +168,8 @@ impl<F: Field> SumcheckKernel<F> for SpartanProductRemainderKernel<F> {
             .map_err(|_| SumcheckKernelError::InvariantViolation {
                 reason: "the CUDA Spartan product claim pass failed",
             })?;
-        jolt_claims::OutputClaims::from_opening_values(|id| openings.get(id).copied())
-            .map_err(SumcheckKernelError::MissingOpeningValue)
+        OutputClaims::from_opening_values(|id| openings.get(id).copied())
+            .map_err(SumcheckKernelError::from)
     }
 }
 
@@ -183,11 +186,12 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_claims::{NoChallenges, OutputClaims};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage2::product_remainder::{
         product_remainder_input_values_from_uniskip_output, ProductRemainder,
         ProductRemainderInputClaims,
     };
+    use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
     use jolt_witness::JoltWitnessPlane;
     use proptest::prelude::*;
 
@@ -273,7 +277,7 @@ mod tests {
     ) -> Box<dyn SumcheckKernel<Fr, Relation = ProductRemainder<Fr>>> {
         let mut session = ProofSession::default();
         if cuda {
-            UniskipKernel::<Fr, ProductRemainder<Fr>>::prepare(
+            UniskipKernel::<Fr, ProductRemainder<Fr>, ProductUniskipInputClaims<Fr>>::prepare(
                 &CudaBackend,
                 &mut session,
                 LOG_T,
@@ -282,7 +286,7 @@ mod tests {
             )
             .expect("cuda uni-skip prepare");
         } else {
-            UniskipKernel::<Fr, ProductRemainder<Fr>>::prepare(
+            UniskipKernel::<Fr, ProductRemainder<Fr>, ProductUniskipInputClaims<Fr>>::prepare(
                 &ReferenceBackend,
                 &mut session,
                 LOG_T,
@@ -336,19 +340,19 @@ mod tests {
 
             with_r1cs_witness(LOG_T, RAM_K, one_hot(), seed, |witness| {
                 let mut expected_session = ProofSession::default();
-                UniskipKernel::<Fr, ProductRemainder<Fr>>::prepare(
+                UniskipKernel::<Fr, ProductRemainder<Fr>, ProductUniskipInputClaims<Fr>>::prepare(
                     &ReferenceBackend, &mut expected_session, LOG_T, &tau_low, witness,
                 ).expect("reference uni-skip prepare");
-                let expected = UniskipKernel::<Fr, ProductRemainder<Fr>>::first_round_poly(
-                    &ReferenceBackend, &mut expected_session, &[tau_high],
+                let expected = UniskipKernel::<Fr, ProductRemainder<Fr>, ProductUniskipInputClaims<Fr>>::first_round_poly(
+                    &ReferenceBackend, &mut expected_session, &[tau_high], &ProductUniskipInputClaims { product: Fr::from_u64(0), should_branch: Fr::from_u64(0), should_jump: Fr::from_u64(0) },
                 ).expect("reference uni-skip first-round polynomial");
 
                 let mut got_session = ProofSession::default();
-                UniskipKernel::<Fr, ProductRemainder<Fr>>::prepare(
+                UniskipKernel::<Fr, ProductRemainder<Fr>, ProductUniskipInputClaims<Fr>>::prepare(
                     &CudaBackend, &mut got_session, LOG_T, &tau_low, witness,
                 ).expect("cuda uni-skip prepare");
-                let got = UniskipKernel::<Fr, ProductRemainder<Fr>>::first_round_poly(
-                    &CudaBackend, &mut got_session, &[tau_high],
+                let got = UniskipKernel::<Fr, ProductRemainder<Fr>, ProductUniskipInputClaims<Fr>>::first_round_poly(
+                    &CudaBackend, &mut got_session, &[tau_high], &ProductUniskipInputClaims { product: Fr::from_u64(0), should_branch: Fr::from_u64(0), should_jump: Fr::from_u64(0) },
                 ).expect("cuda uni-skip first-round polynomial");
 
                 prop_assert_eq!(

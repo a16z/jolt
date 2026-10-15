@@ -1,9 +1,3 @@
-//! Concrete BN254 curve implementation.
-//!
-//! This module wraps the arkworks `ark-bn254` crate behind the generic
-//! `JoltGroup` and `PairingGroup` traits. Arkworks types never appear in
-//! the public API — all conversions happen internally.
-
 /// Generates a `#[repr(transparent)]` wrapper over an arkworks projective curve type,
 /// with all operator impls, serde, `AppendToTranscript`, `JoltGroup`, compile-time
 /// size assertions, and a safe `into_inner` accessor.
@@ -24,13 +18,11 @@ macro_rules! impl_jolt_group_wrapper {
             assert!(::std::mem::size_of::<$wrapper>() == ::std::mem::size_of::<$projective>());
 
         impl $wrapper {
-            /// Unwraps into the inner arkworks projective type.
             #[inline(always)]
             pub fn into_inner(self) -> $projective {
                 self.0
             }
 
-            /// Reinterprets a wrapper slice as a slice of the inner arkworks type.
             #[inline(always)]
             pub(crate) fn as_inner_slice(slice: &[Self]) -> &[$projective] {
                 // SAFETY: $wrapper is #[repr(transparent)] over $projective
@@ -41,7 +33,6 @@ macro_rules! impl_jolt_group_wrapper {
                 }
             }
 
-            /// Reinterprets a mutable wrapper slice as a slice of the inner arkworks type.
             #[inline(always)]
             pub(crate) fn as_inner_slice_mut(slice: &mut [Self]) -> &mut [$projective] {
                 // SAFETY: same repr(transparent) layout guarantee as `as_inner_slice`;
@@ -151,8 +142,19 @@ macro_rules! impl_jolt_group_wrapper {
             fn deserialize<D: ::serde::Deserializer<'de>>(
                 deserializer: D,
             ) -> Result<Self, D::Error> {
-                use ::ark_serialize::CanonicalDeserialize;
+                use ::ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
                 let buf = <Vec<u8>>::deserialize(deserializer)?;
+                // Exact-size gate (as for `Bn254GT`): `deserialize_compressed`
+                // stops after one point and would silently accept trailing
+                // bytes, giving one group element many wire encodings.
+                let expected_len = <$projective>::default().compressed_size();
+                if buf.len() != expected_len {
+                    return Err(::serde::de::Error::custom(format!(
+                        "{} encoding must be exactly {expected_len} bytes, got {}",
+                        stringify!($wrapper),
+                        buf.len()
+                    )));
+                }
                 let inner = <$projective>::deserialize_compressed(&buf[..])
                     .map_err(::serde::de::Error::custom)?;
                 Ok(Self(inner))
@@ -187,12 +189,12 @@ macro_rules! impl_jolt_group_wrapper {
             }
 
             #[inline]
-            fn scalar_mul<F: ::jolt_field::Field>(&self, scalar: &F) -> Self {
+            fn scalar_mul<F: ::jolt_field::JoltField>(&self, scalar: &F) -> Self {
                 Self(self.0 * super::field_to_fr(scalar))
             }
 
             #[inline]
-            fn msm<F: ::jolt_field::Field>(bases: &[Self], scalars: &[F]) -> Self {
+            fn msm<F: ::jolt_field::JoltField>(bases: &[Self], scalars: &[F]) -> Self {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
                 // Arkworks' msm_bigint silently truncates to the shorter slice,
@@ -233,11 +235,10 @@ use ark_bn254::Bn254 as ArkBn254;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField as _;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::PairingGroup;
 
-/// BN254 pairing-friendly curve.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bn254;
 
@@ -284,9 +285,9 @@ impl PairingGroup for Bn254 {
     }
 }
 
-/// Converts a generic `Field` element to an arkworks `Fr` via serialization.
+/// Converts a generic `JoltField` element to an arkworks `Fr` via serialization.
 ///
-/// This is the bridge between jolt-field's backend-agnostic `Field` trait and
+/// This is the bridge between jolt-field's backend-agnostic `JoltField` trait and
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
 ///
@@ -302,7 +303,7 @@ impl PairingGroup for Bn254 {
 /// In debug builds, asserts that the source value fits in the BN254 Fr modulus —
 /// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
 #[inline]
-pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
+pub(crate) fn field_to_fr<F: JoltField>(f: &F) -> ark_bn254::Fr {
     let mut bytes = vec![0u8; F::NUM_BYTES];
     f.to_bytes_le(&mut bytes);
     #[cfg(debug_assertions)]
@@ -322,42 +323,31 @@ pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
 #[expect(clippy::expect_used, reason = "tests may fail loudly")]
 mod tests {
     use ark_serialize::CanonicalSerialize;
-    use jolt_field::Fr;
-    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
-    use super::Bn254;
+    use super::{Bn254, Bn254G1, Bn254G2};
 
-    #[test]
-    fn g1_transcript_encoding_uses_compressed_commitment_bytes() {
-        let point = Bn254::g1_generator();
-        let mut actual = Blake2bTranscript::<Fr>::new(b"test");
-        point.append_to_transcript(&mut actual);
-
-        let mut expected = Blake2bTranscript::<Fr>::new(b"test");
+    fn encode_with_trailing_byte<P: CanonicalSerialize>(point: &P) -> Vec<u8> {
         let mut bytes = Vec::new();
         point
-            .0
             .serialize_compressed(&mut bytes)
-            .expect("serialize G1");
-        expected.append_bytes(&bytes);
-
-        assert_eq!(actual.state(), expected.state());
+            .expect("serialize point");
+        bytes.push(0);
+        bytes
     }
 
     #[test]
-    fn g2_transcript_encoding_uses_compressed_commitment_bytes() {
-        let point = Bn254::g2_generator();
-        let mut actual = Blake2bTranscript::<Fr>::new(b"test");
-        point.append_to_transcript(&mut actual);
+    fn g1_deserialize_rejects_wrong_length_encoding() {
+        let bytes = encode_with_trailing_byte(&Bn254::g1_generator().0);
+        let json = serde_json::to_string(&bytes).expect("encode bytes");
+        let err = serde_json::from_str::<Bn254G1>(&json).expect_err("trailing byte");
+        assert!(err.to_string().contains("exactly"), "{err}");
+    }
 
-        let mut expected = Blake2bTranscript::<Fr>::new(b"test");
-        let mut bytes = Vec::new();
-        point
-            .0
-            .serialize_compressed(&mut bytes)
-            .expect("serialize G2");
-        expected.append_bytes(&bytes);
-
-        assert_eq!(actual.state(), expected.state());
+    #[test]
+    fn g2_deserialize_rejects_wrong_length_encoding() {
+        let bytes = encode_with_trailing_byte(&Bn254::g2_generator().0);
+        let json = serde_json::to_string(&bytes).expect("encode bytes");
+        let err = serde_json::from_str::<Bn254G2>(&json).expect_err("trailing byte");
+        assert!(err.to_string().contains("exactly"), "{err}");
     }
 }

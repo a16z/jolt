@@ -1,4 +1,13 @@
+use ark_bn254::Fq;
+use ark_bn254::Fq12;
+use ark_bn254::Fq2;
+use ark_bn254::Fq6;
+use ark_ff::BigInt;
 use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2, ArkGT, BN254};
+use dory::messages::FirstReduceMessage;
+use dory::messages::ScalarProductMessage;
+use dory::messages::SecondReduceMessage;
+use dory::messages::VMVMessage;
 use dory::primitives::arithmetic::PairingCurve;
 use dory::primitives::transcript::Transcript as DoryTranscript;
 use dory::primitives::DorySerialize;
@@ -21,23 +30,23 @@ fn ark_g2(points: &[DeviceG2]) -> Vec<ArkG2> {
     load_all_g2(points).into_iter().map(ArkG2).collect()
 }
 
-fn fq(words: &[u64]) -> ark_bn254::Fq {
-    ark_bn254::Fq::new_unchecked(ark_ff::BigInt([words[0], words[1], words[2], words[3]]))
+fn fq(words: &[u64]) -> Fq {
+    Fq::new_unchecked(BigInt([words[0], words[1], words[2], words[3]]))
 }
 
-fn fq2(words: &[u64]) -> ark_bn254::Fq2 {
-    ark_bn254::Fq2::new(fq(&words[..FQ_LIMBS]), fq(&words[FQ_LIMBS..]))
+fn fq2(words: &[u64]) -> Fq2 {
+    Fq2::new(fq(&words[..FQ_LIMBS]), fq(&words[FQ_LIMBS..]))
 }
 
-pub(super) fn fq12(words: &[u64]) -> ark_bn254::Fq12 {
+pub(super) fn fq12(words: &[u64]) -> Fq12 {
     let fq6 = |chunk: &[u64]| {
-        ark_bn254::Fq6::new(
+        Fq6::new(
             fq2(&chunk[..2 * FQ_LIMBS]),
             fq2(&chunk[2 * FQ_LIMBS..4 * FQ_LIMBS]),
             fq2(&chunk[4 * FQ_LIMBS..]),
         )
     };
-    ark_bn254::Fq12::new(fq6(&words[..6 * FQ_LIMBS]), fq6(&words[6 * FQ_LIMBS..]))
+    Fq12::new(fq6(&words[..6 * FQ_LIMBS]), fq6(&words[6 * FQ_LIMBS..]))
 }
 
 #[tracing::instrument(skip_all, name = "cuda_multi_pair", fields(pairs = ps.len()))]
@@ -130,7 +139,7 @@ pub(super) fn rebind_proof(proof: ResidentProof) -> Result<HostProof, &'static s
     let g2 = |handle: DeviceG2| ArkG2(handle.load());
     let gt = DeviceGT::value;
     Ok(HostProof {
-        vmv_message: dory::messages::VMVMessage {
+        vmv_message: VMVMessage {
             c: gt(proof.vmv_message.c),
             d2: gt(proof.vmv_message.d2),
             e1: g1(proof.vmv_message.e1),
@@ -138,7 +147,7 @@ pub(super) fn rebind_proof(proof: ResidentProof) -> Result<HostProof, &'static s
         first_messages: proof
             .first_messages
             .into_iter()
-            .map(|message| dory::messages::FirstReduceMessage {
+            .map(|message| FirstReduceMessage {
                 d1_left: gt(message.d1_left),
                 d1_right: gt(message.d1_right),
                 d2_left: gt(message.d2_left),
@@ -150,7 +159,7 @@ pub(super) fn rebind_proof(proof: ResidentProof) -> Result<HostProof, &'static s
         second_messages: proof
             .second_messages
             .into_iter()
-            .map(|message| dory::messages::SecondReduceMessage {
+            .map(|message| SecondReduceMessage {
                 c_plus: gt(message.c_plus),
                 c_minus: gt(message.c_minus),
                 e1_plus: g1(message.e1_plus),
@@ -159,12 +168,10 @@ pub(super) fn rebind_proof(proof: ResidentProof) -> Result<HostProof, &'static s
                 e2_minus: g2(message.e2_minus),
             })
             .collect(),
-        final_message: proof
-            .final_message
-            .map(|message| dory::messages::ScalarProductMessage {
-                e1: g1(message.e1),
-                e2: g2(message.e2),
-            }),
+        final_message: proof.final_message.map(|message| ScalarProductMessage {
+            e1: g1(message.e1),
+            e2: g2(message.e2),
+        }),
         nu: proof.nu,
         sigma: proof.sigma,
         e2: proof.e2.map(g2),

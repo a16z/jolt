@@ -1,4 +1,6 @@
+pub(crate) mod address_first;
 pub(crate) mod address_major_matrix;
+pub(crate) mod address_rounds;
 pub(crate) mod context;
 pub(crate) mod dense_product;
 pub(crate) mod device;

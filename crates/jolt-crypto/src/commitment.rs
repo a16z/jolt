@@ -1,9 +1,10 @@
 use std::{
     error::Error,
-    fmt::{self, Debug},
+    fmt::{self, Debug, Formatter, Result as FmtResult},
+    marker::PhantomData,
 };
 
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, WithAccumulator};
+use jolt_field::{Accumulator, CanonicalBytes, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_transcript::AppendToTranscript;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -19,8 +20,83 @@ const PAR_THRESHOLD: usize = 1024;
 /// The `Output` associated type is the single piece of connective tissue
 /// between these different levels of abstraction.
 pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
-    /// The commitment value (e.g., a group element, a Merkle root, a lattice vector).
     type Output: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
+}
+
+/// Type-level placeholder for protocols that do not use vector commitments.
+pub struct NoVectorCommitment<F>(PhantomData<fn() -> F>);
+
+impl<F> Clone for NoVectorCommitment<F> {
+    fn clone(&self) -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<F> Debug for NoVectorCommitment<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.write_str("NoVectorCommitment")
+    }
+}
+
+impl<F> PartialEq for NoVectorCommitment<F> {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl<F> Eq for NoVectorCommitment<F> {}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoCommitment;
+
+impl CanonicalBytes for NoCommitment {
+    const NUM_BYTES: usize = 0;
+
+    fn to_bytes_le(&self, _out: &mut [u8]) {}
+}
+
+impl<F: JoltField> HomomorphicCommitment<F> for NoCommitment {
+    fn add(_c1: &Self, _c2: &Self) -> Self {
+        Self
+    }
+
+    fn linear_combine(_c1: &Self, _c2: &Self, _scalar: &F) -> Self {
+        Self
+    }
+}
+
+impl<F: JoltField> Commitment for NoVectorCommitment<F> {
+    type Output = NoCommitment;
+}
+
+impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
+    type Field = F;
+    type Setup = ();
+
+    fn capacity(_setup: &Self::Setup) -> usize {
+        0
+    }
+
+    #[expect(
+        clippy::panic,
+        reason = "transparent protocols reject ZK before requesting a vector commitment"
+    )]
+    fn commit(
+        _setup: &Self::Setup,
+        _values: &[Self::Field],
+        _blinding: &Self::Field,
+    ) -> Self::Output {
+        panic!("NoVectorCommitment cannot commit")
+    }
+
+    fn verify(
+        _setup: &Self::Setup,
+        _commitment: &Self::Output,
+        _values: &[Self::Field],
+        _blinding: &Self::Field,
+    ) -> bool {
+        false
+    }
 }
 
 /// Backend-agnostic vector commitment.
@@ -31,7 +107,7 @@ pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
 pub trait VectorCommitment:
     Commitment<Output: Copy + AppendToTranscript + Serialize + DeserializeOwned>
 {
-    type Field: Field;
+    type Field: JoltField;
 
     /// Transparent setup parameters (generators, public parameters, etc.).
     type Setup: Clone + Send + Sync;
@@ -71,7 +147,7 @@ pub trait VectorCommitment:
         entry_point: &[Self::Field],
     ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError>
     where
-        <Self::Field as WithAccumulator>::Accumulator: RingAccumulator<Element = Self::Field>,
+        <Self::Field as WithAccumulator>::Accumulator: Accumulator<Element = Self::Field>,
     {
         let row_count = point_len_to_basis_len(row_point.len())?;
         validate_row_len(row_len, entry_point.len())?;
@@ -117,7 +193,7 @@ pub trait VectorCommitment:
     ) -> Result<Self::Field, VectorOpeningError>
     where
         Self::Output: HomomorphicCommitment<Self::Field>,
-        <Self::Field as WithAccumulator>::Accumulator: RingAccumulator<Element = Self::Field>,
+        <Self::Field as WithAccumulator>::Accumulator: Accumulator<Element = Self::Field>,
     {
         let row_count = point_len_to_basis_len(row_point.len())?;
         if row_commitments.len() != row_count {
@@ -157,7 +233,6 @@ pub struct VectorCommitmentOpening<F> {
     pub combined_blinding: F,
 }
 
-/// Errors returned by committed-row opening helpers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorOpeningError {
     RowLenZero,
@@ -236,8 +311,7 @@ impl Error for VectorOpeningError {}
 /// (via `scalar_mul` + addition; `JoltGroup` requires `Default == identity`).
 /// Non-group commitment types (e.g., lattice vectors) can implement this
 /// trait directly for their native scalar field.
-pub trait HomomorphicCommitment<F: Field>: Clone + Default {
-    /// Computes `c1 + c2`.
+pub trait HomomorphicCommitment<F: JoltField>: Clone + Default {
     #[must_use]
     fn add(c1: &Self, c2: &Self) -> Self;
 
@@ -283,14 +357,14 @@ fn point_len_to_basis_len(point_len: usize) -> Result<usize, VectorOpeningError>
 }
 
 #[cfg(feature = "parallel")]
-fn combine_rows<F: Field>(
+fn combine_rows<F: JoltField>(
     flattened_rows: &[F],
     row_len: usize,
     row_weights: &[F],
     max_len: usize,
 ) -> Vec<F>
 where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mut combined_vector = vec![F::zero(); row_len];
 
@@ -325,14 +399,14 @@ where
 }
 
 #[cfg(not(feature = "parallel"))]
-fn combine_rows<F: Field>(
+fn combine_rows<F: JoltField>(
     flattened_rows: &[F],
     row_len: usize,
     row_weights: &[F],
     _max_len: usize,
 ) -> Vec<F>
 where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mut combined_vector = vec![F::zero(); row_len];
 
@@ -349,9 +423,9 @@ where
     combined_vector
 }
 
-fn inner_product<F: Field>(lhs: &[F], rhs: &[F]) -> F
+fn inner_product<F: JoltField>(lhs: &[F], rhs: &[F]) -> F
 where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     #[cfg(feature = "parallel")]
     {
@@ -388,7 +462,7 @@ where
 
 fn combine_commitments<F, C>(commitments: &[C], weights: &[F]) -> C
 where
-    F: Field,
+    F: JoltField,
     C: HomomorphicCommitment<F> + Copy + Send + Sync,
 {
     #[cfg(feature = "parallel")]
@@ -412,7 +486,7 @@ where
         })
 }
 
-impl<G: crate::JoltGroup, F: Field> HomomorphicCommitment<F> for G {
+impl<G: crate::JoltGroup, F: JoltField> HomomorphicCommitment<F> for G {
     #[inline]
     fn add(c1: &G, c2: &G) -> G {
         *c1 + c2

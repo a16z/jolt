@@ -6,7 +6,7 @@ This is structured as tests, but note that all tests are not expected to succeed
 
 Consistency refers to a virtual sequence only allowing a single result for a given input, i.e it not being underconstrained. Correctness is a stronger statement which says that it only allows the correct computation, this may be harder to solve for which is why they are separated.
 
-To see the found examples of contradictions run using `cargo test -- --nocapture`.
+To see the found examples of contradictions, run `cargo nextest run --no-capture`.
 
 To run you will need z3 installed on your system.
 ```

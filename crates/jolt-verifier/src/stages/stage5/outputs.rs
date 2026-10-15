@@ -1,33 +1,62 @@
-//! Typed inputs consumed and outputs produced by stage 5 verification.
-
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-use super::instruction_read_raf::{reconstruct_r_address, InstructionReadRaf};
-use super::ram_ra_claim_reduction::RamRaClaimReduction;
-use super::registers_val_evaluation::RegistersValEvaluation;
+#[cfg(feature = "field-inline")]
+pub use super::field_registers_val_evaluation::{
+    FieldRegistersValEvaluation, FieldRegistersValEvaluationOutputClaims,
+};
+use super::instruction_read_raf::{
+    reconstruct_r_address, InstructionReadRaf, InstructionReadRafOutputClaims,
+};
+use super::ram_ra_claim_reduction::{RamRaClaimReduction, RamRaClaimReductionOutputClaims};
+use super::registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationOutputClaims};
 
-/// Source-of-truth for stage 5's sumcheck batch: the three instances in
-/// Fiat-Shamir batch order (instruction read-RAF, RAM-RA reduction, register
-/// value-evaluation). `#[derive(SumcheckBatch)]` generates the
-/// `Stage5{Input,Output}{Claims,Points}<F>` and `Stage5Challenges<F>`
-/// aggregates — one field per instance, in this declaration order — plus the
-/// Fiat-Shamir absorb plumbing (`opening_values` / `append_output_claims` on this
-/// struct). The field order is load-bearing: it fixes the canonical opening order
-/// absorbed into the transcript, which must match the prover's commitment order.
+/// Source-of-truth for stage 5's sumcheck batch, in Fiat-Shamir batch order (instruction
+/// read-RAF, RAM-RA reduction, register value-evaluation, the field-inline field-register
+/// value-evaluation when composed). `#[derive(SumcheckBatch)]` generates the
+/// `Stage5{Input,Output}{Claims,Points}<F>` and `Stage5Challenges<F>` aggregates — one field
+/// per instance, in this declaration order — plus the Fiat-Shamir absorb plumbing
+/// (`opening_values` / `append_output_claims` on this struct). The field order is
+/// load-bearing: it fixes the canonical opening order absorbed into the transcript, which must
+/// match the prover's commitment order.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-pub struct Stage5Sumchecks<F: Field> {
+pub struct Stage5Sumchecks<F: JoltField> {
     pub instruction_read_raf: InstructionReadRaf<F>,
     pub ram_ra_claim_reduction: RamRaClaimReduction<F>,
     pub registers_val_evaluation: RegistersValEvaluation<F>,
+    /// The field-inline Twist val-evaluation instance. Declaration position (last) is the
+    /// spec's stage-5 batch order (`specs/field-inline-protocol.md`, "Stage 5 Composition"):
+    /// its two openings absorb after the ordinary register value-evaluation ones, and it draws
+    /// no instance challenge (`NoChallenges`), so the stage's gamma draw order is unchanged.
+    #[cfg(feature = "field-inline")]
+    pub field_registers_val_evaluation: FieldRegistersValEvaluation<F>,
 }
 
-/// The shared opening-point accessors over the point-only stage-5 aggregate.
-impl<F: Field> Stage5OutputPoints<F> {
+impl<F: JoltField> Stage5OutputClaims<F> {
+    /// Construct the ordinary stage-5 claims. Producers without field-inline semantics use
+    /// this regardless of the build's feature set — the field-inline val-evaluation slot
+    /// defaults to all-zero claims, inert because such producers' proofs never declare the
+    /// field-inline axis.
+    pub fn new(
+        instruction_read_raf: InstructionReadRafOutputClaims<F>,
+        ram_ra_claim_reduction: RamRaClaimReductionOutputClaims<F>,
+        registers_val_evaluation: RegistersValEvaluationOutputClaims<F>,
+    ) -> Self {
+        Self {
+            instruction_read_raf,
+            ram_ra_claim_reduction,
+            registers_val_evaluation,
+            #[cfg(feature = "field-inline")]
+            field_registers_val_evaluation: Default::default(),
+        }
+    }
+}
+
+impl<F: JoltField> Stage5OutputPoints<F> {
     /// The instruction read-RAF cycle point (shared by the lookup-table-flag
     /// and RAF-flag openings).
     pub fn instruction_r_cycle(&self) -> &[F] {
@@ -49,11 +78,18 @@ impl<F: Field> Stage5OutputPoints<F> {
     pub fn registers_opening_point(&self) -> &[F] {
         self.registers_val_evaluation.rd_inc()
     }
+
+    /// The field-register value-evaluation opening point (shared by the field-inline
+    /// `rd_inc`/`rd_wa`).
+    #[cfg(feature = "field-inline")]
+    pub fn field_registers_val_evaluation_point(&self) -> &[F] {
+        self.field_registers_val_evaluation.rd_inc()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct Stage5ClearOutput<F: Field> {
+pub struct Stage5ClearOutput<F: JoltField> {
     pub challenges: Stage5Challenges<F>,
     /// The produced stage-5 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
@@ -70,7 +106,7 @@ pub struct Stage5ClearOutput<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage5ZkOutput<F: Field, C> {
+pub struct Stage5ZkOutput<F: JoltField, C> {
     pub challenges: Stage5Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
@@ -88,12 +124,12 @@ pub struct Stage5ZkOutput<F: Field, C> {
 // consistency and output-claim commitments. Boxing the common clear variant to
 // shrink the rarer ZK one would add indirection to every clear-path access.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage5Output<F: Field, C> {
+pub enum Stage5Output<F: JoltField, C> {
     Clear(Stage5ClearOutput<F>),
     Zk(Stage5ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage5Output<F, C> {
+impl<F: JoltField, C> Stage5Output<F, C> {
     /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage5OutputPoints<F> {
         match self {
@@ -130,33 +166,38 @@ impl<F: Field, C> Stage5Output<F, C> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
+    use jolt_transcript::Transcript;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
     }
 
-    /// Locks the stage-5 Fiat-Shamir append order against silent drift: the
-    /// instruction read-RAF openings, then the RAM-RA reduced opening, then the
-    /// register value-evaluation openings, each member single-sourcing its own
-    /// per-field order from its `OutputClaims` derive. A wrong batch order here
-    /// silently breaks soundness, so it is pinned with distinct sentinels.
-    #[test]
-    fn opening_values_follow_canonical_order() {
+    fn sumchecks() -> Stage5Sumchecks<Fr> {
         let trace_dimensions = TraceDimensions::new(4);
-        let sumchecks = Stage5Sumchecks::<Fr> {
+        Stage5Sumchecks::<Fr> {
             instruction_read_raf: InstructionReadRaf::new(
                 InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap(),
             ),
             ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, 3),
             registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
-        };
-        let claims = Stage5OutputClaims::<Fr> {
+            #[cfg(feature = "field-inline")]
+            field_registers_val_evaluation: FieldRegistersValEvaluation::new(
+                FieldRegistersTraceDimensions::new(4),
+            ),
+        }
+    }
+
+    fn claims() -> Stage5OutputClaims<Fr> {
+        Stage5OutputClaims::<Fr> {
             instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![fr(1), fr(2)],
                 instruction_ra: vec![fr(3), fr(4)],
@@ -167,11 +208,78 @@ mod tests {
                 rd_inc: fr(7),
                 rd_wa: fr(8),
             },
-        };
+            #[cfg(feature = "field-inline")]
+            field_registers_val_evaluation: FieldRegistersValEvaluationOutputClaims {
+                rd_inc: fr(9),
+                rd_wa: fr(10),
+            },
+        }
+    }
 
+    /// Locks the stage-5 Fiat-Shamir append order against silent drift: the instruction
+    /// read-RAF openings, then the RAM-RA reduced opening, then the register value-evaluation
+    /// openings, under `field-inline` the field-inline value-evaluation openings last (the
+    /// spec's committed row order: `FieldRdInc`, `FieldRdWa`), each member single-sourcing its
+    /// own per-field order from its `OutputClaims` derive. A wrong batch order here silently
+    /// breaks soundness, so it is pinned with distinct sentinels.
+    #[test]
+    fn opening_values_follow_canonical_order() {
+        #[cfg(not(feature = "field-inline"))]
+        let expected = (1..=8).map(fr).collect::<Vec<_>>();
+        #[cfg(feature = "field-inline")]
+        let expected = (1..=10).map(fr).collect::<Vec<_>>();
+        assert_eq!(sumchecks().opening_values(&claims()), expected);
+    }
+
+    /// Pins the batch's `draw_challenges` to the inline draw: the instruction gamma, then the
+    /// RAM-RA gamma. The register value-evaluation member draws nothing, and so does the
+    /// `field-inline` field-register value-evaluation member (`NoChallenges`) — composing it
+    /// changes no stage-5 draw.
+    #[test]
+    fn draw_challenges_matches_inline_draw_sequence() {
+        let sumchecks = sumchecks();
+        let (inline_events, inline_gammas) =
+            record(|t| (0..2).map(|_| t.challenge_scalar()).collect::<Vec<Fr>>());
+        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
         assert_eq!(
-            sumchecks.opening_values(&claims),
-            (1..=8).map(fr).collect::<Vec<_>>()
+            draw_events,
+            vec![DrawEvent::Squeeze(1), DrawEvent::Squeeze(2)]
         );
+        assert_eq!(
+            vec![
+                challenges.instruction_read_raf.gamma,
+                challenges.ram_ra_claim_reduction.gamma,
+            ],
+            inline_gammas
+        );
+    }
+
+    /// The field-register value-evaluation member's wire set is exactly the two spec outputs
+    /// (`FieldRdInc`, `FieldRdWa` at `FieldRegistersValEvaluation`), so composing it grows the
+    /// stage-5 absorbed/committed opening count by two.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_registers_val_evaluation_wire_set_is_the_two_spec_outputs() {
+        use crate::stages::relations::ConcreteSumcheck as _;
+        use jolt_claims::protocols::field_inline::geometry::registers::val_evaluation_output_openings;
+
+        let sumchecks = sumchecks();
+        let wire = sumchecks
+            .field_registers_val_evaluation
+            .wire_output_openings();
+        assert_eq!(wire, val_evaluation_output_openings().into_iter().collect());
+
+        let others = sumchecks.instruction_read_raf.wire_output_openings().len()
+            + sumchecks
+                .ram_ra_claim_reduction
+                .wire_output_openings()
+                .len()
+            + sumchecks
+                .registers_val_evaluation
+                .wire_output_openings()
+                .len();
+        assert_eq!(sumchecks.output_claim_count(), others + 2);
     }
 }

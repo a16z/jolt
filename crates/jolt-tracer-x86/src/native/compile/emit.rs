@@ -15,6 +15,7 @@
 //!   target equals its own source address executes once, then execution
 //!   stops.
 
+use common::constants::STACK_CANARY_SIZE;
 use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynasmApi, DynasmLabelApi};
 use jolt_program::execution::TraceError;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
@@ -22,15 +23,13 @@ use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 use super::super::helpers;
 use super::super::state::{
     advice_slot_offset, reg_offset, ExitReason, OBSERVATION_SIZE, OBS_RAM_ADDRESS, OBS_RAM_POST,
-    OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_EXIT,
-    OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC, OFF_ROW_LIMIT,
-    OFF_TRACE_LEN,
+    OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_CANARY_OFFSET,
+    OFF_EXIT, OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC,
+    OFF_ROW_LIMIT, OFF_TRACE_LEN,
 };
 use super::emitter::{EmitOutcome, RowEmitter};
 use super::{EmitMode, Emitter};
 
-/// The dynasm-template emitter: the production implementor of the
-/// [`RowEmitter`] seam, covering every final-bytecode row kind.
 pub struct DynasmEmitter;
 
 impl RowEmitter for DynasmEmitter {
@@ -75,7 +74,6 @@ impl Emitter {
     /// register per ALU row, the most frequent shape in the bytecode.
     fn alu_reg_operand(&mut self, op: AluRR, dst: Rq, reg: Option<u8>) {
         let Some(r) = reg.filter(|r| *r != 0) else {
-            // x0: fold the identity/annihilator rather than touching memory.
             match op {
                 AluRR::Add | AluRR::Sub | AluRR::Or | AluRR::Xor => {}
                 AluRR::And | AluRR::Mul => {
@@ -95,7 +93,6 @@ impl Emitter {
         }
     }
 
-    /// Compare against a guest register straight from the state plane.
     fn cmp_reg_operand(&mut self, dst: Rq, reg: Option<u8>) {
         if let Some(r) = reg.filter(|r| *r != 0) {
             dynasm!(self.ops ; .arch x64 ; cmp Rq(dst), QWORD [r12 + reg_offset(r)]);
@@ -159,7 +156,6 @@ pub(super) struct Stubs {
 }
 
 impl Emitter {
-    /// Function prologue: pin registers, dispatch to `state.pc`.
     pub(super) fn emit_prologue(&mut self) -> AssemblyOffset {
         let entry = self.ops.offset();
         dynasm!(self.ops
@@ -196,6 +192,21 @@ impl Emitter {
     /// Falling off the end of the compiled program is a bad jump.
     pub(super) fn emit_jump_to_bad_jump(&mut self) {
         dynasm!(self.ops ; .arch x64 ; jmp ->bad_jump);
+    }
+
+    /// Static branch and jump targets without a compiled group fault when
+    /// taken, like a dispatched jump to the same address.
+    pub(super) fn emit_unmapped_target_stubs(&mut self) {
+        for (&address, &label) in &self.labels {
+            if self.ops.labels().resolve_dynamic(label).is_err() {
+                dynasm!(self.ops
+                    ; .arch x64
+                    ; =>label
+                    ; mov rax, QWORD address as i64
+                    ; jmp ->bad_jump
+                );
+            }
+        }
     }
 
     pub(super) fn emit_stubs(&mut self) -> Stubs {
@@ -377,7 +388,6 @@ impl DynasmEmitter {
         e.store_rd(RAX, row.operands.rd);
     }
 
-    /// `Sd`: mirror of `Ld` with the store value in rsi's place.
     fn emit_store_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
         // EA = x[rs1].wrapping_add(imm) as u64 — imm used as full i64 here.
         e.load_reg(RAX, row.operands.rs1);
@@ -406,6 +416,13 @@ impl DynasmEmitter {
             ; jae >slow
             ; test al, 7
             ; jnz >slow
+            // Stack canary: plane offsets in [canary_offset, canary_offset +
+            // STACK_CANARY_SIZE) are a stack overflow. One unsigned compare
+            // covers both ends of the range; the helper reports the fault.
+            ; mov rsi, rcx
+            ; sub rsi, QWORD [r12 + OFF_CANARY_OFFSET]
+            ; cmp rsi, STACK_CANARY_SIZE as i32
+            ; jb >slow
         );
         if e.mode == EmitMode::Record {
             e.obs_reload();
@@ -427,8 +444,6 @@ impl DynasmEmitter {
         dynasm!(e.ops ; .arch x64 ; done:);
     }
 
-    /// Alignment asserts: compute EA, test low bits, call the fatal helper on
-    /// failure. `mask` is 1 (halfword) or 3 (word); `code` selects the message.
     fn emit_assert_alignment(e: &mut Emitter, row: &JoltInstructionRow, mask: i8, code: u64) {
         e.load_reg(RAX, row.operands.rs1);
         e.load_imm(RCX, row.operands.imm as i64);
@@ -454,20 +469,9 @@ impl Emitter {
             Some(r) => dynasm!(self.ops ; .arch x64 ; mov Rd(gpr), DWORD [r12 + reg_offset(r)]),
         }
     }
-
-    /// Load the low 32 bits of a guest register, sign-extended to 64.
-    fn load_reg32_sext(&mut self, gpr: Rq, reg: Option<u8>) {
-        match reg {
-            None | Some(0) => dynasm!(self.ops ; .arch x64 ; xor Rq(gpr), Rq(gpr)),
-            Some(r) => {
-                dynasm!(self.ops ; .arch x64 ; movsxd Rq(gpr), DWORD [r12 + reg_offset(r)]);
-            }
-        }
-    }
 }
 
 impl DynasmEmitter {
-    /// `(x[rs1] ^ x[rs2]).rotate_right(n)`, 64-bit.
     fn emit_xor_rot(e: &mut Emitter, row: &JoltInstructionRow, n: i8) {
         e.load_reg(RAX, row.operands.rs1);
         e.load_reg(RCX, row.operands.rs2);
@@ -485,7 +489,6 @@ impl DynasmEmitter {
 }
 
 impl Emitter {
-    /// Emit a group's advice computation before its rows.
     pub(super) fn emit_advice_compute(&mut self, job_index: usize) {
         dynasm!(self.ops ; .arch x64 ; mov rsi, job_index as i32);
         self.call_helper(helpers::advice_compute as *const () as usize);
@@ -512,7 +515,6 @@ impl Emitter {
         dynasm!(self.ops ; .arch x64 ; mov r10, QWORD [r12 + OFF_OBS_CURSOR]);
     }
 
-    /// Record mode: advance the cursor past this row's slot.
     fn obs_close(&mut self) {
         dynasm!(self.ops
             ; .arch x64
@@ -522,8 +524,6 @@ impl Emitter {
         );
     }
 
-    /// Record mode: capture the register values this row reads and the
-    /// destination's pre-value, before the row's own template runs.
     fn obs_registers_pre(&mut self, row: &JoltInstructionRow) {
         self.obs_reload();
         for (slot, register) in [
@@ -563,7 +563,6 @@ impl Emitter {
         );
     }
 
-    /// Record mode: capture the destination's post-value, after the template ran.
     fn obs_rd_post(&mut self, row: &JoltInstructionRow) {
         self.obs_reload();
         match row.operands.rd {
@@ -595,7 +594,6 @@ impl DynasmEmitter {
             return Ok(EmitOutcome::Unsupported);
         }
 
-        // Every row is one trace row.
         dynasm!(e.ops ; .arch x64 ; inc r14);
 
         // Record mode brackets each row's template with value capture. Rows that
@@ -646,7 +644,6 @@ impl DynasmEmitter {
             K::MulI(_) => Self::emit_alu_ri(e, row, AluRR::Mul),
 
             K::MulHU(_) => {
-                // rd = high 64 bits of unsigned x[rs1] * x[rs2].
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops ; .arch x64 ; mul rcx);
@@ -676,7 +673,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::Auipc(_) => {
-                // rd = address + imm, fully static.
                 let value = (row.address as i64).wrapping_add(row.operands.imm as i64);
                 e.load_imm(RAX, value);
                 e.store_rd(RAX, row.operands.rd);
@@ -689,9 +685,15 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualShiftRightBitmask(_) => {
-                // rd = u64::MAX << (x[rs1] & 63) — bits [63:shift] set.
                 e.load_reg(RCX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; mov rax, -1 ; shl rax, cl);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualShiftRightBitmaskW(_) => {
+                // rd = (1 << 32) - (1 << (x[rs1] & 31)) — bits [31:shift] set.
+                // 32-bit shl masks cl mod 32 and zero-extends into rax.
+                e.load_reg(RCX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; mov eax, -1 ; shl eax, cl);
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSignExtendWord(_) => {
@@ -726,6 +728,159 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr rax, cl);
                 e.store_rd(RAX, row.operands.rd);
             }
+            K::VirtualSrlw(_) => {
+                // rd = sext32((x[rs1] as u32) >> tz(x[rs2])); the W bitmask
+                // producer guarantees tz(x[rs2]) ≤ 31, within shr's cl mod 32.
+                e.load_reg(RCX, row.operands.rs2);
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr eax, cl ; movsxd rax, eax);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualSraw(_) => {
+                e.load_reg(RCX, row.operands.rs2);
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; sar eax, cl ; movsxd rax, eax);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualSrliw(_) => {
+                let shift = (row.operands.imm as u64).trailing_zeros();
+                // x86 masks shift counts modulo 32, so fold empty word masks here.
+                if shift < 32 {
+                    e.load_reg(RAX, row.operands.rs1);
+                    dynasm!(e.ops ; .arch x64 ; shr eax, shift as i8 ; movsxd rax, eax);
+                } else {
+                    dynasm!(e.ops ; .arch x64 ; xor eax, eax);
+                }
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualSraiw(_) => {
+                let shift = ((row.operands.imm as u64).trailing_zeros() % 32) as i8;
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; sar eax, shift ; movsxd rax, eax);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::WindowMaskW(_) => {
+                e.load_reg(RCX, row.operands.rs1);
+                e.load_imm(RAX, row.operands.imm as i64);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; add rcx, rax
+                    ; and ecx, 4
+                    ; shl ecx, 3
+                    ; mov eax, -1
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::WindowMaskB(_) => {
+                e.load_reg(RCX, row.operands.rs1);
+                e.load_imm(RAX, row.operands.imm as i64);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; add rcx, rax
+                    ; and ecx, 7
+                    ; shl ecx, 3
+                    ; mov eax, 0xFF
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::WindowMaskH(_) => {
+                // rd = 0xFFFF << (8 * ((x[rs1] + imm) & 6)): byte mask of the
+                // addressed halfword's lane within its containing doubleword.
+                // Bit 0 is ignored; the surrounding sequence asserts halfword
+                // alignment.
+                e.load_reg(RCX, row.operands.rs1);
+                e.load_imm(RAX, row.operands.imm as i64);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; add rcx, rax
+                    ; and ecx, 6
+                    ; shl ecx, 3
+                    ; mov eax, 0xFFFF
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::AlignAddr(_) => {
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_imm(RCX, row.operands.imm as i64);
+                dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -8);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::ShiftDataB(_) => {
+                // rd = (x[rs1] & 0xFF) << (8 * (x[rs2] & 7)): the store byte
+                // moved into its lane within the containing doubleword (rs1
+                // holds the store value, rs2 the effective address).
+                e.load_reg(RCX, row.operands.rs2);
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; and ecx, 7
+                    ; shl ecx, 3
+                    ; movzx eax, al
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::ShiftDataH(_) => {
+                // rd = (x[rs1] & 0xFFFF) << (8 * (x[rs2] & 6)): the store
+                // halfword moved into its lane. Bit 0 of the address is
+                // ignored; the surrounding sequence asserts halfword
+                // alignment.
+                e.load_reg(RCX, row.operands.rs2);
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; and ecx, 6
+                    ; shl ecx, 3
+                    ; movzx eax, ax
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::ShiftDataW(_) => {
+                // rd = (x[rs1] & 0xFFFFFFFF) << (8 * (x[rs2] & 4)): the store
+                // word moved into its lane. Bits 0-1 of the address are
+                // ignored; the surrounding sequence asserts word alignment.
+                e.load_reg(RCX, row.operands.rs2);
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; and ecx, 4
+                    ; shl ecx, 3
+                    ; mov eax, eax
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::Pext(_) => {
+                // rd = pext(x[rs1], x[rs2]), zero-extended. Requires BMI2
+                // (checked once).
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_reg(RCX, row.operands.rs2);
+                dynasm!(e.ops ; .arch x64 ; pext rax, rax, rcx);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::PextSigned(_) => {
+                // rd = pext(x[rs1], x[rs2]) sign-extended by the extracted
+                // window's top bit: shift the pc packed bits to the top, then
+                // arithmetic-shift back down. cl = -pc ≡ 64-pc (mod 64), so
+                // pc = 0 shifts the zero pext by 0 and pc = 64 is the
+                // identity, both matching the reference. Requires
+                // BMI2/POPCNT (checked once).
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_reg(RCX, row.operands.rs2);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; pext rax, rax, rcx
+                    ; popcnt rcx, rcx
+                    ; neg ecx
+                    ; shl rax, cl
+                    ; sar rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
 
             K::Beq(_) => Self::emit_branch(e, row, Cc::Eq),
             K::Bne(_) => Self::emit_branch(e, row, Cc::Ne),
@@ -753,7 +908,6 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -2);
                 e.load_imm(RCX, link_value(row));
                 e.store_rd(RCX, row.operands.rd);
-                // PC-stall check against this row's own source address.
                 dynasm!(e.ops ; .arch x64 ; mov rcx, QWORD row.address as i64 ; cmp rax, rcx ; jne >go);
                 e.terminal(row.address as u64);
                 dynasm!(e.ops ; .arch x64 ; go:);
@@ -766,7 +920,6 @@ impl DynasmEmitter {
             K::AssertHalfwordAlignment(_) => Self::emit_assert_alignment(e, row, 1, 0),
             K::AssertWordAlignment(_) => Self::emit_assert_alignment(e, row, 3, 1),
             K::AssertLte(_) => {
-                // assert!(x[rs1] as u64 <= x[rs2] as u64) — unsigned.
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops
@@ -786,14 +939,12 @@ impl DynasmEmitter {
                 e.set_cc_less(true, row.operands.rd);
             }
             K::Andn(_) => {
-                // rd = x[rs1] & !x[rs2]
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops ; .arch x64 ; not rcx ; and rax, rcx);
                 e.store_rd(RAX, row.operands.rd);
             }
             K::Pow2I(_) => {
-                // Static: rd = 1 << (imm % 64).
                 let value = 1i64 << ((row.operands.imm as u64) % 64);
                 e.load_imm(RAX, value);
                 e.store_rd(RAX, row.operands.rd);
@@ -804,13 +955,11 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::Pow2W(_) => {
-                // rd = 1 << ((x[rs1] as u64) % 32)
                 e.load_reg(RCX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; and ecx, 31 ; mov eax, 1 ; shl rax, cl);
                 e.store_rd(RAX, row.operands.rd);
             }
             K::MovSign(_) => {
-                // rd = -1 if the sign bit is set else 0.
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; sar rax, 63);
                 e.store_rd(RAX, row.operands.rd);
@@ -823,7 +972,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualRotri(_) => {
-                // Shift amount = imm.trailing_zeros() (bitmask encoding), mod 64.
                 let shift = (((row.operands.imm as u64).trailing_zeros()) % 64) as i8;
                 e.load_reg(RAX, row.operands.rs1);
                 if shift != 0 {
@@ -842,7 +990,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualShiftRightBitmaski(_) => {
-                // Static: bits [63:shift] set (all-ones when shift == 0).
                 let shift = (row.operands.imm as u64) % 64;
                 let value = (((1u128 << (64 - shift)) - 1) << shift) as u64 as i64;
                 e.load_imm(RAX, value);
@@ -864,6 +1011,17 @@ impl DynasmEmitter {
             K::VirtualXorRotW12(_) => Self::emit_xor_rotw(e, row, 12),
             K::VirtualXorRotW8(_) => Self::emit_xor_rotw(e, row, 8),
             K::VirtualXorRotW7(_) => Self::emit_xor_rotw(e, row, 7),
+            K::VirtualXorRotW22(_) => Self::emit_xor_rotw(e, row, 22),
+            K::VirtualXorRotW19(_) => Self::emit_xor_rotw(e, row, 19),
+            K::VirtualXorRotW6(_) => Self::emit_xor_rotw(e, row, 6),
+            K::VirtualXorRotL1(_) => {
+                // Keccak theta-D: `x[rs1] ^ x[rs2].rotate_left(1)` — the rotation
+                // applies to rs2 before the xor, unlike the (a ^ b).ror(n) family.
+                e.load_reg(RAX, row.operands.rs2);
+                e.load_reg(RCX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; rol rax, 1 ; xor rax, rcx);
+                e.store_rd(RAX, row.operands.rd);
+            }
             K::AssertEq(_) => {
                 // imm == 0: hard assert. imm != 0: "spoil" mode, warn-and-continue
                 // in the interpreter; a no-op here (registers unaffected).
@@ -882,7 +1040,6 @@ impl DynasmEmitter {
                 }
             }
             K::AssertValidDiv0(_) => {
-                // divisor == 0 implies quotient == u64::MAX.
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops
@@ -898,7 +1055,6 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; ok:);
             }
             K::AssertValidUnsignedRemainder(_) => {
-                // divisor == 0 || remainder < divisor (unsigned).
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops
@@ -929,40 +1085,16 @@ impl DynasmEmitter {
                 e.call_helper(helpers::assert_failed as *const () as usize);
                 dynasm!(e.ops ; .arch x64 ; ok:);
             }
-            K::VirtualChangeDivisor(_) => {
-                // rd = 1 if (dividend, divisor) == (i64::MIN, -1) else divisor.
+            K::VirtualNegateIf(_) => {
                 e.load_reg(RCX, row.operands.rs1);
                 e.load_reg(RAX, row.operands.rs2);
                 dynasm!(e.ops
                     ; .arch x64
-                    ; mov rdx, QWORD i64::MIN
-                    ; cmp rcx, rdx
-                    ; jne >done
-                    ; cmp rax, -1
-                    ; jne >done
-                    ; mov eax, 1
-                    ; done:
+                    ; mov rdx, rax
+                    ; neg rdx
+                    ; test rcx, rcx
+                    ; cmovs rax, rdx
                 );
-                e.store_rd(RAX, row.operands.rd);
-            }
-            K::VirtualChangeDivisorW(_) => {
-                // 32-bit variant; the else branch sign-extends the low 32 bits of
-                // x[rs2] (upper bits discarded).
-                e.load_reg32_sext(RCX, row.operands.rs1);
-                e.load_reg32_sext(RAX, row.operands.rs2);
-                dynasm!(e.ops
-                    ; .arch x64
-                    ; cmp ecx, 0x8000_0000u32 as i32
-                    ; jne >done
-                    ; cmp eax, -1
-                    ; jne >done
-                    ; mov eax, 1
-                    ; done:
-                );
-                e.store_rd(RAX, row.operands.rd);
-            }
-            K::VirtualAdviceLen(_) => {
-                e.call_helper(helpers::advice_remaining as *const () as usize);
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualAdviceLoad(_) => {
