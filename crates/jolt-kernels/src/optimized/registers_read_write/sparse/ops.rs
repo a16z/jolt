@@ -11,7 +11,7 @@ use super::{
         merge_bind, merge_count, merge_soa, split_indexed, split_pair_group, split_soa_pair_group,
         Cell, IndexedMeta, MatrixEntry, SeedEntry, SoaSpareBlock, SparseEntry,
     },
-    CoeffLut, CycleState, LutIndex, OneHotCoeff, Seeds,
+    CoeffLut, CycleState, LutIndex, Seeds,
 };
 
 /// Block boundaries advanced so no `row >> pair_bits` group is split.
@@ -271,15 +271,7 @@ pub(super) fn bind_indexed_to_direct<F: JoltField>(
     }
 
     let unused = CycleState::<F>::unused_lut();
-    let deref = |entry: SparseEntry<F, LutIndex>| SparseEntry::<F, F> {
-        val: entry.val,
-        prev_val: entry.prev_val,
-        next_val: entry.next_val,
-        row: entry.row,
-        ra: entry.ra.value(ra_lut),
-        wa: entry.wa.value(wa_lut),
-        col: entry.col,
-    };
+    let deref = |entry: SparseEntry<F, LutIndex>| entry.to_field(ra_lut, wa_lut);
     let fill_block = |(block, out): (usize, &mut [MaybeUninit<SparseEntry<F, F>>])| {
         let mut written = 0usize;
         let mut cursor = bounds[block];
@@ -314,7 +306,7 @@ pub(super) fn bind_indexed_to_direct<F: JoltField>(
     bound
 }
 
-fn accumulate_pair_group<F, E>(
+pub(super) fn accumulate_pair_group<F, E>(
     evens: &[E],
     odds: &[E],
     inc_evals: [F; 2],
@@ -526,112 +518,6 @@ pub(super) fn fused_intermediates<F: JoltField>(
     merge_bind(evens, odds, &bind, |entry| scratch.0.push(entry));
     let (evens, odds) = split_pair_group(second);
     merge_bind(evens, odds, &bind, |entry| scratch.1.push(entry));
-}
-
-/// `Σ_{x_out} e_out[x_out] · Σ_{x_in} e_in[x_in] · inner(z)` over the nonempty
-/// `2^span_bits`-row seed groups `z = x_out·|e_in| + x_in`. Each task owns one
-/// complete `x_out` group, so a nonempty group costs two `e_out` products, as
-/// in [`sparse_quadratic`], and an empty group costs none.
-fn seed_split_eq<F: JoltField, S>(
-    seeds: &Seeds,
-    span_bits: u32,
-    e_in: &[F],
-    e_out: &[F],
-    init: impl Fn() -> S + Send + Sync,
-    inner: impl Fn(&mut S, usize, &[SeedEntry]) -> [F; 2] + Sync,
-) -> Result<[F; 2], WitnessError> {
-    let in_mask = e_in.len() - 1;
-    let group_rows = e_in.len() << span_bits;
-    let outer_group = |state: &mut S, x_out: usize| -> Result<[F; 2], WitnessError> {
-        let mut acc = [F::Accumulator::default(); 2];
-        let mut nonempty = false;
-        seeds.for_each_group(
-            x_out * group_rows..(x_out + 1) * group_rows,
-            span_bits,
-            |z, cells| {
-                nonempty = true;
-                let e_in_eval = e_in[z & in_mask];
-                let [at_zero, leading] = inner(state, z, cells);
-                acc[0].fmadd(e_in_eval, at_zero);
-                acc[1].fmadd(e_in_eval, leading);
-            },
-        )?;
-        if !nonempty {
-            return Ok([F::zero(); 2]);
-        }
-        let e_out_eval = e_out[x_out];
-        Ok([e_out_eval * acc[0].reduce(), e_out_eval * acc[1].reduce()])
-    };
-    #[cfg(feature = "parallel")]
-    {
-        (0..e_out.len())
-            .into_par_iter()
-            .map_init(init, outer_group)
-            .try_reduce(|| [F::zero(); 2], |a, b| Ok([a[0] + b[0], a[1] + b[1]]))
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut state = init();
-        (0..e_out.len()).try_fold([F::zero(); 2], |sum, x_out| {
-            let group = outer_group(&mut state, x_out)?;
-            Ok([sum[0] + group[0], sum[1] + group[1]])
-        })
-    }
-}
-
-/// Round-0 `[q(0), leading coefficient]` over seed cells.
-pub(super) fn seed_quadratic<F: JoltField>(
-    seeds: &Seeds,
-    ra_lut: &CoeffLut<F>,
-    wa_lut: &CoeffLut<F>,
-    e_in: &[F],
-    e_out: &[F],
-    inc_evals_at: impl Fn(usize) -> [F; 2] + Sync,
-) -> Result<[F; 2], WitnessError> {
-    seed_split_eq(
-        seeds,
-        1,
-        e_in,
-        e_out,
-        || (),
-        |&mut (), z, pair_group| {
-            let mut inner = [F::Accumulator::default(); 2];
-            let (evens, odds) = split_pair_group(pair_group);
-            accumulate_pair_group(evens, odds, inc_evals_at(z), &mut inner, ra_lut, wa_lut);
-            [inner[0].reduce(), inner[1].reduce()]
-        },
-    )
-}
-
-/// Round-1 quadratic with first-bind rows rebuilt in per-thread scratch.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "mirrors seed_quadratic plus the two table generations"
-)]
-pub(super) fn seed_quadratic_fused<F: JoltField>(
-    seeds: &Seeds,
-    seed_ra_lut: &CoeffLut<F>,
-    seed_wa_lut: &CoeffLut<F>,
-    ra_lut: &CoeffLut<F>,
-    wa_lut: &CoeffLut<F>,
-    r1: F,
-    e_in: &[F],
-    e_out: &[F],
-    inc_evals_at: impl Fn(usize) -> [F; 2] + Sync,
-) -> Result<[F; 2], WitnessError> {
-    seed_split_eq(seeds, 2, e_in, e_out, fused_scratch, |scratch, z, quad| {
-        fused_intermediates(quad, seed_ra_lut, seed_wa_lut, r1, scratch);
-        let mut inner = [F::Accumulator::default(); 2];
-        accumulate_pair_group(
-            &scratch.0,
-            &scratch.1,
-            inc_evals_at(z),
-            &mut inner,
-            ra_lut,
-            wa_lut,
-        );
-        [inner[0].reduce(), inner[1].reduce()]
-    })
 }
 
 /// Cycles per second-bind block: a multiple of four, so no 4-row group
