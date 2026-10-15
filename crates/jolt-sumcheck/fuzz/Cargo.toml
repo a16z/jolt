@@ -5,10 +5,10 @@
 # jolt-sumcheck's types are built against the patched fork. Apply the same patches
 # here so both sides see the same `ark-ff`.
 [patch.crates-io]
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
 
 [package]
 name = "jolt-sumcheck-fuzz"

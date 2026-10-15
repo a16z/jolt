@@ -530,11 +530,11 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 "#;
 
@@ -586,11 +586,11 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "90c99eee214b01882e4aa7aa43ff6f30b9b7f51a" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 "#;
 

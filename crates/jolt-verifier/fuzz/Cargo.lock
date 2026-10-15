@@ -50,7 +50,7 @@ checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
@@ -61,7 +61,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "allocative",
  "ark-ff-asm 0.5.0",
@@ -120,7 +120,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "quote",
  "syn 2.0.119",
@@ -139,7 +139,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "num-bigint 0.4.8",
  "num-traits",
@@ -164,7 +164,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "ahash",
  "ark-ff 0.5.0",
@@ -178,7 +178,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "ark-serialize-derive 0.5.0",
  "ark-std 0.5.0",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -766,7 +766,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+source = "git+https://github.com/a16z/arkworks-algebra?rev=90c99eee214b01882e4aa7aa43ff6f30b9b7f51a#90c99eee214b01882e4aa7aa43ff6f30b9b7f51a"
 dependencies = [
  "ark-bn254",
  "ark-ec",
