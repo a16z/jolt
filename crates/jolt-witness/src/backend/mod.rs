@@ -126,8 +126,8 @@ macro_rules! impl_witness_handle {
             ) -> Result<(), WitnessError> {
                 (**self).visit_chunks(range, chunk_size, visitor)
             }
-            fn random_access(&self) -> Option<crate::RandomAccessRows> {
-                (**self).random_access()
+            fn rows(&self) -> Option<crate::TraceRows> {
+                (**self).rows()
             }
         }
     };

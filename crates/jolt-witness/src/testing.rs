@@ -1,14 +1,15 @@
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId};
 use jolt_field::Fr;
 use jolt_program::{
-    execution::{JoltProgram, TraceData, TraceOutput},
+    execution::{JoltProgram, RowReader, RowReplay, TraceData, TraceError, TraceOutput},
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{
     JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NormalizedOperands, RamAccess, RamWrite,
     RegisterRead, RegisterState, RegisterWrite, RV64IMAC_JOLT,
 };
-use std::sync::Arc;
+use std::ops::Range;
+use std::sync::{Arc, Mutex};
 
 use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
@@ -132,4 +133,94 @@ where
             "bundle column diverges from oracle_table for {id:?}"
         );
     });
+}
+
+/// A [`RowReplay`] serving retained rows, for tests of replay-backed
+/// witnesses: readers log their opens and reads, a read past the proof prefix
+/// fails, and a read covering `fail_row` fails like a diverged replay.
+pub struct LoggedReplay {
+    rows: TraceData,
+    segment_rows: usize,
+    fail_row: Option<usize>,
+    log: Mutex<Vec<ReplayEvent>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReplayEvent {
+    Open(usize),
+    Read(Range<usize>),
+}
+
+impl LoggedReplay {
+    /// Replays the proof prefix of `rows` (trailing canonical padding is
+    /// trimmed exactly as [`TraceData::new`] trims it).
+    pub fn new(rows: Vec<JoltTraceRow>, segment_rows: usize) -> Self {
+        Self {
+            rows: TraceData::new(rows),
+            segment_rows,
+            fail_row: None,
+            log: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn failing_at(mut self, row: usize) -> Self {
+        self.fail_row = Some(row);
+        self
+    }
+
+    #[expect(clippy::unwrap_used, reason = "test helper")]
+    pub fn take_log(&self) -> Vec<ReplayEvent> {
+        std::mem::take(&mut *self.log.lock().unwrap())
+    }
+
+    #[expect(clippy::unwrap_used, reason = "test helper")]
+    fn record(&self, event: ReplayEvent) {
+        self.log.lock().unwrap().push(event);
+    }
+}
+
+impl RowReplay for LoggedReplay {
+    fn segment_rows(&self) -> usize {
+        self.segment_rows
+    }
+
+    fn proof_len(&self) -> usize {
+        self.rows.proof_len()
+    }
+
+    fn reader(&self, start: usize) -> Result<Box<dyn RowReader + '_>, TraceError> {
+        self.record(ReplayEvent::Open(start));
+        Ok(Box::new(LoggedReader {
+            replay: self,
+            next: start,
+        }))
+    }
+}
+
+struct LoggedReader<'a> {
+    replay: &'a LoggedReplay,
+    next: usize,
+}
+
+impl RowReader for LoggedReader<'_> {
+    fn read(&mut self, rows: &mut [JoltTraceRow]) -> Result<(), TraceError> {
+        let range = self.next..self.next + rows.len();
+        self.replay.record(ReplayEvent::Read(range.clone()));
+        let Some(source) = self.replay.rows.proof_rows().get(range.clone()) else {
+            return Err(TraceError::ReplayOutOfRange {
+                start: range.start,
+                end: range.end,
+                extent: self.replay.rows.proof_len(),
+            });
+        };
+        if let Some(row) = self.replay.fail_row.filter(|row| range.contains(row)) {
+            return Err(TraceError::ReplayDiverged {
+                row,
+                reason: "injected failure".to_owned(),
+            });
+        }
+        rows.copy_from_slice(source);
+        self.next = range.end;
+        Ok(())
+    }
 }

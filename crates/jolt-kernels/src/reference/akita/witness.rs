@@ -11,9 +11,7 @@ use jolt_field::JoltField;
 use jolt_witness::witnesses::{
     BalancedIncColumn, BytecodePc, FusedInc, LookupIndex, RaChunkSelector, RemappedRamAddress,
 };
-use jolt_witness::{
-    collect_bundles, JoltWitnessPlane, RandomAccessRows, WitnessBundle, WitnessError,
-};
+use jolt_witness::{collect_bundles, JoltWitnessPlane, TraceRows, WitnessBundle, WitnessError};
 #[cfg(all(feature = "field-inline", feature = "parallel"))]
 use rayon::prelude::*;
 #[cfg(not(feature = "field-inline"))]
@@ -57,7 +55,7 @@ enum OneHotTraceColumn {
 /// is retained for [`OneHotTraceRows::check_extraction`]. The commitment reads
 /// every row of this immutable source, so it observes any error a later read could.
 struct ExtractedRows {
-    access: RandomAccessRows,
+    access: TraceRows,
     extraction_error: OnceLock<WitnessError>,
 }
 
@@ -74,7 +72,7 @@ impl ExtractedRows {
 
 enum SelectedRows {
     Extracted(ExtractedRows),
-    /// Materialized for witness planes without random access.
+    /// Materialized for witness planes without a trace row handle.
     Packed {
         selected_rows: Vec<u8>,
         ram_active_rows: Vec<u64>,
@@ -209,7 +207,7 @@ fn fill_trace_row(
 }
 
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
-/// plan's canonical semantic-column order. Witness planes with random access
+/// plan's canonical semantic-column order. Witness planes with a row handle
 /// yield a view that extracts rows on demand; others are materialized once.
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
 pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
@@ -279,10 +277,8 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
         increments
     };
 
-    let random_access = witness
-        .random_access()
-        .filter(|access| num_rows <= access.cycles());
-    let selected_rows = if let Some(access) = random_access {
+    let trace_rows = witness.rows().filter(|access| num_rows <= access.cycles());
+    let selected_rows = if let Some(access) = trace_rows {
         // Increment commitments precede the trace commitment, so retain only
         // their shared column; the one-hot rows stay lazy.
         SelectedRows::Extracted(ExtractedRows {

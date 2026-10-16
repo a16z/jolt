@@ -27,7 +27,7 @@ use jolt_openings::CommitmentScheme;
 #[cfg(feature = "field-inline")]
 use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{
-    stream_witnesses, JoltWitnessOracle, RandomAccessRows, RowSource, StreamConsumer, WitnessError,
+    stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer, TraceRows, WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -144,7 +144,7 @@ where
     // against the commit grid of the current one; re-emulating sources
     // alternate the two phases through the sequential walk.
     #[cfg(feature = "parallel")]
-    if let Some(access) = source.random_access() {
+    if let Some(access) = source.rows() {
         if cycles <= access.cycles() {
             return commit_pipelined(&access, ids, grid, setup, superchunk);
         }
@@ -181,7 +181,7 @@ where
 /// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
 fn collect_range_into(
-    access: &RandomAccessRows,
+    access: &TraceRows,
     range: std::ops::Range<usize>,
     out: &mut Vec<CommittedColumnsWitness>,
 ) -> Result<(), WitnessError> {
@@ -207,7 +207,7 @@ fn collect_range_into(
 
 #[cfg(feature = "parallel")]
 fn commit_pipelined<F, PCS>(
-    access: &RandomAccessRows,
+    access: &TraceRows,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
@@ -503,7 +503,7 @@ mod tests {
             assert_same_commitments(&reference, &streamed);
             #[cfg(feature = "parallel")]
             {
-                let access = source.random_access().unwrap();
+                let access = source.rows().unwrap();
                 let pipelined = super::commit_pipelined::<Fr, DoryScheme>(
                     &access,
                     &ids,

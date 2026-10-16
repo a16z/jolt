@@ -13,8 +13,8 @@ use jolt_kernels::akita::commitment::{CommitWitness, WitnessCommitRequest, Witne
 use jolt_kernels::{KernelContext, KernelError, ProofSession, ReferenceBackend};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::{
-    ChunkVisitor, JoltWitnessOracle, JoltWitnessPlane, ProgramSource, RandomAccessRows, RowSource,
-    Shape, WitnessError,
+    ChunkVisitor, JoltWitnessOracle, JoltWitnessPlane, ProgramSource, RowSource, Shape, TraceRows,
+    WitnessError,
 };
 
 use jolt_prover::JoltBackend;
@@ -50,8 +50,8 @@ impl RowSource for UnreadableWitness {
     ) -> Result<(), WitnessError> {
         panic!("commit dispatch must not request trace rows")
     }
-    fn random_access(&self) -> Option<RandomAccessRows> {
-        panic!("commit dispatch must not request random access")
+    fn rows(&self) -> Option<TraceRows> {
+        panic!("commit dispatch must not request the trace row handle")
     }
 }
 

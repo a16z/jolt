@@ -29,7 +29,7 @@ use super::OptimizedRegistersReadWrite;
 use crate::optimized::parity::ExceptionalEq;
 use crate::KernelError;
 
-/// The trace backend without its random access, so the kernel collects seed
+/// The trace backend without its row handle, so the kernel collects seed
 /// cells instead of regenerating them from rows.
 struct SequentialRows<'a>(&'a TraceBackend);
 
@@ -82,7 +82,7 @@ fn run_parity_with_phases(
     run_parity_case(fixture, log_t, seed, phase_splits, None);
 }
 
-/// Every case runs on the random-access plane (seed cells regenerated from
+/// Every case runs on the row-handle plane (seed cells regenerated from
 /// rows) and on [`SequentialRows`] (seed cells collected), in each field.
 fn run_parity_case(
     fixture: TraceFixture,
@@ -250,10 +250,10 @@ fn parity_exceptional_eq_across_sparse_layouts_and_orders() {
 }
 
 /// Pins which seed source the parity runs exercise: only a plane without
-/// random access keeps the seed cells in memory.
+/// a row handle keeps the seed cells in memory.
 #[cfg(feature = "parallel")]
 #[test]
-fn seed_cells_are_collected_only_without_random_access() {
+fn seed_cells_are_collected_only_without_trace_rows() {
     structured_fixture(8).with_plane(3, |backend| {
         let (_, seeds) = RegisterColumns::collect::<Fr>(backend, 8).unwrap();
         assert!(matches!(seeds, Seeds::Rows(_)));

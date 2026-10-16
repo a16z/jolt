@@ -7,7 +7,7 @@
 //! `SeedEntry` omits the round-0 field value. The first challenge is held
 //! without materializing `T/2`; the second bind creates the `T/4` indexed SoA
 //! layout. Coefficients stay as LUT indices until the `u16` domain saturates.
-//! Parallel builds keep no seed entries for a random-access witness: rounds
+//! Parallel builds keep no seed entries for a witness with a row handle: rounds
 //! 0–1 and the second bind regenerate them from the trace rows.
 //!
 //! Supports cycle-first and full address-first binding.

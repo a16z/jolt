@@ -235,7 +235,7 @@ impl InstructionCycleRow {
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Vec<Self>, KernelError<F>> {
-        if let Some(access) = witness.random_access() {
+        if let Some(access) = witness.rows() {
             if cycles <= access.cycles() {
                 let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
                     Self::new(
@@ -289,7 +289,7 @@ impl InstructionCycleRow {
             Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
             _ => None,
         };
-        if witness.random_access().is_some() {
+        if witness.rows().is_some() {
             let upgraded = || {
                 session
                     .state::<SharedInstructionRowsWeak>()
@@ -387,7 +387,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
             witness,
             1 << dimensions.log_t(),
         )?);
-        if witness.random_access().is_some() {
+        if witness.rows().is_some() {
             session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
         } else {
             session.park(SharedInstructionRows(Arc::clone(&rows)));
