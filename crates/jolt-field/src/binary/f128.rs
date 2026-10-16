@@ -22,6 +22,24 @@ impl F128 {
         self.0
     }
 
+    /// Multiplies by the polynomial `x`, represented by `from_raw(2)`.
+    /// This is distinct from the integer ring map, which retains only parity.
+    #[inline]
+    pub const fn mul_x(self) -> Self {
+        Self((self.0 << 1) ^ if self.0 >> 127 != 0 { 0x87 } else { 0 })
+    }
+
+    /// Multiplies by the degree-below-64 polynomial whose coefficients are
+    /// the bits of `word`, rather than the parity scalar of `Ring::mul_u64`.
+    /// On carry-less backends, this uses two carry-less multiplications for the
+    /// product and one to reduce the 64 overflow bits (degree below 64 times
+    /// the degree-seven modulus tail cannot overflow 128 bits again), versus
+    /// five on x86-64 or six on aarch64 for the general product.
+    #[inline]
+    pub fn mul_word(self, word: u64) -> Self {
+        Self(arithmetic::multiply128_word(self.0, word))
+    }
+
     fn add_coefficients(self, rhs: Self) -> Self {
         Self(self.0 ^ rhs.0)
     }

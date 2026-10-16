@@ -53,6 +53,22 @@ pub(super) fn multiply128(a: u128, b: u128) -> u128 {
 }
 
 #[inline]
+pub(super) fn multiply128_word(a: u128, word: u64) -> u128 {
+    let a = Word::from_u128(a);
+    let b = Word::from_u64(word);
+    let low = a.mul_ll(b);
+    let middle = a.mul_hl(b);
+    (low ^ middle.low_to_high() ^ middle.mul_hl(Word::from_u64(0x87))).to_u128()
+}
+
+#[inline]
+pub(super) fn accumulate128_word(acc: Unreduced128, a: u128, word: u64) -> Unreduced128 {
+    let a = Word::from_accumulator_u128(a);
+    let b = Word::from_accumulator_u128(u128::from(word));
+    [acc[0] ^ a.mul_ll(b), acc[1] ^ a.mul_hl(b), acc[2]]
+}
+
+#[inline]
 pub(super) fn product128(a: u128, b: u128) -> Unreduced128 {
     product128_with::<KARATSUBA128>(a, b)
 }

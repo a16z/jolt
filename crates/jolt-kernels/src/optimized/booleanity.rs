@@ -94,7 +94,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaBranches};
 use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
@@ -749,13 +749,13 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        if let LazyFoldedRa::Lazy {
+        if let LazyFoldedRa::Lazy(LazyRaBranches {
             tables,
             width,
             factors: 1,
             source,
             ..
-        } = &self.tables
+        }) = &self.tables
         {
             if !tables.is_empty()
                 && CategoricalProducts::<F, BooleanityChunks>::fits_budget(
@@ -1574,7 +1574,7 @@ mod categorical_tests {
     use jolt_field::{Fr, JoltField, Ring, Zero};
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
-    use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa};
+    use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa, LazyRaBranches};
     use crate::reference::views::eq_table;
 
     struct Source(Vec<Vec<Option<usize>>>);
@@ -1676,13 +1676,13 @@ mod categorical_tests {
                             prefix * (bit * x + (F::one() - bit) * (F::one() - x)) * sum
                         })
                         .collect();
-                    let LazyFoldedRa::Lazy {
+                    let LazyFoldedRa::Lazy(LazyRaBranches {
                         tables,
                         width,
                         factors: 1,
                         source,
                         ..
-                    } = &lazy
+                    }) = &lazy
                     else {
                         unreachable!()
                     };

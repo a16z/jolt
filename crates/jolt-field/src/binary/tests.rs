@@ -216,3 +216,134 @@ fn concrete_accumulator_types() {
     assert_types::<F128, F128Accumulator>();
     assert_types::<F192, F192Accumulator>();
 }
+
+#[test]
+fn f128_word_products_match_shift_xor() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x776f_7264_0012);
+    let values: Vec<_> = [0, u128::MAX]
+        .into_iter()
+        .chain((0..128).map(|bit| 1u128 << bit))
+        .chain((0..10_000).map(|_| u128::from(rng.next_u64()) | (u128::from(rng.next_u64()) << 64)))
+        .collect();
+    assert_eq!(F128::from_raw(1 << 127).mul_x(), F128::from_raw(0x87));
+    for a in values {
+        let field = F128::from_raw(a);
+        assert_eq!(field.mul_x(), field * F128::from_raw(2));
+        for word in [0, 1, 2, 1 << 63, u64::MAX, rng.next_u64()] {
+            let expected = portable::multiply128(a, u128::from(word));
+            assert_eq!(
+                field.mul_word(word),
+                field * F128::from_raw(u128::from(word))
+            );
+            assert_eq!(field.mul_word(word).to_raw(), expected);
+            assert_eq!(portable::multiply128_word(a, word), expected);
+            assert_eq!(
+                portable::reduce128(portable::accumulate128_word([0; 2], a, word)),
+                expected
+            );
+            #[cfg(any(
+                all(target_arch = "aarch64", target_feature = "aes"),
+                all(target_arch = "x86_64", target_feature = "pclmulqdq")
+            ))]
+            {
+                assert_eq!(kernels::multiply128_word(a, word), expected);
+                assert_eq!(
+                    kernels::canonical128(kernels::accumulate128_word(Default::default(), a, word)),
+                    portable::product128(a, u128::from(word))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn f128_word_accumulator_mixed_merges() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x6d69_7865_645f_776f);
+    for count in [1, 2, 20] {
+        let mut accumulators = [F128Accumulator::default(); 2];
+        let mut portable_accumulators = [[0; 2]; 2];
+        #[cfg(any(
+            all(target_arch = "aarch64", target_feature = "aes"),
+            all(target_arch = "x86_64", target_feature = "pclmulqdq")
+        ))]
+        let mut kernel_accumulators = [Default::default(); 2];
+        let mut expected = F128::from_raw(0);
+        for list in 0..2 {
+            for term in 0..count {
+                let a =
+                    F128::from_raw(u128::from(rng.next_u64()) | (u128::from(rng.next_u64()) << 64));
+                let b =
+                    F128::from_raw(u128::from(rng.next_u64()) | (u128::from(rng.next_u64()) << 64));
+                let word = rng.next_u64();
+                let add = F128::from_raw(u128::from(rng.next_u64()));
+                match (term + list) % 3 {
+                    0 => {
+                        accumulators[list].fmadd_word(a, word);
+                        portable_accumulators[list] = portable::accumulate128_word(
+                            portable_accumulators[list],
+                            a.to_raw(),
+                            word,
+                        );
+                        expected += a * F128::from_raw(u128::from(word));
+                    }
+                    1 => {
+                        accumulators[list].fmadd(a, b);
+                        portable_accumulators[list] = portable::accumulate128(
+                            portable_accumulators[list],
+                            a.to_raw(),
+                            b.to_raw(),
+                        );
+                        expected += a * b;
+                    }
+                    _ => {
+                        accumulators[list].add(add);
+                        for (lane, value) in portable_accumulators[list]
+                            .iter_mut()
+                            .zip(portable::embed128(add.to_raw()))
+                        {
+                            *lane ^= value;
+                        }
+                        expected += add;
+                    }
+                }
+                #[cfg(any(
+                    all(target_arch = "aarch64", target_feature = "aes"),
+                    all(target_arch = "x86_64", target_feature = "pclmulqdq")
+                ))]
+                {
+                    let acc = &mut kernel_accumulators[list];
+                    match (term + list) % 3 {
+                        0 => *acc = kernels::accumulate128_word(*acc, a.to_raw(), word),
+                        1 => *acc = kernels::accumulate128(*acc, a.to_raw(), b.to_raw()),
+                        _ => {
+                            for (lane, value) in acc.iter_mut().zip(kernels::embed128(add.to_raw()))
+                            {
+                                *lane ^= value;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_ne!(expected, F128::from_raw(0));
+        let [mut left, right] = accumulators;
+        left.merge(right);
+        assert_eq!(left.reduce(), expected);
+        let [left, right] = portable_accumulators;
+        assert_eq!(
+            portable::reduce128(std::array::from_fn(|i| left[i] ^ right[i])),
+            expected.to_raw()
+        );
+        #[cfg(any(
+            all(target_arch = "aarch64", target_feature = "aes"),
+            all(target_arch = "x86_64", target_feature = "pclmulqdq")
+        ))]
+        {
+            let [left, right] = kernel_accumulators;
+            assert_eq!(
+                kernels::reduce128(std::array::from_fn(|i| left[i] ^ right[i])),
+                expected.to_raw()
+            );
+        }
+    }
+}

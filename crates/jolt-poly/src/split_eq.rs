@@ -1,8 +1,52 @@
-use jolt_field::JoltField;
+use jolt_field::{Field, JoltField};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
+
+/// Recovers the missing endpoint of `q` for a round polynomial `s = l*q`.
+///
+/// `s_known` is the value of `s` at one endpoint, and `l_missing` is the
+/// value of the linear factor at the other. When `l_missing` is nonzero,
+/// solves `s_known + l_missing*q = s_0_plus_s_1` without calling `q_missing`.
+/// Otherwise calls `q_missing` once, returning its value if that equation
+/// holds or `Err` containing the actual endpoint sum if it does not.
+/// This holds in every characteristic and checks no other property of `s` or `q`.
+pub fn gruen_recover_endpoint<F: Field>(
+    s_known: F,
+    l_missing: F,
+    s_0_plus_s_1: F,
+    q_missing: impl FnOnce() -> F,
+) -> Result<F, F> {
+    if let Some(inverse) = l_missing.inverse() {
+        Ok((s_0_plus_s_1 - s_known) * inverse)
+    } else {
+        let endpoint = q_missing();
+        let actual = s_known + l_missing * endpoint;
+        if actual == s_0_plus_s_1 {
+            Ok(endpoint)
+        } else {
+            Err(actual)
+        }
+    }
+}
+
+/// Multiplies `q` by the linear polynomial with endpoint values `linear_evals`.
+///
+/// Input and output coefficients are in ascending degree order. The output
+/// has `q_coeffs.len() + 1` coefficients, retaining trailing zeros; an empty
+/// slice gives one zero coefficient. This holds in every characteristic and
+/// does not check a degree bound or evaluate `q` at interpolation nodes.
+pub fn gruen_mul_linear<F: Field>(linear_evals: (F, F), q_coeffs: &[F]) -> UnivariatePoly<F> {
+    let (l_zero, l_one) = linear_evals;
+    let l_slope = l_one - l_zero;
+    let mut coefficients = vec![F::zero(); q_coeffs.len() + 1];
+    for (index, q_coeff) in q_coeffs.iter().copied().enumerate() {
+        coefficients[index] += q_coeff * l_zero;
+        coefficients[index + 1] += q_coeff * l_slope;
+    }
+    UnivariatePoly::new(coefficients)
+}
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -362,6 +406,15 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Computes the cubic `s = l*q` from `q(0)`, its leading coefficient,
     /// and the sumcheck hint. The missing endpoint is evaluated only when
     /// `l(1)` vanishes. An error carries the actual endpoint sum.
+    ///
+    /// Integer nodes `0, 1, 2, 3` must be distinct in `F`, requiring field
+    /// characteristic greater than three. In characteristic two, use
+    /// [`Self::recover_q_one`] and [`Self::round_poly_from_q_coeffs`].
+    ///
+    /// # Panics
+    ///
+    /// If interpolation is reached with repeated integer nodes,
+    /// [`UnivariatePoly::interpolate`] panics when a node difference has no inverse.
     pub fn gruen_poly_deg_3(
         &self,
         q_constant: F,
@@ -378,16 +431,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         let eq_eval_3 = eq_eval_2 + eq_m;
         let cubic_eval_0 = eq_eval_0 * q_constant;
         let cubic_eval_1 = s_0_plus_s_1 - cubic_eval_0;
-        let quadratic_eval_1 = if let Some(inverse) = eq_eval_1.inverse() {
-            cubic_eval_1 * inverse
-        } else {
-            let endpoint = q_at_one();
-            let actual = cubic_eval_0 + eq_eval_1 * endpoint;
-            if actual != s_0_plus_s_1 {
-                return Err(actual);
-            }
-            endpoint
-        };
+        let quadratic_eval_1 =
+            gruen_recover_endpoint(cubic_eval_0, eq_eval_1, s_0_plus_s_1, q_at_one)?;
         let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
         let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - q_constant + e_times_2;
         let quadratic_eval_3 =
@@ -403,6 +448,18 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Toom samples are `q(1)..q(d-1), q`'s leading coefficient, with `d>=2`.
     /// `q_evals` must contain at least two entries.
     /// The missing `q(0)` is evaluated only when `l(0)` vanishes.
+    ///
+    /// The finite integer nodes `0, 1, ..., d-1` must be distinct in `F`.
+    /// With three or more finite samples, the factorials through `(d-1)!`
+    /// must be invertible, requiring field characteristic greater than `d-1`.
+    /// Two finite samples use only `0, 1` and work in characteristic two;
+    /// for more samples there, use [`Self::recover_q_one`] and
+    /// [`Self::round_poly_from_q_coeffs`].
+    ///
+    /// # Panics
+    ///
+    /// If Toom interpolation is reached without these conditions,
+    /// [`UnivariatePoly::from_evals`] panics when a required factorial has no inverse.
     pub fn gruen_poly_from_evals(
         &self,
         q_evals: &[F],
@@ -417,7 +474,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         full_q_evals.push(q_zero);
         full_q_evals.extend_from_slice(q_evals);
         let q_coeffs = UnivariatePoly::from_evals_toom(&full_q_evals).into_coefficients();
-        Ok(self.multiply_linear_factor(&q_coeffs))
+        Ok(self.round_poly_from_q_coeffs(&q_coeffs))
     }
 
     /// Degree-two message for a linear inner factor, with lazy `q(0)` recovery.
@@ -431,33 +488,42 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             return Self::zero_round(3, s_0_plus_s_1);
         }
         let q_zero = self.recover_q_zero(q_one, s_0_plus_s_1, q_at_zero)?;
-        Ok(self.multiply_linear_factor(&[q_zero, q_one - q_zero]))
+        Ok(self.round_poly_from_q_coeffs(&[q_zero, q_one - q_zero]))
     }
 
     fn recover_q_zero(&self, q_one: F, hint: F, q_at_zero: impl FnOnce() -> F) -> Result<F, F> {
         let (l_zero, l_one) = self.current_linear_evals();
-        if let Some(inverse) = l_zero.inverse() {
-            Ok((hint - l_one * q_one) * inverse)
-        } else {
-            let q_zero = q_at_zero();
-            let actual = l_zero * q_zero + l_one * q_one;
-            if actual == hint {
-                Ok(q_zero)
-            } else {
-                Err(actual)
-            }
-        }
+        gruen_recover_endpoint(l_one * q_one, l_zero, hint, q_at_zero)
     }
 
-    fn multiply_linear_factor(&self, q_coeffs: &[F]) -> UnivariatePoly<F> {
+    /// Recovers `q(1)` for the current round `s = l*q` from `q(0)` and its claim.
+    ///
+    /// Uses [`gruen_recover_endpoint`] with the current linear factor. Calls
+    /// `q_at_one` once only when `l(1)` is zero, including a zero current scalar.
+    /// An error contains the actual endpoint sum; a zero scalar therefore
+    /// accepts a zero claim and returns `Err(0)` for a nonzero claim.
+    /// A variable must remain to bind, as for [`Self::current_linear_evals`];
+    /// this precondition and the claimed degree of `q` are not checked.
+    pub fn recover_q_one(
+        &self,
+        q_zero: F,
+        s_0_plus_s_1: F,
+        q_at_one: impl FnOnce() -> F,
+    ) -> Result<F, F> {
         let (l_zero, l_one) = self.current_linear_evals();
-        let l_slope = l_one - l_zero;
-        let mut coefficients = vec![F::zero(); q_coeffs.len() + 1];
-        for (index, q_coeff) in q_coeffs.iter().copied().enumerate() {
-            coefficients[index] += q_coeff * l_zero;
-            coefficients[index + 1] += q_coeff * l_slope;
-        }
-        UnivariatePoly::new(coefficients)
+        gruen_recover_endpoint(l_zero * q_zero, l_one, s_0_plus_s_1, q_at_one)
+    }
+
+    /// Builds the current round polynomial `l*q` from ascending coefficients of `q`.
+    ///
+    /// Uses [`gruen_mul_linear`] with the current linear factor, retaining
+    /// `q_coeffs.len() + 1` coefficients, including trailing zeros. A zero
+    /// current scalar yields that many zero coefficients, and an empty slice
+    /// yields one zero coefficient. A variable must remain to bind, as for
+    /// [`Self::current_linear_evals`]; this precondition and any degree bound
+    /// on `q` are not checked.
+    pub fn round_poly_from_q_coeffs(&self, q_coeffs: &[F]) -> UnivariatePoly<F> {
+        gruen_mul_linear(self.current_linear_evals(), q_coeffs)
     }
 
     fn zero_round(coefficients: usize, hint: F) -> Result<UnivariatePoly<F>, F> {
@@ -539,6 +605,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     reason = "test module asserts successful reconstruction and forbidden lazy endpoint evaluation"
 )]
 mod tests {
+    #[cfg(feature = "binary")]
+    use jolt_field::F128;
     use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
@@ -550,6 +618,299 @@ mod tests {
     fn random_point(len: usize, seed: u64) -> Vec<Fr> {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
         (0..len).map(|_| Fr::random(&mut rng)).collect()
+    }
+
+    fn gruen_functions_match_products<F: JoltField>() {
+        let mut rng = ChaCha20Rng::seed_from_u64(5101);
+        for degree in 0..=5 {
+            let linear = (F::random(&mut rng), F::random(&mut rng));
+            assert!(!linear.0.is_zero() && !linear.1.is_zero());
+            let mut q_coeffs: Vec<F> = (0..=degree).map(|_| F::random(&mut rng)).collect();
+            for zero_top in [false, true] {
+                if zero_top {
+                    q_coeffs[degree] = F::zero();
+                }
+                let q = UnivariatePoly::new(q_coeffs.clone());
+                let product = gruen_mul_linear(linear, &q_coeffs);
+                assert_eq!(product.coefficients().len(), q_coeffs.len() + 1);
+                let mut points = vec![F::zero(), F::one()];
+                while points.len() < product.coefficients().len() {
+                    let point = F::random(&mut rng);
+                    if !points.contains(&point) {
+                        points.push(point);
+                    }
+                }
+                for x in points {
+                    assert_eq!(
+                        product.evaluate(x),
+                        ((F::one() - x) * linear.0 + x * linear.1) * q.evaluate(x)
+                    );
+                }
+                let endpoint_q = (q.evaluate(F::zero()), q.evaluate(F::one()));
+                let endpoint_s = (linear.0 * endpoint_q.0, linear.1 * endpoint_q.1);
+                let claim = endpoint_s.0 + endpoint_s.1;
+                assert_eq!(
+                    gruen_recover_endpoint(endpoint_s.0, linear.1, claim, || panic!(
+                        "nonzero missing factor must not evaluate the endpoint"
+                    )),
+                    Ok(endpoint_q.1)
+                );
+                assert_eq!(
+                    gruen_recover_endpoint(endpoint_s.1, linear.0, claim, || panic!(
+                        "nonzero missing factor must not evaluate the endpoint"
+                    )),
+                    Ok(endpoint_q.0)
+                );
+            }
+        }
+        assert_eq!(
+            gruen_mul_linear((F::one(), F::one()), &[]).coefficients(),
+            &[F::zero()]
+        );
+        for known in [F::zero(), F::random(&mut rng)] {
+            let endpoint = F::random(&mut rng);
+            for claim in [known, known + F::one()] {
+                let calls = Cell::new(0);
+                let recovered = gruen_recover_endpoint(known, F::zero(), claim, || {
+                    calls.set(calls.get() + 1);
+                    endpoint
+                });
+                assert_eq!(calls.get(), 1);
+                assert_eq!(
+                    recovered,
+                    if claim == known {
+                        Ok(endpoint)
+                    } else {
+                        Err(known)
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn characteristic_free_gruen_functions_bn254() {
+        gruen_functions_match_products::<Fr>();
+    }
+
+    #[test]
+    fn characteristic_free_gruen_functions_akita_field() {
+        gruen_functions_match_products::<Prime128OffsetA7F7>();
+    }
+
+    #[cfg(feature = "binary")]
+    #[test]
+    fn characteristic_free_gruen_functions_binary() {
+        gruen_functions_match_products::<F128>();
+    }
+
+    fn direct_boolean_weight<F: Field>(point: &[F], index: usize) -> F {
+        point
+            .iter()
+            .enumerate()
+            .map(|(coordinate, &value)| {
+                if index & (1 << (point.len() - coordinate - 1)) == 0 {
+                    F::one() - value
+                } else {
+                    value
+                }
+            })
+            .product()
+    }
+
+    fn direct_table_value<F: Field>(table: &[F], point: &[F]) -> F {
+        table
+            .iter()
+            .enumerate()
+            .map(|(index, &value)| direct_boolean_weight(point, index) * value)
+            .sum()
+    }
+
+    struct GruenRoundTables<F> {
+        a: Vec<F>,
+        b: Vec<F>,
+        w: Vec<F>,
+        order: BindingOrder,
+    }
+
+    impl<F: JoltField> GruenRoundTables<F> {
+        fn assignment(&self, bound: &[F], x: F, index: usize) -> Vec<F> {
+            let remaining = self.w.len() - bound.len() - 1;
+            let mut point = vec![F::zero(); self.w.len()];
+            match self.order {
+                BindingOrder::LowToHigh => {
+                    for (round, &challenge) in bound.iter().enumerate() {
+                        point[self.w.len() - round - 1] = challenge;
+                    }
+                    point[remaining] = x;
+                    for (coordinate, value) in point.iter_mut().take(remaining).enumerate() {
+                        *value = if index & (1 << (remaining - coordinate - 1)) == 0 {
+                            F::zero()
+                        } else {
+                            F::one()
+                        };
+                    }
+                }
+                BindingOrder::HighToLow => {
+                    point[..bound.len()].copy_from_slice(bound);
+                    point[bound.len()] = x;
+                    for (coordinate, value) in point.iter_mut().skip(bound.len() + 1).enumerate() {
+                        *value = if index & (1 << (remaining - coordinate - 1)) == 0 {
+                            F::zero()
+                        } else {
+                            F::one()
+                        };
+                    }
+                }
+            }
+            point
+        }
+
+        fn q_endpoints_and_leading(&self, bound: &[F]) -> (F, F, F) {
+            let remaining_w = match self.order {
+                BindingOrder::LowToHigh => &self.w[..self.w.len() - bound.len() - 1],
+                BindingOrder::HighToLow => &self.w[bound.len() + 1..],
+            };
+            let mut q_zero = F::zero();
+            let mut q_one = F::zero();
+            let mut q_quadratic = F::zero();
+            for index in 0..1 << remaining_w.len() {
+                let weight = direct_boolean_weight(remaining_w, index);
+                let zero = self.assignment(bound, F::zero(), index);
+                let one = self.assignment(bound, F::one(), index);
+                let a_zero = direct_table_value(&self.a, &zero);
+                let a_one = direct_table_value(&self.a, &one);
+                let b_zero = direct_table_value(&self.b, &zero);
+                let b_one = direct_table_value(&self.b, &one);
+                q_zero += weight * a_zero * b_zero;
+                q_one += weight * a_one * b_one;
+                q_quadratic += weight * (a_one - a_zero) * (b_one - b_zero);
+            }
+            (q_zero, q_one, q_quadratic)
+        }
+
+        fn round_value(&self, bound: &[F], x: F) -> F {
+            (0..1 << (self.w.len() - bound.len() - 1))
+                .map(|index| {
+                    let point = self.assignment(bound, x, index);
+                    let eq: F = self
+                        .w
+                        .iter()
+                        .zip(&point)
+                        .map(|(&w, &coordinate)| {
+                            (F::one() - w) * (F::one() - coordinate) + w * coordinate
+                        })
+                        .product();
+                    eq * direct_table_value(&self.a, &point) * direct_table_value(&self.b, &point)
+                })
+                .sum()
+        }
+    }
+
+    fn gruen_methods_match_direct_sums<F: JoltField>(check_cubic: bool) {
+        let mut rng = ChaCha20Rng::seed_from_u64(5209);
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let a: Vec<F> = (0..16).map(|_| F::random(&mut rng)).collect();
+            let b: Vec<F> = (0..16).map(|_| F::random(&mut rng)).collect();
+            let original_w: Vec<F> = (0..4).map(|_| F::random(&mut rng)).collect();
+            let challenges: Vec<F> = (0..4).map(|_| F::random(&mut rng)).collect();
+            let extra_points = [F::random(&mut rng), F::random(&mut rng)];
+            for exceptional in [None, Some(F::zero()), Some(F::one())] {
+                let mut w = original_w.clone();
+                if let Some(coordinate) = exceptional {
+                    w[1] = coordinate;
+                }
+                let fixture = GruenRoundTables {
+                    a: a.clone(),
+                    b: b.clone(),
+                    w,
+                    order,
+                };
+                let mut claim: F = fixture
+                    .a
+                    .iter()
+                    .zip(&fixture.b)
+                    .enumerate()
+                    .map(|(index, (&a, &b))| direct_boolean_weight(&fixture.w, index) * a * b)
+                    .sum();
+                let mut split = GruenSplitEqPolynomial::new(&fixture.w, order);
+                for (round, &challenge) in challenges.iter().enumerate() {
+                    let bound = &challenges[..round];
+                    let (q_zero, direct_q_one, q_quadratic) =
+                        fixture.q_endpoints_and_leading(bound);
+                    let calls = Cell::new(0);
+                    let q_one = split
+                        .recover_q_one(q_zero, claim, || {
+                            calls.set(calls.get() + 1);
+                            direct_q_one
+                        })
+                        .unwrap();
+                    assert_eq!(q_one, direct_q_one);
+                    assert_eq!(
+                        calls.get(),
+                        usize::from(split.current_linear_evals().1.is_zero())
+                    );
+                    let coefficients = [q_zero, q_one - q_zero - q_quadratic, q_quadratic];
+                    let polynomial = split.round_poly_from_q_coeffs(&coefficients);
+                    assert_eq!(polynomial.coefficients().len(), 4);
+                    for x in [F::zero(), F::one(), extra_points[0], extra_points[1]] {
+                        assert_eq!(polynomial.evaluate(x), fixture.round_value(bound, x));
+                    }
+                    if check_cubic {
+                        let cubic = split
+                            .gruen_poly_deg_3(q_zero, q_quadratic, claim, || direct_q_one)
+                            .unwrap();
+                        for x in [F::zero(), F::one(), extra_points[0], extra_points[1]] {
+                            assert_eq!(cubic.evaluate(x), fixture.round_value(bound, x));
+                        }
+                    }
+                    claim = polynomial.evaluate(challenge);
+                    split.bind(challenge);
+                }
+
+                let zero =
+                    GruenSplitEqPolynomial::new_with_scaling(&fixture.w, order, Some(F::zero()));
+                let endpoint = F::random(&mut rng);
+                for claim in [F::zero(), F::one()] {
+                    let calls = Cell::new(0);
+                    let result = zero.recover_q_one(F::one(), claim, || {
+                        calls.set(calls.get() + 1);
+                        endpoint
+                    });
+                    assert_eq!(calls.get(), 1);
+                    assert_eq!(
+                        result,
+                        if claim.is_zero() {
+                            Ok(endpoint)
+                        } else {
+                            Err(F::zero())
+                        }
+                    );
+                }
+                for coefficients in [&[][..], &[F::one(), endpoint, F::zero()][..]] {
+                    assert_eq!(
+                        zero.round_poly_from_q_coeffs(coefficients).coefficients(),
+                        vec![F::zero(); coefficients.len() + 1]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn characteristic_free_gruen_methods_bn254() {
+        gruen_methods_match_direct_sums::<Fr>(true);
+    }
+
+    #[test]
+    fn characteristic_free_gruen_methods_akita_field() {
+        gruen_methods_match_direct_sums::<Prime128OffsetA7F7>(false);
+    }
+
+    #[cfg(feature = "binary")]
+    #[test]
+    fn characteristic_free_gruen_methods_binary() {
+        gruen_methods_match_direct_sums::<F128>(false);
     }
 
     #[test]

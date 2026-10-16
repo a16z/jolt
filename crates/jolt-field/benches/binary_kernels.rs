@@ -1,8 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_field::{
-    Accumulator, ExtField, Field, NaiveAccumulator, WithAccumulator, F128, F192, F64,
+    Accumulator, ExtField, F128Accumulator, Field, NaiveAccumulator, WithAccumulator, Zero, F128,
+    F192, F64,
 };
-use rand::SeedableRng;
+use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::hint::black_box;
 
@@ -88,5 +89,69 @@ fn binary_kernels(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, binary_kernels);
+fn bench_word_products(c: &mut Criterion) {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x776f_7264_736c_6963);
+    let pairs: Vec<_> = (0..1024)
+        .map(|_| (F128::random(&mut rng), rng.next_u64()))
+        .collect();
+    let mut output = vec![F128::zero(); pairs.len()];
+    let mut group = c.benchmark_group("F128");
+    let _ = group.throughput(Throughput::Elements(1024));
+    let _ = group.bench_function("mul_x_slice", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, _)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a.mul_x();
+            }
+            let _ = black_box(&output);
+        });
+    });
+    let _ = group.bench_function("mul_x_slice_general", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, _)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a * F128::from_raw(2);
+            }
+            let _ = black_box(&output);
+        });
+    });
+    let _ = group.bench_function("mul_word_slice", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, word)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a.mul_word(word);
+            }
+            let _ = black_box(&output);
+        });
+    });
+    let _ = group.bench_function("mul_word_slice_general", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, word)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a * F128::from_raw(u128::from(word));
+            }
+            let _ = black_box(&output);
+        });
+    });
+    group.finish();
+    let mut group = c.benchmark_group("F128/accumulator");
+    let _ = group.throughput(Throughput::Elements(1024));
+    let _ = group.bench_function("deferred_word", |bencher| {
+        bencher.iter(|| {
+            let mut acc = F128Accumulator::default();
+            for &(a, word) in black_box(&pairs) {
+                acc.fmadd_word(a, word);
+            }
+            black_box(acc.reduce())
+        });
+    });
+    let _ = group.bench_function("deferred_word_general", |bencher| {
+        bencher.iter(|| {
+            let mut acc = F128Accumulator::default();
+            for &(a, word) in black_box(&pairs) {
+                acc.fmadd(a, F128::from_raw(u128::from(word)));
+            }
+            black_box(acc.reduce())
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(benches, binary_kernels, bench_word_products);
 criterion_main!(benches);
