@@ -14,9 +14,8 @@
 //! - **Sparse one-hot access.** Each `ra_i(·, j)` is one-hot in the chunk
 //!   domain, so the per-cycle hot index is a chunk of that cycle's lookup
 //!   index / mapped PC / remapped RAM address. Both phases gather through
-//!   [`RaChunkSelector`]s over the packed stage-5 rows
-//!   (`SharedInstructionRows`, reclaimed from the [`ProofSession`] or
-//!   collected in one streaming pass) and never materialize the `K × T`
+//!   [`RaChunkSelector`]s over packed rows decoded block by block from the
+//!   witness's row handle (`CycleRows`) and never materialize the `K × T`
 //!   grids the naive tier's `oracle_table` walks, nor per-polynomial index
 //!   columns (legacy `RaIndices`).
 //! - **Pushforward `G` tables (address phase).** `G_i[k] = Σ_j
@@ -52,15 +51,9 @@
 //! domain (16–256 points) — negligible next to the `T`-scale table
 //! construction — so it reuses the reference kernel's explicit four-point
 //! sampling verbatim; only the table construction is replaced.
-//!
-//! Cross-stage carry: both prepares reclaim the packed stage-5 rows with
-//! [`ProofSession::take`], clone the [`Arc`], and park the carry back for
-//! the later consumers (mixed-backend registries fall back to a fresh
-//! streaming pass when the carry is absent or geometry-stale).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
-use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
@@ -94,12 +87,14 @@ use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::InstructionCycleRow;
+use super::instruction_read_raf::{CycleRows, InstructionCycleRow};
 use super::lazy_ra::{
-    try_fold_groups, visit_resident, visit_source_rows, ChunkIndexSource, LazyFoldedRa,
-    SourceBlock, MATERIALIZE_BYTES,
+    try_fold_groups, visit_source_rows, ChunkIndexSource, LazyFoldedRa, SourceBlock,
+    MATERIALIZE_BYTES,
 };
-use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
+use super::support::{
+    gamma_powers, pin_derived_term_if_derived, task_ranges, GruenRoundMessage, RoundProgress,
+};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -230,15 +225,16 @@ impl BooleanityColumns {
 /// per-cycle multiply); each block then reduces its touched buckets and
 /// folds them by `e_out` into the running partials. Equals the reference's
 /// per-chunk cycle masses exactly — same terms, regrouped through the
-/// `eq = E_out ⊗ E_in` factorization.
+/// `eq = E_out ⊗ E_in` factorization. At most one task per pool thread
+/// visits whole `E_out` blocks ([`task_ranges`]) once, serially, one block
+/// per callback.
 fn cycle_pushforward<F: JoltField>(
-    rows: &[InstructionCycleRow],
+    rows: &CycleRows,
     selectors: &[ColumnSelector],
     k_chunk: usize,
     point: &[F],
-) -> Vec<Vec<F>> {
+) -> Result<Vec<Vec<F>>, WitnessError> {
     let eq = TensorEqTable::new(point);
-    debug_assert_eq!(eq.len(), rows.len());
     let e_out = eq.e_out();
     let e_in = eq.e_in();
     let in_len = e_in.len();
@@ -251,10 +247,8 @@ fn cycle_pushforward<F: JoltField>(
         partial: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
         block: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
     };
-    let scatter = |mut state: State<F>, x_out: usize| {
-        let base = x_out * in_len;
-        for (x_in, e) in e_in.iter().enumerate() {
-            let row = &rows[base + x_in];
+    let scatter = |state: &mut State<F>, x_out: usize, block_rows: &[InstructionCycleRow]| {
+        for (row, e) in block_rows.iter().zip(e_in) {
             for (selector, block) in selectors.iter().zip(state.block.iter_mut()) {
                 if let Some(k) = selector.index(row) {
                     block[k].add(*e);
@@ -270,7 +264,6 @@ fn cycle_pushforward<F: JoltField>(
                 }
             }
         }
-        state
     };
     let finish = |state: State<F>| -> Vec<Vec<F>> {
         state
@@ -287,21 +280,26 @@ fn cycle_pushforward<F: JoltField>(
         }
         left
     };
+    let task = |range: &Range<usize>| -> Result<State<F>, WitnessError> {
+        let mut state = zero();
+        rows.visit_blocks(range.clone(), in_len, |first, block_rows| {
+            scatter(&mut state, first / in_len, block_rows);
+            Ok(())
+        })?;
+        Ok(state)
+    };
 
+    let ranges = task_ranges(eq.len(), rows.segment_len(), in_len);
     #[cfg(feature = "parallel")]
-    {
-        finish(
-            (0..e_out.len())
-                .into_par_iter()
-                .fold(zero, scatter)
-                .reduce(zero, merge),
-        )
-    }
+    let state = ranges
+        .par_iter()
+        .map(task)
+        .try_reduce(zero, |left, right| Ok(merge(left, right)))?;
     #[cfg(not(feature = "parallel"))]
-    {
-        let _ = merge;
-        finish((0..e_out.len()).fold(zero(), scatter))
-    }
+    let state = ranges.iter().map(task).try_fold(zero(), |left, right| {
+        Ok::<_, WitnessError>(merge(left, right?))
+    })?;
+    Ok(finish(state))
 }
 
 pub struct OptimizedBooleanityAddress;
@@ -309,7 +307,7 @@ pub struct OptimizedBooleanityAddress;
 impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleanityAddress {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BooleanityAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
@@ -330,13 +328,15 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
         }
 
         let columns = BooleanityColumns::new(witness, dimensions)?;
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
+        let rows = witness.rows().ok_or(WitnessError::UnavailableView {
+            label: "stage-6a booleanity rows",
+        })?;
         let masses = cycle_pushforward(
-            &rows,
+            &CycleRows::Trace(rows),
             &columns.selectors,
             1usize << dimensions.log_k_chunk,
             &reference_cycle,
-        );
+        )?;
 
         Ok(Box::new(OptimizedBooleanityAddressKernel::new(
             relation.rounds(),
@@ -492,12 +492,11 @@ pub struct OptimizedBooleanityCycle;
 impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
         Ok(Box::new(OptimizedBooleanityCycleKernel::prepare(
-            session,
             witness,
             &inputs,
             MATERIALIZE_BYTES,
@@ -509,7 +508,6 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     /// `materialize_bytes` bounds each dense table ([`LazyFoldedRa::new`]);
     /// production passes [`MATERIALIZE_BYTES`].
     fn prepare(
-        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &ProverInputs<'_, F, Booleanity<F>>,
         materialize_bytes: usize,
@@ -525,7 +523,16 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
             });
         }
         let columns = BooleanityColumns::new(witness, dimensions)?;
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
+        let rows = witness.rows().ok_or(WitnessError::UnavailableView {
+            label: "stage-6b booleanity rows",
+        })?;
+        if rows.cycles() != 1 << dimensions.log_t {
+            return Err(KernelError::TableSizeMismatch {
+                table: "stage-6b booleanity rows".to_owned(),
+                expected: 1 << dimensions.log_t,
+                got: rows.cycles(),
+            });
+        }
 
         // The fixed address eq factor of the `EqAddressCycle` public; rides
         // in the split-eq scaling so round messages and the bound scalar
@@ -565,7 +572,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
             tables: LazyFoldedRa::new(
                 tables,
                 BooleanityChunks {
-                    rows,
+                    rows: CycleRows::Trace(rows),
                     selectors: columns.selectors,
                 },
                 materialize_bytes,
@@ -579,7 +586,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BooleanityChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: CycleRows,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<ColumnSelector>,
 }
@@ -592,7 +599,7 @@ impl ChunkIndexSource for BooleanityChunks {
     }
 
     fn cycles(&self) -> usize {
-        self.rows.len()
+        self.rows.cycles()
     }
 
     #[inline]
@@ -606,7 +613,7 @@ impl ChunkIndexSource for BooleanityChunks {
         block: usize,
         visit: impl FnMut(usize, &[Self::Row]) -> Result<(), WitnessError>,
     ) -> Result<(), WitnessError> {
-        visit_resident(&self.rows, range, block, visit)
+        self.rows.visit_blocks(range, block, visit)
     }
 }
 
@@ -1193,9 +1200,9 @@ mod tests {
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
     use jolt_witness::JoltWitnessOracle;
 
-    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
+    use crate::optimized::testing::replayed;
     use crate::ReferenceBackend;
 
     #[expect(clippy::type_complexity)]
@@ -1285,8 +1292,12 @@ mod tests {
         total
     }
 
-    fn address_parity(log_t: usize, log_k_chunk: u8) {
+    /// `replayed_rows`: the optimized kernel reads the rows replayed from
+    /// two-row checkpoints; the reference reads the resident rows.
+    fn address_parity(log_t: usize, log_k_chunk: u8, replayed_rows: bool) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, dimensions| {
+            let replay = replayed_rows.then(|| replayed(backend, 2, None));
+            let witness = replay.as_ref().unwrap_or(backend);
             let relation = BooleanityAddressPhase::<Fr>::new(
                 dimensions,
                 point(900, dimensions.log_k_chunk),
@@ -1310,11 +1321,10 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let mut session = ProofSession::default();
             let optimized = OptimizedBooleanityAddress
                 .prepare(
-                    &mut session,
-                    backend,
+                    &mut ProofSession::default(),
+                    witness,
                     ProverInputs {
                         relation: &relation,
                         claims: &claims,
@@ -1329,52 +1339,86 @@ mod tests {
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap(),
             );
-            assert!(
-                session.state::<SharedInstructionRows>().is_some()
-                    || session.state::<SharedInstructionRowsWeak>().is_some()
-            );
         });
     }
 
     #[test]
     fn address_kernel_matches_reference() {
-        address_parity(2, 4);
+        address_parity(2, 4, false);
     }
 
     #[test]
     fn address_kernel_matches_reference_single_cycle_round() {
-        address_parity(1, 4);
+        address_parity(1, 4, false);
+    }
+
+    /// Two scan tasks cross the replay checkpoints and run into the padding.
+    #[test]
+    fn address_kernel_matches_reference_on_replayed_rows() {
+        address_parity(3, 4, true);
+        address_parity(2, 8, true);
     }
 
     #[test]
     fn address_kernel_matches_reference_wide_chunk() {
-        address_parity(2, 8);
+        address_parity(2, 8, false);
     }
 
-    fn cycle_parity(log_t: usize, log_k_chunk: u8, carried_indices: bool) {
-        cycle_parity_with_gamma(log_t, log_k_chunk, carried_indices, Fr::from_u64(31));
+    /// A replay failing inside the pushforward pass fails `prepare` typed.
+    #[test]
+    fn address_replay_failure_is_typed() {
+        with_booleanity_backend(3, 4, |backend, dimensions| {
+            let relation =
+                BooleanityAddressPhase::<Fr>::new(dimensions, point(900, 4), point(300, 3));
+            let challenges = BooleanityAddressPhaseChallenges {
+                reference_address: point(700, 4),
+                gamma: Fr::from_u64(31),
+            };
+            let prepared = OptimizedBooleanityAddress.prepare(
+                &mut ProofSession::default(),
+                &replayed(backend, 2, Some(1)),
+                ProverInputs {
+                    relation: &relation,
+                    claims: &Default::default(),
+                    points: &Default::default(),
+                    challenges: &challenges,
+                },
+            );
+            assert!(matches!(
+                prepared,
+                Err(KernelError::Witness(WitnessError::Replay { .. }))
+            ));
+        });
     }
 
-    fn cycle_parity_with_gamma(log_t: usize, log_k_chunk: u8, carried_indices: bool, gamma: Fr) {
+    fn cycle_parity(log_t: usize, log_k_chunk: u8, replayed_rows: bool) {
+        cycle_parity_with_gamma(log_t, log_k_chunk, replayed_rows, Fr::from_u64(31));
+    }
+
+    fn cycle_parity_with_gamma(log_t: usize, log_k_chunk: u8, replayed_rows: bool, gamma: Fr) {
         cycle_parity_case(
             log_t,
             log_k_chunk,
-            carried_indices,
+            replayed_rows,
             gamma,
             None,
             MATERIALIZE_BYTES,
         );
     }
 
+    /// `replayed_rows`: the optimized kernel reads the rows replayed from
+    /// two-row checkpoints; the reference reads the resident rows.
     fn cycle_parity_case(
         log_t: usize,
         log_k_chunk: u8,
-        carried_indices: bool,
+        replayed_rows: bool,
         gamma: Fr,
         exceptional: Option<ExceptionalEq>,
         materialize_bytes: usize,
     ) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, dimensions| {
+            let replay = replayed_rows.then(|| replayed(backend, 2, None));
+            let witness = replay.as_ref().unwrap_or(backend);
             let r_address = point(110, dimensions.log_k_chunk);
             let reference_address = point(700, dimensions.log_k_chunk);
             let reference_cycle = exceptional.map_or_else(
@@ -1415,15 +1459,9 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let mut session = ProofSession::default();
-            if carried_indices {
-                let rows = InstructionCycleRow::collect::<Fr>(backend, 1usize << log_t).unwrap();
-                session.park(SharedInstructionRows(Arc::new(rows)));
-            }
             let optimized: Box<dyn SumcheckKernel<Fr, Relation = Booleanity<Fr>>> = Box::new(
                 OptimizedBooleanityCycleKernel::prepare(
-                    &mut session,
-                    backend,
+                    witness,
                     &ProverInputs {
                         relation: &relation,
                         claims: &claims,
@@ -1434,13 +1472,6 @@ mod tests {
                 )
                 .unwrap(),
             );
-            if carried_indices {
-                assert!(
-                    session.state::<SharedInstructionRows>().is_some()
-                        || session.state::<SharedInstructionRowsWeak>().is_some(),
-                    "cycle prepare must park a shared-rows carry back for later consumers"
-                );
-            }
 
             let (mut reference, mut optimized, challenges_drawn) =
                 drive_lockstep(reference, optimized, input_claim);
@@ -1507,9 +1538,11 @@ mod tests {
         cycle_parity(2, 8, false);
     }
 
+    /// Lazy rounds, the materializing bind and dense rounds over replayed
+    /// visits that cross checkpoints and run into the padding.
     #[test]
-    fn cycle_kernel_matches_reference_with_carried_indices() {
-        cycle_parity(2, 4, true);
+    fn cycle_kernel_matches_reference_on_replayed_rows() {
+        cycle_parity(5, 4, true);
     }
 
     /// A budget of `T/64` entries per dense table keeps the tables lazy
@@ -1533,10 +1566,10 @@ mod tests {
 
     /// The production 6a→6b sequencing: the address phase (both kernels in
     /// lockstep) stages the intermediate claim; the cycle phase consumes it
-    /// with `r_address` = the reversed address challenges, reclaiming the
-    /// parked index columns from the shared session. The reference kernel's
-    /// round-zero check pins the intermediate claim to the cycle-phase sum,
-    /// so a cross-phase orientation drift fails loudly.
+    /// with `r_address` = the reversed address challenges, through one shared
+    /// session. The reference kernel's round-zero check pins the intermediate
+    /// claim to the cycle-phase sum, so a cross-phase orientation drift fails
+    /// loudly.
     #[test]
     fn two_phase_flow_matches_reference_end_to_end() {
         let log_t = 2;
@@ -1641,11 +1674,6 @@ mod tests {
                     },
                 )
                 .unwrap();
-            assert!(
-                session.state::<SharedInstructionRows>().is_some()
-                    || session.state::<SharedInstructionRowsWeak>().is_some(),
-                "cycle prepare must park a shared-rows carry back"
-            );
             let (mut reference, mut optimized, cycle_challenges_drawn) =
                 drive_lockstep(reference, optimized, input_claim);
             assert_eq!(
@@ -1682,9 +1710,8 @@ mod categorical_tests {
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
     use jolt_witness::WitnessError;
 
-    use super::{
-        visit_resident, CategoricalProducts, ChunkIndexSource, LazyFoldedRa, MATERIALIZE_BYTES,
-    };
+    use super::super::lazy_ra::visit_resident;
+    use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa, MATERIALIZE_BYTES};
     use crate::reference::views::eq_table;
 
     /// Column-major hot indices; a cycle's row is its index.

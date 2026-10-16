@@ -55,16 +55,14 @@ use jolt_witness::witnesses::{BalancedIncColumn, FusedInc};
 use jolt_witness::witnesses::{
     BytecodePc, InstructionRafFlag, LookupIndex, RemappedRamAddress, TableIndex,
 };
-use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, StreamConsumer, TraceRows, WitnessBundle, WitnessError,
-};
+use jolt_witness::{JoltWitnessPlane, TraceRows, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::lazy_ra::{try_fold_groups, visit_resident, ChunkIndexSource, LazyFoldedRa, PairBlock};
 use super::support::{
-    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
-    product_grid_scratch_len, split_at_tasks, task_ranges, GruenRoundMessage, RoundProgress,
+    accumulate_product_grid, map_indices, map_reduce_chunks, product_grid_scratch_len,
+    split_at_tasks, task_ranges, GruenRoundMessage, RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -86,10 +84,10 @@ const _: () = assert!(
     "InstructionCycleRow packs lookup table indices as u8"
 );
 
-/// One packed per-cycle row: the stage-5 facts plus the bytecode/RAM and
-/// packed fused-inc sources used by later one-hot kernels. The lookup index
-/// is split into native limbs and the PC/table/flags share one word, keeping
-/// the retained row at 40 bytes in Akita mode.
+/// One packed per-cycle row, decoded per visited block: the stage-5 facts
+/// plus the bytecode/RAM and packed fused-inc sources the late one-hot
+/// kernels read. The lookup index is split into native limbs and the
+/// PC/table/flags share one word, keeping the row at 40 bytes in Akita mode.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct InstructionCycleRow {
@@ -180,17 +178,6 @@ impl InstructionCycleRow {
         };
         FusedInc(value).selected_row(column)
     }
-
-    #[cfg(feature = "akita")]
-    #[inline]
-    pub(crate) fn fused_inc<F: JoltField>(&self) -> F {
-        let magnitude = F::from_u64(self.fused_inc_magnitude);
-        if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
-            -magnitude
-        } else {
-            magnitude
-        }
-    }
 }
 
 #[cfg(feature = "akita")]
@@ -223,97 +210,12 @@ impl WideInstructionRow {
     }
 }
 
-struct PackRows {
-    rows: Vec<InstructionCycleRow>,
-}
-
-impl StreamConsumer for PackRows {
-    type Witness = WideInstructionRow;
-
-    fn consume(&mut self, chunk: &[WideInstructionRow]) {
-        self.rows
-            .extend(chunk.iter().map(WideInstructionRow::decode));
-    }
-}
-
-impl InstructionCycleRow {
-    pub(crate) fn collect<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Vec<Self>, KernelError<F>> {
-        if let Some(access) = witness.rows() {
-            if cycles <= access.cycles() {
-                let rows =
-                    collect_par_map(&access, cycles, |row: WideInstructionRow| row.decode())?;
-                return Ok(rows);
-            }
-        }
-        let mut consumers = (PackRows {
-            rows: Vec::with_capacity(cycles),
-        },);
-        stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
-        Ok(consumers.0.rows)
-    }
-}
-
-/// The collected per-cycle rows, parked in the [`ProofSession`] for the
-/// stage-6b instruction RA virtualization kernel (its committed one-hot
-/// chunks are chunks of the same per-cycle lookup index) and the
-/// stage-6a/6b booleanity kernels (all three one-hot chunk families).
-///
-/// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
-/// carry back for the later stages.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
-
-/// Weak cache for slice-backed rows; it does not keep a collection alive.
-/// A queued kernel drop can retain the last strong reference across stages.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
-
-impl InstructionCycleRow {
-    /// Reclaim the parked rows (the length guard makes a stale carry
-    /// impossible to consume) or collect them fresh, and park the carry back
-    /// for later consumers.
-    pub(crate) fn shared<F: JoltField>(
-        session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Arc<Vec<Self>>, KernelError<F>> {
-        // A parked strong carry is always honored (re-emulating sources, and
-        // tests that inject rows a witness would not produce).
-        let carried = match session.take::<SharedInstructionRows>() {
-            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
-            _ => None,
-        };
-        if witness.rows().is_some() {
-            let upgraded = || {
-                session
-                    .state::<SharedInstructionRowsWeak>()
-                    .and_then(|weak| weak.0.upgrade())
-                    .filter(|rows| rows.len() == cycles)
-            };
-            let rows = match carried.or_else(upgraded) {
-                Some(rows) => rows,
-                None => Arc::new(Self::collect(witness, cycles)?),
-            };
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-            return Ok(rows);
-        }
-        let rows = match carried {
-            Some(rows) => rows,
-            None => Arc::new(Self::collect(witness, cycles)?),
-        };
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
-        Ok(rows)
-    }
-}
-
 /// The per-cycle rows a pass reads: the witness's row handle, decoded block
-/// by block, or a collected vector (the later one-hot kernels' carry, and
-/// the in-module tests' rows that no trace produces).
+/// by block (every production reader), or a collected vector (tests' rows
+/// that no trace produces, and the empty value the read-RAF handoff leaves
+/// behind).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-enum CycleRows {
+pub(crate) enum CycleRows {
     /// The witness plane owns these rows; it reports them itself.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     Trace(TraceRows),
@@ -321,14 +223,14 @@ enum CycleRows {
 }
 
 impl CycleRows {
-    fn cycles(&self) -> usize {
+    pub(crate) fn cycles(&self) -> usize {
         match self {
             Self::Trace(rows) => rows.cycles(),
             Self::Collected(rows) => rows.len(),
         }
     }
 
-    fn segment_len(&self) -> usize {
+    pub(crate) fn segment_len(&self) -> usize {
         match self {
             Self::Trace(rows) => rows.segment_len(),
             Self::Collected(_) => 1,
@@ -338,7 +240,7 @@ impl CycleRows {
     /// [`ChunkIndexSource::visit_blocks`]: a trace visit extracts each block
     /// ([`TraceRows::visit_bundles`]) and decodes it into one visit-owned
     /// buffer of at most `block` rows. `visit` must not enter Rayon.
-    fn visit_blocks(
+    pub(crate) fn visit_blocks(
         &self,
         range: Range<usize>,
         block: usize,
@@ -359,8 +261,7 @@ impl CycleRows {
 }
 
 /// Lazy-RA index source: column `i` is the `i`-th most significant
-/// `chunk_bits`-bit chunk of the per-cycle lookup index (always hot), off the
-/// stage-5 rows.
+/// `chunk_bits`-bit chunk of the per-cycle lookup index (always hot).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct LookupIndexChunks {
     rows: CycleRows,
@@ -369,13 +270,9 @@ pub(crate) struct LookupIndexChunks {
 }
 
 impl LookupIndexChunks {
-    pub(crate) fn new(
-        rows: Arc<Vec<InstructionCycleRow>>,
-        chunks: usize,
-        chunk_bits: usize,
-    ) -> Self {
+    pub(crate) fn new(rows: CycleRows, chunks: usize, chunk_bits: usize) -> Self {
         Self {
-            rows: CycleRows::Collected(rows),
+            rows,
             chunks,
             chunk_bits,
         }
@@ -1651,7 +1548,7 @@ mod tests {
     use jolt_verifier::stages::stage5::InstructionReadRaf;
     use jolt_witness::testing::LoggedReplay;
     #[cfg(feature = "akita")]
-    use jolt_witness::witnesses::FusedInc;
+    use jolt_witness::witnesses::{BalancedIncColumn, FusedInc};
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
     use jolt_witness::{TraceBackend, WitnessError};
 
@@ -1667,7 +1564,7 @@ mod tests {
 
     use super::{
         CycleRows, InstructionCycleRow, OptimizedInstructionReadRaf,
-        OptimizedInstructionReadRafKernel, SharedInstructionRows, SharedInstructionRowsWeak,
+        OptimizedInstructionReadRafKernel,
     };
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
@@ -1754,7 +1651,16 @@ mod tests {
         assert_eq!(row.remapped_ram_address(), Some(u64::MAX - 1));
         assert!(row.raf_flag());
         #[cfg(feature = "akita")]
-        assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
+        for column in [
+            BalancedIncColumn::Digit { width: 4, index: 0 },
+            BalancedIncColumn::Digit { width: 4, index: 1 },
+            BalancedIncColumn::Carry { width: 4 },
+        ] {
+            assert_eq!(
+                row.fused_inc_row(column),
+                FusedInc(-123).selected_row(column)
+            );
+        }
     }
 
     /// The sumcheck input claim from first principles:
@@ -2010,12 +1916,9 @@ mod tests {
         let mut reference = ReferenceBackend
             .prepare(&mut ProofSession::default(), resident, inputs())
             .unwrap();
-        let mut session = ProofSession::default();
         let mut optimized = OptimizedInstructionReadRaf
-            .prepare(&mut session, witness, inputs())
+            .prepare(&mut ProofSession::default(), witness, inputs())
             .unwrap();
-        assert!(session.state::<SharedInstructionRows>().is_none());
-        assert!(session.state::<SharedInstructionRowsWeak>().is_none());
 
         let claim = probe_input_claim(reference.as_mut());
         run_lockstep(reference.as_mut(), optimized.as_mut(), claim, &challenges);

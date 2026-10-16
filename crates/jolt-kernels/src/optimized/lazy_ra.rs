@@ -323,7 +323,13 @@ impl<S: ChunkIndexSource> SourceBlock<'_, S> {
     /// Column `i`'s hot index at unbound cycle `j` of this block.
     #[inline]
     pub(crate) fn index(&self, i: usize, j: usize) -> Option<usize> {
-        self.source.index(i, &self.rows[j - self.first])
+        self.source.index(i, self.row(j))
+    }
+
+    /// The source row of unbound cycle `j` of this block.
+    #[inline]
+    pub(crate) fn row(&self, j: usize) -> &S::Row {
+        &self.rows[j - self.first]
     }
 }
 
