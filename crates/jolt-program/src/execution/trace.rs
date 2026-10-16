@@ -276,6 +276,57 @@ impl ExecutionDimensions {
     }
 }
 
+/// [`ExecutionDimensions`] folded over contiguous row ranges that are observed
+/// and merged in any order. The proof prefix follows [`TraceData::new`]: it
+/// ends at the last row that is not canonical padding. Field-inline events
+/// are not folded; field-inline traces take their prefix from
+/// `TraceData::from_parts`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DimensionFold {
+    /// Execution index and jump flag of the last non-padding row observed.
+    last_row: Option<(usize, bool)>,
+    ram_bounds: RamAddressBounds,
+}
+
+impl DimensionFold {
+    /// Observe `rows`, the execution rows starting at index `first`.
+    pub fn observe(&mut self, first: usize, rows: &[JoltTraceRow]) {
+        for row in rows {
+            self.ram_bounds.observe(row.ram_address());
+        }
+        let prefix = data::proof_prefix_len(rows);
+        if let Some(row) = prefix.checked_sub(1).and_then(|last| rows.get(last)) {
+            self.keep_last((
+                first + prefix - 1,
+                row.circuit_flags().get(CircuitFlags::Jump),
+            ));
+        }
+    }
+
+    #[must_use]
+    pub fn merge(mut self, other: Self) -> Self {
+        if let Some(row) = other.last_row {
+            self.keep_last(row);
+        }
+        self.ram_bounds = self.ram_bounds.merge(other.ram_bounds);
+        self
+    }
+
+    pub fn dimensions(self) -> ExecutionDimensions {
+        ExecutionDimensions {
+            trace_length: self.last_row.map_or(0, |(index, _)| index + 1),
+            ends_in_jump: self.last_row.is_some_and(|(_, jump)| jump),
+            ram_bounds: self.ram_bounds,
+        }
+    }
+
+    fn keep_last(&mut self, row: (usize, bool)) {
+        if self.last_row.is_none_or(|(index, _)| index < row.0) {
+            self.last_row = Some(row);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TraceOutput<T = Arc<TraceData>> {
     pub dimensions: ExecutionDimensions,
@@ -332,6 +383,10 @@ impl TraceOutput<Arc<TraceData>> {
 #[expect(clippy::expect_used, reason = "test module")]
 mod dimension_tests {
     use super::*;
+    use jolt_riscv::{
+        JoltInstructionKind, NormalizedOperands, RamAccess, RamRead, RamWrite, RegisterRead,
+        RegisterState, RegisterWrite,
+    };
 
     #[test]
     fn external_ram_bounds_must_be_ordered() {
@@ -396,6 +451,132 @@ mod dimension_tests {
                     expected
                 );
                 assert_eq!(merged.merge(RamAddressBounds::default()), merged);
+            }
+        }
+    }
+
+    fn row(
+        kind: JoltInstructionKind,
+        operands: NormalizedOperands,
+        registers: RegisterState,
+        ram: RamAccess,
+    ) -> JoltTraceRow {
+        let instruction = JoltInstructionRow {
+            instruction_kind: kind,
+            address: 0x8000_0000,
+            operands,
+            ..Default::default()
+        };
+        JoltTraceRow::new(instruction, registers, ram, 1).expect("valid row")
+    }
+
+    /// Folding any partition of the rows, merged in either order, reproduces
+    /// the trimmed proof view of `TraceData::new` summarized by `from_rows`.
+    #[test]
+    fn dimension_fold_matches_proof_rows_over_any_partition() {
+        let load = row(
+            JoltInstructionKind::LD,
+            NormalizedOperands {
+                rs1: Some(10),
+                rs2: None,
+                rd: Some(11),
+                imm: 8,
+            },
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 10,
+                    value: 0x1000,
+                }),
+                rs2: None,
+                rd: Some(RegisterWrite {
+                    register: 11,
+                    pre_value: 5,
+                    post_value: 7,
+                }),
+            },
+            RamAccess::Read(RamRead {
+                address: 0x1008,
+                value: 7,
+            }),
+        );
+        let store = row(
+            JoltInstructionKind::SD,
+            NormalizedOperands {
+                rs1: Some(10),
+                rs2: Some(12),
+                rd: None,
+                imm: -4,
+            },
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 10,
+                    value: 0x3000,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 12,
+                    value: 0x1234,
+                }),
+                rd: None,
+            },
+            RamAccess::Write(RamWrite {
+                address: 0x2ffc,
+                pre_value: 0,
+                post_value: 0x1234,
+            }),
+        );
+        let jump = row(
+            JoltInstructionKind::JAL,
+            NormalizedOperands {
+                rs1: None,
+                rs2: None,
+                rd: Some(1),
+                imm: 8,
+            },
+            RegisterState {
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 0x8000_0004,
+                }),
+                ..Default::default()
+            },
+            RamAccess::NoOp,
+        );
+        assert!(jump.circuit_flags().get(CircuitFlags::Jump));
+        let pad = JoltTraceRow::default();
+        for rows in [
+            vec![],
+            vec![pad, pad],
+            vec![load, pad, store, jump, pad, pad],
+            vec![jump, pad, load, pad],
+            vec![pad, store],
+        ] {
+            let expected =
+                ExecutionDimensions::from_rows(TraceData::new(rows.clone()).proof_rows());
+            for cuts in 0u32..1 << rows.len().saturating_sub(1) {
+                let mut folds = Vec::new();
+                let (mut first, mut rest) = (0, rows.as_slice());
+                while !rest.is_empty() {
+                    let mut len = 1;
+                    while len < rest.len() && cuts >> (first + len - 1) & 1 == 0 {
+                        len += 1;
+                    }
+                    let (chunk, tail) = rest.split_at(len);
+                    let mut fold = DimensionFold::default();
+                    fold.observe(first, chunk);
+                    folds.push(fold);
+                    first += len;
+                    rest = tail;
+                }
+                let forward = folds
+                    .iter()
+                    .fold(DimensionFold::default(), |all, fold| all.merge(*fold));
+                let backward = folds
+                    .iter()
+                    .rev()
+                    .fold(DimensionFold::default(), |all, fold| all.merge(*fold));
+                assert_eq!(forward.dimensions(), expected, "cuts {cuts:b}");
+                assert_eq!(backward.dimensions(), expected, "cuts {cuts:b}");
             }
         }
     }

@@ -1,5 +1,6 @@
 pub mod backend;
 pub mod error;
+pub mod replay;
 pub mod trace;
 
 use crate::ProgramError;
@@ -17,11 +18,12 @@ pub use crate::field_inline::{
 };
 pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary};
 pub use error::TraceError;
+pub use replay::{RowReader, RowReplay};
 #[cfg(feature = "field-inline")]
 pub use trace::FieldEvent;
 pub use trace::{
-    ExecutionDimensions, JoltProgram, MemoryImage, RamAddressBounds, TraceData, TraceInputs,
-    TraceOutput,
+    DimensionFold, ExecutionDimensions, JoltProgram, MemoryImage, RamAddressBounds, TraceData,
+    TraceInputs, TraceOutput,
 };
 
 #[cfg(feature = "image")]

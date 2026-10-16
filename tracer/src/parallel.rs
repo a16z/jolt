@@ -31,12 +31,11 @@ pub struct ChunkCheckpoint {
 }
 
 impl ChunkCheckpoint {
-    /// Capture at a tick boundary of a pass-1 emulator. Workers replay by
+    /// Capture at a tick boundary of a pass-1 or worker CPU. Workers replay by
     /// tick count, never by stall detection, so no termination-heuristic
     /// state is carried.
     #[expect(clippy::expect_used)]
-    pub fn capture(emulator: &Emulator) -> Self {
-        let cpu = emulator.get_cpu();
+    pub fn capture(cpu: &Cpu) -> Self {
         let device = cpu
             .mmu
             .jolt_device
@@ -50,9 +49,17 @@ impl ChunkCheckpoint {
         }
     }
 
+    /// Heap bytes this checkpoint owns, by capacity.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.cpu.heap_bytes() + self.outputs.capacity()
+    }
+
     /// Paranoia check: first difference between this captured boundary state
     /// and `cpu`'s current state (`None` = equal). A worker finishing chunk k
-    /// must land exactly on checkpoint k+1's capture.
+    /// must land exactly on checkpoint k+1's capture. Compares the CPU state
+    /// that `ChunkCpuState::diff_vs_cpu` covers plus JoltDevice outputs and
+    /// panic; memory, MMU translation state, floating-point and field
+    /// registers are not compared.
     pub fn diff_vs_cpu(&self, cpu: &Cpu) -> Option<String> {
         if let Some(diff) = self.cpu.diff_vs_cpu(cpu) {
             return Some(diff);
@@ -128,8 +135,8 @@ impl SnapshotPool {
 }
 
 /// A resident chunk-replay worker: one CPU reused across chunks, running in
-/// [`HostIo::Replay`] (no duplicate prints/markers/advice-appends, no call
-/// tracking) for its whole lifetime.
+/// [`HostIo::Replay`] (no duplicate prints or markers, no call tracking;
+/// advice appends go to its private tape) for its whole lifetime.
 pub struct ChunkWorker {
     cpu: Cpu,
     /// Empty-entry decode cache covering the program text, cloned per chunk:
@@ -170,11 +177,33 @@ impl ChunkWorker {
     /// Install a chunk: seed CPU+MMU state, adopt `image` as the working
     /// memory (returns the previous buffer for the pool), patch device
     /// outputs/panic, and reset the decode cache.
-    #[expect(clippy::expect_used)]
     pub fn install_chunk(&mut self, checkpoint: &ChunkCheckpoint, image: Vec<u64>) -> Vec<u64> {
+        self.install_state(checkpoint);
+        self.cpu.mmu.memory.memory.data.replace_flat(image)
+    }
+
+    /// [`ChunkWorker::install_chunk`] from a touched memory prefix: see
+    /// `MemoryData::install_prefix` for the backing it builds.
+    pub(crate) fn install_prefix(
+        &mut self,
+        checkpoint: &ChunkCheckpoint,
+        prefix: &[u64],
+        resident_words: usize,
+        logical_words: usize,
+    ) {
+        self.install_state(checkpoint);
+        self.cpu
+            .mmu
+            .memory
+            .memory
+            .data
+            .install_prefix(prefix, resident_words, logical_words);
+    }
+
+    #[expect(clippy::expect_used)]
+    fn install_state(&mut self, checkpoint: &ChunkCheckpoint) {
         self.cpu.install_chunk_state(&checkpoint.cpu);
         self.cpu.mmu.install_chunk_state(&checkpoint.mmu);
-        let previous = self.cpu.mmu.memory.memory.data.replace_flat(image);
         let device = self
             .cpu
             .mmu
@@ -184,7 +213,11 @@ impl ChunkWorker {
         device.outputs.clone_from(&checkpoint.outputs);
         device.panic = checkpoint.panic;
         self.cpu.mmu.decode_cache = self.decode_template.clone();
-        previous
+    }
+
+    /// Execute one tick without rows: pass-1's execute path.
+    pub(crate) fn execute_tick(&mut self) {
+        self.cpu.tick(None);
     }
 
     /// Re-trace `tick_count` ticks, appending rows to `out`. Tick counts are
@@ -230,12 +263,22 @@ impl ChunkWorker {
     }
 }
 
+/// How pass-1 terminated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PassEnd {
+    /// The PC did not advance; no tick ran after the last row.
+    PcStall,
+    /// A tick emitted no row. It ran, so the emulator state is past the last
+    /// row's tick boundary.
+    ZeroRowTick,
+}
+
 /// Pass-1 driver: executes the program tick by tick with trace-equivalent
 /// state, exposing checkpoint capture at tick boundaries.
 pub struct PassOne {
     emulator: Emulator,
     prev_pc: u64,
-    done: bool,
+    end: Option<PassEnd>,
 }
 
 impl PassOne {
@@ -243,7 +286,7 @@ impl PassOne {
         Self {
             emulator,
             prev_pc: 0,
-            done: false,
+            end: None,
         }
     }
 
@@ -252,18 +295,18 @@ impl PassOne {
     /// stall, or a step that would emit zero rows (trap/WFI tick — observed
     /// here as a zero `trace_len` delta, which the execute path shares).
     pub fn step(&mut self) -> bool {
-        if self.done {
+        if self.end.is_some() {
             return false;
         }
         let pc = self.emulator.get_cpu().read_pc();
         if pc == self.prev_pc {
-            self.done = true;
+            self.end = Some(PassEnd::PcStall);
             return false;
         }
         let ticks_before = self.emulator.get_cpu().trace_len;
         self.emulator.tick(None);
         if self.emulator.get_cpu().trace_len == ticks_before {
-            self.done = true;
+            self.end = Some(PassEnd::ZeroRowTick);
             return false;
         }
         self.prev_pc = pc;
@@ -271,7 +314,12 @@ impl PassOne {
     }
 
     pub fn is_done(&self) -> bool {
-        self.done
+        self.end.is_some()
+    }
+
+    /// How pass-1 terminated, once [`PassOne::step`] has returned `false`.
+    pub fn end(&self) -> Option<PassEnd> {
+        self.end
     }
 
     /// Trace rows produced so far (`trace_len` is row-uniform across modes:
@@ -282,7 +330,7 @@ impl PassOne {
 
     /// Capture a chunk checkpoint at the current tick boundary.
     pub fn checkpoint(&self) -> ChunkCheckpoint {
-        ChunkCheckpoint::capture(&self.emulator)
+        ChunkCheckpoint::capture(self.emulator.get_cpu())
     }
 
     pub fn emulator(&self) -> &Emulator {
