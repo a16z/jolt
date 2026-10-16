@@ -8,13 +8,14 @@ use jolt_blindfold::{
     BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
     FinalOpeningBinding, WitnessCoordinate,
 };
+use jolt_claims::r1cs::ClaimSourceTable;
 use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
 use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::{CompressedPoly, EqPolynomial};
-use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
+use jolt_r1cs::{ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
     CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage, SumcheckDomainSpec,
@@ -761,9 +762,6 @@ struct SumcheckTrace {
     point: Vec<F>,
 }
 
-/// Everything needed to drive a prover (harness or real) over the same
-/// protocol-backed instance: the statement-derived protocol plus the real
-/// witness rows, blindings, and final-opening evaluations.
 pub struct ProtocolBackedInstance {
     pub setup: PedersenSetup<Bn254G1>,
     pub protocol: BlindFoldProtocol<F, Bn254G1>,

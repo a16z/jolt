@@ -1,5 +1,3 @@
-//! RAM output-check symbolic sumcheck relation.
-
 use core::marker::PhantomData;
 
 use jolt_field::{JoltField, Ring};
@@ -124,59 +122,5 @@ impl SymbolicSumcheck for OutputCheck {
             - derived(RamOutputCheckPublic::EqAddress)
                 * derived(RamOutputCheckPublic::IoMask)
                 * derived(RamOutputCheckPublic::ValIo)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, Ring};
-
-    fn read_write_dimensions() -> ReadWriteDimensions {
-        ReadWriteDimensions::new(5, 4, 2, 1)
-    }
-
-    #[test]
-    fn output_check_evaluates_like_core_formula() {
-        let relation = OutputCheck::new(read_write_dimensions());
-
-        let val_final = Fr::from_u64(7);
-        let eq_address = Fr::from_u64(11);
-        let io_mask = Fr::from_u64(13);
-        let val_io = Fr::from_u64(17);
-        let zero = Fr::from_u64(0);
-
-        let input = relation
-            .input_expression::<Fr>()
-            .evaluate(|_| zero, |_| zero, |_| zero);
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_val_final() => val_final,
-                _ => zero,
-            },
-            |_| zero,
-            |id| match *id {
-                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::EqAddress) => eq_address,
-                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::IoMask) => io_mask,
-                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::ValIo) => val_io,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, zero);
-        assert_eq!(output, eq_address * io_mask * (val_final - val_io));
-    }
-
-    #[test]
-    fn output_check_symbolic_matches_dependencies() {
-        let relation = OutputCheck::new(read_write_dimensions());
-
-        assert_eq!(OutputCheck::id(), JoltRelationId::RamOutputCheck);
-        assert_eq!(
-            relation.rounds(),
-            read_write_dimensions().output_check_rounds()
-        );
-        assert_eq!(relation.degree(), 3);
     }
 }

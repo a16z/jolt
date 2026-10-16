@@ -246,26 +246,6 @@ pub fn virtual_instruction_product() -> JoltOpeningId {
     )
 }
 
-#[cfg(test)]
-pub(crate) fn next_unexpanded_pc_outer() -> JoltOpeningId {
-    outer_opening(JoltVirtualPolynomial::NextUnexpandedPC)
-}
-
-#[cfg(test)]
-pub(crate) fn next_pc_outer() -> JoltOpeningId {
-    outer_opening(JoltVirtualPolynomial::NextPC)
-}
-
-#[cfg(test)]
-pub(crate) fn next_is_virtual_outer() -> JoltOpeningId {
-    outer_opening(JoltVirtualPolynomial::NextIsVirtual)
-}
-
-#[cfg(test)]
-pub(crate) fn next_is_first_in_sequence_outer() -> JoltOpeningId {
-    outer_opening(JoltVirtualPolynomial::NextIsFirstInSequence)
-}
-
 pub fn unexpanded_pc_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
@@ -305,14 +285,5 @@ mod tests {
     #[test]
     fn outer_dimensions_rejects_empty_variables() {
         assert_eq!(SpartanOuterDimensions::new(8, Vec::new(), false), None);
-    }
-
-    #[test]
-    fn default_outer_dimensions_match_r1cs_input_catalog() {
-        let dimensions = SpartanOuterDimensions::rv64(8);
-
-        assert_eq!(dimensions.log_t(), 8);
-        assert_eq!(dimensions.variables(), &SPARTAN_OUTER_R1CS_INPUTS);
-        assert!(dimensions.include_affine_terms());
     }
 }

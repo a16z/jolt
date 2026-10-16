@@ -17,7 +17,6 @@ macro_rules! declare_riscv_instr {
             pub operands: $format,
             pub virtual_sequence_remaining: Option<u16>,
             pub is_first_in_sequence: bool,
-            /// Set if instruction is C-Type
             pub is_compressed: bool,
         }
 
@@ -27,7 +26,7 @@ macro_rules! declare_riscv_instr {
 
             type Format = $format;
             type RegisterState = $registers;
-            type RAMAccess = $ram;
+            type RamAccess = $ram;
 
             fn operands(&self) -> &Self::Format {
                 &self.operands
@@ -76,7 +75,7 @@ macro_rules! declare_riscv_instr {
                 }
             }
 
-            fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RAMAccess) {
+            fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RamAccess) {
                 self.exec(cpu, ram)
             }
 

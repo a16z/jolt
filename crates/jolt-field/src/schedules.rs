@@ -71,9 +71,6 @@ where
     ]
 }
 
-/// Chebyshev `φ` fold-back for a degree-8 accumulator: maps the product
-/// index `k` onto the `[1, e1, ..., e7]` basis (`k = 0 → 2·constant`,
-/// `1 ≤ k ≤ 7 → +e_k`, `k = 8 → 0`, `9 ≤ k ≤ 15 → −e_{16−k}`).
 #[inline(always)]
 fn ext8_add_phi<V: Copy>(
     out: &mut [V; 8],

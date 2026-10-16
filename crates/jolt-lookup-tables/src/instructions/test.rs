@@ -1,5 +1,3 @@
-//! Per-instruction test helpers.
-
 use std::any::TypeId;
 use std::fmt::Debug;
 

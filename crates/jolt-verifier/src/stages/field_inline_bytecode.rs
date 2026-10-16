@@ -1,5 +1,3 @@
-//! Field-register access points and challenges for bytecode read-RAF.
-
 use jolt_claims::protocols::field_inline::geometry::bytecode::{
     FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT, FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS,
 };

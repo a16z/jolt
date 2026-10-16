@@ -1,3 +1,4 @@
+use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
@@ -64,7 +65,7 @@ pub fn preprocess_full_with_advice(
     })
 }
 
-/// The grouped packed setup: the canonical `OneHotTrace` object plus every
+/// The grouped Akita setup: the canonical `OneHotTrace` object plus every
 /// auxiliary object (advice, field increments, then direct program objects)
 /// opened in one batch. Building it provisions the grouped schedule rows that
 /// commit, prove, and verify later resolve without planning.
@@ -101,7 +102,7 @@ pub(crate) fn grouped_setup_params(
             }
         })?;
     let catalog = schedule_artifacts
-        .one_hot_catalog(one_hot_k)
+        .one_hot_catalog_for_profile(one_hot_k, config.akita_chunk_profile)
         .map_err(|error| PreprocessingError::InvalidConfiguration {
             reason: error.to_string(),
         })?;
@@ -145,7 +146,7 @@ pub(crate) fn grouped_setup_params(
             untrusted_physical_vars,
             trusted_physical_vars,
             mandatory_dense_layouts,
-            shape.num_vars,
+            PolynomialGroupLayout::new(shape.num_vars, shape.num_polys),
         )
     });
     let params = AkitaSetupParams::one_hot_only_grouped(
@@ -156,7 +157,8 @@ pub(crate) fn grouped_setup_params(
         one_hot_k,
         grouped_schedule,
         Arc::clone(schedule_artifacts),
-    );
+    )
+    .with_akita_chunk_profile(config.akita_chunk_profile);
     Ok(params)
 }
 
@@ -164,27 +166,18 @@ pub fn preprocess_committed(
     schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: JoltProgramPreprocessing,
     config: &ProverConfig,
-    bytecode_chunk_count: usize,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
-    preprocess_committed_with_advice(
-        schedule_artifacts,
-        program,
-        config,
-        bytecode_chunk_count,
-        false,
-        false,
-    )
+    preprocess_committed_with_advice(schedule_artifacts, program, config, false, false)
 }
 
 pub fn preprocess_committed_with_advice(
     schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: JoltProgramPreprocessing,
     config: &ProverConfig,
-    bytecode_chunk_count: usize,
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
-    crate::preprocessing::validate_committed_mode()?;
+    crate::preprocessing::validate_committed_mode(&program)?;
     validate_trace_order(config)?;
     let metadata =
         program
@@ -193,46 +186,37 @@ pub fn preprocess_committed_with_advice(
                 reason: "entry address is absent from bytecode preprocessing".to_owned(),
             })?;
     let trace_order = config.trace_polynomial_order;
-    let direct_plan = committed_program_packing_plan(
-        program.bytecode.bytecode.len(),
-        bytecode_chunk_count,
+    let plan = committed_program_packing_plan(
+        program.bytecode.code_size,
         program.ram.bytecode_words.len(),
         trace_order,
     )
     .map_err(|error| PreprocessingError::InvalidCommittedProgram {
         reason: error.to_string(),
     })?;
-    let direct_program_physical_vars: Vec<usize> = direct_plan
-        .objects()
-        .map(|object| object.packing().packed_num_vars())
-        .collect();
+    let physical_vars = [
+        plan.bytecode.packing().packed_num_vars(),
+        plan.program_image.packing().packed_num_vars(),
+    ];
     let (pcs_setup, verifier_setup) = grouped_setup(
         schedule_artifacts,
         &program,
         config,
         untrusted_advice,
         trusted_advice,
-        &direct_program_physical_vars,
+        &physical_vars,
     )?;
-    let direct_program = commit_direct_program::<AkitaScheme>(
-        schedule_artifacts,
-        &program,
-        &direct_plan,
-        trace_order,
-    )
-    .map_err(|error| PreprocessingError::InvalidCommittedProgram {
-        reason: error.to_string(),
-    })?;
+    let direct_program =
+        commit_direct_program::<AkitaScheme>(schedule_artifacts, &program, trace_order, &plan)
+            .map_err(|error| PreprocessingError::InvalidCommittedProgram {
+                reason: error.to_string(),
+            })?;
     let committed_program = CommittedProgramPreprocessing {
         meta: metadata,
         memory_layout: program.memory_layout.clone(),
         max_padded_trace_length: program.max_padded_trace_length,
-        direct_program_commitments: direct_program
-            .objects
-            .iter()
-            .map(|object| object.commitment.clone())
-            .collect(),
-        bytecode_chunk_count,
+        bytecode_commitment: direct_program.bytecode.commitment.clone(),
+        program_image_commitment: direct_program.program_image.commitment.clone(),
         trace_order,
     };
     let verifier = JoltVerifierPreprocessing::new(
@@ -276,7 +260,6 @@ pub fn commit_trusted_advice(
     })
 }
 
-/// The physical arity of an advice object sized to the program's advice capacity.
 fn advice_physical_num_vars(
     program: &JoltProgramPreprocessing,
     kind: JoltAdviceKind,
@@ -314,6 +297,7 @@ mod tests {
     use super::*;
     use crate::config::{one_hot_config, read_write_config};
     use common::jolt_device::MemoryLayout;
+    use jolt_akita::AkitaChunkProfile;
     use jolt_riscv::RV64IMAC_JOLT;
 
     #[test]
@@ -333,6 +317,7 @@ mod tests {
             rw_config: read_write_config(32, 12),
             one_hot_config: one_hot_config(32),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
+            akita_chunk_profile: AkitaChunkProfile::Single,
         };
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         assert!(matches!(

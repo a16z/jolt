@@ -165,14 +165,12 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
     }
 }
 
-/// Trace rows before the first bind; a dense table afterward.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncState<F: JoltField> {
     Rows(BundleStore<RdIncRow>),
     Dense(Polynomial<F>),
 }
 
-/// The single-column bundle behind the increment table.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RdIncRow {
     rd_inc: RdInc,
@@ -197,7 +195,6 @@ impl<F: JoltField> ValEvaluationKernel<F> {
         match &mut self.inc {
             IncState::Dense(inc) => inc.bind_with_order(challenge, BindingOrder::LowToHigh),
             IncState::Rows(store) => {
-                // Bind row pairs directly into a half-length field table.
                 debug_assert_eq!(self.progress.bound(), 0);
                 let half = (1usize << self.progress.total()) / 2;
                 let access = store.access();
@@ -369,9 +366,7 @@ mod tests {
     use super::OptimizedRegistersValEvaluation;
     use crate::ProofSession;
 
-    /// How the optimized kernel sources its per-cycle rd indices.
     enum IndexSource {
-        /// Collected from the row source inside `prepare`.
         Collect,
         /// Reclaimed from a session carry parked by stage 4.
         Parked,

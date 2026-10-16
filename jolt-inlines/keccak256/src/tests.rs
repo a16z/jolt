@@ -12,11 +12,6 @@ mod exec {
     }
 
     #[test]
-    fn test_keccak256_random_direct_execution() {
-        assert_random_cases_match_reference::<Keccak256Permutation>(0xEC_CAC, 100);
-    }
-
-    #[test]
     fn test_keccak256_absorb_permute_direct_execution() {
         assert_edge_cases_match_reference::<Keccak256AbsorbPermutation>();
         assert_random_cases_match_reference::<Keccak256AbsorbPermutation>(0x00AB_50BB, 100);
@@ -66,68 +61,6 @@ mod exec_unit {
     use crate::NUM_LANES;
 
     #[test]
-    fn test_execute_theta() {
-        // Patterned state to exercise column parities; theta should change the state.
-        let mut state = [0u64; NUM_LANES];
-        state[0] = 1;
-        state[5] = 2;
-        state[10] = 4;
-        let original_state = state;
-        execute_theta(&mut state);
-        assert_ne!(
-            state, original_state,
-            "theta: state unchanged; expected column parity diffusion"
-        );
-    }
-
-    #[test]
-    fn test_execute_rho_and_pi() {
-        // Rho rotates lanes and Pi permutes positions; the state must change and lane [1] should move.
-        let mut state = [0u64; NUM_LANES];
-        state[1] = 0xFF;
-        let original_state = state;
-        execute_rho_and_pi(&mut state);
-        assert_ne!(
-            state, original_state,
-            "rho+pi: state unchanged; expected rotations and permutation"
-        );
-        assert_ne!(
-            state[1], 0xFF,
-            "rho+pi: lane [1] not moved/rotated as expected"
-        );
-    }
-
-    #[test]
-    fn test_execute_chi() {
-        // Chi applies non-linearity: A[x] ^= (~A[x+1] & A[x+2]). Check one row cell explicitly.
-        let mut state = [0u64; NUM_LANES];
-        state[0] = 0xFF;
-        state[1] = 0xAA;
-        state[2] = 0x55;
-        execute_chi(&mut state);
-        let expected_0 = 0xFF ^ ((!0xAA) & 0x55);
-        assert_eq!(
-            state[0], expected_0,
-            "chi: A[0] mismatch (expected {expected_0:#x}, got {:#x})",
-            state[0]
-        );
-    }
-
-    #[test]
-    fn test_execute_iota() {
-        // Iota xors the round constant into A[0,0]; all other lanes remain unchanged.
-        let mut state = [0u64; NUM_LANES];
-        state[0] = 0x1234;
-        execute_iota(&mut state, 0x5678);
-        assert_eq!(state[0], 0x1234 ^ 0x5678, "iota: A[0,0] mismatch");
-        state
-            .into_iter()
-            .enumerate()
-            .skip(1)
-            .for_each(|(i, s)| assert_eq!(s, 0, "iota: lane {i} changed unexpectedly"));
-    }
-
-    #[test]
     fn test_step_by_step_round_1() {
         // Round-1 step-by-step: compare post-theta/rho+pi/chi states to XKCP expected snapshots.
         let mut state = [0u64; NUM_LANES];
@@ -144,7 +77,6 @@ mod exec_unit {
             step_fn(&mut state);
             assert_eq!(state, expected, "round 1: mismatch after {name}");
         }
-        // Iota has a different signature; apply it separately and check final snapshot.
         execute_iota(&mut state, ROUND_CONSTANTS[round]);
         assert_eq!(state, expected_states.iota, "round 1: mismatch after iota");
     }

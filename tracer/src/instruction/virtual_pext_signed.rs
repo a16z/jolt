@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualPextSigned {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPextSigned as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPextSigned as RISCVInstruction>::RamAccess) {
         let x = cpu.x[self.operands.rs1 as usize] as u64;
         let y = cpu.x[self.operands.rs2 as usize] as u64;
         cpu.write_register(self.operands.rd as usize, pext_signed(x, y) as i64);
@@ -36,7 +36,6 @@ pub(crate) fn pext(x: u64, y: u64) -> u64 {
         // extract is a shift plus truncate.
         return (x >> tz) & normalized;
     }
-    // General mask: gather one bit per set position, lowest first.
     let mut bits = y;
     let mut out = 0u64;
     let mut k = 0;
@@ -58,7 +57,6 @@ pub(crate) fn pext_signed(x: u64, y: u64) -> u64 {
         return 0;
     }
     let pext = pext(x, y);
-    // σ: the window sign, x's bit at y's most significant set bit.
     let sign = (x >> y.ilog2()) & 1;
     // pext < 2^pc, so the sum never overflows 64 bits.
     let ext = if sign == 1 {

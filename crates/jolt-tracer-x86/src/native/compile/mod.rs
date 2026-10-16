@@ -14,14 +14,16 @@ pub mod emitter;
 use std::collections::BTreeMap;
 
 use dynasmrt::{x64::Assembler, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
-use jolt_program::execution::{JoltProgram, TraceError};
+use jolt_program::{
+    execution::{JoltProgram, TraceError},
+    preprocess::BytecodePCMapper,
+};
 use jolt_riscv::SourceInstructionKind;
 
 use super::state::{AdviceCompute, AdviceJob, GuestState};
 use emitter::EmitterSet;
 use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow};
 
-/// One compiled code body (fast or record) with its dispatch table.
 struct CompiledBody {
     buffer: dynasmrt::ExecutableBuffer,
     entry: AssemblyOffset,
@@ -39,13 +41,13 @@ struct CompiledBody {
 pub struct CompiledProgram {
     fast: CompiledBody,
     record: CompiledBody,
-    /// Same two bodies, with the chunk-boundary pause check emitted.
     fast_pausable: CompiledBody,
     record_pausable: CompiledBody,
     /// Advice computations, one per group that needs them; generated code
     /// passes indices into this table. Identical for both bodies (same rows,
     /// same order), so it is collected once.
     advice_jobs: Vec<AdviceJob>,
+    pc_map: BytecodePCMapper,
 }
 
 impl CompiledProgram {
@@ -84,6 +86,8 @@ impl CompiledProgram {
             ));
         }
 
+        let pc_map = BytecodePCMapper::try_new(rows)?;
+
         // Source rows keyed by address: the expanded bytecode erases the source
         // kind and inline key, which the per-group advice computations need.
         let sources = Self::source_rows(program)?;
@@ -105,7 +109,12 @@ impl CompiledProgram {
             fast_pausable,
             record_pausable,
             advice_jobs,
+            pc_map,
         })
+    }
+
+    pub(super) fn pc_map(&self) -> &BytecodePCMapper {
+        &self.pc_map
     }
 
     pub fn advice_jobs_ptr(&self) -> *const AdviceJob {
@@ -160,7 +169,6 @@ impl CompiledProgram {
     }
 }
 
-/// Which code body is being emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmitMode {
     /// No row materialization: execute only, for the fast pass.
@@ -172,7 +180,6 @@ pub enum EmitMode {
 /// Emission context handed to a [`RowEmitter`](emitter::RowEmitter): the
 /// assembler plus the per-group state a row template may need.
 pub struct Emitter {
-    /// Which body this emission belongs to.
     pub mode: EmitMode,
     /// Whether this body can pause at group boundaries. Only the chunked
     /// paths need that; the eager paths must not pay a per-group check.
@@ -191,9 +198,7 @@ pub struct Emitter {
     /// Index of the current group's advice job, until the group ends and its
     /// consumed-slot count is patched in (see [`Self::finish_advice_group`]).
     current_advice_job: Option<usize>,
-    /// Dynamic label per group-start guest address (branch/jump targets).
     labels: BTreeMap<u64, DynamicLabel>,
-    /// Guest addresses that start a compiled group, with their code offsets.
     group_offsets: Vec<(u64, AssemblyOffset)>,
     pub text_base: u64,
     pub text_span: u64,
@@ -247,7 +252,6 @@ impl CompiledBody {
         Ok(())
     }
 
-    /// Emit one code body over every expanded row.
     fn compile(
         rows: &[JoltInstructionRow],
         sources: &SourceMap,
@@ -323,6 +327,7 @@ impl CompiledBody {
 
         // Execution falling off the end of the program is a bad jump.
         emitter.emit_jump_to_bad_jump();
+        emitter.emit_unmapped_target_stubs();
         let stubs = emitter.emit_stubs();
 
         let group_offsets = core::mem::take(&mut emitter.group_offsets);
@@ -354,7 +359,6 @@ impl CompiledBody {
 }
 
 impl AdviceCompute {
-    /// The advice computation a source instruction's group needs, if any.
     fn from_source(
         source: &jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>,
     ) -> Result<Option<Self>, TraceError> {

@@ -6,7 +6,6 @@
     reason = "tests use unwrap on fallible prove paths under assertion"
 )]
 
-use jolt_crypto::Bn254G1;
 use jolt_field::{Fr, Ring};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
@@ -54,7 +53,7 @@ fn traversal_fixture() -> (
     DenseMember,
     BatchPrelude<F>,
     Blake2bTranscript,
-    ClearSumcheckRecorder<F, Bn254G1>,
+    ClearSumcheckRecorder<F>,
 ) {
     let sum_long = F::from_u64(4242);
     let sum_short = F::from_u64(99);
@@ -62,7 +61,7 @@ fn traversal_fixture() -> (
     let short = DenseMember::with_sum(1, sum_short, 13);
 
     let mut transcript = Blake2bTranscript::new(b"traversal-seam");
-    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[sum_long, sum_short], &mut transcript);
     let coeff_long: F = transcript.challenge_scalar();
     let coeff_short: F = transcript.challenge_scalar();

@@ -1,5 +1,3 @@
-//! Proof structures for single and batched sumcheck protocols.
-
 use crate::{
     claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement},
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
@@ -59,6 +57,18 @@ impl<F: Field> Default for ClearProof<F> {
 pub enum SumcheckProof<F: Field, C> {
     Clear(ClearProof<F>),
     Committed(CommittedSumcheckProof<C>),
+}
+
+impl<F: Field, C> From<ClearSumcheckProof<F>> for SumcheckProof<F, C> {
+    fn from(proof: ClearSumcheckProof<F>) -> Self {
+        Self::Clear(ClearProof::Full(proof))
+    }
+}
+
+impl<F: Field, C> From<CompressedSumcheckProof<F>> for SumcheckProof<F, C> {
+    fn from(proof: CompressedSumcheckProof<F>) -> Self {
+        Self::Clear(ClearProof::Compressed(proof))
+    }
 }
 
 impl<F: Field, C> SumcheckProof<F, C> {

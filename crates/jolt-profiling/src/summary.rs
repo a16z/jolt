@@ -300,8 +300,6 @@ fn json_f64(value: &Value) -> Option<f64> {
     }
 }
 
-/// Extracts `counters.*` args from an event, prefix stripped. `None` when
-/// the event carries no counter fields (i.e. it is not a monitor sample).
 fn counter_samples(event: &Value) -> Option<Vec<(String, f64)>> {
     let obj = event.as_object()?;
     // Span begin/end and metadata events never carry counter fields; only
@@ -321,7 +319,6 @@ fn counter_samples(event: &Value) -> Option<Vec<(String, f64)>> {
     (!samples.is_empty()).then_some(samples)
 }
 
-/// One thread's currently open span during the stack replay.
 struct OpenSpan {
     name: String,
     start_us: f64,
@@ -428,7 +425,6 @@ pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggreg
                 entry.self_ns += us_to_ns(self_us);
 
                 if open.name == root_span {
-                    // Keep the longest instance if the label somehow repeats.
                     let dark_ns = us_to_ns(self_us);
                     if root.is_none_or(|(prev, _)| interval.duration_ns() > prev.duration_ns()) {
                         root = Some((interval, dark_ns));
@@ -619,7 +615,6 @@ pub fn build_summary(
     }
 }
 
-/// Parses a chrome trace file (bare event array or `{"traceEvents": [...]}`).
 fn read_events(path: &Path) -> Result<Vec<Value>, SummaryError> {
     let data = std::fs::read_to_string(path).map_err(|source| SummaryError::ReadTrace {
         path: path.to_path_buf(),
@@ -730,7 +725,6 @@ pub fn finalize_trace(
     Ok((out_path, summary))
 }
 
-/// Short git revision of the working directory, if resolvable.
 fn git_rev() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])

@@ -18,10 +18,8 @@ use rayon::prelude::*;
 
 use crate::{KernelError, ProofSession};
 
-/// Streaming extraction window.
 const SPLIT_CHUNK: usize = 1 << 16;
 
-/// Parallel scatter grain.
 #[cfg(feature = "parallel")]
 const PAR_CHUNK: usize = 1 << 14;
 
@@ -96,7 +94,6 @@ impl SharedRamAddresses {
     }
 }
 
-/// Collect SoA columns by parallel scatter or ordered streaming.
 fn collect_split_columns<F: JoltField, B, T, const N: usize>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
@@ -157,7 +154,6 @@ where
     Ok(columns)
 }
 
-/// Scatter rows directly into column spare capacity.
 #[cfg(feature = "parallel")]
 fn collect_split_columns_par<F: JoltField, B, T, const N: usize>(
     access: &RandomAccessRows,
@@ -225,7 +221,6 @@ where
     Ok(columns)
 }
 
-/// Stage-2 address and value columns.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamAccessColumns {
     pub addresses: Arc<Vec<u32>>,
@@ -282,7 +277,6 @@ impl RamAccessColumns {
     }
 }
 
-/// Reject addresses outside the proof's RAM domain.
 pub(crate) fn validate_addresses<F: JoltField>(
     addresses: &[u32],
     ram_k: usize,
@@ -312,7 +306,6 @@ pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u32], eq_address: &[F]) 
         .collect()
 }
 
-/// Eq rows staged per cycle-fold chunk.
 const FOLD_CYCLES_CHUNK: usize = 1 << 20;
 
 /// Cycle fold of the one-hot `ra` grid:

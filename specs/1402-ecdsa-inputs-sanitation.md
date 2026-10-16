@@ -26,6 +26,7 @@ Make `ecdsa_verify()` self-contained and safe by validating all inputs internall
 5. `ecdsa_verify()` returns `Err` if r or s is zero
 6. All checks are guest-side (part of the execution trace), not host-only assertions
 7. `from_u64_arr_unchecked()` is not accessible from outside the crate
+8. `verify_ecdsa_inner()` (P-256) spoils the proof when fake-GLV advice point limbs (R1/R2) are outside `[0, p)` — the advice words are prover-supplied, and non-canonical limbs pass the on-curve check while corrupting `AffinePoint::add`/`sub_mod` limb semantics (free-slope forgery in the final `r1.add(&r2)`)
 
 ### Non-Goals
 
@@ -41,6 +42,7 @@ Make `ecdsa_verify()` self-contained and safe by validating all inputs internall
 - [ ] `ecdsa_verify` returns `Err` when q is point at infinity
 - [ ] `ecdsa_verify` returns `Err` when r or s is zero
 - [ ] `ecdsa_verify` returns `Err` when scalar/coordinate limbs are out of field range
+- [ ] `verify_ecdsa_inner` (P-256) spoils when fake-GLV advice point limbs are out of field range
 - [ ] `ecdsa_verify` returns `Ok(())` for valid signatures (existing inline tests pass)
 - [ ] Checks are proved (guest-side, part of the execution trace)
 - [ ] `from_u64_arr_unchecked` is `pub(crate)` or private — not accessible from external crates

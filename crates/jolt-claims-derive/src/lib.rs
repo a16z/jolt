@@ -152,7 +152,6 @@ struct Namespace {
     virtual_polynomial: TokenStream2,
     committed_polynomial: TokenStream2,
     challenge_id: TokenStream2,
-    /// Advice openings are jolt-protocol ids; other namespaces reject them.
     allows_advice: bool,
 }
 
@@ -182,8 +181,6 @@ impl Namespace {
     }
 }
 
-/// Reads the optional struct-level `#[protocol(..)]` namespace selector;
-/// defaults to the jolt namespace.
 fn parse_namespace(attrs: &[Attribute]) -> Result<Namespace> {
     let mut selected: Option<(Ident, Namespace)> = None;
     for attr in attrs {
@@ -212,9 +209,6 @@ fn parse_namespace(attrs: &[Attribute]) -> Result<Namespace> {
 }
 
 enum LeafKind {
-    /// A virtual-polynomial variant: its variant path plus an optional payload
-    /// (`OpFlags(CircuitFlags::VirtualInstruction)` carries the `CircuitFlags::..`
-    /// path as `payload`). A payload variant is always scalar — never indexed.
     Virtual {
         variant: Path,
         payload: Option<TokenStream2>,
@@ -353,7 +347,6 @@ fn parse_opening(attr: &Attribute) -> Result<OpeningSpec> {
     Ok(OpeningSpec { kind, from })
 }
 
-/// `true` if the field type's last path segment is `ident`.
 fn type_named(ty: &Type, ident: &str) -> bool {
     let Type::Path(path) = ty else {
         return false;
@@ -364,14 +357,10 @@ fn type_named(ty: &Type, ident: &str) -> bool {
         .is_some_and(|segment| segment.ident == ident)
 }
 
-/// `true` if the field type is syntactically `Option<..>` (a single optional
-/// opening).
 fn is_option_type(ty: &Type) -> bool {
     type_named(ty, "Option")
 }
 
-/// `true` if the field type is syntactically `Vec<..>` (an indexed opening
-/// family). Arity is read from the type rather than the annotation.
 fn is_vec_type(ty: &Type) -> bool {
     type_named(ty, "Vec")
 }
@@ -404,7 +393,6 @@ fn plan_field(
         ));
     }
     let relation = match (struct_relation, spec.from) {
-        // OutputClaims: relation is struct-level; `from` is not allowed.
         (Some(relation), None) => relation.clone(),
         (Some(_), Some(from)) => {
             return Err(Error::new_spanned(
@@ -412,7 +400,6 @@ fn plan_field(
                 "`from = ..` is only used by InputClaims; OutputClaims uses #[relation(..)]",
             ));
         }
-        // InputClaims: relation is the per-field `from`.
         (None, Some(from)) => from,
         (None, None) => {
             return Err(Error::new_spanned(
@@ -457,8 +444,6 @@ fn plan_field(
     })
 }
 
-/// Opening-id constructor for a leaf in the selected namespace, with an optional
-/// index expression for indexed (`many`) families.
 fn id_expr(
     ns: &Namespace,
     kind: &LeafKind,
@@ -478,11 +463,8 @@ fn id_expr(
                 (Some(_), Some(_)) => {
                     unreachable!("Vec fields with payload annotations are rejected in plan_field")
                 }
-                // Indexed family over a `usize` payload: `Variant(i)`.
                 (Some(index), None) => quote!(#virtual_polynomial::#variant(#index)),
-                // Single payload-carrying variant: `Variant(PAYLOAD)`.
                 (None, Some(payload)) => quote!(#virtual_polynomial::#variant(#payload)),
-                // Single unit variant: `Variant`.
                 (None, None) => quote!(#virtual_polynomial::#variant),
             };
             quote!(#opening_id::virtual_polynomial(#polynomial, #rel))
@@ -538,9 +520,6 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
                     }
                 }
             });
-            // An indexed family consumes indices `0, 1, ..` for as long as the
-            // source answers — the family's length is instance data the source
-            // defines.
             construct_fields.push(quote! {
                 #ident: {
                     let mut __values = ::std::vec::Vec::new();
@@ -562,7 +541,6 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
                     }
                 }
             });
-            // An `Option` field is present iff the source answers its id.
             construct_fields.push(quote!(#ident: resolve(&#id),));
         } else {
             let id = id_expr(&namespace, kind, relation, None);
@@ -572,7 +550,6 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
                     return ::core::option::Option::Some(self.#ident);
                 }
             });
-            // A plain field's id must resolve; a miss is the caller's error.
             construct_fields.push(quote! {
                 #ident: {
                     let __id = #id;
@@ -597,7 +574,6 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     .then(|| {
         let fields = plans.iter().enumerate().map(|(index, plan)| {
             let ident = &plan.ident;
-            // the last field takes ownership of the point; the rest clone it
             if index + 1 == plans.len() {
                 quote!(#ident: point,)
             } else {
@@ -617,8 +593,6 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     });
 
     Ok(quote! {
-        // The value resolver lives on the value cell (`C = F`): each field is read
-        // as `F` (or `Vec<F>` / `Option<F>`) directly.
         impl<F: ::jolt_field::JoltField> ::jolt_claims::OutputClaims<F, #id_ty> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
@@ -643,10 +617,6 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
             }
         }
 
-        // The per-field opening-point accessors live on the point cell
-        // (`C = Vec<F>`): each field is a `Vec<F>` point (or `Vec<Vec<F>>` /
-        // `Option<Vec<F>>`). A field and its accessor share a name; `x` reads the
-        // field, `x()` calls the accessor.
         impl<F: ::jolt_field::JoltField> #name<::std::vec::Vec<F>> {
             #from_shared_point
             #(#point_accessors)*
@@ -654,9 +624,6 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     })
 }
 
-/// A per-field opening-point accessor on the point cell (`C = Vec<F>`): scalar
-/// `fn f(&self) -> &[F]`, `Vec` `fn f(&self) -> &[Vec<F>]`, `Option`
-/// `fn f(&self) -> Option<&[F]>`.
 fn point_accessor(plan: &FieldPlan) -> TokenStream2 {
     let ident = &plan.ident;
     if plan.is_many {
@@ -722,7 +689,6 @@ fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
                 order_chains.push(quote!(.chain(::core::iter::once(#id))));
             }
             let hit = if *is_option {
-                // The field is `Option<F>`; surface the value if present.
                 quote!(return self.#ident;)
             } else {
                 quote!(return ::core::option::Option::Some(self.#ident);)
@@ -760,8 +726,6 @@ fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
     })
 }
 
-/// One challenge field: its identifier and the `SubEnum::Variant` path it names.
-/// Challenge fields are always a scalar `F` (one drawn Fiat-Shamir scalar).
 struct ChallengeFieldPlan {
     ident: Ident,
     path: Path,
@@ -808,7 +772,6 @@ fn plan_challenge_field(field: &Field) -> Result<ChallengeFieldPlan> {
     Ok(ChallengeFieldPlan { ident, path })
 }
 
-/// The single field type generic parameter (the field type, conventionally `F`).
 fn field_type_param(generics: &Generics) -> Result<Ident> {
     generics
         .params
@@ -839,8 +802,6 @@ fn expand_challenges(input: DeriveInput) -> Result<TokenStream2> {
     let mut resolve_arms = Vec::new();
     let mut build_stmts = Vec::new();
     let mut field_idents = Vec::new();
-    // Every challenge field is a scalar, so the struct requires one drawn value per
-    // field; `required` is the field count.
     let required = plans.len();
     for (index, plan) in plans.iter().enumerate() {
         let ChallengeFieldPlan { ident, path } = plan;
@@ -851,9 +812,6 @@ fn expand_challenges(input: DeriveInput) -> Result<TokenStream2> {
                 return ::core::option::Option::Some(self.#ident);
             }
         });
-        // Each scalar field consumes one drawn value; a dry stream is an error. The
-        // already-populated count (`index`) is baked per field so the error reports
-        // progress without a runtime counter.
         build_stmts.push(quote! {
             let #ident = __values.next().ok_or(
                 ::jolt_claims::ChallengeDrawError::StreamExhausted {

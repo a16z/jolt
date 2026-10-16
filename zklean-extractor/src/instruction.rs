@@ -13,7 +13,6 @@ use crate::{
     util::{indent, ZkLeanReprField},
 };
 
-/// Represents how an instructions operands should be combined into a single vector.
 #[derive(Debug, Clone, Copy)]
 pub enum OperandInterleaving {
     /// Indicates that the operands should be concatenated:
@@ -25,10 +24,8 @@ pub enum OperandInterleaving {
 }
 
 impl OperandInterleaving {
-    /// Extract the operand interleaving for an instruction
     fn instruction_interleaving(instruction: &JoltInstructionRow) -> Self {
-        let instruction = JoltInstruction::try_from(*instruction)
-            .expect("final Jolt instruction rows have exhaustive typed dispatch");
+        let instruction = JoltInstruction::from(*instruction);
         if instruction.circuit_flags().is_interleaved_operands() {
             Self::Interleaved
         } else {
@@ -46,8 +43,6 @@ impl std::fmt::Display for OperandInterleaving {
     }
 }
 
-/// Wrapper around a JoltInstructionRowData
-// TODO: Make this generic over the instruction set
 #[derive(Debug, Clone)]
 pub struct ZkLeanInstruction<J> {
     instruction: tracer::instruction::Instruction,
@@ -97,8 +92,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         let name = self.name();
         let num_variables = 2 * J::XLEN;
         let interleaving = self.interleaving;
-        let instruction = JoltInstruction::try_from(self.row)
-            .expect("final Jolt instruction rows have exhaustive typed dispatch");
+        let instruction = JoltInstruction::from(self.row);
         let lookup_table = match InstructionLookupTable::<XLEN>::lookup_table(&instruction)
             .map(|table| ZkLeanLookupTable::from(table).name())
         {

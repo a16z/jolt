@@ -47,7 +47,6 @@ fuzz_target!(|data: &[u8]| {
         wire_rounds.push(CompressedPoly::new(coeffs));
     }
 
-    // Production path.
     let proof = CompressedSumcheckProof {
         round_polynomials: wire_rounds.clone(),
     };

@@ -14,7 +14,7 @@ pub struct FormatAdviceLoadI {
 impl InstructionFormat for FormatAdviceLoadI {
     fn parse(word: u32) -> Self {
         FormatAdviceLoadI {
-            rd: ((word >> 7) & 0x1f) as u8, // [11:7]
+            rd: ((word >> 7) & 0x1f) as u8,
         }
     }
 

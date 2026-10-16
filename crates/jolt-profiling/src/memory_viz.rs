@@ -90,8 +90,6 @@ pub(crate) fn write_memory_viz(
         .collect();
 
     let payload = json!({
-        // Page title: the run directory's name ({timestamp}_{trace_name})
-        // identifies both the workload and the specific run.
         "trace_name": trace_path
             .parent()
             .and_then(Path::file_name)

@@ -19,20 +19,18 @@ declare_riscv_instr!(
 );
 
 impl LRD {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <LRD as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <LRD as RISCVInstruction>::RamAccess) {
         if cpu.is_reservation_set() {
             println!("LRD: Reservation is already set");
         }
 
         let address = cpu.x[self.operands.rs1 as usize] as u64;
 
-        // Load the doubleword from memory
         let value = cpu.mmu.load_doubleword(address);
 
         let write_value = match value {
             Ok((doubleword, _memory_read)) => {
                 cpu.set_reservation(address, ReservationWidth::Doubleword);
-                // Return the 64-bit value
                 doubleword as i64
             }
             Err(_) => panic!("MMU load error"),

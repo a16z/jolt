@@ -1,4 +1,4 @@
-# Spec: Field-Inline Portability — Packed Commitments and Base-Field Instantiation
+# Spec: Field-Inline Portability — Akita Commitments and Base-Field Instantiation
 
 | Field | Value |
 |-------|-------|
@@ -18,14 +18,14 @@ commitment and the field-specific tracer encoding.
 
 ```text
 in scope:
-  packed (Akita) treatment of the field-inline committed surface
+  Akita treatment of the field-inline committed surface
   instantiating field-inline over fp128
 out of scope:
   extension-field sumcheck soundness (base fields ONLY: field registers hold
     elements of the sumcheck field F itself; any base/extension split is a
     separate spec)
   any change to the Twist identities or the virtual/committed split
-  zk over the packed axis (akita x zk stays mutually exclusive)
+  zk over the Akita axis (akita x zk stays mutually exclusive)
 ```
 
 ## Shared invariants
@@ -36,7 +36,7 @@ out of scope:
 - The Twist memory-checking identities (`crates/jolt-claims/src/twist/`) are
   representation-agnostic and shared by both commitment modes.
 - Field-register RA/WA/Val remain virtual and bytecode-anchored. Field-inline
-  adds no packed one-hot commitments.
+  adds no native one-hot trace columns.
 - `FieldRegistersIncClaimReduction` reduces the read/write and value-evaluation
   claims to one opening of `FieldRdInc`, with the same relation in both modes.
 
@@ -79,7 +79,7 @@ In stage 8, the stage-6b claim `(v, r)` becomes a single dense opening at the
 padded point with value `v`. The PCS binds it directly to the field-increment
 commitment. There is no limb recomposition identity, selector challenge, or
 additional reconstruction sumcheck. Prover and verifier share this claim
-construction in `jolt-verifier/src/stages/stage8/packed.rs`.
+construction in `jolt-verifier/src/stages/stage8/akita.rs`.
 
 The commitment is required on every Akita proof with field-inline enabled,
 including traces that execute no field instructions. An all-zero polynomial
@@ -107,12 +107,16 @@ register indices, and integer immediates carry no field-specific value
 encoding, so there is no separate encoding tag or field-instruction table.
 The verifier checks instruction-profile legality and operand shapes on these
 rows. Proof configuration binds the field-inline and commitment modes; the
-commitment mode selects the proof field. Guests that use a field modulus or
-a fixed limb count still need to match that configuration.
+commitment mode selects the proof field. Guests see that field as
+`jolt::field_inline::MODULUS`: jolt-host passes the tracer's execution field
+to field-inline guest builds, and every successful SDK limb conversion proves
+in-guest that the guest's modulus is the proof field's. Invalid imports may
+panic before this binding (protocol spec, "Guest Field Selection").
 
 Guest ingress and readout still use u64 limbs because the integer register
 file is RV64; these instruction operands are independent of the commitment
-representation:
+representation. `field_from_limbs!` and `field_to_limbs!` emit these sequences
+with the modulus binding added:
 
 - A full fp128 load uses zero initialization followed by two
   `FIELD_LOAD_ACCUMULATE_FROM_REGISTER` instructions, high limb first. Each
@@ -136,5 +140,11 @@ representation:
   the field-increment role in the batch.
 
 The shared guest acceptance matrix runs field-inline in clear Dory, ZK Dory,
-and Akita modes. Tracer tests check canonical-value roundtrips and zero
-padding under both proof-field configurations.
+and Akita modes, including the `field-limbs` conversion conformance guest.
+Tracer tests check canonical-value roundtrips, zero padding, and the
+guest-visible modulus table under both proof-field configurations.
+
+The field-inline schedule coverage test resolves all 266 production K=16 keys
+(widths 51–64, column arities 16–34) under Single, W2R2, W4R2, and W8R2,
+using the canonical emitted grid and production grouped provisioning. Explicit
+K=256 trace fixtures are checked separately.

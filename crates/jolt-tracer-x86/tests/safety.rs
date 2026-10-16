@@ -9,8 +9,11 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::expect_used, clippy::panic)]
 
+use common::constants::STACK_CANARY_SIZE;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
-use jolt_tracer_x86::harness::{compile_program, run_program, single_row_program, TEST_ADDR};
+use jolt_tracer_x86::harness::{
+    compile_program, memory_config, run_program, single_row_program, Outcome, TEST_ADDR,
+};
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
 
@@ -122,6 +125,63 @@ fn out_of_bounds_store_reports_a_fault() {
     );
 }
 
+/// Run a single `SD` of `0xdead_beef` to `address` in the harness layout.
+fn store_to(address: u64) -> Outcome {
+    let mut store = row(JoltInstructionKind::SD, Some(1), None, 0);
+    store.operands.rs2 = Some(3);
+    let program = single_row_program(store);
+    let mut pre = [0u64; REGS];
+    pre[1] = address;
+    pre[3] = 0xdead_beef;
+    run_program(&program, &pre, &[], &[]).expect("run should not error")
+}
+
+fn harness_stack_end() -> u64 {
+    common::jolt_device::JoltDevice::new(&memory_config())
+        .memory_layout
+        .stack_end
+}
+
+/// A store into the stack canary `[stack_end, stack_end + STACK_CANARY_SIZE)`
+/// is a stack overflow. The interpreter panics on it
+/// (`Mmu::assert_effective_address`); the native backend must fault instead
+/// of performing the write.
+#[test]
+fn store_into_stack_canary_reports_a_fault() {
+    let stack_end = harness_stack_end();
+    let last_doubleword = stack_end + STACK_CANARY_SIZE - 8;
+    for address in [stack_end, stack_end + 8, last_doubleword] {
+        let outcome = store_to(address);
+        assert_eq!(
+            outcome.exit, 4,
+            "store to {address:#x}: expected the helper-fault exit reason, got {} ({:?})",
+            outcome.exit, outcome.helper_error
+        );
+        let message = outcome.helper_error.expect("a helper error message");
+        assert!(
+            message.contains("Stack overflow")
+                && message.contains("stack canary region")
+                && message.contains(&format!("{address:#X}")),
+            "unexpected helper error: {message}"
+        );
+    }
+}
+
+/// The doublewords on either side of the canary are ordinary RAM: the check
+/// must not reject the top of the program image or the bottom of the stack.
+#[test]
+fn stores_next_to_stack_canary_succeed() {
+    let stack_end = harness_stack_end();
+    for address in [stack_end - 8, stack_end + STACK_CANARY_SIZE] {
+        let outcome = store_to(address);
+        assert_eq!(
+            outcome.exit, 1,
+            "store to {address:#x}: expected a clean termination, got {} ({:?})",
+            outcome.exit, outcome.helper_error
+        );
+    }
+}
+
 /// An aligned address inside the text span but between compiled group starts
 /// must take the jump-table filler path and report the bad target.
 #[test]
@@ -137,4 +197,30 @@ fn in_range_unmapped_jump_reports_bad_target() {
         outcome.exit, outcome.helper_error
     );
     assert_eq!(outcome.fault_addr, TEST_ADDR + 2);
+}
+
+/// A static branch whose target has no compiled group must compile: it
+/// executes normally when not taken and reports the bad target when taken.
+#[test]
+fn static_branch_to_unmapped_target_faults_only_when_taken() {
+    let target = TEST_ADDR + 12;
+    let program = single_row_program(row(
+        JoltInstructionKind::BEQ,
+        Some(1),
+        None,
+        (target - TEST_ADDR).into(),
+    ));
+    for (x1, exit) in [(1, 1), (0, 3)] {
+        let mut pre = [0u64; REGS];
+        pre[1] = x1;
+        let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
+        assert_eq!(
+            outcome.exit, exit,
+            "x1 = {x1}: unexpected exit reason ({:?})",
+            outcome.helper_error
+        );
+        if exit == 3 {
+            assert_eq!(outcome.fault_addr, target);
+        }
+    }
 }

@@ -15,7 +15,6 @@ pub struct DeviceLimits {
     pub max_threads_per_threadgroup: usize,
 }
 
-/// What the platform backend reads from a newly opened device.
 pub(crate) struct DeviceInfo {
     pub(crate) name: String,
     pub(crate) registry_id: u64,

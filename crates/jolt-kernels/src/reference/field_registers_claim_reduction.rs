@@ -1,5 +1,3 @@
-//! Dense witness tables for the symbolic `FieldRegistersClaimReduction` relation.
-
 use super::views::eq_table;
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, ReferenceBackend,

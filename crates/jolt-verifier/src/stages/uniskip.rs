@@ -12,11 +12,11 @@
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
-use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::JoltField;
-use jolt_r1cs::constraints::jolt::{
+use jolt_claims::protocols::composed::r1cs::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
+use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_field::JoltField;
 use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
     SumcheckStatement, UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -27,7 +27,6 @@ use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
-/// A uni-skip round is always a single round reducing to a single challenge.
 const UNISKIP_ROUNDS: usize = 1;
 
 /// The per-stage uni-skip shape: the fixed first-round degree bound and
@@ -37,11 +36,9 @@ const UNISKIP_ROUNDS: usize = 1;
 /// two constructors are the only instances.
 pub struct UniskipParams {
     stage: JoltRelationId,
-    /// The stage number reported by `StageClaimOutputMismatch`.
     stage_number: usize,
     degree: usize,
     domain_size: usize,
-    /// The proof field name reported by the ZK commitment-count checks.
     proof_field: &'static str,
 }
 

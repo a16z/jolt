@@ -1,5 +1,3 @@
-//! Shared witness-view and table helpers for the per-relation kernels.
-
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
@@ -16,7 +14,6 @@ use crate::KernelError;
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1 << 10;
 
-/// Materialize a dense field-element table of the oracle behind `opening`.
 pub(crate) fn dense_view<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
@@ -170,14 +167,10 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// The stored-column backend replays a `(K x T)` grid into the kernels'
-    /// fold helpers — the oracle seam's second implementor, no trace behind
-    /// it.
     #[test]
     fn fold_helpers_run_against_a_fixed_backend_grid() {
         let mut backend = FixedBackend::new();
         let id = JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamVal);
-        // K = 2, T = 2, address-major: grid[(k << log_t) | j].
         let grid = vec![fr(1), fr(2), fr(3), fr(4)];
         backend
             .insert(id, Shape::new(2, PolynomialEncoding::Dense), grid.clone())
@@ -191,7 +184,6 @@ mod tests {
 
         let r = fr(7);
         let folded = address_fold::<Fr>(&backend, opening, 1, &[r]).unwrap();
-        // out[j] = (1 - r) * grid[j] + r * grid[2 + j]
         assert_eq!(
             folded,
             vec![
@@ -201,7 +193,6 @@ mod tests {
         );
 
         let folded_cycles = cycle_fold::<Fr>(&backend, opening, 1, &[r]).unwrap();
-        // out[k] = (1 - r) * grid[k << 1] + r * grid[(k << 1) | 1]
         assert_eq!(
             folded_cycles,
             vec![

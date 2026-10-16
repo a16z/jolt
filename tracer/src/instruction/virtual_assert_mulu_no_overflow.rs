@@ -1,5 +1,3 @@
-//! Virtual instruction that asserts unsigned multiplication of two operands does not overflow.
-
 use crate::instruction::registers::b::RegisterStateB;
 
 use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
@@ -19,7 +17,7 @@ impl VirtualAssertMulUNoOverflow {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        _: &mut <VirtualAssertMulUNoOverflow as RISCVInstruction>::RAMAccess,
+        _: &mut <VirtualAssertMulUNoOverflow as RISCVInstruction>::RamAccess,
     ) {
         let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
         let rs2_val = cpu.x[self.operands.rs2 as usize] as u64;

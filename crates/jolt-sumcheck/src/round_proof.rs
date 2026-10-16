@@ -1,5 +1,3 @@
-//! Per-round sumcheck messages.
-
 use jolt_field::Field;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
@@ -7,7 +5,6 @@ use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 use crate::error::SumcheckError;
 use crate::{SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL};
 
-/// Common interface for one sumcheck round message.
 pub trait RoundMessage {
     fn degree(&self) -> usize;
 

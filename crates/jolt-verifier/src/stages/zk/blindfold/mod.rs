@@ -58,6 +58,10 @@ use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
+use jolt_claims::protocols::composed::r1cs::{
+    JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
 #[cfg(not(feature = "field-inline"))]
@@ -114,10 +118,6 @@ use jolt_poly::{
     OperandPolynomial, OperandSide,
 };
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_r1cs::constraints::jolt::{
-    JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-};
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
@@ -433,7 +433,6 @@ where
     }
 }
 
-/// Lift a jolt-typed opening-id list into the composite id space.
 fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<ComposedOpeningId> {
     ids.into_iter().map(Into::into).collect()
 }
@@ -1130,19 +1129,6 @@ where
     )
 }
 
-fn add_bytecode_chunk_weight_publics<F: JoltField>(
-    values: &mut SourceValues<F>,
-    chunk_weights: Vec<F>,
-) -> Result<(), VerifierError> {
-    for (chunk_idx, weight) in chunk_weights.into_iter().enumerate() {
-        values.public(
-            JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx)),
-            weight,
-        )?;
-    }
-    Ok(())
-}
-
 fn add_bytecode_reduction_cycle_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
@@ -1166,10 +1152,13 @@ where
     // The cycle scale recovered from the produced opening point equals the
     // sumcheck-point form (`cycle_phase_permuted_*` agree — unit-tested in
     // `claim_reductions::precommitted`), matching the clear relation's path.
-    let chunk_weights = layout
-        .cycle_phase_final_output_weights_at_opening_point(weights.as_inputs(), opening_point)
+    let weight = layout
+        .cycle_phase_final_output_weight_at_opening_point(weights.as_inputs(), opening_point)
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;
-    add_bytecode_chunk_weight_publics(values, chunk_weights)
+    values.public(
+        JoltDerivedId::from(BytecodeClaimReductionPublic::OutputWeight),
+        weight,
+    )
 }
 
 fn add_bytecode_reduction_address_publics<PCS, VC, ZkProof>(
@@ -1190,14 +1179,17 @@ where
             id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
         })?;
     let weights = bytecode_reduction_weights(input, layout)?;
-    let chunk_weights = layout
-        .address_phase_final_output_weights(
+    let weight = layout
+        .address_phase_final_output_weight(
             weights.as_inputs(),
             &cycle_phase_variables,
             sumcheck_point,
         )
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReduction, error))?;
-    add_bytecode_chunk_weight_publics(values, chunk_weights)
+    values.public(
+        JoltDerivedId::from(BytecodeClaimReductionPublic::OutputWeight),
+        weight,
+    )
 }
 
 fn add_program_image_reduction_cycle_publics<PCS, VC, ZkProof>(
@@ -1390,7 +1382,6 @@ fn public_error(stage: JoltRelationId, error: impl ToString) -> VerifierError {
     }
 }
 
-/// The first `prefix_len` variables of an `address ++ cycle` opening point.
 fn point_prefix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -1407,8 +1398,6 @@ fn point_prefix<F: JoltField>(
     })
 }
 
-/// The variables past the first `prefix_len` of an `address ++ cycle` opening
-/// point (the cycle sub-point).
 fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,

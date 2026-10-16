@@ -17,7 +17,6 @@
 /// ```
 #[macro_export]
 macro_rules! bench_objective {
-    // Expression form with config methods
     ($obj_expr:expr, config: $($method:ident($($arg:expr),*)),* $(,)?) => {
         use $crate::Objective as _;
 
@@ -41,7 +40,6 @@ macro_rules! bench_objective {
         ::criterion::criterion_main!(benches);
     };
 
-    // Simple form: just a type (uses Default + default Criterion config)
     ($obj_ty:ty) => {
         use $crate::Objective as _;
 

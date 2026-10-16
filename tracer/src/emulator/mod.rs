@@ -36,27 +36,12 @@ use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
 use std::io::Write;
 use std::path::Path;
 
-/// RISC-V emulator. It emulates RISC-V CPU and peripheral devices.
-///
-/// Sample code to run the emulator.
-/// ```ignore
-/// // Creates an emulator with arbitrary terminal
-/// let mut emulator = Emulator::new(Box::new(DefaultTerminal::new()));
-/// // Set up program content binary
-/// emulator.setup_program(program_content);
-/// // Set up Filesystem content binary
-/// emulator.setup_filesystem(fs_content);
-/// // Go!
-/// emulator.run();
-/// ```
 #[derive(Clone, Debug)]
 pub struct Emulator {
-    /// addr2line instance for symbol lookups
     pub elf_path: Option<std::path::PathBuf>,
 
     cpu: Cpu,
 
-    /// Stores mapping from symbol to virtual address
     symbol_map: FnvHashMap<String, u64>,
 
     /// [`riscv-tests`](https://github.com/riscv/riscv-tests) program specific
@@ -78,14 +63,6 @@ pub struct Emulator {
     pub end_signature_addr: u64,
 }
 
-// type alias EmulatorState to Emulator for now
-pub type EmulatorState = Emulator;
-
-// Create a new Emulator from a saved state.
-pub fn get_mut_emulator(state: &mut EmulatorState) -> &mut Emulator {
-    state
-}
-
 impl Emulator {
     /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
     /// is internally used for transferring input/output data to/from `Emulator`.
@@ -99,7 +76,6 @@ impl Emulator {
             symbol_map: FnvHashMap::default(),
             elf_path: None,
 
-            // These can be updated in setup_program()
             is_test: false,
             tohost_addr: 0, // assuming tohost_addr is non-zero if exists
             begin_signature_addr: 0,
@@ -107,19 +83,8 @@ impl Emulator {
         }
     }
 
-    /// Set the advice tape for this emulator
     pub fn set_advice_tape(&mut self, tape: cpu::AdviceTape) {
         self.cpu.advice_tape = tape;
-    }
-
-    /// Get a reference to the advice tape
-    pub fn get_advice_tape(&self) -> &cpu::AdviceTape {
-        &self.cpu.advice_tape
-    }
-
-    /// Get a mutable reference to the advice tape
-    pub fn get_mut_advice_tape(&mut self) -> &mut cpu::AdviceTape {
-        &mut self.cpu.advice_tape
     }
 
     /// Take ownership of the advice tape, replacing it with an empty one
@@ -128,36 +93,29 @@ impl Emulator {
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
-    /// The differences from `run_program()` are
-    /// * Disassembles every instruction and dumps to terminal
-    /// * The emulator stops when the test finishes
-    /// * Displays the result message (pass/fail) to terminal
     ///
     /// Returns the HTIF termination code extracted from the `tohost` write:
     /// * `0` — clean exit (RVMODEL_HALT_PASS, or PC-stall termination used by
-    ///   Jolt guests that call `jolt_exit()`)
+    ///   Jolt guests that call `platform_exit()`)
     /// * non-zero — `tohost payload >> 1` from RVMODEL_HALT_FAIL (gp-derived,
     ///   ACT4 uses this for signature-mismatch failures)
     ///
     /// Callers typically collapse this to 0/1 for the OS exit status; see
     /// `tracer/src/main.rs`.
     pub fn run_test(&mut self, trace: bool, disassemble: bool) -> u64 {
-        // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
         tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         let mut cycle_count = 0;
         let mut prev_pc: u64 = 0;
         loop {
-            // Disassemble and print each instruction if requested (like spike -d)
             if disassemble {
                 let disas = self.cpu.disassemble_next_instruction();
                 println!("core   0: {disas}");
             }
 
             // Check for infinite loop termination (PC stall detection)
-            // This is used by Jolt guests that terminate via `j .` instruction.
-            // The trap handler (in guest_std_boot.rs or guest_no_std_boot.rs) calls
-            // jolt_exit() which enters an infinite loop for clean termination.
+            // This is used by Jolt guests that terminate via `j .` instruction:
+            // jolt-platform's platform_exit() enters this loop for clean termination.
             let pc = self.cpu.read_pc();
             if prev_pc == pc {
                 tracing::info!("Program exited successfully (code 0) after {cycle_count} cycles");
@@ -169,7 +127,6 @@ impl Emulator {
             self.tick(traces.as_mut());
             cycle_count += 1;
 
-            // Check if tohost has been written to
             let tohost_value = self.cpu.get_mut_mmu().load_doubleword_raw(self.tohost_addr);
             if tohost_value != 0 {
                 // Extract device, cmd and payload from tohost value
@@ -196,7 +153,6 @@ impl Emulator {
         }
     }
 
-    /// Runs CPU one cycle
     pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
         self.cpu.tick(trace)
     }
@@ -214,8 +170,6 @@ impl Emulator {
     ///
     /// # Arguments
     /// * `data` Program binary
-    // @TODO: Make ElfAnalyzer and move the core logic there.
-    // @TODO: Returns `Err` if the passed contend doesn't seem ELF file
     pub fn setup_program(&mut self, data: &[u8]) {
         let analyzer = ElfAnalyzer::new(data);
 
@@ -239,7 +193,6 @@ impl Emulator {
             };
         }
 
-        // Creates symbol - virtual address mapping
         self.symbol_map
             .extend(analyzer.read_symbol_map(&header, &section_headers));
 
@@ -247,9 +200,6 @@ impl Emulator {
         self.tohost_addr = self.symbol_map.get("tohost").copied().unwrap_or(0);
         self.begin_signature_addr = self.symbol_map.get("begin_signature").copied().unwrap_or(0);
         self.end_signature_addr = self.symbol_map.get("end_signature").copied().unwrap_or(0);
-
-        // Detected whether the elf file is riscv-tests.
-        // Setting up CPU and Memory depending on it.
 
         assert_eq!(header.e_width, 64, "tracer only supports RV64 ELF inputs");
 
@@ -279,7 +229,6 @@ impl Emulator {
             self.cpu.get_mut_mmu().init_memory(memory_capacity);
         }
 
-        // Copy program data sections to CPU memory.
         for header in &program_data_section_headers {
             let sh_addr = header.sh_addr;
             let sh_offset = header.sh_offset as usize;
@@ -317,12 +266,10 @@ impl Emulator {
         self.cpu.update_pc(header.e_entry);
     }
 
-    /// Returns immutable reference to `self.cpu`.
     pub fn get_cpu(&self) -> &Cpu {
         &self.cpu
     }
 
-    /// Returns mutable reference to `self.cpu`.
     pub fn get_mut_cpu(&mut self) -> &mut Cpu {
         &mut self.cpu
     }

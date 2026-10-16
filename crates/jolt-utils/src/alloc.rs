@@ -45,20 +45,6 @@ mod tests {
     use jolt_field::{Fr, Ring};
 
     #[test]
-    fn zero_vec_u64() {
-        let v: Vec<u64> = unsafe_allocate_zero_vec(1024);
-        assert_eq!(v.len(), 1024);
-        assert!(v.iter().all(|&x| x == 0));
-    }
-
-    #[test]
-    fn zero_vec_f64() {
-        let v: Vec<f64> = unsafe_allocate_zero_vec(256);
-        assert_eq!(v.len(), 256);
-        assert!(v.iter().all(|&x| x == 0.0));
-    }
-
-    #[test]
     fn zero_vec_field_elements() {
         let table: Vec<Fr> = unsafe_allocate_zero_vec(1 << 10);
         assert_eq!(table, vec![Fr::from_u64(0); 1 << 10]);

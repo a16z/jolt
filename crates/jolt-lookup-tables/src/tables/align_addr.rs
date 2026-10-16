@@ -28,7 +28,6 @@ impl<const XLEN: usize> LookupTable for AlignAddrTable<XLEN> {
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
-        // Skip bits 2..0 (the three lowest positions).
         for i in 0..XLEN - 3 {
             let shift = XLEN - 1 - i;
             let b_i: F = r[XLEN + i].into();

@@ -1,5 +1,3 @@
-//! Bit-manipulation utilities on `usize`.
-
 pub trait Math {
     /// Returns `2^self`.
     fn pow2(self) -> usize;

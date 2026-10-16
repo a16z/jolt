@@ -1,9 +1,3 @@
-//! End-to-end pipeline over the prover-side assignment API:
-//! `BlindFoldProtocol::assign_witness` → `jolt_blindfold::prove` →
-//! `BlindFoldProtocol::verify`, cross-validating the crate's own prover
-//! against the verifier on witnesses assembled from committed sumcheck data
-//! and the protocol's public parts alone.
-
 #![expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 
 mod support;
@@ -41,9 +35,6 @@ const STAGE_DOMAINS: [SumcheckDomainSpec; 2] = [
     SumcheckDomainSpec::BooleanHypercube,
 ];
 
-/// The two-stage committed pipeline of the proof tests, rebuilt through the
-/// public builder: constant claim expressions, one final opening bound to
-/// the first output claim.
 fn assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
     let setup = pedersen_setup(4);
     let statement1 = SumcheckStatement::new(3, 3);

@@ -8,7 +8,6 @@
 
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
-use jolt_field::signed::{S192, S256, S64};
 use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::InstructionFlags;
@@ -34,10 +33,8 @@ const NUM_TABLES: usize = 8;
 
 use crate::mem::purge_retained_memory;
 
-/// Bind count that triggers the late allocator purge.
 const LATE_PURGE_ROUNDS: usize = 8;
 
-/// The parallel scatter grain of the `T/2` table materialization.
 #[cfg(feature = "parallel")]
 const MATERIALIZE_CHUNK: usize = 1 << 12;
 
@@ -59,7 +56,6 @@ pub struct InstructionInputRow {
 }
 
 impl InstructionInputRow {
-    /// Field values in table order.
     #[inline]
     fn field_values<F: JoltField>(&self) -> [F; NUM_TABLES] {
         [
@@ -75,7 +71,6 @@ impl InstructionInputRow {
     }
 }
 
-/// Optimized [`PrepareKernel`] implementor for the `instruction_input` slot.
 pub struct OptimizedInstructionInput;
 
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
@@ -95,7 +90,6 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
     }
 }
 
-/// Native rows through round 0; eight dense tables afterward.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum InputState<F: JoltField> {
     Native(BundleStore<InstructionInputRow>),
@@ -117,7 +111,6 @@ fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     }
 }
 
-/// Exact `(value at t = 0, step)` for a linear extension.
 #[inline]
 fn ext_u64(even: u64, odd: u64) -> (i128, i128) {
     (i128::from(even), i128::from(odd) - i128::from(even))
@@ -168,6 +161,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
 
         let block = |x_out: usize| -> Result<[F; POINTS], WitnessError> {
             let mut right_acc = [Accumulator::<F>::default(); POINTS];
+            let mut right_high_acc = [Accumulator::<F>::default(); POINTS];
             let mut left_acc = [Accumulator::<F>::default(); POINTS];
             for (x_in, &e_in) in e_in.iter().enumerate() {
                 let y = x_out * in_len + x_in;
@@ -180,29 +174,39 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 let (rs1, rs1_m) = ext_u64(even.rs1_value.0, odd.rs1_value.0);
                 let (upc, upc_m) = ext_u64(even.unexpanded_pc.0, odd.unexpanded_pc.0);
                 let (rs2, rs2_m) = ext_u64(even.rs2_value.0, odd.rs2_value.0);
-                let imm_even = S192::from_i128(even.imm.0);
-                let imm_odd = S192::from_i128(odd.imm.0);
+                let split = |imm: i128| (imm >> 64, i128::from(imm as u64));
+                let (imm_even_high, imm_even_low) = split(even.imm.0);
+                let (imm_odd_high, imm_odd_low) = split(odd.imm.0);
                 for t in 0..POINTS as i64 {
-                    // |f(t)| ≤ 3; |v(t)| < 2^67; products < 2^70.
+                    // |f(t)| ≤ 3, |v(t)| < 2^67, and the Lagrange weights
+                    // |1 − t|, |t| ≤ 3 keep every low sum below 2^70 and the
+                    // high sums below 2^67: exact in `i128` for any immediate.
                     let f_rs1 = is_rs1 + t * is_rs1_m;
                     let f_pc = is_pc + t * is_pc_m;
                     let f_rs2 = is_rs2 + t * is_rs2_m;
                     let f_imm = is_imm + t * is_imm_m;
+                    let (w_even, w_odd) = (i128::from(f_imm * (1 - t)), i128::from(f_imm * t));
                     let left = i128::from(f_rs1) * (rs1 + i128::from(t) * rs1_m)
                         + i128::from(f_pc) * (upc + i128::from(t) * upc_m);
-                    // Lagrange coefficients are ≤ 12; products fit `S256`.
-                    let mut right =
-                        S256::from_i128(i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m));
-                    S64::from_i64(f_imm * (1 - t)).fmadd_trunc::<3, 4>(&imm_even, &mut right);
-                    S64::from_i64(f_imm * t).fmadd_trunc::<3, 4>(&imm_odd, &mut right);
-                    right_acc[t as usize].fmadd_s256(e_in, &right);
-                    left_acc[t as usize].fmadd_s256(e_in, &S256::from_i128(left));
+                    let right = i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m)
+                        + w_even * imm_even_low
+                        + w_odd * imm_odd_low;
+                    let right_high = w_even * imm_even_high + w_odd * imm_odd_high;
+                    right_acc[t as usize].fmadd_i128(e_in, right);
+                    if right_high != 0 {
+                        right_high_acc[t as usize].fmadd_i128(e_in, right_high);
+                    }
+                    left_acc[t as usize].fmadd_i128(e_in, left);
                 }
             }
             let e_out = e_out[x_out];
             let mut out = [F::zero(); POINTS];
-            for (slot, (right, left)) in out.iter_mut().zip(right_acc.into_iter().zip(left_acc)) {
-                *slot = e_out * (right.reduce() + gamma * left.reduce());
+            for (slot, ((right, right_high), left)) in out
+                .iter_mut()
+                .zip(right_acc.into_iter().zip(right_high_acc).zip(left_acc))
+            {
+                let right = right.reduce() + right_high.reduce().mul_pow_2(64);
+                *slot = e_out * (right + gamma * left.reduce());
             }
             Ok(out)
         };
@@ -230,7 +234,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         }
     }
 
-    /// The bound rounds' `q` evaluations over the eight dense tables.
     fn dense_q_evals(&self, tables: &[Polynomial<F>]) -> [F; 4] {
         const POINTS: usize = 4;
         self.gruen.par_fold_out_in(
@@ -274,8 +277,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         )
     }
 
-    /// `s(t) = ℓ(t) · Σ_y E(y) · q(t, y)` at `t = 0..=3`, with
-    /// `q = (is_rs2·rs2 + is_imm·imm) + γ·(is_rs1·rs1 + is_pc·upc)`.
     fn message(
         &self,
         round: usize,
@@ -289,7 +290,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    /// Materializes the first bind directly at half size.
     fn materialize_half(
         rows: &BundleStore<InstructionInputRow>,
         challenge: F,
@@ -304,7 +304,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }))
         };
 
-        // Fill all eight tables in one row pass.
         let mut tables: [Vec<F>; NUM_TABLES] =
             core::array::from_fn(|_| unsafe_allocate_zero_vec(half));
         #[cfg(feature = "parallel")]
@@ -357,7 +356,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                     Self::materialize_half(rows, challenge, 1 << (self.progress.total() - 1))
                         .map_err(row_extraction_error)?;
                 self.state = InputState::Dense(tables);
-                // Return row and preparation pages before dense rounds.
                 purge_retained_memory(self.progress.total());
             }
             InputState::Dense(tables) => {
@@ -365,7 +363,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 for table in tables.iter_mut() {
                     let _ = table.bind_low_to_high_in_place(challenge);
                 }
-                // Return shrink tails once the live tables are small.
                 if self.progress.bound() + 1 == LATE_PURGE_ROUNDS {
                     purge_retained_memory(self.progress.total());
                 }
@@ -375,10 +372,8 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         Ok(())
     }
 
-    /// The eight fully bound table values, table order.
     fn final_values(&self) -> Result<[F; NUM_TABLES], WitnessError> {
         match &self.state {
-            // Only for `log_t = 0`.
             InputState::Native(rows) => Ok(rows.access().row(0)?.field_values()),
             InputState::Dense(tables) => Ok(core::array::from_fn(|i| tables[i].evals()[0])),
         }
@@ -432,7 +427,6 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         })
     }
 
-    /// Check the bound Gruen scalar against the verifier.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -496,7 +490,6 @@ mod tests {
 
     fn assert_parity(log_t: usize, seed: u64) {
         let mut state = seed;
-        // Covers full-width values and signed immediates.
         let rows: Vec<InstructionInputRow> = (0..1usize << log_t)
             .map(|index| {
                 let raw = splitmix(&mut state);
@@ -570,7 +563,6 @@ mod tests {
             OptimizedInstructionInputKernel::new(&r_product, BundleStore::Retained(rows), gamma)
                 .unwrap();
 
-        // Direct hypercube sum.
         let eq = eq_table(&r_product);
         let mut claim = fr(0);
         for j in 0..1usize << log_t {
@@ -620,13 +612,11 @@ mod tests {
 
     #[test]
     fn parity_single_round() {
-        // Fully bound during the deferred first bind.
         assert_parity(1, 4242);
     }
 
     #[test]
     fn parity_two_rounds() {
-        // Materializes length-one tables in `finish_rounds`.
         assert_parity(2, 1717);
     }
 }

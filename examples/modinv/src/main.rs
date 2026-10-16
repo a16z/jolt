@@ -6,14 +6,11 @@ pub fn main() {
 
     let target_dir = "/tmp/jolt-guest-targets";
 
-    // Test case: compute the modular inverse of 3 modulo 11
-    // Expected: 3 * 4 ≡ 12 ≡ 1 (mod 11), so the inverse is 4
     let a = 3u64;
     let m = 11u64;
 
     info!("Computing modular inverse of {} modulo {}", a, m);
 
-    // Compile and preprocess the advice-based version
     let mut program = guest::compile_modinv(target_dir);
     let shared_preprocessing = guest::preprocess_shared_modinv(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_modinv(shared_preprocessing.clone());

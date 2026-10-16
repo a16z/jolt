@@ -35,8 +35,6 @@ pub fn ram_ra_claim_reduction_input_values_from_upstream<F: JoltField>(
     }
 }
 
-/// Wire this relation's consumed opening *points* from the upstream output-points
-/// aggregates.
 pub fn ram_ra_claim_reduction_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,

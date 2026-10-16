@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::RAMWrite;
+use super::RamWrite;
 
 use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace};
 
@@ -13,13 +13,11 @@ declare_riscv_instr!(
     match  = 0x00003023,
     format = FormatS,
     registers = RegisterStateS,
-    ram    = RAMWrite
+    ram    = RamWrite
 );
 
 impl SD {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SD as RISCVInstruction>::RAMAccess) {
-        // The SD, SW, SH, and SB instructions store 64-bit, 32-bit, 16-bit, and 8-bit values from
-        // the low bits of register rs2 to memory respectively.
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SD as RISCVInstruction>::RamAccess) {
         *ram_access = cpu
             .mmu
             .store_doubleword(

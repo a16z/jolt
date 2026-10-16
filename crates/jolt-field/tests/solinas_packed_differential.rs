@@ -20,7 +20,6 @@ use two::{
     pseudo_mersenne_modulus, CanonicalEncoding, ExtField, Field, NoPacking, Packed, WithPacking,
 };
 
-/// Packed ops must equal per-lane scalar ops (add/sub/mul/square/inverse).
 fn check_packed_matches_scalar<PF: Packed>(lhs: &[PF::Scalar], rhs: &[PF::Scalar]) {
     let w = PF::WIDTH;
     assert_eq!(lhs.len() % w, 0);
@@ -46,8 +45,6 @@ fn check_packed_matches_scalar<PF: Packed>(lhs: &[PF::Scalar], rhs: &[PF::Scalar
     }
 }
 
-/// Boundary lane patterns for a prime field with modulus `p`: all-max
-/// lanes, mixed canonical extremes, and single-lane-nonzero, crossed.
 fn check_boundary_patterns<PF>(p: u128)
 where
     PF: Packed,
@@ -70,7 +67,6 @@ where
     }
 }
 
-/// Random packed-vs-scalar equivalence plus boundary patterns.
 fn check_prime_field<PF>(p: u128, seed: u64)
 where
     PF: Packed,
@@ -131,7 +127,6 @@ where
     }
 }
 
-/// `from_fn`/`extract`/`broadcast` and the slice-helper laws.
 fn check_lane_laws<PF: Packed>(vals: &[PF::Scalar]) {
     let w = PF::WIDTH;
     assert!(w >= 1);
@@ -158,8 +153,6 @@ fn check_lane_laws<PF: Packed>(vals: &[PF::Scalar]) {
     assert_eq!(PF::pack_slice(&buf[..w * 3]).len(), 3);
 }
 
-/// `WithPacking` associated-type sanity: the packing's scalar is the field
-/// itself and the lane laws hold.
 fn check_with_packing<F: WithPacking>(seed: u64) {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let vals: Vec<F> = (0..<F::Packing as Packed>::WIDTH.max(4))
@@ -203,7 +196,6 @@ fn packed_fp128_matches_scalar() {
     );
 }
 
-/// Extension boundary lanes: all-max coefficient vectors and mixed extremes.
 fn check_ext_boundaries<PF, F>(p: u128)
 where
     F: Field + CanonicalEncoding,
@@ -228,7 +220,6 @@ where
     check_packed_matches_scalar::<PF>(&mixed_lanes, &mixed_lanes);
 }
 
-/// Packed extension towers vs scalar extension arithmetic.
 fn check_ext_field<PF, F>(p: u128, seed: u64)
 where
     F: Field + CanonicalEncoding,
@@ -321,8 +312,6 @@ fn with_packing_associated_types() {
 
 #[test]
 fn no_packing_equivalence() {
-    // A type with no SIMD path: NoPacking over a word field, exercised
-    // through the same laws and differentials as the SIMD backends.
     type PF = NoPacking<two::Prime32Offset99>;
     check_prime_field::<PF>(pm(32, 99), 0x0001);
     let mut rng = ChaCha20Rng::seed_from_u64(0x0002);

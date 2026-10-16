@@ -1,5 +1,3 @@
-//! Keccak-256 inline.
-
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x0B;

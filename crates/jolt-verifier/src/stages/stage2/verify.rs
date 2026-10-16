@@ -171,8 +171,6 @@ where
     // feed the input/output claims and populate the stage aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    // Every member's input points are empty (each derives its output points from its
-    // own sumcheck point).
     let input_points = sumchecks.empty_input_points();
 
     if checked.zk {

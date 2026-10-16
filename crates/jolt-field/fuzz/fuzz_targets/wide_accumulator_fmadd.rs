@@ -4,8 +4,6 @@ use libfuzzer_sys::fuzz_target;
 use num_traits::Zero;
 
 fuzz_target!(|data: &[u8]| {
-    // Each pair of field elements needs 64 bytes (2 x 32-byte chunks).
-    // Silently skip inputs that don't contain at least one complete pair.
     if data.len() < 64 {
         return;
     }

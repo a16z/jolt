@@ -15,8 +15,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::{
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{AdviceClaimReductionLayout, JoltAdviceKind};
 use jolt_claims::protocols::jolt::{
-    BytecodeClaimReductionLayout, JoltCommittedPolynomial, JoltRelationId,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    JoltCommittedPolynomial, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_field::JoltField;
 
@@ -37,9 +36,6 @@ pub struct PrecommittedFinalOpening<F: JoltField> {
     pub opening_claim: Option<F>,
 }
 
-/// Opening point and (clear-mode) claim payload recorded by the stage that
-/// completed a precommitted claim reduction. `T` is a single claim for advice and
-/// the program image, and the per-chunk claim slice for the committed bytecode.
 struct PrecommittedFinalSource<'a, F, T = F> {
     point: &'a [F],
     opening_claim: Option<T>,
@@ -107,27 +103,31 @@ pub fn precommitted_final_openings<F: JoltField>(
             stage7
                 .bytecode_address_phase
                 .as_ref()
-                .map(|values| values.chunks.clone())
+                .map(|claims| claims.bytecode)
         });
-        let address_phase = resolve_source(is_clear, stage7_points.bytecode_point(), address_value);
-        // The stage-6b cycle phase completes the reduction only when it produced the
-        // final chunk claims (no intermediate remained), so the clear source is Some
-        // only under that guard; the point-only ZK source is unguarded.
         let cycle_value = clear.and_then(|(_, stage6)| {
             stage6
                 .bytecode_reduction
                 .as_ref()
-                .filter(|reduction| {
-                    reduction.intermediate.is_none() && !reduction.chunks.is_empty()
-                })
-                .map(|reduction| reduction.chunks.clone())
+                .and_then(|claims| claims.bytecode().copied())
         });
-        let cycle_phase = resolve_source(
-            is_clear,
-            stage6_points.bytecode_reduction_opening_point(),
-            cycle_value,
-        );
-        openings.extend(bytecode_final_openings(layout, address_phase, cycle_phase)?);
+        let source = if layout.dimensions().has_address_phase() {
+            resolve_source(is_clear, stage7_points.bytecode_point(), address_value)
+        } else {
+            resolve_source(
+                is_clear,
+                stage6_points.bytecode_reduction_opening_point(),
+                cycle_value,
+            )
+        }
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: bytecode_reduction::final_program_bytecode_opening().into(),
+        })?;
+        openings.push(PrecommittedFinalOpening {
+            polynomial: JoltCommittedPolynomial::ProgramBytecode,
+            point: source.point.to_vec(),
+            opening_claim: source.opening_claim,
+        });
     }
     if let Some(layout) = schedule.program_image.as_ref() {
         let address_value = clear.and_then(|(stage7, _)| {
@@ -176,8 +176,6 @@ fn resolve_source<F: JoltField, T>(
     })
 }
 
-/// The stage-7 advice address-phase output *value* for `kind` (only that kind's
-/// slot is filled on the wire).
 #[cfg(not(feature = "akita"))]
 fn advice_address_value<F: JoltField>(
     claims: &Stage7OutputClaims<F>,
@@ -192,9 +190,6 @@ fn advice_address_value<F: JoltField>(
     }
 }
 
-/// Resolves the final opening of an advice polynomial from whichever phase
-/// completed its reduction: this stage's address phase, or the stage 6b cycle
-/// phase when no active address rounds remain.
 #[cfg(not(feature = "akita"))]
 fn advice_final_opening<F: JoltField>(
     kind: JoltAdviceKind,
@@ -221,51 +216,6 @@ fn advice_final_opening<F: JoltField>(
     })
 }
 
-/// Resolves the final per-chunk openings of the committed bytecode from whichever
-/// phase completed the reduction: this stage's address phase, or the stage 6b
-/// cycle phase when no active address rounds remain.
-fn bytecode_final_openings<F: JoltField>(
-    layout: &BytecodeClaimReductionLayout,
-    address_phase: Option<PrecommittedFinalSource<'_, F, Vec<F>>>,
-    cycle_phase: Option<PrecommittedFinalSource<'_, F, Vec<F>>>,
-) -> Result<Vec<PrecommittedFinalOpening<F>>, VerifierError> {
-    let source = if layout.dimensions().has_address_phase() {
-        address_phase
-    } else {
-        cycle_phase
-    };
-    let source = source.ok_or(VerifierError::MissingOpeningClaim {
-        id: bytecode_reduction::final_bytecode_chunk_opening(0).into(),
-    })?;
-    if let Some(chunk_claims) = &source.opening_claim {
-        if chunk_claims.len() != layout.chunk_count() {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeClaimReduction,
-                reason: format!(
-                    "final bytecode chunk claim count mismatch: expected {}, got {}",
-                    layout.chunk_count(),
-                    chunk_claims.len()
-                ),
-            });
-        }
-    }
-    Ok((0..layout.chunk_count())
-        .map(|chunk_idx| PrecommittedFinalOpening {
-            polynomial: JoltCommittedPolynomial::BytecodeChunk(chunk_idx),
-            point: source.point.to_vec(),
-            // In range whenever the claims are present: the count was checked
-            // against `layout.chunk_count()` above.
-            opening_claim: source
-                .opening_claim
-                .as_ref()
-                .and_then(|chunk_claims| chunk_claims.get(chunk_idx).copied()),
-        })
-        .collect())
-}
-
-/// Resolves the final opening of the committed program image from whichever phase
-/// completed the reduction: this stage's address phase, or the stage 6b cycle
-/// phase when no active address rounds remain.
 fn program_image_final_opening<F: JoltField>(
     layout: &ProgramImageClaimReductionLayout,
     address_phase: Option<PrecommittedFinalSource<'_, F>>,

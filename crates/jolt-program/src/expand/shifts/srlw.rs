@@ -1,6 +1,5 @@
 use super::*;
 
-/// Lowers variable `SRLW` through a word-width shift mask and fused shift row.
 pub(in crate::expand) fn expand_srlw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

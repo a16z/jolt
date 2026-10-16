@@ -23,7 +23,6 @@ use jolt_riscv::{
 };
 
 use crate::WitnessError;
-use crate::JOLT_VM_LABEL;
 
 mod flags;
 mod increments;
@@ -63,12 +62,10 @@ impl<'a> WitnessEnv<'a> {
     }
 }
 
-/// The field encoding of an atomic witness value.
 pub trait ToField {
     fn to_field<F: JoltField>(self) -> F;
 }
 
-/// The single-sourced derivation of one atomic witness from a trace row.
 pub trait Extract<R = TraceRow>: Sized {
     fn extract(row: &R, next: Option<&R>, env: &WitnessEnv<'_>) -> Result<Self, WitnessError>;
 }
@@ -102,7 +99,6 @@ fn instruction_row(row: &TraceRow) -> JoltInstructionRow {
     }
 }
 
-/// Proof-only view of the compact trace row used by lookup queries.
 #[derive(Clone, Copy)]
 pub(crate) struct CompactTraceCycle<'a>(&'a TraceRow);
 
@@ -181,15 +177,6 @@ macro_rules! define_lookup_values {
 
 jolt_riscv::for_each_jolt_instruction_kind!(define_lookup_values);
 
-pub(crate) fn decode_instruction(row: &TraceRow) -> Result<JoltInstruction, WitnessError> {
-    JoltInstruction::try_from(instruction_row(row)).map_err(|kind| {
-        WitnessError::InvalidWitnessData {
-            label: JOLT_VM_LABEL,
-            reason: format!("unsupported Jolt instruction kind in trace row: {kind:?}"),
-        }
-    })
-}
-
-pub(crate) fn row_is_noop(row: &TraceRow) -> bool {
-    row.is_noop()
+pub(crate) fn decode_instruction(row: &TraceRow) -> JoltInstruction {
+    JoltInstruction::from(instruction_row(row))
 }

@@ -144,28 +144,24 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
     }
 }
 
-/// Builds an opening source expression.
 pub fn opening<F: Ring, O, P, C>(id: impl Into<O>) -> Expr<F, O, P, C> {
     Expr {
         terms: vec![Term::source(Source::Opening(id.into()))],
     }
 }
 
-/// Builds a Fiat-Shamir challenge source expression.
 pub fn challenge<F: Ring, O, P, C>(id: impl Into<C>) -> Expr<F, O, P, C> {
     Expr {
         terms: vec![Term::source(Source::Challenge(id.into()))],
     }
 }
 
-/// Builds a named derived-value source expression.
 pub fn derived<F: Ring, O, P, C>(id: impl Into<P>) -> Expr<F, O, P, C> {
     Expr {
         terms: vec![Term::source(Source::Derived(id.into()))],
     }
 }
 
-/// Builds a constant expression.
 pub fn constant<F: Ring, O, P, C>(value: F) -> Expr<F, O, P, C> {
     Expr::constant(value)
 }
@@ -230,13 +226,6 @@ mod tests {
         );
 
         assert_eq!(value, Fr::from_u64(31));
-    }
-
-    #[test]
-    fn pow2_builds_field_native_powers() {
-        assert_eq!(Fr::pow2(0), Fr::from_u64(1));
-        assert_eq!(Fr::pow2(1), Fr::from_u64(2));
-        assert_eq!(Fr::pow2(63), Fr::from_u64(1u64 << 63));
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase as BytecodeAddressPhase;
+
 pub(super) fn add_stage7<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     builder: Builder<PCS::Field, VC::Output>,
@@ -32,12 +34,10 @@ where
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
     let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().and_then(|layout| {
-        layout.dimensions().has_address_phase().then(|| {
-            relations::claim_reductions::bytecode::AddressPhase::new((
-                layout.dimensions(),
-                layout.chunk_count(),
-            ))
-        })
+        layout
+            .dimensions()
+            .has_address_phase()
+            .then(|| BytecodeAddressPhase::new(layout.dimensions()))
     });
     let program_image_reduction_claims =
         program_image_reduction_layout.as_ref().and_then(|layout| {
@@ -132,16 +132,9 @@ where
         claims.push(relation_claim(&claim));
         output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted).into());
     }
-    if let (Some(layout), Some(claim)) = (
-        bytecode_reduction_layout.as_ref(),
-        bytecode_reduction_claims,
-    ) {
+    if let Some(claim) = bytecode_reduction_claims {
         claims.push(relation_claim(&claim));
-        output_ids.extend(
-            (0..layout.chunk_count())
-                .map(bytecode_reduction::final_bytecode_chunk_opening)
-                .map(ComposedOpeningId::from),
-        );
+        output_ids.push(bytecode_reduction::final_program_bytecode_opening().into());
     }
     if let Some(claim) = program_image_reduction_claims {
         claims.push(relation_claim(&claim));

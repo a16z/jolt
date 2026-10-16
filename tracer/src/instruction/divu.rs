@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl DIVU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <DIVU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <DIVU as RISCVInstruction>::RamAccess) {
         let dividend = cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]);
         let divisor = cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]);
         if divisor == 0 {
@@ -31,7 +31,6 @@ impl DIVU {
 
 impl RISCVTrace for DIVU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // DIV operands
         let x = cpu.x[self.operands.rs1 as usize] as u64;
         let y = cpu.x[self.operands.rs2 as usize] as u64;
 

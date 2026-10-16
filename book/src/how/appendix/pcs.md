@@ -25,7 +25,7 @@ These polynomial commitments tie together the various algebraic claims generated
 |---|---|---|
 | Cryptographic construction | Elliptic curve pairings over BN254 | Lattice commitments |
 | Proof field | BN254 scalar field | 128-bit prime field |
-| Trace commitments | Separate commitments to witness polynomials | One packed `OneHotTrace` commitment containing address and increment columns |
+| Trace commitments | Separate commitments to witness polynomials | One native `OneHotTrace` commitment group containing the actual trace columns |
 | Final opening | Random linear combination using additive homomorphism | Native grouped opening across trace, advice, and committed-program objects |
 | Zero knowledge in Jolt | Available with `zk` via [BlindFold](../blindfold.md) | Not currently supported |
 | Selection | Default | `akita` Cargo feature |

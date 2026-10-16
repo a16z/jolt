@@ -95,7 +95,6 @@ impl LibrarySpec {
         self
     }
 
-    /// Validates the declaration and produces the complete MSL source.
     fn assemble(&self) -> Result<String, MetalError> {
         let invalid = |reason: String| MetalError::InvalidLibrary { reason };
         if self.kernels.is_empty() {
@@ -161,15 +160,12 @@ pub(crate) struct ArgumentSlot {
     pub(crate) data_size: usize,
 }
 
-/// What the platform backend reads from a newly created pipeline.
 pub(crate) struct PipelineInfo {
     pub(crate) max_total_threads_per_threadgroup: usize,
     pub(crate) thread_execution_width: usize,
-    /// Buffer arguments in declaration order.
     pub(crate) slots: Vec<ArgumentSlot>,
 }
 
-/// A compiled compute kernel.
 pub struct Pipeline {
     pub(crate) sys: RawPipeline,
     pub(crate) name: Arc<str>,
@@ -182,7 +178,6 @@ impl Pipeline {
         &self.name
     }
 
-    /// The largest threadgroup this pipeline can be dispatched with.
     pub fn max_total_threads_per_threadgroup(&self) -> usize {
         self.info.max_total_threads_per_threadgroup
     }

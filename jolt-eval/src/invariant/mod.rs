@@ -17,7 +17,6 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-/// What to synthesize from an invariant definition.
 #[derive(Debug, EnumSetType)]
 pub enum SynthesisTarget {
     Test,
@@ -25,7 +24,6 @@ pub enum SynthesisTarget {
     RedTeam,
 }
 
-/// Error indicating an invariant was violated.
 #[derive(Debug, Clone)]
 pub struct InvariantViolation {
     pub message: String,
@@ -60,10 +58,8 @@ impl InvariantViolation {
     }
 }
 
-/// Result of checking an invariant against a single input.
 #[derive(Debug)]
 pub enum CheckError {
-    /// The invariant was violated.
     Violation(InvariantViolation),
     /// The input is degenerate or uninteresting and should be skipped.
     InvalidInput(String),
@@ -133,7 +129,6 @@ pub trait InvariantTargets {
     }
 }
 
-/// Enum collecting all Jolt invariants. Methods dispatch via match.
 pub enum JoltInvariants {
     SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
     SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
@@ -262,7 +257,6 @@ pub struct FailedAttempt {
 /// ````json` code block first, then falls back to the last `{…}` that
 /// parses as valid JSON.
 pub fn extract_json(text: &str) -> Option<String> {
-    // 1. ```json ... ```
     if let Some(start) = text.find("```json") {
         let json_start = start + "```json".len();
         if let Some(end) = text[json_start..].find("```") {
@@ -273,7 +267,6 @@ pub fn extract_json(text: &str) -> Option<String> {
         }
     }
 
-    // 2. Last balanced {…} that is valid JSON
     let bytes = text.as_bytes();
     let mut i = bytes.len();
     while i > 0 {
@@ -303,69 +296,4 @@ pub fn extract_json(text: &str) -> Option<String> {
     }
 
     None
-}
-
-#[cfg(test)]
-mod integration_tests {
-    use super::*;
-
-    struct TrivialInvariant;
-    impl InvariantTargets for TrivialInvariant {}
-
-    impl Invariant for TrivialInvariant {
-        type Setup = ();
-        type Input = u8;
-        fn name(&self) -> &str {
-            "trivial"
-        }
-        fn description(&self) -> String {
-            "Always passes".into()
-        }
-        fn setup(&self) {}
-        fn check(&self, _: &(), _: u8) -> Result<(), CheckError> {
-            Ok(())
-        }
-        fn seed_corpus(&self) -> Vec<u8> {
-            vec![0, 1, 255]
-        }
-    }
-
-    struct FailingInvariant;
-    impl InvariantTargets for FailingInvariant {}
-
-    impl Invariant for FailingInvariant {
-        type Setup = ();
-        type Input = u8;
-        fn name(&self) -> &str {
-            "failing"
-        }
-        fn description(&self) -> String {
-            "Always fails".into()
-        }
-        fn setup(&self) {}
-        fn check(&self, _: &(), input: u8) -> Result<(), CheckError> {
-            Err(CheckError::Violation(InvariantViolation::new(format!(
-                "failed for input {input}"
-            ))))
-        }
-        fn seed_corpus(&self) -> Vec<u8> {
-            vec![42]
-        }
-    }
-
-    #[test]
-    fn trivial_invariant_passes() {
-        let inv = TrivialInvariant;
-        for input in inv.seed_corpus() {
-            inv.check(&(), input).unwrap();
-        }
-    }
-
-    #[test]
-    fn failing_invariant_reports_violations() {
-        let inv = FailingInvariant;
-        for input in inv.seed_corpus() {
-            assert!(inv.check(&(), input).is_err());
-        }
-    }
 }

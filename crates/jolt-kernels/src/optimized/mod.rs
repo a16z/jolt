@@ -23,8 +23,12 @@
 //!
 //! Each module documents its own port; [`JoltBackend::optimized`] wires them.
 
+#[cfg(feature = "akita")]
+use jolt_akita::TraceOneHotCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "akita")]
+use jolt_openings::{GroupSetupMetadata, TransparentObjectSetup};
 
 #[cfg(feature = "field-inline")]
 use self::field_registers_claim_reduction::OptimizedFieldRegistersClaimReduction;
@@ -34,12 +38,14 @@ use self::field_registers_inc_claim_reduction::OptimizedFieldRegistersIncClaimRe
 use self::field_registers_read_write::OptimizedFieldRegistersReadWrite;
 #[cfg(feature = "field-inline")]
 use self::field_registers_val_evaluation::OptimizedFieldRegistersValEvaluation;
+#[cfg(not(feature = "akita"))]
 use crate::commitment::ModeStreamingCommitment;
 
 use crate::JoltBackend;
 
 pub mod booleanity;
 pub mod bytecode_read_raf;
+#[cfg(not(feature = "akita"))]
 pub mod commitment;
 #[cfg(feature = "field-inline")]
 pub mod field_registers_claim_reduction;
@@ -56,6 +62,7 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 mod lazy_ra;
+#[cfg(not(feature = "akita"))]
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod ram_hamming_booleanity;
@@ -94,6 +101,7 @@ where
     /// The optimized backend: [`JoltBackend::reference`] with every slot this
     /// module tree ports overwritten by its optimized kernel. Same
     /// construction bounds as the reference backend.
+    #[cfg(not(feature = "akita"))]
     pub fn optimized() -> Self
     where
         PCS: ModeStreamingCommitment,
@@ -104,6 +112,16 @@ where
         backend.joint_opening = Box::new(OptimizedBackend);
 
         backend
+    }
+
+    /// Optimized shared compute kernels with native packed commitment and opening.
+    #[cfg(feature = "akita")]
+    pub fn optimized() -> Self
+    where
+        PCS: TraceOneHotCommitment + TransparentObjectSetup,
+        PCS::ProverSetup: GroupSetupMetadata,
+    {
+        Self::reference().with_optimized_compute()
     }
 
     /// Replace every protocol-arithmetic slot with its optimized kernel while

@@ -34,7 +34,6 @@ impl<const XLEN: usize> LookupTable for WindowMaskWTable<XLEN> {
         let half = XLEN / 2;
         let mask = F::from_u128((1u128 << half) - 1);
         let bit2: F = r[r.len() - 3].into();
-        // mask · 2^(half·bit2) = mask · (1 + (2^half − 1)·bit2)
         mask + mask * (F::from_u128((1u128 << half) - 1) * bit2)
     }
 }

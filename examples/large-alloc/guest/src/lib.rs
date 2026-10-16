@@ -26,7 +26,6 @@ use libc::{MAP_ANONYMOUS, MAP_FAILED, MAP_PRIVATE, PROT_READ, PROT_WRITE};
 fn large_alloc_roundtrip() -> u64 {
     let mut acc: u64 = 0;
     for round in 0..4u64 {
-        // 256 KiB + a per-round page so the mappings differ in size.
         let len = (256 << 10) + (round as usize) * 4096;
         let mut buffer = vec![0u8; len];
         let mut i = 0;
@@ -40,7 +39,6 @@ fn large_alloc_roundtrip() -> u64 {
 
     const PAGE: usize = 4096;
     unsafe {
-        // Round 2: repeated unmap of the same range.
         let base = libc::mmap(
             core::ptr::null_mut(),
             16 * PAGE,
@@ -58,7 +56,6 @@ fn large_alloc_roundtrip() -> u64 {
             "repeated munmap must no-op"
         );
 
-        // Round 3: trim a reservation's tail, then release the whole range.
         let base = libc::mmap(
             core::ptr::null_mut(),
             16 * PAGE,

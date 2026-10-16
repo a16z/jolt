@@ -69,7 +69,6 @@ pub fn main() {
         .expect("Could not serialize trusted advice commitment.");
     }
 
-    // Pass only the first input and trusted_advice commitment to the verifier
     let is_valid = verify_merkle_tree(
         leaf1,
         output,

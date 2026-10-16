@@ -3,7 +3,6 @@ use jolt_field::{Accumulator, Fr, CanonicalEncoding, WideAccumulator};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    // Need at least two pairs (128 bytes) so each half gets at least one.
     if data.len() < 128 {
         return;
     }

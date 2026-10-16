@@ -1,5 +1,3 @@
-//! Wrapper types bridging dory-pcs to jolt-openings.
-
 use std::io::Cursor;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -336,8 +334,6 @@ mod tests {
         );
     }
 
-    /// Wraps `bytes` in the outer serde byte layer and asserts `T`'s
-    /// deserializer rejects them with `needle` in the error message.
     fn assert_rejected_with<T: for<'de> Deserialize<'de>>(bytes: &[u8], needle: &str) {
         let encoded = serde_json::to_vec(&bytes).expect("encode crafted bytes");
         let err = serde_json::from_slice::<T>(&encoded)

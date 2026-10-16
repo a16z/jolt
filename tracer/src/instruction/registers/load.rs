@@ -21,7 +21,6 @@ impl InstructionRegisterState for RegisterStateLoad {
     fn random(rng: &mut StdRng, operands: &NormalizedOperands) -> Self {
         use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
         use rand::RngCore;
-        // Use a smaller range to avoid issues with boundaries
         let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
         debug_assert_ne!(operands.rs1.unwrap(), 0);
 

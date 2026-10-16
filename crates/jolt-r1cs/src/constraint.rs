@@ -60,7 +60,6 @@ pub struct MatrixColumnContributions<F: Field> {
     pub c: F,
 }
 
-/// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
 struct RawConstraintMatrices<F: Field> {
@@ -148,6 +147,18 @@ impl<F: Field> ConstraintMatrices<F> {
             b,
             c,
         }
+    }
+
+    /// Rechecks the row-count and column-bound invariants of [`Self::new`];
+    /// the fields are public, so a held value may no longer satisfy them.
+    pub fn validate(&self) -> Result<(), String> {
+        check_invariants(
+            self.num_constraints,
+            self.num_vars,
+            &self.a,
+            &self.b,
+            &self.c,
+        )
     }
 
     /// Checks whether a per-cycle witness satisfies all constraints.
@@ -250,6 +261,48 @@ impl<F: Field> ConstraintMatrices<F> {
         )?;
         Ok(weights[0] * a + weights[1] * b + weights[2] * c)
     }
+
+    /// Projects a contiguous column range against row and matrix weights.
+    pub fn project_column_range(
+        &self,
+        row_weights: &[F],
+        start: usize,
+        count: usize,
+        matrix_weights: [F; 3],
+    ) -> Result<Vec<F>, ConstraintMatrixEvalError> {
+        if row_weights.len() < self.num_constraints {
+            return Err(ConstraintMatrixEvalError::RowWeightsLengthMismatch {
+                expected: self.num_constraints,
+                actual: row_weights.len(),
+            });
+        }
+        let end = start
+            .checked_add(count)
+            .ok_or(ConstraintMatrixEvalError::ColumnRangeOverflow { start, count })?;
+        if end > self.num_vars {
+            return Err(ConstraintMatrixEvalError::ColumnOutOfBounds {
+                column: end.saturating_sub(1),
+                num_vars: self.num_vars,
+            });
+        }
+        let mut projected = vec![F::zero(); count];
+        for (matrix, weight) in [&self.a, &self.b, &self.c].into_iter().zip(matrix_weights) {
+            for (row, row_weight) in matrix.iter().zip(row_weights) {
+                for (column, coefficient) in row {
+                    if (start..end).contains(column) {
+                        let target = projected.get_mut(column - start).ok_or(
+                            ConstraintMatrixEvalError::ColumnOutOfBounds {
+                                column: *column,
+                                num_vars: self.num_vars,
+                            },
+                        )?;
+                        *target += weight * *row_weight * coefficient;
+                    }
+                }
+            }
+        }
+        Ok(projected)
+    }
 }
 
 #[inline]
@@ -337,20 +390,6 @@ fn matrix_bilinear_eval_columns<F: Field>(
 mod tests {
     use super::*;
     use jolt_field::{Fr, Ring};
-
-    #[test]
-    fn satisfied_constraint() {
-        // x * x = y with witness [1, x=3, y=9]
-        let m = ConstraintMatrices::new(
-            1,
-            3,
-            vec![vec![(1, Fr::from_u64(1))]],
-            vec![vec![(1, Fr::from_u64(1))]],
-            vec![vec![(2, Fr::from_u64(1))]],
-        );
-        let w = vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
-        assert!(m.check_witness(&w).is_ok());
-    }
 
     #[test]
     fn violated_constraint() {

@@ -32,7 +32,6 @@ impl<const MASK_WIDTH: usize> InstructionFormat for FormatVirtualRightShiftR<MAS
         let rd = rng.next_u64() as u8 % RISCV_REGISTER_COUNT;
         let rs1 = rng.next_u64() as u8 % RISCV_REGISTER_COUNT;
 
-        // Ensure rs2 is non-zero and different from rs1
         let mut rs2 = 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1));
         if rs2 == rs1 {
             rs2 = if rs2 == RISCV_REGISTER_COUNT - 1 {

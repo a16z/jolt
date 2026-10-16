@@ -1,5 +1,3 @@
-//! Instruction symbolic sumcheck relations.
-
 mod input_virtualization;
 mod ra_virtualization;
 mod read_raf;

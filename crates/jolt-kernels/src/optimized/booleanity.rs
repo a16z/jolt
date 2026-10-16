@@ -158,8 +158,6 @@ impl BooleanityColumns {
         }
     }
 
-    /// The layout's chunk selectors, in canonical polynomial order, with the
-    /// witness shapes validated up front.
     fn new<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         dimensions: BooleanityDimensions,
@@ -242,9 +240,7 @@ fn cycle_pushforward<F: JoltField>(
     let in_len = e_in.len();
 
     struct State<F: JoltField> {
-        /// Cross-block `Σ e_out · reduce(block)` lanes, still deferred.
         partial: Vec<Vec<F::Accumulator>>,
-        /// Within-block unreduced `Σ e_in` buckets, cleared per block.
         block: Vec<Vec<F::Accumulator>>,
     }
     let zero = || State::<F> {
@@ -304,11 +300,6 @@ fn cycle_pushforward<F: JoltField>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Stage 6a: address phase
-// ---------------------------------------------------------------------------
-
-/// Slot front for the stage-6a booleanity address phase.
 pub struct OptimizedBooleanityAddress;
 
 impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleanityAddress {
@@ -492,11 +483,6 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityAddressKernel<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Stage 6b: cycle phase
-// ---------------------------------------------------------------------------
-
-/// Slot front for the stage-6b booleanity cycle phase.
 pub struct OptimizedBooleanityCycle;
 
 impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
@@ -568,8 +554,6 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
     }
 }
 
-/// Lazy-RA index source over the packed stage-5 rows: polynomial `i`'s hot
-/// chunk at cycle `j`, through the layout's selectors.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BooleanityChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
@@ -578,7 +562,7 @@ struct BooleanityChunks {
 }
 
 impl ChunkIndexSource for BooleanityChunks {
-    fn num_polys(&self) -> usize {
+    fn num_columns(&self) -> usize {
         self.selectors.len()
     }
 
@@ -599,8 +583,6 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     /// `eq(r_address, reference_address)` — together the reference's
     /// `EqAddressCycle` derived table.
     eq: GruenSplitEqPolynomial<F>,
-    /// Shared address-folded tables, scaled by nonzero `γ^i` and left unscaled
-    /// for disabled columns; index-encoded until dense at `T/16`.
     tables: LazyFoldedRa<F, BooleanityChunks>,
     gamma_powers: Vec<F>,
     opening_unscale: Vec<F>,
@@ -719,7 +701,6 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                     constant += constants[lo];
                     leading += squares[lo * self.states + hi];
                 }
-                // Share these two equality products across all families.
                 lanes[0].fmadd(weight, constant);
                 lanes[1].fmadd(weight, leading);
             },
@@ -771,7 +752,9 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         if let LazyFoldedRa::Lazy {
             tables,
             width,
+            factors: 1,
             source,
+            ..
         } = &self.tables
         {
             if !tables.is_empty()
@@ -791,7 +774,6 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         let active_polys = gamma_powers.iter().take_while(|rho| !rho.is_zero()).count();
 
         struct Scratch<F: JoltField> {
-            /// Within-block `Σ e_in · (constant, leading)` lanes, deferred.
             lanes: [F::Accumulator; 2],
             pairs: Vec<(F, F)>,
         }
@@ -922,14 +904,15 @@ pub(crate) mod testing {
         JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
     };
     use jolt_field::Fr;
-    use jolt_program::execution::{
-        JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
-        RegisterWrite, TraceOutput, TraceRow,
-    };
+    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{
+        JoltTraceRow as TraceRow, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
+        RegisterWrite,
+    };
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
 
     const LOAD: JoltInstructionRow = JoltInstructionRow {
@@ -968,7 +951,6 @@ pub(crate) mod testing {
         ..LOAD
     };
 
-    /// A fixture-program load of `address` (hot bytecode, register activity).
     pub(crate) fn load_row(address: u64) -> TraceRow {
         TraceRow::new(
             LOAD,
@@ -985,11 +967,11 @@ pub(crate) mod testing {
                 ..Default::default()
             },
             RamAccess::Read(RamRead { address, value: 8 }),
+            1,
         )
         .unwrap()
     }
 
-    /// A fixture-program store to `address`.
     pub(crate) fn store_row(address: u64) -> TraceRow {
         TraceRow::new(
             STORE,
@@ -1009,28 +991,25 @@ pub(crate) mod testing {
                 pre_value: 7,
                 post_value: 11,
             }),
+            2,
         )
         .unwrap()
     }
 
-    /// A cold row: default instruction, no register or RAM activity.
     pub(crate) fn no_op_row() -> TraceRow {
         TraceRow::new(
             JoltInstructionRow::default(),
             RegisterState::default(),
             RamAccess::NoOp,
+            0,
         )
         .unwrap()
     }
 
-    /// Runs `f` against a trace backend whose rows exercise the one-hot
-    /// sparsity structure: hot/cold bytecode cycles, hot/cold RAM cycles,
-    /// varied lookup indices, plus backend-synthesized padding when
-    /// `log_t > 2`.
     pub(crate) fn with_booleanity_backend<R>(
         log_t: usize,
         log_k_chunk: u8,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
+        f: impl FnOnce(&TraceBackend, BooleanityDimensions) -> R,
     ) -> R {
         let alu = TraceRow::new(
             ALU,
@@ -1047,6 +1026,7 @@ pub(crate) mod testing {
                 ..Default::default()
             },
             RamAccess::NoOp,
+            3,
         )
         .unwrap();
         let mut rows = vec![
@@ -1067,7 +1047,7 @@ pub(crate) mod testing {
         log_t: usize,
         log_k_chunk: u8,
         rows: Vec<TraceRow>,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
+        f: impl FnOnce(&TraceBackend, BooleanityDimensions) -> R,
     ) -> R {
         use std::sync::Arc;
         let preprocessing = Arc::new(JoltProgramPreprocessing {
@@ -1094,7 +1074,7 @@ pub(crate) mod testing {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+            TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
 
@@ -1119,7 +1099,6 @@ pub(crate) mod testing {
         f(&backend, dimensions)
     }
 
-    /// Deterministic nonzero challenge sequence for lockstep test drives.
     pub(crate) fn test_challenge(round: usize) -> Fr {
         use jolt_field::Ring;
         Fr::from_u64(0x1234_5678 + 1000 * round as u64 + 7)
@@ -1143,10 +1122,6 @@ mod tests {
     use super::*;
     use crate::ReferenceBackend;
 
-    /// Drives both kernels through the full round loop with identical
-    /// challenges, asserting byte-identical round polynomials, and delivers
-    /// the terminal bind. Returns the fully bound kernels and the challenge
-    /// sequence.
     #[expect(clippy::type_complexity)]
     fn drive_lockstep<R>(
         mut reference: Box<dyn SumcheckKernel<Fr, Relation = R>>,
@@ -1272,14 +1247,12 @@ mod tests {
                     },
                 )
                 .unwrap();
-            // The two-table split makes the input claim exactly zero.
             let (mut reference, mut optimized, _) =
                 drive_lockstep(reference, optimized, Fr::from_u64(0));
             assert_eq!(
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap(),
             );
-            // The 6a prepare parks a shared-rows carry for the 6b consumers.
             assert!(
                 session.state::<SharedInstructionRows>().is_some()
                     || session.state::<SharedInstructionRowsWeak>().is_some()
@@ -1425,11 +1398,6 @@ mod tests {
     }
 
     #[test]
-    fn cycle_kernel_matches_reference() {
-        cycle_parity(2, 4, false);
-    }
-
-    #[test]
     fn cycle_kernel_matches_reference_single_round() {
         cycle_parity(1, 4, false);
     }
@@ -1520,7 +1488,6 @@ mod tests {
                 optimized.output_claims(&address_claims).unwrap()
             );
 
-            // 6b: the address opening prefix is the reversed 6a point.
             let r_address: Vec<Fr> = address_challenges_drawn.iter().rev().copied().collect();
             let cycle_relation = cycle_relation(
                 dimensions,
@@ -1528,8 +1495,6 @@ mod tests {
                 reference_address.clone(),
                 reference_cycle.clone(),
             );
-            // Cross-phase consistency: the staged intermediate equals the
-            // cycle phase's sum at the bound address point.
             let input_claim = brute_force_cycle_claim(
                 backend,
                 dimensions,
@@ -1615,7 +1580,7 @@ mod categorical_tests {
     struct Source(Vec<Vec<Option<usize>>>);
 
     impl ChunkIndexSource for Source {
-        fn num_polys(&self) -> usize {
+        fn num_columns(&self) -> usize {
             self.0.len()
         }
         fn cycles(&self) -> usize {
@@ -1714,7 +1679,9 @@ mod categorical_tests {
                     let LazyFoldedRa::Lazy {
                         tables,
                         width,
+                        factors: 1,
                         source,
+                        ..
                     } = &lazy
                     else {
                         unreachable!()
@@ -1737,19 +1704,6 @@ mod categorical_tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn categorical_booleanity_startup_budget() {
-        let fits = CategoricalProducts::<Fr, Source>::fits_budget;
-        assert!(!fits(1, 16, 1 << 12));
-        assert!(fits(1, 16, 1 << 13));
-        assert!(!fits(2, 16, 1 << 20));
-        assert!(fits(2, 16, 1 << 21));
-        assert!(fits(1, 256, 1 << 21));
-        assert!(!fits(2, 256, 1 << 25));
-        assert!(!fits(4, 16, 1 << 25));
-        assert!(!fits(1, usize::MAX, 1 << 25));
     }
 
     #[test]

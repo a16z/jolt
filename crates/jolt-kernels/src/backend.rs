@@ -1,9 +1,9 @@
-//! The runtime seam: [`JoltBackend`] is the value `jolt-prover` proves
-//! against — one boxed object-safe slot per kernel entry — and
+//! The runtime seam: [`JoltBackend`] is the reusable kernel registry,
+//! bound to execution data through [`KernelContext`], and
 //! [`ProofSession`] is the backend-owned state with proof lifetime. Swapping
 //! a kernel implementation, mixing implementations per slot, running two
 //! backends side by side, and choosing a configuration from the hardware are
-//! all value construction, never compilation. See
+//! value construction within the compiled protocol (Akita or Dory). See
 //! `specs/clean-slate-prover.md`, "The backend seam".
 
 use std::any::{Any, TypeId};
@@ -13,12 +13,20 @@ use std::sync::Arc;
 
 #[cfg(feature = "allocative")]
 use allocative::{Allocative, Key, Visitor};
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
+#[cfg(not(feature = "akita"))]
+use jolt_poly::MultilinearPoly;
 #[cfg(feature = "allocative")]
 use jolt_poly::Polynomial;
+use jolt_poly::UnivariatePoly;
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
@@ -62,15 +70,22 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use jolt_sumcheck::RoundScheduler;
 
-use crate::commitment::CommitWitness;
+#[cfg(feature = "akita")]
+use crate::akita::commitment::WitnessCommitRequest;
 use crate::kernel::{ProverInputs, SumcheckKernel};
-use crate::opening::{JointOpeningPolynomials, RamInitialOpeningEvaluation};
+#[cfg(not(feature = "akita"))]
+use crate::opening::JointOpeningPolynomials;
+use crate::opening::{RamInitialOpening, RamInitialOpeningEvaluation};
 use crate::uniskip::UniskipKernel;
-use crate::KernelError;
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+use crate::FieldInlineWitnessCommitment;
+#[cfg(not(feature = "akita"))]
+use crate::{opening::PrecommittedOpeningTables, CommitmentGrid};
+use crate::{CommitWitness, KernelError, WitnessCommitment};
 
 /// Factory behind [`JoltBackend::round_scheduler`]: stage fronts mint one
 /// scheduler per stage via `build`. Takes [`ProofSession`] so a device
@@ -94,9 +109,8 @@ pub trait BuildRoundScheduler<F: JoltField> {
 /// fronts, typed-row witnesses, precommitted phase spans, commit, joint
 /// opening) keep hand-shaped traits in their own modules.
 ///
-/// Also the registry seam: `jolt-prover`'s generated stage drivers bound
-/// their kernel source `B` by one `PrepareKernel<F, R>` per batch member, so
-/// a registry is any type implementing it per slot. Never implemented by
+/// The internal registry seam: the coordinator uses [`KernelContext`],
+/// and [`KernelContext`] supplies its bound witness to these slots. Never implemented by
 /// hand for [`JoltBackend`]: `#[derive(KernelSlots)]` emits one impl per
 /// `Box<dyn PrepareKernel<F, R>>` field, delegating to that field, so the
 /// field's own type is the relation→slot mapping and registry and resolution
@@ -134,6 +148,12 @@ where
 }
 
 /// The kernel registry: one independently swappable slot per kernel entry.
+///
+/// The `akita` feature selects packed witness commitment;
+/// otherwise commitment streams per polynomial and uses the joint-opening slot.
+/// Both protocols share the same compute slots and reference/optimized constructors.
+/// Bind one execution with [`Self::with_witness`] before proving. The binding
+/// borrows this registry, which can be reused across independent proofs.
 ///
 /// `F` and `PCS` are deployment constants, not swap targets — the PCS traits
 /// are structurally non-object-safe and their associated types are wire
@@ -198,18 +218,237 @@ where
     pub bytecode_reduction_address: Box<dyn PrepareKernel<F, BytecodeReductionAddressPhase<F>>>,
     pub program_image_reduction_address:
         Box<dyn PrepareKernel<F, ProgramImageReductionAddressPhase<F>>>,
+    #[cfg(not(feature = "akita"))]
     pub joint_opening: Box<dyn JointOpeningPolynomials<F>>,
 }
 
-impl<F, PCS> JoltBackend<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    /// Open the proof-scoped session that slot state lives in. One session
-    /// per proof; drop it when the proof is assembled.
-    pub fn begin_proof(&self) -> ProofSession {
-        ProofSession::default()
+/// A reusable kernel registry bound to one execution. The coordinator borrows
+/// this context mutably; its working session stays bound to the witness.
+/// The witness is mandatory and private; only kernel implementations receive it.
+/// Full proving consumes this binding and its session; the registry remains
+/// reusable across independent executions.
+pub struct KernelContext<'a, F: JoltField, B: ?Sized> {
+    registry: &'a B,
+    witness: Box<dyn JoltWitnessPlane<F> + 'a>,
+    session: ProofSession,
+}
+
+impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
+    /// Bind execution data and its initial state without copying trace rows.
+    /// The caller must supply state belonging to this witness. After binding,
+    /// dispatch uses only this session, which cannot be replaced or extracted.
+    pub fn new(
+        registry: &'a B,
+        witness: impl JoltWitnessPlane<F> + 'a,
+        session: ProofSession,
+    ) -> Self {
+        Self {
+            registry,
+            witness: Box::new(witness),
+            session,
+        }
+    }
+
+    /// Inspect proof-local state without detaching it from this execution.
+    pub fn session(&self) -> &ProofSession {
+        &self.session
+    }
+
+    /// Release the completed execution, dropping retained kernel state in the background.
+    pub fn finish(self) {
+        crate::mem::drop_in_background_thread(self.session);
+    }
+
+    pub fn park_residue<R: ConcreteSumcheck<F> + 'static>(
+        &mut self,
+        kernel: Box<dyn SumcheckKernel<F, Relation = R>>,
+    ) {
+        kernel.park_residue(&mut self.session);
+    }
+
+    /// Check the bound witness's declared polynomial support before dispatch.
+    /// This queries shapes only, without requesting polynomial tables or trace rows.
+    pub fn validate_servable(
+        &self,
+        ids: impl IntoIterator<Item = JoltPolynomialId>,
+    ) -> Result<(), WitnessError> {
+        jolt_witness::validate_servable(self.witness.as_ref(), ids)
+    }
+
+    /// Prepare a kernel using this proof's execution data.
+    pub fn prepare<R>(
+        &mut self,
+        inputs: ProverInputs<'_, F, R>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>
+    where
+        R: ConcreteSumcheck<F>,
+        B: PrepareKernel<F, R>,
+    {
+        self.registry
+            .prepare(&mut self.session, self.witness.as_ref(), inputs)
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltBackend<F, PCS> {
+    /// Borrow the registry for a proof with owned or borrowed execution data.
+    pub fn with_witness<'a>(
+        &'a self,
+        witness: impl JoltWitnessPlane<F> + 'a,
+    ) -> KernelContext<'a, F, Self> {
+        KernelContext::new(self, witness, ProofSession::default())
+    }
+}
+
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> KernelContext<'_, F, JoltBackend<F, PCS>> {
+    /// Admit backend address and cycle domains before witness commitments.
+    pub fn preflight(&mut self, dimensions: ReadWriteDimensions) -> Result<(), KernelError<F>> {
+        self.registry.instruction_read_raf.preflight(
+            &mut self.session,
+            self.witness.as_ref(),
+            dimensions,
+        )?;
+        self.registry
+            .ram_read_write
+            .preflight(&mut self.session, self.witness.as_ref(), dimensions)
+    }
+
+    pub fn build_round_scheduler(&mut self) -> Box<dyn RoundScheduler<F>> {
+        self.registry.round_scheduler.build(&mut self.session)
+    }
+
+    pub fn outer_uniskip_poly(&mut self) -> Result<UnivariatePoly<F>, KernelError<F>> {
+        self.registry
+            .spartan_outer_uniskip
+            .first_round_poly(&mut self.session, &[], &())
+    }
+
+    pub fn product_uniskip_poly(
+        &mut self,
+        late_tau: &[F],
+        inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
+    ) -> Result<UnivariatePoly<F>, KernelError<F>> {
+        self.registry
+            .spartan_product_uniskip
+            .first_round_poly(&mut self.session, late_tau, inputs)
+    }
+
+    pub fn prepare_outer_uniskip(&mut self, log_t: usize, tau: &[F]) -> Result<(), KernelError<F>> {
+        self.registry.spartan_outer_uniskip.prepare(
+            &mut self.session,
+            log_t,
+            tau,
+            self.witness.as_ref(),
+        )
+    }
+
+    pub fn prepare_product_uniskip(
+        &mut self,
+        log_t: usize,
+        tau: &[F],
+    ) -> Result<(), KernelError<F>> {
+        self.registry.spartan_product_uniskip.prepare(
+            &mut self.session,
+            log_t,
+            tau,
+            self.witness.as_ref(),
+        )
+    }
+
+    pub fn evaluate_ram_initial_openings(
+        &mut self,
+        openings: &[RamInitialOpening<'_, F>],
+    ) -> Result<Vec<F>, KernelError<F>> {
+        self.registry.ram_initial_openings.evaluate(
+            &mut self.session,
+            openings,
+            self.witness.as_ref(),
+        )
+    }
+
+    #[cfg(feature = "akita")]
+    pub fn commit_witness(
+        &mut self,
+        request: WitnessCommitRequest<'_, PCS>,
+    ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        self.registry
+            .commit
+            .commit_witness(&mut self.session, self.witness.as_ref(), request)
+    }
+
+    #[cfg(not(feature = "akita"))]
+    pub fn commit_witness(
+        &mut self,
+        ids: &[JoltCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
+        self.registry.commit.commit_witness(
+            &mut self.session,
+            self.witness.as_ref(),
+            ids,
+            grid,
+            setup,
+        )
+    }
+
+    #[cfg(all(feature = "field-inline", not(feature = "akita")))]
+    pub fn commit_field_inline_witness(
+        &mut self,
+        ids: &[FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+        self.registry.commit.commit_field_inline_witness(
+            &mut self.session,
+            self.witness.as_ref(),
+            ids,
+            grid,
+            setup,
+        )
+    }
+
+    #[cfg(not(feature = "akita"))]
+    pub fn commit_advice(
+        &mut self,
+        id: JoltCommittedPolynomial,
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        self.registry.commit.commit_advice(
+            &mut self.session,
+            self.witness.as_ref(),
+            id,
+            grid,
+            setup,
+        )
+    }
+
+    #[cfg(all(feature = "field-inline", not(feature = "akita")))]
+    pub fn prepare_field_inline_opening(
+        &mut self,
+        grid: CommitmentGrid,
+    ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>> {
+        self.registry.joint_opening.prepare_field_inline(
+            &mut self.session,
+            self.witness.as_ref(),
+            grid,
+        )
+    }
+
+    #[cfg(not(feature = "akita"))]
+    pub fn prepare_joint_opening(
+        &mut self,
+        polynomials: &[JoltCommittedPolynomial],
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
+        grid: CommitmentGrid,
+    ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+        self.registry.joint_opening.prepare(
+            &mut self.session,
+            self.witness.as_ref(),
+            polynomials,
+            precommitted_tables,
+            grid,
+        )
     }
 }
 
@@ -233,13 +472,13 @@ impl<T: ?Sized> MaybeAllocative for T {}
 /// a monomorphized visitor captured at insertion — where the concrete type
 /// is still known — so heap flamegraphs can see through the `dyn Any`.
 struct Carry {
-    value: Box<dyn Any>,
+    value: Box<dyn Any + Send>,
     #[cfg(feature = "allocative")]
     visit: fn(&dyn Any, &mut Visitor<'_>),
 }
 
 impl Carry {
-    fn new<T: Any + MaybeAllocative>(value: T) -> Self {
+    fn new<T: Any + MaybeAllocative + Send>(value: T) -> Self {
         Self {
             value: Box::new(value),
             #[cfg(feature = "allocative")]
@@ -248,8 +487,6 @@ impl Carry {
     }
 }
 
-/// Visits one carry's concrete value, keyed by its type name (the frame
-/// label in the rendered flamegraph).
 #[cfg(feature = "allocative")]
 fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) {
     if let Some(value) = value.downcast_ref::<T>() {
@@ -312,8 +549,7 @@ pub(crate) fn visit_keyed_polys<K, T>(
 /// Slots stash and share private state keyed by a backend-private type, so
 /// per-slot mixing of backend families cannot collide: witness-upload
 /// residency, cross-member shared tables, and cross-stage carries all live
-/// here, invisible to the stage recipes that thread `&mut ProofSession`
-/// through every slot call.
+/// here; the execution context supplies the session to each slot.
 ///
 /// Inserted state must be [`MaybeAllocative`]: under the `allocative`
 /// feature the session captures a per-entry visitor, so per-stage heap
@@ -331,7 +567,7 @@ impl ProofSession {
         clippy::expect_used,
         reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
     )]
-    pub fn state_or_insert_with<T: Any + MaybeAllocative>(
+    pub fn state_or_insert_with<T: Any + MaybeAllocative + Send>(
         &mut self,
         init: impl FnOnce() -> T,
     ) -> &mut T {
@@ -358,7 +594,7 @@ impl ProofSession {
     /// missing or stale carry is a proof-time
     /// [`KernelError`](crate::KernelError), the accepted cost of keeping
     /// every batch member uniform.
-    pub fn park<T: Any + MaybeAllocative>(&mut self, value: T) {
+    pub fn park<T: Any + MaybeAllocative + Send>(&mut self, value: T) {
         let _ = self.state.insert(TypeId::of::<T>(), Carry::new(value));
     }
 

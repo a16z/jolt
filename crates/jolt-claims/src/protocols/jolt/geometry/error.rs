@@ -52,8 +52,6 @@ pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), PointG
     Ok(())
 }
 
-/// [`require_len`] with the opening-point flavored error, for inputs that are
-/// opening points rather than challenge vectors.
 pub(crate) fn require_opening_point_len<F>(
     values: &[F],
     expected: usize,

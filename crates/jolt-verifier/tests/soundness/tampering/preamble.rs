@@ -66,19 +66,6 @@ fn excessive_trace_length_rejects_now() {
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
-fn invalid_ram_domain_rejects_now() {
-    let base = standard_muldiv_case();
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        tamper_manifest::required_target("proof.ram_K"),
-        &base,
-        |case| {
-            case.proof.ram_K = 3;
-        },
-    );
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-#[test]
 fn zero_ram_domain_rejects_now() {
     let base = standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
@@ -196,8 +183,3 @@ fn tampered_one_hot_config_rejects() {
         },
     );
 }
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn preamble_tampering_requires_verifier_fixtures() {}

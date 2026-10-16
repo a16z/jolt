@@ -88,7 +88,6 @@ fn replaced_untrusted_advice_commitment_rejects() {
         tamper_manifest::required_target("proof.untrusted_advice_commitment"),
         &base,
         |case| {
-            // valid-but-wrong payload: another commitment from the same proof
             case.proof.untrusted_advice_commitment = Some(case.proof.commitments.rd_inc.clone());
         },
     );
@@ -110,8 +109,3 @@ fn replaced_trusted_advice_commitment_rejects() {
         },
     );
 }
-
-#[test]
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[ignore = "direct commitment tampering fixtures are not wired yet"]
-fn tampered_commitment_order_reject() {}

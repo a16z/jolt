@@ -1,5 +1,3 @@
-//\! Claim-reduction symbolic sumcheck relations (Phase 3 — to be filled).
-
 pub mod advice;
 pub mod bytecode;
 pub mod hamming_weight;

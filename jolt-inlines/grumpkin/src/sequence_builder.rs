@@ -7,7 +7,7 @@ use jolt_inlines_sdk::host::{
 };
 struct GrumpkinDivAdv {
     asm: InlineExpansionBuilder,
-    vr: InlineRegister, // only one register needed
+    vr: InlineRegister,
     operands: InlineOperands,
 }
 

@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 5 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
@@ -58,7 +56,6 @@ impl<F: JoltField> Stage5OutputClaims<F> {
     }
 }
 
-/// The shared opening-point accessors over the point-only stage-5 aggregate.
 impl<F: JoltField> Stage5OutputPoints<F> {
     /// The instruction read-RAF cycle point (shared by the lookup-table-flag
     /// and RAF-flag openings).

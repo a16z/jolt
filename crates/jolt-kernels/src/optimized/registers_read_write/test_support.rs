@@ -1,16 +1,12 @@
-//! Shared parity-test support for the registers kernel family.
-
 use core::fmt::Debug;
 
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, Ring};
-use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RegisterRead, RegisterState, RegisterWrite, TraceOutput,
-    TraceRow,
-};
+use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RegisterRead, RegisterState, RegisterWrite};
 use jolt_verifier::stages::relations::{
     ChallengeIdOf, ConcreteSumcheck, ConcreteSumcheckChallenges, OpeningIdOf, SumcheckInputClaims,
     SumcheckInputPoints, SumcheckOutputClaims,
@@ -21,8 +17,6 @@ use crate::optimized::testing::trimmed;
 use crate::reference::ReferenceBackend;
 use crate::{PrepareKernel, ProofSession, ProverInputs};
 
-/// Deterministic nonzero field elements (an LCG over odd u64s), used for
-/// both fixed points and round challenges.
 pub(crate) fn challenge_sequence(len: usize, seed: u64) -> Vec<Fr> {
     let mut state = seed;
     (0..len)
@@ -98,15 +92,11 @@ impl TraceFixture {
             is_compressed: false,
         };
         self.rows
-            .push(TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap());
+            .push(TraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap());
     }
 
     /// Run `f` against a trace backend padded to `2^log_t` cycles.
-    pub(crate) fn with_plane<R>(
-        self,
-        log_t: usize,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
-    ) -> R {
+    pub(crate) fn with_plane<R>(self, log_t: usize, f: impl FnOnce(&TraceBackend) -> R) -> R {
         assert!(self.rows.len() <= 1 << log_t, "fixture overflows 2^log_t");
         let bytecode = self
             .rows
@@ -131,10 +121,24 @@ impl TraceFixture {
                 lookups_ra_virtual_log_k_chunk: 16,
             },
         );
+        let rows = self
+            .rows
+            .into_iter()
+            .map(|row| {
+                let instruction = row.instruction();
+                let pc = preprocessing
+                    .bytecode
+                    .get_pc(&instruction)
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+                TraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap()
+            })
+            .collect();
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(self.rows), Default::default(), None, None),
+            TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend)

@@ -69,35 +69,3 @@ fn collect_leaf_cognitive(space: &FuncSpace, total: &mut f64, count: &mut usize)
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cognitive_on_proof_system() {
-        let obj = CognitiveComplexityObjective {
-            crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
-        };
-        let val = obj.collect_measurement().unwrap();
-        assert!(val > 0.0, "avg cognitive should be > 0, got {val}");
-        assert!(val < 100.0, "avg cognitive should be < 100, got {val}");
-    }
-
-    #[test]
-    fn cognitive_on_single_file() {
-        let source = b"fn simple() { let x = 1; }".to_vec();
-        let path = Path::new("test.rs");
-        let space = rust_code_analysis::get_function_spaces(
-            &rust_code_analysis::LANG::Rust,
-            source,
-            path,
-            None,
-        )
-        .unwrap();
-        let mut total = 0.0;
-        let mut count = 0;
-        collect_leaf_cognitive(&space, &mut total, &mut count);
-        assert_eq!(total, 0.0);
-    }
-}

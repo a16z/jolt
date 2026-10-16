@@ -1,13 +1,11 @@
 use std::time::Instant;
 use tracing::info;
 
-// Demonstration of advice tape usage in a provable computation
 pub fn main() {
     tracing_subscriber::fmt::init();
 
     let target_dir = "/tmp/jolt-guest-targets";
 
-    // example input
     let n = 221u8;
     let a = vec![1usize, 2, 3, 4, 5];
     let b = vec![0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];

@@ -1,5 +1,3 @@
-//! Shared checks for committed sumcheck stage boundaries.
-
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::SumcheckProof;

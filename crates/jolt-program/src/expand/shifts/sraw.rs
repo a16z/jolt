@@ -1,6 +1,5 @@
 use super::*;
 
-/// Lowers variable `SRAW` through a word-width shift mask and fused shift row.
 pub(in crate::expand) fn expand_sraw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

@@ -43,7 +43,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for ReferenceBack
         }
         let (r_address, r_cycle) = registers_val_point.split_at(REGISTER_ADDRESS_BITS);
 
-        // The address-bound `rd_wa` slice, folded from the one-hot grid.
         let wa_folded = address_fold(
             witness,
             rd_wa_val_evaluation(),

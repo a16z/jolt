@@ -31,7 +31,6 @@ pub fn invariant(attr: TokenStream, item: TokenStream) -> TokenStream {
     let targets = parse_targets(attr);
     let has_test = targets.contains(&"Test".to_string());
 
-    // Build the EnumSet expression for InvariantTargets::targets()
     let target_exprs: Vec<proc_macro2::TokenStream> = targets
         .iter()
         .map(|t| {

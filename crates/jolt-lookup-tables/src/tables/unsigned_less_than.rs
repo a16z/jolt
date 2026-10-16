@@ -24,7 +24,6 @@ impl<const XLEN: usize> LookupTable for UnsignedLessThanTable<XLEN> {
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
-        // \sum_i (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)
         let mut result = F::zero();
         let mut eq_term = F::one();
         for i in 0..XLEN {

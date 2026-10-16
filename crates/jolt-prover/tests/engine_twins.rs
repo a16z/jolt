@@ -18,7 +18,7 @@ use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound, ClearSumcheckRecorder,
     CommittedSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckDomain, SumcheckError,
-    SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+    SumcheckProof, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
@@ -120,14 +120,12 @@ fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
     PedersenSetup::new(generators, generator.scalar_mul(&Fr::from_u64(99)))
 }
 
-/// Synthetic stand-ins for a stage's flattened output-claim values.
 fn synthetic_output_values() -> Vec<Fr> {
     vec![Fr::from_u64(11), Fr::from_u64(22), Fr::from_u64(33)]
 }
 
 #[test]
 fn clear_engine_twin_matches_generated_verify_clear() {
-    // Prover: draw → sums → begin_batch(clear) → prove_batch → finish.
     let sumchecks = fixture();
     let inputs = inputs();
     let mut prover_transcript = Blake2bTranscript::new(b"engine-twin");
@@ -155,7 +153,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
         91,
     );
 
-    let mut recorder = ClearSumcheckRecorder::<Fr, Bn254G1>::new();
+    let mut recorder = ClearSumcheckRecorder::<Fr>::new();
     let (batch, prover_coefficients) = sumchecks
         .begin_batch(
             &inputs,
@@ -183,7 +181,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
     // absorbs (the low-level clear path the composed `verify_clear` wraps).
     let mut verifier_transcript = Blake2bTranscript::new(b"engine-twin");
     let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-    let mut verifier_recorder = ClearSumcheckRecorder::<Fr, Bn254G1>::new();
+    let mut verifier_recorder = ClearSumcheckRecorder::<Fr>::new();
     let (verifier_batch, verifier_coefficients) = sumchecks
         .begin_batch(
             &inputs,
@@ -192,8 +190,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
             &mut verifier_transcript,
         )
         .unwrap();
-    let reduction = recorded
-        .proof
+    let reduction = SumcheckProof::<Fr, Bn254G1>::from(recorded.proof)
         .verify_compressed_boolean(
             verifier_batch.max_num_vars,
             verifier_batch.max_degree,
@@ -270,8 +267,6 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         .unwrap();
     assert!(recorded.committed_witness.is_some());
 
-    // Verifier: draw → generated verify_zk (coefficient draws, committed
-    // round consistency, output-claim commitment absorbs).
     let mut verifier_transcript = Blake2bTranscript::new(b"engine-zk-twin");
     let _verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
     let consistency = sumchecks
@@ -314,7 +309,7 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
     );
 
     let mut prover_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
-    let proved = prove_uniskip_clear::<Fr, Bn254G1, _>(
+    let proved = prove_uniskip_clear::<Fr, _>(
         poly,
         input_claim,
         degree,
@@ -325,7 +320,7 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
 
     let mut verifier_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
     let challenge = uniskip::verify_clear(
-        &proved.proof,
+        &SumcheckProof::<Fr, Bn254G1>::from(proved.proof),
         &params,
         input_claim,
         proved.output_claim,

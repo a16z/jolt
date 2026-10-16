@@ -1,6 +1,7 @@
+use jolt_claims::r1cs::ClaimLoweringError;
 use jolt_crypto::VectorOpeningError;
 use jolt_field::JoltField;
-use jolt_r1cs::{ClaimLoweringError, ConstraintMatrixEvalError};
+use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::{SumcheckError, SumcheckR1csError};
 use thiserror::Error as ThisError;
 

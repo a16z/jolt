@@ -7,14 +7,14 @@
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
 //! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
+use jolt_claims::protocols::composed::r1cs::{
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+};
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-};
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
@@ -26,7 +26,6 @@ use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
 use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{ProverError, StageProver as _};
@@ -47,11 +46,9 @@ pub struct Stage1ProverOutput<F: JoltField, C> {
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage1<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     log_t: usize,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, VC::Output>, ProverError<F>>
 where
@@ -64,19 +61,11 @@ where
     // Backend-neutral kernel-seam spans at the call boundary, so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's
     // kernel-seam contract.
-    tracing::info_span!("SpartanOuterUniskip::prepare").in_scope(|| {
-        backend
-            .spartan_outer_uniskip
-            .prepare(session, log_t, &tau, witness)
-    })?;
+    tracing::info_span!("SpartanOuterUniskip::prepare")
+        .in_scope(|| backend.prepare_outer_uniskip(log_t, &tau))?;
 
-    let uniskip_poly =
-        tracing::info_span!("SpartanOuterUniskip::first_round_poly").in_scope(|| {
-            backend
-                .spartan_outer_uniskip
-                .first_round_poly(session, &[], &())
-        })?;
-    // The selected jolt-r1cs shape includes the field-inline rows when enabled.
+    let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
+        .in_scope(|| backend.outer_uniskip_poly())?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
@@ -86,7 +75,6 @@ where
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
 
-    // The generated stage drivers, on the verifier's own batch type.
     let sumchecks = Stage1BatchSumchecks {
         outer_remainder: OuterRemainder::new(
             SpartanOuterDimensions::rv64(log_t),
@@ -102,12 +90,10 @@ where
         ),
     };
 
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &challenges,
@@ -117,7 +103,7 @@ where
     #[cfg(feature = "zk")]
     let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
     #[cfg(not(feature = "zk"))]
-    let sumcheck_proof = proved.recorded.proof;
+    let sumcheck_proof = proved.recorded.proof.into();
 
     let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
@@ -152,28 +138,23 @@ mod field_inline_round_trip {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
-    use jolt_program::execution::OwnedTrace;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::stages::stage2::product_tau_low;
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
-    use crate::stages::field_inline_fixtures::{
-        addi_only_backend, field_arithmetic_backend, LOG_T,
-    };
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, LOG_T};
 
-    fn round_trip(trace_backend: TraceBackend<OwnedTrace>) {
+    fn round_trip(trace_backend: TraceBackend) {
         let witness = trace_backend.with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let mut session = backend.begin_proof();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline");
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
+            &mut context,
             &mode,
             LOG_T,
-            &witness,
             &mut prover_transcript,
         )
         .unwrap();
@@ -195,23 +176,12 @@ mod field_inline_round_trip {
             assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
         }
 
-        // The verifier twin.
         let mut transcript = Blake2bTranscript::new(b"stage1-field-inline");
         twins::replay_stage1(&mut transcript, &out);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }
 
-    /// The ADDI-only field-inline trace: every field-inline column is zero, so this pins
-    /// the composed protocol on a field-inline guest that executes no field-inline
-    /// instruction.
-    #[test]
-    fn addi_only_stage1_round_trips_the_composed_verifier() {
-        round_trip(addi_only_backend());
-    }
-
-    /// Actual field-inline rows via decoded field-inline instruction words (two field loads and a
-    /// multiply).
     #[test]
     fn field_arithmetic_stage1_round_trips_the_composed_verifier() {
         round_trip(field_arithmetic_backend());
@@ -244,17 +214,15 @@ mod field_inline_zk {
     #[test]
     fn committed_stage1_shell_carries_the_composed_rows_and_replays() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let mut session = backend.begin_proof();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
+            &mut context,
             &mode,
             LOG_T,
-            &witness,
             &mut prover_transcript,
         )
         .unwrap();
@@ -293,7 +261,6 @@ mod field_inline_zk {
             50usize.div_ceil(CAPACITY)
         );
 
-        // The replay.
         let checked = CheckedInputs {
             public_io: JoltDevice::default(),
             zk: true,
@@ -331,36 +298,5 @@ mod field_inline_zk {
             .unwrap();
 
         assert_eq!(transcript.state(), prover_transcript.state());
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Without field-inline, the composed jolt-r1cs outer uni-skip constants equal the
-    /// jolt-claims RV64-only constants this recipe previously passed — the
-    /// swap is byte-neutral.
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn outer_uniskip_constants_match_the_rv64_only_values() {
-        use jolt_claims::protocols::jolt::geometry::dimensions::{
-            OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-        };
-
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_DOMAIN_SIZE);
-        assert_eq!(
-            SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-            OUTER_UNISKIP_FIRST_ROUND_DEGREE
-        );
-    }
-
-    /// With field-inline enabled, the composed outer domain carries the appended field-inline rows
-    /// — the spec's 15-point domain and its degree-42 first round.
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn outer_uniskip_constants_are_the_composed_field_domains() {
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
     }
 }

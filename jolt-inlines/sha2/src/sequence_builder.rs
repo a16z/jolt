@@ -27,17 +27,11 @@ pub const K: [u64; 64] = [
 /// Output will be written to rs1..rs1+8
 struct Sha256SequenceBuilder {
     asm: InlineExpansionBuilder,
-    /// Round id
     round: i32,
-    /// Working state registers A-H
     state: [InlineRegister; 8],
-    /// Message schedule W[0..15] (16 registers)
     message: [InlineRegister; 16],
-    /// Initial state values for final addition (8 registers, only used when !initial)
     iv: Vec<InlineRegister>,
-    /// Operands
     operands: InlineOperands,
-    /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
 }
 
@@ -66,11 +60,8 @@ impl Sha256SequenceBuilder {
         })
     }
 
-    /// Loads and runs all SHA256 rounds
     fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         if !self.initial {
-            // Load initial hash values from memory when using custom IV
-            // Load all A-H into initial_state registers (used both for initial values and final addition)
             (0..4).for_each(|i| {
                 self.asm.load_paired_u32_dirty(
                     self.operands.rs1,
@@ -80,7 +71,6 @@ impl Sha256SequenceBuilder {
                 );
             });
         }
-        // Load input words into message registers
         for i in 0..8 {
             let lo = *self.message[i * 2];
             let hi = *self.message[i * 2 + 1];
@@ -91,13 +81,10 @@ impl Sha256SequenceBuilder {
             self.asm.emit_i(Kind::VIRTUAL_REV8_W, lo, lo, 0);
             self.asm.emit_i(SourceKind::SRLI, hi, lo, 32);
         }
-        // Run 64 rounds
         for _ in 0..64 {
             self.round()?;
         }
         self.final_add_iv();
-        // Store output values to rs1 location
-        // Store output A..H in-order using the current VR mapping after all rotations
         let outs = [('A', 'B'), ('C', 'D'), ('E', 'F'), ('G', 'H')];
         for (i, (ch1, ch2)) in outs.iter().enumerate() {
             self.asm.store_paired_u32(
@@ -115,10 +102,8 @@ impl Sha256SequenceBuilder {
         self.asm.finalize()
     }
 
-    /// Adds IV to the final hash value to produce output
     fn final_add_iv(&mut self) {
         if !self.initial {
-            // We have all initial values A-H stored in iv registers
             self.asm.add(self.vri('A'), Reg(*self.iv[0]), self.vr('A'));
             self.asm.add(self.vri('B'), Reg(*self.iv[1]), self.vr('B'));
             self.asm.add(self.vri('C'), Reg(*self.iv[2]), self.vr('C'));
@@ -128,7 +113,6 @@ impl Sha256SequenceBuilder {
             self.asm.add(self.vri('G'), Reg(*self.iv[6]), self.vr('G'));
             self.asm.add(self.vri('H'), Reg(*self.iv[7]), self.vr('H'));
         } else {
-            // We are using constants for final addition round
             self.asm.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
             self.asm.add(self.vri('B'), Imm(BLOCK[1]), self.vr('B'));
             self.asm.add(self.vri('C'), Imm(BLOCK[2]), self.vr('C'));
@@ -140,7 +124,6 @@ impl Sha256SequenceBuilder {
         }
     }
 
-    /// Performs one round of SHA256 compression
     fn round(&mut self) -> Result<(), ExpansionError> {
         assert!(self.round < 64);
         let t1 = self.asm.allocate_for_inline()?;
@@ -159,39 +142,29 @@ impl Sha256SequenceBuilder {
         Ok(())
     }
 
-    /// Compute T1 into the provided `t1` register and return it as a Value.
     fn compute_t1(&mut self, t1: u8, ss: u8, ss2: u8) -> Value {
         // Put H + K
         // We do this first because H is going to be Imm the longest of all inputs
         let h_add_k = self.asm.add(Imm(K[self.round as usize]), self.vri('H'), t1);
-        // Put Sigma_1(E_0) into register t1
         let sigma_1 = self.sha_sigma_1(self.vri('E'), ss, ss2);
         let add_sigma_1 = self.asm.add(h_add_k, sigma_1, t1);
-        // Put Ch(E_0, F_0, G_0) into register t2
         let ch = self.sha_ch(self.vri('E'), self.vri('F'), self.vri('G'), ss, ss2);
         let add_ch = self.asm.add(add_sigma_1, ch, t1);
         self.update_w([ss, ss2]);
-        // Add W_(rid)
         self.asm.add(add_ch, Reg(self.w(0)), t1)
     }
 
-    /// Compute T2 into the provided `t2` register and return it as a Value.
     fn compute_t2(&mut self, t2: u8, ss: u8, ss2: u8) -> Value {
-        // Put Sigma_0(A_0) into register t2
         let sigma_0 = self.sha_sigma_0(self.vri('A'), t2, ss);
-        // Put Maj(A_0, B_0, C_0) into register ss
         let maj = self.sha_maj(self.vri('A'), self.vri('B'), self.vri('C'), ss, ss2);
-        // Add Maj to t2
         self.asm.add(sigma_0, maj, t2)
     }
 
-    /// Apply A/E updates for the current round using computed T1/T2 and then advance the round.
     fn apply_round_update(&mut self, t1: Value, t2: Value, old_d: Value) {
         self.round += 1;
         // After incrementing round, the rotation has happened
         // So vr('A') now points to the right place to write the new A
         self.asm.add(t1, t2, self.vr('A'));
-        // Overwrite D_0 with D_0 + T_1
         self.asm.add(t1, old_d, self.vr('E'));
     }
 
@@ -199,11 +172,6 @@ impl Sha256SequenceBuilder {
     /// When initial is true, uses BLOCK constants for the first few rounds
     /// until all values have been computed
     fn vri(&self, shift: char) -> Value {
-        // For initial rounds without custom IV, some values haven't been computed yet
-        // Round 0: Only A,E are computed (from initial values)
-        // Round 1: A,B,E,F are available
-        // Round 2: A,B,C,E,F,G are available
-        // Round 3+: All values are in registers
         if self.initial
             && (self.round == 0
                 || (self.round == 1 && !['A', 'E'].contains(&shift))
@@ -240,11 +208,9 @@ impl Sha256SequenceBuilder {
         }
         let shift = shift as i32 - 'A' as i32;
 
-        // Standard rotation: each round shifts all variables by -1
         *self.state[(-self.round + shift).rem_euclid(8) as usize]
     }
 
-    /// Register number containing W_(rid+shift)
     fn w(&self, shift: i32) -> u8 {
         *self.message[((self.round + shift).rem_euclid(16)) as usize]
     }
@@ -255,15 +221,10 @@ impl Sha256SequenceBuilder {
         if self.round < 16 {
             return;
         }
-        // Calculate σ₀(W[t-15])
         self.sha_word_sigma_0(self.w(-15), ss[0], ss[1]);
-        // Add σ₀ to W[t-16]
         self.asm.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
-        // Add W[t-7] to W[t-16]
         self.asm.add(Reg(self.w(-7)), Reg(self.w(-16)), self.w(-16));
-        // Calculate σ₁(W[t-2])
         self.sha_word_sigma_1(self.w(-2), ss[0], ss[1]);
-        // Add σ₁ to W[t-16] to get final W[t]
         self.asm.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
     }
 
@@ -280,7 +241,6 @@ impl Sha256SequenceBuilder {
                 self.asm.xor(e_and_f, neg_e_and_g, rd)
             }
             _ => {
-                // Fallback for immediate values (used in first few rounds)
                 let neg_e = self.asm.xor(rs1, Imm(u32::MAX as u64), rd);
                 let neg_e_and_g = self.asm.and(neg_e, rs3, rd);
                 self.asm.xor(e_and_f, neg_e_and_g, rd)

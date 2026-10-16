@@ -34,10 +34,10 @@ use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
-// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the jolt-claims RV64-only
+// The COMPOSED R1CS shapes (feature-aware): identical to the jolt-claims RV64-only
 // constants without field-inline, the field-inline-extended row/column composition
 // under `field-inline` — the shapes the composed verifier checks.
-use jolt_r1cs::constraints::jolt::{
+use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
@@ -122,8 +122,6 @@ pub struct SpartanOuterKernel<F: JoltField> {
     /// opening-column order: the relation's ordinary variables, then (under `field-inline`)
     /// the five field-inline columns.
     input_tables: Vec<Vec<F>>,
-    /// Per-constraint-row value tables over the cycle domain:
-    /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]`.
     az_rows: Vec<Vec<F>>,
     bz_rows: Vec<Vec<F>>,
     /// eq(τ_low, ·) over the (cycle ∥ stream) index `j = (t << 1) | s`
@@ -159,13 +157,6 @@ impl<F: JoltField> SpartanOuterKernel<F> {
         })
     }
 
-    /// Brute-force the uni-skip first-round polynomial. The summand's
-    /// row-node polynomial
-    /// `t1(Y) = Σ_(s,t) eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)` vanishes on
-    /// the 10 in-domain nodes (each row is a satisfied
-    /// `guard · (left − right) = 0`), so `t1` is interpolated over the
-    /// 19-point centered domain from the 9 extended-node evaluations; the
-    /// transmitted polynomial is `LK(τ_high, ·) × t1`.
     fn uniskip_first_round_poly(&self) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let tau_high = self.tau[self.log_t + 1];
         let extended_size = 2 * SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE - 1;
@@ -224,7 +215,7 @@ impl<F: JoltField> SpartanOuterKernel<F> {
     /// uni-skip round's challenge is drawn: a plain naive member over the
     /// joint `(cycle ‖ stream)` domain, `index = (t << 1) | s`. The
     /// per-stream `Az`/`Bz` linear forms are single-sourced from the same
-    /// jolt-r1cs functions the verifier's coefficient build uses; each is
+    /// jolt-claims functions the verifier's coefficient build uses; each is
     /// linear in the stream variable, so every derived leaf materializes as
     /// one multilinear table.
     fn into_remainder(

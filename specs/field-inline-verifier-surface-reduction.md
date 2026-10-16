@@ -64,8 +64,9 @@ transcript byte, and fixture stays identical in every mode.
    extensions in `outer_remainder` / `product_remainder` / `product_uniskip`
    consume product sizing from `jolt-claims::protocols::composed::geometry` and
    the selected R1CS tables (`spartan_outer_opening_columns`, lane tables) from
-   jolt-r1cs. The combined symbolic relations live in the sibling `composed`
-   module; the verifier supplies concrete evaluation and stage wiring.
+   `jolt-claims::protocols::composed::r1cs`. The combined symbolic relations
+   live in the sibling `composed` module; the verifier supplies concrete
+   evaluation and stage wiring.
 5. **Use canonical bytecode rows.** Field operation flags now use `CircuitFlags`,
    and field-register operands are projected from the instruction's existing
    operand slots. The side table, conversion, and duplicate flag fold are removed;
@@ -107,7 +108,7 @@ differently-typed inputs, and stages 2/4/6b hand-curate wire-bearing absorb
 orders no static table can pin. R3 (mechanisms 3–5) was a no-go at ~48/~27/~5
 recoverable lines respectively: the seams' member constructors and attach
 targets are type-distinct (an executor costs what it removes at n=8), the
-composed Spartan/product code already consumes the feature-aware jolt-r1cs
+composed Spartan/product code already consumes the feature-aware composed R1CS
 tables, and the bytecode converter is fail-closed validation plus
 already-schema-driven suppression.
 

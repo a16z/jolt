@@ -15,13 +15,10 @@ pub fn main() {
     let prove_overflow_stack = guest::build_prover_overflow_stack(program, prover_preprocessing);
 
     let res = panic::catch_unwind(|| {
-        // trying to allocate 1024 elems array and sum it up
-        // with stack_size=1024, should panic
         let (_, _, _) = prove_overflow_stack();
     });
     handle_result(res);
 
-    // now lets try to overflow the heap, should also panic
     let mut program = guest::compile_overflow_heap(target_dir);
     let shared_preprocessing = guest::preprocess_shared_overflow_heap(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_overflow_heap(shared_preprocessing.clone());
@@ -32,8 +29,6 @@ pub fn main() {
     });
     handle_result(res);
 
-    // valid case for stack allocation, calls overflow_stack() under the hood
-    // but with stack_size=8192
     let mut program = guest::compile_allocate_stack_with_increased_size(target_dir);
 
     let shared_preprocessing =

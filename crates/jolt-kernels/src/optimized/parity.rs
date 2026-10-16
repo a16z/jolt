@@ -63,9 +63,6 @@ impl ExceptionalEq {
     }
 }
 
-/// Probe the committed one-hot family sizes and chunk bits off the backend's
-/// shape surface: family count by scanning indices until the shape errors,
-/// chunk bits from `log(one-hot rows) − log_t`.
 #[cfg(not(feature = "akita"))]
 pub(crate) fn probe_one_hot_family(
     witness: &impl JoltWitnessOracle<Fr>,

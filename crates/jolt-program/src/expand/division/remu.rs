@@ -13,8 +13,6 @@ pub(in crate::expand) fn expand_remu(
     let mut asm = ExpansionBuilder::new(*instruction);
     let v0 = asm.allocate()?;
 
-    // v0 starts as the quotient witness and is then reused for q * divisor and
-    // finally for the derived remainder.
     asm.emit_j(
         SourceInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
         v0.operand(),

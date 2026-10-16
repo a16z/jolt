@@ -37,7 +37,6 @@ impl<const XLEN: usize> LookupTable for ShiftDataHTable<XLEN> {
             let x_k: F = r[2 * (XLEN - 1 - k)].into();
             lane += x_k * F::from_u64(1u64 << k);
         }
-        // offset = 4·y_2 + 2·y_1 (bit 0 ignored)
         let mut result = lane;
         for i in 1..3 {
             let y_i: F = r[2 * (XLEN - 1 - i) + 1].into();

@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualNegateIf {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualNegateIf as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualNegateIf as RISCVInstruction>::RamAccess) {
         let sign_source = cpu.x[self.operands.rs1 as usize];
         let value = cpu.x[self.operands.rs2 as usize];
         cpu.write_register(

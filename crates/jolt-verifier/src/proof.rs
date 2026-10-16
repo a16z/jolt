@@ -1,5 +1,3 @@
-//! Verifier-owned proof model types.
-
 use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -25,7 +23,7 @@ use crate::{
 #[cfg(not(feature = "akita"))]
 pub type ProofCommitments<PCS> = JoltCommitments<<PCS as Commitment>::Output>;
 /// The proof-carried polynomial commitments on the `akita` build: the single
-/// packed `OneHotTrace` commitment carrying every per-proof column.
+/// native `OneHotTrace` group commitment carrying every per-proof column.
 #[cfg(feature = "akita")]
 pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 
@@ -189,7 +187,7 @@ pub struct JoltCommitments<C> {
     /// Present on every field-inline proof (the build with field-inline enabled proves all
     /// guests under the composed protocol). Carried as an `Option` because this type is shared
     /// with producers that cannot supply field-inline commitments — the legacy prover and the
-    /// packed converter — whose proofs fail the protocol-config gate before this field is ever
+    /// Akita converter — whose proofs fail the protocol-config gate before this field is ever
     /// read; [`validate_proof_consistency`] rejects a missing payload fail-closed for
     /// everything else.
     ///
@@ -269,7 +267,6 @@ pub struct ClearProofClaims<F: JoltField> {
 }
 
 impl<F: JoltField> ClearProofClaims<F> {
-    /// Assemble the clear claims from the stage outputs.
     #[expect(
         clippy::too_many_arguments,
         reason = "one argument per stage, mirroring the wire struct"

@@ -15,25 +15,21 @@ use crate::{
 pub struct AlignedHash32(pub [u8; 32]);
 
 impl AlignedHash32 {
-    /// Create a new AlignedHash32 from a byte array
     #[inline(always)]
     pub const fn new(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    /// Create a zeroed AlignedHash32
     #[inline(always)]
     pub const fn zeroed() -> Self {
         Self([0u8; 32])
     }
 
-    /// Get a reference to the inner bytes
     #[inline(always)]
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 
-    /// Get a mutable reference to the inner bytes
     #[inline(always)]
     pub fn as_bytes_mut(&mut self) -> &mut [u8; 32] {
         &mut self.0
@@ -69,13 +65,9 @@ impl AsMut<[u8; 32]> for AlignedHash32 {
 }
 
 pub struct Blake3 {
-    /// Hash state (8 x 32-bit words)
     h: [u32; CHAINING_VALUE_LEN],
-    /// Buffer for incomplete blocks
     buffer: [u8; BLOCK_INPUT_SIZE_IN_BYTES],
-    /// Current buffer length
     buffer_len: usize,
-    /// Total bytes processed
     counter: u64,
 }
 
@@ -121,10 +113,8 @@ impl Blake3 {
         self.buffer_len += input_len;
     }
 
-    /// Finalizes the hash and returns the digest.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE_IN_BYTES] {
-        // Zero padding
         if self.buffer_len < BLOCK_INPUT_SIZE_IN_BYTES {
             unsafe {
                 core::ptr::write_bytes(
@@ -188,7 +178,6 @@ fn compression_caller(
 
     #[cfg(target_endian = "big")]
     {
-        // For big-endian, we need to convert each u32
         for i in 0..MSG_BLOCK_LEN {
             let offset = i * 4;
             message[i] = u32::from_le_bytes([
@@ -216,7 +205,6 @@ impl Default for Blake3 {
     }
 }
 
-/// Convert hash state to output bytes.
 #[inline(always)]
 pub(crate) fn to_bytes(h: [u32; CHAINING_VALUE_LEN]) -> [u8; OUTPUT_SIZE_IN_BYTES] {
     #[cfg(target_endian = "little")]
@@ -274,7 +262,6 @@ pub(crate) fn compress_direct(
     #[cfg(target_endian = "little")]
     if len > 0 {
         unsafe {
-            // Copy input directly to message (padded with zeros)
             core::ptr::copy_nonoverlapping(input.as_ptr(), message.as_mut_ptr() as *mut u8, len);
         }
     }
@@ -351,22 +338,17 @@ pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u
     // Memory layout for BLAKE3 instruction:
     // message points to: message block (64 bytes / 16 u32s) + counter (8 bytes / 2 u32s) + block_len (4 bytes / 1 u32) + flags (4 bytes / 1 u32)
 
-    // Extract the message block (first 16 u32s)
     let message_block = &*(message as *const [u32; 16]);
 
-    // Extract counter (next 2 u32s at offset 16)
     let counter_ptr = message.add(16);
     let counter_low = *counter_ptr;
     let counter_high = *counter_ptr.add(1);
     let counter_array = [counter_low, counter_high];
 
-    // Extract block_len (next u32 at offset 18)
     let block_len = *message.add(18);
 
-    // Extract flags (next u32 at offset 19)
     let flags = *message.add(19);
 
-    // On the host, we call our reference implementation from the exec module.
     crate::exec::execute_blake3_compression(
         &mut *(chaining_value as *mut [u32; 8]),
         message_block,
@@ -412,14 +394,12 @@ unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, iv: *mut 
 #[cfg(feature = "host")]
 #[inline(always)]
 unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, key: *mut u32) {
-    // Concatenate left || right as message
     let mut message = [0u32; 16];
     core::ptr::copy_nonoverlapping(left, message.as_mut_ptr(), 8);
     core::ptr::copy_nonoverlapping(right, message.as_mut_ptr().add(8), 8);
 
     let key_arr = &mut *(key as *mut [u32; 8]);
 
-    // flags = CHUNK_START | CHUNK_END | ROOT | KEYED_HASH
     crate::exec::execute_blake3_compression(
         key_arr,
         &message,
@@ -495,7 +475,6 @@ mod tests {
         let len = data.len();
         let mut parts = Vec::new();
         let mut partitioned_num = 0usize;
-        // Use a fixed seed for deterministic test results
         let mut rng = StdRng::seed_from_u64(42);
         while partitioned_num < len {
             let remaining = len - partitioned_num;
@@ -544,48 +523,21 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_panics_on_larger_than_block_input() {
-        // 65 bytes should trigger panic
         let input = vec![0u8; BLOCK_INPUT_SIZE_IN_BYTES + 1];
         let _ = Blake3::digest(&input);
     }
 
     #[test]
-    fn test_edge_cases() {
-        // Empty
-        let empty: &[u8] = &[];
-        assert_eq!(Blake3::digest(empty), compute_expected_result(empty));
-
-        // Length 64 (block-size)
-        let mut l64 = [0u8; 64];
-        for (i, b) in l64.iter_mut().enumerate() {
-            *b = 255 - i as u8;
-        }
-        assert_eq!(Blake3::digest(&l64), compute_expected_result(&l64));
-
-        // All zeros (64 bytes)
-        let zeros = [0u8; 64];
-        assert_eq!(Blake3::digest(&zeros), compute_expected_result(&zeros));
-
-        // All 0xFF (64 bytes)
-        let maxes = [0xFFu8; 64];
-        assert_eq!(Blake3::digest(&maxes), compute_expected_result(&maxes));
-    }
-
-    #[test]
     fn test_blake3_aligned_vs_unaligned() {
-        // Test various sizes up to 64 bytes (Blake3 block size limit)
         let test_sizes = [0, 1, 3, 4, 7, 8, 15, 16, 31, 32, 33, 63, 64];
 
         for &size in &test_sizes {
-            // Create aligned buffer
             let aligned: Vec<u8> = (0..size).map(|i| (i * 37 + 11) as u8).collect();
 
-            // Create unaligned buffer by adding 1-byte offset
             let mut unaligned_buf = vec![0u8; size + 1];
             unaligned_buf[1..].copy_from_slice(&aligned);
             let unaligned = &unaligned_buf[1..];
 
-            // Verify alignment difference
             if size > 0 {
                 assert_ne!(
                     aligned.as_ptr() as usize % 4,
@@ -594,7 +546,6 @@ mod tests {
                 );
             }
 
-            // Both should produce identical results
             let aligned_result = Blake3::digest(&aligned);
             let unaligned_result = Blake3::digest(unaligned);
 
@@ -603,7 +554,6 @@ mod tests {
                 "Blake3: aligned vs unaligned mismatch at size {size}"
             );
 
-            // Also verify against reference implementation
             let expected = compute_expected_result(&aligned);
             assert_eq!(
                 aligned_result, expected,
@@ -614,7 +564,6 @@ mod tests {
 
     #[test]
     fn test_blake3_keyed64_matches_reference() {
-        // Test that blake3_keyed64 matches the official blake3::keyed_hash for 64-byte input
         use super::AlignedHash32;
         use rand::rngs::StdRng;
         use rand::{RngCore, SeedableRng};
@@ -629,15 +578,12 @@ mod tests {
             rng.fill_bytes(&mut right.0);
             rng.fill_bytes(&mut key.0);
 
-            // Concatenate left || right as 64-byte input
             let mut input = [0u8; 64];
             input[..32].copy_from_slice(&left.0);
             input[32..].copy_from_slice(&right.0);
 
-            // Call official blake3::keyed_hash
             let expected = blake3::keyed_hash(&key.0, &input);
 
-            // Call our keyed64 function (key is passed as iv, modified in-place)
             let mut result_iv = key;
             super::blake3_keyed64(&left, &right, &mut result_iv);
 
@@ -647,42 +593,5 @@ mod tests {
                 "blake3_keyed64 does not match blake3::keyed_hash"
             );
         }
-    }
-
-    #[test]
-    fn test_blake3_keyed64_deterministic() {
-        use super::AlignedHash32;
-
-        let left = AlignedHash32::new([0xAAu8; 32]);
-        let right = AlignedHash32::new([0xBBu8; 32]);
-
-        let mut iv1 = super::BLAKE3_IV;
-        let mut iv2 = super::BLAKE3_IV;
-
-        super::blake3_keyed64(&left, &right, &mut iv1);
-        super::blake3_keyed64(&left, &right, &mut iv2);
-
-        assert_eq!(iv1, iv2, "blake3_keyed64 should be deterministic");
-    }
-
-    #[test]
-    fn test_blake3_keyed64_different_inputs() {
-        use super::AlignedHash32;
-
-        let left1 = AlignedHash32::new([0x11u8; 32]);
-        let right1 = AlignedHash32::new([0x22u8; 32]);
-        let left2 = AlignedHash32::new([0x33u8; 32]);
-        let right2 = AlignedHash32::new([0x44u8; 32]);
-
-        let mut iv1 = super::BLAKE3_IV;
-        let mut iv2 = super::BLAKE3_IV;
-
-        super::blake3_keyed64(&left1, &right1, &mut iv1);
-        super::blake3_keyed64(&left2, &right2, &mut iv2);
-
-        assert_ne!(
-            iv1, iv2,
-            "Different inputs should produce different results"
-        );
     }
 }

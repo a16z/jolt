@@ -145,8 +145,6 @@ mod tests {
                 )
                 .unwrap();
 
-                // The independently folded true input claim:
-                // `Σ_k unmap(k) · ra_folded(k)`.
                 let ra_folded =
                     cycle_fold::<Fr>(witness, ram_ra_raf_evaluation(), shape.log_k(), &tau_low)
                         .unwrap();

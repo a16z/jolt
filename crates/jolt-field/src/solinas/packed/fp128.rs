@@ -54,7 +54,6 @@ impl<const P: u128, I: SimdWord> PackedFp128<P, I> {
         }
     }
 
-    /// Subtract with borrow-conditional modulus add-back.
     #[inline(always)]
     fn sub_raw(a: Self, b: Self) -> Self {
         let one = I::splat64(1);

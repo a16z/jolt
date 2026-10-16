@@ -133,7 +133,7 @@ const _: () = {
             self.0 *= rhs.0.inverse().expect("GT element has no inverse");
         }
     }
-}; // end #[allow(clippy::suspicious_*)]
+};
 
 impl Mul for Bn254GT {
     type Output = Self;

@@ -10,6 +10,8 @@
 
 use crate::PseudoMersenne;
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+#[cfg(feature = "bytemuck")]
+use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
 use rand_core::RngCore;
 
 /// Trial-division primality check, cheap enough for CTFE at u32 scale.
@@ -49,7 +51,6 @@ macro_rules! define_solinas_prime {
         pub struct $name<const P: $word>(pub(crate) $word);
 
         impl<const P: $word> $name<P> {
-            /// Fold point: smallest `k` such that `P <= 2^k`.
             pub(crate) const BITS: u32 = <$word>::BITS - P.leading_zeros();
 
             /// Offset `c = 2^k − P`. Instantiating with a modulus that
@@ -73,7 +74,6 @@ macro_rules! define_solinas_prime {
                 c
             };
 
-            /// Mask for the low `BITS` bits of a double word.
             const MASK: $double = if Self::BITS == <$word>::BITS {
                 <$word>::MAX as $double
             } else {
@@ -82,7 +82,6 @@ macro_rules! define_solinas_prime {
 
             const MASK128: u128 = Self::MASK as u128;
 
-            /// Conditional subtract of a folded value down to `[0, P)`.
             #[inline(always)]
             fn canonicalize_folded(v: $double) -> $word {
                 if Self::BITS < <$word>::BITS {
@@ -95,7 +94,6 @@ macro_rules! define_solinas_prime {
                 }
             }
 
-            /// Loop-fold Solinas reduction of an arbitrary double word.
             #[inline(always)]
             fn reduce_double(x: $double) -> $word {
                 let mut v = x;
@@ -105,7 +103,6 @@ macro_rules! define_solinas_prime {
                 Self::canonicalize_folded(v)
             }
 
-            /// Loop-fold Solinas reduction of an arbitrary `u128`.
             #[inline(always)]
             fn reduce_u128(x: u128) -> $word {
                 let mut v = x;
@@ -455,8 +452,33 @@ impl<const P: u64> PseudoMersenne for Fp64<P> {
     const OFFSET: u128 = Self::C as u128;
 }
 
+// Byte views for device buffers (`jolt-metal`), as for `Fp128`. Upload is a
+// byte copy; read-back goes through `CheckedBitPattern`, which admits only
+// canonical words.
+
+// SAFETY: `Fp64<P>` is `repr(transparent)` over `u64`, and zero is the
+// canonical zero.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u64> Zeroable for Fp64<P> {}
+
+// SAFETY: `Fp64<P>` is `repr(transparent)` over `u64`, which has no padding
+// or uninitialized bytes.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u64> NoUninit for Fp64<P> {}
+
+// SAFETY: `Bits` is `u64`, the layout of `Fp64<P>` (`repr(transparent)`), and
+// the check admits exactly the canonical values `< P`.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u64> CheckedBitPattern for Fp64<P> {
+    type Bits = u64;
+
+    #[inline]
+    fn is_valid_bit_pattern(bits: &u64) -> bool {
+        *bits < P
+    }
+}
+
 impl<const P: u64> Fp64<P> {
-    /// Mask for the low `BITS` bits in a word.
     pub(crate) const MASK64: u64 = if Self::BITS < 64 {
         (1u64 << Self::BITS) - 1
     } else {
@@ -467,7 +489,6 @@ impl<const P: u64> Fp64<P> {
     pub(crate) const FOLD_IN_U64: bool =
         Self::BITS < 64 && (Self::C as u128) < (1u128 << (64 - Self::BITS));
 
-    /// Reduces a product supplied as exact low and high words.
     #[inline(always)]
     pub(crate) fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
         if Self::FOLD_IN_U64 {
@@ -530,5 +551,31 @@ fn mul_c_narrow(c: u64, x: u64) -> u64 {
     {
         let (c, x_lo, x_hi) = (c as u32 as u64, x as u32 as u64, x >> 32);
         (c * x_lo).wrapping_add((c * x_hi) << 32)
+    }
+}
+
+#[cfg(all(test, feature = "bytemuck"))]
+mod bytemuck_tests {
+    use super::super::{Prime48Offset59, Prime64Offset59};
+    use bytemuck::checked::{self, CheckedCastError};
+    use bytemuck::CheckedBitPattern;
+
+    fn check<F: CheckedBitPattern<Bits = u64>>(p: u64) {
+        for valid in [0, 1, 1 << 32, p - 1] {
+            assert!(checked::try_cast::<u64, F>(valid).is_ok(), "{valid}");
+        }
+        for invalid in [p, p + 1, u64::MAX] {
+            assert_eq!(
+                checked::try_cast::<u64, F>(invalid).err(),
+                Some(CheckedCastError::InvalidBitPattern),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_canonical_words_are_valid_bit_patterns() {
+        check::<Prime64Offset59>(0u64.wrapping_sub(59));
+        check::<Prime48Offset59>((1 << 48) - 59);
     }
 }

@@ -660,16 +660,6 @@ mod encoding_tests {
     }
 
     #[test]
-    fn assert_zero_requires_its_funct7() {
-        let word = 0x7b | (6 << 12) | (3 << 15) | (2 << 25);
-        assert_eq!(
-            FieldInlineOp::from_word(word),
-            Some(FieldInlineOp::AssertZero)
-        );
-        assert_eq!(FieldInlineOp::from_word(word & !(0x7f << 25)), None);
-    }
-
-    #[test]
     fn load_accumulate_from_memory_requires_its_offset_family() {
         let op = FieldInlineOp::LoadAccumulateFromMemory;
         for offset_words in 0..32 {

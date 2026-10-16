@@ -23,7 +23,6 @@ pub fn set_flamegraph_prefix(prefix: impl Into<String>) {
     let _ = FLAMEGRAPH_PREFIX.set(prefix.into());
 }
 
-/// The configured prefix, if the harness opted in.
 pub fn flamegraph_prefix() -> Option<&'static str> {
     FLAMEGRAPH_PREFIX.get().map(String::as_str)
 }

@@ -7,11 +7,9 @@
 
 use crate::JoltInstructionRowData;
 
-/// Dynamic cycle view: a populated instruction plus runtime register state.
 pub trait JoltCycle {
     type Instruction: JoltInstructionRowData;
 
-    /// The instruction executed during this cycle.
     fn instruction(&self) -> Self::Instruction;
 
     /// Value held in rs1 at the start of the cycle, or `None` if unused.

@@ -140,8 +140,6 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>> for Referenc
                                     })
                                     .collect::<Vec<_>>(),
                             ),
-                            // The digit-zero recentering baselines are
-                            // constant in the chunk variable: `eq(point, 0)`.
                             JoltDerivedId::HammingWeightClaimReduction(
                                 HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero,
                             ) => Some(vec![eq_at_digit_zero(r_address); k as usize]),

@@ -349,9 +349,6 @@ macro_rules! source_extension_for_marker {
     (VirtualAdvice) => {
         Some(SourceExtension::JoltCustom)
     };
-    (VirtualAdviceLen) => {
-        Some(SourceExtension::JoltCustom)
-    };
     (VirtualAdviceLoad) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -844,9 +841,6 @@ macro_rules! source_side_effects_for_marker {
     (VirtualAdvice) => {
         false
     };
-    (VirtualAdviceLen) => {
-        false
-    };
     (VirtualNegateIf) => {
         false
     };
@@ -1112,9 +1106,6 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::LoadStore64)
     };
     (VirtualAdvice) => {
-        Some(JoltTargetExtension::Advice)
-    };
-    (VirtualAdviceLen) => {
         Some(JoltTargetExtension::Advice)
     };
     (VirtualAdviceLoad) => {
@@ -1472,9 +1463,6 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualAdvice) => {
-        false
-    };
-    (VirtualAdviceLen) => {
         false
     };
     (VirtualNegateIf) => {
@@ -2134,13 +2122,17 @@ impl Valid for JoltInstructionKind {
 #[cfg(test)]
 mod tests {
     use super::{JoltInstructionKind, JoltInstructionTag, SourceInstructionKind};
-    use crate::instructions::{JoltInstruction, SourceInstruction, VirtualHostIO};
+    use crate::instructions::{JoltInstruction, VirtualHostIO};
     use std::collections::HashSet;
 
     #[test]
     fn tags_are_stable_for_representative_final_rows() {
         assert_eq!(JoltInstructionKind::NoOp.tag(), JoltInstructionTag(0x0000));
         assert_eq!(JoltInstructionKind::ADD.tag(), JoltInstructionTag(0x0002));
+        assert_eq!(
+            JoltInstructionKind::from_tag(JoltInstructionTag(0x0062)),
+            None
+        );
         assert_eq!(
             JoltInstruction::VirtualHostIO(VirtualHostIO(())).tag(),
             JoltInstructionTag(0x0068)
@@ -2186,24 +2178,6 @@ mod tests {
             assert!(!name.is_empty(), "empty canonical name for {kind:?}");
             assert!(seen.insert(name), "duplicate canonical name {name:?}");
         }
-    }
-
-    #[test]
-    fn source_to_final_mapping_is_partial() {
-        assert_eq!(
-            SourceInstructionKind::ADD.jolt_kind(),
-            Some(JoltInstructionKind::ADD)
-        );
-        assert_eq!(
-            SourceInstruction::VirtualHostIO(VirtualHostIO(())).jolt_kind(),
-            Some(JoltInstruction::VirtualHostIO(VirtualHostIO(())))
-        );
-        assert_eq!(
-            SourceInstructionKind::ADDW.jolt_kind(),
-            Some(JoltInstructionKind::ADDW)
-        );
-        assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
-        assert_eq!(SourceInstructionKind::Unimpl.jolt_kind(), None);
     }
 
     #[test]

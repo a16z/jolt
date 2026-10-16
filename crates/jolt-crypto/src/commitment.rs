@@ -20,7 +20,6 @@ const PAR_THRESHOLD: usize = 1024;
 /// The `Output` associated type is the single piece of connective tissue
 /// between these different levels of abstraction.
 pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
-    /// The commitment value (e.g., a group element, a Merkle root, a lattice vector).
     type Output: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
 }
 
@@ -234,7 +233,6 @@ pub struct VectorCommitmentOpening<F> {
     pub combined_blinding: F,
 }
 
-/// Errors returned by committed-row opening helpers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorOpeningError {
     RowLenZero,
@@ -314,7 +312,6 @@ impl Error for VectorOpeningError {}
 /// Non-group commitment types (e.g., lattice vectors) can implement this
 /// trait directly for their native scalar field.
 pub trait HomomorphicCommitment<F: JoltField>: Clone + Default {
-    /// Computes `c1 + c2`.
     #[must_use]
     fn add(c1: &Self, c2: &Self) -> Self;
 

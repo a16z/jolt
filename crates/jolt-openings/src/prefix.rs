@@ -85,17 +85,14 @@ where
         })
     }
 
-    /// Number of variables in each logical polynomial.
     pub const fn logical_num_vars(&self) -> usize {
         self.logical_num_vars
     }
 
-    /// Number of variables selecting a prefix slot.
     pub const fn selector_num_vars(&self) -> usize {
         self.selector_num_vars
     }
 
-    /// Number of variables in the physical packed polynomial.
     pub const fn packed_num_vars(&self) -> usize {
         self.logical_num_vars + self.selector_num_vars
     }
@@ -110,7 +107,6 @@ where
         &self.ids
     }
 
-    /// Physical slot assigned to `id`.
     pub fn slot_index(&self, id: &Id) -> Option<usize> {
         self.slot_indices.get(id).copied()
     }

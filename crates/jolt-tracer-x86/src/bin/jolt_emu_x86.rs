@@ -133,7 +133,6 @@ mod native {
         }
 
         if tohost == 0 {
-            // No `tohost` symbol at all: nothing to judge.
             eprintln!("{elf_path}: no tohost symbol; cannot determine the result");
             return ExitCode::from(EXIT_FAILED);
         }

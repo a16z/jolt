@@ -17,20 +17,18 @@ pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommitt
     polynomials
 }
 
-/// `committed_program_chunks` is `Some(bytecode_chunk_count)` in committed
-/// program mode, which appends the trusted bytecode chunk and program-image
-/// commitments to the batch.
+/// Committed mode appends the whole-bytecode and program-image commitments.
 pub fn final_opening_polynomial_order(
     layout: JoltRaPolynomialLayout,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
-    committed_program_chunks: Option<usize>,
+    committed_program: bool,
 ) -> Vec<JoltCommittedPolynomial> {
     let mut polynomials = Vec::with_capacity(
         2 + layout.total()
             + usize::from(include_trusted_advice)
             + usize::from(include_untrusted_advice)
-            + committed_program_chunks.map_or(0, |chunk_count| chunk_count + 1),
+            + 2 * usize::from(committed_program),
     );
     polynomials.push(JoltCommittedPolynomial::RamInc);
     polynomials.push(JoltCommittedPolynomial::RdInc);
@@ -43,8 +41,8 @@ pub fn final_opening_polynomial_order(
     if include_untrusted_advice {
         polynomials.push(JoltCommittedPolynomial::UntrustedAdvice);
     }
-    if let Some(chunk_count) = committed_program_chunks {
-        polynomials.extend((0..chunk_count).map(JoltCommittedPolynomial::BytecodeChunk));
+    if committed_program {
+        polynomials.push(JoltCommittedPolynomial::ProgramBytecode);
         polynomials.push(JoltCommittedPolynomial::ProgramImageInit);
     }
     polynomials
@@ -73,9 +71,10 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
         JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice => {
             JoltRelationId::AdviceClaimReduction
         }
-        JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
+        JoltCommittedPolynomial::ProgramBytecode => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
 
+        JoltCommittedPolynomial::Reserved4(retired) => match retired {},
         JoltCommittedPolynomial::BalancedIncDigit(_)
         | JoltCommittedPolynomial::BalancedIncCarry => JoltRelationId::HammingWeightClaimReduction,
     }
@@ -141,8 +140,6 @@ pub fn commitment_embedding_scale<F: JoltField>(
     )
 }
 
-/// Inputs to [`final_opening_point`], gathered from earlier verification
-/// stages.
 pub struct FinalOpeningPointInputs<'a, F: JoltField> {
     pub log_t: usize,
     pub log_k_chunk: usize,
@@ -226,88 +223,6 @@ mod tests {
     use super::*;
     use jolt_field::{Fr, Ring, Zero};
 
-    fn layout() -> JoltRaPolynomialLayout {
-        JoltRaPolynomialLayout::new(2, 1, 2).unwrap_or_else(|error| {
-            panic!("test layout should be valid: {error}");
-        })
-    }
-
-    #[test]
-    fn proof_commitment_order_matches_proof_payload_order() {
-        assert_eq!(
-            proof_commitment_order(layout()),
-            vec![
-                JoltCommittedPolynomial::RdInc,
-                JoltCommittedPolynomial::RamInc,
-                JoltCommittedPolynomial::InstructionRa(0),
-                JoltCommittedPolynomial::InstructionRa(1),
-                JoltCommittedPolynomial::RamRa(0),
-                JoltCommittedPolynomial::RamRa(1),
-                JoltCommittedPolynomial::BytecodeRa(0),
-            ]
-        );
-    }
-
-    #[test]
-    fn final_opening_order_matches_stage8_rlc_order() {
-        assert_eq!(
-            final_opening_polynomial_order(layout(), true, true, None),
-            vec![
-                JoltCommittedPolynomial::RamInc,
-                JoltCommittedPolynomial::RdInc,
-                JoltCommittedPolynomial::InstructionRa(0),
-                JoltCommittedPolynomial::InstructionRa(1),
-                JoltCommittedPolynomial::BytecodeRa(0),
-                JoltCommittedPolynomial::RamRa(0),
-                JoltCommittedPolynomial::RamRa(1),
-                JoltCommittedPolynomial::TrustedAdvice,
-                JoltCommittedPolynomial::UntrustedAdvice,
-            ]
-        );
-    }
-
-    #[test]
-    fn final_opening_ids_use_sumcheck_sources() {
-        let ids = final_opening_polynomial_order(layout(), true, false, None)
-            .into_iter()
-            .map(final_opening_id)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            ids,
-            vec![
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::RamInc,
-                    JoltRelationId::IncClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::RdInc,
-                    JoltRelationId::IncClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::InstructionRa(0),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::InstructionRa(1),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::BytecodeRa(0),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::RamRa(0),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::RamRa(1),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::trusted_advice(JoltRelationId::AdviceClaimReduction),
-            ]
-        );
-    }
-
     #[test]
     fn embedding_scale_checks_positions_and_repeated_coordinates() {
         use jolt_poly::Polynomial;
@@ -334,8 +249,6 @@ mod tests {
     #[test]
     fn embedding_scales_match_independently_placed_tables() {
         use jolt_poly::Polynomial;
-        // Native table [1,2,3,4]: two trace cycles at each of two addresses,
-        // or the rows of a 2x2 precommitted matrix in a 4x4 grid.
         let native = [1, 2, 3, 4].map(Fr::from_u64).to_vec();
         let cases = [
             (

@@ -2,10 +2,12 @@
 //! crate-internal surface with uninhabited types, so every public type
 //! compiles everywhere and only `Device::system_default` can be reached.
 
+use std::time::Duration;
+
 use crate::error::MetalError;
 
 pub(crate) enum RawBatchOutcome {
-    CompletionConfirmed(Result<(), MetalError>),
+    CompletionConfirmed(Result<Duration, MetalError>),
     CompletionUncertain(MetalError),
 }
 

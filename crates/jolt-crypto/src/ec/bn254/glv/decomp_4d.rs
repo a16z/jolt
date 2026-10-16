@@ -195,12 +195,11 @@ mod tests {
         scalars.extend([
             Fr::from(0u64),
             Fr::from(1u64),
-            -Fr::from(1u64), // r - 1
+            -Fr::from(1u64),
             lambda,
             lambda * lambda,
             lambda * lambda * lambda,
             lambda - Fr::from(1u64),
-            // magnitudes at the ~64-66 bit component boundary
             Fr::from(u64::MAX),
             Fr::from((1u128 << 66) - 1),
             Fr::from(1u128 << 66),

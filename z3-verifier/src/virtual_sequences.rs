@@ -123,7 +123,6 @@ fn verifier_bv_bits() -> u32 {
 }
 
 fn scale_imm_u64(imm: u64, cpu: &SymbolicCpu) -> u64 {
-    // First check boundary values
     match imm {
         0x1f => return (cpu.word_bits - 1) as u64,
         0x3f => return (cpu.bv_bits - 1) as u64,
@@ -132,7 +131,6 @@ fn scale_imm_u64(imm: u64, cpu: &SymbolicCpu) -> u64 {
         _ => {}
     }
 
-    // For power-of-2 values, scale the exponent
     if imm != 0 && (imm & (imm - 1)) == 0 {
         let shift = imm.trailing_zeros();
         let scaled_shift = match shift {
@@ -144,7 +142,6 @@ fn scale_imm_u64(imm: u64, cpu: &SymbolicCpu) -> u64 {
         return 1u64 << scaled_shift;
     }
 
-    // Otherwise return as-is
     imm
 }
 
@@ -188,7 +185,7 @@ impl SymbolicCpu {
             x: regs,
             mem,
             advice_vars: Vec::new(),
-            asserts, // x0 is always 0
+            asserts,
             bv_bits,
             word_bits,
         }
@@ -493,8 +490,6 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         Instruction::VirtualWindowMaskB(VirtualWindowMaskB { operands, .. }) => {
             let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
             let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
-            // One of 8 lanes of bv_bits/8 bits each; scales with the reduced
-            // solver widths.
             let byte_bits = (cpu.bv_bits / 8) as u64;
             let shift = offset * cpu.bv_u64(byte_bits);
             let byte_mask = cpu.bv_u64((1u64 << byte_bits) - 1);
@@ -503,16 +498,12 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         Instruction::VirtualWindowMaskH(VirtualWindowMaskH { operands, .. }) => {
             let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
             let offset = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2);
-            // One of 4 lanes of bv_bits/4 bits each; scales with the reduced
-            // solver widths.
             let half_bits = (cpu.bv_bits / 4) as u64;
             let shift = offset * cpu.bv_u64(half_bits);
             let half_mask = cpu.bv_u64((1u64 << half_bits) - 1);
             cpu.x[operands.rd as usize] = half_mask.bvshl(shift);
         }
         Instruction::VirtualShiftDataB(VirtualShiftDataB { operands, .. }) => {
-            // One of 8 lanes of bv_bits/8 bits each; scales with the reduced
-            // solver widths.
             let byte_bits = (cpu.bv_bits / 8) as u64;
             let data = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((1u64 << byte_bits) - 1);
             let ea = cpu.x[operands.rs2 as usize].clone();
@@ -521,7 +512,6 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = data.bvshl(shift);
         }
         Instruction::VirtualShiftDataH(VirtualShiftDataH { operands, .. }) => {
-            // One of 4 lanes of bv_bits/4 bits each.
             let half_bits = (cpu.bv_bits / 4) as u64;
             let data = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((1u64 << half_bits) - 1);
             let ea = cpu.x[operands.rs2 as usize].clone();
@@ -530,7 +520,6 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = data.bvshl(shift);
         }
         Instruction::VirtualShiftDataW(VirtualShiftDataW { operands, .. }) => {
-            // One of 2 lanes of bv_bits/2 bits each.
             let word_bits = cpu.word_bits as u64;
             let data = cpu.x[operands.rs1 as usize].clone()
                 & cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
@@ -605,7 +594,6 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::VirtualSRLI(VirtualSRLI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            // Bitmask immediate: compute trailing_zeros, then scale the shift amount
             let shift_amt = operands.imm.trailing_zeros();
 
             // Preserve RV64 shifts of 32..63 across reduced verifier widths.
@@ -613,7 +601,6 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                 let base = (shift_amt - 32) & (cpu.word_bits - 1);
                 (cpu.word_bits + base) as u64
             } else {
-                // Direct scaling for regular shifts
                 match shift_amt {
                     31 => (cpu.word_bits - 1) as u64,
                     _ => shift_amt as u64 & (cpu.bv_bits - 1) as u64,
@@ -630,7 +617,6 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::VirtualSRAI(VirtualSRAI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
-            // Bitmask immediate: compute trailing_zeros, then scale the shift amount
             let shift_amt = operands.imm.trailing_zeros();
             let scaled_shift = match shift_amt {
                 31 => (cpu.word_bits - 1) as u64,
@@ -890,7 +876,6 @@ macro_rules! test_sequence {
                 let instr = $instr {
                     operands: template_format!($operands),
                     $($field: $value,)*
-                    // unused by solver
                     address: 8,
                     is_compressed: false,
                     is_first_in_sequence: false,
@@ -906,7 +891,6 @@ macro_rules! test_sequence {
                 let instr = $instr {
                     operands: template_format!($operands),
                     $($field: $value,)*
-                    // unused by solver
                     address: 8,
                     is_compressed: false,
                     is_first_in_sequence: false,
@@ -1280,4 +1264,3 @@ test_sequence!(SUBW, FormatR, |instr: &SUBW, cpu| {
     cpu.x[instr.operands.rd as usize] =
         cpu.sign_ext_word(&(cpu.word_extract(rs1) - cpu.word_extract(rs2)));
 });
-//test_sequence!(SW, FormatS);

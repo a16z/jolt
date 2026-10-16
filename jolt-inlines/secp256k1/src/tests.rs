@@ -11,7 +11,6 @@ mod sequence_tests {
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
-        // get expected value
         let arr_to_fq = |arr: &[u64; 4]| Fq::new(BigInt(*arr));
         let expected = (arr_to_fq(b)
             .inverse()
@@ -19,7 +18,6 @@ mod sequence_tests {
             * arr_to_fq(a))
         .into_bigint()
         .0;
-        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
         let mut harness = InlineTestHarness::new(layout);
@@ -39,7 +37,6 @@ mod sequence_tests {
 
     #[test]
     fn test_secp256k1_divq_direct_execution() {
-        // arbitrary test vectors for direct execution
         let a = [
             0x123456789ABCDEF0,
             0x0FEDCBA987654321,
@@ -62,10 +59,8 @@ mod sequence_tests {
     }
 
     fn assert_mulq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
-        // get expected value
         let arr_to_fq = |arr: &[u64; 4]| Fq::new(BigInt(*arr));
         let expected = (arr_to_fq(a) * arr_to_fq(b)).into_bigint().0;
-        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
         let mut harness = InlineTestHarness::new(layout);
@@ -85,7 +80,6 @@ mod sequence_tests {
 
     #[test]
     fn test_secp256k1_mulq_direct_execution() {
-        // arbitrary test vectors for direct execution
         let a = [0u64, 0u64, 0u64, 1u64];
         let b = [0u64, 1u64, 0u64, 0u64];
         assert_mulq_trace_equiv(&a, &b);
@@ -111,10 +105,8 @@ mod sequence_tests {
     }
 
     fn assert_squareq_trace_equiv(a: &[u64; 4]) {
-        // get expected value
         let arr_to_fq = |arr: &[u64; 4]| Fq::new(BigInt(*arr));
         let expected = (arr_to_fq(a) * arr_to_fq(a)).into_bigint().0;
-        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
         let mut harness = InlineTestHarness::new(layout);
@@ -133,7 +125,6 @@ mod sequence_tests {
 
     #[test]
     fn test_secp256k1_squareq_direct_execution() {
-        // arbitrary test vectors for direct execution
         let a = [0u64, 0u64, 0u64, 1u64];
         assert_squareq_trace_equiv(&a);
         let a = [
@@ -150,7 +141,6 @@ mod sequence_tests {
     }
 
     fn assert_divr_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
-        // get expected value
         let arr_to_fr = |arr: &[u64; 4]| Fr::new(BigInt(*arr));
         let expected = (arr_to_fr(b)
             .inverse()
@@ -158,7 +148,6 @@ mod sequence_tests {
             * arr_to_fr(a))
         .into_bigint()
         .0;
-        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
         let mut harness = InlineTestHarness::new(layout);
@@ -178,7 +167,6 @@ mod sequence_tests {
 
     #[test]
     fn test_secp256k1_divr_direct_execution() {
-        // arbitrary test vectors for direct execution
         let a = [
             0x123456789ABCDEF0,
             0x0FEDCBA987654321,
@@ -205,7 +193,6 @@ mod sequence_tests {
     /// against the dividend has run, otherwise the checks compare the stored
     /// result against itself and any value would be accepted.
     fn assert_div_trace_equiv_aliased(funct3: u32, a: &[u64; 4], b: &[u64; 4], expected: [u64; 4]) {
-        // rs1 == rs3: dividend and result share one 32-byte region
         let layout = InlineMemoryLayout {
             output_base: DRAM_BASE,
             ..InlineMemoryLayout::two_inputs(32, 32, 32)
@@ -253,10 +240,8 @@ mod sequence_tests {
     }
 
     fn assert_mulr_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
-        // get expected value
         let arr_to_fr = |arr: &[u64; 4]| Fr::new(BigInt(*arr));
         let expected = (arr_to_fr(a) * arr_to_fr(b)).into_bigint().0;
-        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
         let mut harness = InlineTestHarness::new(layout);
@@ -276,7 +261,6 @@ mod sequence_tests {
 
     #[test]
     fn test_secp256k1_mulr_direct_execution() {
-        // arbitrary test vectors for direct execution
         let a = [0u64, 0u64, 0u64, 1u64];
         let b = [0u64, 1u64, 0u64, 0u64];
         assert_mulr_trace_equiv(&a, &b);
@@ -302,10 +286,8 @@ mod sequence_tests {
     }
 
     fn assert_squarer_trace_equiv(a: &[u64; 4]) {
-        // get expected value
         let arr_to_fr = |arr: &[u64; 4]| Fr::new(BigInt(*arr));
         let expected = (arr_to_fr(a) * arr_to_fr(a)).into_bigint().0;
-        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
         let mut harness = InlineTestHarness::new(layout);
@@ -324,7 +306,6 @@ mod sequence_tests {
 
     #[test]
     fn test_secp256k1_squarer_direct_execution() {
-        // arbitrary test vectors for direct execution
         let a = [0u64, 0u64, 0u64, 1u64];
         assert_squarer_trace_equiv(&a);
         let a = [
@@ -382,7 +363,6 @@ mod sequence_tests {
 
     #[test]
     fn test_endomorphism_consistency() {
-        // get q and its endomorphism
         let q = Secp256k1Point::from_u64_arr(&[
             0x0012563f32ed0216,
             0xee00716af6a73670,
@@ -395,9 +375,7 @@ mod sequence_tests {
         ])
         .unwrap();
         let endo_q = q.endomorphism();
-        // check that endo_q.y = q.y
         assert_eq!(endo_q.y(), q.y());
-        // check that endo_q.x = beta * q.x
         let beta = Secp256k1Fq::from_u64_arr(&[
             0xc1396c28719501ee,
             0x9cf0497512f58995,
@@ -407,7 +385,6 @@ mod sequence_tests {
         .unwrap();
         let expected_x = beta.mul(&q.x());
         assert_eq!(endo_q.x(), expected_x);
-        // check that lambda * q == endo_q
         let lambda = Secp256k1Fr::from_u64_arr(&[
             0xdf02967c1b23bd72,
             0x122e22ea20816678,
@@ -422,7 +399,6 @@ mod sequence_tests {
 
     #[test]
     fn test_glv_decomposition() {
-        // get q and its endomorphism
         let q = Secp256k1Point::from_u64_arr(&[
             0x0012563f32ed0216,
             0xee00716af6a73670,
@@ -435,7 +411,6 @@ mod sequence_tests {
         ])
         .unwrap();
         let endo_q = q.endomorphism();
-        // and an arbitrary scalar k
         let k = Secp256k1Fr::from_u64_arr(&[
             0x1234567890ABCDEF,
             0x0FEDCBA987654321,
@@ -443,7 +418,6 @@ mod sequence_tests {
             0x2222222222222222,
         ])
         .unwrap();
-        // check that k * q == k1 * q + k2 * endo_q
         let expected = fr_point_mul(&k, &q);
         let decomp = k.glv_decompose();
         let sq = if decomp[0].0 { q.neg() } else { q.clone() };
@@ -515,48 +489,38 @@ mod sequence_tests {
         let r = Secp256k1Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
         let s = Secp256k1Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
 
-        // Q = infinity → QAtInfinity
         let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), Secp256k1Point::infinity());
         assert!(matches!(result, Err(Secp256k1Error::QAtInfinity)));
 
-        // r = 0 → ROrSZero
         let zero = Secp256k1Fr::from_u64_arr(&[0, 0, 0, 0]).unwrap();
         let result = ecdsa_verify(z.clone(), zero.clone(), s.clone(), g.clone());
         assert!(matches!(result, Err(Secp256k1Error::ROrSZero)));
 
-        // s = 0 → ROrSZero
         let result = ecdsa_verify(z.clone(), r.clone(), zero, g.clone());
         assert!(matches!(result, Err(Secp256k1Error::ROrSZero)));
 
-        // Non-canonical scalar (z >= n) → InvalidFrElement
         let bad_z = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let result = ecdsa_verify(bad_z, r.clone(), s.clone(), g.clone());
         assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
 
-        // Non-canonical scalar (r >= n) → InvalidFrElement
         let bad_r = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let result = ecdsa_verify(z.clone(), bad_r, s.clone(), g.clone());
         assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
 
-        // Non-canonical scalar (s >= n) → InvalidFrElement
         let bad_s = Secp256k1Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let result = ecdsa_verify(z.clone(), r.clone(), bad_s, g.clone());
         assert!(matches!(result, Err(Secp256k1Error::InvalidFrElement)));
 
-        // Non-canonical coordinate (q.x >= p) → InvalidFqElement
         let bad_x = Secp256k1Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let bad_q = Secp256k1Point::new_unchecked(bad_x, g.y());
         let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
         assert!(matches!(result, Err(Secp256k1Error::InvalidFqElement)));
 
-        // Non-canonical coordinate (q.y >= p) → InvalidFqElement
         let bad_y = Secp256k1Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let bad_q = Secp256k1Point::new_unchecked(g.x(), bad_y);
         let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
         assert!(matches!(result, Err(Secp256k1Error::InvalidFqElement)));
 
-        // Off-curve point → NotOnCurve
-        // Take a valid x-coordinate and set y to a different valid value
         let off_curve_y = Secp256k1Fq::from_u64_arr(&[1, 0, 0, 0]).unwrap();
         let bad_q = Secp256k1Point::new_unchecked(g.x(), off_curve_y);
         let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
@@ -581,8 +545,6 @@ mod sequence_tests {
     /// `is_fq_non_canonical` and `is_fr_non_canonical`.
     #[test]
     fn test_modulus_limb_assumptions() {
-        // Fq modulus p = 2^256 - 2^32 - 977
-        // Expected: limbs[1], limbs[2], limbs[3] are all u64::MAX
         assert_eq!(
             Fq::MODULUS.0[3],
             u64::MAX,
@@ -599,8 +561,6 @@ mod sequence_tests {
             "Fq::MODULUS.0[1] should be u64::MAX"
         );
 
-        // Fr modulus n (scalar field order)
-        // Expected: only limbs[3] is u64::MAX
         assert_eq!(
             Fr::MODULUS.0[3],
             u64::MAX,

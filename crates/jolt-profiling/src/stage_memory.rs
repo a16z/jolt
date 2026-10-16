@@ -24,7 +24,6 @@ use tracing_subscriber::Layer;
 use crate::taxonomy::ROOT_SPAN;
 use crate::units::{format_memory_size, BYTES_PER_GIB};
 
-/// One tracked span's RSS at open, parked in the span's extensions.
 #[derive(Clone, Copy)]
 struct RssAtOpen(u64);
 
@@ -53,7 +52,6 @@ static STAGE_MEMORY_ROWS: Mutex<RowLog> = Mutex::new(RowLog {
     warned_full: false,
 });
 
-/// The stage spans worth boundary-sampling.
 fn tracked(name: &str) -> bool {
     name.starts_with("prove_stage") || name == ROOT_SPAN
 }
@@ -92,8 +90,6 @@ where
             rss_open_bytes,
             rss_close_bytes: stats.physical_mem as u64,
         };
-        // An instant event for the Chrome/Perfetto trace, anchoring the
-        // boundary RSS next to the stage's slice.
         tracing::info!(
             stage = row.stage,
             rss_open_gib = row.rss_open_bytes as f64 / BYTES_PER_GIB,

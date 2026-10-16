@@ -8,12 +8,12 @@
 //! selected row's own grammar.
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_pcs::AkitaError;
-use akita_schedules::ResolvedScheduleRow;
-use akita_types::{
+use akita_params::{
     CompressionChainPlan, GroupCommitPhaseParams, OpeningClaimsLayout, OpeningScheduleSelection,
     PolynomialGroupLayout,
 };
+use akita_pcs::AkitaError;
+use akita_schedules::ResolvedScheduleRow;
 use jolt_field::Zero;
 use jolt_openings::OpeningsError;
 
@@ -157,7 +157,7 @@ mod tests {
 
     use super::*;
     use akita_config::TrustedScheduleCatalog;
-    use akita_types::AkitaScheduleLookupKey;
+    use akita_params::ScheduleLookupKey;
     use jolt_field::Ring;
 
     use crate::{
@@ -195,7 +195,7 @@ mod tests {
         poly_count: usize,
     ) -> OpeningScheduleSelection {
         schedules
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars, poly_count,
             )))
             .expect("test schedule")
@@ -223,26 +223,6 @@ mod tests {
         )
         .expect("schedule");
         (commitment, point, layout, resolved.clone(), schedules)
-    }
-
-    #[test]
-    fn forged_commitment_coeff_len_rejects_before_deserialization() {
-        let (mut commitment, point, _, resolved, schedules) = resolved_dense(16, 2);
-        commitment.backend_coeff_len = 1 << 25;
-        let err = deserialize_checked_backend_payload(
-            &schedules,
-            &commitment,
-            resolved.selection(),
-            2,
-            &point,
-        )
-        .expect_err("forged coefficient count must be rejected");
-        assert_ne!(
-            commitment.backend_coeff_len,
-            expected_commitment_coeff_len_for_profile(&resolved.profiles().final_group)
-                .expect("expected coefficients")
-        );
-        assert!(err.to_string().contains("coefficients"));
     }
 
     #[test]

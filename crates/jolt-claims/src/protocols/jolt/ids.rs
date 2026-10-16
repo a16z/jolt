@@ -5,9 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Expr;
 
-/// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
-/// families (openings, deriveds, challenges). Each relation's `input`/`output`
-/// expression is a `JoltExpr<F>`.
 pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -135,11 +132,11 @@ pub enum HammingWeightClaimReductionChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
-    /// Packed path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
+    /// Akita path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
     /// weight of a Booleanity leg (`specs/digit-zero-virtualization.md`).
     EqBooleanityAtDigitZero,
     EqVirtualization(usize),
-    /// Packed path: `eq(r_virtualization_address_i, 0)` — the digit-zero
+    /// Akita path: `eq(r_virtualization_address_i, 0)` — the digit-zero
     /// baseline weight of a virtualization leg.
     EqVirtualizationAtDigitZero(usize),
     BalancedIncValueAtAddress,
@@ -194,11 +191,15 @@ pub enum BytecodeClaimReductionChallenge {
     Eta,
 }
 
+/// Uninhabited payload preserving retired identifier slots in the wire format.
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RetiredIdentifier {}
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BytecodeClaimReductionPublic {
-    /// Final output coefficient of one committed bytecode chunk opening:
-    /// `eq(r_bc_high)[chunk] * eq_combined * skip_scale`.
-    ChunkOutputWeight(usize),
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved0(RetiredIdentifier),
+    OutputWeight,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -335,15 +336,17 @@ pub enum JoltCommittedPolynomial {
     RamInc,
     InstructionRa(usize),
     BytecodeRa(usize),
-    BytecodeChunk(usize),
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved4(RetiredIdentifier),
     RamRa(usize),
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
-    // Lattice-mode committed polynomials (slots of the packed witness); base
+    // Lattice-mode committed polynomials (columns of the native trace group); base
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,
+    ProgramBytecode,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -500,28 +503,9 @@ pub enum JoltDerivedId {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "wire regression tests fail loudly")]
 mod tests {
     use super::*;
-
-    #[test]
-    fn opening_constructors_preserve_stage_context() {
-        let relation = JoltRelationId::RamReadWriteChecking;
-
-        assert_eq!(
-            JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, relation),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::RamInc),
-                relation,
-            }
-        );
-        assert_eq!(
-            JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamVal, relation),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamVal),
-                relation,
-            }
-        );
-    }
 
     #[test]
     fn advice_group_roles_fix_order_and_transcript_tags() {
@@ -531,5 +515,35 @@ mod tests {
         assert!(untrusted.order() < trusted.order());
         assert_eq!(untrusted.transcript_label(), b"untrusted_advice");
         assert_eq!(trusted.transcript_label(), b"trusted_advice");
+    }
+
+    #[test]
+    fn retired_bytecode_identifiers_are_rejected_without_shifting_live_tags() {
+        let config = bincode::config::standard();
+        for (id, tag) in [
+            (JoltCommittedPolynomial::RamRa(3), vec![5, 3]),
+            (JoltCommittedPolynomial::ProgramImageInit, vec![8]),
+            (JoltCommittedPolynomial::ProgramBytecode, vec![11]),
+        ] {
+            assert_eq!(bincode::serde::encode_to_vec(id, config).unwrap(), tag);
+            let (decoded, consumed) =
+                bincode::serde::decode_from_slice::<JoltCommittedPolynomial, _>(&tag, config)
+                    .unwrap();
+            assert_eq!(decoded, id);
+            assert_eq!(consumed, tag.len());
+        }
+        assert!(
+            bincode::serde::decode_from_slice::<JoltCommittedPolynomial, _>(&[4, 0], config)
+                .is_err()
+        );
+        assert_eq!(
+            bincode::serde::encode_to_vec(BytecodeClaimReductionPublic::OutputWeight, config)
+                .unwrap(),
+            vec![1]
+        );
+        assert!(
+            bincode::serde::decode_from_slice::<BytecodeClaimReductionPublic, _>(&[0, 0], config)
+                .is_err()
+        );
     }
 }

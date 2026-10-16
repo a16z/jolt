@@ -8,7 +8,6 @@ pub struct Sha3Chain {
 
 impl Default for Sha3Chain {
     fn default() -> Self {
-        // e2e_profiling.rs default
         Self {
             input: [5u8; 32],
             num_iters: 20,

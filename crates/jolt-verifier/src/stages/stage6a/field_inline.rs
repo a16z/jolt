@@ -42,8 +42,6 @@ pub fn compose_bytecode_geometry<F: JoltField>(
     }
 }
 
-/// Wire the field-inline opening values the extended bytecode read-RAF input claim consumes
-/// from the upstream clear outputs, from the field-register relations.
 pub fn field_inline_bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,

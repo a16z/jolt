@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineRelationId;
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::{Fr, JoltField};
 #[cfg(feature = "field-inline")]
@@ -10,6 +11,7 @@ use jolt_verifier::stages::stage2::outputs::FieldRegistersClaimReductionOutputCl
 use jolt_verifier::stages::stage4::FieldRegistersReadWriteOutputClaims;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage5::FieldRegistersValEvaluationOutputClaims;
+use jolt_verifier::stages::stage6b::outputs::BytecodeReductionCyclePhaseOutputClaims;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims;
 use jolt_verifier::{
@@ -962,19 +964,19 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage6.claims.bytecode_reduction.intermediate",
-        "claims.stage6b.bytecode_reduction.intermediate",
+        "claims.stage6b.bytecode_reduction.Intermediate.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "committed fixture offsets the bytecode reduction cycle-phase intermediate output claim",
+        "committed fixture offsets the cycle-phase intermediate",
     ),
     checked_standard(
-        "stage6.claims.bytecode_reduction.chunks",
-        "claims.stage6b.bytecode_reduction.chunks",
+        "stage6.claims.bytecode_reduction.bytecode",
+        "claims.stage6b.bytecode_reduction.Final.bytecode",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "cycle-phase-only committed shapes emit final chunks at stage 6, but every current committed fixture has an address phase; needs a cycle-phase-only fixture",
+        "cycle-only bytecode claims require a fixture without an address phase",
     ),
     checked_standard(
         "stage6.claims.program_image_reduction.program_image",
@@ -1054,12 +1056,12 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         "advice fixture test offsets the untrusted advice address-phase output claim",
     ),
     checked_standard(
-        "stage7.claims.bytecode_address_phase.chunks",
-        "claims.stage7.bytecode_address_phase.chunks",
+        "stage7.claims.bytecode_address_phase.bytecode",
+        "claims.stage7.bytecode_address_phase.bytecode",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "committed fixture offsets each final bytecode chunk claim",
+        "committed fixture offsets the whole-bytecode claim",
     ),
     checked_standard(
         "stage7.claims.program_image_address_phase",
@@ -1112,7 +1114,7 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
 /// The Akita-path claim cells: the read-raf fused-inc opening, lattice
 /// Booleanity, and the fused Stage-7 Hamming reduction. All active: the fixture-driven sweep in
 /// `soundness/tampering/akita.rs` (`every_clear_claim_wire_rejects_offset`)
-/// offsets every clear-claim scalar of the real packed-prover fixtures and
+/// offsets every clear-claim scalar of the real Akita-prover fixtures and
 /// asserts each offset rejects.
 #[cfg(feature = "akita")]
 pub const AKITA_TARGETS: &[TamperTarget] = &[
@@ -1163,7 +1165,7 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage8Openings,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "the packed field-inline e2e flips the field increment commitment's layout-digest byte, mutates the batch \
+        "the Akita field-inline e2e flips the field increment commitment's layout-digest byte, mutates the batch \
          proof, and strips the group; each rejects",
     ),
 ];
@@ -1195,13 +1197,6 @@ pub fn required_target(name: &str) -> TamperTarget {
         .into_iter()
         .find(|target| target.name == name)
         .unwrap_or_else(|| panic!("missing tamper manifest target {name}"))
-}
-
-pub fn target_names_are_unique() -> bool {
-    let mut names = BTreeSet::new();
-    all_targets()
-        .into_iter()
-        .all(|target| names.insert(target.name))
 }
 
 pub fn manifest_paths() -> BTreeSet<String> {
@@ -1265,16 +1260,6 @@ pub fn proof_field_paths() -> &'static [&'static str] {
     ]
 }
 
-pub fn verifier_owned_targets_without_active_coverage() -> Vec<TamperTarget> {
-    all_targets()
-        .into_iter()
-        .filter(|target| {
-            target.disposition == TamperDisposition::CheckedAtStage
-                && target.coverage != TamperCoverage::Active
-        })
-        .collect()
-}
-
 pub fn assert_manifest_target_is_active(target: TamperTarget) {
     assert_eq!(
         target.coverage,
@@ -1304,8 +1289,6 @@ pub fn expected_rejection_phase(target: TamperTarget) -> VerifierPhase {
     }
 }
 
-/// Which stage's batched sumcheck verifies each relation. Folds 6a/6b into
-/// `Stage6`.
 fn relation_phase(id: JoltRelationId) -> VerifierPhase {
     match id {
         JoltRelationId::SpartanOuter => VerifierPhase::Stage1,
@@ -1857,10 +1840,9 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 stage6b::outputs::UntrustedAdviceCyclePhaseOutputClaims { untrusted: zero },
             ),
             bytecode_reduction: fill_optionals.then_some(
-                stage6b::outputs::BytecodeReductionCyclePhaseOutputClaims {
-                    intermediate: Some(zero),
-                    chunks: Vec::new(),
-                },
+                BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                    BytecodeReductionIntermediateClaims { intermediate: zero },
+                ),
             ),
             program_image_reduction: fill_optionals.then_some(
                 stage6b::outputs::ProgramImageReductionCyclePhaseOutputClaims {
@@ -1893,7 +1875,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
             ),
             bytecode_address_phase: fill_optionals.then_some(
                 stage7::committed_reduction_address_phase::BytecodeReductionAddressPhaseOutputClaims {
-                    chunks: vec![zero],
+                    bytecode: zero,
                 },
             ),
             program_image_address_phase: fill_optionals.then_some(

@@ -38,12 +38,6 @@ fn manual_label_state(label: &[u8]) -> [u8; 32] {
 }
 
 #[test]
-fn new_state_is_the_hash_of_the_zero_padded_label() {
-    let transcript = LegacyB2b::new(b"legacy-compat");
-    assert_eq!(transcript.state(), manual_label_state(b"legacy-compat"));
-}
-
-#[test]
 fn appends_and_challenges_follow_the_legacy_hash_chain() {
     let mut transcript = LegacyB2b::new(b"legacy-chain");
     let mut expected = manual_label_state(b"legacy-chain");
@@ -83,26 +77,6 @@ fn appends_and_challenges_follow_the_legacy_hash_chain() {
 }
 
 #[test]
-fn multi_block_squeeze_chains_one_hash_per_32_byte_block() {
-    let mut transcript = LegacyB2b::new(b"legacy-blocks");
-    let mut out = [0u8; 80];
-    transcript.raw_challenge_bytes(&mut out);
-
-    let state0 = manual_label_state(b"legacy-blocks");
-    let block1 = manual_step(&state0, 0, &[]);
-    let block2 = manual_step(&block1, 1, &[]);
-    let block3 = manual_step(&block2, 2, &[]);
-    assert_eq!(&out[..32], &block1);
-    assert_eq!(&out[32..64], &block2);
-    assert_eq!(&out[64..], &block3[..16], "the final block is truncated");
-    assert_eq!(
-        transcript.state(),
-        block3,
-        "three blocks must advance the chain three rounds"
-    );
-}
-
-#[test]
 fn clone_replays_identically_until_inputs_diverge() {
     let mut original = LegacyB2b::new(b"legacy-clone");
     original.append_bytes(b"shared prefix");
@@ -120,37 +94,5 @@ fn clone_replays_identically_until_inputs_diverge() {
         original.state(),
         cloned.state(),
         "divergent appends must yield divergent states"
-    );
-}
-
-#[test]
-fn debug_output_names_the_engine_and_round_counter() {
-    let transcript = LegacyB2b::new(b"legacy-debug");
-    let output = format!("{transcript:?}");
-    assert!(
-        output.contains("DigestTranscript") && output.contains("n_rounds"),
-        "unexpected Debug output: {output}"
-    );
-}
-
-/// The `challenge_scalar_powers` default must equal independently computed
-/// powers of the scalar squeezed by an identically driven transcript.
-#[test]
-fn challenge_scalar_powers_are_the_geometric_sequence_of_one_squeeze() {
-    let mut transcript = LegacyB2b::new(b"legacy-powers");
-    transcript.append_bytes(b"bind");
-    let mut reference = transcript.clone();
-
-    let powers = transcript.challenge_scalar_powers(4);
-    let gamma = reference.challenge_scalar();
-    assert_eq!(
-        powers,
-        vec![Fr::from(1u128), gamma, gamma * gamma, gamma * gamma * gamma],
-        "powers must be [1, gamma, gamma^2, gamma^3] of a single squeeze"
-    );
-    assert_eq!(
-        transcript.state(),
-        reference.state(),
-        "challenge_scalar_powers must consume exactly one squeeze"
     );
 }

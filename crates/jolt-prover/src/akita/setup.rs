@@ -1,6 +1,6 @@
 //! The canonical `OneHotTrace` commitment-group shape, derived from the
 //! proof config and the program shape alone — what a caller needs to build
-//! the packed scheme's setup params without instantiating any prover (the
+//! the Akita scheme's setup params without instantiating any prover (the
 //! params constructor itself is scheme-specific, so this crate exposes only
 //! the shape).
 
@@ -67,6 +67,7 @@ pub fn one_hot_trace_setup_shape(
 mod tests {
     use super::*;
     use crate::config::{one_hot_config, read_write_config};
+    use jolt_akita::AkitaChunkProfile;
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
 
     fn config(log_t: usize) -> ProverConfig {
@@ -76,15 +77,16 @@ mod tests {
             rw_config: read_write_config(log_t, 24),
             one_hot_config: one_hot_config(log_t),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
+            akita_chunk_profile: AkitaChunkProfile::Single,
         }
     }
 
     #[test]
-    fn maximum_trace_uses_the_44_variable_packed_shape() {
+    fn maximum_trace_uses_native_column_geometry() {
         let (shape, _, one_hot_k) = one_hot_trace_setup_shape(&config(31), 1 << 24).unwrap();
-        assert_eq!(shape.num_vars, 44);
-        assert_eq!(shape.num_polys, 1);
-        assert_eq!(one_hot_k, 256);
+        assert_eq!(shape.num_vars, 35);
+        assert_eq!(shape.num_polys, 61);
+        assert_eq!(one_hot_k, 16);
     }
 
     #[test]

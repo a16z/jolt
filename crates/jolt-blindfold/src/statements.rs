@@ -134,37 +134,3 @@ impl<F, O, Com> FinalOpeningBinding<F, O, Com> {
         }
     }
 }
-
-#[cfg(test)]
-#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
-mod tests {
-    use super::*;
-    use jolt_claims::{opening, Expr};
-    use jolt_field::Fr;
-    use jolt_sumcheck::{CommittedSumcheckConsistency, SumcheckDomainSpec};
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum Opening {
-        A,
-    }
-
-    #[test]
-    fn blindfold_statement_groups_stages() {
-        let claim: Expr<Fr, Opening> = opening(Opening::A);
-        let stage = BlindFoldStage::new(
-            "stage",
-            SumcheckStatement::new(2, 2),
-            SumcheckDomainSpec::BooleanHypercube,
-            CommittedSumcheckConsistency::<Fr, ()> { rounds: Vec::new() },
-            CommittedClaimRows::empty(),
-            claim.clone(),
-            claim,
-        );
-        let statement = BlindFoldStatement::new(vec![stage], Vec::new());
-
-        assert_eq!(statement.stages.len(), 1);
-        assert_eq!(statement.stage_count(), 1);
-        assert_eq!(statement.stages[0].name, "stage");
-        assert_eq!(statement.stages[0].statement, SumcheckStatement::new(2, 2));
-    }
-}

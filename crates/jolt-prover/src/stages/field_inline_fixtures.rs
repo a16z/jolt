@@ -18,26 +18,32 @@
 
 use std::sync::Arc;
 
+use crate::JoltBackend;
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
-use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
-    TraceOutput, TraceRow,
+use jolt_field::Fr;
+#[cfg(feature = "akita")]
+use jolt_kernels::{
+    CommitWitness, KernelError, ProofSession, WitnessCommitRequest, WitnessCommitment,
 };
+use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{
-    FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
-    NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE,
+    JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
+    NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
+    TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::PrecommittedSchedule;
 use jolt_verifier::CheckedInputs;
+#[cfg(feature = "akita")]
+use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 use crate::{JoltProverPreprocessing, ProverConfig};
@@ -86,8 +92,9 @@ fn fixture_program_preprocessing(
 
 pub(crate) fn field_inline_backend(
     bytecode: Vec<JoltInstructionRow>,
-    rows: Vec<TraceRow>,
-) -> TraceBackend<OwnedTrace> {
+    rows: Vec<JoltTraceRow>,
+    field_events: Vec<FieldEvent>,
+) -> TraceBackend {
     let profile: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
     let program = Arc::new(JoltProgram::from_parts_with_profile(
         Vec::new(),
@@ -98,6 +105,15 @@ pub(crate) fn field_inline_backend(
         profile,
     ));
     let preprocessing = fixture_program_preprocessing(bytecode);
+    let rows = rows
+        .into_iter()
+        .map(|row| {
+            let instruction = row.instruction();
+            let pc = u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap();
+            JoltTraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap()
+        })
+        .collect();
+    let data = TraceData::from_parts(rows, field_events).unwrap();
     TraceBackend::new(
         JoltVmWitnessConfig::new(
             LOG_T,
@@ -110,7 +126,7 @@ pub(crate) fn field_inline_backend(
         JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), test_public_io(), None, None),
+            TraceOutput::new(data, test_public_io(), None, None),
         ),
     )
 }
@@ -119,19 +135,25 @@ fn enc(value: u64) -> FieldEncodedValue {
     FieldEncodedValue::from_u64(value)
 }
 
-fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-    let mut row = TraceRow::from_instruction(instruction).unwrap();
-    row.field_inline = Some(data.into());
-    row
+fn trace_row(
+    instruction: JoltInstructionRow,
+    registers: RegisterState,
+    ram_access: RamAccess,
+) -> Result<JoltTraceRow, TraceRowError> {
+    JoltTraceRow::new(instruction, registers, ram_access, 1)
+}
+
+fn field_row(instruction: JoltInstructionRow) -> JoltTraceRow {
+    trace_row(instruction, RegisterState::default(), RamAccess::NoOp).unwrap()
 }
 
 /// A terminal JAL row: the only hand-craftable last real instruction — its
 /// `Jump` flag turns off the otherwise-unconditional PC-update row 16, and
 /// `ShouldJump` stays 0 because the successor is the noop padding — with the
 /// link write (`rd = address + 4`) row 13 demands.
-fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
+fn halt_jal_row(offset: usize, rd: u8) -> JoltTraceRow {
     let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);
-    TraceRow::new(
+    trace_row(
         jal,
         RegisterState {
             rd: Some(RegisterWrite {
@@ -152,7 +174,7 @@ fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
 /// check needs a matching increment. Two rows: `ADDI x6, x0, 1` (a consistent
 /// register write of the stored value), then `SD x6, termination(x0)` (store
 /// flag on, `RamAddress = rs1 + imm = termination`, `RamWriteValue = rs2`).
-fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
+fn termination_store_rows(offset: usize) -> [JoltTraceRow; 2] {
     let one = instruction(JoltInstructionKind::ADDI, offset, Some(6), Some(0), None, 1);
     let termination = test_memory_layout().termination;
     let store = instruction(
@@ -164,7 +186,7 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
         termination as i128,
     );
     [
-        TraceRow::new(
+        trace_row(
             one,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -181,7 +203,7 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
             RamAccess::NoOp,
         )
         .unwrap(),
-        TraceRow::new(
+        trace_row(
             store,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -207,12 +229,12 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
 /// A field-inline guest executing only ordinary instructions (an ADDI with
 /// consistent register semantics, the termination store, then the terminal
 /// JAL): the rv64 eq rows are satisfied while every field-inline column is zero.
-fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
+fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>) {
     let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
     let [one, store] = termination_store_rows(1);
     let jal = halt_jal_row(3, 5);
     let rows = vec![
-        TraceRow::new(
+        trace_row(
             addi,
             RegisterState {
                 // Register 2 is never written, so the read must see the
@@ -231,9 +253,9 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
             RamAccess::NoOp,
         )
         .unwrap(),
-        one.clone(),
-        store.clone(),
-        jal.clone(),
+        one,
+        store,
+        jal,
     ];
     (
         vec![
@@ -246,16 +268,16 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     )
 }
 
-pub(crate) fn addi_only_backend() -> TraceBackend<OwnedTrace> {
+pub(crate) fn addi_only_backend() -> TraceBackend {
     let (bytecode, rows) = addi_only_program();
-    field_inline_backend(bytecode, rows)
+    field_inline_backend(bytecode, rows, Vec::new())
 }
 
 /// Two field loads and a multiply: `FieldRdInc = [13, 17, 221, 0]`,
 /// `13 · 17 = 221` — every field-inline eq row and both field-inline product lanes are satisfied
 /// (the product columns are extractor-derived), and the x-register file is
 /// untouched.
-fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
+fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Vec<FieldEvent>) {
     let load_a = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
         0,
@@ -283,34 +305,41 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let [one, store] = termination_store_rows(3);
     let jal = halt_jal_row(5, 5);
     let rows = vec![
-        field_row(
-            load_a,
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
+        field_row(load_a),
+        field_row(load_b),
+        field_row(mul),
+        one,
+        store,
+        jal,
+    ];
+    let field_events = vec![
+        FieldEvent {
+            cycle: 0,
+            data: FieldInlineTraceData {
+                rs1: None,
+                rs2: None,
                 rd: Some(FieldRegisterWrite {
                     register: 1,
                     pre_value: enc(0),
                     post_value: enc(13),
                 }),
-                ..FieldInlineTraceData::default()
             },
-        ),
-        field_row(
-            load_b,
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
+        },
+        FieldEvent {
+            cycle: 1,
+            data: FieldInlineTraceData {
+                rs1: None,
+                rs2: None,
                 rd: Some(FieldRegisterWrite {
                     register: 2,
                     pre_value: enc(0),
                     post_value: enc(17),
                 }),
-                ..FieldInlineTraceData::default()
             },
-        ),
-        field_row(
-            mul,
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::Mul),
+        },
+        FieldEvent {
+            cycle: 2,
+            data: FieldInlineTraceData {
                 rs1: Some(FieldRegisterRead {
                     register: 1,
                     value: enc(13),
@@ -324,12 +353,8 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
                     pre_value: enc(0),
                     post_value: enc(221),
                 }),
-                ..FieldInlineTraceData::default()
             },
-        ),
-        one.clone(),
-        store.clone(),
-        jal.clone(),
+        },
     ];
     (
         vec![
@@ -341,12 +366,13 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
             jal.instruction(),
         ],
         rows,
+        field_events,
     )
 }
 
-pub(crate) fn field_arithmetic_backend() -> TraceBackend<OwnedTrace> {
-    let (bytecode, rows) = field_arithmetic_program();
-    field_inline_backend(bytecode, rows)
+pub(crate) fn field_arithmetic_backend() -> TraceBackend {
+    let (bytecode, rows, field_events) = field_arithmetic_program();
+    field_inline_backend(bytecode, rows, field_events)
 }
 
 /// The prover-preprocessing carrier the stage-4+ recipes take, over the
@@ -402,7 +428,7 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
 }
 
 /// The stage recipes' derived-config shape for the fixture traces: the same
-/// derivation `ProverConfig::derive` performs, at the fixture's scale (no
+/// derivation `ProverConfig::derive_from_dimensions` performs, at the fixture's scale (no
 /// RAM traffic, so `ram_K` stays at a small power of two).
 pub(crate) fn test_prover_config() -> ProverConfig {
     ProverConfig {
@@ -411,6 +437,8 @@ pub(crate) fn test_prover_config() -> ProverConfig {
         rw_config: crate::config::read_write_config(LOG_T, RAM_LOG_K),
         one_hot_config: crate::config::one_hot_config(LOG_T),
         trace_polynomial_order: Default::default(),
+        #[cfg(feature = "akita")]
+        akita_chunk_profile: Default::default(),
     }
 }
 
@@ -429,7 +457,6 @@ pub(crate) fn test_memory_layout() -> MemoryLayout {
     })
 }
 
-/// The fixture traces' program I/O: empty, over [`test_memory_layout`].
 pub(crate) fn test_public_io() -> JoltDevice {
     JoltDevice {
         memory_layout: test_memory_layout(),
@@ -455,7 +482,7 @@ pub(crate) mod twins {
     };
     use jolt_claims::protocols::jolt::TraceDimensions;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::Ring;
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::{AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript};
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
@@ -489,6 +516,7 @@ pub(crate) mod twins {
     use jolt_claims::protocols::jolt::JoltRelationId;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
     use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
     use jolt_verifier::stages::stage4::outputs::Stage4Sumchecks;
     use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
@@ -864,7 +892,7 @@ pub(crate) mod twins {
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,
         );
-        // The packed shape folds the four reduced Inc claims into the
+        // The Akita shape folds the four reduced Inc claims into the
         // fused-inc consumer stage slots (stage6a::verify's own wrapper).
         #[cfg(feature = "akita")]
         let base_input_values = LatticeReadRafAddressPhaseInputClaims {
@@ -903,7 +931,6 @@ pub(crate) mod twins {
     }
 }
 
-/// Shared upstream proving for clear and committed stage tests.
 pub(crate) mod proving {
     use super::*;
     use crate::stages::stage1::{prove_stage1, Stage1ProverOutput};
@@ -914,9 +941,8 @@ pub(crate) mod proving {
     use crate::stages::stage6a::{prove_stage6a, Stage6aProverOutput};
     use crate::{JoltBackend, ProofMode};
     use jolt_field::Fr;
-    use jolt_kernels::ProofSession;
+    use jolt_kernels::KernelContext;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_witness::JoltWitnessPlane;
     type Commitment = Bn254G1;
     type Stages3 = (
         Stage1ProverOutput<Fr, Commitment>,
@@ -927,48 +953,40 @@ pub(crate) mod proving {
     type Stages5 = (Stages4, Stage5ProverOutput<Fr, Commitment>);
     type Stages6a = (Stages5, Stage6aProverOutput<Fr, Commitment>);
 
-    pub(crate) struct FixtureProver<'a> {
-        pub(crate) backend: &'a JoltBackend<Fr, DoryScheme>,
-        pub(crate) session: &'a mut ProofSession,
+    pub(crate) struct FixtureProver<'a, 'w> {
+        pub(crate) backend: &'a mut KernelContext<'w, Fr, JoltBackend<Fr, DoryScheme>>,
         pub(crate) mode: &'a ProofMode<'a, Pedersen<Bn254G1>>,
         pub(crate) config: &'a ProverConfig,
         pub(crate) public_io: &'a JoltDevice,
         pub(crate) checked: &'a CheckedInputs,
         pub(crate) preprocessing: &'a JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
-        pub(crate) witness: &'a dyn JoltWitnessPlane<Fr>,
         pub(crate) transcript: &'a mut Blake2bTranscript,
     }
 
-    impl FixtureProver<'_> {
+    impl FixtureProver<'_, '_> {
         pub(crate) fn through_stage3(&mut self) -> Stages3 {
             let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 self.backend,
-                self.session,
                 self.mode,
                 LOG_T,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
             let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 self.backend,
-                self.session,
                 self.mode,
                 self.config,
                 self.public_io,
                 &stage1.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
             let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 self.backend,
-                self.session,
                 self.mode,
                 self.config,
                 &stage1.clear_output,
                 &stage2.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
@@ -978,14 +996,12 @@ pub(crate) mod proving {
             let (stage1, stage2, stage3) = self.through_stage3();
             let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 self.backend,
-                self.session,
                 self.mode,
                 self.checked,
                 self.config,
                 self.preprocessing,
                 &stage2.clear_output,
                 &stage3.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
@@ -995,14 +1011,12 @@ pub(crate) mod proving {
             let ((stage1, stage2, stage3), stage4) = self.through_stage4();
             let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 self.backend,
-                self.session,
                 self.mode,
                 self.checked,
                 self.config,
                 self.preprocessing,
                 &stage2.clear_output,
                 &stage4.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
@@ -1012,7 +1026,6 @@ pub(crate) mod proving {
             let (((stage1, stage2, stage3), stage4), stage5) = self.through_stage5();
             let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 self.backend,
-                self.session,
                 self.mode,
                 self.checked,
                 self.config,
@@ -1022,11 +1035,39 @@ pub(crate) mod proving {
                 &stage3.clear_output,
                 &stage4.clear_output,
                 &stage5.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
             ((((stage1, stage2, stage3), stage4), stage5), stage6a)
         }
+    }
+}
+
+/// The stage fixtures do not perform a PCS commitment.
+pub(crate) fn reference_backend() -> JoltBackend<Fr, DoryScheme> {
+    #[cfg(not(feature = "akita"))]
+    {
+        JoltBackend::reference()
+    }
+    #[cfg(feature = "akita")]
+    {
+        JoltBackend::reference_kernels(UnusedCommit)
+    }
+}
+
+#[cfg(feature = "akita")]
+struct UnusedCommit;
+
+#[cfg(feature = "akita")]
+impl CommitWitness<Fr, DoryScheme> for UnusedCommit {
+    fn commit_witness(
+        &self,
+        _: &mut ProofSession,
+        _: &dyn JoltWitnessPlane<Fr>,
+        _: WitnessCommitRequest<'_, DoryScheme>,
+    ) -> Result<WitnessCommitment<DoryScheme>, KernelError<Fr>> {
+        Err(KernelError::Unsupported {
+            reason: "stage fixture has no commitment slot",
+        })
     }
 }

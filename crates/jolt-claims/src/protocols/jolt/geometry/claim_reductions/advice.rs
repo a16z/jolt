@@ -204,8 +204,6 @@ fn advice_opening(kind: JoltAdviceKind, relation: JoltRelationId) -> JoltOpening
     }
 }
 
-/// Compute the column-side and row-side active round ranges for the advice
-/// cycle-phase sumcheck, given the main/advice matrix shapes and trace order.
 fn cycle_phase_round_schedule(
     trace_order: TracePolynomialOrder,
     log_t: usize,
@@ -229,30 +227,5 @@ fn cycle_phase_round_schedule(
                 );
             (col_binding_rounds, row_binding_rounds)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn with_address_phase() -> PrecommittedReductionDimensions {
-        PrecommittedReductionDimensions::new(4, 3, true)
-    }
-
-    fn without_address_phase() -> PrecommittedReductionDimensions {
-        PrecommittedReductionDimensions::new(4, 3, false)
-    }
-
-    #[test]
-    fn cycle_phase_output_openings_track_address_phase_presence() {
-        assert_eq!(
-            cycle_phase_output_openings(JoltAdviceKind::Trusted, with_address_phase()),
-            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            cycle_phase_output_openings(JoltAdviceKind::Untrusted, without_address_phase()),
-            vec![final_advice_opening(JoltAdviceKind::Untrusted)]
-        );
     }
 }

@@ -194,10 +194,6 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
-/// Dispatches a method call to the inner table for every
-/// [`LookupTableKind`] variant, binding the inner table to `$t` and
-/// evaluating `$expr`. Variants are listed once here so that
-/// [`LookupTableKind`]'s dispatch methods stay a single line each.
 macro_rules! dispatch {
     ($self:expr, $t:ident => $expr:expr) => {
         match $self {
@@ -316,10 +312,8 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
 /// where the sum is over a small number of prefix-suffix pairs.
 /// This enables the sumcheck prover to avoid materializing the entire table.
 pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Default {
-    /// The prefix types used in this table's decomposition.
     fn prefixes(&self) -> &'static [Prefixes];
 
-    /// The suffix types used in this table's decomposition.
     fn suffixes(&self) -> &'static [Suffixes];
 
     /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.

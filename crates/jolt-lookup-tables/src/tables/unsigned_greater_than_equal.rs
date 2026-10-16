@@ -40,7 +40,6 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedGreaterThanE
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, less_than] = suffixes.try_into().unwrap();
-        // 1 - LTU(x, y)
         one - prefixes[Prefixes::LessThan] * one - prefixes[Prefixes::Eq] * less_than
     }
 }

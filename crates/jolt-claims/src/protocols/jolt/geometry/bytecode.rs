@@ -2,9 +2,11 @@ use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind, XLEN};
 use jolt_poly::{EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
 use jolt_riscv::{
-    instructions::Noop, CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker,
-    JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
+    CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction,
+    JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
+
+use rayon::prelude::*;
 
 use crate::{challenge, derived, opening};
 
@@ -455,6 +457,65 @@ where
         .collect()
 }
 
+/// Fold staged bytecode values without allocating a row-value matrix. Large
+/// tables use Rayon; small tables run serially. Field addition makes the result
+/// independent of chunk scheduling.
+pub fn read_raf_fold_stage_values<F: JoltField>(
+    inputs: BytecodeReadRafStageValueInputs<'_, F>,
+    address_eq_evals: &[F],
+) -> Result<[F; NUM_BYTECODE_VAL_STAGES], PointGeometryError> {
+    if inputs.bytecode.len() != address_eq_evals.len() {
+        return Err(PointGeometryError::EvaluationDomainLengthMismatch {
+            expected: inputs.bytecode.len(),
+            got: address_eq_evals.len(),
+        });
+    }
+    let register_eq = read_raf_register_eq_evals(
+        inputs.register_read_write_point,
+        inputs.register_val_evaluation_point,
+    );
+    let fold_rows = |rows: &[JoltInstructionRow], weights: &[F]| {
+        let mut sums = [F::zero(); NUM_BYTECODE_VAL_STAGES];
+        for (instruction, weight) in rows.iter().zip(weights) {
+            let values = read_raf_row_values::<F>(
+                instruction,
+                &register_eq.read_write,
+                &register_eq.val_evaluation,
+                inputs.stage1_gammas,
+                inputs.stage2_gammas,
+                inputs.stage3_gammas,
+                inputs.stage4_gammas,
+                inputs.stage5_gammas,
+            );
+            for (sum, value) in sums.iter_mut().zip(values) {
+                *sum += value * *weight;
+            }
+        }
+        sums
+    };
+    const PARALLEL_MIN_ROWS: usize = 1 << 15;
+    const CHUNK_ROWS: usize = 1 << 12;
+    let folded = if inputs.bytecode.len() < PARALLEL_MIN_ROWS {
+        fold_rows(inputs.bytecode, address_eq_evals)
+    } else {
+        inputs
+            .bytecode
+            .par_chunks(CHUNK_ROWS)
+            .zip(address_eq_evals.par_chunks(CHUNK_ROWS))
+            .map(|(rows, weights)| fold_rows(rows, weights))
+            .reduce(
+                || [F::zero(); NUM_BYTECODE_VAL_STAGES],
+                |mut left, right| {
+                    for (sum, value) in left.iter_mut().zip(right) {
+                        *sum += value;
+                    }
+                    left
+                },
+            )
+    };
+    Ok(folded)
+}
+
 pub fn read_raf_public_values<F>(
     inputs: BytecodeReadRafEvaluationInputs<'_, F>,
 ) -> Result<BytecodeReadRafPublicValues<F>, PointGeometryError>
@@ -543,8 +604,7 @@ fn read_raf_row_values<F>(
 where
     F: JoltField,
 {
-    let decoded = JoltInstruction::try_from(*instruction)
-        .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
+    let decoded = JoltInstruction::from(*instruction);
     let circuit_flags = decoded.circuit_flags();
     let instruction_flags = decoded.instruction_flags();
 
@@ -791,94 +851,4 @@ pub fn bytecode_ra(index: usize) -> JoltOpeningId {
         JoltCommittedPolynomial::BytecodeRa(index),
         JoltRelationId::BytecodeReadRaf,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use jolt_field::{Fr, Ring};
-    use jolt_poly::EqPolynomial;
-    use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
-
-    #[test]
-    fn read_raf_register_eq_evals_builds_register_address_tables() {
-        let read_write = vec![Fr::from_u64(2), Fr::from_u64(3)];
-        let val_evaluation = vec![Fr::from_u64(5), Fr::from_u64(7)];
-        let eq = read_raf_register_eq_evals(&read_write, &val_evaluation);
-
-        assert_eq!(
-            eq,
-            BytecodeReadRafRegisterEqEvals {
-                read_write: EqPolynomial::<Fr>::evals(&read_write, None),
-                val_evaluation: EqPolynomial::<Fr>::evals(&val_evaluation, None),
-            }
-        );
-    }
-
-    #[test]
-    fn read_raf_stage_values_match_row_formula() {
-        let bytecode = vec![
-            JoltInstructionRow {
-                instruction_kind: JoltInstructionKind::ADD,
-                address: 9,
-                operands: NormalizedOperands {
-                    rs1: Some(1),
-                    rs2: Some(2),
-                    rd: Some(3),
-                    imm: 4,
-                },
-                virtual_sequence_remaining: None,
-                is_first_in_sequence: false,
-                is_compressed: false,
-            },
-            JoltInstructionRow::default(),
-        ];
-        let register_read_write_point = vec![Fr::from_u64(2); 4];
-        let register_val_evaluation_point = vec![Fr::from_u64(3); 4];
-        let stage1_gammas = (0..2 + NUM_CIRCUIT_FLAGS)
-            .map(|value| Fr::from_u64(value as u64 + 1))
-            .collect::<Vec<_>>();
-        let stage2_gammas = (0..4)
-            .map(|value| Fr::from_u64(value as u64 + 11))
-            .collect::<Vec<_>>();
-        let stage3_gammas = (0..9)
-            .map(|value| Fr::from_u64(value as u64 + 17))
-            .collect::<Vec<_>>();
-        let stage4_gammas = (0..3)
-            .map(|value| Fr::from_u64(value as u64 + 29))
-            .collect::<Vec<_>>();
-        let stage5_gammas = (0..2 + LookupTableKind::<XLEN>::COUNT)
-            .map(|value| Fr::from_u64(value as u64 + 37))
-            .collect::<Vec<_>>();
-        let register_eq =
-            read_raf_register_eq_evals(&register_read_write_point, &register_val_evaluation_point);
-
-        let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
-            bytecode: &bytecode,
-            register_read_write_point: &register_read_write_point,
-            register_val_evaluation_point: &register_val_evaluation_point,
-            stage1_gammas: &stage1_gammas,
-            stage2_gammas: &stage2_gammas,
-            stage3_gammas: &stage3_gammas,
-            stage4_gammas: &stage4_gammas,
-            stage5_gammas: &stage5_gammas,
-        });
-        let expected = bytecode
-            .iter()
-            .map(|row| {
-                read_raf_row_values(
-                    row,
-                    &register_eq.read_write,
-                    &register_eq.val_evaluation,
-                    &stage1_gammas,
-                    &stage2_gammas,
-                    &stage3_gammas,
-                    &stage4_gammas,
-                    &stage5_gammas,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(stage_values, expected);
-    }
 }

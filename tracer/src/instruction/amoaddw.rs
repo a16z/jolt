@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::Instruction;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{format::format_amo::FormatAMO, Cycle, RAMWrite, RISCVInstruction, RISCVTrace};
+use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace, RamWrite};
 
 declare_riscv_instr!(
     name   = AMOADDW,
@@ -12,28 +12,25 @@ declare_riscv_instr!(
     match  = 0x0000202f,
     format = FormatAMO,
     registers = RegisterStateAMO,
-    ram    = RAMWrite
+    ram    = RamWrite
 );
 
 impl AMOADDW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOADDW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOADDW as RISCVInstruction>::RamAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let add_value = cpu.x[self.operands.rs2 as usize] as i32;
 
-        // Load the original word from memory
         let load_result = cpu.mmu.load_word(address);
         let original_value = match load_result {
             Ok((word, _)) => word as i32 as i64,
             Err(_) => panic!("MMU load error"),
         };
 
-        // Add the values and store back to memory
         let new_value = (original_value as i32).wrapping_add(add_value) as u32;
         cpu.mmu
             .store_word(address, new_value)
             .expect("MMU store error");
 
-        // Return the original value
         cpu.write_register(self.operands.rd as usize, original_value);
     }
 }

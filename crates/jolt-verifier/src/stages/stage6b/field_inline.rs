@@ -1,6 +1,3 @@
-//! Field-inline bytecode composition, preprocessing checks, and transcript ordering
-//! for stage 6b.
-
 use jolt_claims::protocols::field_inline::{FieldInlineRelationId, FIELD_REGISTERS_LOG_K};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::OutputClaims as _;

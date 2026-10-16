@@ -32,7 +32,6 @@ pub fn glv_four_scalar_mul_online(scalar: Fr, points: &[G2Projective]) -> Vec<G2
         .collect()
 }
 
-/// Shamir's trick for 4-point scalar multiplication with sign handling.
 pub(crate) fn shamir_glv_mul_4d(
     bases: &[G2Projective; 4],
     coeffs: &[<Fr as PrimeField>::BigInt; 4],

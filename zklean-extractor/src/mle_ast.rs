@@ -1,7 +1,3 @@
-// =============================================================================
-// Imports
-// =============================================================================
-
 use std::cell::RefCell;
 use std::cmp::max;
 use std::collections::HashMap;
@@ -64,10 +60,6 @@ const CSE_PREFIX: &str = "cse";
 // actual AST nodes (they're constructed separately). For zkLean/Lean output where
 // there's a single large AST, CSE with threshold 4 helps.
 const CSE_DEPTH_THRESHOLD: usize = 4;
-
-// =============================================================================
-// Type aliases
-// =============================================================================
 
 /// A 256-bit scalar value represented as 4 u64 limbs in little-endian order.
 /// Value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
@@ -162,7 +154,6 @@ pub fn set_pending_challenge(challenge: MleAst) {
     });
 }
 
-/// Take the pending challenge (if any).
 fn take_pending_challenge() -> Option<MleAst> {
     PENDING_CHALLENGE.with(|cell| cell.borrow_mut().take())
 }
@@ -268,7 +259,6 @@ pub fn disable_constraint_mode() {
     });
 }
 
-/// Check if constraint mode is enabled.
 pub fn is_constraint_mode() -> bool {
     CONSTRAINT_MODE.with(|cell| *cell.borrow())
 }
@@ -283,21 +273,14 @@ pub fn take_constraints() -> Vec<MleAst> {
     SYMBOLIC_CONSTRAINTS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
 }
 
-/// Add a constraint that should equal zero.
 fn add_constraint(constraint: MleAst) {
     SYMBOLIC_CONSTRAINTS.with(|cell| {
         cell.borrow_mut().push(constraint);
     });
 }
 
-// =============================================================================
-// Core types
-// =============================================================================
-
-/// An atomic (var or const) AST element
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Atom {
-    /// A constant value.
     Scalar(Scalar),
     /// A variable, represented by an index into a register of variables
     Var(Index),
@@ -310,9 +293,6 @@ impl Atom {
     fn evaluate<F: JoltField>(&self, env: &Environment<F>) -> F {
         match self {
             Self::Scalar(value) => {
-                // Convert [u64; 4] to F
-                // value = limb0 + limb1*2^64 + limb2*2^128 + limb3*2^192
-                // For test purposes, we only support values that fit in u128
                 assert!(
                     value[2] == 0 && value[3] == 0,
                     "Scalar too large for test evaluation"
@@ -329,12 +309,9 @@ impl Atom {
     }
 }
 
-/// Either an index into the arena, or an atomic (var or const) element.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Edge {
-    /// An atomic (var or const) AST element.
     Atom(Atom),
-    /// A reference to a node in the arena.
     NodeRef(NodeId),
 }
 
@@ -351,7 +328,6 @@ pub enum TranscriptHashData {
 }
 
 impl TranscriptHashData {
-    /// View data elements as a slice (generic traversal).
     pub fn as_slice(&self) -> &[Edge] {
         match self {
             Self::Poseidon(e) => std::slice::from_ref(e),
@@ -367,13 +343,9 @@ pub enum Node {
     /// An atomic (var or const) AST element. This should only be used for MLE's with a single
     /// node.
     Atom(Atom),
-    /// The negation of a node (from zklean base, unused by Jolt transpiler)
     Neg(Edge),
-    /// The multiplicative inverse of a node
     Inv(Edge),
-    /// The sum of two nodes
     Add(Edge, Edge),
-    /// The product of two nodes
     Mul(Edge, Edge),
     /// The difference between the first and second nodes
     Sub(Edge, Edge),
@@ -420,17 +392,9 @@ pub enum Node {
 /// Serialized handles retain arena indices; use [`AstBundle`] to transport the graph.
 #[derive(Debug, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
 pub struct MleAst {
-    /// Index of the root node in the arena.
-    /// nodes: [ ]
     root: NodeId,
-    /// Name of the register this MLE is evaluated over.
-    // TODO: Support multiple registers?
     reg_name: Option<char>,
 }
-
-// =============================================================================
-// impl MleAst (inherent methods)
-// =============================================================================
 
 impl MleAst {
     fn new_scalar(scalar: Scalar) -> Self {
@@ -458,13 +422,11 @@ impl MleAst {
         }
     }
 
-    /// Create a new root node in the form of a unitary operator.
     fn unop(&mut self, constructor: impl FnOnce(Edge) -> Node) {
         let edge = edge_for_root(self.root);
         self.root = insert_node(constructor(edge));
     }
 
-    /// Create a new root node in the form of a binary operator.
     fn binop(&mut self, constructor: impl FnOnce(Edge, Edge) -> Node, rhs: &Self) {
         self.merge_reg_name(rhs.reg_name);
         let lhs_edge = edge_for_root(self.root);
@@ -472,17 +434,14 @@ impl MleAst {
         self.root = insert_node(constructor(lhs_edge, rhs_edge));
     }
 
-    /// Create a variable from an index (for symbolic execution).
     pub fn from_var(index: u16) -> Self {
         Self::new_var('v', index)
     }
 
-    /// Get the root node ID for this AST.
     pub fn root(&self) -> NodeId {
         self.root
     }
 
-    /// Poseidon hash with 3 inputs (state, n_rounds, data).
     pub fn poseidon(state: &Self, n_rounds: &Self, data: &Self) -> Self {
         let state_edge = edge_for_root(state.root);
         let rounds_edge = edge_for_root(n_rounds.root);
@@ -498,7 +457,6 @@ impl MleAst {
         }
     }
 
-    /// Blake2b hash with variable-arity data.
     pub fn blake2b(state: &Self, n_rounds: &Self, data: &[Self]) -> Self {
         let data_edges: Vec<Edge> = data.iter().map(|d| edge_for_root(d.root)).collect();
         let root = insert_node(Node::TranscriptHash(
@@ -512,7 +470,6 @@ impl MleAst {
         }
     }
 
-    /// Keccak hash with variable-arity data.
     pub fn keccak(state: &Self, n_rounds: &Self, data: &[Self]) -> Self {
         let data_edges: Vec<Edge> = data.iter().map(|d| edge_for_root(d.root)).collect();
         let root = insert_node(Node::TranscriptHash(
@@ -580,10 +537,6 @@ impl MleAst {
     }
 }
 
-// =============================================================================
-// Test-only evaluation helpers
-// =============================================================================
-
 #[cfg(test)]
 fn evaluate_edge<F: JoltField>(edge: Edge, env: &Environment<F>) -> F {
     match edge {
@@ -614,15 +567,10 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
         | Node::Truncate128Reverse(_)
         | Node::Truncate128(_)
         | Node::AppendU64Transform(_) => {
-            // Hash/transform nodes are for circuit generation only, not field evaluation
             unreachable!("Hash/transform nodes should not appear in zklean-extractor tests")
         }
     }
 }
-
-// =============================================================================
-// Formatting
-// =============================================================================
 
 struct FormattingData<'a> {
     prefix: &'a String,
@@ -748,10 +696,6 @@ fn fmt_node(
     }
 }
 
-// =============================================================================
-// Common Subexpression Elimination (CSE)
-// =============================================================================
-
 pub fn compute_hash<T: Hash>(value: &T) -> u64 {
     let mut h = DefaultHasher::new();
     value.hash(&mut h);
@@ -814,7 +758,6 @@ fn node_depth(node: &Node) -> usize {
 /// The CSE_DEPTH_THRESHOLD controls granularity - subexpressions below this depth
 /// are not hoisted (to avoid excessive small definitions).
 pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
-    /// Assumption: the sub-nodes have already been CSE-d
     fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
         let node_hash = compute_hash(&node);
         let depth = node_depth(&node);
@@ -827,7 +770,6 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
         if depth < CSE_DEPTH_THRESHOLD {
             return node;
         }
-        // Registering a new node
         let index = nodes.len();
         nodes.push(node.clone());
         bindings
@@ -900,17 +842,11 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
     (nodes, new_node)
 }
 
-// =============================================================================
-// Trait implementations for MleAst
-// =============================================================================
-
 impl crate::util::ZkLeanReprField for MleAst {
     fn register(name: char, size: usize) -> Vec<Self> {
         (0..size).map(|i| Self::new_var(name, i as Index)).collect()
     }
 
-    /// Evaluate the computation represented by the AST over another [`JoltField`], starting at
-    /// `root`, and using the variable assignments in `vars`.
     #[cfg(test)]
     fn evaluate<F: JoltField>(&self, env: &Environment<F>) -> F {
         evaluate_node(self.root, env)
@@ -974,26 +910,22 @@ impl crate::util::ZkLeanReprField for MleAst {
 /// to avoid triggering constraint registration. See their docstrings for details.
 impl PartialEq for MleAst {
     fn eq(&self, other: &Self) -> bool {
-        // Same node reference: trivially equal in both modes
         if self.root == other.root {
             return true;
         }
 
-        // Constraint mode: register (self - other) == 0 and return true
         if is_constraint_mode() {
             let diff = *self - *other;
             add_constraint(diff);
             return true;
         }
 
-        // Normal mode: different symbolic expressions are not equal
         false
     }
 }
 
 impl Eq for MleAst {}
 
-/// `Scalar` is `[u64; 4]` (BN254 field element), so we use typed constants.
 impl Zero for MleAst {
     fn zero() -> Self {
         Self::new_scalar(SCALAR_ZERO)
@@ -1095,7 +1027,6 @@ impl std::ops::Sub<&Self> for MleAst {
         if rhs.is_zero() {
             return self;
         }
-        // Optimization: 0 - x = -x
         if self.is_zero() {
             return -*rhs;
         }
@@ -1130,11 +1061,9 @@ impl std::ops::Div<&Self> for MleAst {
 
 impl std::ops::AddAssign for MleAst {
     fn add_assign(&mut self, rhs: Self) {
-        // Optimization: x += 0 is a no-op
         if rhs.is_zero() {
             return;
         }
-        // Optimization: 0 += x => self = x
         if self.is_zero() {
             *self = rhs;
             return;
@@ -1145,11 +1074,9 @@ impl std::ops::AddAssign for MleAst {
 
 impl<'a> std::ops::AddAssign<&'a Self> for MleAst {
     fn add_assign(&mut self, rhs: &'a Self) {
-        // Optimization: x += 0 is a no-op
         if rhs.is_zero() {
             return;
         }
-        // Optimization: 0 += x => self = x
         if self.is_zero() {
             *self = *rhs;
             return;
@@ -1160,11 +1087,9 @@ impl<'a> std::ops::AddAssign<&'a Self> for MleAst {
 
 impl std::ops::SubAssign for MleAst {
     fn sub_assign(&mut self, rhs: Self) {
-        // Optimization: x -= 0 is a no-op
         if rhs.is_zero() {
             return;
         }
-        // Optimization: 0 -= x => self = -x
         if self.is_zero() {
             *self = -rhs;
             return;
@@ -1175,11 +1100,9 @@ impl std::ops::SubAssign for MleAst {
 
 impl<'a> std::ops::SubAssign<&'a Self> for MleAst {
     fn sub_assign(&mut self, rhs: &'a Self) {
-        // Optimization: x -= 0 is a no-op
         if rhs.is_zero() {
             return;
         }
-        // Optimization: 0 -= x => self = -x
         if self.is_zero() {
             *self = -*rhs;
             return;
@@ -1190,7 +1113,6 @@ impl<'a> std::ops::SubAssign<&'a Self> for MleAst {
 
 impl std::ops::MulAssign for MleAst {
     fn mul_assign(&mut self, rhs: Self) {
-        // Optimization: x *= 0 => x = 0, 0 *= x => stays 0
         if self.is_zero() || rhs.is_zero() {
             *self = Self::zero();
             return;
@@ -1201,7 +1123,6 @@ impl std::ops::MulAssign for MleAst {
 
 impl<'a> std::ops::MulAssign<&'a Self> for MleAst {
     fn mul_assign(&mut self, rhs: &'a Self) {
-        // Optimization: x *= 0 => x = 0, 0 *= x => stays 0
         if self.is_zero() || rhs.is_zero() {
             *self = Self::zero();
             return;
@@ -1329,9 +1250,6 @@ impl Ring for MleAst {
         if n >= 0 {
             Self::new_scalar([n as u64, 0, 0, 0])
         } else {
-            // For negative numbers in BN254 field: compute p - |n|
-            // BN254 scalar field modulus:
-            // p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
             const BN254_MODULUS: [u64; 4] = [
                 0x43e1f593f0000001,
                 0x2833e84879b97091,
@@ -1361,8 +1279,6 @@ impl Ring for MleAst {
             let high = (n >> 64) as u64;
             Self::new_scalar([low, high, 0, 0])
         } else {
-            // For negative numbers in BN254 field: compute p - |n|
-            // BN254 scalar field modulus
             const BN254_MODULUS: [u64; 4] = [
                 0x43e1f593f0000001,
                 0x2833e84879b97091,
@@ -1374,7 +1290,6 @@ impl Ring for MleAst {
             let abs_low = abs_n as u64;
             let abs_high = (abs_n >> 64) as u64;
 
-            // Compute p - |n| with borrow propagation
             let (l0, b0) = BN254_MODULUS[0].overflowing_sub(abs_low);
             let (l1, b1) = BN254_MODULUS[1].overflowing_sub(abs_high + b0 as u64);
             let (l2, b2) = BN254_MODULUS[2].overflowing_sub(b1 as u64);
@@ -1521,10 +1436,6 @@ impl Valid for MleAst {
     }
 }
 
-// =============================================================================
-// Serialization stubs for Atom, Edge, Node
-// =============================================================================
-
 impl CanonicalSerialize for Atom {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
@@ -1615,27 +1526,14 @@ impl Valid for Node {
     }
 }
 
-// =============================================================================
-// Re-exports from ast_bundle module for backward compatibility
-// =============================================================================
-
 pub use crate::ast_bundle::{Assertion, AstBundle, AstCommitment, TargetField, WitnessType};
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // =============================================================================
-    // Arena Tests
-    // =============================================================================
-
     #[test]
     fn test_node_insertion_and_retrieval() {
-        // Test that inserted nodes can be retrieved correctly
         let ast_42 = MleAst::from_u64(42);
         let node_42 = get_node(ast_42.root());
         assert!(matches!(node_42, Node::Atom(Atom::Scalar([42, 0, 0, 0]))));
@@ -1644,7 +1542,6 @@ mod tests {
         let node_sum = get_node(ast_sum.root());
         assert!(matches!(node_sum, Node::Add(_, _)));
 
-        // Test constant nodes
         let zero = MleAst::zero();
         assert!(matches!(get_node(zero.root()), Node::Atom(Atom::Scalar(s)) if s == SCALAR_ZERO));
 
@@ -1652,13 +1549,8 @@ mod tests {
         assert!(matches!(get_node(one.root()), Node::Atom(Atom::Scalar(s)) if s == SCALAR_ONE));
     }
 
-    // =============================================================================
-    // Thread-Local Storage Tests
-    // =============================================================================
-
     #[test]
     fn test_pending_challenge_round_trip() {
-        // Test thread-local challenge tunneling
         let challenge = MleAst::from_u64(12345);
 
         set_pending_challenge(challenge);
@@ -1667,14 +1559,12 @@ mod tests {
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().root(), challenge.root());
 
-        // Taking again should return None
         let empty = take_pending_challenge();
         assert!(empty.is_none());
     }
 
     #[test]
     fn test_pending_append_round_trip() {
-        // Test thread-local append tunneling
         let value = MleAst::from_u64(67890);
 
         set_pending_append(value);
@@ -1683,14 +1573,12 @@ mod tests {
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().root(), value.root());
 
-        // Taking again should return None
         let empty = take_pending_append();
         assert!(empty.is_none());
     }
 
     #[test]
     fn test_pending_commitment_chunks_round_trip() {
-        // Test thread-local commitment chunks tunneling
         let chunks = vec![
             MleAst::from_u64(1),
             MleAst::from_u64(2),
@@ -1707,14 +1595,12 @@ mod tests {
             assert_eq!(chunk.root(), chunks[i].root());
         }
 
-        // Taking again should return None
         let empty = take_pending_commitment_chunks();
         assert!(empty.is_none());
     }
 
     #[test]
     fn test_pending_point_elements_round_trip() {
-        // Test thread-local point elements tunneling (must be exactly 2 elements)
         let elements = vec![MleAst::from_u64(100), MleAst::from_u64(200)];
 
         set_pending_point_elements(elements.clone());
@@ -1726,7 +1612,6 @@ mod tests {
         assert_eq!(retrieved_elements[0].root(), elements[0].root());
         assert_eq!(retrieved_elements[1].root(), elements[1].root());
 
-        // Taking again should return None
         let empty = take_pending_point_elements();
         assert!(empty.is_none());
     }
@@ -1734,7 +1619,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "Point must have exactly 2 elements")]
     fn test_pending_point_elements_wrong_length() {
-        // Should panic if not exactly 2 elements
         let elements = vec![
             MleAst::from_u64(1),
             MleAst::from_u64(2),
@@ -1743,13 +1627,8 @@ mod tests {
         set_pending_point_elements(elements);
     }
 
-    // =============================================================================
-    // Constraint Mode Tests
-    // =============================================================================
-
     #[test]
     fn test_constraint_mode() {
-        // Test enable/disable/add_constraint
         assert!(!is_constraint_mode());
 
         enable_constraint_mode();
@@ -1758,63 +1637,49 @@ mod tests {
         let a = MleAst::from_u64(5);
         let b = MleAst::from_u64(3);
 
-        // In constraint mode, equality should add constraint and return true
         assert_eq!(num_constraints(), 0);
 
         let equal = a == b;
-        assert!(equal); // Should return true in constraint mode
-        assert_eq!(num_constraints(), 1); // Should have added constraint
+        assert!(equal);
+        assert_eq!(num_constraints(), 1);
 
         let constraints = take_constraints();
         assert_eq!(constraints.len(), 1);
-        // Constraint should be (a - b)
         assert!(matches!(get_node(constraints[0].root()), Node::Sub(_, _)));
 
-        // After taking, constraints should be empty
         assert_eq!(num_constraints(), 0);
 
         disable_constraint_mode();
         assert!(!is_constraint_mode());
 
-        // After disabling, equality should not add constraints
         let equal2 = a == b;
-        assert!(!equal2); // Different nodes, should return false
-        assert_eq!(num_constraints(), 0); // No constraint added
+        assert!(!equal2);
+        assert_eq!(num_constraints(), 0);
     }
-
-    // =============================================================================
-    // MleAst Creation Tests
-    // =============================================================================
 
     #[test]
     fn test_mle_ast_from_primitives() {
-        // Test from_u64
         let val_u64 = MleAst::from_u64(42);
         assert!(matches!(
             get_node(val_u64.root()),
             Node::Atom(Atom::Scalar([42, 0, 0, 0]))
         ));
 
-        // Test from_u128
         let val_u128 = MleAst::from_u128(0xFEDCBA9876543210_123456789ABCDEF0u128);
         let node_u128 = get_node(val_u128.root());
-        // from_u128 stores: low 64 bits in limb[0], high 64 bits in limb[1]
         assert!(matches!(
             node_u128,
             Node::Atom(Atom::Scalar([0x123456789ABCDEF0, 0xFEDCBA9876543210, 0, 0]))
         ));
 
-        // Test from_i64 positive
         let val_i64_pos = MleAst::from_i64(123);
         assert!(matches!(
             get_node(val_i64_pos.root()),
             Node::Atom(Atom::Scalar([123, 0, 0, 0]))
         ));
 
-        // Test from_i64 negative (should compute p - |n|)
         let val_i64_neg = MleAst::from_i64(-1);
         let node_neg = get_node(val_i64_neg.root());
-        // -1 in BN254 is p-1
         assert!(matches!(
             node_neg,
             Node::Atom(Atom::Scalar([
@@ -1825,7 +1690,6 @@ mod tests {
             ]))
         ));
 
-        // Test from_bool
         let val_true = MleAst::from_bool(true);
         assert!(matches!(
             get_node(val_true.root()),
@@ -1839,16 +1703,11 @@ mod tests {
         ));
     }
 
-    // =============================================================================
-    // Arithmetic Operation Tests
-    // =============================================================================
-
     #[test]
     fn test_mle_ast_arithmetic_creates_nodes() {
         let a = MleAst::from_u64(5);
         let b = MleAst::from_u64(3);
 
-        // Basic binary ops
         let sum = a + b;
         assert!(matches!(get_node(sum.root()), Node::Add(_, _)));
 
@@ -1861,14 +1720,12 @@ mod tests {
         let quot = a / b;
         assert!(matches!(get_node(quot.root()), Node::Div(_, _)));
 
-        // Unary ops
         let neg = -a;
         assert!(matches!(get_node(neg.root()), Node::Neg(_)));
 
         let inv = a.inverse().unwrap();
         assert!(matches!(get_node(inv.root()), Node::Inv(_)));
 
-        // Self-operations (edge cases)
         let squared = a.square();
         assert!(matches!(get_node(squared.root()), Node::Mul(_, _)));
 
@@ -1882,34 +1739,24 @@ mod tests {
         let a = MleAst::from_u64(5);
         let zero = MleAst::zero();
 
-        // Test x + 0 = x (should not create Add node)
         let result1 = a + &zero;
         assert_eq!(result1.root(), a.root());
 
-        // Test 0 + x = x (should not create Add node)
         let result2 = zero + &a;
         assert_eq!(result2.root(), a.root());
 
-        // Test x - 0 = x (should not create Sub node)
         let result3 = a - &zero;
         assert_eq!(result3.root(), a.root());
 
-        // Test 0 - x = -x (should create Neg node, not Sub)
         let result4 = zero - &a;
         assert!(matches!(get_node(result4.root()), Node::Neg(_)));
 
-        // Test x * 0 = 0 (should return zero, not Mul node)
         let result5 = a * &zero;
         assert!(result5.is_zero());
 
-        // Test 0 * x = 0 (should return zero, not Mul node)
         let result6 = zero * &a;
         assert!(result6.is_zero());
     }
-
-    // =============================================================================
-    // Zero/One Tests
-    // =============================================================================
 
     #[test]
     fn test_is_zero_is_one() {
@@ -1917,12 +1764,10 @@ mod tests {
         let one = MleAst::one();
         let five = MleAst::from_u64(5);
 
-        // Test is_zero
         assert!(zero.is_zero());
         assert!(!one.is_zero());
         assert!(!five.is_zero());
 
-        // Test is_one
         assert!(one.is_one());
         assert!(!zero.is_one());
         assert!(!five.is_one());

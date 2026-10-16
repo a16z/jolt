@@ -114,7 +114,6 @@ pub fn peak_rss_bytes() -> Option<u64> {
     None
 }
 
-/// The kernel's `rusage_info_v4` snapshot of this process.
 #[cfg(target_os = "macos")]
 fn rusage_info() -> Option<rusage_info_v4> {
     // SAFETY: on success (return value 0) proc_pid_rusage writes a complete

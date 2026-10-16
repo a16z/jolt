@@ -181,7 +181,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         let left = || OperandPolynomial::new(address_bits, OperandSide::Left).evaluate(&r_address);
         let right =
             || OperandPolynomial::new(address_bits, OperandSide::Right).evaluate(&r_address);
-        // The RAF publics fold the batching gamma into the operand evaluations.
         let gamma = challenges.gamma;
         let gamma2 = gamma * gamma;
         match public {

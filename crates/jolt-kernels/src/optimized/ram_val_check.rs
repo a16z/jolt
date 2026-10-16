@@ -28,14 +28,13 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Remapped RAM address index, absent on no-access cycles.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
     addresses: Arc<Vec<u32>>,
 }
 
 impl ChunkIndexSource for RamAddressIndices {
-    fn num_polys(&self) -> usize {
+    fn num_columns(&self) -> usize {
         1
     }
 
@@ -95,7 +94,6 @@ enum IncColumn<F: JoltField> {
     Bound(Polynomial<F>),
 }
 
-/// `inc(j)` from raw trace values.
 #[inline]
 fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
     F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
@@ -121,12 +119,10 @@ impl<F: JoltField> RamValCheckKernel<F> {
                 post_values: Vec::new(),
             });
             self.inc = match std::mem::replace(&mut self.inc, placeholder) {
-                // Round 1 reads bound pairs from the raw columns.
                 IncColumn::Raw(columns) => IncColumn::RawBound {
                     columns,
                     r1: challenge,
                 },
-                // Materialize the second bind directly at `T/4`.
                 IncColumn::RawBound { columns, r1 } => {
                     freed_columns = true;
                     IncColumn::Bound(bind_raw_twice(
@@ -213,9 +209,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
             program_image: inputs.program_image,
             ram_ra: self.ra.final_values()[0],
             ram_inc: match &self.inc {
-                // Only when log_t = 0.
                 IncColumn::Raw(columns) => raw_inc(columns, 0),
-                // Only when log_t = 1.
                 IncColumn::RawBound { columns, r1 } => bound_pair(|j| raw_inc(columns, j), *r1, 0),
                 IncColumn::Bound(inc) => inc.evals()[0],
             },
@@ -316,7 +310,6 @@ mod tests {
             )
             .unwrap();
 
-            // Independent input claim: `Σ inc · ra_folded · (LT + γ)`.
             let ra_folded =
                 address_fold::<Fr>(witness, ram_ra_val_check(), shape.log_t, &r_address).unwrap();
             let inc: Vec<Fr> = witness

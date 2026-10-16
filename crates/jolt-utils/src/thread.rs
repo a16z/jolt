@@ -1,14 +1,8 @@
-//! Rayon-backed threading utilities: background drops and deterministic-error
-//! index-parallel collection.
+//! Rayon-backed deterministic-error index-parallel collection.
 
 use std::sync::Mutex;
 
 use rayon::prelude::*;
-
-/// Drops `data` in a background rayon task to avoid blocking the caller.
-pub fn drop_in_background_thread<T: Send + 'static>(data: T) {
-    rayon::spawn(move || drop(data));
-}
 
 /// The parallel scatter grain of [`par_collect_windows`]: big enough to
 /// amortize rayon dispatch, small enough to load-balance skewed work.
@@ -113,7 +107,6 @@ mod tests {
 
     #[test]
     fn par_collect_windows_collects_in_order() {
-        // Spans multiple scatter chunks so cross-chunk indexing is exercised.
         let count = COLLECT_PAR_CHUNK * 2 + 17;
         let out: Vec<usize> = par_collect_windows(count, Ok::<usize, ()>).unwrap();
         assert_eq!(out.len(), count);
@@ -124,7 +117,6 @@ mod tests {
     fn par_collect_windows_reports_lowest_index_error() {
         let count = COLLECT_PAR_CHUNK * 4;
         let result: Result<Vec<usize>, usize> = par_collect_windows(count, |index| {
-            // Every chunk fails somewhere; the lowest failing index must win.
             if index % COLLECT_PAR_CHUNK == 13 {
                 Err(index)
             } else {

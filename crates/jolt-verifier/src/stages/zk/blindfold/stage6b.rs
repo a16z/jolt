@@ -1,5 +1,7 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase as BytecodeCyclePhase;
+
 use jolt_claims::protocols::jolt::relations::claim_reductions::increments::IncClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
@@ -43,18 +45,13 @@ where
     let untrusted_claims = untrusted_layout.as_ref().map(|layout| {
         relations::claim_reductions::advice::UntrustedCyclePhase::new(layout.dimensions())
     });
-    let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().map(|layout| {
-        relations::claim_reductions::bytecode::CyclePhase::new((
-            layout.dimensions(),
-            layout.chunk_count(),
-        ))
-    });
+    let bytecode_reduction_claims = bytecode_reduction_layout
+        .as_ref()
+        .map(|layout| BytecodeCyclePhase::new(layout.dimensions()));
     let program_image_reduction_claims = program_image_reduction_layout.as_ref().map(|layout| {
         relations::claim_reductions::program_image::CyclePhase::new(layout.dimensions())
     });
 
-    // The committed and uncommitted cycle-phase relations are distinct types, so
-    // collapse the active one into its domain and batch tuple here.
     let (bytecode_domain, bytecode_claim) = if bytecode_reduction_layout.is_some() {
         let claims = relations::bytecode::ReadRafCyclePhaseCommitted::new((
             formula_dimensions.bytecode_read_raf,
@@ -198,12 +195,9 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
     }
     if let Some(layout) = bytecode_reduction_layout {
         output_ids.extend(
-            bytecode_reduction::cycle_phase_output_openings(
-                layout.dimensions(),
-                layout.chunk_count(),
-            )
-            .into_iter()
-            .map(ComposedOpeningId::from),
+            bytecode_reduction::cycle_phase_output_openings(layout.dimensions())
+                .into_iter()
+                .map(ComposedOpeningId::from),
         );
     }
     if let Some(layout) = program_image_reduction_layout {
@@ -292,8 +286,6 @@ mod tests {
         .unwrap()
     }
 
-    /// Claims with distinct sentinel values, every wire vector sized from the
-    /// formula dimensions.
     fn sentinel_claims(formula_dimensions: &JoltFormulaDimensions) -> Stage6bOutputClaims<Fr> {
         let bytecode_ra_len =
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf)
@@ -475,7 +467,6 @@ mod field_inline_tests {
         };
         let entry_bytecode_index = 1usize;
 
-        // The clear composed relation.
         let relation = BytecodeReadRaf::new(BytecodeReadRafCycleInputs {
             dimensions,
             r_address: r_address.clone(),

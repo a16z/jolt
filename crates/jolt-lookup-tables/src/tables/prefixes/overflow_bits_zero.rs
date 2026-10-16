@@ -18,8 +18,6 @@ impl<F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroPrefix {
             return checkpoints[Prefixes::OverflowBitsZero];
         }
 
-        // Overflow region = interleaved positions 0..XLEN.
-        // Phase bits in overflow = top portion of `b`.
         let overflow_bits = if suffix_len >= XLEN {
             u128::from(b)
         } else {

@@ -1,3 +1,4 @@
+use jolt_sdk::ProgramPreprocessingMode;
 pub mod btreemap;
 pub mod fibonacci;
 pub mod secp256k1_ecdsa;
@@ -36,8 +37,13 @@ pub fn prover_preprocessing(
     memory_config: MemoryConfig,
     max_trace_length: usize,
 ) -> ProverPreprocessing {
-    jolt_sdk::preprocess_program(program, memory_config, max_trace_length, None)
-        .expect("prover preprocessing failed")
+    jolt_sdk::preprocess_program(
+        program,
+        memory_config,
+        max_trace_length,
+        ProgramPreprocessingMode::Full,
+    )
+    .expect("prover preprocessing failed")
 }
 
 pub fn verifier_preprocessing(prover_pp: &ProverPreprocessing) -> VerifierPreprocessing {
@@ -97,9 +103,6 @@ pub fn verify_with_claims(
     )
 }
 
-// ── GuestConfig ─────────────────────────────────────────────────────
-
-/// Trait for configuring which guest program to benchmark.
 pub trait GuestConfig: Default + Send + Sync {
     /// Cargo package name (e.g. "fibonacci-guest").
     fn package(&self) -> &str;
@@ -128,7 +131,6 @@ pub trait GuestConfig: Default + Send + Sync {
     /// Serialized program input (postcard-encoded).
     fn input(&self) -> Vec<u8>;
 
-    /// Display name for the benchmark.
     fn bench_name(&self) -> String {
         format!("prover_time_{}", self.label())
     }

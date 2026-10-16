@@ -12,7 +12,6 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 pub enum Pow2OffsetPrefix<const LOW_BIT: usize> {}
 
 impl<const LOW_BIT: usize> Pow2OffsetPrefix<LOW_BIT> {
-    /// Which of the low 3 index bits contribute to the offset.
     const OFFSET_MASK: u128 = ((7 >> LOW_BIT) << LOW_BIT) as u128;
 
     const VARIANT: Prefixes = match LOW_BIT {

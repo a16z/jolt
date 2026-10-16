@@ -280,7 +280,6 @@ impl Invariant for TranscriptConsistencyInvariant {
     }
 }
 
-/// Spongefish symmetry invariant for the Blake2b512 sponge.
 #[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyBlake2bInvariant;
@@ -308,7 +307,6 @@ impl Invariant for TranscriptConsistencyBlake2bInvariant {
     }
 }
 
-/// Spongefish symmetry invariant for the Keccak sponge.
 #[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyKeccakInvariant;
@@ -336,7 +334,6 @@ impl Invariant for TranscriptConsistencyKeccakInvariant {
     }
 }
 
-/// Spongefish symmetry invariant for the Poseidon sponge.
 #[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyPoseidonInvariant;

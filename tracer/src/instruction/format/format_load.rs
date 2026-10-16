@@ -15,8 +15,8 @@ pub struct FormatLoad {
 impl InstructionFormat for FormatLoad {
     fn parse(word: u32) -> Self {
         FormatLoad {
-            rd: ((word >> 7) & 0x1f) as u8,   // [11:7]
-            rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
+            rd: ((word >> 7) & 0x1f) as u8,
+            rs1: ((word >> 15) & 0x1f) as u8,
             imm: (
                 match word & 0x80000000 {
                     // imm[31:11] = [31]
@@ -33,10 +33,8 @@ impl InstructionFormat for FormatLoad {
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
-            // Keep imm small to avoid going out of bounds when added to rs1
-            imm: (rng.next_u64() as i64 % 256) - 128, // Range: [-128, 127]
+            imm: (rng.next_u64() as i64 % 256) - 128,
             rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            // rs1 should never be 0 for memory operations (x0 is hardwired to 0)
             rs1: 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1)),
         }
     }

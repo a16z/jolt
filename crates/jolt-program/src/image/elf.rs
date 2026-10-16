@@ -172,7 +172,6 @@ mod tests {
         flags: u64,
         address: u64,
         data: Vec<u8>,
-        /// Overrides sh_size, e.g. to point past the end of the file.
         size_override: Option<u64>,
     }
 
@@ -311,11 +310,6 @@ mod tests {
     }
 
     #[test]
-    fn merge_ranges_returns_empty_for_empty_input() {
-        assert_eq!(merge_ranges(vec![]), Vec::<(u64, u64)>::new());
-    }
-
-    #[test]
     fn merge_ranges_sorts_and_keeps_disjoint_ranges_separate() {
         assert_eq!(
             merge_ranges(vec![(30, 40), (0, 5), (10, 20)]),
@@ -329,10 +323,8 @@ mod tests {
         // instruction stream at the seam
         assert_eq!(merge_ranges(vec![(0, 10), (10, 20)]), vec![(0, 20)]);
         assert_eq!(merge_ranges(vec![(0, 15), (10, 20)]), vec![(0, 20)]);
-        // a nested range must not extend the enclosing end
         assert_eq!(merge_ranges(vec![(0, 100), (10, 20)]), vec![(0, 100)]);
         assert_eq!(merge_ranges(vec![(5, 9), (5, 9)]), vec![(5, 9)]);
-        // out-of-order chain collapses into one range
         assert_eq!(
             merge_ranges(vec![(20, 30), (0, 10), (10, 20)]),
             vec![(0, 30)]

@@ -13,8 +13,8 @@ pub struct FormatS {
 impl InstructionFormat for FormatS {
     fn parse(word: u32) -> Self {
         FormatS {
-            rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
-            rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
+            rs1: ((word >> 15) & 0x1f) as u8,
+            rs2: ((word >> 20) & 0x1f) as u8,
             imm: (
                 match word & 0x80000000 {
 				0x80000000 => 0xfffff000,
@@ -36,7 +36,7 @@ impl InstructionFormat for FormatS {
             rs1: 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1)),
             rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
             // Keep imm small to avoid going out of bounds when added to rs1
-            imm: (rng.next_u64() as i64 % 256) - 128, // Range: [-128, 127]
+            imm: (rng.next_u64() as i64 % 256) - 128,
         }
     }
 }

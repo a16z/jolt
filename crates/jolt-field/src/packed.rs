@@ -22,19 +22,15 @@ use std::ops::{Add, Mul, Sub};
 pub trait Packed:
     'static + Copy + Send + Sync + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self>
 {
-    /// Scalar field type of one lane.
     type Scalar: Field;
 
     /// Number of scalar lanes.
     const WIDTH: usize;
 
-    /// Builds a packed value from a lane generator.
     fn from_fn(f: impl FnMut(usize) -> Self::Scalar) -> Self;
 
-    /// Extracts one lane.
     fn extract(&self, lane: usize) -> Self::Scalar;
 
-    /// Broadcasts one scalar across all lanes.
     fn broadcast(value: Self::Scalar) -> Self;
 
     /// Packs a scalar slice into packed values.
@@ -57,7 +53,6 @@ pub trait Packed:
         (Self::pack_slice(packed), suffix)
     }
 
-    /// Unpacks packed values into a flat scalar vector.
     #[inline]
     fn unpack_slice(buf: &[Self]) -> Vec<Self::Scalar> {
         buf.iter()
@@ -65,7 +60,6 @@ pub trait Packed:
             .collect()
     }
 
-    /// Squares one packed value.
     #[inline(always)]
     fn square(self) -> Self {
         self * self
@@ -105,7 +99,6 @@ pub trait Packed:
         crate::schedules::ext4_mul_coeffs(a, b)
     }
 
-    /// Kernel hook: packed degree-4 extension squaring.
     #[inline(always)]
     fn ext4_square(a: [Self; 4]) -> [Self; 4] {
         crate::schedules::ext4_square_coeffs(a)
@@ -119,7 +112,6 @@ pub trait Packed:
         crate::schedules::ext8_mul_schedule(a, b, zero, |x, y| x + y, |x, y| x - y, |x, y| x * y)
     }
 
-    /// Kernel hook: packed degree-8 extension squaring.
     #[inline(always)]
     fn ext8_square(a: [Self; 8]) -> [Self; 8] {
         let zero = Self::broadcast(Self::Scalar::zero());
@@ -127,7 +119,6 @@ pub trait Packed:
     }
 }
 
-/// Associates a packed representation with a scalar field.
 pub trait WithPacking: Field {
     /// Packed representation (the target's widest available backend).
     type Packing: Packed<Scalar = Self>;

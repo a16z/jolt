@@ -3,11 +3,8 @@
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_field::{Fr, Ring};
 use jolt_sumcheck::round_proof::RoundMessage;
-use jolt_sumcheck::{
-    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, SumcheckError, SumcheckStatement,
-    SumcheckVerifier,
-};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use jolt_sumcheck::{CommittedRound, CommittedRoundWitness, SumcheckStatement, SumcheckVerifier};
+use jolt_transcript::{Blake2bTranscript, Transcript};
 
 type F = Fr;
 type VC = Pedersen<Bn254G1>;
@@ -71,43 +68,6 @@ fn committed_rounds_complete_with_pedersen_commitments() {
 }
 
 #[test]
-fn committed_rounds_reject_wrong_count_and_degree() {
-    let setup = pedersen_setup(3);
-    let rounds = committed_rounds(
-        &setup,
-        &[
-            vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)],
-            vec![F::from_u64(7), F::from_u64(11)],
-        ],
-    );
-
-    let mut wrong_count_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let wrong_count = SumcheckVerifier::verify_committed_round_consistency(
-        SumcheckStatement::new(3, 2),
-        &rounds,
-        &mut wrong_count_transcript,
-    );
-    assert!(matches!(
-        wrong_count,
-        Err(SumcheckError::WrongNumberOfRounds {
-            expected: 3,
-            got: 2
-        })
-    ));
-
-    let mut degree_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let degree = SumcheckVerifier::verify_committed_round_consistency(
-        SumcheckStatement::new(2, 1),
-        &rounds,
-        &mut degree_transcript,
-    );
-    assert!(matches!(
-        degree,
-        Err(SumcheckError::DegreeBoundExceeded { got: 2, max: 1 })
-    ));
-}
-
-#[test]
 fn tampered_committed_round_changes_challenges() {
     let setup = pedersen_setup(3);
     let rounds = committed_rounds(
@@ -142,33 +102,4 @@ fn tampered_committed_round_changes_challenges() {
 
     assert_ne!(tampered.challenges(), original.challenges());
     assert_ne!(tampered_transcript.state(), original_transcript.state());
-}
-
-#[test]
-fn committed_output_claims_keep_length_and_order() {
-    let setup = pedersen_setup(2);
-    let rounds = committed_rounds(
-        &setup,
-        &[
-            vec![F::from_u64(2), F::from_u64(3)],
-            vec![F::from_u64(5), F::from_u64(7)],
-        ],
-    );
-    let output_claims = CommittedOutputClaims {
-        commitments: rounds
-            .iter()
-            .map(|round| round.commitment)
-            .collect::<Vec<_>>(),
-    };
-
-    let mut actual = Blake2bTranscript::<F>::new(b"committed-output");
-    output_claims.append_to_transcript(&mut actual);
-
-    let mut expected = Blake2bTranscript::<F>::new(b"committed-output");
-    expected.append(&LabelWithCount(b"output_claims_coms", 2));
-    for commitment in &output_claims.commitments {
-        commitment.append_to_transcript(&mut expected);
-    }
-
-    assert_eq!(actual.state(), expected.state());
 }

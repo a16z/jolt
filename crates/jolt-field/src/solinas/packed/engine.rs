@@ -149,7 +149,6 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
         Self(Self::reduce(I::widen_mul(a.0, b.0)))
     }
 
-    /// One Solinas fold: `(v & MASK) + C·(v >> BITS)`.
     #[inline(always)]
     fn fold(v: I::V64) -> I::V64 {
         I::add64(
@@ -237,7 +236,6 @@ impl<const P: u32, I: SimdWord> Packed for PackedFp32<P, I> {
         ]
     }
 
-    /// Fused kernel: squaring via three- and four-term dot products.
     #[inline(always)]
     fn ext4_square(a: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a;
@@ -269,14 +267,12 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
     const EXT2_TWO_FUSION_SAFE: bool =
         Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
 
-    /// Reduces a scalar sum of up to three products for lane-wise backends.
     #[inline(always)]
     fn reduce_three_product_sum(lo: u64, hi: u64) -> u64 {
         debug_assert!(Self::EXT2_TWO_FUSION_SAFE);
         Fp64::<P>::reduce_sub_word_wide(lo, hi, hi >> Self::BITS)
     }
 
-    /// Adds lane-wise 128-bit values represented as `[lo, hi]`.
     #[inline(always)]
     fn add128(a: [I::V64; 2], b: [I::V64; 2]) -> [I::V64; 2] {
         let lo = I::add64(a[0], b[0]);
@@ -334,7 +330,6 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
         }
     }
 
-    /// Solinas reduction of per-lane 128-bit products `hi·2^64 + lo`.
     #[inline(always)]
     fn reduce128(lo: I::V64, hi: I::V64) -> I::V64 {
         let p = I::splat64(P);

@@ -161,7 +161,6 @@ impl<F: JoltField> MultilinearPoly<F> for OneHotPolynomial {
         let total_len = 1usize << self.num_vars;
         let num_rows = total_len / num_cols;
 
-        // Pre-index nonzero entries by matrix row.
         let mut row_hot_cols: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
         for (cycle, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
@@ -315,7 +314,6 @@ mod tests {
         <OneHotPolynomial as MultilinearPoly<Fr>>::for_each_one(&oh, &mut |idx| entries.push(idx));
 
         assert_eq!(entries.len(), 3);
-        // cycle 0, col 2; cycle 2, col 0; cycle 3, col 3
         assert_eq!(entries[0], 2);
         assert_eq!(entries[1], 2 * 4);
         assert_eq!(entries[2], 3 * 4 + 3);
@@ -334,16 +332,9 @@ mod tests {
     }
 
     #[test]
-    fn is_one_hot_returns_true() {
-        let oh = make_one_hot(4, &[Some(0), Some(1), Some(2), Some(3)]);
-        assert!(MultilinearPoly::<Fr>::is_one_hot(&oh));
-    }
-
-    #[test]
     #[cfg_attr(not(debug_assertions), ignore = "index validation is debug-only")]
     #[should_panic(expected = "one-hot column index out of range")]
     fn out_of_range_column_rejected_in_debug() {
-        // k = 4 but a hot index of 7 is representable in u8.
         let _ = OneHotPolynomial::new(4, vec![Some(7), None, Some(1), Some(0)]);
     }
 

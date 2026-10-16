@@ -21,7 +21,7 @@ declare_riscv_instr!(
 );
 
 impl FIELD_LOAD_IMM {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_LOAD_IMM as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_LOAD_IMM as RISCVInstruction>::RamAccess) {
         let rd_register = self.operands.rd.unwrap_or(0);
         // Decoded FIELD_LOAD_IMM immediates are zero-extended 12-bit values (0..=4095);
         // anything else can only arrive through synthetic instruction construction and

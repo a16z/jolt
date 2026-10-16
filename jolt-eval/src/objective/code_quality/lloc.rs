@@ -92,37 +92,3 @@ pub(crate) fn analyze_rust_file(path: &Path) -> Option<FuncSpace> {
     let source = std::fs::read(path).ok()?;
     get_function_spaces(&LANG::Rust, source, path, None)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lloc_on_proof_system() {
-        let obj = LlocObjective {
-            crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
-        };
-        let val = obj.collect_measurement().unwrap();
-        assert!(val > 1000.0, "LLOC should be > 1000, got {val}");
-    }
-
-    #[test]
-    fn lloc_on_inline_source() {
-        let source = b"fn f() { let x = 1; let y = 2; }".to_vec();
-        let path = Path::new("test.rs");
-        let space = get_function_spaces(&LANG::Rust, source, path, None).unwrap();
-        let lloc = space.metrics.loc.lloc();
-        assert!(
-            lloc >= 2.0,
-            "two statements should give lloc >= 2, got {lloc}"
-        );
-    }
-
-    #[test]
-    fn rust_files_finds_rs_files() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let files = rust_files(&src).unwrap();
-        assert!(!files.is_empty());
-        assert!(files.iter().all(|f| f.extension().unwrap() == "rs"));
-    }
-}

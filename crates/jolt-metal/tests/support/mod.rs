@@ -1,5 +1,3 @@
-//! Shared setup for tests that run on the GPU.
-
 use std::fs::File;
 use std::process;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -8,7 +6,6 @@ use std::time::Duration;
 
 use jolt_metal::runtime::Device;
 
-/// No single test may hold the GPU longer than this.
 const WATCHDOG: Duration = Duration::from_mins(2);
 
 /// Exclusive use of the GPU for one test, plus a hang watchdog.
@@ -44,7 +41,6 @@ pub fn gpu(test: &'static str) -> (GpuGuard, Device) {
     )
 }
 
-/// SplitMix64: a fixed-seed input generator with no extra dependencies.
 pub struct SplitMix64(pub u64);
 
 impl Iterator for SplitMix64 {

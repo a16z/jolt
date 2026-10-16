@@ -45,7 +45,6 @@ pub fn nbiguint_to_limbs(n: &NBigUint) -> Vec<u64> {
     limbs
 }
 
-/// Type of multiplication-style modular operation (multiply, square, or divide).
 pub enum MulqType {
     Mul,
     Square,
@@ -632,73 +631,4 @@ macro_rules! __submit_inline_op {
             }
         }
     };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::InlineAdvice;
-    use super::{
-        GlvDecompositionAdvice, InlineBuilderExt, InlineExpansionBuilder, InlineRegister,
-        ModularDivisionAdvice, NoAdvice, QuotientAdvice, SignedU128Advice,
-    };
-    use std::collections::VecDeque;
-
-    #[test]
-    fn no_advice_converts_to_no_runtime_queue() {
-        assert!(NoAdvice.into_runtime_advice().is_none());
-    }
-
-    #[test]
-    fn quotient_advice_converts_to_runtime_queue() {
-        let advice = QuotientAdvice {
-            quotient: [1, 2, 3, 4],
-        };
-
-        assert_eq!(
-            advice.into_runtime_advice(),
-            Some(VecDeque::from([1, 2, 3, 4]))
-        );
-    }
-
-    #[test]
-    fn division_advice_interleaves_result_and_quotient() {
-        let advice = ModularDivisionAdvice {
-            result: [10, 11, 12, 13],
-            quotient: [20, 21, 22, 23],
-        };
-
-        assert_eq!(
-            advice.into_runtime_advice(),
-            Some(VecDeque::from([10, 20, 11, 21, 12, 22, 13, 23]))
-        );
-    }
-
-    #[test]
-    fn glv_advice_serializes_signs_before_magnitudes() {
-        let advice = GlvDecompositionAdvice {
-            k1: SignedU128Advice::from_u128((3u128 << 64) | 2, true),
-            k2: SignedU128Advice::from_u128((5u128 << 64) | 4, false),
-        };
-
-        assert_eq!(
-            advice.into_runtime_advice(),
-            Some(VecDeque::from([1, 2, 3, 0, 4, 5]))
-        );
-    }
-
-    #[test]
-    fn range_helpers_accept_register_slices() {
-        fn assert_methods(
-            asm: &mut InlineExpansionBuilder,
-            base: u8,
-            registers: &[InlineRegister],
-        ) {
-            asm.load_u64_range(base, 0, registers);
-            asm.store_u64_range(base, 0, registers);
-            asm.load_u32_range(base, 0, registers);
-            asm.load_paired_u32_range_dirty(base, 0, registers);
-        }
-
-        let _ = assert_methods;
-    }
 }

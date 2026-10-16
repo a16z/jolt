@@ -1,5 +1,3 @@
-//! Canonical trusted/untrusted advice word encoding.
-
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 use core::fmt::{Display, Formatter, Result as FmtResult};

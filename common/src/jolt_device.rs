@@ -2,6 +2,10 @@
 use allocative::Allocative;
 #[cfg(feature = "std")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use core::{
+    error::Error,
+    fmt::{Display, Formatter, Result as FmtResult},
+};
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "std"))]
@@ -19,10 +23,15 @@ use crate::constants::{
 pub enum MemoryLayoutError {
     ZeroAddress,
     AddressBelowLowest { address: u64, lowest_address: u64 },
+    MissingProgramSize,
+    SizeOverflow { region: &'static str },
+    InvalidTrustedAdviceSize { size: u64 },
+    InvalidUntrustedAdviceSize { size: u64 },
+    IoRegionTooLarge { padded_bytes: u64 },
 }
 
-impl core::fmt::Display for MemoryLayoutError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl Display for MemoryLayoutError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::ZeroAddress => write!(f, "cannot remap the zero address"),
             Self::AddressBelowLowest {
@@ -32,9 +41,25 @@ impl core::fmt::Display for MemoryLayoutError {
                 f,
                 "address {address} is below lowest mapped address {lowest_address}"
             ),
+            Self::MissingProgramSize => write!(f, "MemoryLayout requires bytecode size to be set"),
+            Self::SizeOverflow { region } => write!(f, "{region} size or address overflow"),
+            Self::InvalidTrustedAdviceSize { size } => write!(
+                f,
+                "Trusted advice size must be a power of two (got {size})"
+            ),
+            Self::InvalidUntrustedAdviceSize { size } => write!(
+                f,
+                "Untrusted advice size must be a power of two (got {size})"
+            ),
+            Self::IoRegionTooLarge { padded_bytes } => write!(
+                f,
+                "padded I/O region ({padded_bytes} bytes) reaches the zero address or exceeds RAM_START_ADDRESS"
+            ),
         }
     }
 }
+
+impl Error for MemoryLayoutError {}
 
 #[expect(
     clippy::too_long_first_doc_paragraph,
@@ -122,7 +147,7 @@ impl JoltDevice {
         if self.is_panic(address) {
             self.panic as u8
         } else if self.is_termination(address) {
-            0 // Termination bit should never be loaded after it is set
+            0
         } else if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
             self.inputs.get(internal_address).copied().unwrap_or(0)
@@ -143,7 +168,7 @@ impl JoltDevice {
             self.outputs.get(internal_address).copied().unwrap_or(0)
         } else {
             assert!(address <= RAM_START_ADDRESS - 8);
-            0 // zero-padding
+            0
         }
     }
 
@@ -340,49 +365,53 @@ impl core::fmt::Debug for MemoryLayout {
 }
 
 impl MemoryLayout {
+    /// Constructs a layout, panicking if the configuration is invalid.
+    /// Host preprocessing should use [`Self::try_new`] to report configuration errors.
     #[expect(
-        clippy::expect_used,
-        clippy::unwrap_used,
-        reason = "layout construction panics on pathological config sizes; fallible construction is tracked as a follow-up in specs/verifier-closure-lints.md"
+        clippy::panic,
+        reason = "the existing infallible constructor retains its documented panic contract; host preprocessing uses try_new"
     )]
     pub fn new(config: &MemoryConfig) -> Self {
-        assert!(
-            config.program_size.is_some(),
-            "MemoryLayout requires bytecode size to be set"
-        );
+        Self::try_new(config).unwrap_or_else(|error| panic!("{error}"))
+    }
 
-        // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
+    /// Constructs a checked layout without allocating guest memory.
+    /// Advice capacities are zero or powers of two after eight-byte alignment.
+    /// The padded I/O region must leave its lowest address above zero.
+    pub fn try_new(config: &MemoryConfig) -> Result<Self, MemoryLayoutError> {
+        let program_size = config
+            .program_size
+            .ok_or(MemoryLayoutError::MissingProgramSize)?;
+
         #[inline]
-        fn align_up(val: u64, align: u64) -> u64 {
-            if align == 0 {
-                val
-            } else {
-                match val % align {
-                    0 => val,
-                    rem => {
-                        // panics if val + (align - rem) overflows
-                        val.checked_add(align - rem).expect("alignment overflow")
-                    }
-                }
+        fn align_up(val: u64, region: &'static str) -> Result<u64, MemoryLayoutError> {
+            match val % 8 {
+                0 => Ok(val),
+                rem => val
+                    .checked_add(8 - rem)
+                    .ok_or(MemoryLayoutError::SizeOverflow { region }),
             }
-        } // Must be 8-byte aligned
+        }
 
-        let max_trusted_advice_size = align_up(config.max_trusted_advice_size, 8);
-        let max_untrusted_advice_size = align_up(config.max_untrusted_advice_size, 8);
-        let max_input_size = align_up(config.max_input_size, 8);
-        let max_output_size = align_up(config.max_output_size, 8);
-        let stack_size = align_up(config.stack_size, 8);
-        let heap_size = align_up(config.heap_size, 8);
+        let max_trusted_advice_size = align_up(config.max_trusted_advice_size, "trusted advice")?;
+        let max_untrusted_advice_size =
+            align_up(config.max_untrusted_advice_size, "untrusted advice")?;
+        let max_input_size = align_up(config.max_input_size, "input")?;
+        let max_output_size = align_up(config.max_output_size, "output")?;
+        let stack_size = align_up(config.stack_size, "stack")?;
+        let heap_size = align_up(config.heap_size, "heap")?;
 
         // Critical for ValEvaluation and ValFinal sumchecks in RAM
-        assert!(
-            max_trusted_advice_size.is_power_of_two() || max_trusted_advice_size == 0,
-            "Trusted advice size must be a power of two (got {max_trusted_advice_size})",
-        );
-        assert!(
-            max_untrusted_advice_size.is_power_of_two() || max_untrusted_advice_size == 0,
-            "Untrusted advice size must be a power of two (got {max_untrusted_advice_size})",
-        );
+        if max_trusted_advice_size != 0 && !max_trusted_advice_size.is_power_of_two() {
+            return Err(MemoryLayoutError::InvalidTrustedAdviceSize {
+                size: max_trusted_advice_size,
+            });
+        }
+        if max_untrusted_advice_size != 0 && !max_untrusted_advice_size.is_power_of_two() {
+            return Err(MemoryLayoutError::InvalidUntrustedAdviceSize {
+                size: max_untrusted_advice_size,
+            });
+        }
 
         // Adds 16 to account for panic bit and termination bit
         // (they each occupy one full 8-byte word)
@@ -391,80 +420,95 @@ impl MemoryLayout {
             .and_then(|s| s.checked_add(max_untrusted_advice_size))
             .and_then(|s| s.checked_add(max_output_size))
             .and_then(|s| s.checked_add(16))
-            .expect("I/O region size overflow");
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "I/O" })?;
 
         // Padded so that the witness index corresponding to `input_start`
         // has the form 0b11...100...0
-        let io_region_words = (io_region_bytes / 8).next_power_of_two();
-        // let io_region_words = (io_region_bytes / 8 + 1).next_power_of_two() - 1;
+        let io_region_words = (io_region_bytes / 8)
+            .checked_next_power_of_two()
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "I/O" })?;
 
         let io_bytes = io_region_words
             .checked_mul(8)
-            .expect("I/O region byte count overflow");
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "I/O" })?;
 
-        // Place the larger or equal-sized advice region first in memory (at the lower address).
+        // Zero is the no-access sentinel. Power-of-two padding therefore keeps
+        // admitted I/O in the upper half below RAM, above emulator peripherals.
+        let io_start = RAM_START_ADDRESS
+            .checked_sub(io_bytes)
+            .filter(|start| *start != 0)
+            .ok_or(MemoryLayoutError::IoRegionTooLarge {
+                padded_bytes: io_bytes,
+            })?;
+
         let (
             trusted_advice_start,
             trusted_advice_end,
             untrusted_advice_start,
             untrusted_advice_end,
         ) = if max_trusted_advice_size >= max_untrusted_advice_size {
-            // Trusted advice goes first
-            let trusted_start = RAM_START_ADDRESS
-                .checked_sub(io_bytes)
-                .expect("I/O region exceeds RAM_START_ADDRESS");
-            let trusted_end = trusted_start
-                .checked_add(max_trusted_advice_size)
-                .expect("trusted_advice_end overflow");
+            let trusted_start = io_start;
+            let trusted_end = trusted_start.checked_add(max_trusted_advice_size).ok_or(
+                MemoryLayoutError::SizeOverflow {
+                    region: "trusted advice",
+                },
+            )?;
             let untrusted_start = trusted_end;
             let untrusted_end = untrusted_start
                 .checked_add(max_untrusted_advice_size)
-                .expect("untrusted_advice_end overflow");
+                .ok_or(MemoryLayoutError::SizeOverflow {
+                    region: "untrusted advice",
+                })?;
             (trusted_start, trusted_end, untrusted_start, untrusted_end)
         } else {
-            // Untrusted advice goes first
-            let untrusted_start = RAM_START_ADDRESS
-                .checked_sub(io_bytes)
-                .expect("I/O region exceeds RAM_START_ADDRESS");
+            let untrusted_start = io_start;
             let untrusted_end = untrusted_start
                 .checked_add(max_untrusted_advice_size)
-                .expect("untrusted_advice_end overflow");
+                .ok_or(MemoryLayoutError::SizeOverflow {
+                    region: "untrusted advice",
+                })?;
             let trusted_start = untrusted_end;
-            let trusted_end = trusted_start
-                .checked_add(max_trusted_advice_size)
-                .expect("trusted_advice_end overflow");
+            let trusted_end = trusted_start.checked_add(max_trusted_advice_size).ok_or(
+                MemoryLayoutError::SizeOverflow {
+                    region: "trusted advice",
+                },
+            )?;
             (trusted_start, trusted_end, untrusted_start, untrusted_end)
         };
 
         let input_start = core::cmp::max(untrusted_advice_end, trusted_advice_end);
         let input_end = input_start
             .checked_add(max_input_size)
-            .expect("input_end overflow");
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "input" })?;
         let output_start = input_end;
         let output_end = output_start
             .checked_add(max_output_size)
-            .expect("output_end overflow");
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "output" })?;
         let panic = output_end;
-        let termination = panic.checked_add(8).expect("termination overflow");
-        let io_end = termination.checked_add(8).expect("io_end overflow");
-
-        let program_size = config.program_size.unwrap();
+        let termination = panic
+            .checked_add(8)
+            .ok_or(MemoryLayoutError::SizeOverflow {
+                region: "termination",
+            })?;
+        let io_end = termination
+            .checked_add(8)
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "I/O" })?;
 
         // stack grows downwards (decreasing addresses) from the top of the stack down to stack_end
         let stack_end = RAM_START_ADDRESS
             .checked_add(program_size)
-            .expect("stack_end overflow");
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "program" })?;
         let stack_start = stack_end
             .checked_add(STACK_CANARY_SIZE)
             .and_then(|s| s.checked_add(stack_size))
-            .expect("stack_start overflow");
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "stack" })?;
 
         // heap grows *up* (increasing addresses) from the top of the stack
         let heap_end = stack_start
             .checked_add(heap_size)
-            .expect("heap_end overflow");
+            .ok_or(MemoryLayoutError::SizeOverflow { region: "heap" })?;
 
-        Self {
+        Ok(Self {
             program_size,
             max_trusted_advice_size,
             trusted_advice_start,
@@ -485,10 +529,9 @@ impl MemoryLayout {
             panic,
             termination,
             io_end,
-        }
+        })
     }
 
-    /// Returns the start address memory.
     pub fn get_lowest_address(&self) -> u64 {
         self.trusted_advice_start.min(self.untrusted_advice_start)
     }
@@ -524,6 +567,70 @@ impl MemoryLayout {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_layout_admits_large_advice_and_rejects_zero_address_overlap() {
+        let config = MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 1 << 29,
+            max_untrusted_advice_size: 1 << 28,
+            ..Default::default()
+        };
+        let layout = MemoryLayout::try_new(&config).unwrap();
+        assert_eq!(layout.get_lowest_address(), 1 << 30);
+        assert_eq!(layout.trusted_advice_end, (1 << 30) + (1 << 29));
+        assert_eq!(layout.untrusted_advice_start, layout.trusted_advice_end);
+        assert_eq!(layout.max_untrusted_advice_size, 1 << 28);
+        assert!(layout.io_end <= RAM_START_ADDRESS);
+
+        assert_eq!(
+            MemoryLayout::try_new(&MemoryConfig {
+                max_untrusted_advice_size: 1 << 29,
+                ..config
+            }),
+            Err(MemoryLayoutError::IoRegionTooLarge {
+                padded_bytes: 1 << 31
+            })
+        );
+    }
+
+    #[test]
+    fn checked_layout_reports_arithmetic_overflow_without_allocation() {
+        let config = MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        for invalid in [
+            MemoryConfig {
+                max_input_size: u64::MAX,
+                ..config
+            },
+            MemoryConfig {
+                max_input_size: u64::MAX - 7,
+                max_output_size: 0,
+                max_trusted_advice_size: 0,
+                max_untrusted_advice_size: 0,
+                ..config
+            },
+            MemoryConfig {
+                max_trusted_advice_size: 1 << 63,
+                ..config
+            },
+            MemoryConfig {
+                program_size: Some(u64::MAX),
+                ..config
+            },
+            MemoryConfig {
+                heap_size: u64::MAX - 7,
+                ..config
+            },
+        ] {
+            assert!(matches!(
+                MemoryLayout::try_new(&invalid),
+                Err(MemoryLayoutError::SizeOverflow { .. })
+            ));
+        }
+    }
 
     #[test]
     #[should_panic(expected = "Output too long")]
@@ -609,9 +716,6 @@ mod tests {
 
     #[test]
     fn layout_packs_io_regions_contiguously_below_ram_start() {
-        // trusted (4096) < untrusted (8192) forces the untrusted-first branch.
-        // io_region_bytes = 4096 + 8192 + 4096 + 4096 + 16 = 20496 bytes
-        //   => 2562 words => padded to 4096 words => 32768 bytes below RAM_START.
         let layout = MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: 4096,

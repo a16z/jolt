@@ -1,31 +1,19 @@
-//! Committed-program polynomial materialization: the per-chunk bytecode
-//! coefficient grids and the padded program-image word vector, built from the
-//! prover-retained full program.
-//!
-//! Each bytecode chunk is a `(lanes × chunk_cycles)` grid interleaved by the
-//! proof's trace order (`index = order.address_cycle_to_index(lane,
-//! chunk_cycle, lane_capacity, chunk_cycle_len)` — lane plays the address
-//! role): one bytecode row per chunk cycle, one lane per committed row
-//! attribute (the one-hot `rs1`/`rs2`/`rd` blocks, the scalar unexpanded-PC
-//! and immediate lanes, the circuit/instruction flag blocks, the
-//! lookup-table selector block, and the RAF flag — [`BYTECODE_LANE_LAYOUT`]).
-//! The same grids back the preprocessing-time chunk commitments, the
-//! stage-6b bytecode claim reduction, and the stage-8 joint opening, so they
-//! are built here once and shared.
+//! Committed-program bytecode row/lane grids and padded image words.
+//! Both commitment backends use one whole bytecode grid.
+//! Each row uses the shared lane layout, interleaved by the trace order.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
-    is_valid_committed_bytecode_chunking_for_len, is_valid_committed_program_immediate,
-    total_lanes, BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY,
-    INVALID_COMMITTED_PROGRAM_IMMEDIATE,
+    bytecode_total_vars, is_valid_committed_program_immediate, BYTECODE_LANE_LAYOUT,
+    COMMITTED_BYTECODE_LANE_CAPACITY, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
-use jolt_riscv::instructions::Noop;
 use jolt_riscv::{
     Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction, JoltInstructionRow,
     CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
+use jolt_utils::unsafe_allocate_zero_vec;
 
 use crate::KernelError;
 
@@ -40,13 +28,11 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
     InstructionFlags::IsNoop,
 ];
 
-/// The sparse `(lane, value)` encoding of one committed bytecode row.
 fn for_each_active_lane_value<F: JoltField>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
 ) {
-    let decoded = JoltInstruction::try_from(*instruction)
-        .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
+    let decoded = JoltInstruction::from(*instruction);
     let circuit_flags = decoded.circuit_flags();
     let instruction_flags = decoded.instruction_flags();
     let layout = BYTECODE_LANE_LAYOUT;
@@ -86,14 +72,16 @@ fn for_each_active_lane_value<F: JoltField>(
     }
 }
 
-/// Build the per-chunk committed bytecode coefficient grids, interleaved by
-/// the proof's trace order.
-#[tracing::instrument(skip_all, name = "build_committed_bytecode_chunk_coeffs")]
-pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
+/// Materialize one complete bytecode row/lane grid, independent of trace length.
+#[tracing::instrument(skip_all, name = "build_committed_bytecode_coeffs")]
+pub fn build_committed_bytecode_coeffs<F: JoltField>(
     instructions: &[JoltInstructionRow],
-    chunk_count: usize,
     order: TracePolynomialOrder,
-) -> Result<Vec<Vec<F>>, KernelError<F>> {
+) -> Result<Vec<F>, KernelError<F>> {
+    let num_vars =
+        bytecode_total_vars(instructions.len()).map_err(|error| KernelError::InvalidGeometry {
+            reason: error.to_string(),
+        })?;
     if instructions
         .iter()
         .any(|instruction| !is_valid_committed_program_immediate(instruction.operands.imm))
@@ -102,43 +90,32 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
             reason: INVALID_COMMITTED_PROGRAM_IMMEDIATE.to_owned(),
         });
     }
-    let bytecode_len = instructions.len();
-    if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
-        return Err(KernelError::InvalidGeometry {
-            reason: format!(
-                "invalid committed bytecode chunking: {chunk_count} chunks over {bytecode_len} rows"
-            ),
-        });
-    }
-    let chunk_cycle_len = bytecode_len / chunk_count;
-    let lane_capacity = COMMITTED_BYTECODE_LANE_CAPACITY;
-    let mut chunk_coeffs: Vec<Vec<F>> = (0..chunk_count)
-        .map(|_| vec![F::zero(); lane_capacity * chunk_cycle_len])
-        .collect();
-
-    for (cycle, instruction) in instructions.iter().enumerate() {
-        let coeffs = &mut chunk_coeffs[cycle / chunk_cycle_len];
-        let chunk_cycle = cycle % chunk_cycle_len;
+    let len = 1usize
+        .checked_shl(num_vars as u32)
+        .ok_or_else(|| KernelError::InvalidGeometry {
+            reason: "bytecode coefficient length overflows usize".to_owned(),
+        })?;
+    let mut coeffs = unsafe_allocate_zero_vec(len);
+    for (row, instruction) in instructions.iter().enumerate() {
         for_each_active_lane_value::<F>(instruction, |lane, value| {
             coeffs[order.address_cycle_to_index(
                 lane,
-                chunk_cycle,
-                lane_capacity,
-                chunk_cycle_len,
+                row,
+                COMMITTED_BYTECODE_LANE_CAPACITY,
+                instructions.len(),
             )] += value;
         });
     }
-    Ok(chunk_coeffs)
+    Ok(coeffs)
 }
 
-/// The `(lane, cycle)` coordinates of a chunk-grid index in the given trace
-/// order — the pairing the reduction's lane-weight/eq template walks.
-pub fn chunk_index_to_lane_cycle(
+/// The `(lane, row)` coordinates addressed by the reduction template.
+pub fn bytecode_index_to_lane_row(
     index: usize,
-    chunk_cycle_len: usize,
+    row_count: usize,
     order: TracePolynomialOrder,
 ) -> (usize, usize) {
-    order.index_to_address_cycle(index, COMMITTED_BYTECODE_LANE_CAPACITY, chunk_cycle_len)
+    order.index_to_address_cycle(index, COMMITTED_BYTECODE_LANE_CAPACITY, row_count)
 }
 
 /// The committed program-image polynomial's word vector: the RAM-remapped
@@ -148,9 +125,4 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
     let mut words = bytecode_words.to_vec();
     words.resize(padded_len, 0);
     words
-}
-
-/// Sanity re-export target: the lane total the layout must fit.
-pub const fn committed_total_lanes() -> usize {
-    total_lanes()
 }

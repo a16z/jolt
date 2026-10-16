@@ -9,8 +9,6 @@ use crate::lattice::BalancedChunkingError;
 /// value of [`BalancedIncCarry`](crate::protocols::jolt::JoltCommittedPolynomial::BalancedIncCarry):
 /// the shared balanced-digit window.
 pub use crate::lattice::BALANCED_INC_BITS as FUSED_INC_BITS;
-/// The shared balanced-digit algebra ([`crate::lattice`]), re-exported at
-/// its historical home (here the digits decompose the fused increment).
 pub use crate::lattice::{balanced_inc_value, BalancedIncChunking};
 
 /// Bytecode read-raf val stages in lattice mode: the base stages plus one
@@ -42,14 +40,8 @@ pub enum LatticeGeometryError {
         actual: usize,
         expected: usize,
     },
-    #[error(
-        "OneHotTrace has {actual} columns, exceeding the K=2^{chunk_width} packed capacity {capacity}"
-    )]
-    TooManyOneHotTraceColumns {
-        chunk_width: usize,
-        actual: usize,
-        capacity: usize,
-    },
+    #[error("OneHotTrace has {actual} columns, above the {capacity}-column row mask limit")]
+    TooManyOneHotTraceColumns { actual: usize, capacity: usize },
 }
 
 impl From<BalancedChunkingError> for LatticeGeometryError {
@@ -63,20 +55,5 @@ impl From<BalancedChunkingError> for LatticeGeometryError {
                 Self::ChunkWidthTooLarge { chunk_width }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The shared chunking's errors surface through the jolt-side error type
-    /// unchanged (the `From` mapping is variant-for-variant).
-    #[test]
-    fn chunking_errors_map_into_the_lattice_error() {
-        assert_eq!(
-            BalancedIncChunking::new(7).map_err(LatticeGeometryError::from),
-            Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width: 7 })
-        );
     }
 }

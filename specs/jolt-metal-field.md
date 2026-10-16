@@ -37,15 +37,20 @@ with an unsafe raw-dispatch API whose caller establishes kernel memory safety.
 Key abstractions:
 
 - **MSL field templates** (`shaders/jolt/field/*.h`). These define
-  `jolt::Fp32<BITS, C>`, `jolt::Fp64<BITS, C>`, `jolt::Fp128<C>`,
-  `jolt::Ext2<F, NR>` and `jolt::Ext4<F>`. Each template mirrors one
-  `jolt_field` type and uses the same algorithm names (`reduce_product`,
-  `mul_unreduced`, `mul_u64_unreduced`, …).
-- **MSL accumulators** (`shaders/jolt/field/accum.h`). These mirror
-  `jolt_field::WithAccumulator`: `Accumulator`, `SmallScalarAccumulator`, and
-  `SignedProductAccumulator`. Each has a `constexpr` `CAPACITY`, the maximum
-  number of worst-case terms before `reduce()`, derived in a comment next to
-  its definition.
+  `jolt::Fp128<C>` and `jolt::Fp64<C>`, the fields `2^128 − C` and
+  `2^64 − C` for odd `C < 2^32`, and `jolt::Ext2<F>`, the quadratic
+  extension with non-residue 2 over either. `Fp32` and `FpExt4` follow the
+  same pattern when a consumer needs them (see Non-Goals). Each template
+  mirrors one `jolt_field` type and uses the same algorithm names
+  (`reduce_product`, `fold2_canonicalize`, …).
+- **MSL accumulators.** `shaders/jolt/field/accum.h` states the contract and
+  mirrors `jolt_field::WithAccumulator` with `Accumulator` and
+  `SmallScalarAccumulator`; each field header specializes it (`fp128_accum.h`
+  for `Fp128`). Each accumulator has a `constexpr` `CAPACITY`, the number of
+  terms it holds exactly, derived in a comment next to its definition.
+  `shaders/jolt/field/reduce.h` sums accumulators over a simdgroup and a
+  threadgroup, generically over the contract. `SignedProductAccumulator`
+  lands with its first consumer.
 - **`MetalField` trait** (Rust). It is implemented for each supported
   `jolt_field` type. It supplies:
   - the MSL type spelling, for example `jolt::Fp128<0xFFFFA7F7u>`;
@@ -114,10 +119,16 @@ Key abstractions:
   this spec.
 - **Field inversion on the GPU.** No planned consumer needs it. It will be
   added with its first caller.
-- **`FpExt8`, and `Fp32` / `Fp64` before a consumer needs them.** The
-  templates are written generically from the start. Instantiations,
-  `MetalField` impls, and tests land with their first production caller, per
-  the repository rule against speculative API.
+- **`Fp32`, `FpExt4` and `FpExt8` before a consumer needs them.**
+  Instantiations, `MetalField` impls, and tests land with their first
+  production caller, per the repository rule against speculative API.
+  `Fp64` and `Ext2` landed in step 4 because Akita's `fp64` preset
+  (`akita-config`'s `proof_optimized/fp64.rs`: `Field = Prime64Offset59`,
+  `ExtensionField = Ext2<Field>`) uses them as its base and extension
+  fields. The `fp32` preset's `Prime32Offset99` and `FpExt4` follow in step 5.
+- **`Fp64` moduli below `2^63`.** `jolt_field`'s `Fp64<P>` also covers
+  sub-word moduli, which fold at a different bit. `MetalField` for such a
+  `P` is a build error.
 - **Fallback policy.** Whether a consumer fails the proof or re-proves on the
   CPU after a GPU error is decided by the consumer. This crate only
   classifies errors (see Error model).
@@ -152,7 +163,9 @@ Key abstractions:
       validation enabled (`MTL_SHADER_VALIDATION=1`,
       `MTL_DEBUG_LAYER=1`).
 - [ ] `grep` over `crates/jolt-metal/src` (excluding `#[cfg(test)]`) finds no
-      `unwrap(`, `expect(`, `panic!`, `assert!`, or `unreachable!`.
+      `unwrap(`, `expect(`, `panic!`, `assert!`, or `unreachable!`, except in
+      `const fn`s evaluated only in constants, where a failure is a build
+      error (`field.rs` spells MSL type names from `P` this way).
 - [ ] #1848's `solinas/fp128.metal`, `simd_reduce.metal`, `deferred_sum.metal`,
       and the per-kernel wide accumulators are deleted in favour of
       `jolt-metal` headers. This is tracked in #1848's rebase, not in this
@@ -167,10 +180,56 @@ implementation, not a refactor of the CPU code.
 - **Conformance.** A generic `#[cfg(test)]` harness is instantiated per
   `MetalField` type. It assembles test kernels (`vec_add`, `vec_mul`,
   `vec_fmadd_accum`, …) from the same headers consumers use.
-- **Property tests** with `proptest` on a fixed seed:
-  - ring axioms on device outputs;
-  - canonical form of all outputs;
-  - accumulator reduction equals the sum of fully reduced products.
+- **Branch coverage.** Random inputs almost never reach the rare reduction
+  branches (the second fold's overflow and its canonicalization), so the
+  suite also builds inputs for each branch from the modulus. It recomputes
+  each reduction's intermediate values in `u128` arithmetic and asserts that
+  every branch of `fold2_canonicalize` is taken for `mul` and `mul_u64`, and
+  that `add`'s wrap and canonicalization and `sub`'s borrow occur.
+- **`Fp64` and `Ext2`** (`tests/fp64.rs`, `tests/ext2.rs`, step 4). The
+  same harness and branch assertions, over the moduli that reach each
+  bound at its limit. `Fp64` runs over `Prime64Offset59` and
+  `2^64 − 2^32 + 1`, whose offset is the largest `jolt::Fp64` accepts.
+  `Ext2` runs over four bases: `Prime64Offset59`; `2^64 − 0x7fffffd3`,
+  whose offset is the largest prime offset below `2^31`, the bound of the
+  `Fp64` forms that reduce a sum of two products once; and, through the
+  generic Karatsuba forms, `2^64 − 2^32 + 1` and `Prime128Offset275`.
+  A shared model (`tests/support/fp64.rs`) recomputes the reduction in
+  `u128` arithmetic, and the suites assert that every `fold2_canonicalize`
+  branch is taken by `mul`, by `mul_u64`, and by each coefficient of the
+  `Ext2` multiply, and that one `c1` sum carries into its top word through
+  the low word, which random operands reach with probability about
+  `2^−64`. Inputs for the rare branches are built from the modulus:
+  with `a = 2^63` and `b = 2m`, the product is `m · 2^64`, and `m` is chosen
+  so that `C·m` lands just below `(k + 1) · 2^64`. Since `Ext2` over
+  non-field bases is exercised (the Goldilocks prime has `p ≡ 1 (mod 8)`,
+  so `u^2 − 2` splits), the suites test the arithmetic, not the field
+  axioms, which `jolt_field` covers.
+- **Mutation testing.** The suite's strength is checked by hand-made
+  mutants of each carry, shift, fold, and sign-handling step. In step 2,
+  all 23 mutants of the code in the final `fp128.h` fail the suite. Two
+  other mutants survived because they were equivalent: shifting a word that
+  is always zero, in the loop-form `sqr_wide` since replaced, and reading
+  `sub128`'s borrow from bit 32 instead of bit 63, which agree for every
+  input. Canonical outputs are enforced by the checked read-back, and
+  bit-exact agreement with `jolt_field` implies the ring axioms, so there are
+  no separate property tests for base-field operations.
+- **Accumulator conformance** (`tests/fp128_accum.rs`, step 3). For both
+  instantiated moduli, the accumulator property: every accumulator's
+  `reduce()` equals the `jolt_field` sum of its terms. Edge operands and
+  2^20 fixed-seed random terms, with every operation interleaved, are summed
+  by `threadgroup_merge` at one and at 16 terms per thread, in threadgroups of
+  1, 2, 3 and 8 simdgroups and the pipeline's largest whole-simdgroup size.
+  Every lane's result is checked. The small-scalar edges are 0, 1, 2,
+  2^32 − 1, 2^32, 2^63 − 1, 2^63, 2^63 + 1, 2^64 − 2 and 2^64 − 1, each with
+  both signs. Capacity (invariant 7) is checked at exactly `CAPACITY`
+  worst-case terms, and at `CAPACITY + 1` both through the documented
+  pre-reduction path, which must be exact, and without it, which must
+  differ. The signed accumulator is filled with each sign. Of 19 mutants of
+  the carry, fold, sign and merge steps in `fp128_accum.h` and `reduce.h`,
+  17 fail the suite. The other two are equivalent: negating a zero scalar
+  product in `fmadd_i64`, and writing the simdgroup sum from lane 1 instead
+  of lane 0, which hold the same value after the butterfly.
 - **Serialization.** nextest runs each test in its own process, so GPU tests
   take an exclusive file lock (`File::lock` on a file in the temp directory),
   following the `/tmp` flock in #1733. This avoids contention noise and makes
@@ -194,22 +253,97 @@ implementation, not a refactor of the CPU code.
 
 ### Performance
 
-Criterion benchmarks, one per operation and field:
+Criterion benchmarks (`crates/jolt-metal/benches/field.rs`) for `Fp128`
+(offset `0xA7F7`), `Fp64` (offset 59) and `Ext2` over that `Fp64`:
 
-- elementwise `add`, `mul`, and `square`;
-- `fmadd` into an accumulator;
-- simdgroup and threadgroup sum reduction.
+- dependent chains of `add`, `mul`, and `square` in registers, plus `mul`
+  with four independent chains, reported as operations per second: the ALU
+  cost of each operation;
+- elementwise `add`, `mul`, and `square` at 2^16–2^26 elements;
+- an inner product with a threadgroup reduction at 2^16–2^26 elements, the
+  shape of a sumcheck round;
+- for `Fp128`, `fmadd`, `fmadd` with four independent accumulators, and
+  `fmadd_i64` in registers, and an inner product whose products are
+  accumulated unreduced and summed by `threadgroup_merge` (step 3).
 
-Each is reported as elements per second at sizes 2^16–2^26, with a CPU
-`jolt_field` baseline on the same machine: the NEON packed engine where it
-exists, scalar otherwise.
+GPU kernel samples use execution time from the command buffer's timestamps
+(`Batch::commit_and_wait` returns it), which excludes host submission. Inner
+products additionally report complete wall time including submission, checked
+readback, and the CPU sum of partials; inputs are already resident. The
+CPU baseline is `jolt_field` on all cores with rayon and the `asm` multiply
+Akita's prover uses. The packed NEON `Fp128` multiplies lane by lane through
+that same scalar path, so it is not a separate baseline. Every kernel's output
+is checked against the CPU before it is timed.
+`scripts/metal-report.sh --bench` appends the table to the local report.
 
-Fp128 limb layout decision gate. The PR introducing `Fp128` benchmarks the
-`uint4` (4×u32) representation used by #1848 and Akita against the 2×u64
-representation from the earlier `quang/metal-field-kernels` branch. It keeps
-the faster one and records both numbers. The expectation, not yet measured,
-is that `uint4` wins, because Apple GPU ALUs are 32-bit and 64-bit multiplies
-are emulated.
+**Fp128 limb layout.** The earlier `quang/metal-field-kernels` 2×u64 code
+built each 64×64 product from four 32×32 multiplies and read `C` from a
+buffer, so comparing it with `uint4` would have measured those choices, not
+the layout. The comparison run instead was `uint4` schoolbook against a
+`ulong2` port of the same header using MSL's native 64-bit `*` and `mulhi`,
+with `C` a template constant in both and the same storage. It lives on the
+unmerged branch `metal/fp128-limb-ab` (`benches/limb_ab.rs`), so it can be
+rerun on other chips. Each round times every variant in alternating order,
+and the result is the median per-round ratio against `uint4`, a paired
+comparison. The decision rule, fixed in advance, was to take a variant only
+if it is faster on the ALU-bound and inner-product cases by more than the
+round-to-round spread, and otherwise to keep the simpler code.
+
+Result on an Apple M4 Max (macOS 27.0, 31 rounds; battery power, high power
+mode), time of `ulong2` relative to `uint4`:
+
+| case | `ulong2` / `uint4` (p10–p90) |
+|---|---|
+| dependent `add` | 1.072 (1.072–1.073) |
+| dependent `mul` | 1.495 (1.495–1.495) |
+| four independent `mul` chains | 1.625 (1.625–1.629) |
+| dependent `square` | 1.910 (1.899–1.918) |
+| streaming `mul`, 2^24 | 0.999 (0.995–1.006) |
+| inner product, 2^20 | 1.057 (1.033–1.078) |
+| inner product, 2^24 | 1.048 (1.024–1.070) |
+
+`uint4` is kept. Streaming `mul` ties because at 2^24 both reach about
+430 GB/s, near the memory bandwidth. Every pipeline reported 1024 maximum
+threads per threadgroup. This is a dispatch limit; it does not establish equal
+register use, spilling, or achieved occupancy. The timings support the layout
+choice on this device. Attributing the difference to occupancy requires
+profiling evidence and a sweep of actual threadgroup sizes.
+
+The same run changed `square`. The triangular cross-product loop ported
+first ran at 29 G/s, slower than `a * a` at 45 G/s. Written out, with each
+square added in one multiply-add step, it runs at 60 G/s (paired ratios
+against it: loop 2.055, `a * a` 1.322).
+
+A second run, on AC power with other processes loading the machine (load
+average 32–51 on 16 cores), reproduced every ratio within 2%: 1.073, 1.506,
+1.643, 1.939, 1.001, 1.076 and 1.040 in the table's order, and 2.090 and 1.330
+for `square`. Load moved the absolute rates of both runs, so the rates above
+are indicative only; the ratios hold because each round times every variant
+back to back.
+
+**Fp64 and Ext2 forms** (step 4). Where a function has alternative forms,
+the choice follows the limb-layout rule made explicit and fixed before
+measuring: in a paired A/B (each variant the merged header with one
+function replaced), the fastest variant on the dependent chain wins if it
+beats every other there by at least 3% and is at most 3% slower than the
+best on four chains and on the inner product at 2^20; otherwise the
+simplest variant within 3% of the best on the chain wins. The PR that makes
+a choice reports its paired comparison (see Regression bound).
+
+- `mul_wide` is the row-by-row product of `fp128.h`, and `square(a)` is
+  `a * a`: a dedicated three-product square was not faster.
+- Over `Fp64<C>` with `C < 2^31`, the `Ext2` multiply and square reduce
+  each coefficient's two products once (`fp64_detail::reduce_sum`):
+  `c0 = a0 b0 + (2 a1) b1` and `c1 = a0 b1 + a1 b0`, and the square's
+  `c0 = c0^2 + (2 c1) c1`. The square wins the rule outright against the
+  generic form. The multiply does not beat Karatsuba by 3% on the chain, so
+  the rule alone would keep Karatsuba; it uses the square's reduction
+  because the conformance suite can reach that reduction's rare branches
+  only through the multiply's independent operands. Summing `c0` as three
+  products, `a0 b0 + a1 b1 + a1 b1`, before one reduction lost to these
+  forms by more than 3% on both chains.
+- Offsets from `2^31` up keep Karatsuba and the generic square, outside the
+  bound `reduce_sum` proves.
 
 Regression bound: after the first measurement, a PR that changes an MSL
 arithmetic header reports the table and a paired comparison against its base
@@ -223,25 +357,53 @@ its speed. This section fixes how speed is measured and reported. Decisions
 then rest on numbers, and per-machine tuning (see Direction) needs no kernel
 rewrite.
 
-**Machine limits.** A benchmark, `benches/limits.rs`, measures the resources a
-kernel can be bound by, on the machine that runs it:
+**Machine limits and diagnostic workloads.** `benches/limits.rs` measures
+arithmetic and memory rates, completion latency, and a threadgroup-load workload
+on the machine that runs it:
 
 | Limit | Measured as |
 |---|---|
 | field multiply | independent `Fp128` multiplies per second, with enough threads to hide latency |
-| deferred multiply-accumulate | `fmadd` into an accumulator, reduced once per `CAPACITY` terms |
-| memory bandwidth | a streaming copy, at sizes inside and beyond the system-level cache |
-| threadgroup memory bandwidth | 16 B loads per second from threadgroup memory |
+| deferred multiply-accumulate | `fmadd` into an accumulator, reduced once per 256 terms |
+| memory copy | `out[i] = in[i]` on 16 B words, at sizes inside and beyond the system-level cache |
+| memory read | four strided 16 B loads summed per thread, one write, at the same sizes |
+| threadgroup load workload | GPU execution time; executed load count is unverified |
 | round trip | from committing a batch to the host observing its result, for an empty batch and for one reduction to a single element |
 
+The threadgroup-load workload repeats eight addresses per thread across 1024
+rounds. A compiler may reuse those loads, so source-level load counts cannot
+justify a bandwidth figure. The benchmark reports workload time only. Promote
+it to a bandwidth limit only after checking generated code or suitable counters
+and a round-count sweep with setup costs accounted for.
+
+Inner-product benchmarks label GPU partial-reduction time separately from
+complete wall time. The latter includes submission, checked readback, and the
+CPU sum of all partials, with inputs already resident on the GPU. CPU complete
+wall time returns the same final scalar. Compare those complete measurements
+when assessing latency; the partial kernel time measures GPU throughput only.
+
 The report prints these next to the device descriptor. The machine's ridge,
-bandwidth divided by multiply rate, says which kernels are compute-bound. On
-an M4 Max, step 2's provisional figures (about 45 G multiplies/s, about
-430 GB/s) put the ridge near 1.7 multiplies per 16 B element read. That is
-half an RTX 5090's, about 3.3 (327 G multiplies/s at 1.6 TB/s). So on Apple
-GPUs any kernel doing more than about two multiplies per element it reads is
+bandwidth divided by multiply rate, says which kernels are compute-bound.
+
+Copy is not an upper bound for a kernel that only reads. On an M4 Max in
+step 3, reads beyond the system-level cache ran at about 440 GB/s and copies
+at about 415 (both directions counted), and the inner products measured 1.04
+of the copy rate. A read-only kernel is compared with the read limit, and a
+kernel that writes as much as it reads with the copy limit.
+
+On that machine, at load about 30, step 3 measured 42.9 G multiplies/s,
+46.8 G multiply-accumulates/s and 444 GB/s read at 2^26 elements. That puts
+the ridge at about 1.5 multiplies per 16 B element read, under half an
+RTX 5090's, about 3.3 (327 G multiplies/s at 1.6 TB/s). So on Apple GPUs any
+kernel doing more than about two multiplies per element it reads is
 compute-bound, and the multiply and multiply-accumulate rates are the limits
 that matter most.
+
+The round trip is dominated by the host. Reducing 1024 elements to one and
+reading it back took 135–152 µs from commit to observation (medians of two
+runs), of which the GPU spent 8 µs; an empty batch took 33–36 µs. A protocol step that waits on the GPU
+between rounds pays that per round, so kernels that end in a host decision
+batch as much work as the protocol allows before it.
 
 **Kernel criteria.** From step 3 on, every kernel PR:
 
@@ -258,17 +420,28 @@ that matter most.
 
 **Measurement hygiene.**
 
-- Absolute rates come from an otherwise idle machine on AC power in high power
-  mode. The report records the power source, the energy mode, and the load
-  average before and after the benchmarks. A run whose 1-minute load average
-  exceeds 1 does not supply absolute rates. Other processes share the chip's
-  power budget: at load 32–51 on 16 cores, step 2's GPU multiply chain
-  measured 29 G/s instead of 45, and the CPU baseline varied 2.5–20×.
+- Benchmarks run on AC power in high power mode. The report records the power
+  source, the energy mode, and the load average before and after the
+  benchmarks. Other processes share the chip's power budget: at load 32–51 on
+  16 cores, from CPU-only work, step 2's GPU multiply chain measured 29 G/s
+  instead of 45, and the CPU baseline varied 2.5–20×. An idle development
+  machine is rarely available, so absolute rates are reported with the load
+  they were measured under, and no comparison is drawn between absolute rates
+  from different runs.
 - A choice between variants uses a paired comparison. Each round times every
   variant back to back in alternating order, and the result is the median
   per-round ratio with its 10th–90th percentile spread. The decision rule is
   fixed before the run. Under the load above, step 2's paired ratios
   reproduced within 2%.
+- A kernel's fraction of its limit is measured the same way: each round times
+  the kernel and the benchmark of its bounding limit back to back. That makes
+  the fraction a paired ratio. In step 3, runs at load about 30 and about
+  100 gave fractions within 3% of each other (stream `mul` 1.028 and 1.032
+  of copy; inner product 0.976 and 0.996, and accumulator inner product
+  0.959 and 0.989, of read), so fractions are compared across runs the way
+  variant ratios are. Unpaired in-cache rates are not: copying 4 MiB ran at
+  1880 GB/s in the first run and 460 in the second, while reading 4 MiB ran
+  at about 1500 in both. The cause is not known.
 
 **No runtime autotuning.** A kernel's configuration is a pure function of the
 kernel, the problem shape, and the device descriptor. It comes from
@@ -283,7 +456,7 @@ jolt-field (CPU types, verifier-reachable)
     ▲
     │ normal dependency (types, OFFSET, ext tables)
 jolt-metal (prover-only; macOS runtime, portable shader text)
-    ├── shaders/jolt/field/{fp32,fp64,fp128,ext2,ext4,accum,reduce}.h
+    ├── shaders/jolt/field/{fp32,fp64,fp128,ext2,ext4,accum,fp128_accum,reduce}.h
     ├── src/field.rs        MetalField trait + impls for instantiated types
     ├── src/runtime/        Device, ShaderLibrary, Pipeline, DeviceBuffer, Batch
     └── src/error.rs        MetalError + ErrorClass
@@ -292,8 +465,8 @@ jolt-kernels (feature metal)  akita-metal (Akita `dev`, opt-in)
 ```
 
 **Shader genericity.** The Metal Shading Language is C++14-based. Field types
-are class templates whose non-type parameters are the modulus shape
-(`BITS`, `C`). The `C` parameter is a compile-time constant, so a multiply by
+are class templates whose non-type parameter is the offset `C`, and
+extensions are templates over their base field. The `C` parameter is a compile-time constant, so a multiply by
 a small `C` folds. Consumer kernels are function templates over the field
 type:
 
@@ -324,10 +497,12 @@ hand-written in a consumer, and the `C < 2^32` precondition is a
 (little-endian, canonical). On little-endian Apple Silicon its bytes equal
 MSL `uint4` little-endian words. Upload is therefore a byte copy, with a
 `const` assertion on size and layout. Read-back goes through the checked
-conversion (invariant 6). This needs one small `jolt-field` addition: a
-checked constructor from canonical limbs or bytes, or a `bytemuck`
-`CheckedBitPattern` impl. It is pure, allocation-free, and has no platform
-code. Device buffer offsets are required to be multiples of 16 so that
+conversion (invariant 6). This is one small `jolt-field` addition behind an
+optional `bytemuck` feature: `Zeroable`, `NoUninit`, and `CheckedBitPattern`
+for `Fp128<P>`, whose validity check is `limbs < P`, and likewise for
+`Fp64<P>` (over `u64`) and `FpExt2<F, C>` (over `[F; 2]`, valid when both
+coefficients are). It is pure,
+allocation-free, and has no platform code. Device buffer offsets are required to be multiples of 16 so that
 `device uint4*` accesses are aligned.
 
 **Shader packaging.** `ShaderLibrary` compiles embedded source at runtime
@@ -454,21 +629,51 @@ together with #1848.
    a byte-fill kernel for the read-back check. `MslType` is the seam that
    `MetalField` extends in step 2.
 2. **`Fp128`.** Contents:
-   - `fp128.h`: add, sub, neg, mul, square, `mul_u64`, `mul_i64`,
-     `from_u64`, `from_i64`;
-   - the `MetalField` impls for `Prime128OffsetA7F7` and `Prime128Offset275`;
-   - the checked read-back addition to `jolt-field`;
-   - conformance and property suites;
-   - benchmarks, including the limb-layout A/B.
-3. **Accumulators and machine limits.** `accum.h` mirrors `Fp128Accumulator`
-   and `Fp128SignedAccumulator` with proved `CAPACITY`. Also simdgroup and
-   threadgroup reductions that are generic over the accumulator, and
-   `benches/limits.rs` (Performance model), whose multiply-accumulate limit
-   needs the accumulators. The kernel criteria apply from this step.
-4. **Extensions.** `Ext2`, and `FpExt4` in the `[1, e1, e2, e3]` cyclotomic
-   basis matching `PseudoMersenne::ext4_mul`.
-5. **Word fields.** `Fp64<BITS, C>` / `Fp32<BITS, C>` for `Prime64Offset59` /
-   `Prime32Offset99`, landed when `akita-metal` first needs them.
+   - `fp128.h`: `jolt::Fp128<C>` with add, sub, neg, mul, square, `mul_u64`,
+     `mul_i64`, `from_u64`, `from_i64`, ported from #1848's
+     `fp128.metal` with the `LONG_MIN` negation fixed and each bound argued;
+   - `MetalField`, implemented for every `Fp128<P>`, with the MSL spelling
+     and host suffix computed from `P` at compile time;
+   - the `bytemuck` feature of `jolt-field` for byte views and checked
+     read-back;
+   - the conformance suite with asserted branch coverage, checked by
+     mutation testing;
+   - GPU timestamps on `Batch`, the benchmarks, the limb-layout A/B, and the
+     `--bench` option of the local report.
+3. **Accumulators and machine limits.** `accum.h` and `fp128_accum.h` mirror
+   `Fp128Accumulator` and `Fp128SignedAccumulator` with proved `CAPACITY`.
+   Also simdgroup and threadgroup reductions that are generic over the
+   accumulator (`reduce.h`), and `benches/limits.rs` (Performance model),
+   whose multiply-accumulate limit needs the accumulators. The kernel
+   criteria apply from this step. The layouts were chosen by a paired A/B on
+   an M4 Max, with the rule fixed in advance: the fastest variant on `fmadd`
+   wins if it beats every other by at least 3% and is at most 3% slower than
+   the best on `fmadd` in four chains; otherwise the variant with the fewest
+   words within 3% of the best on `fmadd` wins, since consumer kernels spend
+   registers on other state. A 288-bit carried accumulator in 9 words was
+   within 3% of eight `ulong` slots and of eight uncarried column sums, both
+   16 words, on `fmadd`, on `fmadd` in four chains and on an inner product at
+   2^24, and 3% faster at 2^20. Reducing every product was 1.40× slower on
+   `fmadd`. A 224-bit two's-complement signed accumulator in 7 words was
+   1.16× faster than a positive and negative pair (14 words), and 1.82×
+   faster than reducing every product. The A/B harness is kept on a branch,
+   not merged. `SignedProductAccumulator` is deferred until a kernel needs
+   it.
+4. **`Fp64` and `Ext2`.** Contents:
+   - `fp64.h`: `jolt::Fp64<C>` with the operations of `Fp128`, for 64-bit
+     moduli with odd `C < 2^32`, and `fp64_detail::reduce_sum`, which
+     reduces a sum of two 128-bit products once for `C < 2^31`;
+   - `ext2.h`: `jolt::Ext2<F>` over either base, with multiplication by a
+     base-field element (`mul_base`). Multiply and square are Karatsuba
+     forms, overloaded over `Fp64<C>` with `C < 2^31` by forms that reduce
+     each coefficient once;
+   - `MetalField` for `Fp64<P>` with 64-bit `P` and for `Ext2<F>`, and the
+     `bytemuck` impls behind them;
+   - the conformance suites and the generic field benchmarks
+     (`benches/field.rs`).
+5. **`Fp32` and `FpExt4`.** `Fp32` for `Prime32Offset99`, and `FpExt4` in
+   the `[1, e1, e2, e3]` cyclotomic basis matching
+   `PseudoMersenne::ext4_mul`, each landed when a consumer first needs it.
 6. **Adoption.** #1848 (Jolt) and `akita-metal` (Akita `dev`) switch to these
    headers and delete their copies. The Akita side follows its own spec:
    ring, NTT over CRT primes, commitment, fold, and range sumcheck layers.
@@ -522,8 +727,10 @@ only the Command Line Tools installed.
   template are both listed by the library and both dispatch correctly. A
   `static_assert` on a template parameter fails `newLibraryWithSource` with
   `MTLLibraryErrorDomain` code 3, so an invalid field instantiation is a
-  `Setup` error. A small library compiled in about 220 ms; full-library
-  compile time will be measured with the `Fp128` library in step 2.
+  `Setup` error. A small library compiled in about 220 ms. The `Fp128`
+  conformance library (10 kernels) compiles in 75 ms for one field and
+  104 ms for two, the first compile in a process; later compiles in the same
+  process take 26 and 43 ms.
 - **Objective-C exceptions.** `objc2` 0.6 lets an uncaught exception unwind
   into Rust, which in practice aborts. `catch-all` wraps every send but
   panics on a caught exception. `exception::catch` returns a `Result`, and

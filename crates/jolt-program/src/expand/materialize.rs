@@ -209,7 +209,6 @@ impl ExpansionState {
     }
 }
 
-/// Bounded output collector — rejects sequences exceeding `MAX_FINAL_ROWS_PER_SOURCE`.
 #[derive(Debug)]
 struct ExpansionBuffer {
     rows: Vec<JoltInstructionRow>,
@@ -273,7 +272,6 @@ impl TempBindingId for InlineTempId {
     }
 }
 
-/// Maps symbolic ids to physical virtual registers for one recipe materialization.
 struct TempBindings<Id, const N: usize> {
     slots: [Option<u8>; N],
     _marker: PhantomData<fn(Id)>,
@@ -322,7 +320,6 @@ impl<Id: TempBindingId, const N: usize> TempBindings<Id, N> {
     }
 }
 
-/// Executes a single recipe: resolves temps, collects output rows, checks capacity.
 struct SequenceMaterializer {
     address: usize,
     rows: ExpansionBuffer,

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
-    format::format_amo::FormatAMO, Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace,
+    format::format_amo::FormatAMO, Cycle, Instruction, RISCVInstruction, RISCVTrace, RamWrite,
 };
 
 declare_riscv_instr!(
@@ -13,27 +13,24 @@ declare_riscv_instr!(
     match  = 0x0800202f,
     format = FormatAMO,
     registers = RegisterStateAMO,
-    ram    = RAMWrite
+    ram    = RamWrite
 );
 
 impl AMOSWAPW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOSWAPW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOSWAPW as RISCVInstruction>::RamAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let new_value = cpu.x[self.operands.rs2 as usize] as u32;
 
-        // Load the original word from memory
         let load_result = cpu.mmu.load_word(address);
         let original_value = match load_result {
             Ok((word, _)) => word as i32 as i64,
             Err(_) => panic!("MMU load error"),
         };
 
-        // Store the new value to memory
         cpu.mmu
             .store_word(address, new_value)
             .expect("MMU store error");
 
-        // Return the original value
         cpu.write_register(self.operands.rd as usize, original_value);
     }
 }

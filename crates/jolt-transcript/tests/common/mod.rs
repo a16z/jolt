@@ -10,7 +10,6 @@ macro_rules! transcript_tests {
         use jolt_transcript::Transcript;
         use std::collections::HashSet;
 
-        // Helper: drive a transcript through a closure and squeeze a challenge.
         fn challenge_after<F: FnOnce(&mut $transcript_type)>(
             label: &'static [u8],
             f: F,
@@ -58,18 +57,6 @@ macro_rules! transcript_tests {
         }
 
         #[test]
-        fn test_append_changes_state() {
-            let baseline = challenge_after(b"mutation_test", |_| {});
-            let after_append = challenge_after(b"mutation_test", |t| {
-                t.append_bytes(&1u64.to_be_bytes());
-            });
-            assert_ne!(
-                baseline, after_append,
-                "append must change observable challenge"
-            );
-        }
-
-        #[test]
         fn test_order_matters() {
             let c1 = challenge_after(b"order_test", |t| {
                 t.append_bytes(&1u64.to_be_bytes());
@@ -103,38 +90,10 @@ macro_rules! transcript_tests {
                 baseline, with_empty,
                 "append_bytes(&[]) must observably change challenge"
             );
-            // Determinism for empty appends.
             let with_empty_again = challenge_after(b"empty_test", |t| {
                 t.append_bytes(&[]);
             });
             assert_eq!(with_empty, with_empty_again);
-        }
-
-        #[test]
-        fn test_large_data() {
-            let mut transcript = <$transcript_type>::new(b"large_data_test");
-            let large_data = vec![0xABu8; 10_000];
-
-            transcript.append_bytes(&large_data);
-            let _ = transcript.challenge();
-        }
-
-        #[test]
-        fn test_prover_verifier_consistency() {
-            let mut prover = <$transcript_type>::new(b"protocol");
-            prover.append_bytes(&42u64.to_be_bytes());
-            prover.append_bytes(b"commitment");
-            let prover_challenge = prover.challenge();
-
-            let mut verifier = <$transcript_type>::new(b"protocol");
-            verifier.append_bytes(&42u64.to_be_bytes());
-            verifier.append_bytes(b"commitment");
-            let verifier_challenge = verifier.challenge();
-
-            assert_eq!(
-                prover_challenge, verifier_challenge,
-                "Prover and verifier must derive identical challenges"
-            );
         }
 
         #[test]

@@ -21,7 +21,7 @@ fn parse_chunks(data: &[u8]) -> Vec<&[u8]> {
     let mut chunks = Vec::new();
     let mut cursor = 0;
     while cursor < data.len() && chunks.len() < MAX_CHUNKS {
-        let len = data[cursor] as usize % 33; // 0..=32 bytes
+        let len = data[cursor] as usize % 33;
         cursor += 1;
         if cursor + len > data.len() {
             break;

@@ -1,5 +1,3 @@
-//! Stage-boundary hooks shared by the Dory and Akita provers.
-
 use jolt_kernels::{MaybeAllocative, ProofSession};
 
 /// Snapshot the surviving stage state, then purge allocator-retained temporaries.

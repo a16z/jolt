@@ -1,15 +1,11 @@
 #![no_main]
 
-//! Differential check of `Fr::from_bytes_le_reduced` against a `num-bigint`
-//! reference reduction, plus canonicality of the re-encoding.
-
 use std::sync::OnceLock;
 
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigUint;
 
-/// BN254 scalar-field modulus `r`.
 fn modulus() -> &'static BigUint {
     static R: OnceLock<BigUint> = OnceLock::new();
     R.get_or_init(|| {

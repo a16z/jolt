@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualWindowMaskH {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualWindowMaskH as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualWindowMaskH as RISCVInstruction>::RamAccess) {
         // Byte mask of the halfword at the effective address's offset within
         // its containing doubleword. Bit 0 is ignored; it is zero on the
         // halfword-aligned addresses the surrounding sequence asserts. The

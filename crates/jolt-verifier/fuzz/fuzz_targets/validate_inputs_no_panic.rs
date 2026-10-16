@@ -43,7 +43,6 @@ fuzz_target!(|data: &[u8]| {
     }
     let (preprocessing, public_io, proof, _) = bundle();
 
-    // Fuzzer-chosen dimensions, drawn from the header bytes.
     let trace_length = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
     let ram_k = u64::from_le_bytes(data[8..16].try_into().unwrap()) as usize;
     let trusted_present = data[16] & 1 == 1;

@@ -35,7 +35,6 @@ pub struct TrustedAdviceCyclePhaseOutputClaims<C> {
     pub trusted: C,
 }
 
-/// The consumed RAM value-check trusted-advice opening.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct TrustedAdviceCyclePhaseInputClaims<C> {
     #[opening(trusted_advice, from = RamValCheck)]
@@ -56,7 +55,6 @@ pub struct UntrustedAdviceCyclePhaseOutputClaims<C> {
     pub untrusted: C,
 }
 
-/// The consumed RAM value-check untrusted-advice opening.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct UntrustedAdviceCyclePhaseInputClaims<C> {
     #[opening(untrusted_advice, from = RamValCheck)]
@@ -158,70 +156,5 @@ impl SymbolicSumcheck for UntrustedCyclePhase {
                 JoltAdviceKind::Untrusted,
             ))) * opening(final_advice_opening(JoltAdviceKind::Untrusted))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::PrecommittedReductionDimensions;
-    use jolt_field::{Fr, Ring};
-
-    fn with_address_phase() -> PrecommittedReductionDimensions {
-        PrecommittedReductionDimensions::new(4, 3, true)
-    }
-
-    fn without_address_phase() -> PrecommittedReductionDimensions {
-        PrecommittedReductionDimensions::new(4, 3, false)
-    }
-
-    #[test]
-    fn cycle_phase_without_address_phase_evaluates_like_core_formula() {
-        let relation = TrustedCyclePhase::new(without_address_phase());
-
-        let input_advice = Fr::from_u64(3);
-        let final_advice_claim = Fr::from_u64(5);
-        let final_scale = Fr::from_u64(7);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_val_check_advice_opening(JoltAdviceKind::Trusted) => input_advice,
-                _ => zero,
-            },
-            |_| zero,
-            |_| zero,
-        );
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == final_advice_opening(JoltAdviceKind::Trusted) => final_advice_claim,
-                _ => zero,
-            },
-            |_| zero,
-            |id| match *id {
-                JoltDerivedId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
-                    JoltAdviceKind::Trusted,
-                )) => final_scale,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, input_advice);
-        assert_eq!(output, final_scale * final_advice_claim);
-    }
-
-    #[test]
-    fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
-        let relation = TrustedCyclePhase::new(with_address_phase());
-
-        assert_eq!(
-            TrustedCyclePhase::id(),
-            JoltRelationId::AdviceClaimReductionCyclePhase
-        );
-        assert_eq!(
-            relation.rounds(),
-            with_address_phase().cycle_phase_total_rounds()
-        );
-        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
     }
 }

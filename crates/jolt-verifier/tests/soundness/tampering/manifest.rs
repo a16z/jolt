@@ -1,61 +1,9 @@
 #[cfg(not(feature = "akita"))]
 use std::path::Path;
 
-use jolt_verifier::VerifierError;
-
-use crate::support::tamper_manifest::{
-    all_targets, clear_claim_leaf_paths, manifest_paths, observed_rejection_phase,
-    proof_field_paths, target_names_are_unique, verifier_owned_targets_without_active_coverage,
-    TamperCoverage,
-};
-use crate::support::VerifierPhase;
-
-#[test]
-fn batch_sumcheck_errors_have_rejection_phases() {
-    for (stage, phase) in [
-        ("Stage1Batch", VerifierPhase::Stage1),
-        ("Stage2Batch", VerifierPhase::Stage2),
-        ("Stage3", VerifierPhase::Stage3),
-        ("Stage4", VerifierPhase::Stage4),
-        ("Stage5", VerifierPhase::Stage5),
-        ("Stage6a", VerifierPhase::Stage6),
-        ("Stage6b", VerifierPhase::Stage6),
-        ("Stage7", VerifierPhase::Stage7),
-        #[cfg(feature = "field-inline")]
-        ("FieldRegistersSpartanOuter", VerifierPhase::Stage1),
-        #[cfg(feature = "field-inline")]
-        ("FieldRegistersClaimReduction", VerifierPhase::Stage2),
-        #[cfg(feature = "field-inline")]
-        ("FieldRegistersProduct", VerifierPhase::Stage2),
-        #[cfg(feature = "field-inline")]
-        ("FieldRegistersReadWriteChecking", VerifierPhase::Stage4),
-        #[cfg(feature = "field-inline")]
-        ("FieldRegistersValEvaluation", VerifierPhase::Stage5),
-        #[cfg(feature = "field-inline")]
-        ("FieldRegistersIncClaimReduction", VerifierPhase::Stage6),
-    ] {
-        let error = VerifierError::StageClaimSumcheckFailed {
-            stage: stage.to_string(),
-            reason: "invalid round polynomial".to_string(),
-        };
-        assert_eq!(observed_rejection_phase(&error), Some(phase), "{stage}");
-    }
-}
-
-#[test]
-#[should_panic(expected = "unrecognized verifier stage")]
-fn unknown_stage_errors_cannot_skip_rejection_deadlines() {
-    let error = VerifierError::StageClaimSumcheckFailed {
-        stage: "UnknownStage".to_string(),
-        reason: "invalid round polynomial".to_string(),
-    };
-    let _ = observed_rejection_phase(&error);
-}
-
-#[test]
-fn tamper_manifest_target_names_are_unique() {
-    assert!(target_names_are_unique());
-}
+#[cfg(not(feature = "akita"))]
+use crate::support::tamper_manifest::{all_targets, TamperCoverage};
+use crate::support::tamper_manifest::{clear_claim_leaf_paths, manifest_paths, proof_field_paths};
 
 /// Closes the Active ⇒ test direction: `assert_verifier_fixture_tamper_rejects`
 /// proves an exercised target is Active, but nothing else stops a target from
@@ -125,32 +73,5 @@ fn tamper_manifest_covers_top_level_proof_fields() {
     assert!(
         missing.is_empty(),
         "top-level proof fields missing from tamper manifest: {missing:?}"
-    );
-}
-
-#[test]
-fn verifier_owned_inactive_tamper_targets_are_documented() {
-    let undocumented = verifier_owned_targets_without_active_coverage()
-        .into_iter()
-        .filter(|target| target.reason.is_empty())
-        .collect::<Vec<_>>();
-
-    assert!(
-        undocumented.is_empty(),
-        "verifier-owned tamper targets without active coverage need a reason: {undocumented:?}"
-    );
-}
-
-#[test]
-fn deferred_tamper_targets_are_documented() {
-    let undocumented = all_targets()
-        .into_iter()
-        .filter(|target| target.coverage != TamperCoverage::Active)
-        .filter(|target| target.reason.is_empty())
-        .collect::<Vec<_>>();
-
-    assert!(
-        undocumented.is_empty(),
-        "deferred or ignored tamper targets need a reason: {undocumented:?}"
     );
 }

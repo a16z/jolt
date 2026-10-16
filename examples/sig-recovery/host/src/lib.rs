@@ -1,14 +1,9 @@
-//! sig-recovery host library
-//!
-//! Utility functions for generating and serializing test transactions.
-
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, U256};
 use reth_ethereum_primitives::{Transaction, TransactionSigned};
 use secp256k1::{ecdsa::RecoverableSignature, rand, Keypair, Message, SecretKey};
 
-/// Generate a batch of signed transactions for testing
 pub fn generate_test_transactions(count: usize) -> Vec<TransactionSigned> {
     let mut rng = rand::rng();
 

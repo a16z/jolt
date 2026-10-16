@@ -124,10 +124,8 @@ pub trait SparseDenseSuffix: 'static + Sync {
     fn suffix_mle(b: LookupBits) -> u64;
 }
 
-/// Type alias for suffix evaluations promoted to field elements.
 pub type SuffixEval<F> = F;
 
-/// All suffix types used by Jolt's lookup tables.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::EnumCount)]
 #[repr(u8)]
 pub enum Suffixes {
@@ -198,9 +196,6 @@ pub enum Suffixes {
     BottomXBit,
 }
 
-/// Total number of suffix variants.
-pub const NUM_SUFFIXES: usize = <Suffixes as strum::EnumCount>::COUNT;
-
 impl Suffixes {
     /// Returns `true` if this suffix's output is guaranteed to be in {0, 1}.
     ///
@@ -226,7 +221,6 @@ impl Suffixes {
         )
     }
 
-    /// Evaluate this suffix's MLE on bitvector `b`.
     pub fn suffix_mle(&self, b: LookupBits) -> u64 {
         match self {
             Suffixes::One => OneSuffix::suffix_mle(b),
@@ -295,7 +289,6 @@ impl Suffixes {
         }
     }
 
-    /// Evaluate and promote to a field element.
     #[inline]
     pub fn evaluate<F: JoltField>(&self, b: LookupBits) -> SuffixEval<F> {
         F::from_u64(self.suffix_mle(b))

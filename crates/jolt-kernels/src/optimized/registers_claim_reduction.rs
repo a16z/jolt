@@ -97,22 +97,17 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
             });
         }
         let cycles = 1usize << log_t;
-        // Slice-backed witnesses re-extract rows without retaining a vector.
         let values = BundleStore::<RegisterValuesRow>::resolve(witness, cycles)?;
         let access = values.access();
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // τ = τ_hi ‖ τ_lo (big-endian). The prefix (low, bound-first) part
-        // takes the extra variable when log_t is odd, matching legacy.
         let (tau_hi, tau_lo) = tau.split_at(log_t / 2);
         let prefix_vars = tau_lo.len();
         let p = EqPolynomial::<F>::evals(tau_lo, None);
         let eq_suffix = EqPolynomial::<F>::evals(tau_hi, None);
 
-        // Q(x_lo) = Σ_{x_hi} eq(τ_hi)[x_hi] · V(x_hi ‖ x_lo), with the three
-        // value columns folded on u64 accumulators and γ-combined once.
         const BLOCK: usize = 32;
         let build_q_block =
             |(block_index, q_block): (usize, &mut [F])| -> Result<(), WitnessError> {
@@ -175,18 +170,13 @@ struct ClaimReductionKernel<F: JoltField> {
     gamma: F,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_sq: F,
-    /// The full `τ_low` point (big-endian) the summand's eq factor fixes.
     tau: Vec<F>,
-    /// Raw values kept for phase-2 regeneration.
     values: BundleStore<RegisterValuesRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
 
 impl<F: JoltField> ClaimReductionKernel<F> {
-    /// Regenerate the dense phase from the raw values: the three columns
-    /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix
-    /// eq table scaled by the bound-prefix eq factor.
     fn transition_to_dense(&mut self) -> Result<(), WitnessError> {
         let bound = self.challenges.bound();
         let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
@@ -217,7 +207,6 @@ impl<F: JoltField> ClaimReductionKernel<F> {
         #[cfg(not(feature = "parallel"))]
         let folds: Vec<[F; 3]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
-        // Release retained raw values after regeneration.
         self.values = BundleStore::Retained(Vec::new());
 
         let (tau_hi, tau_lo) = self.tau.split_at(self.log_t / 2);
@@ -233,8 +222,6 @@ impl<F: JoltField> ClaimReductionKernel<F> {
 
     fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         self.challenges.push(r);
-        // Last prefix variable: regenerate the dense phase from the raw
-        // values instead of binding the exhausted P·Q.
         if matches!(&self.phase, Phase::PrefixSuffix { p, .. } if p.len() == 2) {
             return self.transition_to_dense().map_err(|_| {
                 SumcheckError::MissingEvaluationSource {

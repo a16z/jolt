@@ -28,7 +28,7 @@ fn parse_ops(data: &[u8]) -> Vec<Op<'_>> {
         if tag % 4 == 0 {
             ops.push(Op::Challenge);
         } else {
-            let len = tag as usize % 33; // 0..=32 bytes per absorb
+            let len = tag as usize % 33;
             if cursor + len > data.len() {
                 break;
             }

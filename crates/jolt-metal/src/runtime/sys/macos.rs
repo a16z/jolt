@@ -9,6 +9,7 @@
 use std::panic::AssertUnwindSafe;
 use std::ptr::NonNull;
 use std::slice;
+use std::time::Duration;
 
 use objc2::exception;
 use objc2::rc::{autoreleasepool, Retained};
@@ -346,7 +347,10 @@ impl RawCommandBatch {
             self.buffer.waitUntilCompleted();
             let status = self.buffer.status();
             if status == MTLCommandBufferStatus::Completed {
-                return RawBatchOutcome::CompletionConfirmed(Ok(()));
+                return RawBatchOutcome::CompletionConfirmed(Ok(gpu_time(
+                    self.buffer.GPUStartTime(),
+                    self.buffer.GPUEndTime(),
+                )));
             }
             let (code, description) = match self.buffer.error() {
                 Some(error) => {
@@ -380,6 +384,15 @@ impl RawCommandBatch {
             Err(error) => RawBatchOutcome::CompletionUncertain(error),
         }
     }
+}
+
+/// The GPU execution time between two host-clock timestamps in seconds.
+///
+/// A completed command buffer has both timestamps and `end >= start`; a
+/// value outside that contract reads as zero rather than failing a batch
+/// whose results are valid.
+fn gpu_time(start: f64, end: f64) -> Duration {
+    Duration::try_from_secs_f64(end - start).unwrap_or(Duration::ZERO)
 }
 
 impl Drop for RawCommandBatch {

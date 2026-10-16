@@ -1,5 +1,3 @@
-//! Bytecode read-RAF symbolic sumcheck relations.
-
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
@@ -19,7 +17,6 @@ pub struct BytecodeReadRafOutputClaims<C> {
     pub bytecode_ra: Vec<C>,
 }
 
-/// The `BytecodeReadRafAddrClaim` intermediate consumed from the address phase.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReadRafInputClaims<C> {
     #[opening(BytecodeReadRafAddrClaim, from = BytecodeReadRaf)]

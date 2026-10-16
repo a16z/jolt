@@ -1,5 +1,3 @@
-//! Native field-inline instructions.
-
 pub mod add;
 pub mod advice_limb;
 pub mod assert_eq;

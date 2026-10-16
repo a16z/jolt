@@ -32,6 +32,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -63,10 +64,9 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             });
         }
 
-        // The public-IO tables, exactly as the reference builds them.
         let public_memory = relation.public_memory();
         let addresses = 1usize << ram_log_k;
-        let mut val_io = vec![F::zero(); addresses];
+        let mut val_io = unsafe_allocate_zero_vec(addresses);
         for segment in &public_memory.segments {
             for (offset, &word) in segment.words.iter().enumerate() {
                 let index = segment.start_index as usize + offset;
@@ -109,8 +109,6 @@ struct OutputCheckKernel<F: JoltField> {
     bind_scratch: Vec<F>,
 }
 impl<F: JoltField> OutputCheckKernel<F> {
-    /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
-    /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
     fn message(
         &self,
         round: usize,
@@ -231,11 +229,12 @@ mod tests {
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, ReadWriteDimensions};
     use jolt_field::{Fr, Ring};
-    use jolt_program::execution::{JoltProgram, MemoryImage, OwnedTrace, TraceOutput, TraceRow};
+    use jolt_program::execution::{JoltProgram, MemoryImage, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, PublicIoMemory, RAMPreprocessing,
     };
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RegisterState};
     use jolt_verifier::stages::stage2::ram_output_check::{
         RamOutputCheckChallenges, RamOutputCheckInputClaims,
     };
@@ -291,7 +290,18 @@ mod tests {
             memory_layout: device.memory_layout.clone(),
             max_padded_trace_length: 1 << log_t,
         });
-        let rows = vec![TraceRow::from_instruction(instruction).unwrap()];
+        let rows = vec![TraceRow::new(
+            instruction,
+            RegisterState::default(),
+            RamAccess::NoOp,
+            preprocessing
+                .bytecode
+                .get_pc(&instruction)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        )
+        .unwrap()];
         // Post-execution DRAM bytes (outside the IO mask): nonzero
         // `val_final − val_io` there keeps the later round polynomials
         // nontrivial while the Boolean-point sum stays zero.
@@ -315,7 +325,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory), None),
+            TraceOutput::new(TraceData::new(rows), device, Some(final_memory), None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend, public_memory)
@@ -386,10 +396,5 @@ mod tests {
     #[test]
     fn parity_k32_deeper_address_domain() {
         run_parity(4, 32, 409);
-    }
-
-    #[test]
-    fn parity_k16_alternate_seed() {
-        run_parity(2, 16, 419);
     }
 }

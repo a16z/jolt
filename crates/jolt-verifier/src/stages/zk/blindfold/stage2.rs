@@ -147,8 +147,6 @@ where
         eq_spartan,
     )?;
 
-    // The field-inline claim reduction member and its baked publics (relation + gamma +
-    // EqSpartan), at the same source-values position as before.
     #[cfg(feature = "field-inline")]
     let field_registers_reduction = super::field_inline::stage2_claim_reduction(
         values,
@@ -485,7 +483,6 @@ mod tests {
             }
         };
 
-        // The clear curated order over the same sentinels.
         #[cfg(not(feature = "field-inline"))]
         let expected_values: Vec<Fr> = (1..=15).map(fr).collect();
         #[cfg(feature = "field-inline")]

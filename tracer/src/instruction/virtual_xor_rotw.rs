@@ -17,7 +17,7 @@ macro_rules! declare_xorrotw {
         );
 
         impl $name {
-            fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RAMAccess) {
+            fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RamAccess) {
                 let rs1_val = cpu.x[self.operands.rs1 as usize] as u32;
                 let rs2_val = cpu.x[self.operands.rs2 as usize] as u32;
                 let xor_result = rs1_val ^ rs2_val;

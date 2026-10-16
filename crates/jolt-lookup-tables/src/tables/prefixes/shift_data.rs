@@ -51,7 +51,6 @@ impl<F: JoltField, const EIGHTHS: usize> SparseDensePrefix<F> for ShiftDataPrefi
         // bound into the checkpoints.
         let bits: u128 = b.into();
 
-        // ΔL: lane contribution of the x bits this phase owns.
         let mut lane = F::zero();
         for k in 0..Self::LANE_BITS {
             let pos = 2 * k + 1;
@@ -67,7 +66,6 @@ impl<F: JoltField, const EIGHTHS: usize> SparseDensePrefix<F> for ShiftDataPrefi
         let offset_scale = checkpoints[Self::OFFSET_SCALE_VARIANT];
         let mut value = checkpoints[Self::VARIANT] + lane * offset_scale;
 
-        // ΔP: offset factors of the y bits this phase owns.
         for i in 0..3 {
             if (Self::OFFSET_MASK >> i) & 1 == 0 {
                 continue;

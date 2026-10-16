@@ -42,18 +42,27 @@
 //!   and fold matrices; packed SIMD backends (NEON, AVX2, AVX-512) for
 //!   32/64/128-bit lanes and packed extensions.
 //!
+//! - `binary`: `F64`, `F128`, and `F192` binary fields for Jolt,
+//!   matching Akita's binary-field commitment (LaBinius) coordinates, with
+//!   compile-time carry-less multiply kernels and a portable fallback.
+//!
 //! # Feature flags
 //!
 //! - `bn254` (default) — the arkworks-backed BN254 backend.
 //! - `solinas` — the pseudo-Mersenne backend (scalar, extension, unreduced,
 //!   packed, and the conditional-parallelism helpers in
 //!   `solinas::parallel`).
+//! - `binary` — the binary-field backend, off by default.
 //! - `asm` — opts into architecture-specific Fp128 assembly kernels on
 //!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
 //! - `parallel` — activates rayon behind the `cfg_*!` helper macros.
 //! - `allocative` — `Allocative` derives on the concrete field types for
 //!   memory profiling, and [`JoltField`] gains it as a supertrait so
 //!   field-generic containers render through the native impls.
+//!
+//! The `binary` backend also provides `F8`, the AES polynomial field.
+//! `From<F8>` embeds it into `F64` and `F128` by sending x to the smallest
+//! raw root of x^8 + x^4 + x^3 + x + 1, and into `F192` through `F64`.
 //!
 //! # Byte compatibility (hard invariants)
 //!
@@ -90,6 +99,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod algebra;
+#[cfg(feature = "binary")]
+mod binary;
 #[cfg(feature = "bn254")]
 mod bn254;
 mod extension;
@@ -108,6 +119,8 @@ pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
+#[cfg(feature = "binary")]
+pub use binary::{F128, F192, F64, F8};
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
@@ -131,13 +144,10 @@ pub use solinas::{
 };
 pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
-/// Backend-independent input and shape failures.
 #[derive(Debug, thiserror::Error)]
 pub enum FieldError {
-    /// Invalid input parameter or value.
     #[error("invalid input: {0}")]
     InvalidInput(String),
-    /// Length mismatch between an expected and provided shape.
     #[error("invalid size: expected {expected}, actual {actual}")]
     InvalidSize { expected: usize, actual: usize },
 }

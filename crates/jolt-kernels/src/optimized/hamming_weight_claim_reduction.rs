@@ -383,7 +383,6 @@ impl<F: JoltField> HammingWeightKernel<F> {
         self.progress.advance();
     }
 
-    /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
     #[inline]
     fn group_evals(&self, y: usize) -> [F; 2] {
         let mut out = [F::zero(); 2];
@@ -448,11 +447,6 @@ impl<F: JoltField> SumcheckKernel<F> for HammingWeightKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel over the sample backend. All
-/// three families are live at fixture scale (the instruction family alone
-/// contributes 128/log_k_chunk polynomials), so the multi-family pushforward
-/// walk, cold RAM/bytecode cycles, and per-polynomial weight fusion are all
-/// exercised.
 #[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

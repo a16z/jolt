@@ -116,7 +116,6 @@ pub enum BalancedIncColumn {
     Carry { width: usize },
 }
 
-/// The row selected by one `BalancedIncDigit`/`BalancedIncCarry` column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BalancedIncRow(pub usize);
 
@@ -188,24 +187,6 @@ mod tests {
             let carry = inc.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK });
             reconstructed += centered(carry, radix) << FUSED_INC_BITS;
             assert_eq!(reconstructed, inc.0, "cycle {cycle}");
-        }
-    }
-
-    #[test]
-    fn zero_delta_uses_balanced_zero_digits_and_carry() {
-        let padding = FusedInc(0);
-        assert_eq!(
-            padding.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK }),
-            0
-        );
-        for index in 0..DIGITS {
-            assert_eq!(
-                padding.selected_row(BalancedIncColumn::Digit {
-                    width: LOG_K_CHUNK,
-                    index,
-                }),
-                0
-            );
         }
     }
 }

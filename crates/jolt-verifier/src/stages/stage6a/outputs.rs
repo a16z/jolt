@@ -1,6 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 6a (address-phase)
-//! verification.
-
 use jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::JoltField;

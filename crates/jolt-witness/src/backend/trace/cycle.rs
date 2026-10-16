@@ -1,6 +1,3 @@
-//! The sequential cycle walk driving the atomic extractors, and the
-//! trace-backed implementation of the streaming pass.
-
 use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
@@ -11,9 +8,7 @@ use std::ops::Range;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
 
-impl<T: TraceSource> TraceBackend<T> {
-    /// Materializes one cycle-domain witness column by walking the trace
-    /// once; all per-witness logic lives on `W`.
+impl TraceBackend {
     pub(crate) fn materialize_cycle<F: JoltField, W: Extract + ToField>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
@@ -100,10 +95,6 @@ impl<T: TraceSource> TraceBackend<T> {
         Ok(values)
     }
 
-    /// One pass over `2^log_t` cycles with the one-row lookahead window;
-    /// rows beyond the trace are padding (default) rows.
-    ///
-    /// Extraction is pure per cycle window and parallel when enabled.
     fn walk_cycles<V: Copy + Send>(
         &self,
         value: impl Fn(&TraceRow, Option<&TraceRow>, &WitnessEnv<'_>) -> Result<V, WitnessError>
@@ -112,7 +103,7 @@ impl<T: TraceSource> TraceBackend<T> {
     ) -> Result<Vec<V>, WitnessError> {
         let rows = checked_pow2(self.config.log_t)?;
         let env = WitnessEnv::new(&self.preprocessing);
-        let physical = self.trace.trace.as_slice();
+        let physical = self.trace.trace.proof_rows();
         let padding = TraceRow::default();
         let window = |index: usize| {
             let current = physical.get(index).unwrap_or(&padding);
@@ -126,7 +117,7 @@ impl<T: TraceSource> TraceBackend<T> {
     }
 }
 
-impl<T: TraceSource> RowSource for TraceBackend<T> {
+impl RowSource for TraceBackend {
     fn random_access(&self) -> Option<crate::RandomAccessRows> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
         crate::RandomAccessRows::new(
@@ -154,7 +145,7 @@ impl<T: TraceSource> RowSource for TraceBackend<T> {
             });
         }
         let env = WitnessEnv::new(&self.preprocessing);
-        let physical = self.trace.trace.as_slice();
+        let physical = self.trace.trace.proof_rows();
         let padding = TraceRow::default();
         let mut position = range.start;
         while position < range.end {
@@ -175,7 +166,7 @@ impl<T: TraceSource> RowSource for TraceBackend<T> {
     }
 }
 
-impl<T: TraceSource> BundleSource for TraceBackend<T> {
+impl BundleSource for TraceBackend {
     fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
         crate::collect_bundles(self, checked_pow2(self.config.log_t)?)
     }

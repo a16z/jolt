@@ -1,31 +1,23 @@
-//! Packed stage 0: input validation, commitments, and transcript setup.
-
 use common::jolt_device::JoltDevice;
-use std::sync::Arc;
+use jolt_kernels::akita::commitment::{WitnessCommitRequest, WitnessCommitment};
+use jolt_kernels::{JoltBackend, KernelContext};
 
-use jolt_akita::{TraceOneHotCommitment, TraceOneHotRows};
-use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
+use jolt_claims::protocols::jolt::lattice::OneHotTraceShape;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::ProofSession;
-use jolt_openings::{
-    CommitmentGroupRole, CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup,
-};
+use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::{
-    absorb_packed_commitments, absorb_transcript_preamble, validate_inputs_from_parts,
-    CheckedInputs, ProofTranscriptConfig, VerifierError,
+    absorb_akita_commitments, absorb_transcript_preamble, validate_inputs_from_parts,
+    CheckedInputs, ProofTranscriptConfig,
 };
-use jolt_witness::JoltWitnessPlane;
 
-#[cfg(feature = "field-inline")]
-use super::field_inline::FieldIncObject;
-use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
-use super::JoltAkitaBackend;
+use super::witness::{commit_advice, AdviceObject};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+#[cfg(feature = "field-inline")]
+use jolt_kernels::akita::commitment::FieldIncObject;
 
-/// Outputs retained for later prover stages.
 pub struct Stage0Output<PCS, T>
 where
     PCS: CommitmentScheme,
@@ -35,31 +27,36 @@ where
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
-    /// The field increment polynomial, committed on every packed field-inline proof.
+    /// The field increment polynomial, committed on every Akita field-inline proof.
     #[cfg(feature = "field-inline")]
     pub field_inc: FieldIncObject<PCS>,
 }
 
-/// Validate inputs, commit the packed objects, and seed the transcript.
+/// Validate inputs, commit the native trace group and auxiliary objects, and seed the transcript.
 #[tracing::instrument(skip_all)]
-pub fn prove_stage0<F, PCS, VC, T, W>(
-    backend: &JoltAkitaBackend<F, PCS>,
-    session: &mut ProofSession,
+pub fn prove_stage0<F, PCS, VC, T>(
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
-    witness: &W,
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
+    PCS::VerifierSetup: GroupSetupMetadata,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F>,
 {
+    if config.akita_chunk_profile.num_chunks()
+        != preprocessing.verifier.pcs_setup.one_hot_num_chunks()
+    {
+        return Err(ProverError::Unsupported {
+            reason: "Akita chunk profile differs from preprocessing; reuse its configuration or regenerate preprocessing",
+        });
+    }
     if config.trace_polynomial_order != TracePolynomialOrder::CycleMajor {
         return Err(ProverError::Unsupported {
             reason: "Akita supports only cycle-major trace polynomials",
@@ -81,7 +78,6 @@ where
         preprocessing.committed_program.as_ref(),
         preprocessing.verifier.program.committed(),
     ) {
-        let objects = &data.direct_program.objects;
         if data.trace_order != config.trace_polynomial_order
             || committed.trace_order != config.trace_polynomial_order
         {
@@ -89,11 +85,8 @@ where
                 reason: "committed-program trace order disagrees with the proof configuration",
             });
         }
-        if objects.len() != committed.direct_program_commitments.len()
-            || objects
-                .iter()
-                .zip(&committed.direct_program_commitments)
-                .any(|(object, commitment)| object.commitment != *commitment)
+        if data.direct_program.bytecode.commitment != committed.bytecode_commitment
+            || data.direct_program.program_image.commitment != committed.program_image_commitment
         {
             return Err(ProverError::Unsupported {
                 reason: "the retained direct-program commitments disagree with the preprocessing",
@@ -136,56 +129,21 @@ where
         log_t,
         log_k_chunk,
     };
-    let plan = ONE_HOT_TRACE_LAYOUT
-        .plan(&one_hot_trace_shape)
-        .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-            reason: error.to_string(),
-        })?;
-    let canonical_digest = ONE_HOT_TRACE_LAYOUT
-        .layout_digest(&one_hot_trace_shape)
-        .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-            reason: error.to_string(),
-        })?;
-    if preprocessing.pcs_setup.default_layout_digest() != canonical_digest {
-        return Err(ProverError::Unsupported {
-            reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
-        });
-    }
-    let required_batch_polys = 1
-        + usize::from(untrusted_advice_present)
+    let num_precommitted = usize::from(untrusted_advice_present)
         + usize::from(trusted_advice.is_some())
-        + usize::from(cfg!(feature = "field-inline"))
         + preprocessing
             .committed_program
             .as_ref()
-            .map_or(0, |data| data.direct_program.objects.len());
-    // The setup is shape-exact for the canonical OneHotTrace group.
-    if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
-        || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
-        || preprocessing.pcs_setup.max_total_batch_polys() < required_batch_polys
-        || preprocessing.pcs_setup.one_hot_k() != 1usize << log_k_chunk
-    {
-        return Err(ProverError::Unsupported {
-            reason: "the packed setup's dimensions disagree with the canonical OneHotTrace shape",
-        });
-    }
-    let preflight_dimensions = config
-        .rw_config
-        .ram_dimensions(log_t, config.ram_K.ilog2() as usize);
-    backend
-        .base
-        .instruction_read_raf
-        .preflight(session, witness, preflight_dimensions)?;
-    backend
-        .base
-        .ram_read_write
-        .preflight(session, witness, preflight_dimensions)?;
-    let assembled = assemble_one_hot_trace_rows(
-        witness,
-        &plan,
-        formula_dimensions.ra_layout,
-        log_k_chunk,
-        log_t,
+            .map_or(0, |data| data.direct_program.objects().count());
+    let _ = WitnessCommitRequest::<PCS>::validate_setup(
+        &preprocessing.pcs_setup,
+        &one_hot_trace_shape,
+        num_precommitted,
+    )?;
+    backend.preflight(
+        config
+            .rw_config
+            .ram_dimensions(log_t, config.ram_K.ilog2() as usize),
     )?;
     // Auxiliary objects commit before the trace because their frozen
     // profiles select its grouped schedule row.
@@ -199,78 +157,47 @@ where
     } else {
         None
     };
-    #[cfg(feature = "field-inline")]
-    let field_inc = super::field_inline::commit_field_inc::<F, PCS>(
-        &preprocessing.pcs_setup,
-        log_t,
-        assembled.increments,
-    )?;
 
     // Canonical batch order: advice, then field increments or direct committed-program
     // objects (mutually exclusive), then OneHotTrace.
-    let mut auxiliary_groups: Vec<(CommitmentGroupRole, &PCS::Output, &PCS::OpeningHint)> =
-        untrusted_advice
-            .as_ref()
-            .map(|object| (object.plan.group_role(), &object.commitment, &object.hint))
-            .into_iter()
-            .chain(
-                trusted_advice
-                    .map(|object| (object.plan.group_role(), &object.commitment, &object.hint)),
-            )
-            .collect();
-    #[cfg(feature = "field-inline")]
-    auxiliary_groups.push((
-        jolt_claims::protocols::field_inline::lattice::field_inc_group_role(),
-        &field_inc.commitment,
-        &field_inc.hint,
-    ));
+    let mut precommitted_hints: Vec<&PCS::OpeningHint> = untrusted_advice
+        .as_ref()
+        .map(|object| &object.hint)
+        .into_iter()
+        .chain(trusted_advice.map(|object| &object.hint))
+        .collect();
     if let Some(program) = preprocessing
         .committed_program
         .as_ref()
         .map(|data| &data.direct_program)
     {
-        for object in &program.objects {
-            auxiliary_groups.push((object.plan.group_role(), &object.commitment, &object.hint));
-        }
+        precommitted_hints.extend(program.objects().map(|object| &object.hint));
     }
+    let WitnessCommitment {
+        commitment,
+        hint,
+        #[cfg(feature = "field-inline")]
+        field_inc,
+    } = tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
+        backend.commit_witness(WitnessCommitRequest::new(
+            &preprocessing.pcs_setup,
+            one_hot_trace_shape,
+            &precommitted_hints,
+        )?)
+    })?;
 
-    let (commitment, hint) =
-        tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
-            let group_hints = auxiliary_groups
-                .iter()
-                .map(|(_, _, hint)| *hint)
-                .collect::<Vec<_>>();
-            let committed = PCS::commit_trace_one_hot(
-                &preprocessing.pcs_setup,
-                preprocessing.pcs_setup.default_layout_digest(),
-                plan.packing().slot_capacity(),
-                Arc::clone(&assembled.rows) as Arc<dyn TraceOneHotRows>,
-                &group_hints,
-            );
-            assembled.rows.check_extraction()?;
-            let (commitment, hint) =
-                committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-                    reason: error.to_string(),
-                })?;
-            PCS::release_post_commit_residency(&preprocessing.pcs_setup).map_err(|error| {
-                VerifierError::FinalOpeningVerificationFailed {
-                    reason: error.to_string(),
-                }
-            })?;
-            Ok::<_, ProverError<F>>((commitment, hint))
-        })?;
-
-    absorb_packed_commitments(
+    absorb_akita_commitments(
         &commitment,
         untrusted_advice.as_ref().map(|object| &object.commitment),
         trusted_advice.map(|object| &object.commitment),
         #[cfg(feature = "field-inline")]
         Some(&field_inc.commitment),
-        preprocessing
-            .verifier
-            .program
-            .committed()
-            .map_or(&[][..], |committed| &committed.direct_program_commitments),
+        preprocessing.verifier.program.committed().map(|committed| {
+            (
+                &committed.bytecode_commitment,
+                &committed.program_image_commitment,
+            )
+        }),
         &mut transcript,
     );
 

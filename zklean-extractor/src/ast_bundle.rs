@@ -13,10 +13,6 @@ use std::collections::{HashMap, HashSet};
 
 use crate::mle_ast::{node_arena, set_pending_commitment_chunks, Edge, MleAst, Node, NodeId};
 
-// =============================================================================
-// Input and Constraint Types
-// =============================================================================
-
 /// The witness type for an input variable.
 ///
 /// Determines how it's treated in circuit generation:
@@ -117,15 +113,9 @@ pub enum Assertion {
 pub struct Constraint {
     /// Human-readable name for the constraint (e.g., "stage1_sumcheck_final").
     pub name: String,
-    /// The root node of the expression.
     pub root: NodeId,
-    /// What assertion this constraint represents.
     pub assertion: Assertion,
 }
-
-// =============================================================================
-// AstBundle
-// =============================================================================
 
 /// CSE (Common Subexpression Elimination) bindings for a single constraint.
 ///
@@ -170,7 +160,6 @@ pub struct GlobalCse {
 /// Call `run_cse()` after `snapshot_arena()` to compute CSE bindings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AstBundle {
-    /// The node arena - all nodes in the AST(s).
     pub nodes: Vec<Node>,
     /// Global CSE bindings: nodes shared across ≥2 constraints.
     /// Computed by `run_global_cse()` before `run_cse()`.
@@ -180,14 +169,11 @@ pub struct AstBundle {
     /// Each constraint has its own isolated CSE context.
     #[serde(default)]
     pub constraint_cse: Vec<ConstraintCse>,
-    /// The constraints to be verified.
     pub constraints: Vec<Constraint>,
-    /// Input variable descriptions.
     pub inputs: Vec<InputVar>,
 }
 
 impl AstBundle {
-    /// Create a new empty bundle.
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
@@ -244,7 +230,6 @@ impl AstBundle {
         self.inputs.iter().any(|i| i.target_field == field)
     }
 
-    /// Count inputs for a specific target field.
     pub fn count_inputs_for_field(&self, field: TargetField) -> usize {
         self.inputs
             .iter()
@@ -252,7 +237,6 @@ impl AstBundle {
             .count()
     }
 
-    /// Add a constraint that asserts an expression equals zero.
     pub fn add_constraint_eq_zero(&mut self, name: impl Into<String>, root: NodeId) {
         self.constraints.push(Constraint {
             name: name.into(),
@@ -277,7 +261,6 @@ impl AstBundle {
         });
     }
 
-    /// Add a constraint that asserts two expressions are equal.
     pub fn add_constraint_eq_node(&mut self, name: impl Into<String>, root: NodeId, other: NodeId) {
         self.constraints.push(Constraint {
             name: name.into(),
@@ -302,14 +285,12 @@ impl AstBundle {
     ///
     /// Call this after `snapshot_arena()` and before `run_cse()`.
     pub fn run_global_cse(&mut self) {
-        // Phase 1: For each constraint, collect the set of reachable NodeIds
         let mut node_to_constraints: HashMap<NodeId, Vec<usize>> = HashMap::new();
         for (idx, constraint) in self.constraints.iter().enumerate() {
             let refs = self.count_refs(constraint.root);
             for node_id in refs.keys() {
                 node_to_constraints.entry(*node_id).or_default().push(idx);
             }
-            // Also include EqualNode targets
             if let Assertion::EqualNode(other_id) = &constraint.assertion {
                 let other_refs = self.count_refs(*other_id);
                 for node_id in other_refs.keys() {
@@ -318,10 +299,8 @@ impl AstBundle {
             }
         }
 
-        // Phase 2: Find TranscriptHash nodes that appear in ≥2 distinct constraints
         let mut global_nodes: HashSet<NodeId> = HashSet::new();
         for (&node_id, constraints) in &node_to_constraints {
-            // Deduplicate constraint indices
             let mut unique: Vec<usize> = constraints.clone();
             unique.sort_unstable();
             unique.dedup();
@@ -335,9 +314,6 @@ impl AstBundle {
             return;
         }
 
-        // Phase 3: Include dependencies of global nodes that are also multi-constraint.
-        // Walk children of each global node; if a child is in ≥2 constraints and is
-        // non-trivial (not an atom), include it too. This captures the full chain.
         let mut expanded = global_nodes.clone();
         let mut worklist: Vec<NodeId> = global_nodes.into_iter().collect();
         while let Some(node_id) = worklist.pop() {
@@ -348,7 +324,6 @@ impl AstBundle {
                 if matches!(self.nodes[child_id], Node::Atom(_)) {
                     continue;
                 }
-                // Check if child is in ≥2 distinct constraints
                 if let Some(constraints) = node_to_constraints.get(&child_id) {
                     let mut unique: Vec<usize> = constraints.clone();
                     unique.sort_unstable();
@@ -369,13 +344,11 @@ impl AstBundle {
         self.global_cse = GlobalCse { bindings };
     }
 
-    /// Topological sort a subset of nodes in post-order (children before parents).
     fn topological_sort_subset(&self, subset: &HashSet<NodeId>) -> Vec<NodeId> {
         let mut result = Vec::new();
         let mut visited: HashSet<NodeId> = HashSet::new();
         let mut stack: Vec<(NodeId, bool)> = Vec::new();
 
-        // Start from all nodes in the subset
         for &node_id in subset {
             if visited.contains(&node_id) {
                 continue;
@@ -397,7 +370,6 @@ impl AstBundle {
 
                 stack.push((nid, true));
 
-                // Only traverse children that are in the subset
                 for child_id in self.node_children(nid).into_iter().rev() {
                     if subset.contains(&child_id) && !visited.contains(&child_id) {
                         stack.push((child_id, false));
@@ -443,13 +415,10 @@ impl AstBundle {
         root: NodeId,
         global_set: &HashSet<NodeId>,
     ) -> ConstraintCse {
-        // Phase 1: Count references to each node
         let ref_counts = self.count_refs(root);
 
-        // Phase 2: Build post-order traversal and collect hoisted nodes
         let post_order = self.build_post_order(root);
 
-        // Phase 3: Collect nodes that should be hoisted (ref_count > 1, not atoms, not global)
         let mut bindings = Vec::new();
 
         for node_id in post_order {
@@ -460,12 +429,10 @@ impl AstBundle {
                 continue;
             }
 
-            // Skip nodes already in global CSE
             if global_set.contains(&node_id) {
                 continue;
             }
 
-            // Hoist if referenced more than once
             if ref_count > 1 {
                 bindings.push(node_id);
             }
@@ -474,7 +441,6 @@ impl AstBundle {
         ConstraintCse { bindings }
     }
 
-    /// Count how many times each node is referenced in a constraint's tree.
     fn count_refs(&self, root: NodeId) -> HashMap<NodeId, usize> {
         let mut ref_counts: HashMap<NodeId, usize> = HashMap::new();
         let mut stack = vec![root];
@@ -482,7 +448,6 @@ impl AstBundle {
         while let Some(node_id) = stack.pop() {
             *ref_counts.entry(node_id).or_insert(0) += 1;
 
-            // Only traverse children on first visit
             if ref_counts[&node_id] == 1 {
                 stack.extend(self.node_children(node_id));
             }
@@ -491,7 +456,6 @@ impl AstBundle {
         ref_counts
     }
 
-    /// Build post-order traversal of a constraint's tree.
     fn build_post_order(&self, root: NodeId) -> Vec<NodeId> {
         let mut post_order = Vec::new();
         let mut visited: HashSet<NodeId> = HashSet::new();
@@ -510,7 +474,6 @@ impl AstBundle {
 
             stack.push((node_id, true));
 
-            // Push children in reverse order for left-to-right processing
             for child_id in self.node_children(node_id).into_iter().rev() {
                 if !visited.contains(&child_id) {
                     stack.push((child_id, false));
@@ -521,7 +484,6 @@ impl AstBundle {
         post_order
     }
 
-    /// Get child NodeIds for a node.
     fn node_children(&self, node_id: NodeId) -> Vec<NodeId> {
         fn edge_to_node_id(edge: Edge) -> Option<NodeId> {
             match edge {
@@ -572,7 +534,6 @@ impl AstBundle {
             .map(|cse| cse.bindings.as_slice())
     }
 
-    /// Get the number of public statement inputs.
     pub fn num_public_inputs(&self) -> usize {
         self.inputs
             .iter()
@@ -580,7 +541,6 @@ impl AstBundle {
             .count()
     }
 
-    /// Get the number of proof data inputs.
     pub fn num_proof_inputs(&self) -> usize {
         self.inputs
             .iter()
@@ -588,17 +548,14 @@ impl AstBundle {
             .count()
     }
 
-    /// Serialize to pretty-printed JSON string (used by write_json).
     fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
 
-    /// Deserialize from JSON string (used by read_json).
     fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 
-    /// Write to a JSON file.
     pub fn write_json(&self, path: &std::path::Path) -> std::io::Result<()> {
         let json = self
             .to_json_pretty()
@@ -606,7 +563,6 @@ impl AstBundle {
         std::fs::write(path, json)
     }
 
-    /// Read from a JSON file.
     pub fn read_json(path: &std::path::Path) -> std::io::Result<Self> {
         let json = std::fs::read_to_string(path)?;
         Self::from_json(&json)
@@ -619,10 +575,6 @@ impl Default for AstBundle {
         Self::new()
     }
 }
-
-// =============================================================================
-// AstCommitment
-// =============================================================================
 
 /// Wrapper type for a commitment represented as MleAst chunks.
 ///

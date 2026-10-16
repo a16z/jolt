@@ -1,5 +1,3 @@
-//! Dense reference tables in the configured read/write round order.
-
 use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::JoltField;
 use jolt_poly::Polynomial;

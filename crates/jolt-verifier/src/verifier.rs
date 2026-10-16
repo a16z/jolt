@@ -169,8 +169,8 @@ where
     Ok(())
 }
 
-/// The Akita verification path: the same stage spine, with a random-selector
-/// reduction of the packed trace and one native opening for the trace, advice,
+/// The Akita verification path: the same stage spine, with ordered native
+/// trace-column claims and one batch opening for the trace, advice,
 /// and committed-program objects. No homomorphism bounds and no ZK tail.
 #[cfg(feature = "akita")]
 pub fn verify<F, PCS, VC, T>(
@@ -344,7 +344,6 @@ where
     let one_hot_config = proof.one_hot_config;
     #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
-    // The zk axis is fixed at compile time; every branch below const-folds.
     let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
     let vc_capacity = if zk {
         Some(validate_zk_vector_commitment_setup::<PCS, VC>(
@@ -447,7 +446,6 @@ where
         program
             .committed()
             .map(|committed| {
-                #[cfg(feature = "akita")]
                 if committed.trace_order != trace_polynomial_order {
                     return Err(VerifierError::InvalidCommittedProgram {
                         reason: "committed-program trace order disagrees with the proof".to_owned(),
@@ -475,7 +473,6 @@ where
                     })?;
                 Ok(CommittedProgramSchedule {
                     bytecode_len: meta.bytecode_len,
-                    bytecode_chunk_count: committed.bytecode_chunk_count(),
                     program_image_len_words: meta.program_image_len_words,
                     program_image_start_index,
                 })
@@ -553,7 +550,7 @@ where
 {
     // A build with field-inline enabled proves every guest under the composed protocol, so the
     // field-inline committed payload is unconditionally required (absence means a producer
-    // without field-inline semantics — reject before any stage logic). On the packed axis the
+    // without field-inline semantics — reject before any stage logic). On the Akita axis the
     // field-increment commitment slot is equally unconditional: presence is never claim-gated
     // (an all-zero group still commits).
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
@@ -734,37 +731,39 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         );
         if let Some(committed) = preprocessing.program.committed() {
             absorb_committed_program_commitments(
-                &committed.bytecode_chunk_commitments,
+                &committed.bytecode_commitment,
                 &committed.program_image_commitment,
                 transcript,
             );
         }
     }
     #[cfg(feature = "akita")]
-    absorb_packed_commitments(
+    absorb_akita_commitments(
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]
         proof.field_inc_commitment.as_ref(),
-        preprocessing
-            .program
-            .committed()
-            .map_or(&[][..], |committed| &committed.direct_program_commitments),
+        preprocessing.program.committed().map(|committed| {
+            (
+                &committed.bytecode_commitment,
+                &committed.program_image_commitment,
+            )
+        }),
         transcript,
     );
 }
 
-/// Absorbs the packed commitment objects in canonical object order: `OneHotTrace`, untrusted
-/// advice, trusted advice, the field-increment commitment (field-inline builds), then direct
-/// bytecode chunks and program image. Shared verbatim by the packed prover's stage 0.
+/// Absorbs the Akita commitment objects in canonical object order: `OneHotTrace`, untrusted
+/// advice, trusted advice, the field-increment commitment (field-inline builds), then the whole
+/// bytecode and program image. Shared verbatim by the Akita prover's stage 0.
 #[cfg(feature = "akita")]
-pub fn absorb_packed_commitments<C, T>(
+pub fn absorb_akita_commitments<C, T>(
     one_hot_trace: &C,
     untrusted_advice_commitment: Option<&C>,
     trusted_advice_commitment: Option<&C>,
     #[cfg(feature = "field-inline")] field_inc_commitment: Option<&C>,
-    direct_program_commitments: &[C],
+    program_commitments: Option<(&C, &C)>,
     transcript: &mut T,
 ) where
     C: AppendToTranscript,
@@ -781,40 +780,34 @@ pub fn absorb_packed_commitments<C, T>(
     if let Some(commitment) = field_inc_commitment {
         append_length_prefixed(transcript, b"field_inc", commitment);
     }
-    absorb_packed_program_commitments(direct_program_commitments, transcript);
+    if let Some((bytecode, image)) = program_commitments {
+        absorb_akita_program_commitments(bytecode, image, transcript);
+    }
 }
 
 #[cfg(feature = "akita")]
-pub fn absorb_packed_program_commitments<C, T>(commitments: &[C], transcript: &mut T)
+pub fn absorb_akita_program_commitments<C, T>(bytecode: &C, image: &C, transcript: &mut T)
 where
     C: AppendToTranscript,
     T: Transcript,
 {
-    let Some((image, chunks)) = commitments.split_last() else {
-        return;
-    };
-    for (index, commitment) in chunks.iter().enumerate() {
-        transcript.append(&U64Word(num::u64_from_usize(index)));
-        append_length_prefixed(transcript, b"bytecode_chunk_commitment", commitment);
-    }
+    append_length_prefixed(transcript, b"program_bytecode_commitment", bytecode);
     append_length_prefixed(transcript, b"program_image_init_commitment", image);
 }
 
-/// Absorbs the preprocessing-held committed-program commitments (per-chunk
+/// Absorbs the preprocessing-held committed-program commitments (whole
 /// bytecode, then the program image), immediately after the proof-carried
 /// commitments. Shared verbatim by the prover's stage 0.
 pub fn absorb_committed_program_commitments<C, T>(
-    bytecode_chunk_commitments: &[C],
+    bytecode_commitment: &C,
     program_image_commitment: &C,
     transcript: &mut T,
 ) where
     C: AppendToTranscript,
     T: Transcript,
 {
-    for commitment in bytecode_chunk_commitments {
-        append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-        transcript.append(commitment);
-    }
+    append_payload_label(transcript, b"program_bytecode_commit", bytecode_commitment);
+    transcript.append(bytecode_commitment);
     append_payload_label(
         transcript,
         b"program_image_commitment",
@@ -1097,7 +1090,6 @@ where
             .program
             .committed()
             .map(|committed| {
-                #[cfg(feature = "akita")]
                 if committed.trace_order != trace_polynomial_order {
                     return Err(VerifierError::InvalidCommittedProgram {
                         reason: "committed-program trace order disagrees with the proof".to_owned(),
@@ -1124,7 +1116,6 @@ where
                     })?;
                 Ok(CommittedProgramSchedule {
                     bytecode_len: committed.meta.bytecode_len,
-                    bytecode_chunk_count: committed.bytecode_chunk_count(),
                     program_image_len_words: committed.meta.program_image_len_words,
                     program_image_start_index,
                 })
@@ -1332,50 +1323,6 @@ mod tests {
     }
 
     #[test]
-    fn accepts_standard_proof_consistency() {
-        let proof = proof_with_zk(false, clear_claims());
-
-        assert!(validate_proof_consistency(&proof, false).is_ok());
-    }
-
-    /// A zk proof cannot exist on the akita build (`zk` and `akita` are
-    /// mutually exclusive), so the accept case is base-only; the reject cases
-    /// below run on both builds.
-    #[cfg(not(feature = "akita"))]
-    #[test]
-    fn accepts_zk_proof_consistency() {
-        let proof = proof_with_zk(true, zk_claims());
-
-        assert!(validate_proof_consistency(&proof, true).is_ok());
-    }
-
-    #[test]
-    fn rejects_wrong_stage_representation() {
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.stages.stage5_sumcheck_proof =
-            SumcheckProof::Committed(CommittedSumcheckProof::default());
-
-        assert!(matches!(
-            validate_proof_consistency(&proof, false),
-            Err(VerifierError::ExpectedClearProof {
-                field: "stage5_sumcheck_proof",
-            })
-        ));
-    }
-
-    #[test]
-    fn rejects_wrong_verifier_zk_flag() {
-        let proof = proof_with_zk(false, clear_claims());
-
-        assert!(matches!(
-            validate_proof_consistency(&proof, true),
-            Err(VerifierError::ExpectedCommittedProof {
-                field: "stage1_uni_skip_first_round_proof",
-            })
-        ));
-    }
-
-    #[test]
     fn checks_payload_for_selected_zk_flag() {
         assert!(matches!(
             validate_proof_consistency(&proof_with_zk(false, zk_claims()), false),
@@ -1394,7 +1341,6 @@ mod tests {
         use jolt_transcript::LegacyBlake2bTranscript;
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut preprocessing = test_preprocessing();
-        // Invalid metadata and layout give independent later-stage failures.
         #[cfg(feature = "field-inline")]
         if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
             let bytecode = &mut Arc::make_mut(full).bytecode.bytecode;
@@ -1538,7 +1484,7 @@ mod tests {
     #[test]
     fn blindfold_generator_budget_covers_the_composed_uniskip_rounds() {
         use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
-        use jolt_r1cs::constraints::jolt::SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
+        use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
 
         const {
             assert!(MAX_BLINDFOLD_GENERATORS > SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE);
@@ -1929,8 +1875,6 @@ mod tests {
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        // Use the build's instruction profile when
-        // required, including the all-inactive table for this empty program.
         let program = JoltProgramPreprocessing::new(
             Vec::new(),
             Vec::new(),

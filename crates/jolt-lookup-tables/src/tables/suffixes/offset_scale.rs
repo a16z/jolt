@@ -30,7 +30,6 @@ fn offset_scale_suffix(b: LookupBits, eighths: u64) -> u64 {
     let bits: u128 = b.into();
     let mask = 8 - eighths;
     let mut shift = 0u64;
-    // Offset bit y_i sits at even index position 2i.
     for i in 0..3 {
         if (mask >> i) & 1 == 1 && 2 * i < b.len() && (bits >> (2 * i)) & 1 == 1 {
             shift += ((XLEN / 8) << i) as u64;

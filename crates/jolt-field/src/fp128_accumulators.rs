@@ -133,6 +133,23 @@ impl<const P: u128> Accumulator for Fp128SignedAccumulator<P> {
         }
     }
 
+    /// The sign folds into the multiplicand, so every term lands in `pos`
+    /// without a data-dependent branch. The product's top limb folds through
+    /// `2^192 ≡ C·2^64 (mod p)` into the upper slots, which then grow by
+    /// `< 2^65` per term — headroom `2^62` terms for the reduction's carry
+    /// chain.
+    #[inline(always)]
+    fn fmadd_i128(&mut self, value: Fp128<P>, scalar: i128) {
+        let value = if scalar < 0 { -value } else { value };
+        let [r0, r1, r2, r3] = value.mul_wide_u128(scalar.unsigned_abs());
+        let folded = u128::from(r3) * u128::from(Fp128::<P>::C_LO);
+        self.pos += Fp128MulU64Accum([
+            u128::from(r0),
+            u128::from(r1) + u128::from(folded as u64),
+            u128::from(r2) + (folded >> 64),
+        ]);
+    }
+
     #[inline(always)]
     fn fmadd_signed_u64(&mut self, value: Fp128<P>, magnitude: u64, is_positive: bool) {
         if magnitude != 0 {
@@ -210,10 +227,17 @@ mod tests {
             );
             candidate.fmadd_s256(value, &scalar);
             expected.fmadd_s256(value, &scalar);
+            let wide = (u128::from(rng.next_u64()) << 64 | u128::from(rng.next_u64())) as i128;
+            candidate.fmadd_i128(value, wide);
+            expected.fmadd(value, TestField::from_i128(wide));
         }
         let value = <TestField as Field>::random(&mut rng);
         candidate.fmadd_signed_u64(value, u64::MAX, false);
         expected.fmadd_signed_u64(value, u64::MAX, false);
+        for extreme in [i128::MIN, i128::MAX, -1] {
+            candidate.fmadd_i128(value, extreme);
+            expected.fmadd(value, TestField::from_i128(extreme));
+        }
         assert_eq!(candidate.reduce(), expected.reduce());
     }
 

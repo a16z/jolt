@@ -6,7 +6,6 @@ use super::{decode_instruction, lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 use crate::RV64_XLEN;
 
-/// Output of the instruction's lookup query.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LookupOutput(pub u64);
 
@@ -61,7 +60,7 @@ impl Extract for TableIndex {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let instruction = decode_instruction(row)?;
+        let instruction = decode_instruction(row);
         Ok(Self(
             <JoltInstruction as InstructionLookupTable<RV64_XLEN>>::lookup_table(&instruction)
                 .map(|kind| kind.index()),

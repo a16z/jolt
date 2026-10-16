@@ -95,8 +95,6 @@ where
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
     let draws = Stage6bDraws::draw(transcript, bytecode_reduction_layout.is_some());
 
-    // The batch is built after the post-6a draws, directly from the upstream stage
-    // outputs; `build` derives every mode-agnostic constructor leg internally.
     let sumchecks = Stage6bSumchecks::build(
         checked,
         preprocessing,
@@ -120,7 +118,7 @@ where
         stage5.output_points(),
     );
 
-    // No zk protocol exists over the packed axis, so the committed arm (and its
+    // No zk protocol exists over the Akita axis, so the committed arm (and its
     // runtime point-alias dedup arithmetic) is base-only.
     #[cfg(not(feature = "akita"))]
     if checked.zk {
@@ -269,7 +267,7 @@ where
 /// over-length trailing entries are never algebraically consumed and would
 /// otherwise reach the Fiat-Shamir absorb, letting a malicious prover pass off
 /// padded, non-canonical proofs. Also checks the bytecode reduction's
-/// intermediate-vs-chunks shape. Member presence is enforced separately by the
+/// intermediate-vs-final shape. Member presence is enforced separately by the
 /// hand-listed `validate_member_presence` calls; a missing advice inner opening is caught by
 /// `expected_final_claim` (the advice cycle phase's `expected_output`).
 fn validate_cycle_phase_claim_shape<F: JoltField>(
@@ -307,8 +305,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         claims.booleanity.ram_ra.len(),
     )?;
 
-    // The packed increment digit claims: one per chunk of the shared
-    // one-hot chunking.
     #[cfg(feature = "akita")]
     {
         let expected_chunks =
@@ -353,18 +349,7 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         claims.bytecode_reduction.as_ref(),
     ) {
         let has_address_phase = layout.dimensions().has_address_phase();
-        // The wire shape must match the reduction mode: an `intermediate` (no
-        // chunks) when an address phase follows, else exactly `chunk_count`
-        // chunks (no intermediate).
-        let shape_ok = match (
-            &output_claims.intermediate,
-            output_claims.chunks.is_empty(),
-            has_address_phase,
-        ) {
-            (Some(_), true, true) => true,
-            (None, false, false) => output_claims.chunks.len() == layout.chunk_count(),
-            _ => false,
-        };
+        let shape_ok = output_claims.intermediate().is_some() == has_address_phase;
         if !shape_ok {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::BytecodeClaimReductionCyclePhase,
@@ -378,7 +363,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
     Ok(())
 }
 
-/// Reject a wire claim vector whose length disagrees with its formula-dimension count.
 fn require_claim_count(
     stage: JoltRelationId,
     label: &str,
@@ -529,8 +513,6 @@ pub fn stage6b_opening_values<F: JoltField>(
     values.extend(claims.inc_claim_reduction.opening_values());
     #[cfg(feature = "field-inline")]
     super::field_inline::splice_inc_values(&mut values, claims);
-    // Each advice member is a single-slot per-kind claims struct, so it
-    // contributes exactly its own kind's opening.
     #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.trusted_advice {
         values.extend(advice.opening_values());
@@ -619,10 +601,6 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// Per-mode sample claims with sentinel values in the canonical append order: base
-    /// interleaves the inc member after the RA virtualizations (and, under `field-inline`, the
-    /// field-inline inc member after it); Akita carries the read-raf `FusedInc` cell and the
-    /// lattice booleanity digit/carry cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
         let last = 10;
@@ -712,7 +690,6 @@ mod tests {
         .unwrap()
     }
 
-    /// Claims whose every wire vector length matches `formula_dimensions` exactly.
     fn shape_matched_claims(formula_dimensions: &JoltFormulaDimensions) -> Stage6bOutputClaims<Fr> {
         let bytecode_ra_len =
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf)

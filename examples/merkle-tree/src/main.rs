@@ -39,7 +39,6 @@ pub fn main() {
     );
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
-    // Pass only the first input and trusted_advice commitment to the verifier
     let is_valid = verify_merkle_tree(
         leaf1,
         output,

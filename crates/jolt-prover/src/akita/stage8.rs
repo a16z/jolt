@@ -1,6 +1,6 @@
 //! Akita's final opening combines auxiliary groups and the trace in canonical
 //! order `[UntrustedAdvice?, TrustedAdvice?,
-//! FieldInc (field-inline) OR BytecodeChunk(0..C), ProgramImageInit (committed),
+//! FieldInc (field-inline) OR ProgramBytecode, ProgramImageInit (committed),
 //! OneHotTrace]`. Field-inline and committed-program suffixes are exclusive.
 
 use std::collections::BTreeMap;
@@ -18,16 +18,14 @@ use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 #[cfg(feature = "field-inline")]
-use jolt_verifier::stages::stage8::packed::field_inc_claim;
-use jolt_verifier::stages::stage8::packed::{
-    leaf_claims, object_leaf_claims, one_hot_trace_packed_claims,
-};
+use jolt_verifier::stages::stage8::akita::field_inc_claim;
+use jolt_verifier::stages::stage8::akita::{leaf_claims, object_leaf_claims, one_hot_trace_claim};
 use jolt_verifier::{CheckedInputs, VerifierError};
 
-#[cfg(feature = "field-inline")]
-use super::field_inline::FieldIncObject;
 use super::witness::{AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+#[cfg(feature = "field-inline")]
+use jolt_kernels::akita::commitment::FieldIncObject;
 
 fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     ProverError::Verifier(VerifierError::FinalOpeningBatchFailed {
@@ -93,12 +91,8 @@ where
 
     let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
 
-    let packed_claims =
-        one_hot_trace_packed_claims(&plan, chunk_width, &leaves).map_err(ProverError::Verifier)?;
-    let packed_claim = plan
-        .packing()
-        .reduce_claims(&packed_claims, transcript)
-        .map_err(batch_failed::<F>)?;
+    let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)
+        .map_err(ProverError::Verifier)?;
 
     let untrusted_physical = untrusted_advice
         .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
@@ -111,7 +105,8 @@ where
     // or the direct committed-program objects, then OneHotTrace. The suffixes
     // are exclusive: field-inline rejects committed-program preprocessing.
     let mut auxiliary_groups = Vec::with_capacity(
-        2 + usize::from(cfg!(feature = "field-inline")) + program.map_or(0, |p| p.objects.len()),
+        2 + usize::from(cfg!(feature = "field-inline"))
+            + program.map_or(0, |objects| objects.objects().count()),
     );
     for (object, claim) in [
         (untrusted_advice, untrusted_physical.as_ref()),
@@ -138,7 +133,7 @@ where
     ));
 
     if let Some(program) = program {
-        for object in &program.objects {
+        for object in program.objects() {
             let physical = reduce_precommitted(&object.plan, &leaves, transcript)?;
             auxiliary_groups.push((
                 TaggedGroupOpeningClaim::new(
@@ -154,11 +149,6 @@ where
         }
     }
 
-    let main_group = GroupOpeningClaim::new(
-        one_hot_trace_commitment.clone(),
-        packed_claim.point.as_slice().to_vec(),
-        vec![packed_claim.value],
-    );
     let joint_opening_proof = tracing::info_span!("akita_main_batched_prove").in_scope(|| {
         PCS::prove_batch(
             &preprocessing.pcs_setup,

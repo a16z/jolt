@@ -109,7 +109,7 @@ mod stage6b {
     };
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
-    // The packed batch has no inc member — the fused-inc read-raf stages
+    // The Akita batch has no inc member — the fused-inc read-raf stages
     // discharge the reduced inc claims instead.
     #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
@@ -188,13 +188,13 @@ mod twin_tests {
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_kernels::{
-        KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
-        SumcheckKernelError,
+        KernelContext, KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs,
+        SumcheckKernel, SumcheckKernelError,
     };
     use jolt_poly::UnivariatePoly;
     use jolt_sumcheck::{
-        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, RoundScheduler,
-        SequentialRounds, SumcheckError,
+        ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds, SequentialRounds,
+        SumcheckError, SumcheckProof,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
@@ -207,10 +207,6 @@ mod twin_tests {
     use crate::driver::{impl_stage_prover, Proved};
     use crate::{ProverError, StageProver as _};
 
-    /// Declare one toy dense relation: a single produced opening, a single
-    /// consumed claim carrying the true table sum, no challenges, degree 1.
-    /// The optional `head_pad` marks the relation head-aligned (`offset = 0`)
-    /// with that many trailing dummy rounds in its batch.
     macro_rules! toy_relation {
         (
             $symbolic:ident, $relation:ident, $inputs:ident, $outputs:ident,
@@ -406,9 +402,6 @@ mod twin_tests {
     toy_driver_sumchecks_members!(impl_stage_prover);
     toy_head_sumchecks_members!(impl_stage_prover);
 
-    /// A dense multilinear kernel with a prescribed total sum (HighToLow
-    /// binding, degree 1): the single produced opening is the fully bound
-    /// table value, which is exactly the relation's `expected_output`.
     struct DenseKernel<R> {
         evals: Vec<Fr>,
         num_rounds: usize,
@@ -521,8 +514,6 @@ mod twin_tests {
             .push(member);
     }
 
-    /// Mints a fresh dense kernel whose table sums to the member's consumed
-    /// claim, read off the `ProverInputs` bundle like a real backend slot.
     struct DensePrepare {
         member: &'static str,
         seed: u64,
@@ -633,8 +624,6 @@ mod twin_tests {
         }
     }
 
-    // The toy registry, resolved exactly like `JoltBackend`: one derived
-    // delegating `PrepareKernel` impl per `Box<dyn PrepareKernel<..>>` slot.
     #[derive(KernelSlots)]
     struct ToyKernels {
         alpha: Box<dyn PrepareKernel<Fr, ToyAlpha<Fr>>>,
@@ -662,7 +651,6 @@ mod twin_tests {
         delta: Box<dyn PrepareKernel<Fr, ToyDelta<Fr>>>,
     }
 
-    /// A witness plane the toy kernels never read: every access errors.
     struct NoWitness;
 
     impl NoWitness {
@@ -722,8 +710,6 @@ mod twin_tests {
     const GAMMA_ROUNDS: usize = 3;
     const GAMMA_SUM: u64 = 4242;
     const HEAD_ROUNDS: usize = 2;
-    /// The head-aligned member's trailing dummy rounds in the head twin batch
-    /// (alpha is its full-window member).
     const HEAD_PAD: usize = ALPHA_ROUNDS - HEAD_ROUNDS;
 
     fn fixture(beta: bool) -> ToyDriverSumchecks<Fr> {
@@ -749,9 +735,6 @@ mod twin_tests {
         }
     }
 
-    /// Drive the macro-expanded `prove` and its `verify_clear` twin, assert
-    /// byte-identical transcript states, and return the driver's output plus
-    /// the recorded prepare and residue call orders.
     #[expect(
         clippy::type_complexity,
         reason = "the twin driver's aggregate return: the proved carrier plus the two recorded call orders"
@@ -759,7 +742,7 @@ mod twin_tests {
     fn drive(
         beta: bool,
     ) -> (
-        Proved<Fr, ToyDriverSumchecks<Fr>, Fr>,
+        Proved<Fr, ToyDriverSumchecks<Fr>, CompressedSumcheckProof<Fr>>,
         Vec<&'static str>,
         Vec<JoltRelationId>,
     ) {
@@ -773,19 +756,18 @@ mod twin_tests {
             23,
         )));
 
+        let mut context = KernelContext::new(&kernels, NoWitness, session);
         let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
-                &kernels,
-                &mut session,
+                &mut context,
                 &mut SequentialRounds,
-                &NoWitness,
                 &inputs,
                 &input_points,
                 &challenges,
-                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                ClearSumcheckRecorder::<Fr>::new(),
                 &mut prover_transcript,
             )
             .unwrap();
@@ -801,7 +783,7 @@ mod twin_tests {
                 &input_points,
                 &verifier_challenges,
                 &proved.output_claims,
-                &proved.recorded.proof,
+                &SumcheckProof::<Fr, Fr>::from(proved.recorded.proof.clone()),
                 &mut verifier_transcript,
                 0,
             )
@@ -810,21 +792,28 @@ mod twin_tests {
 
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
-        let calls = session.take::<PrepareCallLog>().unwrap().0;
-        let residues = session.take::<ResidueCallLog>().unwrap().0;
+        let calls = context
+            .session()
+            .state::<PrepareCallLog>()
+            .unwrap()
+            .0
+            .clone();
+        let residues = context
+            .session()
+            .state::<ResidueCallLog>()
+            .unwrap()
+            .0
+            .clone();
         (proved, calls, residues)
     }
 
     #[test]
     fn driver_twin_with_present_option_member() {
         let (proved, calls, residues) = drive(true);
-        // Prepare ran in declaration order.
         assert_eq!(calls, vec!["alpha", "beta", "gamma"]);
         assert!(proved.output_claims.beta.is_some());
-        // Typed extraction filled every slot, the session carry included.
         assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
         assert_eq!(proved.output_claims.gamma.opening_values().len(), 1);
-        // The driver parked every member's residue, in declaration order.
         assert_eq!(
             residues,
             vec![
@@ -876,21 +865,20 @@ mod twin_tests {
             }),
             delta: Box::new(HeadDensePrepare { seed: 37 }),
         };
-        let mut session = ProofSession::default();
+        let session = ProofSession::default();
 
+        let mut context = KernelContext::new(&kernels, NoWitness, session);
         let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
-                &kernels,
-                &mut session,
+                &mut context,
                 &mut SequentialRounds,
-                &NoWitness,
                 &inputs,
                 &input_points,
                 &challenges,
-                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                ClearSumcheckRecorder::<Fr>::new(),
                 &mut prover_transcript,
             )
             .unwrap();
@@ -903,7 +891,7 @@ mod twin_tests {
                 &input_points,
                 &verifier_challenges,
                 &proved.output_claims,
-                &proved.recorded.proof,
+                &SumcheckProof::<Fr, Fr>::from(proved.recorded.proof),
                 &mut verifier_transcript,
                 0,
             )
@@ -912,16 +900,24 @@ mod twin_tests {
 
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
         assert_eq!(verified_points, proved.output_points);
-        // The head member is bound on the batch point's PREFIX: its opening
-        // point is the leading entries of the full-window member's point.
         assert_eq!(
             proved.output_points.delta.value.as_slice(),
             &proved.output_points.alpha.value[..HEAD_ROUNDS]
         );
         assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
         assert_eq!(proved.output_claims.delta.opening_values().len(), 1);
-        let calls = session.take::<PrepareCallLog>().unwrap().0;
-        let residues = session.take::<ResidueCallLog>().unwrap().0;
+        let calls = context
+            .session()
+            .state::<PrepareCallLog>()
+            .unwrap()
+            .0
+            .clone();
+        let residues = context
+            .session()
+            .state::<ResidueCallLog>()
+            .unwrap()
+            .0
+            .clone();
         assert_eq!(calls, vec!["alpha", "delta"]);
         assert_eq!(
             residues,
@@ -932,28 +928,21 @@ mod twin_tests {
         );
     }
 
-    /// A session-carried member with no parked carry fails at prepare with a
-    /// kernel error — the accepted cost of session carries over v1's
-    /// compile-time-visible external members.
     #[test]
     fn missing_session_carry_fails_at_prepare() {
         let sumchecks = fixture(false);
         let inputs = inputs(false);
         let kernels = toy_kernels();
-        let mut session = ProofSession::default();
-
         let mut transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let result = sumchecks.prove(
-            &kernels,
-            &mut session,
+            &mut KernelContext::new(&kernels, NoWitness, ProofSession::default()),
             &mut SequentialRounds,
-            &NoWitness,
             &inputs,
             &input_points,
             &challenges,
-            ClearSumcheckRecorder::<Fr, Fr>::new(),
+            ClearSumcheckRecorder::<Fr>::new(),
             &mut transcript,
         );
         assert!(matches!(
@@ -962,13 +951,9 @@ mod twin_tests {
         ));
     }
 
-    /// Cells populated for a member the batch did not instantiate fail at
-    /// prepare, attributed to the member's relation id — the mirror of the
-    /// present-instance-with-missing-cell check.
     #[test]
     fn populated_cells_for_absent_member_fail_at_prepare() {
         let kernels = toy_kernels();
-        let mut session = ProofSession::default();
         let claims = ToyBetaInputs {
             claimed_sum: Fr::from_u64(777),
         };
@@ -977,10 +962,8 @@ mod twin_tests {
         };
 
         let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, _>(
-            &kernels,
+            &mut KernelContext::new(&kernels, NoWitness, ProofSession::default()),
             None,
-            &mut session,
-            &NoWitness,
             Some(&claims),
             Some(&points),
             Some(&NoChallenges::default()),
@@ -992,38 +975,5 @@ mod twin_tests {
             panic!("expected the populated-cell wiring error, got {error:?}");
         };
         assert_eq!(*stage, format!("{:?}", JoltRelationId::RamValCheck));
-    }
-
-    /// `prove` is generic over the recorder: this compiles it against the
-    /// committed recorder even though nothing wires the ZK path yet.
-    #[expect(dead_code, reason = "compile-only recorder-generality witness")]
-    #[expect(clippy::too_many_arguments, reason = "the driver's protocol signature")]
-    fn prove_type_checks_with_committed_recorder(
-        sumchecks: &ToyDriverSumchecks<Fr>,
-        kernels: &ToyKernels,
-        session: &mut ProofSession,
-        scheduler: &mut dyn RoundScheduler<Fr>,
-        inputs: &ToyDriverInputClaims<Fr>,
-        input_points: &ToyDriverInputPoints<Fr>,
-        challenges: &ToyDriverChallenges<Fr>,
-        recorder: CommittedSumcheckRecorder<
-            '_,
-            Fr,
-            jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
-            rand_core::OsRng,
-        >,
-        transcript: &mut Blake2bTranscript,
-    ) -> Result<Proved<Fr, ToyDriverSumchecks<Fr>, jolt_crypto::Bn254G1>, ProverError<Fr>> {
-        sumchecks.prove(
-            kernels,
-            session,
-            scheduler,
-            &NoWitness,
-            inputs,
-            input_points,
-            challenges,
-            recorder,
-            transcript,
-        )
     }
 }

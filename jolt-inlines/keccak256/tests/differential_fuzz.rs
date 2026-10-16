@@ -114,7 +114,6 @@ fn fuzz_digest_vs_tiny_keccak() {
     let mut rng = StdRng::seed_from_u64(0xD16E57);
 
     for i in 0..iters {
-        // Cover empty inputs, sub-rate, rate-straddling, and multi-block sizes.
         let len = match i % 4 {
             0 => (rng.next_u32() % 16) as usize,
             1 => 120 + (rng.next_u32() % 32) as usize,
@@ -138,8 +137,6 @@ fn fuzz_digest_vs_tiny_keccak() {
 
 #[test]
 fn fuzz_chunked_update_vs_tiny_keccak() {
-    // Split schedules landing exactly on, and one byte either side of, the
-    // 136- and 272-byte block boundaries.
     const BOUNDARY_SPLITS: &[&[usize]] = &[
         &[136],
         &[135, 1],

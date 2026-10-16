@@ -12,7 +12,7 @@ pub struct FormatU {
 impl InstructionFormat for FormatU {
     fn parse(word: u32) -> Self {
         FormatU {
-            rd: ((word >> 7) & 0x1f) as u8, // [11:7]
+            rd: ((word >> 7) & 0x1f) as u8,
             imm: (
                 match word & 0x80000000 {
 				0x80000000 => 0xffffffff00000000,

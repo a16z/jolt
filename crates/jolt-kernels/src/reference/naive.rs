@@ -92,9 +92,6 @@ where
     DerivedIdOf<F, R>: Ord + Sync,
     ChallengeIdOf<F, R>: Ord + Sync,
 {
-    /// The kernel's own clone of the stage's relation, taken from
-    /// [`ProverInputs`] at prepare time; the degree and output expression
-    /// are read off it directly.
     relation: R,
     /// The expression's `Challenge` leaves pre-resolved to scalars at
     /// construction, so the round loop reads plain `Sync` data (the typed
@@ -379,9 +376,9 @@ where
     SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
     SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
-    OpeningIdOf<F, R>: Sync,
-    DerivedIdOf<F, R>: Ord + Sync,
-    ChallengeIdOf<F, R>: Ord + Sync,
+    OpeningIdOf<F, R>: Send + Sync,
+    DerivedIdOf<F, R>: Ord + Send + Sync,
+    ChallengeIdOf<F, R>: Ord + Send + Sync,
 {
     type Relation = R;
 
@@ -436,11 +433,6 @@ where
     }
 }
 
-/// A hand-built toy relation exercising every leaf kind (scalar, `Vec`
-/// family, absent `Option`, `Challenge`, `Derived`) through the naive prover
-/// against the relation's own algebra — the single-member rehearsal of a
-/// stage recipe: head choreography → engine round loop → typed extraction →
-/// `expected_output` fold → clear-verifier twin.
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -458,7 +450,8 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         append_sumcheck_claim, prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder,
-        ProveRounds, SequentialRounds, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+        ProveRounds, SequentialRounds, SumcheckProof, SumcheckRecorder,
+        OPENING_CLAIM_TRANSCRIPT_LABEL,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -626,8 +619,6 @@ mod tests {
         )])
     }
 
-    /// Brute-force the output expression's sum over the hypercube — the true
-    /// input claim the toy's `total` input opening carries.
     fn brute_force_sum(
         opening_tables: &BTreeMap<JoltOpeningId, Polynomial<Fr>>,
         derived_tables: &BTreeMap<JoltDerivedId, Polynomial<Fr>>,
@@ -659,9 +650,6 @@ mod tests {
         let derived_tables = derived_tables(&reference_point());
         let claimed_sum = brute_force_sum(&opening_tables, &derived_tables, gamma);
 
-        // The one-member batch head (what the generated begin_batch performs).
-        // `untrusted` is the dual-role cell: consumed here, expected back on
-        // the typed output claims through the shared-id inference.
         let untrusted_value = Fr::from_u64(4242);
         let inputs = ToyInputs {
             total: claimed_sum,
@@ -673,7 +661,7 @@ mod tests {
         };
         let input_claim = relation.input_claim(&inputs, &challenges).unwrap();
         assert_eq!(input_claim, claimed_sum);
-        let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+        let mut recorder = ClearSumcheckRecorder::<Fr>::new();
         recorder.absorb_input_claims(&[input_claim], &mut prover_transcript);
         let coefficient: Fr = prover_transcript.challenge_scalar();
         let prelude = BatchPrelude::new(
@@ -709,7 +697,6 @@ mod tests {
         )
         .unwrap();
 
-        // Typed extraction; the verifier's own algebra is the correctness check.
         let output_points = relation
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
@@ -718,9 +705,6 @@ mod tests {
             .validate_derived_tables(&relation, &input_points, &output_points, &challenges)
             .unwrap();
 
-        // The assembled claims cover the expression's openings plus the
-        // dual-role cell, whose value rode in from the consumed claims (no
-        // table exists for it).
         assert_eq!(output_claims.untrusted, Some(untrusted_value));
         assert_eq!(
             output_claims.canonical_order(),
@@ -740,7 +724,6 @@ mod tests {
         assert_eq!(coefficient * expected, proved.final_claim);
         assert_eq!(proved.member_claims, vec![expected]);
 
-        // Clear-verifier twin: same transcript schedule accepts the proof.
         let recorded = recorder
             .finish(&output_claims.opening_values(), &mut prover_transcript)
             .unwrap();
@@ -757,8 +740,7 @@ mod tests {
             .unwrap();
         append_sumcheck_claim(&mut verifier_transcript, &verifier_input_claim);
         let verifier_coefficient: Fr = verifier_transcript.challenge_scalar();
-        let reduction = recorded
-            .proof
+        let reduction = SumcheckProof::<Fr, Fr>::from(recorded.proof)
             .verify_compressed_boolean(
                 ROUNDS,
                 verifier_relation.degree(),
@@ -789,7 +771,6 @@ mod tests {
         let challenges = relation.draw_challenges(&mut transcript).unwrap();
         let gamma = challenges.gamma;
 
-        // Tables built against a DIFFERENT reference point than the relation's.
         let drifted_point: Vec<Fr> = (0..ROUNDS).map(|i| Fr::from_u64(77 + i as u64)).collect();
         let opening_tables = opening_tables();
         let derived_tables = derived_tables(&drifted_point);
@@ -806,7 +787,7 @@ mod tests {
             ROUNDS,
             relation.degree(),
         );
-        let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+        let mut recorder = ClearSumcheckRecorder::<Fr>::new();
         let inputs = ToyInputs {
             total: claimed_sum,
             untrusted: None,
@@ -863,7 +844,6 @@ mod tests {
         };
         let c_id = virt(JoltVirtualPolynomial::RightLookupOperand);
 
-        // A missing opening table is rejected with its id.
         let mut incomplete = opening_tables();
         let _ = incomplete.remove(&c_id);
         let relation = ToyRelation {
@@ -885,7 +865,6 @@ mod tests {
             Err(KernelError::MissingOpeningTable { id }) if id == c_id.into(),
         ));
 
-        // A mis-sized table is rejected.
         let mut mis_sized = opening_tables();
         let _ = mis_sized.insert(c_id, Polynomial::new(vec![Fr::from_u64(1); SIZE / 2]));
         assert!(matches!(

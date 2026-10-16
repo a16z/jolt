@@ -1,20 +1,11 @@
-//! sig-recovery guest program
-//!
-//! This crate contains the provable functions that run inside the Jolt zkVM.
-//! The main function is `verify_txs` which recovers signer addresses from
-//! serialized Ethereum transactions using parallel recovery via rayon.
-
 use alloy_eips::eip2718::Decodable2718;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::transaction::recover::recover_signers;
 use serde::{Deserialize, Serialize};
 
-/// Result of transaction verification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationResult {
-    /// Number of transactions processed
     pub tx_count: u32,
-    /// Number of successfully recovered signers
     pub recovered_count: u32,
     /// Recovered signer addresses (in order)
     pub signers: Vec<[u8; 20]>,
@@ -32,11 +23,11 @@ pub struct VerificationResult {
 /// # Returns
 /// * `VerificationResult` containing the recovered signers
 #[jolt::provable(
-    max_input_size = 1048576,   // 1MB input
-    max_output_size = 65536,    // 64KB output
-    heap_size = 33554432,     // 32MB memory
-    stack_size = 131072,        // 128KB stack
-    max_trace_length = 33554432 // 32M trace length
+    max_input_size = 1048576,
+    max_output_size = 65536,
+    heap_size = 33554432,
+    stack_size = 131072,
+    max_trace_length = 33554432
 )]
 pub fn verify_txs(txs_bytes: &[u8]) -> VerificationResult {
     jolt::start_cycle_tracking("deserialize");

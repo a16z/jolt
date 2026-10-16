@@ -1,20 +1,17 @@
 use crate::{IV, SIGMA};
 
-/// Rust implementation of BLAKE2 compression on the host.
 pub fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 18]) {
     let mut v = [0u64; 16];
     v[0..8].copy_from_slice(state);
     v[8..16].copy_from_slice(&IV);
 
     v[12] ^= message_words[16];
-    // v[13] ^= counter.shr(64) as u64;  // not used for 64-bit counter
 
     if message_words[17] != 0 {
         v[14] = !v[14];
     }
 
     for s in SIGMA {
-        // Column step
         g(
             &mut v,
             0,
@@ -52,7 +49,6 @@ pub fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 1
             message_words[s[7]],
         );
 
-        // Diagonal step
         g(
             &mut v,
             0,

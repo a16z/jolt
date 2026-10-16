@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Expr;
 
-/// The field-inline protocol's expression type: an [`Expr`](crate::Expr) over the
-/// field-inline id families (openings, deriveds, challenges).
 pub type FieldInlineExpr<F> =
     Expr<F, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId>;
 
@@ -60,6 +58,11 @@ pub enum FieldInlineChallengeId {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineCommittedPolynomial {
     FieldRdInc,
+}
+
+impl FieldInlineCommittedPolynomial {
+    /// All field-inline committed polynomials in proof-payload order.
+    pub const ALL: [Self; 1] = [Self::FieldRdInc];
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

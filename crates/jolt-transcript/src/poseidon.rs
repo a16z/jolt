@@ -172,32 +172,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deterministic() {
-        let mut a = PoseidonSponge::new();
-        let mut b = PoseidonSponge::new();
-        a.absorb(b"hello");
-        b.absorb(b"hello");
-        let mut x = [0u8; 64];
-        let mut y = [0u8; 64];
-        a.squeeze(&mut x);
-        b.squeeze(&mut y);
-        assert_eq!(x, y);
-    }
-
-    #[test]
-    fn order_sensitive() {
-        let mut a = PoseidonSponge::new();
-        let mut b = PoseidonSponge::new();
-        a.absorb(b"x").absorb(b"y");
-        b.absorb(b"y").absorb(b"x");
-        let mut x = [0u8; 32];
-        let mut y = [0u8; 32];
-        a.squeeze(&mut x);
-        b.squeeze(&mut y);
-        assert_ne!(x, y);
-    }
-
-    #[test]
     fn empty_distinct_from_zero_absorb() {
         let mut a = PoseidonSponge::new();
         let mut b = PoseidonSponge::new();

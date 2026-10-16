@@ -1,7 +1,7 @@
 //! field_inline Spartan-outer produced claims.
 //!
 //! The field-inline extension appends five value/product columns to the composed
-//! Spartan outer R1CS (`jolt-r1cs::constraints::jolt`); their openings are
+//! Spartan outer R1CS (`protocols::composed::r1cs`); their openings are
 //! produced by the same stage-1 remainder sumcheck as the ordinary RV64
 //! openings and appended after them. There is no separate field-inline Spartan relation
 //! object — the composed remainder is one sumcheck — so this module carries

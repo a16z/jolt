@@ -1,7 +1,5 @@
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
-// AlwaysPass: trivial invariant to test macro synthesis
-
 #[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
 #[derive(Default)]
 pub struct AlwaysPassInvariant;
@@ -24,8 +22,6 @@ impl Invariant for AlwaysPassInvariant {
         vec![0, 1, 42, 128, 255]
     }
 }
-
-// BoundsCheck: uses a struct Input type
 
 #[derive(
     Debug,

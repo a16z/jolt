@@ -8,7 +8,6 @@ use crate::{
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
-// Special case for VirtualAdvice as it has an extra 'advice' field
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub struct VirtualAdvice {
     pub address: u64,
@@ -30,7 +29,7 @@ impl RISCVInstruction for VirtualAdvice {
 
     type Format = FormatJ;
     type RegisterState = RegisterStateJ;
-    type RAMAccess = ();
+    type RamAccess = ();
 
     fn operands(&self) -> &Self::Format {
         &self.operands
@@ -60,7 +59,7 @@ impl RISCVInstruction for VirtualAdvice {
         }
     }
 
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RamAccess) {
         cpu.write_register(self.operands.rd as usize, self.advice as i64);
     }
 }

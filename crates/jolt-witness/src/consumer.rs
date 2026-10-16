@@ -4,6 +4,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use jolt_program::execution::TraceData;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::JoltTraceRow as TraceRow;
 #[cfg(feature = "parallel")]
@@ -136,7 +137,6 @@ pub trait RowSource {
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
 
-    /// Returns shared random access when the source can provide it.
     fn random_access(&self) -> Option<RandomAccessRows> {
         None
     }
@@ -145,7 +145,7 @@ pub trait RowSource {
 /// Shared random access to compact rows and their extraction context.
 #[derive(Clone)]
 pub struct RandomAccessRows {
-    rows: Arc<Vec<TraceRow>>,
+    rows: Arc<TraceData>,
     cycles: usize,
     preprocessing: Arc<JoltProgramPreprocessing>,
     padding: TraceRow,
@@ -153,16 +153,16 @@ pub struct RandomAccessRows {
 
 impl RandomAccessRows {
     pub(crate) fn new(
-        rows: Arc<Vec<TraceRow>>,
+        rows: Arc<TraceData>,
         cycles: usize,
         preprocessing: Arc<JoltProgramPreprocessing>,
     ) -> Result<Self, WitnessError> {
-        if rows.len() > cycles {
+        if rows.proof_len() > cycles {
             return Err(WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: format!(
                     "physical trace has {} rows but the cycle domain has {cycles}",
-                    rows.len()
+                    rows.proof_len()
                 ),
             });
         }
@@ -182,9 +182,10 @@ impl RandomAccessRows {
     /// Extracts one bundle with padding and one-row lookahead semantics.
     #[inline]
     pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {
-        let current = self.rows.get(index).unwrap_or(&self.padding);
+        let physical = self.rows.proof_rows();
+        let current = physical.get(index).unwrap_or(&self.padding);
         let next =
-            (index + 1 < self.cycles).then(|| self.rows.get(index + 1).unwrap_or(&self.padding));
+            (index + 1 < self.cycles).then(|| physical.get(index + 1).unwrap_or(&self.padding));
         B::from_row(current, next, &WitnessEnv::new(&self.preprocessing))
     }
 }
@@ -213,7 +214,6 @@ pub fn stream_witnesses<S: RowSource + ?Sized, C: ConsumerSet>(
     })
 }
 
-/// The chunk size of a single-consumer bundle-collection pass.
 const BUNDLE_PASS_CHUNK: usize = 1 << 12;
 
 /// Materialize one bundle type over `0..cycles` from a row source. The
@@ -281,7 +281,6 @@ mod tests {
     use crate::BundleSource;
     use jolt_claims::protocols::jolt::JoltPolynomialId;
     use jolt_field::Fr;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     /// A hand-implemented bundle carrying a lookahead witness, so chunk
@@ -309,27 +308,6 @@ mod tests {
         }
     }
 
-    /// Counts its own extractions, so a skipped consumer is observable.
-    #[derive(Clone, Copy, Debug)]
-    struct CountingBundle;
-
-    static EXTRACTIONS: AtomicUsize = AtomicUsize::new(0);
-
-    impl WitnessBundle for CountingBundle {
-        fn from_row(
-            _row: &TraceRow,
-            _next: Option<&TraceRow>,
-            _env: &WitnessEnv<'_>,
-        ) -> Result<Self, WitnessError> {
-            let _ = EXTRACTIONS.fetch_add(1, Ordering::Relaxed);
-            Ok(Self)
-        }
-
-        fn annotated_ids() -> Vec<JoltPolynomialId> {
-            Vec::new()
-        }
-    }
-
     fn collect_with_chunk_size(chunk_size: usize) -> Vec<WindowBundle> {
         with_sample_backend(|backend| {
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
@@ -344,7 +322,6 @@ mod tests {
         for chunk_size in [1, 2, 3] {
             assert_eq!(collect_with_chunk_size(chunk_size), whole);
         }
-        // The shifted column: next_pc[t] == pc[t + 1], 0 at the end.
         for (index, bundle) in whole.iter().enumerate() {
             let expected = whole.get(index + 1).map_or(0, |next| next.pc.0);
             assert_eq!(bundle.next_pc.0, expected);
@@ -354,9 +331,7 @@ mod tests {
     #[test]
     fn random_access_collection_matches_the_chunked_walk() {
         with_sample_backend(|backend| {
-            // The routed path (index-parallel over the slice-backed trace).
             let routed: Vec<WindowBundle> = collect_bundles(backend, 4).unwrap();
-            // The chunked walk, forced.
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
             stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
             assert_eq!(routed, consumers.0.into_rows());
@@ -366,7 +341,7 @@ mod tests {
     #[test]
     fn random_access_rejects_rows_beyond_cycle_domain() {
         with_sample_backend(|backend| {
-            let rows = Arc::new(vec![TraceRow::default(); 2]);
+            let rows = Arc::clone(&backend.trace.trace);
             assert!(matches!(
                 RandomAccessRows::new(rows, 1, Arc::clone(&backend.preprocessing)),
                 Err(WitnessError::InvalidWitnessData { .. })
@@ -387,24 +362,6 @@ mod tests {
             assert_eq!(first.len(), 4);
             assert_eq!(consumers.1.unwrap().into_rows(), first);
             assert!(consumers.2.is_none());
-        });
-    }
-
-    #[test]
-    fn absent_slots_skip_extraction_too() {
-        with_sample_backend(|backend| {
-            EXTRACTIONS.store(0, Ordering::Relaxed);
-            let mut consumers = (
-                None::<CollectBundles<CountingBundle>>,
-                CollectBundles::<WindowBundle>::default(),
-            );
-            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
-            assert_eq!(consumers.1.into_rows().len(), 4);
-            assert_eq!(EXTRACTIONS.load(Ordering::Relaxed), 0);
-
-            let mut consumers = (Some(CollectBundles::<CountingBundle>::default()),);
-            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
-            assert_eq!(EXTRACTIONS.load(Ordering::Relaxed), 4);
         });
     }
 

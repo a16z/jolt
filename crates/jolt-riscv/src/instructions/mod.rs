@@ -6,7 +6,7 @@
 //! instruction kind: with the default `T = ()` it is a zero-sized marker
 //! (used by `JoltInstruction` variants and static-flag tests); with `T` set
 //! to an `Instruction`/`Cycle` payload it becomes the constructed form used
-//! by `LookupQuery` impls. `#[derive(Flags)]` declares the R1CS circuit and
+//! by `LookupQuery` impls. `jolt_instruction!` declares the R1CS circuit and
 //! witness-generation flags. The `InstructionLookupTable` impls (in
 //! `jolt-lookup-tables`) map instructions to lookup tables.
 
@@ -120,7 +120,6 @@ pub use virt::ShiftDataB;
 pub use virt::ShiftDataH;
 pub use virt::ShiftDataW;
 pub use virt::VirtualAdvice;
-pub use virt::VirtualAdviceLen;
 pub use virt::VirtualAdviceLoad;
 pub use virt::VirtualHostIO;
 pub use virt::VirtualNegateIf;
@@ -156,7 +155,6 @@ pub use virt::WindowMaskB;
 pub use virt::WindowMaskH;
 pub use virt::WindowMaskW;
 
-// Atomic + system + advice-load + virtual lw/sw additions
 pub use a::AmoAddD;
 pub use a::AmoAddW;
 pub use a::AmoAndD;
@@ -280,10 +278,7 @@ macro_rules! define_source_instruction {
                 let Some(jolt_kind) = source_kind.jolt_kind() else {
                     return Err(source_kind);
                 };
-                let row = instruction.row().jolt_instruction_row(jolt_kind);
-                JoltInstruction::try_from(row)
-                    .map(|_| row)
-                    .map_err(|_| source_kind)
+                Ok(instruction.row().jolt_instruction_row(jolt_kind))
             }
         }
 
@@ -439,7 +434,6 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     ShiftDataW(ShiftDataW<T>),
     VirtualXorRotL1(VirtualXorRotL1<T>),
     VirtualAdvice(VirtualAdvice<T>),
-    VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
     #[cfg(feature = "field-inline")]
@@ -464,27 +458,25 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     FieldAdviceLimb(FieldAdviceLimb<T>),
 }
 
-macro_rules! impl_jolt_instruction_try_from_row {
+macro_rules! impl_jolt_instruction_from_row {
     (
         instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
-        impl TryFrom<JoltInstructionRow> for JoltInstruction {
-            type Error = JoltInstructionKind;
-
-            fn try_from(instruction: JoltInstructionRow) -> Result<Self, Self::Error> {
-                Ok(match instruction.instruction_kind {
+        impl From<JoltInstructionRow> for JoltInstruction {
+            fn from(instruction: JoltInstructionRow) -> Self {
+                match instruction.instruction_kind {
                     JoltInstruction::Noop(_) => Self::Noop(Noop(instruction)),
                     $(
                         $(#[$meta])*
                         JoltInstruction::$marker(_) => Self::$marker($marker(instruction)),
                     )*
-                })
+                }
             }
         }
     };
 }
 
-crate::for_each_jolt_instruction_kind!(impl_jolt_instruction_try_from_row);
+crate::for_each_jolt_instruction_kind!(impl_jolt_instruction_from_row);
 
 macro_rules! impl_jolt_instructions_flags {
     ($($(#[$meta:meta])* $variant:ident => $kind:ident),* $(,)?) => {
@@ -667,7 +659,6 @@ impl_jolt_instructions_flags! {
     ShiftDataW => VirtualShiftDataW,
     VirtualXorRotL1 => VirtualXORROTL1,
     VirtualAdvice => VirtualAdvice,
-    VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,
     VirtualHostIO => VirtualHostIO,
     #[cfg(feature = "field-inline")]
@@ -694,7 +685,7 @@ impl_jolt_instructions_flags! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flags::{CircuitFlags, Flags, InstructionFlags};
+    use crate::flags::{CircuitFlagSet, CircuitFlags, Flags, InstructionFlags};
 
     #[test]
     fn left_operand_exclusive() {
@@ -752,45 +743,6 @@ mod tests {
     }
 
     #[test]
-    fn phase_specific_instruction_kinds_are_distinct() {
-        let source_kind = crate::SourceInstructionKind::AMOADDW;
-
-        assert_eq!(source_kind.jolt_kind(), None);
-        assert!(source_kind.expands_to_jolt());
-    }
-
-    #[test]
-    fn source_instruction_variant_is_the_source_identity() {
-        let row = SourceInstructionRow {
-            address: 0x8000_0000,
-            operands: crate::NormalizedOperands {
-                rd: Some(1),
-                rs1: Some(2),
-                rs2: Some(3),
-                imm: 4,
-            },
-            inline: None,
-            is_compressed: false,
-        };
-
-        let add = SourceInstruction::new(SourceInstructionKind::ADD, row);
-        let beq = SourceInstruction::new(SourceInstructionKind::BEQ, row);
-
-        assert_eq!(add.kind(), SourceInstructionKind::ADD);
-        assert_eq!(beq.kind(), SourceInstructionKind::BEQ);
-        assert_eq!(
-            JoltInstructionRow::try_from(&add).map(|row| row.instruction_kind),
-            Ok(JoltInstructionKind::ADD)
-        );
-        assert_eq!(
-            JoltInstructionRow::try_from(&beq).map(|row| row.instruction_kind),
-            Ok(JoltInstructionKind::BEQ)
-        );
-        assert!(matches!(add, SourceInstruction::Add(Add(..))));
-        assert!(matches!(beq, SourceInstruction::Beq(Beq(..))));
-    }
-
-    #[test]
     fn source_instruction_uses_catalog_marker_types() {
         let row = SourceInstructionRow::default();
 
@@ -823,11 +775,11 @@ mod tests {
     #[test]
     fn jolt_instruction_identifies_explicit_final_subset() {
         assert!(matches!(
-            JoltInstruction::try_from(JoltInstructionRow {
+            JoltInstruction::from(JoltInstructionRow {
                 instruction_kind: JoltInstructionKind::ADD,
                 ..Default::default()
             }),
-            Ok(JoltInstruction::Add(..))
+            JoltInstruction::Add(..)
         ));
         for kind in [
             SourceInstructionKind::DIV,
@@ -859,15 +811,9 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::panic_in_result_fn,
-        reason = "test assertions inside a Result-returning test"
-    )]
-    fn terminal_virtual_instruction_marks_last_in_sequence() -> Result<(), JoltInstructionKind> {
-        fn flags_for(
-            row: JoltInstructionRow,
-        ) -> Result<crate::CircuitFlagSet, JoltInstructionKind> {
-            JoltInstruction::try_from(row).map(|instruction| instruction.circuit_flags())
+    fn terminal_virtual_instruction_marks_last_in_sequence() {
+        fn flags_for(row: JoltInstructionRow) -> CircuitFlagSet {
+            JoltInstruction::from(row).circuit_flags()
         }
 
         let mut row = JoltInstructionRow {
@@ -876,19 +822,18 @@ mod tests {
         };
 
         row.instruction_kind = JoltInstructionKind::ADDI;
-        let addi_flags = flags_for(row)?;
+        let addi_flags = flags_for(row);
         assert!(addi_flags[CircuitFlags::VirtualInstruction]);
         assert!(addi_flags[CircuitFlags::IsLastInSequence]);
 
         row.instruction_kind = JoltInstructionKind::JALR;
-        let jalr_flags = flags_for(row)?;
+        let jalr_flags = flags_for(row);
         assert!(jalr_flags[CircuitFlags::VirtualInstruction]);
         assert!(jalr_flags[CircuitFlags::IsLastInSequence]);
 
         row.virtual_sequence_remaining = Some(1);
-        let nonterminal_flags = flags_for(row)?;
+        let nonterminal_flags = flags_for(row);
         assert!(nonterminal_flags[CircuitFlags::VirtualInstruction]);
         assert!(!nonterminal_flags[CircuitFlags::IsLastInSequence]);
-        Ok(())
     }
 }

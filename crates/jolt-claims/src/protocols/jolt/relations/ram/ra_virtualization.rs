@@ -1,5 +1,3 @@
-//! RAM `ra` virtualization symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -69,69 +67,5 @@ impl SymbolicSumcheck for RaVirtualization {
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(RamRaVirtualizationPublic::EqCycle) * committed_ram_ra_product(self.shape)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::geometry::ram::committed_ram_ra;
-    use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, Ring};
-
-    fn ra_virtualization_dimensions(committed_ra_polys: usize) -> RamRaVirtualizationDimensions {
-        RamRaVirtualizationDimensions::new(5, committed_ra_polys)
-    }
-
-    #[test]
-    fn ra_virtualization_evaluates_like_core_formula() {
-        let dimensions = ra_virtualization_dimensions(3);
-        let relation = RaVirtualization::new(dimensions);
-
-        let reduced = Fr::from_u64(3);
-        let committed = [Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(11)];
-        let eq_cycle = Fr::from_u64(13);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_ra_claim_reduction() => reduced,
-                _ => zero,
-            },
-            |_| zero,
-            |_| zero,
-        );
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == committed_ram_ra(0) => committed[0],
-                id if id == committed_ram_ra(1) => committed[1],
-                id if id == committed_ram_ra(2) => committed[2],
-                _ => zero,
-            },
-            |_| zero,
-            |id| match *id {
-                JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) => eq_cycle,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, reduced);
-        assert_eq!(
-            output,
-            eq_cycle * committed[0] * committed[1] * committed[2]
-        );
-    }
-
-    #[test]
-    fn ra_virtualization_symbolic_matches_dependencies() {
-        let relation = RaVirtualization::new(ra_virtualization_dimensions(3));
-
-        assert_eq!(RaVirtualization::id(), JoltRelationId::RamRaVirtualization);
-        assert_eq!(relation.rounds(), ra_virtualization_dimensions(3).log_t());
-        assert_eq!(
-            relation.degree(),
-            ra_virtualization_dimensions(3).num_committed_ra_polys() + 1
-        );
     }
 }

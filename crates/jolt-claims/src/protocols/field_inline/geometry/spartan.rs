@@ -28,28 +28,3 @@ pub fn outer_output_openings() -> [FieldInlineOpeningId; FIELD_INLINE_SPARTAN_OU
         outer_opening(FieldInlineVirtualPolynomial::FieldInvProduct),
     ]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn spartan_outer_openings_follow_input_order() {
-        let openings = outer_output_openings();
-        assert_eq!(openings.len(), FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT);
-
-        let expected = FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-            .into_iter()
-            .map(outer_opening)
-            .collect::<Vec<_>>();
-        assert_eq!(openings.to_vec(), expected);
-    }
-
-    #[test]
-    fn spartan_outer_openings_use_field_registers_relation() {
-        for opening in outer_output_openings() {
-            let FieldInlineOpeningId::Polynomial { relation, .. } = opening;
-            assert_eq!(relation, FieldInlineRelationId::FieldRegistersSpartanOuter);
-        }
-    }
-}

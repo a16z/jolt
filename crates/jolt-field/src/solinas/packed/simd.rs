@@ -84,8 +84,6 @@ pub trait SimdWord: 'static {
     }
 }
 
-/// Stamps vocabulary methods whose body is a single (possibly block)
-/// intrinsic expression, wrapped in the requisite `unsafe` block.
 macro_rules! fwd {
     ($($name:ident($($arg:ident: $ty:ty),*) -> $ret:ty = $body:expr;)*) => {
         $(
@@ -153,7 +151,6 @@ mod neon {
             lt_u64(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t = vcltq_u64(a, b);
             select64(m: uint64x2_t, t: uint64x2_t, f: uint64x2_t) -> uint64x2_t =
                 vbslq_u64(m, t, f);
-            // v*c = (lo32(v)·c) + ((hi32(v)·c) << 32): two vmull widening muls.
             mul_small(v: uint64x2_t, c: u64) -> uint64x2_t = {
                 let c32 = vdup_n_u32(c as u32);
                 let lo = vmull_u32(vmovn_u64(v), c32);
@@ -229,7 +226,6 @@ mod neon {
             }
         }
 
-        /// Carry-preserving two-fold reducer for `p = 2^63 - c`.
         #[inline(always)]
         fn mul_pm63(lhs: u64, rhs: u64, _p: u64, c: u64) -> Option<u64> {
             let result: u64;
@@ -459,7 +455,6 @@ mod avx512 {
                 _mm512_movm_epi64(_mm512_cmplt_epu64_mask(a, b));
             select64(m: __m512i, t: __m512i, f: __m512i) -> __m512i =
                 _mm512_ternarylogic_epi64::<0xCA>(m, t, f);
-            // AVX-512DQ has a true 64-bit low multiply.
             mul_small(v: __m512i, c: u64) -> __m512i =
                 _mm512_mullo_epi64(v, _mm512_set1_epi64(c as i64));
             mul_small_wide(v: __m512i, c: u64) -> [__m512i; 2] = {

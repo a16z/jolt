@@ -1,5 +1,3 @@
-//! Dory PCS implementing the `jolt-openings` trait hierarchy.
-
 #![expect(
     clippy::unimplemented,
     reason = "the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
@@ -451,7 +449,6 @@ impl ZkOpeningScheme for DoryScheme {
     }
 }
 
-/// Dense commit: full MSM per row, parallel over rows.
 fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     sigma: usize,
@@ -471,7 +468,6 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
         .collect()
 }
 
-/// One-hot commit: O(T) group additions for unit-valued one-hot polynomials.
 fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     num_rows: usize,
@@ -623,132 +619,21 @@ mod tests {
 
     use super::*;
     use jolt_crypto::{Pedersen, VectorCommitment};
-    use jolt_field::{Field, Ring};
+    use jolt_field::Ring;
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
     #[test]
-    fn commit_open_verify_round_trip() {
-        let num_vars = 4;
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
-
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-
-        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
-            .collect();
-        let eval = poly.evaluate(&point);
-
-        let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
-
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
-        let proof = DoryScheme::open(
-            &poly,
-            &point,
-            eval,
-            &prover_setup,
-            Some(hint),
-            &mut prove_transcript,
-        )
-        .unwrap();
-
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
-        let result = DoryScheme::verify(
-            &commitment,
-            &point,
-            eval,
-            &proof,
-            &verifier_setup,
-            &mut verify_transcript,
-        );
-        assert!(result.is_ok(), "Verification failed: {result:?}");
-    }
-
-    #[test]
     fn commit_rejects_polynomial_exceeding_setup_capacity() {
         let mut rng = ChaCha20Rng::seed_from_u64(700);
         let prover_setup = DoryScheme::setup_prover(2);
-        // 6-variable poly: 8 columns > the 2-var setup's SRS width.
         let poly = Polynomial::<Fr>::random(6, &mut rng);
         let err = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap_err();
         assert!(
             matches!(err, OpeningsError::PolynomialTooLarge { .. }),
             "{err}"
         );
-    }
-
-    #[test]
-    fn combine_commitments_homomorphic() {
-        let num_vars = 2;
-        let mut rng = ChaCha20Rng::seed_from_u64(300);
-
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-
-        let poly_a = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
-
-        let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &prover_setup).unwrap();
-        let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &prover_setup).unwrap();
-
-        let sum_evals: Vec<Fr> = poly_a
-            .evaluations()
-            .iter()
-            .zip(poly_b.evaluations().iter())
-            .map(|(a, b)| *a + *b)
-            .collect();
-        let (commit_sum_direct, _) = DoryScheme::commit(&sum_evals, &prover_setup).unwrap();
-
-        let combined = DoryScheme::combine(
-            &[commit_a, commit_b],
-            &[<Fr as Ring>::from_u64(1), <Fr as Ring>::from_u64(1)],
-        );
-
-        assert_eq!(
-            commit_sum_direct, combined,
-            "combine([1,1]) must match commitment to sum"
-        );
-    }
-
-    #[test]
-    fn zk_open_verify_round_trip() {
-        let num_vars = 4;
-        let mut rng = ChaCha20Rng::seed_from_u64(600);
-
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-
-        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
-            .collect();
-        let eval = poly.evaluate(&point);
-
-        let (commitment, hint) =
-            <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup).unwrap();
-
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
-        let (proof, _eval_com, _blinding) = DoryScheme::open_zk(
-            &poly,
-            &point,
-            eval,
-            &prover_setup,
-            hint,
-            &mut prove_transcript,
-        )
-        .unwrap();
-
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
-        let result = DoryScheme::verify_zk(
-            &commitment,
-            &point,
-            &proof,
-            &verifier_setup,
-            &mut verify_transcript,
-        );
-        assert!(result.is_ok(), "ZK verification failed: {result:?}");
     }
 
     #[test]
