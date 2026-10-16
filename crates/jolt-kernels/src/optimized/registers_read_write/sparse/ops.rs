@@ -1,14 +1,13 @@
-use core::{cmp::Ordering, mem::MaybeUninit};
+use core::cmp::Ordering;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::{Accumulator, JoltField};
-use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::{
-    layout::{merge_bind, split_pair_group, Cell, MatrixEntry, SeedEntry, SparseEntry},
-    CoeffLut, CycleState, LutIndex, Seeds,
+    layout::{merge_bind, split_pair_group, Cell, MatrixEntry},
+    CoeffLut,
 };
 
 /// Block boundaries advanced so no `row >> pair_bits` group is split.
@@ -218,143 +217,4 @@ where
             .map(group_contribution)
             .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
     }
-}
-
-type FusedScratch<F> = (Vec<SparseEntry<F, LutIndex>>, Vec<SparseEntry<F, LutIndex>>);
-
-pub(super) fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
-    (
-        Vec::with_capacity(1 << REGISTER_ADDRESS_BITS),
-        Vec::with_capacity(1 << REGISTER_ADDRESS_BITS),
-    )
-}
-
-#[inline]
-pub(super) fn fused_intermediates<F: JoltField>(
-    group: &[SeedEntry],
-    seed_ra_lut: &CoeffLut<F>,
-    seed_wa_lut: &CoeffLut<F>,
-    r1: F,
-    scratch: &mut FusedScratch<F>,
-) {
-    scratch.0.clear();
-    scratch.1.clear();
-    let half_start = group.partition_point(|entry| entry.row % 4 < 2);
-    let (first, second) = group.split_at(half_start);
-    let bind = |even: Option<&SeedEntry>, odd: Option<&SeedEntry>| {
-        SeedEntry::bind(even, odd, r1, seed_ra_lut, seed_wa_lut)
-    };
-    let (evens, odds) = split_pair_group(first);
-    merge_bind(evens, odds, &bind, |entry| scratch.0.push(entry));
-    let (evens, odds) = split_pair_group(second);
-    merge_bind(evens, odds, &bind, |entry| scratch.1.push(entry));
-}
-
-/// Cycles per second-bind block: a multiple of four, so no 4-row group
-/// straddles two blocks.
-const BIND_BLOCK_CYCLES: usize = 1 << 12;
-
-/// Fuse two seed binds into quarter-domain field-coefficient entries.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the seed source and its cycle count, both table generations, and both challenges"
-)]
-pub(super) fn bind_seed_entries_fused<F: JoltField>(
-    seeds: &Seeds,
-    cycles: usize,
-    seed_ra_lut: &CoeffLut<F>,
-    seed_wa_lut: &CoeffLut<F>,
-    ra_lut: &CoeffLut<F>,
-    wa_lut: &CoeffLut<F>,
-    r1: F,
-    r2: F,
-) -> Result<Vec<SparseEntry<F, F>>, WitnessError> {
-    const _: () = assert!(REGISTER_ADDRESS_BITS <= 7);
-    let block_cycles = BIND_BLOCK_CYCLES.min(cycles);
-    let blocks = cycles / block_cycles;
-    let block_rows = |block: usize| block * block_cycles..(block + 1) * block_cycles;
-
-    let count_block = |block: usize| -> Result<usize, WitnessError> {
-        let mut count = 0usize;
-        seeds.for_each_group(block_rows(block), 2, |_, quad| {
-            count += quad
-                .iter()
-                .fold(0u128, |mask, entry| mask | (1u128 << entry.col))
-                .count_ones() as usize;
-        })?;
-        Ok(count)
-    };
-    #[cfg(feature = "parallel")]
-    let counts = (0..blocks)
-        .into_par_iter()
-        .map(count_block)
-        .collect::<Result<Vec<usize>, _>>()?;
-    #[cfg(not(feature = "parallel"))]
-    let counts = (0..blocks)
-        .map(count_block)
-        .collect::<Result<Vec<usize>, _>>()?;
-
-    let bound_length: usize = counts.iter().sum();
-    let mut bound: Vec<SparseEntry<F, F>> = Vec::with_capacity(bound_length);
-    let mut out_slices = Vec::with_capacity(blocks);
-    let mut out_rest = bound.spare_capacity_mut();
-    for &count in &counts {
-        let (out_slice, next_out) = out_rest.split_at_mut(count);
-        out_rest = next_out;
-        out_slices.push(out_slice);
-    }
-
-    let unused = CycleState::<F>::unused_lut();
-    let to_field = |entry: &SparseEntry<F, LutIndex>| entry.to_field(ra_lut, wa_lut);
-    let fill_block = |scratch: &mut FusedScratch<F>,
-                      (block, out): (usize, &mut [MaybeUninit<SparseEntry<F, F>>])|
-     -> Result<(), WitnessError> {
-        let mut written = 0usize;
-        seeds.for_each_group(block_rows(block), 2, |_, quad| {
-            fused_intermediates(quad, seed_ra_lut, seed_wa_lut, r1, scratch);
-            merge_bind(
-                &scratch.0,
-                &scratch.1,
-                &|even, odd| {
-                    SparseEntry::<F, F>::bind(
-                        even.map(to_field).as_ref(),
-                        odd.map(to_field).as_ref(),
-                        r2,
-                        &unused,
-                        &unused,
-                    )
-                },
-                |entry| {
-                    out[written] = MaybeUninit::new(entry);
-                    written += 1;
-                },
-            );
-        })?;
-        assert_eq!(
-            written,
-            out.len(),
-            "second-bind fill diverged from its count"
-        );
-        Ok(())
-    };
-    #[cfg(feature = "parallel")]
-    out_slices
-        .into_par_iter()
-        .enumerate()
-        .try_for_each_init(fused_scratch, |scratch, item| fill_block(scratch, item))?;
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut scratch = fused_scratch();
-        out_slices
-            .into_iter()
-            .enumerate()
-            .try_for_each(|item| fill_block(&mut scratch, item))?;
-    }
-
-    // SAFETY: exact per-block counts partition the spare capacity, and every
-    // fill block asserted it initialized each of its slots.
-    unsafe {
-        bound.set_len(bound_length);
-    }
-    Ok(bound)
 }

@@ -31,9 +31,7 @@ pub(super) trait MatrixEntry<F: JoltField>: Cell {
 pub(in crate::optimized::registers_read_write) struct SeedEntry {
     pub(super) prev_val: u64,
     pub(super) next_val: u64,
-    /// `u32` is safe because collection rejects wider domains.
-    ///
-    /// [`RegisterColumns::collect`]: crate::optimized::registers_read_write::rows::RegisterColumns::collect
+    /// `u32` is safe because the cycle-first kernel rejects wider domains.
     pub(super) row: u32,
     pub(super) ra: u8,
     pub(super) wa: u8,
@@ -144,7 +142,7 @@ impl SeedEntry {
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(super) struct SparseEntry<F, C> {
+pub(in crate::optimized::registers_read_write) struct SparseEntry<F, C> {
     pub(super) val: F,
     pub(super) prev_val: u64,
     pub(super) next_val: u64,
