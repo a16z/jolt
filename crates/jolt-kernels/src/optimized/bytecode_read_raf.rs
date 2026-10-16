@@ -1819,7 +1819,7 @@ mod akita_tests {
             let mut reference = ReferenceBackend
                 .prepare(
                     &mut session,
-                    backend,
+                    backend as &dyn JoltWitnessPlane<Fr>,
                     ProverInputs {
                         relation: &relation,
                         claims: &claims,

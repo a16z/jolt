@@ -1225,7 +1225,7 @@ mod tests {
             let reference = ReferenceBackend
                 .prepare(
                     &mut ProofSession::default(),
-                    backend,
+                    backend as &dyn JoltWitnessPlane<Fr>,
                     ProverInputs {
                         relation: &relation,
                         claims: &claims,
@@ -1322,7 +1322,7 @@ mod tests {
             let reference = ReferenceBackend
                 .prepare(
                     &mut ProofSession::default(),
-                    backend,
+                    backend as &dyn JoltWitnessPlane<Fr>,
                     ProverInputs {
                         relation: &relation,
                         claims: &claims,
@@ -1459,7 +1459,7 @@ mod tests {
             let reference = ReferenceBackend
                 .prepare(
                     &mut ProofSession::default(),
-                    backend,
+                    backend as &dyn JoltWitnessPlane<Fr>,
                     ProverInputs {
                         relation: &address_relation,
                         claims: &address_claims,
@@ -1515,7 +1515,7 @@ mod tests {
             let reference = ReferenceBackend
                 .prepare(
                     &mut ProofSession::default(),
-                    backend,
+                    backend as &dyn JoltWitnessPlane<Fr>,
                     ProverInputs {
                         relation: &cycle_relation,
                         claims: &cycle_claims,

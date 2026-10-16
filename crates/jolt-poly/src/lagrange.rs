@@ -24,7 +24,8 @@ pub enum LagrangeNodesError {
     LengthMismatch { nodes: usize, values: usize },
 }
 
-fn validate_nodes<F: Field>(nodes: &[F]) -> Result<(), LagrangeNodesError> {
+/// Rejects an empty node list or its lexicographically first repeated pair.
+pub fn validate_nodes<F: Field>(nodes: &[F]) -> Result<(), LagrangeNodesError> {
     if nodes.is_empty() {
         return Err(LagrangeNodesError::EmptyNodes);
     }

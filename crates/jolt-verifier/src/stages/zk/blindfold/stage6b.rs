@@ -381,6 +381,7 @@ mod tests {
                     .resolve_output(id),
                 #[cfg(not(feature = "field-inline"))]
                 ComposedOpeningId::FieldInline(_) => None,
+                ComposedOpeningId::External(_) => None,
             };
             assert_eq!(
                 resolved,
@@ -555,7 +556,7 @@ mod field_inline_tests {
                     .zip(&output_values.bytecode_ra)
                     .find(|(opening_id, _)| *opening_id == id)
                     .map_or_else(|| fr(0), |(_, value)| *value),
-                ComposedOpeningId::FieldInline(_) => fr(0),
+                ComposedOpeningId::FieldInline(_) | ComposedOpeningId::External(_) => fr(0),
             },
             |_| fr(0),
             |id| match id {
