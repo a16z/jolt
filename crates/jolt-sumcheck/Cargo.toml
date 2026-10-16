@@ -7,6 +7,7 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
 [features]
 default = []
+binary = ["jolt-poly/binary", "jolt-field/binary"]
 parallel = [
   "jolt-field/parallel",
   "jolt-poly/parallel",
