@@ -7,10 +7,10 @@ use std::{
 use jolt_field::{AdditiveGroup, Field, Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof,
-    ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError,
-    SumcheckProof, SumcheckRecorder, SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearSumcheckRecorder, ProveRounds,
+    SequentialRounds, SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
+    OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
@@ -230,22 +230,16 @@ impl ProveRounds<ExternalField> for LinearRound {
     ) -> Result<UnivariatePoly<ExternalField>, SumcheckError<ExternalField>> {
         assert!(bind.is_none());
         assert_eq!(round, 0);
-        let polynomial = field_only_polynomial([
-            ExternalField::from_u64(3),
-            ExternalField::from_u64(2),
-        ]);
+        let polynomial =
+            field_only_polynomial([ExternalField::from_u64(3), ExternalField::from_u64(2)]);
         assert_eq!(
-            polynomial.evaluate(ExternalField::zero())
-                + polynomial.evaluate(ExternalField::one()),
+            polynomial.evaluate(ExternalField::zero()) + polynomial.evaluate(ExternalField::one()),
             previous_claim
         );
         Ok(polynomial)
     }
 
-    fn finish_rounds(
-        &mut self,
-        _bind: ExternalField,
-    ) -> Result<(), SumcheckError<ExternalField>> {
+    fn finish_rounds(&mut self, _bind: ExternalField) -> Result<(), SumcheckError<ExternalField>> {
         Ok(())
     }
 }
@@ -287,9 +281,7 @@ fn external_field_runs_stock_clear_prover_and_verifier() {
     let recorded = recorder
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = recorded.proof else {
-        panic!("clear recorder returned a non-compressed proof")
-    };
+    let proof = recorded.proof;
 
     let mut verifier_transcript = ExternalTranscript::new(b"external-field");
     verifier_transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, &input_claim);
