@@ -211,9 +211,6 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
         (0b000, 0x01) => Ok(SourceInstructionKind::AdviceLH),
         (0b000, 0x02) => Ok(SourceInstructionKind::AdviceLW),
         (0b000, 0x03) => Ok(SourceInstructionKind::AdviceLD),
-        (0b000, 0x04) => Ok(SourceInstructionKind::VirtualAdviceLen(
-            jolt_riscv::instructions::VirtualAdviceLen(()),
-        )),
         (0b000, 0x05) => Ok(SourceInstructionKind::VirtualRev8W(
             jolt_riscv::instructions::VirtualRev8W(()),
         )),

@@ -37,7 +37,7 @@ declare_riscv_instr!(
 const CSR_MEPC_ADDRESS: u16 = 0x341;
 
 impl MRET {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <MRET as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <MRET as RISCVInstruction>::RamAccess) {
         let mepc = cpu.read_csr_raw(CSR_MEPC_ADDRESS);
         cpu.pc = mepc;
 

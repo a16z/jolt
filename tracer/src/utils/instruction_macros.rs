@@ -26,7 +26,7 @@ macro_rules! declare_riscv_instr {
 
             type Format = $format;
             type RegisterState = $registers;
-            type RAMAccess = $ram;
+            type RamAccess = $ram;
 
             fn operands(&self) -> &Self::Format {
                 &self.operands
@@ -75,7 +75,7 @@ macro_rules! declare_riscv_instr {
                 }
             }
 
-            fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RAMAccess) {
+            fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RamAccess) {
                 self.exec(cpu, ram)
             }
 

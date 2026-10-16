@@ -17,7 +17,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualHostIO {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualHostIO as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualHostIO as RISCVInstruction>::RamAccess) {
         let call_id = cpu.x[10] as u32;
 
         if call_id == JOLT_ADVICE_WRITE_CALL_ID {

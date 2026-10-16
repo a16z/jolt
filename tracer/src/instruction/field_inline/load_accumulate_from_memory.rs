@@ -6,7 +6,7 @@ use crate::{
     emulator::cpu::Cpu,
     instruction::{
         format::format_field_inline::FormatFieldInline,
-        registers::field_inline::RegisterStateFieldInline, RAMRead, RISCVInstruction, RISCVTrace,
+        registers::field_inline::RegisterStateFieldInline, RISCVInstruction, RISCVTrace, RamRead,
     },
 };
 
@@ -18,14 +18,14 @@ declare_riscv_instr!(
     match  = FieldInlineOp::LoadAccumulateFromMemory.instruction_match(),
     format = FormatFieldInline,
     registers = RegisterStateFieldInline,
-    ram    = RAMRead
+    ram    = RamRead
 );
 
 impl FIELD_LOAD_ACCUMULATE_FROM_MEMORY {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        ram_access: &mut <FIELD_LOAD_ACCUMULATE_FROM_MEMORY as RISCVInstruction>::RAMAccess,
+        ram_access: &mut <FIELD_LOAD_ACCUMULATE_FROM_MEMORY as RISCVInstruction>::RamAccess,
     ) {
         let x_base = self.operands.rs1.unwrap_or(0);
         let x_register = self.operands.rd.unwrap_or(0);

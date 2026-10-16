@@ -38,8 +38,6 @@ pub mod emit {
     );
     /// One- and two-polynomial rows used by adapter and grouped-planner diagnostics.
     pub const ONE_HOT_SCALAR_NUM_POLYS: &[usize] = &[1, 2];
-    pub const K16_SCALAR_NUM_VARS: (usize, usize) = (12, 40);
-    pub const K256_SCALAR_NUM_VARS: (usize, usize) = (12, 43);
     /// Bounded-dense advice and committed-program byte objects.
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 34);
 
@@ -99,12 +97,31 @@ pub mod emit {
         keys
     }
 
-    /// Default production shapes plus the exact adapter, benchmark, and override fixtures.
+    /// Default single-chunk shapes and the adapter's multi-chunk test fixtures.
     pub fn one_hot_keys(
         one_hot_k: usize,
         profile: AkitaChunkProfile,
     ) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
         let family = OneHotFamily::from_parts(one_hot_k, profile)?;
+        if profile != AkitaChunkProfile::Single {
+            // These rows serve adapter roundtrips, grouped cutovers, and small guest
+            // fixtures. Applications provision their own deployment coverage.
+            let mut fixtures = ONE_HOT_SCALAR_NUM_POLYS
+                .iter()
+                .flat_map(|&polys| keys(&[polys], (family.num_vars_range(polys).0, 16)))
+                .collect::<Vec<_>>();
+            fixtures.extend([20, 22, 31, 32].map(PolynomialGroupLayout::singleton));
+            if one_hot_k == AKITA_ONE_HOT_K16 {
+                fixtures.extend((51..=64).map(|width| PolynomialGroupLayout::new(16, width)));
+                fixtures.extend(
+                    [(25, 51), (26, 51), (25, 64), (34, 51), (34, 64)]
+                        .map(|(vars, polys)| PolynomialGroupLayout::new(vars, polys)),
+                );
+            }
+            fixtures.sort_unstable_by_key(|key| (key.num_polynomials(), key.num_vars()));
+            fixtures.dedup();
+            return Ok(fixtures);
+        }
         let mut admitted = ONE_HOT_SCALAR_NUM_POLYS
             .iter()
             .flat_map(|&num_polys| keys(&[num_polys], family.num_vars_range(num_polys)))

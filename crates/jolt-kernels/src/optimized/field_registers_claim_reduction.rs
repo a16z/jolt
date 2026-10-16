@@ -302,7 +302,7 @@ mod tests {
     };
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_field::{Fr, Ring};
-    use jolt_riscv::FieldInlineOp;
+    use jolt_riscv::JoltInstructionKind;
 
     use super::*;
     use crate::optimized::field_registers_testing::{
@@ -410,7 +410,7 @@ mod tests {
     fn parity_single_cycle_round() {
         let mut fixture = FieldRegisterTraceFixture::new();
         fixture.load_imm(15, 7);
-        fixture.arithmetic(FieldInlineOp::Add, 0, 15, 15);
+        fixture.arithmetic(JoltInstructionKind::FIELD_ADD, 0, 15, 15);
         run_parity(fixture, 1, 419, true);
     }
 

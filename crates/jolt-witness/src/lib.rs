@@ -13,9 +13,10 @@
 //! [`JoltWitnessOracle`] (the naive interpreter's path — one exhaustive match
 //! over jolt-claims ids, no wildcard) and typed bundles over the streaming
 //! pass. This crate defines **no id vocabulary of its own** — all ids are
-//! jolt-claims'. Every source supports sequential cycle ranges. Slice-backed
-//! sources may additionally expose random-access views for parallel
-//! collection; checkpointed, re-emulating sources need not.
+//! jolt-claims'. Row sources support sequential cycle ranges and may expose
+//! random-access views for parallel collection. [`JoltVmWitnessMetadata`] exposes
+//! shapes and program facts without row or polynomial data; unsupported queries
+//! return an unavailable-view error.
 
 // Lets derive-generated `::jolt_witness::...` paths resolve inside this
 // crate's own tests.
@@ -37,7 +38,9 @@ mod shape;
 pub use backend::fixed::FixedBackend;
 #[cfg(all(any(test, feature = "test-utils"), feature = "field-inline"))]
 pub use backend::fixed::FixedFieldInline;
-pub use backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+pub use backend::trace::{
+    JoltVmWitnessConfig, JoltVmWitnessInputs, JoltVmWitnessMetadata, TraceBackend,
+};
 pub use backend::{
     validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, ProgramSource,
 };

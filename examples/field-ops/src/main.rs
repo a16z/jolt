@@ -12,11 +12,11 @@ mod pipeline {
     use jolt::host::JoltProgramSource;
     use jolt::{
         JoltProgramPreprocessing, JoltProverPreprocessing, JoltSharedPreprocessing, MemoryConfig,
-        OwnedTrace, TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS,
-        VerifierTranscript, VerifierVC,
+        TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS, VerifierTranscript,
+        VerifierVC,
     };
     use jolt_field::{CanonicalBytes, Ring};
-    use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceRow};
+    use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceData};
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
@@ -62,7 +62,7 @@ mod pipeline {
 
     pub struct TracedGuest {
         pub preprocessing: JoltProverPreprocessing,
-        pub trace_output: TraceOutput<OwnedTrace>,
+        pub trace_output: TraceOutput,
         pub program: Arc<JoltProgram>,
     }
 
@@ -122,8 +122,8 @@ mod pipeline {
         }
     }
 
-    pub fn field_inline_rows(rows: &[TraceRow]) -> usize {
-        rows.iter().filter(|row| row.field_inline.is_some()).count()
+    pub fn field_inline_rows(trace: &TraceData) -> usize {
+        trace.field_events().len()
     }
 
     /// Prove with the modular prover and verify through the full verifier
@@ -136,23 +136,14 @@ mod pipeline {
         } = traced;
         let memory_layout = trace_output.device.memory_layout.clone();
         let public_io = trace_output.device.clone();
-        let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.rows(),
+        let config = ProverConfig::derive_from_dimensions::<Fr>(
+            trace_output.dimensions,
             &memory_layout,
             preprocessing.verifier.program.min_bytecode_address(),
             preprocessing.verifier.program.program_image_len_words(),
             MAX_PADDED_TRACE_LENGTH,
         )
         .expect("derive config");
-
-        let mut rows = trace_output.trace.rows().to_vec();
-        rows.resize(config.trace_length, TraceRow::default());
-        let witness_output = TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-            trace_output.advice_tape,
-        );
 
         let program_preprocessing = preprocessing
             .program_arc()
@@ -163,7 +154,7 @@ mod pipeline {
                 config.ram_K,
                 config.one_hot_config,
             ),
-            JoltVmWitnessInputs::new(&program, &program_preprocessing, witness_output),
+            JoltVmWitnessInputs::new(&program, &program_preprocessing, trace_output),
         )
         // field-inline proving needs the field-inline witness view; classic-profile
         // guests are refused rather than silently proven without field-inline columns.
@@ -173,12 +164,11 @@ mod pipeline {
 
         let prover_preprocessing = preprocessing;
         let backend = JoltBackend::<Fr, VerifierPCS>::reference();
-        let proof = jolt_prover::prove::<Fr, VerifierPCS, VerifierVC, VerifierTranscript, _>(
-            &backend,
+        let proof = jolt_prover::prove::<Fr, VerifierPCS, VerifierVC, VerifierTranscript>(
+            backend.with_witness(&witness),
             &prover_preprocessing,
             &config,
             None,
-            witness.as_ref(),
             &public_io,
         )
         .expect("modular field-inline prove");
@@ -211,7 +201,7 @@ fn main() {
     println!(
         "trace: {} cycles, {} field-inline",
         rows.len(),
-        field_inline_rows(rows)
+        field_inline_rows(&traced.trace_output.trace)
     );
 
     let output = prove_and_verify(traced);
@@ -236,12 +226,22 @@ fn main() {
 mod tests {
     use super::pipeline::{compile_and_trace, field_inline_rows, guest_inputs, PAIRS};
 
+    /// Limb width of the example's Dory field (BN254).
+    const MODULUS_LIMBS: usize = 4;
+    /// `field_to_limbs!`: the advice split and its residual assertion, the
+    /// modulus binding and its assertion, and the restoring accumulations.
+    const READOUT: usize = 3 * MODULUS_LIMBS + 2;
+    /// `field_from_limbs!` of four limbs: the reset, the modulus binding and its
+    /// assertion, and four accumulations.
+    const IMPORT: usize = 1 + MODULUS_LIMBS + 1 + 4;
+
     /// The guest's static field-inline instruction budget: 2 accumulator seeds,
     /// 10 per coordinate pair (2 resets, 2 bridge accumulations, 3 muls, 2 subs,
-    /// 1 add), 5 for the expected value (reset + 4 accumulations), the assert,
-    /// 11 for memory ingress, in-place readout and restoration, 4 for inversion,
-    /// and 5 for the result value, AdviceLimb and AssertZero.
-    const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 10 * PAIRS.len() + 5 + 1 + 11 + 4 + 5;
+    /// 1 add), the expected-value import, the assert, 3 for memory ingress and
+    /// two readouts of it, 4 for inversion, and 3 for the result value and its
+    /// readout.
+    const EXPECTED_FIELD_INLINE_CYCLES: usize =
+        2 + 10 * PAIRS.len() + IMPORT + 1 + 3 + 2 * READOUT + 4 + 3 + READOUT;
 
     /// Commit-A scope: the guest builds and traces field-active — the tracer
     /// executes the field-inline semantics (a failed FIELD_ASSERT_EQ or
@@ -252,7 +252,7 @@ mod tests {
     fn guest_traces_field_inline_active() {
         let traced = compile_and_trace(&guest_inputs(&PAIRS));
         let rows = traced.trace_output.trace.rows();
-        let field_rows = field_inline_rows(rows);
+        let field_rows = field_inline_rows(&traced.trace_output.trace);
         assert_eq!(field_rows, EXPECTED_FIELD_INLINE_CYCLES);
         assert!(
             field_rows < rows.len(),

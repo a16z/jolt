@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl BLTU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <BLTU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <BLTU as RISCVInstruction>::RamAccess) {
         if cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
             < cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
         {

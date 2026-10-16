@@ -1,4 +1,4 @@
-use super::{RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite};
+use jolt_riscv::{RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite};
 
 /// One source instruction's architectural transition, with optional register
 /// operands and an eight-byte-aligned RAM doubleword. The source backend pins

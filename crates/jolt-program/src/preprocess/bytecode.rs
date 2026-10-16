@@ -63,13 +63,7 @@ impl BytecodePreprocessing {
     }
 
     pub fn get_pc(&self, instruction: &JoltInstructionRow) -> Option<usize> {
-        if instruction.instruction_kind == JoltInstructionKind::NoOp {
-            return Some(0);
-        }
-        self.pc_map.get_pc(
-            instruction.address,
-            instruction.virtual_sequence_remaining.unwrap_or(0),
-        )
+        self.pc_map.get_instruction_pc(instruction)
     }
 }
 
@@ -116,6 +110,18 @@ pub struct BytecodePCMapper {
 }
 
 impl BytecodePCMapper {
+    /// Resolves a final instruction against the expanded program, including
+    /// the shared padding slot used by every no-op.
+    pub fn get_instruction_pc(&self, instruction: &JoltInstructionRow) -> Option<usize> {
+        if instruction.instruction_kind == JoltInstructionKind::NoOp {
+            return Some(0);
+        }
+        self.get_pc(
+            instruction.address,
+            instruction.virtual_sequence_remaining.unwrap_or(0),
+        )
+    }
+
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
         let mut slots = vec![PcSlot::default(); Self::index_count(bytecode)?];
         if let Some(first) = slots.first_mut() {
@@ -262,9 +268,7 @@ impl BytecodePCMapper {
 /// only ever comes from a `Store`-flagged row) is asserted during witness
 /// generation.
 fn check_store_rd_disjoint(instruction: &JoltInstructionRow) -> Result<(), PreprocessingError> {
-    let decoded = JoltInstruction::try_from(*instruction).unwrap_or(JoltInstruction::Noop(
-        jolt_riscv::instructions::Noop(*instruction),
-    ));
+    let decoded = JoltInstruction::from(*instruction);
     match instruction.operands.rd {
         Some(rd) if decoded.circuit_flags()[CircuitFlags::Store] => {
             Err(PreprocessingError::StoreWritesRd {

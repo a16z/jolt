@@ -32,7 +32,7 @@ mod clear {
     };
     use jolt_field::Ring;
     use jolt_openings::{CommitmentScheme, GroupCommitmentMetadata};
-    use jolt_prover::akita::JoltAkitaBackend;
+    use jolt_prover::JoltBackend;
     use jolt_prover::ProverConfig;
     use jolt_verifier::proof::JoltProofClaims;
     use jolt_witness::field_inline::FieldInlineWitnessOracle;
@@ -41,15 +41,12 @@ mod clear {
     use crate::support::field_inline::akita::Proof;
     use crate::support::field_inline::{akita, field_ops, muldiv};
 
-    type BackendCase = (
-        &'static str,
-        fn() -> JoltAkitaBackend<AkitaField, AkitaScheme>,
-    );
+    type BackendCase = (&'static str, fn() -> JoltBackend<AkitaField, AkitaScheme>);
 
     fn backends() -> [BackendCase; 2] {
         [
-            ("reference", JoltAkitaBackend::reference),
-            ("optimized", JoltAkitaBackend::optimized),
+            ("reference", JoltBackend::reference),
+            ("optimized", JoltBackend::optimized),
         ]
     }
 
@@ -173,7 +170,7 @@ mod clear {
 
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
-        let (output, inc) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), collect_inc);
+        let (output, inc) = akita::prove(&field_ops(), JoltBackend::optimized(), collect_inc);
         akita::verify_full(
             &output.verifier_preprocessing,
             &output.public_io,
@@ -265,7 +262,7 @@ mod clear {
         use jolt_prover::akita::preprocessing::AkitaTranscript;
         use jolt_transcript::Transcript;
 
-        let (output, ()) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), |_, _, _| ());
+        let (output, ()) = akita::prove(&field_ops(), JoltBackend::optimized(), |_, _, _| ());
         let commitment = output
             .proof
             .field_inc_commitment

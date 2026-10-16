@@ -44,6 +44,8 @@ pub trait GroupSetupMetadata {
     }
     fn default_layout_digest(&self) -> [u8; 32];
     fn one_hot_k(&self) -> usize;
+    /// Number of witness chunks selected by the one-hot setup.
+    fn one_hot_num_chunks(&self) -> usize;
 }
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.

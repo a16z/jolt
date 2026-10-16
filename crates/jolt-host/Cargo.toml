@@ -24,6 +24,7 @@ jolt-field = { workspace = true, optional = true }
 postcard = { workspace = true, optional = true }
 bincode.workspace = true
 common.workspace = true
+jolt-platform.workspace = true
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 serde = { workspace = true, features = ["derive"] }

@@ -13,15 +13,15 @@ use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 
 #[cfg(feature = "field-inline")]
 pub use crate::field_inline::{
-    FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
-    FieldRegisterWrite,
+    FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
 pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, TraceSource};
 pub use error::{SourceTraceError, TraceError};
+#[cfg(feature = "field-inline")]
+pub use trace::FieldEvent;
 pub use trace::{
-    JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
-    RegisterState, RegisterWrite, SourceTraceRow, TraceInputs, TraceOutput, TraceRow,
-    TraceRowError,
+    ExecutionDimensions, JoltProgram, MemoryImage, OwnedTrace, RamAddressBounds, SourceTraceRow,
+    TraceData, TraceInputs, TraceOutput,
 };
 
 #[cfg(feature = "image")]

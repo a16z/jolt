@@ -59,6 +59,18 @@ pub enum SumcheckProof<F: Field, C> {
     Committed(CommittedSumcheckProof<C>),
 }
 
+impl<F: Field, C> From<ClearSumcheckProof<F>> for SumcheckProof<F, C> {
+    fn from(proof: ClearSumcheckProof<F>) -> Self {
+        Self::Clear(ClearProof::Full(proof))
+    }
+}
+
+impl<F: Field, C> From<CompressedSumcheckProof<F>> for SumcheckProof<F, C> {
+    fn from(proof: CompressedSumcheckProof<F>) -> Self {
+        Self::Clear(ClearProof::Compressed(proof))
+    }
+}
+
 impl<F: Field, C> SumcheckProof<F, C> {
     pub fn is_committed(&self) -> bool {
         matches!(self, Self::Committed(_))

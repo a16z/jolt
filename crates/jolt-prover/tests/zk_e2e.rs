@@ -27,7 +27,6 @@ mod zk {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{Fr, Ring};
-    use jolt_program::execution::OwnedTrace;
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_riscv::JoltTraceRow;
@@ -55,8 +54,8 @@ mod zk {
     }
 
     fn derive_config(run: &PreparedGuest) -> ProverConfig {
-        ProverConfig::derive_compact::<Fr>(
-            run.trace.trace.as_slice(),
+        ProverConfig::derive_from_dimensions::<Fr>(
+            run.trace.dimensions,
             &run.preprocessing.memory_layout,
             run.preprocessing.ram.min_bytecode_address,
             run.preprocessing.ram.bytecode_words.len(),
@@ -71,7 +70,7 @@ mod zk {
         inspect_trace: impl FnOnce(&[JoltTraceRow]),
     ) -> ProvedGuest {
         let run = support::prepare(&case);
-        inspect_trace(run.trace.trace.as_slice());
+        inspect_trace(run.trace.trace.proof_rows());
         let mut config = derive_config(&run);
         // Exercise inactive cycle rounds and RAF claim scaling through BlindFold.
         config.rw_config.ram_rw_phase1_num_rounds = 0;
@@ -83,7 +82,7 @@ mod zk {
             .program_arc()
             .expect("full program preprocessing");
         let public_io = run.trace.device.clone();
-        let witness = TraceBackend::<OwnedTrace>::from_compact(
+        let witness = TraceBackend::new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
@@ -98,12 +97,11 @@ mod zk {
                 .expect("trusted advice commitment")
         });
         let proof =
-            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                &backend,
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                backend.with_witness(&witness),
                 &preprocessing,
                 &config,
                 trusted.as_ref(),
-                &witness,
                 &public_io,
             )
             .expect("modular ZK prove");
@@ -156,11 +154,11 @@ mod zk {
         with_zk_stack(|| {
             let run = support::prepare(&muldiv_case());
             let config = derive_config(&run);
-            let preprocessing = jolt_prover::dory::preprocess_committed(run.preprocessing, 2)
+            let preprocessing = jolt_prover::dory::preprocess_committed(run.preprocessing)
                 .expect("committed preprocessing");
             let program_preprocessing = preprocessing.program_arc().expect("retained full program");
             let public_io = run.trace.device.clone();
-            let witness = TraceBackend::<OwnedTrace>::from_compact(
+            let witness = TraceBackend::new(
                 JoltVmWitnessConfig::new(
                     config.trace_length.ilog2() as usize,
                     config.ram_K,
@@ -168,21 +166,15 @@ mod zk {
                 ),
                 JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
             );
-            let proof = jolt_prover::dory::prove::<
-                Fr,
-                DoryScheme,
-                Pedersen<Bn254G1>,
-                Blake2bTranscript,
-                _,
-            >(
-                &JoltBackend::reference(),
-                &preprocessing,
-                &config,
-                None,
-                &witness,
-                &public_io,
-            )
-            .expect("committed ZK prove");
+            let proof =
+                jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                    JoltBackend::reference().with_witness(&witness),
+                    &preprocessing,
+                    &config,
+                    None,
+                    &public_io,
+                )
+                .expect("committed ZK prove");
             jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 &preprocessing.verifier,
                 &public_io,

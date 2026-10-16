@@ -33,25 +33,27 @@ pub fn decode_with_profile(elf: &[u8], profile: JoltInstructionProfile)
 
 `decode_instruction` keeps its signature. `tracer::decode(elf)` keeps its signature and its panics and calls `decode_with_profile(elf, RV64IMAC_JOLT)`.
 
-**Seam.** `TraceSource`, `ExecutionBackend` and `OwnedTrace` take the row type as a parameter that defaults to `TraceRow`.
+**Seam.** `ExecutionBackend` carries an opaque associated trace type. `TraceSource` and `OwnedTrace` take the row type as a parameter that defaults to `SourceTraceRow`; the source backend uses this cursor storage, while proof backends retain the unified `Arc<TraceData>` output.
 
 ```rust
 // crates/jolt-program/src/execution/backend.rs
-pub trait ExecutionBackend<R = TraceRow> {
-    type Trace: TraceSource<R>;
+pub trait ExecutionBackend {
+    type Trace;
     fn trace(&mut self, program: &JoltProgram, inputs: TraceInputs)
         -> Result<TraceOutput<Self::Trace>, TraceError>;
 }
-pub trait TraceSource<R = TraceRow> {
+pub trait TraceSource<R = SourceTraceRow> {
     fn next_row(&mut self) -> Option<R>;
     fn rows(&self) -> Option<&[R]> { None }
     fn shared_rows(&self) -> Option<Arc<Vec<R>>> { None }
 }
 // crates/jolt-program/src/execution/trace.rs
-pub struct OwnedTrace<R = TraceRow> { /* Arc<Vec<R>>, cursor */ }
+pub struct OwnedTrace<R = SourceTraceRow> { /* Arc<Vec<R>>, cursor */ }
 impl<R: Clone> TraceSource<R> for OwnedTrace<R>;
-// JoltProgram::trace_with<R, B: ExecutionBackend<R>>(&self, &mut B, TraceInputs)
+// JoltProgram::trace_with<B: ExecutionBackend>(&self, &mut B, TraceInputs)
 ```
+
+`SourceTracerBackend` supplies `TraceOutput::with_dimensions`, collecting the source instruction count, final JAL/JALR flag, and nonzero aligned RAM address bounds during the existing step pass. These dimensions describe source rows, not an expanded proof trace.
 
 `OwnedTrace<R>` has `new`, `rows`, `From<Vec<R>>`, `Default` and `Clone` with no bound on `R`, and `into_rows` for `R: Clone`. `ChunkedExecutionBackend` is unchanged.
 
@@ -90,7 +92,7 @@ pub struct SourceTracerBackend { /* private: row capacity hint, 0 by default */ 
 impl SourceTracerBackend {
     pub fn with_row_capacity(rows: usize) -> Self;
 }
-impl ExecutionBackend<SourceTraceRow> for SourceTracerBackend {
+impl ExecutionBackend for SourceTracerBackend {
     type Trace = OwnedTrace<SourceTraceRow>;
 }
 ```
@@ -105,7 +107,7 @@ let rows: &[SourceTraceRow] = output.trace.rows();
 
 `program_size` must be `Some` and cover the loaded image, as for `TracerBackend`.
 
-The backend decodes `program.elf_bytes()` with `decode_with_mode(elf, RV64I, mode)` in the mode it holds, `Strict` by default; `program.profile` is not consulted, and an empty ELF returns `TraceError::MissingElfBytes`. Once `create_emulator` has loaded the ELF, the backend checks the emulator's RAM against the decoded image (B6). It executes each decoded instruction through a new `pub(crate) fn Instruction::execute_direct(&self, cpu: &mut Cpu)`, generated beside `Instruction::execute`, which calls the per-instruction `RISCVInstruction::execute` with a discarded stack-local `RAMAccess`: no rd = x0 rewrite, no virtual sequence, no rows. `Mmu` gains a private `record_access: bool`, `true` by default, and `pub(crate) fn set_access_recording(&mut self, on: bool)`, which the backend turns off (invariant B10).
+The backend decodes `program.elf_bytes()` with `decode_with_mode(elf, RV64I, mode)` in the mode it holds, `Strict` by default; `program.profile` is not consulted, and an empty ELF returns `TraceError::MissingElfBytes`. Once `create_emulator` has loaded the ELF, the backend checks the emulator's RAM against the decoded image (B6). It executes each decoded instruction through a new `pub(crate) fn Instruction::execute_direct(&self, cpu: &mut Cpu)`, generated beside `Instruction::execute`, which calls the per-instruction `RISCVInstruction::execute` with a discarded stack-local `RISCVInstruction::RamAccess`: no rd = x0 rewrite, no virtual sequence, no rows. `Mmu` gains a private `record_access: bool`, `true` by default, and `pub(crate) fn set_access_recording(&mut self, on: bool)`, which the backend turns off (invariant B10).
 
 **Decode mode.**
 
@@ -204,7 +206,7 @@ No `jolt-eval` invariant is added. B5 and B13 are checked by test code inside `t
 - [ ] Profile: `c.addi x1, 1` (`0x0085`) returns `IllegalCompressedInstruction` under `RV64I` and `RV64IM_JOLT` and decodes to `ADDI` under `RV64IMAC_JOLT`, through `decode_instruction` and `decode_elf`; a 32-bit `nop` at `0x8000_0002` returns `MalformedImage` under `RV64I` and decodes under `RV64IMAC_JOLT`.
 - [ ] Profile: `decode_with_profile(elf, RV64I)` returns the three instructions and entry address of `addi; addi; jal x0, 0`, and `Err(IllegalSourceInstruction(MUL))` when `mul` is appended; `decode(elf)` returns the same tuple for the first image. A section extent that overflows the address space returns `MalformedImage` without a panic.
 - [ ] Seam: the change is confined to `execution/backend.rs` and `execution/trace.rs`, and the workspace builds, lints and passes every existing test with no other edit.
-- [ ] Seam: a test-local `ExecutionBackend<u64>` returning `[7, 11, 13]`, driven through `trace_with`, yields those rows from `rows()`, from `shared_rows()` (the same allocation) and from `next_row()`. After the first `next_row`, `TraceSource::rows` and `shared_rows` return `None`; after the last, `next_row` returns `None` on every call; `into_rows` returns the rows while another handle to the `Arc` is alive.
+- [ ] Seam: a test-local `ExecutionBackend` returning `[7, 11, 13]`, driven through `trace_with`, yields those rows from `rows()`, from `shared_rows()` (the same allocation) and from `next_row()`. After the first `next_row`, `TraceSource::rows` and `shared_rows` return `None`; after the last, `next_row` returns `None` on every call; `into_rows` returns the rows while another handle to the `Arc` is alive.
 - [ ] Seam: `OwnedTrace<R>` constructs, defaults and clones for an `R` that is neither `Clone` nor `Default`.
 - [ ] Backend: every line of the matrix below holds.
 - [ ] Backend: B1 and B5 hold on every matrix program that completes. B13 holds on each of them and on 64 seeded programs (seeds 0 to 63: a prologue that sets a reserved base register, 64 instructions drawn from the ALU, LUI, AUIPC, forward-branch and aligned load and store kinds over one heap buffer, then `jal x0, 0`).
@@ -295,7 +297,7 @@ The step replaces `Cpu::tick`. What it omits (trap entry, the pending-interrupt 
 ### Alternatives Considered
 
 - **Profile.** A flag that disables expansion (expansion belongs to the pipeline that consumes the image, and the flag would enter the fingerprint); a profile parameter on `tracer::decode` (breaks a public signature); enforcing `Rv64C` in `decode_text_section` (a second enforcement point beside the public `decode_instruction`).
-- **Seam.** A sibling trait and owned-trace type (a parallel copy of the seam); an inherent method on `TracerBackend`, as `trace_compact` (binds consumers to one backend); `ExecutionBackend<SourceTraceRow>` on `TracerBackend` itself (existing `backend.trace(..)` calls become ambiguous); a flag in `Cpu::tick_operate` (a branch in the existing per-instruction loop).
+- **Seam.** A sibling trait and owned-trace type (a parallel copy of the seam); an inherent method on `TracerBackend`, as `trace_compact` (binds consumers to one backend); a second source-trace entry point on `TracerBackend` itself (couples two different trace representations to one backend); a flag in `Cpu::tick_operate` (a branch in the existing per-instruction loop).
 - **Legality.** Decoding under `program.profile` and re-checking each instruction against `RV64I` (a second pass that must also re-derive the alignment rule, since a profile with `Rv64C` admits a 32-bit instruction at an address that is 2 mod 4).
 - **Decode mode.** Marking data by the symbol table or by the mapping symbols `$d` and `$x` (both are optional metadata: hand-written assembly seldom gives its data a symbol type or size, a stripped image has no symbols at all, and decode would still need a rule for an image without them); a flag per section, or a list of section names to exempt (the data shares its section with the code that jumps over it, and a name is one linker script's convention); decoding lazily at fetch (the instruction list would depend on the execution, so `instruction_index` would not name a fixed image, a consumer could not resolve it without the trace, and B7 could not protect an instruction not yet fetched); holes under `Strict` itself (every existing caller would lose the rejection of B6 at trace start); a field of the profile (P5, and the mode would enter the fingerprint).
 - **Image check.** Accepting only listed section types in the source backend (a third statement of which sections load, beside the two loaders, where B5 needs equal bytes); building the emulator's memory from `memory_init` (the source backend and `TracerBackend` would start B13 from different memories); one loader for both (changes the output of `decode_elf` or what `TracerBackend` loads); comparing only at the addresses of `memory_init` (a section that the emulator alone loads leaves bytes that the replay of B5 starts without).

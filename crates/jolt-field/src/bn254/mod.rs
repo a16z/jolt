@@ -258,6 +258,11 @@ wrap_bn254!(
     challenge(low, high): ark_bn254::Fq::from_bigint(ark_ff::BigInt::new([0, 0, low, high]))
 );
 
+impl Fr {
+    /// The modulus as canonical little-endian limbs.
+    pub const MODULUS_LIMBS: [u64; 4] = <ark_bn254::Fr as PrimeField>::MODULUS.0;
+}
+
 impl Ring for Fr {
     #[inline]
     fn from_u64(v: u64) -> Self {

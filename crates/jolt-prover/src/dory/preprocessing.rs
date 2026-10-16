@@ -13,7 +13,7 @@ use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
 use jolt_dory::{DoryCommitment, DoryScheme};
 use jolt_field::{Fr, Ring};
 use jolt_kernels::committed_program::{
-    build_committed_bytecode_chunk_coeffs, program_image_words_padded,
+    build_committed_bytecode_coeffs, program_image_words_padded,
 };
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 #[cfg(feature = "zk")]
@@ -87,28 +87,26 @@ pub fn from_shared_parts(
 
 pub fn preprocess_committed(
     full: JoltProgramPreprocessing,
-    bytecode_chunk_count: usize,
 ) -> Result<DoryProverPreprocessing, PreprocessingError> {
-    preprocess_committed_with_order(full, bytecode_chunk_count, TracePolynomialOrder::CycleMajor)
+    preprocess_committed_with_order(full, TracePolynomialOrder::CycleMajor)
 }
 
 pub fn preprocess_committed_with_order(
     full: JoltProgramPreprocessing,
-    bytecode_chunk_count: usize,
     trace_order: TracePolynomialOrder,
 ) -> Result<DoryProverPreprocessing, PreprocessingError> {
-    crate::preprocessing::validate_committed_mode()?;
+    crate::preprocessing::validate_committed_mode(&full)?;
     let metadata = full
         .metadata()
         .ok_or_else(|| PreprocessingError::InvalidCommittedProgram {
             reason: "entry address is absent from bytecode preprocessing".to_owned(),
         })?;
     let bytecode_candidate =
-        bytecode::precommitted_candidate(full.bytecode.code_size, bytecode_chunk_count).map_err(
-            |error| PreprocessingError::InvalidCommittedProgram {
+        bytecode::bytecode_total_vars(full.bytecode.code_size).map_err(|error| {
+            PreprocessingError::InvalidCommittedProgram {
                 reason: error.to_string(),
-            },
-        )?;
+            }
+        })?;
     let image_candidate = program_image::precommitted_candidate(full.ram.bytecode_words.len());
     let pcs_setup = DoryScheme::setup_prover(setup_total_vars(
         &full.memory_layout,
@@ -116,16 +114,16 @@ pub fn preprocess_committed_with_order(
         full.max_padded_trace_length,
     ));
 
-    let (bytecode_chunk_commitments, bytecode_chunk_hints) =
-        commit_bytecode_chunks(&full, bytecode_chunk_count, trace_order, &pcs_setup)?;
+    let (bytecode_commitment, bytecode_hint) = commit_bytecode(&full, trace_order, &pcs_setup)?;
     let (program_image_commitment, program_image_hint) =
         commit_program_image(&full, image_candidate, &pcs_setup);
     let committed_program = CommittedProgramPreprocessing {
         meta: metadata,
         memory_layout: full.memory_layout.clone(),
         max_padded_trace_length: full.max_padded_trace_length,
-        bytecode_chunk_commitments,
+        bytecode_commitment,
         program_image_commitment,
+        trace_order,
     };
     let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Committed(committed_program),
@@ -137,7 +135,7 @@ pub fn preprocess_committed_with_order(
         pcs_setup,
         committed_program: Some(CommittedProgramProverData {
             full: Arc::new(full),
-            bytecode_chunk_hints,
+            bytecode_hint,
             program_image_hint,
             trace_order,
         }),
@@ -232,35 +230,28 @@ fn commit_table(
     }
 }
 
-fn commit_bytecode_chunks(
+fn commit_bytecode(
     full: &JoltProgramPreprocessing,
-    bytecode_chunk_count: usize,
     trace_order: TracePolynomialOrder,
     setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
 ) -> Result<
     (
-        Vec<DoryCommitment>,
-        Vec<<DoryScheme as CommitmentScheme>::OpeningHint>,
+        DoryCommitment,
+        <DoryScheme as CommitmentScheme>::OpeningHint,
     ),
     PreprocessingError,
 > {
-    let candidate = bytecode::precommitted_candidate(full.bytecode.code_size, bytecode_chunk_count)
+    let candidate = bytecode::bytecode_total_vars(full.bytecode.code_size).map_err(|error| {
+        PreprocessingError::InvalidCommittedProgram {
+            reason: error.to_string(),
+        }
+    })?;
+    let table = build_committed_bytecode_coeffs::<Fr>(&full.bytecode.bytecode, trace_order)
         .map_err(|error| PreprocessingError::InvalidCommittedProgram {
             reason: error.to_string(),
         })?;
-    let tables = build_committed_bytecode_chunk_coeffs::<Fr>(
-        &full.bytecode.bytecode,
-        bytecode_chunk_count,
-        trace_order,
-    )
-    .map_err(|error| PreprocessingError::InvalidCommittedProgram {
-        reason: error.to_string(),
-    })?;
     let row_width = 1usize << CommitmentMatrixShape::balanced(candidate).column_vars();
-    Ok(tables
-        .iter()
-        .map(|table| commit_table(table, row_width, setup))
-        .unzip())
+    Ok(commit_table(&table, row_width, setup))
 }
 
 fn commit_program_image(
@@ -282,7 +273,6 @@ fn commit_program_image(
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    #[cfg(feature = "field-inline")]
     use crate::PreprocessingError;
     use common::jolt_device::MemoryLayout;
     use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -336,9 +326,28 @@ mod tests {
             RV64IMAC_JOLT,
         )
         .unwrap();
-        let preprocessing = preprocess_committed(full, 1).unwrap();
+        let preprocessing = preprocess_committed(full).unwrap();
         assert_prover_preprocessing_round_trips(&preprocessing);
     }
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn committed_program_rejects_mismatched_bytecode_size() {
+        let mut full = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        full.bytecode.code_size = 4;
+        assert!(matches!(
+            preprocess_committed(full),
+            Err(PreprocessingError::InvalidCommittedProgram { .. })
+        ));
+    }
+
     #[cfg(feature = "field-inline")]
     #[test]
     fn committed_preprocessing_rejects_field_inline_mode() {
@@ -352,7 +361,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            preprocess_committed(full, 1),
+            preprocess_committed(full),
             Err(PreprocessingError::InvalidCommittedProgram { .. })
         ));
     }

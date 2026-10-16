@@ -1,20 +1,32 @@
-use jolt_field::Ring;
+use jolt_field::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
-use super::BytecodeReductionShape;
+use super::BytecodeReductionAddressPhaseOutputClaims;
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
-    assert_valid_chunk_count, bytecode_val_stage_opening, cycle_phase_intermediate_opening,
-    final_output_expr, NUM_BYTECODE_VAL_STAGES,
+    bytecode_val_stage_opening, cycle_phase_intermediate_opening, final_output_expr,
+    NUM_BYTECODE_VAL_STAGES,
 };
 use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
 use crate::protocols::jolt::{
     BytecodeClaimReductionChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
-    JoltRelationId,
+    JoltRelationId, PrecommittedReductionDimensions,
 };
-use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+use crate::{
+    challenge, opening, InputClaims, MissingOpeningValue, OutputClaims, SumcheckChallenges,
+    SymbolicSumcheck,
+};
 
-/// The produced bytecode-reduction openings: the intermediate when an address
-/// phase follows, else the per-chunk final `BytecodeChunk` openings.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub enum BytecodeReductionCyclePhaseOutputClaims<C> {
+    Intermediate(BytecodeReductionIntermediateClaims<C>),
+    Final(BytecodeReductionAddressPhaseOutputClaims<C>),
+}
+
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -22,11 +34,52 @@ use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, S
     deserialize = "C: serde::Deserialize<'de>"
 ))]
 #[relation(BytecodeClaimReductionCyclePhase)]
-pub struct BytecodeReductionCyclePhaseOutputClaims<C> {
+pub struct BytecodeReductionIntermediateClaims<C> {
     #[opening(BytecodeClaimReductionIntermediate)]
-    pub intermediate: Option<C>,
-    #[opening(committed = BytecodeChunk)]
-    pub chunks: Vec<C>,
+    pub intermediate: C,
+}
+
+impl<C> BytecodeReductionCyclePhaseOutputClaims<C> {
+    pub fn intermediate(&self) -> Option<&C> {
+        match self {
+            Self::Intermediate(claim) => Some(&claim.intermediate),
+            Self::Final(_) => None,
+        }
+    }
+    pub fn bytecode(&self) -> Option<&C> {
+        match self {
+            Self::Final(claim) => Some(&claim.bytecode),
+            Self::Intermediate(_) => None,
+        }
+    }
+}
+
+// OutputClaims derives support structs; the enum delegates each exclusive state
+// to its derived carrier so opening identities and order still have one owner.
+impl<F: JoltField> OutputClaims<F> for BytecodeReductionCyclePhaseOutputClaims<F> {
+    fn canonical_order(&self) -> Vec<JoltOpeningId> {
+        match self {
+            Self::Intermediate(c) => c.canonical_order(),
+            Self::Final(c) => c.canonical_order(),
+        }
+    }
+    fn resolve_output(&self, id: &JoltOpeningId) -> Option<F> {
+        match self {
+            Self::Intermediate(c) => c.resolve_output(id),
+            Self::Final(c) => c.resolve_output(id),
+        }
+    }
+    fn from_opening_values(
+        mut resolve: impl FnMut(&JoltOpeningId) -> Option<F>,
+    ) -> Result<Self, MissingOpeningValue<JoltOpeningId>> {
+        if let Some(intermediate) = resolve(&cycle_phase_intermediate_opening()) {
+            Ok(Self::Intermediate(BytecodeReductionIntermediateClaims {
+                intermediate,
+            }))
+        } else {
+            BytecodeReductionAddressPhaseOutputClaims::from_opening_values(resolve).map(Self::Final)
+        }
+    }
 }
 
 /// The consumed staged `BytecodeValClaim` openings from the bytecode read-RAF
@@ -47,10 +100,10 @@ pub struct BytecodeReductionCyclePhaseChallenges<F> {
 /// Cycle phase of the committed-bytecode reduction: batches the staged
 /// `BytecodeValClaim(i)` openings by powers of `eta` and reduces them to either
 /// the cycle-phase intermediate opening (when an address phase follows) or the
-/// committed `BytecodeChunk(i)` openings weighted by `ChunkOutputWeight`.
+/// committed `ProgramBytecode` opening weighted by `OutputWeight`.
 #[derive(Clone)]
 pub struct CyclePhase {
-    shape: BytecodeReductionShape,
+    shape: PrecommittedReductionDimensions,
 }
 
 impl SymbolicSumcheck for CyclePhase {
@@ -58,13 +111,12 @@ impl SymbolicSumcheck for CyclePhase {
     type OpeningId = JoltOpeningId;
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
-    type Shape = BytecodeReductionShape;
+    type Shape = PrecommittedReductionDimensions;
     type Challenges<F> = BytecodeReductionCyclePhaseChallenges<F>;
     type Inputs<C> = BytecodeReductionCyclePhaseInputClaims<C>;
     type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
 
-    fn new(shape: BytecodeReductionShape) -> Self {
-        assert_valid_chunk_count(shape.1);
+    fn new(shape: PrecommittedReductionDimensions) -> Self {
         Self { shape }
     }
 
@@ -73,7 +125,7 @@ impl SymbolicSumcheck for CyclePhase {
     }
 
     fn rounds(&self) -> usize {
-        self.shape.0.cycle_phase_total_rounds()
+        self.shape.cycle_phase_total_rounds()
     }
 
     fn degree(&self) -> usize {
@@ -90,11 +142,10 @@ impl SymbolicSumcheck for CyclePhase {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let (dimensions, chunk_count) = self.shape;
-        if dimensions.has_address_phase() {
+        if self.shape.has_address_phase() {
             opening(cycle_phase_intermediate_opening())
         } else {
-            final_output_expr(chunk_count)
+            final_output_expr()
         }
     }
 }

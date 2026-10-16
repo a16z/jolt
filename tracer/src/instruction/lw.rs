@@ -5,7 +5,7 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::format::format_load::FormatLoad;
 use super::Instruction;
-use super::RAMRead;
+use super::RamRead;
 
 use super::{Cycle, RISCVInstruction, RISCVTrace};
 
@@ -15,11 +15,11 @@ declare_riscv_instr!(
     match  = 0x00002003,
     format = FormatLoad,
     registers = RegisterStateLoad,
-    ram    = RAMRead
+    ram    = RamRead
 );
 
 impl LW {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LW as RISCVInstruction>::RamAccess) {
         let value = match cpu
             .mmu
             .load_word(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)

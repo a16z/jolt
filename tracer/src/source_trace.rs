@@ -2,12 +2,14 @@ use std::cmp::Reverse;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_program::execution::{
-    ExecutionBackend, JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite,
-    RegisterRead, RegisterState, RegisterWrite, SourceTraceError, SourceTraceRow, TraceError,
-    TraceInputs, TraceOutput,
+    ExecutionBackend, ExecutionDimensions, JoltProgram, MemoryImage, OwnedTrace, SourceTraceError,
+    SourceTraceRow, TraceError, TraceInputs, TraceOutput,
 };
 use jolt_program::image::DecodeMode;
-use jolt_riscv::{NormalizedOperands, SourceInstructionKind as Kind, RV64I};
+use jolt_riscv::{
+    NormalizedOperands, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite,
+    SourceInstructionKind as Kind, RV64I,
+};
 
 use crate::{
     emulator::{mmu::MemoryWrapper, Emulator},
@@ -71,7 +73,7 @@ impl SourceTracerBackend {
     }
 }
 
-impl ExecutionBackend<SourceTraceRow> for SourceTracerBackend {
+impl ExecutionBackend for SourceTracerBackend {
     type Trace = OwnedTrace<SourceTraceRow>;
 
     fn trace(
@@ -83,7 +85,8 @@ impl ExecutionBackend<SourceTraceRow> for SourceTracerBackend {
         let mut rows = Vec::with_capacity(self.row_capacity);
         while execution.step(&mut rows)? {}
         let (advice_tape, memory, device) = crate::finish_emulator(execution.emulator);
-        Ok(TraceOutput::new(
+        Ok(TraceOutput::with_dimensions(
+            execution.dimensions,
             OwnedTrace::new(rows),
             device,
             Some(MemoryImage {
@@ -196,6 +199,7 @@ struct SourceExecution {
     table: InstructionTable,
     emulator: Emulator,
     control_written: [bool; 2],
+    dimensions: ExecutionDimensions,
 }
 
 impl SourceExecution {
@@ -235,6 +239,7 @@ impl SourceExecution {
             table,
             emulator,
             control_written: [false; 2],
+            dimensions: ExecutionDimensions::default(),
         })
     }
 
@@ -337,6 +342,13 @@ impl SourceExecution {
         rows.push(SourceTraceRow::new(
             index, pc, cpu.pc, registers, ram_access,
         ));
+        self.dimensions.trace_length += 1;
+        self.dimensions.ends_in_jump = matches!(kind, Kind::JAL | Kind::JALR);
+        match ram_access {
+            RamAccess::Read(read) => self.dimensions.ram_bounds.observe(read.address),
+            RamAccess::Write(write) => self.dimensions.ram_bounds.observe(write.address),
+            RamAccess::NoOp => {}
+        }
         cpu.trace_len += 1;
         Ok(cpu.pc != pc)
     }

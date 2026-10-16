@@ -345,10 +345,6 @@ fn tampered_stage6_committed_bytecode_claims_reject() {
     let layout = schedule
         .bytecode
         .unwrap_or_else(|| panic!("committed fixture must schedule a bytecode reduction"));
-    let chunk_count = base.preprocessing.program.committed().map_or_else(
-        || panic!("committed fixture must carry chunk commitments"),
-        |committed| committed.bytecode_chunk_count(),
-    );
 
     for stage in 0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES {
         offset_claim_rejects(
@@ -362,9 +358,9 @@ fn tampered_stage6_committed_bytecode_claims_reject() {
     assert!(
         dimensions.has_address_phase(),
         "committed muldiv fixture lost its bytecode address phase; retire the \
-         stage6 intermediate / stage7 chunk tamper targets"
+         stage6 intermediate / stage7 bytecode tamper targets"
     );
-    for id in bytecode_reduction::cycle_phase_output_openings(dimensions, chunk_count) {
+    for id in bytecode_reduction::cycle_phase_output_openings(dimensions) {
         offset_claim_rejects(&base, "stage6.claims.bytecode_reduction.intermediate", id);
     }
 }
@@ -406,10 +402,6 @@ fn tampered_stage7_committed_claims_reject() {
     let image_layout = schedule
         .program_image
         .unwrap_or_else(|| panic!("committed fixture must schedule a program-image reduction"));
-    let chunk_count = base.preprocessing.program.committed().map_or_else(
-        || panic!("committed fixture must carry chunk commitments"),
-        |committed| committed.bytecode_chunk_count(),
-    );
 
     assert!(
         bytecode_layout.dimensions().has_address_phase()
@@ -417,13 +409,11 @@ fn tampered_stage7_committed_claims_reject() {
         "committed muldiv fixture lost its address phase; retire the stage7 \
          committed tamper targets"
     );
-    for chunk in 0..chunk_count {
-        offset_claim_rejects(
-            &base,
-            "stage7.claims.bytecode_address_phase.chunks",
-            bytecode_reduction::final_bytecode_chunk_opening(chunk),
-        );
-    }
+    offset_claim_rejects(
+        &base,
+        "stage7.claims.bytecode_address_phase.bytecode",
+        bytecode_reduction::final_program_bytecode_opening(),
+    );
     offset_claim_rejects(
         &base,
         "stage7.claims.program_image_address_phase",
@@ -1142,7 +1132,6 @@ fn case_advice_layouts(base: &VerifierFixtureCase) -> PrecommittedSchedule {
             });
         CommittedProgramSchedule {
             bytecode_len: committed.meta.bytecode_len,
-            bytecode_chunk_count: committed.bytecode_chunk_count(),
             program_image_len_words: committed.meta.program_image_len_words,
             program_image_start_index: start_index as usize,
         }

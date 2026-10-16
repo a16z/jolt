@@ -23,7 +23,7 @@ declare_riscv_instr!(
 );
 
 impl EBREAK {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <EBREAK as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <EBREAK as RISCVInstruction>::RamAccess) {
         // Don't advance PC - emulator will detect prev_pc == pc and terminate
         cpu.pc = self.address;
     }

@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl BGE {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <BGE as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <BGE as RISCVInstruction>::RamAccess) {
         if cpu.sign_extend(cpu.x[self.operands.rs1 as usize])
             >= cpu.sign_extend(cpu.x[self.operands.rs2 as usize])
         {

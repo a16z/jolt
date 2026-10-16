@@ -6,7 +6,8 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::expect_used)]
 
-use jolt_program::execution::{ChunkedExecutionBackend, ExecutionBackend, TraceRow};
+use jolt_program::execution::{ChunkedExecutionBackend, ExecutionBackend};
+use jolt_riscv::JoltTraceRow;
 use jolt_tracer_x86::X86TracerBackend;
 
 use jolt_inlines_keccak256 as _;
@@ -83,7 +84,7 @@ fn assert_chunks_compose_spaced(
         }
 
         // Replay in reverse to show order independence.
-        let mut chunks: Vec<Vec<TraceRow>> = summary
+        let mut chunks: Vec<Vec<JoltTraceRow>> = summary
             .checkpoints
             .iter()
             .rev()
@@ -91,12 +92,13 @@ fn assert_chunks_compose_spaced(
                 backend
                     .replay_chunk(checkpoint)
                     .expect("replay failed")
-                    .into_rows()
+                    .rows()
+                    .to_vec()
             })
             .collect();
         chunks.reverse();
 
-        let concatenated: Vec<TraceRow> = chunks.into_iter().flatten().collect();
+        let concatenated: Vec<JoltTraceRow> = chunks.into_iter().flatten().collect();
         assert_eq!(
             concatenated.len(),
             expected.len(),

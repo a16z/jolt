@@ -3,14 +3,16 @@ use std::collections::BTreeMap;
 use common::jolt_device::{MemoryConfig, MemoryLayout};
 use jolt_program::{
     execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
-        RegisterState, RegisterWrite, SourceTraceError, SourceTraceRow, TraceError, TraceInputs,
-        TraceOutput,
+        ExecutionBackend, ExecutionDimensions, JoltProgram, OwnedTrace, SourceTraceError,
+        SourceTraceRow, TraceError, TraceInputs, TraceOutput,
     },
     image::{decode_elf, decode_elf_with_mode, DecodeMode},
     ProgramError,
 };
-use jolt_riscv::{SourceInstructionKind as Kind, RV64I};
+use jolt_riscv::{
+    RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite,
+    SourceInstructionKind as Kind, RV64I,
+};
 
 use super::{InstructionTable, SourceExecution, SourceTracerBackend};
 use crate::{
@@ -555,7 +557,15 @@ fn smoke() {
     f.addi(1, 0, 0, 0, 1, 1);
     f.addi(2, 1, 0, 1, 2, 3);
     f.halt();
-    f.complete();
+    let output = f.complete();
+    assert_eq!(
+        output.dimensions,
+        ExecutionDimensions {
+            trace_length: 3,
+            ends_in_jump: true,
+            ..Default::default()
+        }
+    );
 }
 
 #[test]
@@ -1211,7 +1221,15 @@ fn end_of_ram() {
                 read(address & !7, 0),
             );
             f.halt();
-            f.complete();
+            let output = f.complete();
+            assert_eq!(
+                output.dimensions.ram_bounds.min().unwrap().get(),
+                address & !7
+            );
+            assert_eq!(
+                output.dimensions.ram_bounds.max().unwrap().get(),
+                address & !7
+            );
         }
     }
     for (funct3, width, post) in [
@@ -1230,7 +1248,15 @@ fn end_of_ram() {
             write(address & !7, 0, post),
         );
         f.halt();
-        f.complete();
+        let output = f.complete();
+        assert_eq!(
+            output.dimensions.ram_bounds.min().unwrap().get(),
+            address & !7
+        );
+        assert_eq!(
+            output.dimensions.ram_bounds.max().unwrap().get(),
+            address & !7
+        );
     }
 }
 

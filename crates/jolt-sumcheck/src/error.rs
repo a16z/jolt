@@ -220,4 +220,8 @@ pub enum SumcheckError<F: Field> {
         /// Total number of available batched challenges.
         total: usize,
     },
+
+    /// Consecutive integer domain points have colliding images in the field.
+    #[error("integer sumcheck domain of size {domain_size} is not distinct in the field")]
+    IntegerDomainNotDistinct { domain_size: usize },
 }

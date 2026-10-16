@@ -6,31 +6,27 @@
 //!
 //! Reads return the running field register file state and writes advance it, so the
 //! witness view's build-time replay validation holds by construction. Bridge ops
-//! (`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`/`FIELD_ADVICE_LIMB`) are deliberately not modeled — their
-//! payloads couple to the x-register file, and the field-inline kernel surface under
+//! (`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`/`FIELD_ADVICE_LIMB`) are deliberately not modeled — they
+//! couple field values to the x-register file, and the field-inline kernel surface under
 //! test never distinguishes bridge writes from ordinary ones (the e2e's eq-MLE guest
 //! covers them at the proof level).
 
-#![expect(
-    clippy::unwrap_used,
-    clippy::panic,
-    reason = "test support module: fail loudly"
-)]
+#![expect(clippy::unwrap_used, reason = "test support module: fail loudly")]
 
 use std::sync::Arc;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_field::{CanonicalBytes, Fr, Ring};
-use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
+use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{
-    FieldInlineOp, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
-    RV64IMAC_JOLT_FIELD_INLINE,
+    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE,
 };
+use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RegisterState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 const ENTRY: u64 = RAM_START_ADDRESS;
@@ -45,21 +41,17 @@ fn encode(value: Fr) -> FieldEncodedValue {
 /// file.
 pub(crate) struct FieldRegisterTraceFixture {
     rows: Vec<TraceRow>,
+    field_events: Vec<FieldEvent>,
     bytecode: Vec<JoltInstructionRow>,
     state: [Fr; 16],
     counter: u64,
-}
-
-fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-    let mut row = TraceRow::from_instruction(instruction).unwrap();
-    row.field_inline = Some(Arc::new(data));
-    row
 }
 
 impl FieldRegisterTraceFixture {
     pub(crate) fn new() -> Self {
         Self {
             rows: Vec::new(),
+            field_events: Vec::new(),
             bytecode: Vec::new(),
             state: [Fr::from_u64(0); 16],
             counter: 0x0DDF_00D5_EED0_25EC,
@@ -114,11 +106,24 @@ impl FieldRegisterTraceFixture {
         }
     }
 
+    fn push_row(&mut self, instruction: JoltInstructionRow) {
+        self.rows.push(
+            TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1).unwrap(),
+        );
+    }
+
+    fn push_field_row(&mut self, instruction: JoltInstructionRow, data: FieldInlineTraceData) {
+        self.field_events.push(FieldEvent {
+            cycle: self.rows.len(),
+            data,
+        });
+        self.push_row(instruction);
+    }
+
     /// An ordinary (inactive field-inline) row: an ADDI with no register traffic.
     pub(crate) fn noop(&mut self) {
         let instruction = self.instruction(JoltInstructionKind::ADDI, Some(1), Some(0), None, 0);
-        self.rows
-            .push(TraceRow::from_instruction(instruction).unwrap());
+        self.push_row(instruction);
     }
 
     pub(crate) fn load_imm(&mut self, rd: u8, imm: u64) {
@@ -127,40 +132,32 @@ impl FieldRegisterTraceFixture {
                 imm as i128
             });
         let rd = self.write(rd, Fr::from_u64(imm));
-        self.rows.push(field_row(
+        self.push_field_row(
             instruction,
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
+                rs1: None,
+                rs2: None,
                 rd: Some(rd),
-                ..FieldInlineTraceData::default()
             },
-        ));
+        );
     }
 
-    /// One field-inline arithmetic row (`Add`/`Sub`/`Mul`): reads both operands off the
+    /// One `FIELD_ADD`/`FIELD_SUB`/`FIELD_MUL` row: reads both operands off the
     /// running state and writes a fresh pseudo-random destination value.
-    pub(crate) fn arithmetic(&mut self, op: FieldInlineOp, rd: u8, rs1: u8, rs2: u8) {
-        let kind = match op {
-            FieldInlineOp::Add => JoltInstructionKind::FIELD_ADD,
-            FieldInlineOp::Sub => JoltInstructionKind::FIELD_SUB,
-            FieldInlineOp::Mul => JoltInstructionKind::FIELD_MUL,
-            _ => panic!("arithmetic fixture rows are Add/Sub/Mul only"),
-        };
+    pub(crate) fn arithmetic(&mut self, kind: JoltInstructionKind, rd: u8, rs1: u8, rs2: u8) {
         let instruction = self.instruction(kind, Some(rd), Some(rs1), Some(rs2), 0);
         let rs1 = self.read(rs1);
         let rs2 = self.read(rs2);
         let post = self.fresh_value();
         let rd = self.write(rd, post);
-        self.rows.push(field_row(
+        self.push_field_row(
             instruction,
             FieldInlineTraceData {
-                op: Some(op),
                 rs1: Some(rs1),
                 rs2: Some(rs2),
                 rd: Some(rd),
-                ..FieldInlineTraceData::default()
             },
-        ));
+        );
     }
 
     pub(crate) fn assert_eq_row(&mut self, rs1: u8, rs2: u8) {
@@ -173,15 +170,14 @@ impl FieldRegisterTraceFixture {
         );
         let rs1 = self.read(rs1);
         let rs2 = self.read(rs2);
-        self.rows.push(field_row(
+        self.push_field_row(
             instruction,
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::AssertEq),
                 rs1: Some(rs1),
                 rs2: Some(rs2),
-                ..FieldInlineTraceData::default()
+                rd: None,
             },
-        ));
+        );
     }
 
     pub(crate) fn inv(&mut self, rd: u8, rs1: u8) {
@@ -190,24 +186,19 @@ impl FieldRegisterTraceFixture {
         let post = self.fresh_value();
         let rs1 = self.read(rs1);
         let rd = self.write(rd, post);
-        self.rows.push(field_row(
+        self.push_field_row(
             instruction,
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::Inv),
                 rs1: Some(rs1),
+                rs2: None,
                 rd: Some(rd),
-                ..FieldInlineTraceData::default()
             },
-        ));
+        );
     }
 
     /// Run `f` against a field-inline trace backend padded to `2^log_t` cycles, with
     /// the field-inline witness view attached.
-    pub(crate) fn with_plane<R>(
-        self,
-        log_t: usize,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
-    ) -> R {
+    pub(crate) fn with_plane<R>(self, log_t: usize, f: impl FnOnce(&TraceBackend) -> R) -> R {
         assert!(self.rows.len() <= 1 << log_t, "fixture overflows 2^log_t");
         let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
@@ -236,10 +227,25 @@ impl FieldRegisterTraceFixture {
                 lookups_ra_virtual_log_k_chunk: 16,
             },
         );
+        let rows = self
+            .rows
+            .into_iter()
+            .map(|row| {
+                let instruction = row.instruction();
+                let pc = preprocessing
+                    .bytecode
+                    .get_pc(&instruction)
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+                TraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap()
+            })
+            .collect();
+        let data = TraceData::from_parts(rows, self.field_events).unwrap();
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(self.rows), Default::default(), None, None),
+            TraceOutput::new(data, Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs)
             .with_field_inline()
@@ -256,13 +262,13 @@ pub(crate) fn structured_field_register_fixture(cycles: usize) -> FieldRegisterT
     for step in 0..cycles {
         match step % 8 {
             0 => fixture.load_imm(3, 17 + step as u64),
-            1 => fixture.arithmetic(FieldInlineOp::Add, 5, 3, 15),
-            2 => fixture.arithmetic(FieldInlineOp::Mul, 5, 5, 3),
+            1 => fixture.arithmetic(JoltInstructionKind::FIELD_ADD, 5, 3, 15),
+            2 => fixture.arithmetic(JoltInstructionKind::FIELD_MUL, 5, 5, 3),
             3 => fixture.noop(),
-            4 => fixture.arithmetic(FieldInlineOp::Sub, 15, 5, 5),
+            4 => fixture.arithmetic(JoltInstructionKind::FIELD_SUB, 15, 5, 5),
             5 => fixture.inv(7, 15),
             6 => fixture.assert_eq_row(5, 7),
-            _ => fixture.arithmetic(FieldInlineOp::Mul, 0, 7, 0),
+            _ => fixture.arithmetic(JoltInstructionKind::FIELD_MUL, 0, 7, 0),
         }
     }
     fixture

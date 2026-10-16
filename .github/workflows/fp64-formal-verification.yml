@@ -59,7 +59,7 @@ jobs:
         with:
           toolchain: nightly
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: cargo-fuzz
       - name: Compare field operations with the integer oracle
@@ -76,7 +76,7 @@ jobs:
         with:
           toolchain: nightly
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: cargo-fuzz
       - name: Require BMI2
@@ -166,7 +166,7 @@ jobs:
             --clean
 
       - name: Upload proof evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: fp64-aarch64-linux-gnu-evidence
           path: ${{ runner.temp }}/fp64-aarch64-linux-gnu.json
@@ -217,7 +217,7 @@ jobs:
             --clean
 
       - name: Upload proof evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: fp64-aarch64-apple-darwin-evidence
           path: ${{ runner.temp }}/fp64-aarch64-apple-darwin.json
@@ -263,7 +263,7 @@ jobs:
             --clean
 
       - name: Upload proof evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: fp64-x86-64-linux-gnu-evidence
           path: ${{ runner.temp }}/fp64-x86-64-linux-gnu.json

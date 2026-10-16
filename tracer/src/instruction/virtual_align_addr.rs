@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualAlignAddr {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAlignAddr as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAlignAddr as RISCVInstruction>::RamAccess) {
         // Address of the doubleword containing `rs1 + imm`: the fused
         // ADDI + ANDI(-8) of the sub-word memory sequences.
         let ea =
