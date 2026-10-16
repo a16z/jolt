@@ -1,5 +1,5 @@
 use common::jolt_device::MemoryConfig;
-use jolt_program::execution::{JoltProgram, OwnedTrace, SourceTraceRow, TraceInputs};
+use jolt_program::execution::{JoltProgram, SourceTraceRow, TraceInputs};
 use jolt_riscv::RV64I;
 use tracer::emulator::elf_analyzer::test_elf::{self, StrtabOrder};
 use tracer::SourceTracerBackend;
@@ -92,7 +92,7 @@ pub struct SourceTraceGenObjective;
 
 impl SourceTraceGenObjective {
     /// Emits a reserved source trace; each program's count is checked before timing.
-    pub fn run_source(&self, setup: &SourceTraceGenSetup) -> OwnedTrace<SourceTraceRow> {
+    pub fn run_source(&self, setup: &SourceTraceGenSetup) -> Vec<SourceTraceRow> {
         let mut backend = SourceTracerBackend::with_row_capacity(setup.row_count);
         setup
             .program

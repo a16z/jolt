@@ -17,7 +17,7 @@ fn bench(c: &mut Criterion) {
         group.measurement_time(Duration::from_secs(10));
         group.throughput(Throughput::Elements(setup.row_count as u64));
         let rows = objective.run_source(&setup);
-        assert_eq!(rows.rows().len(), setup.row_count);
+        assert_eq!(rows.len(), setup.row_count);
         drop(rows);
         group.bench_function("source", |b| {
             b.iter(|| std::hint::black_box(objective.run_source(&setup)))
@@ -27,7 +27,7 @@ fn bench(c: &mut Criterion) {
         });
         let rows = objective.run_source(&setup);
         group.bench_function("scan", |b| {
-            b.iter(|| objective.run_scan(std::hint::black_box(rows.rows())))
+            b.iter(|| objective.run_scan(std::hint::black_box(&rows)))
         });
         group.finish();
     }

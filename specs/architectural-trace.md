@@ -33,7 +33,7 @@ pub fn decode_with_profile(elf: &[u8], profile: JoltInstructionProfile)
 
 `decode_instruction` keeps its signature. `tracer::decode(elf)` keeps its signature and its panics and calls `decode_with_profile(elf, RV64IMAC_JOLT)`.
 
-**Seam.** `ExecutionBackend` carries an opaque associated trace type. `TraceSource` and `OwnedTrace` take the row type as a parameter that defaults to `SourceTraceRow`; the source backend uses this cursor storage, while proof backends retain the unified `Arc<TraceData>` output.
+**Seam.** The existing `ExecutionBackend` carries an unconstrained associated trace type. `SourceTracerBackend` returns `Vec<SourceTraceRow>` directly, while proof backends retain the unified `Arc<TraceData>` output described in `specs/unified-trace-row.md`.
 
 ```rust
 // crates/jolt-program/src/execution/backend.rs
@@ -42,20 +42,12 @@ pub trait ExecutionBackend {
     fn trace(&mut self, program: &JoltProgram, inputs: TraceInputs)
         -> Result<TraceOutput<Self::Trace>, TraceError>;
 }
-pub trait TraceSource<R = SourceTraceRow> {
-    fn next_row(&mut self) -> Option<R>;
-    fn rows(&self) -> Option<&[R]> { None }
-    fn shared_rows(&self) -> Option<Arc<Vec<R>>> { None }
-}
-// crates/jolt-program/src/execution/trace.rs
-pub struct OwnedTrace<R = SourceTraceRow> { /* Arc<Vec<R>>, cursor */ }
-impl<R: Clone> TraceSource<R> for OwnedTrace<R>;
 // JoltProgram::trace_with<B: ExecutionBackend>(&self, &mut B, TraceInputs)
 ```
 
 `SourceTracerBackend` supplies `TraceOutput::with_dimensions`, collecting the source instruction count, final JAL/JALR flag, and nonzero aligned RAM address bounds during the existing step pass. These dimensions describe source rows, not an expanded proof trace.
 
-`OwnedTrace<R>` has `new`, `rows`, `From<Vec<R>>`, `Default` and `Clone` with no bound on `R`, and `into_rows` for `R: Clone`. `ChunkedExecutionBackend` is unchanged.
+`ExecutionBackend`, `JoltProgram::trace_with` and `ChunkedExecutionBackend` are unchanged.
 
 **Backend.**
 
@@ -93,7 +85,7 @@ impl SourceTracerBackend {
     pub fn with_row_capacity(rows: usize) -> Self;
 }
 impl ExecutionBackend for SourceTracerBackend {
-    type Trace = OwnedTrace<SourceTraceRow>;
+    type Trace = Vec<SourceTraceRow>;
 }
 ```
 
@@ -102,7 +94,7 @@ let program = JoltProgram::from_elf_bytes_with_profile(elf, RV64I);
 let config = MemoryConfig { program_size: Some(program_size), ..Default::default() };
 let inputs = TraceInputs::new(input, Vec::new(), Vec::new(), config);
 let output = program.trace_with(&mut SourceTracerBackend::with_row_capacity(n), inputs)?;
-let rows: &[SourceTraceRow] = output.trace.rows();
+let rows: &[SourceTraceRow] = &output.trace;
 ```
 
 `program_size` must be `Some` and cover the loaded image, as for `TracerBackend`.
@@ -155,7 +147,7 @@ let mut backend = SourceTracerBackend::with_row_capacity(n).with_decode_mode(mod
 **Seam.**
 
 - A1. Every existing bound, implementation and call site compiles unchanged, and every backend produces the same rows.
-- A2. `TraceSource::rows` and `shared_rows` return `None` once `next_row` has been called. The inherent `OwnedTrace::rows` returns every row regardless of the cursor.
+- A2. The source backend returns its row vector directly in `TraceOutput<Vec<SourceTraceRow>>`; consumers borrow its slice or move the vector without an intermediate row representation.
 
 **Backend.** Write `x[r]` for the value of register `r` before the instruction, with `x[0] = 0`, and `{rs1, rs2, rd, imm}` for the instruction's `NormalizedOperands`.
 
@@ -205,9 +197,8 @@ No `jolt-eval` invariant is added. B5 and B13 are checked by test code inside `t
 - [ ] Profile: one hand-encoded word per base instruction decodes under `RV64I` to its kind; `mul`, `amoadd.w`, `csrrw`, `mret` and an inline-opcode word each return `IllegalSourceInstruction` with the matching kind.
 - [ ] Profile: `c.addi x1, 1` (`0x0085`) returns `IllegalCompressedInstruction` under `RV64I` and `RV64IM_JOLT` and decodes to `ADDI` under `RV64IMAC_JOLT`, through `decode_instruction` and `decode_elf`; a 32-bit `nop` at `0x8000_0002` returns `MalformedImage` under `RV64I` and decodes under `RV64IMAC_JOLT`.
 - [ ] Profile: `decode_with_profile(elf, RV64I)` returns the three instructions and entry address of `addi; addi; jal x0, 0`, and `Err(IllegalSourceInstruction(MUL))` when `mul` is appended; `decode(elf)` returns the same tuple for the first image. A section extent that overflows the address space returns `MalformedImage` without a panic.
-- [ ] Seam: the change is confined to `execution/backend.rs` and `execution/trace.rs`, and the workspace builds, lints and passes every existing test with no other edit.
-- [ ] Seam: a test-local `ExecutionBackend` returning `[7, 11, 13]`, driven through `trace_with`, yields those rows from `rows()`, from `shared_rows()` (the same allocation) and from `next_row()`. After the first `next_row`, `TraceSource::rows` and `shared_rows` return `None`; after the last, `next_row` returns `None` on every call; `into_rows` returns the rows while another handle to the `Arc` is alive.
-- [ ] Seam: `OwnedTrace<R>` constructs, defaults and clones for an `R` that is neither `Clone` nor `Default`.
+- [ ] Seam: the existing execution traits and `trace_with` remain unchanged; `SourceTracerBackend` returns `Vec<SourceTraceRow>` through the associated trace type.
+- [ ] Dimensions: the smoke program reports three instructions, a final jump and no RAM access. One program with a load and a store at different addresses reports the lower store address as its RAM minimum and the higher load address as its RAM maximum.
 - [ ] Backend: every line of the matrix below holds.
 - [ ] Backend: B1 and B5 hold on every matrix program that completes. B13 holds on each of them and on 64 seeded programs (seeds 0 to 63: a prologue that sets a reserved base register, 64 instructions drawn from the ALU, LUI, AUIPC, forward-branch and aligned load and store kinds over one heap buffer, then `jal x0, 0`).
 - [ ] Decode mode: every line of the image table below, after the matrix, holds for `decode_elf_with_mode` under `RV64I`. Wherever a mode decodes, `memory_init` is the bytes of the one section in order, `program_end` is its end and the entry is `0x8000_0000`.
@@ -263,16 +254,16 @@ The image cases of the decode mode are sections of literal bytes, built by the `
 
 B13 is checked by a private harness that steps two emulators in lockstep, as `test_execute_trace_state_lockstep` does: one `Emulator::tick(Some(&mut rows))` against one source step, asserting that the tick's rows form exactly one group at the source `pc`, then comparing registers and PC. The seeded programs are a maintained boundary test of B13 and are secondary to the hand-computed vectors: they show that the two backends agree, not that either is right.
 
-Every existing test passes unmodified, except that test-local `RV64I_ONLY` profile constants become `jolt_riscv::RV64I`. There is no ZK-mode surface; the workspace must still lint under `host` and `host,zk`, and `tracer` must build with `field-inline`, whose instruction variants `execute_direct` covers through the enum's `cfg` attributes.
+The source-backend tests read the returned row vector directly; test-local `RV64I_ONLY` profile constants become `jolt_riscv::RV64I`. There is no ZK-mode surface; the workspace must still lint under `host` and `host,zk`, and `tracer` must build with `field-inline`, whose instruction variants `execute_direct` covers through the enum's `cfg` attributes.
 
 ### Performance
 
 - [ ] `size_of::<SourceTraceRow>() == 80`, asserted at compile time: 320 MiB at 2^22 rows. Rows go straight into one vector, with no intermediate `Vec<Cycle>` and no conversion pass.
 - [ ] After setup, the step loop performs no per-instruction temporary allocation. The row vector is reserved from the capacity hint and otherwise grows amortised; the device output buffer is reserved to `max_output_size` during setup. Full-backtrace capture (`JOLT_BACKTRACE=full`), which boxes the register file on each call, is excluded. Test: a `cfg(test)` counting global allocator with a thread-local counter brackets the private step loop, with capacity reserved, on a loop of 2^12 iterations containing ALU work, a `jal x1` call and `jalr` return, a heap store and load, and an SB to successive output bytes; the allocation count across the loop is zero.
-- [ ] A new `jolt-eval` objective `source_trace_gen` (via `/new-objective`; `jolt-eval` enables `tracer/test-utils`) runs three hand-assembled programs of about 2^22 executed instructions each: an ALU and branch loop, a mix of loads and stores of every width over a heap buffer, and a call and return loop that pushes and pops a stack frame. Criterion ids per program: `source` (`SourceTracerBackend`, capacity reserved), `reference` (`raw_trace_cycles` on the same ELF, `TRACER_PARALLEL` unset) and `scan` (one pass over `rows()` that wrapping-adds the ten numeric accessors of every row into a `u64` passed to `black_box`). Every id sets `Throughput::Elements` to the source row count, so `reference` is normalised per executed source instruction and not per row it emits. Figures are Criterion medians of 10 flat samples after warm-up, release profile, one thread, on an Apple M4 Max, recorded in the PR description. Gates: `source` is not slower than `reference` on any program, and `scan` costs at most 10 ns per row (8 GB/s).
+- [ ] A new `jolt-eval` objective `source_trace_gen` (via `/new-objective`; `jolt-eval` enables `tracer/test-utils`) runs three hand-assembled programs of about 2^22 executed instructions each: an ALU and branch loop, a mix of loads and stores of every width over a heap buffer, and a call and return loop that pushes and pops a stack frame. Criterion ids per program: `source` (`SourceTracerBackend`, capacity reserved), `reference` (`raw_trace_cycles` on the same ELF, `TRACER_PARALLEL` unset) and `scan` (one pass over the row slice that wrapping-adds the ten numeric accessors of every row into a `u64` passed to `black_box`). Every id sets `Throughput::Elements` to the source row count, so `reference` is normalised per executed source instruction and not per row it emits. Figures are Criterion medians of 10 flat samples after warm-up, release profile, one thread, on an Apple M4 Max, recorded in the PR description. Gates: `source` is not slower than `reference` on any program, and `scan` costs at most 10 ns per row (8 GB/s).
 - [ ] The existing path is cost-neutral: seam dispatch stays static, the `Mmu` switch adds one predictable branch to four helpers, and the `reference` ids of `trace_gen_fibonacci` and `trace_gen_sha2_chain` stay within run-to-run noise on the same machine.
 
-The decode gate is off every hot path: decode runs once per program and gains one slice search and one remainder per instruction. So is the decode mode: `DataHoles` replaces the halfword sweep by one `decode_instruction` call per four bytes of text, `Strict` is the default, and the step loop, the slot table and the row are the same in both modes, so no benchmark id moves. The image check of B6 runs at setup, in both modes and outside the step loop. When the addresses of `memory_init` increase strictly, which they do unless sections overlap, it is one scan of `memory_init` that establishes the order, then one pass over `memory_init` merged with one over the doublewords of RAM that the loader touched, and it allocates nothing; otherwise it first sorts the entries by address, in `O(n log n)` time with one index per entry. On an image of 4 MiB with increasing addresses it took 0.47 ns per image byte, on a loaded machine. It falls inside the `source` id, where the hand-assembled images are negligible beside 2^22 steps. A consumer reads `&[SourceTraceRow]` from `TraceSource::rows()`, or the `Arc` from `shared_rows()`, and splits it into parallel chunks without cloning. Each row carries its instruction index, its `next_pc`, and the old and new values of `rd` and of the RAM doubleword, so a chunk needs neither a replay of memory nor, beyond the previous row's `next_pc`, its neighbour.
+The decode gate is off every hot path: decode runs once per program and gains one slice search and one remainder per instruction. So is the decode mode: `DataHoles` replaces the halfword sweep by one `decode_instruction` call per four bytes of text, `Strict` is the default, and the step loop, the slot table and the row are the same in both modes, so no benchmark id moves. The image check of B6 runs at setup, in both modes and outside the step loop. When the addresses of `memory_init` increase strictly, which they do unless sections overlap, it is one scan of `memory_init` that establishes the order, then one pass over `memory_init` merged with one over the doublewords of RAM that the loader touched, and it allocates nothing; otherwise it first sorts the entries by address, in `O(n log n)` time with one index per entry. On an image of 4 MiB with increasing addresses it took 0.47 ns per image byte, on a loaded machine. It falls inside the `source` id, where the hand-assembled images are negligible beside 2^22 steps. A consumer borrows `&[SourceTraceRow]` directly from the returned vector and splits the slice into parallel chunks without cloning. Each row carries its instruction index, its `next_pc`, and the old and new values of `rd` and of the RAM doubleword, so a chunk needs neither a replay of memory nor, beyond the previous row's `next_pc`, its neighbour.
 
 ## Design
 

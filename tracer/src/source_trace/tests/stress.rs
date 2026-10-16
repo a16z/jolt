@@ -70,7 +70,7 @@ fn seeded_state_equivalence() {
             .trace(&program, f.inputs.clone())
             .unwrap();
         check_replay(&program, &f.inputs, &output);
-        check_lockstep(&program, &f.inputs, output.trace.rows());
+        check_lockstep(&program, &f.inputs, &output.trace);
     }
 }
 

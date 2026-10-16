@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use common::jolt_device::{MemoryConfig, MemoryLayout};
 use jolt_program::{
     execution::{
-        ExecutionBackend, ExecutionDimensions, JoltProgram, OwnedTrace, SourceTraceError,
-        SourceTraceRow, TraceError, TraceInputs, TraceOutput,
+        ExecutionBackend, ExecutionDimensions, JoltProgram, SourceTraceError, SourceTraceRow,
+        TraceError, TraceInputs, TraceOutput,
     },
     image::{decode_elf, decode_elf_with_mode, DecodeMode},
     ProgramError,
@@ -277,26 +277,26 @@ impl Fixture {
         JoltProgram::from_elf_bytes_with_profile(elf, RV64I)
     }
 
-    fn complete(self) -> TraceOutput<OwnedTrace<SourceTraceRow>> {
+    fn complete(self) -> TraceOutput<Vec<SourceTraceRow>> {
         self.complete_with_reference_panic(false)
     }
 
     fn complete_with_reference_panic(
         self,
         expected_reference_panic: bool,
-    ) -> TraceOutput<OwnedTrace<SourceTraceRow>> {
+    ) -> TraceOutput<Vec<SourceTraceRow>> {
         let program = self.program();
         let output = SourceTracerBackend::with_row_capacity(self.expected.len())
             .with_decode_mode(self.decode_mode)
             .trace(&program, self.inputs.clone())
             .unwrap();
-        assert_eq!(output.trace.rows(), self.expected);
+        assert_eq!(output.trace, self.expected);
         check_replay_with_mode(&program, &self.inputs, &output, self.decode_mode);
         if !output.device.panic {
             check_lockstep_with_reference_panic(
                 &program,
                 &self.inputs,
-                output.trace.rows(),
+                &output.trace,
                 expected_reference_panic,
                 self.decode_mode,
             );
@@ -354,7 +354,7 @@ fn memory_word(memory: &BTreeMap<u64, u8>, address: u64) -> u64 {
 fn check_replay(
     program: &JoltProgram,
     inputs: &TraceInputs,
-    output: &TraceOutput<OwnedTrace<SourceTraceRow>>,
+    output: &TraceOutput<Vec<SourceTraceRow>>,
 ) {
     check_replay_with_mode(program, inputs, output, DecodeMode::Strict);
 }
@@ -362,7 +362,7 @@ fn check_replay(
 fn check_replay_with_mode(
     program: &JoltProgram,
     inputs: &TraceInputs,
-    output: &TraceOutput<OwnedTrace<SourceTraceRow>>,
+    output: &TraceOutput<Vec<SourceTraceRow>>,
     mode: DecodeMode,
 ) {
     let image = decode_elf_with_mode(program.elf_bytes(), RV64I, mode).unwrap();
@@ -385,7 +385,7 @@ fn check_replay_with_mode(
     }
     let mut x = [0u64; 32];
     let mut pc = image.entry_address;
-    for row in output.trace.rows() {
+    for row in &output.trace {
         assert_eq!(row.pc(), pc);
         assert_eq!(
             image.instructions[row.instruction_index() as usize]
@@ -1221,15 +1221,7 @@ fn end_of_ram() {
                 read(address & !7, 0),
             );
             f.halt();
-            let output = f.complete();
-            assert_eq!(
-                output.dimensions.ram_bounds.min().unwrap().get(),
-                address & !7
-            );
-            assert_eq!(
-                output.dimensions.ram_bounds.max().unwrap().get(),
-                address & !7
-            );
+            f.complete();
         }
     }
     for (funct3, width, post) in [
@@ -1248,16 +1240,37 @@ fn end_of_ram() {
             write(address & !7, 0, post),
         );
         f.halt();
-        let output = f.complete();
-        assert_eq!(
-            output.dimensions.ram_bounds.min().unwrap().get(),
-            address & !7
-        );
-        assert_eq!(
-            output.dimensions.ram_bounds.max().unwrap().get(),
-            address & !7
-        );
+        f.complete();
     }
+}
+
+#[test]
+fn ram_bounds_include_load_and_store() {
+    let mut f = Fixture::new();
+    let store_address = f.layout().heap_end - 24;
+    let load_address = f.layout().heap_end - 8;
+    f.address(5, store_address);
+    f.emit(
+        i(0x03, 3, 6, 5, 16),
+        registers(Some((5, store_address)), None, Some((6, 0, 0))),
+        read(load_address, 0),
+    );
+    f.addi(7, 0, 0, 0, 1, 1);
+    f.emit(
+        s(3, 5, 7, 0),
+        registers(Some((5, store_address)), Some((7, 1)), None),
+        write(store_address, 0, 1),
+    );
+    f.halt();
+    let output = f.complete();
+    assert_eq!(
+        output.dimensions.ram_bounds.min().unwrap().get(),
+        store_address
+    );
+    assert_eq!(
+        output.dimensions.ram_bounds.max().unwrap().get(),
+        load_address
+    );
 }
 
 #[test]

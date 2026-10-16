@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_program::execution::{
-    ExecutionBackend, ExecutionDimensions, JoltProgram, MemoryImage, OwnedTrace, SourceTraceError,
+    ExecutionBackend, ExecutionDimensions, JoltProgram, MemoryImage, SourceTraceError,
     SourceTraceRow, TraceError, TraceInputs, TraceOutput,
 };
 use jolt_program::image::DecodeMode;
@@ -74,7 +74,7 @@ impl SourceTracerBackend {
 }
 
 impl ExecutionBackend for SourceTracerBackend {
-    type Trace = OwnedTrace<SourceTraceRow>;
+    type Trace = Vec<SourceTraceRow>;
 
     fn trace(
         &mut self,
@@ -87,7 +87,7 @@ impl ExecutionBackend for SourceTracerBackend {
         let (advice_tape, memory, device) = crate::finish_emulator(execution.emulator);
         Ok(TraceOutput::with_dimensions(
             execution.dimensions,
-            OwnedTrace::new(rows),
+            rows,
             device,
             Some(MemoryImage {
                 bytes: memory.materialized_nonzero_bytes(),

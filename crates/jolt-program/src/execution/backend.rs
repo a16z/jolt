@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use common::jolt_device::JoltDevice;
 
-use super::{MemoryImage, SourceTraceRow, TraceData, TraceError, TraceInputs, TraceOutput};
+use super::{MemoryImage, TraceData, TraceError, TraceInputs, TraceOutput};
 
 pub trait ExecutionBackend {
     type Trace;
@@ -12,26 +10,6 @@ pub trait ExecutionBackend {
         program: &super::JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput<Self::Trace>, TraceError>;
-}
-
-pub trait TraceSource<R = SourceTraceRow> {
-    fn next_row(&mut self) -> Option<R>;
-
-    /// The full row sequence as one slice, if this source can serve it.
-    ///
-    /// Contract: the slice must equal exactly what the remaining `next_row`
-    /// calls would yield — a partially consumed source must return `None`
-    /// rather than a slice that includes already-consumed rows.
-    fn rows(&self) -> Option<&[R]> {
-        None
-    }
-
-    /// The full row sequence as a shared allocation, under the same contract
-    /// as [`Self::rows`]. Consumers can retain or split the source rows
-    /// without copying the trace.
-    fn shared_rows(&self) -> Option<Arc<Vec<R>>> {
-        None
-    }
 }
 
 /// Two-pass chunked execution: a fast checkpointing pass over the whole
