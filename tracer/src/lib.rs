@@ -755,17 +755,10 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
 #[cfg(test)]
 pub(crate) mod test_utils {
     /// Build the muldiv guest and return the ELF bytes.
-    pub(crate) fn build_muldiv_guest() -> Vec<u8> {
-        build_guest("muldiv-guest", "muldiv")
-    }
-
-    /// Build the fibonacci guest and return the ELF bytes.
-    pub(crate) fn build_fibonacci_guest() -> Vec<u8> {
-        build_guest("fibonacci-guest", "fib")
-    }
-
     /// Mirrors the pattern used by `jolt_host::Program::build()`.
-    fn build_guest(guest: &str, func: &str) -> Vec<u8> {
+    pub(crate) fn build_muldiv_guest() -> Vec<u8> {
+        let guest = "muldiv-guest";
+        let func = "muldiv";
         let target_dir = std::env::temp_dir()
             .join("jolt-guest-targets")
             .join(format!("{guest}-{func}"))
@@ -805,7 +798,7 @@ pub(crate) mod test_utils {
 
         if !output.status.success() {
             panic!(
-                "failed to build {guest}:\n{}",
+                "failed to build muldiv guest:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }
@@ -1164,6 +1157,81 @@ mod tests {
                 "two-pass rows differ (workers={workers}, chunk_rows={chunk_rows}, capacity_rows={capacity_rows})"
             );
             assert_eq!(finished.get_cpu().trace_len, serial_rows.len());
+        }
+    }
+
+    /// `a0 = JOLT_ADVICE_WRITE_CALL_ID; a1 = pc; a2 = 8; VirtualHostIO` appends
+    /// eight text bytes to the advice tape, then `ADVICE_LD x5` reads eight
+    /// bytes back, crossing from the seeded tape into the appended bytes.
+    fn advice_round_trip_elf() -> Vec<u8> {
+        build_elf64(
+            &[
+                0x00ad_c537, // lui a0, 0xadc
+                0xabe5_0513, // addi a0, a0, -0x542
+                0x0000_0597, // auipc a1, 0
+                0x0080_0613, // addi a2, x0, 8
+                0x0000_205b, // VirtualHostIO
+                0x0600_02db, // advice.ld x5
+                0x0000_006f, // j .
+            ],
+            &[],
+            StrtabOrder::GnuLd,
+        )
+    }
+
+    /// Replaying workers append advice to their private tapes. Two-pass chunks
+    /// and chunked-contract windows re-trace the serial rows whether a chunk
+    /// boundary separates the append from the read or both lie in one chunk.
+    /// The contract's boundary spacing floor exceeds this trace, so every
+    /// window resumes at row 0: the read's one-row window re-executes the
+    /// append among its skipped rows.
+    #[test]
+    fn replay_workers_append_advice_to_private_tapes() {
+        use crate::parallel::{run_two_pass, TwoPassConfig};
+        use jolt_program::execution::{ChunkedExecutionBackend, TraceInputs};
+        use jolt_program::preprocess::BytecodePCMapper;
+
+        let elf = advice_round_trip_elf();
+        let memory_config = tiny_guest_config(&elf);
+        let seed = [0xa1u8, 0xa2, 0xa3];
+        let seeded = || Some(AdviceTape::from_bytes(seed.to_vec()));
+        let (_, serial_rows, _, _, tape) =
+            trace(&elf, None, &[], &[], &[], &memory_config, seeded());
+        let appended: [u8; 8] = [0x97, 0x05, 0x00, 0x00, 0x13, 0x06, 0x80, 0x00];
+        assert_eq!(tape.into_bytes(), [seed.as_slice(), &appended].concat());
+        assert!(serial_rows
+            .iter()
+            .any(|cycle| matches!(cycle.rd_write(), Some((5, _, 0x1300_0005_97a3_a2a1)))));
+
+        let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
+        let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode).expect("bytecode");
+        let serial_trace_rows: Vec<_> = serial_rows
+            .iter()
+            .map(|cycle| cycle_to_trace_row(cycle, &bytecode).expect("trace row"))
+            .collect();
+        let inputs = TraceInputs::new(Vec::new(), Vec::new(), Vec::new(), memory_config)
+            .with_advice_tape(Some(seed.to_vec()));
+        let mut backend = TracerBackend::new();
+        for chunk_rows in [1, 1 << 20] {
+            let emulator = create_emulator(&elf, None, &[], &[], &[], &memory_config, seeded());
+            let (rows, _) = run_two_pass(
+                emulator,
+                &TwoPassConfig {
+                    workers: 2,
+                    chunk_rows,
+                    capacity_rows: 1 << 24,
+                },
+            );
+            assert_eq!(rows, serial_rows, "two-pass, chunk_rows {chunk_rows}");
+
+            let summary = backend
+                .execute(&program, inputs.clone(), chunk_rows)
+                .expect("execute");
+            let mut rows = Vec::new();
+            for checkpoint in &summary.checkpoints {
+                rows.extend_from_slice(backend.replay_chunk(checkpoint).expect("replay").rows());
+            }
+            assert_eq!(rows, serial_trace_rows, "chunked, chunk_size {chunk_rows}");
         }
     }
 

@@ -161,41 +161,6 @@ impl MemoryData {
         }
     }
 
-    /// Install a checkpoint image: `prefix` becomes the first words of a flat
-    /// backing of `resident_words` words, all others zero, while
-    /// `logical_words` stays the address-space size that address validation
-    /// reports. An access at or above `resident_words` hits the out-of-bounds
-    /// panic, so the caller must size it to cover every access of the replay.
-    /// Reinstalling into the same backing zeroes only the words dirtied since
-    /// the previous install (everything at or above `high_water` is zero).
-    pub(crate) fn install_prefix(
-        &mut self,
-        prefix: &[u64],
-        resident_words: usize,
-        logical_words: usize,
-    ) {
-        assert!(
-            prefix.len() <= resident_words && resident_words <= logical_words,
-            "checkpoint prefix {} words, resident {resident_words}, logical {logical_words}",
-            prefix.len()
-        );
-        match &mut self.backing {
-            MemoryBacking::Flat(words) if words.len() == resident_words => {
-                if let Some(dirty) = words.get_mut(prefix.len()..self.high_water) {
-                    dirty.fill(0);
-                }
-                words[..prefix.len()].copy_from_slice(prefix);
-            }
-            backing => {
-                let mut words = vec![0; resident_words];
-                words[..prefix.len()].copy_from_slice(prefix);
-                *backing = MemoryBacking::Flat(words);
-            }
-        }
-        self.num_doublewords = logical_words;
-        self.high_water = prefix.len();
-    }
-
     /// Enable checkpoint saving for this memory. If this is true, all memory accesses will have
     /// their initial values stored to `self.checkpoint`.
     /// NOTE: This is necessary because memory accesses used to store the bytecode in memory should
@@ -539,41 +504,6 @@ mod tests {
         assert_eq!(taken.data.get_u64(0), 42);
         assert_eq!(memory.data.get_num_doublewords(), 0);
         assert!(!memory.validate_address(0), "content moved out");
-    }
-
-    #[test]
-    fn install_prefix_bounds_resident_words_and_clears_previous_dirt() {
-        let mut memory = Memory::empty();
-        memory.data.install_prefix(&[11, 22], 4, 8);
-        assert_eq!(memory.data.get_num_doublewords(), 8);
-        assert!(
-            memory.validate_address(7 * 8),
-            "logical size stays distinct"
-        );
-        assert_eq!(
-            [0, 8, 16].map(|address| memory.read_doubleword(address)),
-            [11, 22, 0]
-        );
-        memory.write_doubleword(24, 99);
-
-        memory.data.install_prefix(&[33], 4, 8);
-        assert_eq!(
-            [0, 8, 16, 24].map(|address| memory.read_doubleword(address)),
-            [33, 0, 0, 0]
-        );
-        let err = std::panic::catch_unwind(AssertUnwindSafe(|| memory.read_doubleword(32)))
-            .expect_err("an access past the resident words must panic");
-        let message = err.downcast_ref::<String>().expect("panic message");
-        assert!(message.contains("Out of bounds memory access (4 >= 4)"));
-
-        for (prefix, resident, logical) in [(&[1u64, 2][..], 1, 8), (&[], 9, 8)] {
-            assert!(std::panic::catch_unwind(AssertUnwindSafe(|| {
-                Memory::empty()
-                    .data
-                    .install_prefix(prefix, resident, logical);
-            }))
-            .is_err());
-        }
     }
 
     #[test]

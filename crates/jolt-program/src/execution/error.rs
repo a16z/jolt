@@ -27,14 +27,4 @@ pub enum TraceError {
     InvalidFieldEvent { cycle: usize },
     #[error("RAM minimum address exceeds maximum address")]
     InvalidRamBounds,
-    #[error("replay diverged from the recorded execution at row {row}: {reason}")]
-    ReplayDiverged { row: usize, reason: String },
-    #[error("replay rows {start}..{end} exceed the {extent} readable rows")]
-    ReplayOutOfRange {
-        start: usize,
-        end: usize,
-        extent: usize,
-    },
-    #[error("row replay does not support {0}")]
-    ReplayUnsupported(&'static str),
 }
