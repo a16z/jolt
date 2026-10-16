@@ -6,8 +6,8 @@
 //!
 //! Cycle rounds 0 and 1 read the witness's row handle in task-partitioned
 //! serial visits that regenerate their entries; no round holds `T/2` entries.
-//! The second bind creates the `T/4` indexed SoA layout. Coefficients stay as
-//! LUT indices until the `u16` domain saturates. Parallel builds keep no seed
+//! The second bind creates the quarter-cycle-domain field-coefficient entries
+//! that later cycle binds compact in place. Parallel builds keep no seed
 //! entries for a witness with a row handle: the second bind regenerates them
 //! from the trace rows. The two read-operand openings come from one more row
 //! walk.
