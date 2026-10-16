@@ -22,6 +22,19 @@ pub fn one_hot_trace_setup_shape(
     config: &ProverConfig,
     bytecode_len: usize,
 ) -> Result<(OneHotTraceSetupShape, [u8; 32], usize), VerifierError> {
+    if !config.trace_length.is_power_of_two() {
+        return Err(VerifierError::InvalidTraceLength {
+            got: config.trace_length,
+            max: usize::MAX,
+        });
+    }
+    if !config.ram_K.is_power_of_two() {
+        return Err(VerifierError::InvalidRamK {
+            got: config.ram_K,
+            min: 1,
+            max: usize::MAX,
+        });
+    }
     let log_t = config.trace_length.ilog2() as usize;
     let log_k_chunk = config.one_hot_config.committed_chunk_bits();
     let formula_dimensions = formula_dimensions_from_parts(

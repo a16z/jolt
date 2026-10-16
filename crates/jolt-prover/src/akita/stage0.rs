@@ -1,6 +1,6 @@
 use common::jolt_device::JoltDevice;
 use jolt_kernels::akita::commitment::{WitnessCommitRequest, WitnessCommitment};
-use jolt_kernels::{JoltBackend, KernelContext};
+use jolt_kernels::{JoltBackend, KernelContext, KernelError};
 
 use jolt_claims::protocols::jolt::lattice::OneHotTraceShape;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
@@ -129,6 +129,28 @@ where
         log_t,
         log_k_chunk,
     };
+    let mut precommitted_hints: Vec<&PCS::OpeningHint> = trusted_advice
+        .map(|object| &object.hint)
+        .into_iter()
+        .collect();
+    if let Some(program) = preprocessing
+        .committed_program
+        .as_ref()
+        .map(|data| &data.direct_program)
+    {
+        precommitted_hints.extend(program.objects().map(|object| &object.hint));
+    }
+    let commit_plan = WitnessCommitRequest::<PCS>::validate_setup(
+        &preprocessing.pcs_setup,
+        one_hot_trace_shape,
+        precommitted_hints.len() + usize::from(untrusted_advice_present),
+    )
+    .map_err(KernelError::from)?;
+    backend.preflight(
+        config
+            .rw_config
+            .ram_dimensions(log_t, config.ram_K.ilog2() as usize),
+    )?;
     // Auxiliary objects commit before the trace because their frozen
     // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
@@ -144,18 +166,8 @@ where
 
     // Canonical batch order: advice, then field increments or direct committed-program
     // objects (mutually exclusive), then OneHotTrace.
-    let mut precommitted_hints: Vec<&PCS::OpeningHint> = untrusted_advice
-        .as_ref()
-        .map(|object| &object.hint)
-        .into_iter()
-        .chain(trusted_advice.map(|object| &object.hint))
-        .collect();
-    if let Some(program) = preprocessing
-        .committed_program
-        .as_ref()
-        .map(|data| &data.direct_program)
-    {
-        precommitted_hints.extend(program.objects().map(|object| &object.hint));
+    if let Some(object) = untrusted_advice.as_ref() {
+        precommitted_hints.insert(0, &object.hint);
     }
     let WitnessCommitment {
         commitment,
@@ -163,11 +175,7 @@ where
         #[cfg(feature = "field-inline")]
         field_inc,
     } = tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
-        backend.commit_witness(WitnessCommitRequest::new(
-            &preprocessing.pcs_setup,
-            one_hot_trace_shape,
-            &precommitted_hints,
-        )?)
+        backend.commit_witness(commit_plan.with_precommitted_hints(&precommitted_hints)?)
     })?;
 
     absorb_akita_commitments(

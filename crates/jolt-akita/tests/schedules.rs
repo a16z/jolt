@@ -177,7 +177,7 @@ fn k16_catalogs_cover_production_trace_geometry() {
             {
                 continue;
             }
-            for log_t in 12..=30 {
+            for log_t in 12..=31 {
                 shape.log_t = log_t;
                 let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape).expect("trace layout");
                 let _ = expected.insert((plan.num_vars(), plan.ids().len()));
@@ -749,7 +749,7 @@ mod field_inc {
             .into_iter()
             .filter(|group| group.num_polynomials() > 2)
             .collect::<Vec<_>>();
-        assert_eq!(groups.len(), 266);
+        assert_eq!(groups.len(), 280);
         field_inline_rows_plan_and_resolve(AKITA_ONE_HOT_K16, profile, groups);
     }
 

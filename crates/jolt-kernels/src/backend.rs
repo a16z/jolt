@@ -15,6 +15,7 @@ use std::sync::Arc;
 use allocative::{Allocative, Key, Visitor};
 #[cfg(all(feature = "field-inline", not(feature = "akita")))]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
+use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
@@ -127,6 +128,17 @@ where
     F: JoltField,
     R: ConcreteSumcheck<F>,
 {
+    /// Validate representation limits before commitments, retaining any shared
+    /// witness columns in the proof session for later preparation.
+    fn preflight(
+        &self,
+        _session: &mut ProofSession,
+        _witness: &dyn JoltWitnessPlane<F>,
+        _dimensions: ReadWriteDimensions,
+    ) -> Result<(), KernelError<F>> {
+        Ok(())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -288,6 +300,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltBackend<F, PCS> {
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> KernelContext<'_, F, JoltBackend<F, PCS>> {
+    /// Admit backend address and cycle domains before witness commitments.
+    pub fn preflight(&mut self, dimensions: ReadWriteDimensions) -> Result<(), KernelError<F>> {
+        self.registry
+            .ram_read_write
+            .preflight(&mut self.session, self.witness.as_ref(), dimensions)
+    }
+
     pub fn build_round_scheduler(&mut self) -> Box<dyn RoundScheduler<F>> {
         self.registry.round_scheduler.build(&mut self.session)
     }

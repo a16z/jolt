@@ -188,7 +188,8 @@ mod akita_tests {
         )
         .expect("Akita preprocessing");
         let setup = &preprocessing.pcs_setup;
-        let request = WitnessCommitRequest::<AkitaScheme>::new(setup, shape, &[])
+        let request = WitnessCommitRequest::<AkitaScheme>::validate_setup(setup, shape, 0)
+            .and_then(|plan| plan.with_precommitted_hints(&[]))
             .expect("matching canonical geometry");
         assert_eq!(
             request.plan(),
@@ -200,7 +201,8 @@ mod akita_tests {
             ..shape
         };
         assert!(matches!(
-            WitnessCommitRequest::<AkitaScheme>::new(setup, different_shape, &[]),
+            WitnessCommitRequest::<AkitaScheme>::validate_setup(setup, different_shape, 0)
+                .and_then(|plan| plan.with_precommitted_hints(&[])),
             Err(OpeningsError::InvalidSetup(reason))
                 if reason.contains("layout digest")
         ));
@@ -210,7 +212,8 @@ mod akita_tests {
         let hint = <AkitaScheme as CommitmentScheme>::OpeningHint::default();
         let hints = vec![&hint; setup.max_total_batch_polys()];
         assert!(matches!(
-            WitnessCommitRequest::<AkitaScheme>::new(setup, shape, &hints),
+            WitnessCommitRequest::<AkitaScheme>::validate_setup(setup, shape, hints.len())
+                .and_then(|plan| plan.with_precommitted_hints(&hints)),
             Err(OpeningsError::InvalidSetup(reason))
                 if reason.contains("dimensions")
         ));

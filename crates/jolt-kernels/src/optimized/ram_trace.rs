@@ -58,6 +58,59 @@ fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError
 pub(crate) struct SharedRamAddresses(pub(crate) Arc<Vec<u32>>);
 
 impl SharedRamAddresses {
+    /// Check the maximum remapped address without retaining a column.
+    pub(crate) fn validate_witness<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        ram_k: usize,
+    ) -> Result<(), KernelError<F>> {
+        let cycles = 1usize << log_t;
+        #[cfg(feature = "parallel")]
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                let error = FirstErrorLatch::new();
+                let max_address = (0..cycles.div_ceil(PAR_CHUNK))
+                    .into_par_iter()
+                    .map(|chunk_index| {
+                        let base = chunk_index * PAR_CHUNK;
+                        let take = PAR_CHUNK.min(cycles - base);
+                        let mut maximum = None;
+                        for offset in 0..take {
+                            match access.window::<RamAddressBundle>(base + offset) {
+                                Ok(bundle) => maximum = maximum.max(bundle.address.0),
+                                Err(failure) => {
+                                    error.record(base + offset, KernelError::from(failure));
+                                    return None;
+                                }
+                            }
+                        }
+                        maximum
+                    })
+                    .reduce(|| None, |left, right| left.max(right));
+                if let Some(failure) = error.take() {
+                    return Err(failure);
+                }
+                return validate_addresses(&[encode_address(max_address)?], ram_k);
+            }
+        }
+        struct MaxAddress(Option<u64>);
+
+        impl StreamConsumer for MaxAddress {
+            type Witness = RamAddressBundle;
+
+            fn consume(&mut self, chunk: &[RamAddressBundle]) {
+                for bundle in chunk {
+                    self.0 = self.0.max(bundle.address.0);
+                }
+            }
+        }
+
+        let mut consumers = (MaxAddress(None),);
+        stream_witnesses(witness, 0..cycles, SPLIT_CHUNK, &mut consumers)?;
+        let (MaxAddress(max_address),) = consumers;
+        validate_addresses(&[encode_address(max_address)?], ram_k)
+    }
+
     /// Collect once, then return shared references.
     #[expect(
         clippy::expect_used,
