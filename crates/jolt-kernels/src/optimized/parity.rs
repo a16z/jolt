@@ -12,10 +12,13 @@
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::{Fr, JoltField, Ring};
+use jolt_program::execution::TraceOutput;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_witness::testing::LoggedReplay;
 #[cfg(not(feature = "akita"))]
 use jolt_witness::JoltWitnessOracle;
+use jolt_witness::{JoltVmWitnessInputs, TraceBackend, TraceStorage};
 
 use crate::SumcheckKernel;
 
@@ -30,6 +33,37 @@ pub(crate) fn synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
             )
         })
         .collect()
+}
+
+/// `resident`'s rows behind a replay with `segment_rows`-row checkpoints; a
+/// read covering `fail_row`, when given, fails like a diverged replay.
+pub(crate) fn replayed(
+    resident: &TraceBackend,
+    segment_rows: usize,
+    fail_row: Option<usize>,
+) -> TraceBackend {
+    let TraceStorage::Resident(trace) = &resident.trace.trace else {
+        unreachable!("fixtures retain their rows")
+    };
+    let replay = LoggedReplay::new(trace.proof_rows().to_vec(), segment_rows);
+    let replay = match fail_row {
+        Some(row) => replay.failing_at(row),
+        None => replay,
+    };
+    TraceBackend::new(
+        resident.config.clone(),
+        JoltVmWitnessInputs::replayed(
+            &resident.program,
+            &resident.preprocessing,
+            TraceOutput::with_dimensions(
+                resident.trace.dimensions,
+                replay,
+                resident.trace.device.clone(),
+                None,
+                None,
+            ),
+        ),
+    )
 }
 
 #[derive(Clone, Copy)]
