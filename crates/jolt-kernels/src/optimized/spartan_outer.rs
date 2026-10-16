@@ -20,14 +20,21 @@
 //!   ([`GruenSplitEqPolynomial`]); round polynomials come from the two
 //!   endpoints `q(0)`, `q(∞)` and the running claim (`gruen_poly_deg_3`),
 //!   never from four full-domain evaluation sweeps.
-//! - **Fused round-0 materialization**: the bound `Az`/`Bz` tables over the
-//!   joint `(cycle ‖ stream)` domain and the first round's endpoints are
-//!   produced by one pass over the typed rows
-//!   (`OuterLinearStage::fused_materialise_polynomials_round_zero`).
+//! - **Streamed prefix, then fused materialization**: while two `Az`/`Bz`
+//!   tables over the joint `(cycle ‖ stream)` domain exceed
+//!   `OUTER_DENSE_CAP`, a round's pairs are recomputed from the rows: round
+//!   `j` folds each row's group values with `eq(r_1..r_j, ·)`-scaled Lagrange
+//!   weights (LowToHigh binding gives `f^(j)(y) = Σ_b eq(r, b)·f(2^j·y + b)`).
+//!   The first round whose tables fit fills them in the same pass that yields
+//!   its endpoints (`OuterLinearStage::fused_materialise_polynomials_round_zero`
+//!   when that round is 0).
+//! - **Task-partitioned row visits**: every row pass splits the cycle domain
+//!   into at most pool-thread-count tasks of whole Gruen groups
+//!   (`task_ranges`), each visiting its rows once, serially.
 //! - **In-place binding**: `Az`/`Bz` bind without swap buffers; the ordinary input
 //!   tables are never bound.
 //! - **Post-hoc opening evaluation**: the ordinary produced opening claims come
-//!   from one final eq-weighted walk over the typed rows
+//!   from one final split-eq-weighted walk over the typed rows
 //!   (`R1CSEval::compute_claimed_inputs`), not from binding all input polynomials
 //!   through every round.
 //!
@@ -45,7 +52,7 @@ use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
 use jolt_verifier::stages::relations::OpeningIdOf;
 use std::collections::BTreeMap;
-use std::ops::{Add, Sub};
+use std::ops::{Add, Range, Sub};
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::r1cs::field_constraints::limb_radix;
@@ -73,7 +80,9 @@ use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
+};
 // The COMPOSED R1CS shapes (feature-aware): identical to the rv64-only constants
 // without field-inline, the field-inline-extended row/column composition under
 // `field-inline` — the same sources the reference kernel folds with.
@@ -97,15 +106,15 @@ use jolt_witness::witnesses::{
     RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
-use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, TraceRows, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[cfg(feature = "field-inline")]
 use super::support::map_reduce_chunks;
 use super::support::{
-    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
-    RoundChallenges,
+    dense_crossover, pin_derived_term_if_derived, split_at_tasks, task_ranges, try_par_sum_vecs,
+    GruenRoundMessage, RoundChallenges, VISIT_ROWS,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -619,6 +628,32 @@ impl SpartanOuterRow {
             ],
         }
     }
+
+    /// Both stream groups' `(Az, Bz)` with the group rows weighted by `first`
+    /// and `second` (in `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` order); an
+    /// active field-inline cycle folds its field values.
+    fn fold_streams<F: JoltField>(
+        &self,
+        #[cfg(feature = "field-inline")] field_row: Option<&FieldInlineSpartanRow<F>>,
+        first: &[F],
+        second: &[F],
+    ) -> [(F, F); 2] {
+        #[cfg(feature = "field-inline")]
+        if let Some(field_row) = field_row {
+            let values = self.field_group_values(field_row);
+            return [values.fold_first(first), values.fold_second(second)];
+        }
+        let values = self.group_values();
+        [
+            fold_group(first, &values.a_first, &values.b_first, &[0; DOMAIN]),
+            fold_group(
+                second,
+                &values.a_second,
+                &values.b_second_lo,
+                &values.b_second_hi,
+            ),
+        ]
+    }
 }
 
 const LEFT_NODE_COUNT: usize = (DOMAIN_START - EXTENDED_START) as usize;
@@ -787,17 +822,62 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], lo: &[i128], hi: &[i1
     (az.reduce(), bz.reduce())
 }
 
+/// Byte cap on the two dense `Az`/`Bz` tables: the remainder recomputes each
+/// round's pairs from the rows until the current round's tables fit
+/// ([`dense_crossover`]).
+const OUTER_DENSE_CAP: usize = 4 << 30;
+
+/// The rows every outer pass visits. Production passes visit the witness's
+/// row handle; the in-module parity tests also feed typed rows that no trace
+/// produces (full-range words, `i128::MIN` operands).
+enum OuterRows {
+    Trace(TraceRows),
+    #[cfg(test)]
+    Synthetic(Vec<SpartanOuterRow>),
+}
+
+impl OuterRows {
+    fn segment_len(&self) -> usize {
+        match self {
+            Self::Trace(rows) => rows.segment_len(),
+            #[cfg(test)]
+            Self::Synthetic(_) => 1,
+        }
+    }
+
+    /// One serial visit of `range` in exact `chunk`-row callbacks
+    /// ([`TraceRows::visit_bundles`]); `visit` must not enter Rayon.
+    fn visit(
+        &self,
+        range: Range<usize>,
+        chunk: usize,
+        visit: impl FnMut(usize, &[SpartanOuterRow]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        match self {
+            Self::Trace(rows) => rows.visit_bundles(range, chunk, visit),
+            #[cfg(test)]
+            Self::Synthetic(rows) => {
+                let mut visit = visit;
+                range
+                    .clone()
+                    .step_by(chunk)
+                    .try_for_each(|start| visit(start, &rows[start..range.end.min(start + chunk)]))
+            }
+        }
+    }
+}
+
 /// The uni-skip carry: everything the uni-skip front computes that the
-/// remainder slot reclaims — the typed-row store (reused for
-/// materialization and the final opening walk), the stage challenge vector,
-/// and the extended-node evaluations of `t1`.
+/// remainder slot reclaims — the row handle (revisited by the remainder's
+/// passes and the final opening walk), the stage challenge vector, and the
+/// extended-node evaluations of `t1`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
     tau: Vec<F>,
-    /// Typed-row store: slice-backed witnesses stay unmaterialized (the
-    /// ~176 B × T row vector is the prover's peak allocation at large scale).
-    rows: BundleStore<SpartanOuterRow>,
+    /// The witness plane owns these rows; it reports them itself.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: OuterRows,
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
@@ -822,21 +902,21 @@ impl OptimizedOuterUniskip {
                 reason: "Spartan outer row count disagrees with log_t",
             });
         }
-        Self::prepare_from_store(
+        Self::prepare_with_rows(
             session,
             log_t,
             tau,
-            BundleStore::Retained(rows),
+            OuterRows::Synthetic(rows),
             #[cfg(feature = "field-inline")]
             field_rows,
         )
     }
 
-    fn prepare_from_store<F: JoltField>(
+    fn prepare_with_rows<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
-        rows: BundleStore<SpartanOuterRow>,
+        rows: OuterRows,
         #[cfg(feature = "field-inline")] field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     ) -> Result<(), KernelError<F>> {
         if tau.len() != log_t + 2 {
@@ -846,7 +926,8 @@ impl OptimizedOuterUniskip {
         }
         let (tau_low, _) = tau.split_at(log_t + 1);
         let t1_values = Self::extended_t1_values(
-            &rows.access(),
+            &rows,
+            1 << log_t,
             tau_low,
             #[cfg(feature = "field-inline")]
             &field_rows,
@@ -863,7 +944,8 @@ impl OptimizedOuterUniskip {
     }
 
     fn extended_t1_values<F: JoltField>(
-        rows: &BundleAccess<'_, SpartanOuterRow>,
+        rows: &OuterRows,
+        cycles: usize,
         tau_low: &[F],
         #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<F>)],
     ) -> Result<Vec<F>, WitnessError> {
@@ -875,53 +957,59 @@ impl OptimizedOuterUniskip {
         // (cycle, stream) pair sits inside one `x_out` block.
         let pairs_per_block = e_in.len() / 2;
         let two_pow_64 = F::from_u128(1 << 64);
+        let ranges = task_ranges(cycles, rows.segment_len(), pairs_per_block);
 
-        let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, |x_out| {
-            // At most e_in.len() fmadds per accumulator: on 64-bit hosts the
-            // split gives ≤ 2^32 terms. BN254 slots grow by < 2^66 per i128
-            // term; fp128 slots by < 2^65, leaving ample carry headroom.
-            let mut sums = [(
-                <F as WithAccumulator>::SignedProductAccumulator::default(),
-                <F as WithAccumulator>::SignedProductAccumulator::default(),
-            ); EXTENDED_NODE_COUNT];
-            #[cfg(feature = "field-inline")]
-            let mut field_sums = [F::zero(); EXTENDED_NODE_COUNT];
-            #[cfg(feature = "field-inline")]
-            let mut field_cursor = FieldInlineRowCursor::seek(field_rows, x_out * pairs_per_block);
-            for pair in 0..pairs_per_block {
-                let t = x_out * pairs_per_block + pair;
-                let row = rows.row(t)?;
-                let (e_first, e_second) = (e_in[2 * pair], e_in[2 * pair + 1]);
+        let extended = try_par_sum_vecs(
+            ranges.len(),
+            EXTENDED_NODE_COUNT,
+            |task| -> Result<Vec<F>, WitnessError> {
+                let range = ranges[task].clone();
+                let mut extended = vec![F::zero(); EXTENDED_NODE_COUNT];
                 #[cfg(feature = "field-inline")]
-                if let Some(field_row) = field_cursor.advance(t) {
-                    let values = row.field_group_values(field_row);
-                    let products = values.extended_products();
-                    for (sum, (first, second)) in field_sums.iter_mut().zip(&products) {
-                        *sum += e_first * *first + e_second * *second;
+                let mut field_cursor = FieldInlineRowCursor::seek(field_rows, range.start);
+                // A callback of at most `pairs_per_block` aligned rows lies in one
+                // `x_out` block.
+                rows.visit(range, VISIT_ROWS.min(pairs_per_block), |start, bundles| {
+                    // At most 2·VISIT_ROWS fmadds per accumulator. BN254 slots grow
+                    // by < 2^66 per i128 term; fp128 slots by < 2^65, leaving ample
+                    // carry headroom.
+                    let mut sums = [(
+                        <F as WithAccumulator>::SignedProductAccumulator::default(),
+                        <F as WithAccumulator>::SignedProductAccumulator::default(),
+                    ); EXTENDED_NODE_COUNT];
+                    #[cfg(feature = "field-inline")]
+                    let mut field_sums = [F::zero(); EXTENDED_NODE_COUNT];
+                    for (t, row) in (start..).zip(bundles) {
+                        let pair = t % pairs_per_block;
+                        let (e_first, e_second) = (e_in[2 * pair], e_in[2 * pair + 1]);
+                        #[cfg(feature = "field-inline")]
+                        if let Some(field_row) = field_cursor.advance(t) {
+                            let products = row.field_group_values(field_row).extended_products();
+                            for (sum, (first, second)) in field_sums.iter_mut().zip(&products) {
+                                *sum += e_first * *first + e_second * *second;
+                            }
+                            continue;
+                        }
+                        let products = extended_products(&row.group_values());
+                        for ((low, high), product) in sums.iter_mut().zip(products) {
+                            low.fmadd_i128(e_first, product.first);
+                            low.fmadd_i128(e_second, product.second_lo);
+                            high.fmadd_i128(e_second, product.second_hi);
+                        }
                     }
-                    continue;
-                }
-                let products = extended_products(&row.group_values());
-                for ((low, high), product) in sums.iter_mut().zip(products) {
-                    low.fmadd_i128(e_first, product.first);
-                    low.fmadd_i128(e_second, product.second_lo);
-                    high.fmadd_i128(e_second, product.second_hi);
-                }
-            }
-            #[cfg(feature = "field-inline")]
-            return Ok(sums
-                .into_iter()
-                .zip(field_sums)
-                .map(|((low, high), field_sum)| {
-                    e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce() + field_sum)
-                })
-                .collect());
-            #[cfg(not(feature = "field-inline"))]
-            Ok(sums
-                .into_iter()
-                .map(|(low, high)| e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce()))
-                .collect())
-        })?;
+                    let scale = e_out[start / pairs_per_block];
+                    for (value, (low, high)) in extended.iter_mut().zip(sums) {
+                        *value += scale * (low.reduce() + two_pow_64 * high.reduce());
+                    }
+                    #[cfg(feature = "field-inline")]
+                    for (value, field_sum) in extended.iter_mut().zip(field_sums) {
+                        *value += scale * field_sum;
+                    }
+                    Ok(())
+                })?;
+                Ok(extended)
+            },
+        )?;
 
         let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
         for (position, value) in EXTENDED_POSITIONS.into_iter().zip(extended) {
@@ -940,7 +1028,17 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
         tau: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
+        const LABEL: &str = "Spartan outer trace rows";
+        let rows = witness
+            .rows()
+            .ok_or(WitnessError::UnavailableView { label: LABEL })?;
+        if rows.cycles() != 1 << log_t {
+            return Err(WitnessError::InvalidDimensions {
+                label: LABEL,
+                reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
+            }
+            .into());
+        }
         #[cfg(feature = "field-inline")]
         let field_rows = witness
             .field_inline()
@@ -948,11 +1046,11 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
                 label: "composed Spartan outer field-inline oracle",
             }))?
             .field_inline_spartan_rows()?;
-        Self::prepare_from_store(
+        Self::prepare_with_rows(
             session,
             log_t,
             tau,
-            rows,
+            OuterRows::Trace(rows),
             #[cfg(feature = "field-inline")]
             field_rows,
         )
@@ -1000,7 +1098,11 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemaind
                 .ok_or(KernelError::InvariantViolation {
                     reason: "the outer uni-skip slot parked no carry for the remainder member",
                 })?;
-        Ok(Box::new(OuterRemainderKernel::prepare(carry, &inputs)?))
+        Ok(Box::new(OuterRemainderKernel::prepare(
+            carry,
+            &inputs,
+            OUTER_DENSE_CAP,
+        )?))
     }
 }
 
@@ -1017,18 +1119,36 @@ struct DerivedWeights<F> {
     bz_constant: [F; 2],
 }
 
+/// `Az`/`Bz` over the joint `(cycle ‖ stream)` domain.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum OuterTables<F: JoltField> {
+    /// Rounds before the crossover recompute their pairs from the rows.
+    Streamed,
+    /// Filled by the crossover round's pass, bound in place afterwards.
+    Dense {
+        az: Polynomial<F>,
+        bz: Polynomial<F>,
+    },
+}
+
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
-    az: Polynomial<F>,
-    bz: Polynomial<F>,
+    tables: OuterTables<F>,
+    /// The round whose pass fills `tables`; the round count when they never
+    /// fit the cap.
+    dense_round: usize,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    lagrange: [F; DOMAIN],
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
-    rows: BundleStore<SpartanOuterRow>,
+    /// The witness plane owns these rows; it reports them itself.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: OuterRows,
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
@@ -1036,10 +1156,14 @@ struct OuterRemainderKernel<F: JoltField> {
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
+
 impl<F: JoltField> OuterRemainderKernel<F> {
+    /// `dense_cap` bounds the bytes of the two dense tables; production passes
+    /// [`OUTER_DENSE_CAP`].
     fn prepare(
         carry: SpartanOuterCarry<F>,
         inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
+        dense_cap: usize,
     ) -> Result<Self, KernelError<F>> {
         let SpartanOuterCarry {
             log_t,
@@ -1058,7 +1182,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let uniskip_challenge = inputs.relation.uniskip_challenge();
         let tau_high = tau[log_t + 1];
         let tau_low = &tau[..=log_t];
-        let lagrange_r0 = centered_lagrange_evals::<F>(DOMAIN, uniskip_challenge)?;
+        let lagrange: [F; DOMAIN] = centered_lagrange_evals::<F>(DOMAIN, uniskip_challenge)?
+            .try_into()
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "centered Lagrange weights must span the uni-skip domain",
+            })?;
         let kernel = centered_lagrange_kernel::<F>(DOMAIN, tau_high, uniskip_challenge)?;
         let split_eq = GruenSplitEqPolynomial::new_with_scaling(
             tau_low,
@@ -1073,98 +1201,25 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .map(|&variable| outer_opening(variable))
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
-
-        let cycles = 1usize << log_t;
-        let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * cycles);
-        let mut bz: Vec<F> = unsafe_allocate_zero_vec(2 * cycles);
-        let e_out = split_eq.e_out_current();
-        let e_in = split_eq.e_in_current();
-        let in_len = e_in.len();
-        let width = 2 * in_len;
-        let access = rows.access();
-        let lagrange = &lagrange_r0;
-        #[cfg(feature = "field-inline")]
-        let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
-        let block = |x_out: usize,
-                     az_chunk: &mut [F],
-                     bz_chunk: &mut [F]|
-         -> Result<(F, F), WitnessError> {
-            let mut inner_zero = F::zero();
-            let mut inner_infinity = F::zero();
-            #[cfg(feature = "field-inline")]
-            let mut field_cursor = FieldInlineRowCursor::seek(field_rows_ref, x_out * in_len);
-            for x_in in 0..in_len {
-                let t = x_out * in_len + x_in;
-                let row = access.row(t)?;
-                let integer_fold = || {
-                    let values = row.group_values();
-                    let (az_zero, bz_zero) =
-                        fold_group(lagrange, &values.a_first, &values.b_first, &[0; DOMAIN]);
-                    let (az_one, bz_one) = fold_group(
-                        lagrange,
-                        &values.a_second,
-                        &values.b_second_lo,
-                        &values.b_second_hi,
-                    );
-                    (az_zero, bz_zero, az_one, bz_one)
-                };
-                #[cfg(feature = "field-inline")]
-                let (az_zero, bz_zero, az_one, bz_one) =
-                    if let Some(field_row) = field_cursor.advance(t) {
-                        let values = row.field_group_values(field_row);
-                        let (az_zero, bz_zero) = values.fold_first(lagrange);
-                        let (az_one, bz_one) = values.fold_second(lagrange);
-                        (az_zero, bz_zero, az_one, bz_one)
-                    } else {
-                        integer_fold()
-                    };
-                #[cfg(not(feature = "field-inline"))]
-                let (az_zero, bz_zero, az_one, bz_one) = integer_fold();
-                az_chunk[2 * x_in] = az_zero;
-                az_chunk[2 * x_in + 1] = az_one;
-                bz_chunk[2 * x_in] = bz_zero;
-                bz_chunk[2 * x_in + 1] = bz_one;
-                let e = e_in[x_in];
-                inner_zero += e * (az_zero * bz_zero);
-                inner_infinity += e * ((az_one - az_zero) * (bz_one - bz_zero));
-            }
-            Ok((e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity))
-        };
-        let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
-
-        #[cfg(feature = "parallel")]
-        let endpoints = az
-            .par_chunks_mut(width)
-            .zip(bz.par_chunks_mut(width))
-            .enumerate()
-            .map(|(x_out, (az_chunk, bz_chunk))| block(x_out, az_chunk, bz_chunk))
-            .try_reduce(
-                || (F::zero(), F::zero()),
-                |left, right| Ok(add(left, right)),
-            )?;
-        #[cfg(not(feature = "parallel"))]
-        let endpoints = {
-            let mut folded = (F::zero(), F::zero());
-            for (x_out, (az_chunk, bz_chunk)) in
-                az.chunks_mut(width).zip(bz.chunks_mut(width)).enumerate()
-            {
-                folded = add(folded, block(x_out, az_chunk, bz_chunk)?);
-            }
-            folded
-        };
-        Ok(Self {
-            az: Polynomial::new(az),
-            bz: Polynomial::new(bz),
+        let table_bytes = (4 * size_of::<F>()) << log_t;
+        let mut kernel = Self {
+            tables: OuterTables::Streamed,
+            dense_round: dense_crossover(table_bytes, dense_cap, rounds),
+            lagrange,
             purged: false,
             split_eq,
-            pending_endpoints: Some(endpoints),
+            pending_endpoints: None,
             challenges: RoundChallenges::new(rounds),
             rows,
             #[cfg(feature = "field-inline")]
             field_rows,
             opening_ids,
             derived,
-        })
+        };
+        if kernel.dense_round == 0 {
+            kernel.pending_endpoints = Some(kernel.fill_tables()?);
+        }
+        Ok(kernel)
     }
 
     /// Az/Bz column weights at both stream values over the composed opening-column
@@ -1195,50 +1250,203 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         })
     }
 
+    fn cycles(&self) -> usize {
+        1 << (self.challenges.total() - 1)
+    }
+
+    /// The current round's pass, filling the dense tables: each of length
+    /// `2T / 2^round`, allocated once at its final capacity and written in
+    /// disjoint task slices.
+    fn fill_tables(&mut self) -> Result<(F, F), WitnessError> {
+        let len = (2 * self.cycles()) >> self.challenges.bound();
+        let mut az: Vec<F> = unsafe_allocate_zero_vec(len);
+        let mut bz: Vec<F> = unsafe_allocate_zero_vec(len);
+        let [zero, infinity] = self.round_pass(Some([&mut az[..], &mut bz[..]]), endpoint_terms)?;
+        self.tables = OuterTables::Dense {
+            az: Polynomial::new(az),
+            bz: Polynomial::new(bz),
+        };
+        Ok((zero, infinity))
+    }
+
+    /// Row weights of the current round's pass, one `[first, second]` group
+    /// pair per cycle offset `c` within a pair half: the Lagrange weights in
+    /// round 0, whose halves are the two streams; in round `j ≥ 1`, those
+    /// weights times `eq(r_2..r_j, c)·eq(r_1, s)` for stream `s`, offset bit
+    /// `i` pairing `r_{i+2}`. Round `j` thus holds `2^(j−1)` pairs, at most
+    /// `table_bytes / cap` of them before the crossover.
+    fn round_weights(&self) -> Vec<[[F; DOMAIN]; 2]> {
+        let round = self.challenges.bound();
+        let Some((&stream, cycle_challenges)) = self.challenges.as_slice()[..round].split_first()
+        else {
+            return vec![[self.lagrange; 2]];
+        };
+        let point: Vec<F> = cycle_challenges.iter().rev().copied().collect();
+        EqPolynomial::<F>::evals(&point, None)
+            .into_iter()
+            .map(|eq| {
+                let high = eq * stream;
+                let low = eq - high;
+                [
+                    self.lagrange.map(|weight| low * weight),
+                    self.lagrange.map(|weight| high * weight),
+                ]
+            })
+            .collect()
+    }
+
+    /// One pass of the current round: every task walks its rows serially,
+    /// writes each completed pair's halves into its slices of `tables` when
+    /// filling, and folds `terms(az, bz)` of its pairs into Gruen-grouped
+    /// sums. Task results are a few field elements, so they reduce.
+    fn round_pass<const N: usize>(
+        &self,
+        tables: Option<[&mut [F]; 2]>,
+        terms: impl Fn([F; 2], [F; 2]) -> [F; N] + Sync,
+    ) -> Result<[F; N], WitnessError> {
+        let round = self.challenges.bound();
+        let e_out = self.split_eq.e_out_current();
+        let e_in = self.split_eq.e_in_current();
+        let group = e_in.len() << round;
+        let ranges = task_ranges(self.cycles(), self.rows.segment_len(), group);
+        let weights = self.round_weights();
+        let slices: Vec<Option<[&mut [F]; 2]>> = match tables {
+            Some(tables) => split_at_tasks(tables, &ranges, |cycle| (2 * cycle) >> round)
+                .into_iter()
+                .map(Some)
+                .collect(),
+            None => ranges.iter().map(|_| None).collect(),
+        };
+        let task = |(range, mut slices): (&Range<usize>, Option<[&mut [F]; 2]>)| -> Result<[F; N], WitnessError> {
+            let first_pair = range.start >> round;
+            let mut sums = GruenSums::new(e_out, e_in);
+            self.walk_pairs(
+                range.clone(),
+                VISIT_ROWS.min(group),
+                &weights,
+                |pair, az, bz| {
+                    if let Some([az_out, bz_out]) = &mut slices {
+                        let entry = 2 * (pair - first_pair);
+                        az_out[entry..entry + 2].copy_from_slice(&az);
+                        bz_out[entry..entry + 2].copy_from_slice(&bz);
+                    }
+                    sums.add(pair, terms(az, bz));
+                },
+            )?;
+            Ok(sums.total)
+        };
+        let add = |left: [F; N], right: [F; N]| std::array::from_fn(|i| left[i] + right[i]);
+        #[cfg(feature = "parallel")]
+        return ranges
+            .par_iter()
+            .zip(slices)
+            .map(task)
+            .try_reduce(|| [F::zero(); N], |left, right| Ok(add(left, right)));
+        #[cfg(not(feature = "parallel"))]
+        ranges
+            .iter()
+            .zip(slices)
+            .try_fold([F::zero(); N], |sum, task_input| {
+                Ok(add(sum, task(task_input)?))
+            })
+    }
+
+    /// One task's serial walk of `range` in the current round: each row folds
+    /// into its pair's low or high half — round 0's halves are one cycle's two
+    /// streams, round `j ≥ 1`'s the first and last `2^(j−1)` cycles of a
+    /// `2^j`-cycle pair — and `emit` receives every completed pair in order.
+    /// Halves persist across callbacks, so a pair may span several.
+    fn walk_pairs(
+        &self,
+        range: Range<usize>,
+        chunk: usize,
+        weights: &[[[F; DOMAIN]; 2]],
+        mut emit: impl FnMut(usize, [F; 2], [F; 2]),
+    ) -> Result<(), WitnessError> {
+        let round = self.challenges.bound();
+        let pair_mask = (1usize << round) - 1;
+        #[cfg(feature = "field-inline")]
+        let mut field_cursor = FieldInlineRowCursor::seek(&self.field_rows, range.start);
+        let mut halves = [[F::zero(); 2]; 2];
+        self.rows.visit(range, chunk, |start, bundles| {
+            for (t, row) in (start..).zip(bundles) {
+                let offset = t & pair_mask;
+                let [first, second] = &weights[offset & (pair_mask >> 1)];
+                let [(az_first, bz_first), (az_second, bz_second)] = row.fold_streams(
+                    #[cfg(feature = "field-inline")]
+                    field_cursor.advance(t),
+                    first,
+                    second,
+                );
+                if round == 0 {
+                    emit(t, [az_first, az_second], [bz_first, bz_second]);
+                    continue;
+                }
+                let half = offset >> (round - 1);
+                halves[0][half] += az_first + az_second;
+                halves[1][half] += bz_first + bz_second;
+                if offset == pair_mask {
+                    emit(t >> round, halves[0], halves[1]);
+                    halves = [[F::zero(); 2]; 2];
+                }
+            }
+            Ok(())
+        })
+    }
+
     fn bind(&mut self, challenge: F) {
-        let shrunk = self.az.bind_low_to_high_in_place(challenge);
-        let _ = self.bz.bind_low_to_high_in_place(challenge);
-        if shrunk && !self.purged {
-            self.purged = true;
-            crate::mem::purge_retained_memory(self.challenges.total() - 1);
+        if let OuterTables::Dense { az, bz } = &mut self.tables {
+            let shrunk = az.bind_low_to_high_in_place(challenge);
+            let _ = bz.bind_low_to_high_in_place(challenge);
+            if shrunk && !self.purged {
+                self.purged = true;
+                crate::mem::purge_retained_memory(self.challenges.total() - 1);
+            }
         }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
     }
 
-    fn cycle_weights(&self) -> Vec<F> {
+    /// `eq(r_cycle, ·)` as split tables over the cycle bits: the challenges
+    /// after the stream bit, reversed into big-endian order.
+    fn claimed_input_weights(&self) -> TensorEqTable<F> {
         let reversed: Vec<F> = self.challenges.as_slice()[1..]
             .iter()
             .rev()
             .copied()
             .collect();
         let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
-        EqPolynomial::<F>::evals(&reversed, None)
+        TensorEqTable::new(&reversed)
     }
 
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
-    fn claimed_inputs(&self, weights: &[F]) -> Result<Vec<F>, WitnessError> {
-        let cycles = weights.len();
-        let access = self.rows.access();
-
-        let block_size = 1usize << 12;
-        let blocks = cycles.div_ceil(block_size);
-        let block = |index: usize| -> Result<Vec<F>, WitnessError> {
-            let start = index * block_size;
-            let end = (start + block_size).min(cycles);
-            let mut accumulator = ClaimAccumulator::<F>::default();
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
-                let row = access.row(t)?;
-                accumulator.add_row(weight, &row);
-            }
-            Ok(accumulator.finish())
-        };
-        let claimed = {
-            let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
-            try_par_sum_vecs(blocks, VARIABLE_COUNT, block)
-        };
-        claimed
+    fn claimed_inputs(&self, weights: &TensorEqTable<F>) -> Result<Vec<F>, WitnessError> {
+        let (e_out, e_in) = (weights.e_out(), weights.e_in());
+        let group = e_in.len();
+        let ranges = task_ranges(weights.len(), self.rows.segment_len(), group);
+        let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
+        try_par_sum_vecs(ranges.len(), VARIABLE_COUNT, |task| {
+            let mut claimed = vec![F::zero(); VARIABLE_COUNT];
+            // A callback of at most `group` aligned rows lies in one `e_out`
+            // block, and its accumulators take at most VISIT_ROWS terms.
+            self.rows.visit(
+                ranges[task].clone(),
+                VISIT_ROWS.min(group),
+                |start, bundles| {
+                    let mut accumulator = ClaimAccumulator::<F>::default();
+                    for (t, row) in (start..).zip(bundles) {
+                        accumulator.add_row(e_in[t % group], row);
+                    }
+                    let scale = e_out[start / group];
+                    for (value, sum) in claimed.iter_mut().zip(accumulator.finish()) {
+                        *value += scale * sum;
+                    }
+                    Ok(())
+                },
+            )?;
+            Ok(claimed)
+        })
     }
 
     /// The field-inline opening values at the bound cycle point: one eq-weighted walk
@@ -1246,14 +1454,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order the
     /// composed remainder relation folds).
     #[cfg(feature = "field-inline")]
-    fn field_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
+    fn field_claimed_inputs(&self, weights: &TensorEqTable<F>) -> Vec<F> {
         map_reduce_chunks(
             self.field_rows.len(),
             1 << 12,
             |range| {
                 let mut values = [F::zero(); FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT];
                 for (cycle, row) in &self.field_rows[range] {
-                    let weight = weights[*cycle];
+                    let weight = weights.evaluate_index(*cycle);
                     for (value, column) in values.iter_mut().zip(row.columns()) {
                         *value += weight * column;
                     }
@@ -1264,6 +1472,54 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             || [F::zero(); FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT],
         )
         .to_vec()
+    }
+}
+
+/// `(q(0), q(∞))` terms of one pair of the product summand `Az·Bz`.
+fn endpoint_terms<F: JoltField>(az: [F; 2], bz: [F; 2]) -> [F; 2] {
+    [az[0] * bz[0], (az[1] - az[0]) * (bz[1] - bz[0])]
+}
+
+/// A re-extraction failure inside a round, after `prepare` visited the rows.
+fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
+    SumcheckError::MissingEvaluationSource {
+        kind: "Spartan outer trace rows",
+    }
+}
+
+/// One task's Gruen-grouped sums
+/// `Σ_x_out e_out[x_out] · Σ_x_in e_in[x_in] · terms(x_out·|e_in| + x_in)`.
+struct GruenSums<'a, F, const N: usize> {
+    e_out: &'a [F],
+    e_in: &'a [F],
+    inner: [F; N],
+    total: [F; N],
+}
+
+impl<'a, F: JoltField, const N: usize> GruenSums<'a, F, N> {
+    fn new(e_out: &'a [F], e_in: &'a [F]) -> Self {
+        Self {
+            e_out,
+            e_in,
+            inner: [F::zero(); N],
+            total: [F::zero(); N],
+        }
+    }
+
+    /// Tasks hold whole groups ([`task_ranges`]) and add their pairs in
+    /// order, so a group's last pair closes it.
+    fn add(&mut self, pair: usize, terms: [F; N]) {
+        let x_in = pair & (self.e_in.len() - 1);
+        for (inner, term) in self.inner.iter_mut().zip(terms) {
+            *inner += self.e_in[x_in] * term;
+        }
+        if x_in + 1 == self.e_in.len() {
+            let e_out = self.e_out[pair / self.e_in.len()];
+            for (total, inner) in self.total.iter_mut().zip(&mut self.inner) {
+                *total += e_out * *inner;
+                *inner = F::zero();
+            }
+        }
     }
 }
 
@@ -1411,14 +1667,42 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
-            Some(endpoints) => endpoints,
-            None => self.split_eq.product_endpoints(&self.az, &self.bz),
+        let (q_zero, q_infinity) = if let Some(endpoints) = self.pending_endpoints.take() {
+            endpoints
+        } else if let OuterTables::Dense { az, bz } = &self.tables {
+            self.split_eq.product_endpoints(az, bz)
+        } else if self.challenges.bound() == self.dense_round {
+            self.fill_tables().map_err(rows_unavailable)?
+        } else {
+            let [zero, infinity] = self
+                .round_pass(None, endpoint_terms)
+                .map_err(rows_unavailable)?;
+            (zero, infinity)
         };
-        self.split_eq
-            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.split_eq.product_at_one(&self.az, &self.bz)
-            })
+        // A streamed round's `q(1)` fallback is one more pass, which can fail:
+        // the failure is held and returned below, so its placeholder zero never
+        // reaches a round message.
+        let mut failure = None;
+        let message =
+            self.split_eq
+                .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+                    match &self.tables {
+                        OuterTables::Dense { az, bz } => self.split_eq.product_at_one(az, bz),
+                        OuterTables::Streamed => {
+                            self.round_pass(None, |az, bz| [az[1] * bz[1]]).map_or_else(
+                                |error| {
+                                    failure = Some(error);
+                                    F::zero()
+                                },
+                                |[at_one]| at_one,
+                            )
+                        }
+                    }
+                });
+        match failure {
+            Some(error) => Err(rows_unavailable(error)),
+            None => message,
+        }
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -1433,7 +1717,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
     #[cfg(feature = "field-inline")]
     fn park_residue(mut self: Box<Self>, session: &mut ProofSession) {
         session.park(FieldSpartanCarry(std::mem::take(&mut self.field_rows)));
-        crate::mem::drop_in_background_thread(self);
+        drop(self);
     }
 
     #[cfg_attr(
@@ -1448,7 +1732,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        let weights = self.cycle_weights();
+        let weights = self.claimed_input_weights();
         let claimed =
             self.claimed_inputs(&weights)
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
@@ -1542,20 +1826,27 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltPolynomialId;
     use jolt_claims::NoChallenges;
     use jolt_field::signed::S128;
+    #[cfg(all(feature = "akita", not(feature = "field-inline")))]
+    use jolt_field::Prime128OffsetA7F7;
     use jolt_field::{Fr, Ring};
+    use jolt_program::execution::TraceOutput;
     use jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output;
-    use jolt_witness::testing::with_sample_backend;
+    use jolt_witness::testing::{with_sample_backend, LoggedReplay};
     use jolt_witness::witnesses::ToField;
     #[cfg(feature = "field-inline")]
     use jolt_witness::FixedFieldInline;
     use jolt_witness::{BundleSource, JoltWitnessOracle};
-    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape, TraceBackend};
+    use jolt_witness::{
+        FixedBackend, JoltVmWitnessInputs, PolynomialEncoding, RowSource, Shape, TraceBackend,
+        TraceStorage,
+    };
 
     use super::*;
+    use crate::optimized::registers_read_write::test_support::structured_fixture;
     use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
     use crate::ReferenceBackend;
 
-    fn variable_field_value(row: &SpartanOuterRow, index: usize) -> Fr {
+    fn variable_field_value<F: JoltField>(row: &SpartanOuterRow, index: usize) -> F {
         match index {
             0 => row.left_instruction_input.to_field(),
             1 => row.right_instruction_input.to_field(),
@@ -1789,20 +2080,20 @@ mod tests {
     /// `Σ_{t,s} kernel · eq(τ_low, (t,s)) · Az(t,s) · Bz(t,s)`, computed
     /// through the public `jolt-claims` column-weight path over the COMPOSED
     /// opening selection (independent of both kernels' row-value pipelines).
-    fn true_input_claim(
+    fn true_input_claim<F: JoltField>(
         rows: &[SpartanOuterRow],
-        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
-        tau: &[Fr],
-        r0: Fr,
+        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<F>)],
+        tau: &[F],
+        r0: F,
         log_t: usize,
-    ) -> Fr {
+    ) -> F {
         let tau_low = &tau[..=log_t];
         let tau_high = tau[log_t + 1];
         let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
-        let kernel = centered_lagrange_kernel::<Fr>(DOMAIN, tau_high, r0).unwrap();
-        let matrices = spartan_outer_constraints::<Fr>();
+        let kernel = centered_lagrange_kernel::<F>(DOMAIN, tau_high, r0).unwrap();
+        let matrices = spartan_outer_constraints::<F>();
         let columns: Vec<usize> = spartan_outer_opening_columns();
-        let value = |t: usize, position: usize| -> Fr {
+        let value = |t: usize, position: usize| -> F {
             if position < VARIABLE_COUNT {
                 return variable_field_value(&rows[t], position);
             }
@@ -1811,20 +2102,17 @@ mod tests {
                 field_rows
                     .iter()
                     .find(|(cycle, _)| *cycle == t)
-                    .map_or_else(
-                        || Fr::from_u64(0),
-                        |(_, row)| row.columns()[position - VARIABLE_COUNT],
-                    )
+                    .map_or_else(F::zero, |(_, row)| row.columns()[position - VARIABLE_COUNT])
             }
             #[cfg(not(feature = "field-inline"))]
             unreachable!("the rv64 selection has exactly 35 columns")
         };
-        let mut total = Fr::from_u64(0);
-        for (s, stream) in [Fr::from_u64(0), Fr::from_u64(1)].into_iter().enumerate() {
+        let mut total = F::zero();
+        for (s, stream) in [F::zero(), F::one()].into_iter().enumerate() {
             let weights = spartan_outer_row_weights(r0, stream).unwrap();
             let weighted = matrices.weighted_columns(&weights, &columns).unwrap();
             let constants = matrices
-                .public_column_contributions(&weights, 0, Fr::from_u64(1))
+                .public_column_contributions(&weights, 0, F::one())
                 .unwrap();
             for t in 0..rows.len() {
                 let mut az = constants.a;
@@ -1840,8 +2128,58 @@ mod tests {
         kernel * total
     }
 
-    fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        parity_case_with_eq(dummy_plane, log_t, seed, None, false);
+    /// The optimized remainder over the parked uni-skip carry, its two dense
+    /// tables capped at exactly their size at round `depth`, so they first fit
+    /// there (and fit no round when `depth` is the round count).
+    fn capped_remainder<F: JoltField>(
+        session: &mut ProofSession,
+        inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
+        log_t: usize,
+        depth: usize,
+    ) -> OuterRemainderKernel<F> {
+        let carry = session.take::<SpartanOuterCarry<F>>().unwrap();
+        let cap = ((4 * size_of::<F>()) << log_t) >> depth;
+        OuterRemainderKernel::prepare(carry, inputs, cap).unwrap()
+    }
+
+    /// Drives both remainders through every round on the reference's
+    /// messages, asserting equal round polynomials and that the optimized
+    /// tables materialize at round `depth` with `2T / 2^depth` entries each,
+    /// or never when `depth` is the round count.
+    fn lockstep_rounds<F: JoltField>(
+        reference: &mut dyn SumcheckKernel<F, Relation = OuterRemainder<F>>,
+        optimized: &mut OuterRemainderKernel<F>,
+        challenges: &[F],
+        input_claim: F,
+        depth: usize,
+    ) {
+        let dense_len = |kernel: &OuterRemainderKernel<F>| match &kernel.tables {
+            OuterTables::Dense { az, bz } => {
+                assert_eq!(az.evals().len(), bz.evals().len());
+                Some(az.evals().len())
+            }
+            OuterTables::Streamed => None,
+        };
+        let mut materialized = dense_len(optimized).map(|len| (0, len));
+        let mut bind = None;
+        let mut previous = input_claim;
+        for (round, &challenge) in challenges.iter().enumerate() {
+            let reference_round = reference.prove_round(bind, round, previous).unwrap();
+            let optimized_round = optimized.prove_round(bind, round, previous).unwrap();
+            assert_eq!(
+                optimized_round, reference_round,
+                "round {round} polynomial, depth {depth}"
+            );
+            materialized = materialized.or_else(|| dense_len(optimized).map(|len| (round, len)));
+            previous = reference_round.evaluate(challenge);
+            bind = Some(challenge);
+        }
+        let last = bind.unwrap();
+        reference.finish_rounds(last).unwrap();
+        optimized.finish_rounds(last).unwrap();
+        let rounds = challenges.len();
+        let expected = (depth < rounds).then(|| (depth, (2 << (rounds - 1)) >> depth));
+        assert_eq!(materialized, expected, "dense tables, depth {depth}");
     }
 
     fn parity_case_with_eq(
@@ -1850,6 +2188,7 @@ mod tests {
         seed: u64,
         exceptional: Option<ExceptionalEq>,
         zero_scale: bool,
+        depth: usize,
     ) {
         let rows = synthetic_rows(log_t, seed);
         #[cfg(feature = "field-inline")]
@@ -1923,57 +2262,35 @@ mod tests {
         let claims = outer_remainder_input_values_from_uniskip_output(input_claim);
         let points = SumcheckInputPoints::<Fr, OuterRemainder<Fr>>::default();
         let no_challenges = NoChallenges::<Fr>::default();
+        let inputs = || ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &no_challenges,
+        };
 
         let mut reference_kernel = ReferenceOuterRemainder
-            .prepare(
-                &mut reference_session,
-                dummy_plane,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &no_challenges,
-                },
-            )
+            .prepare(&mut reference_session, dummy_plane, inputs())
             .unwrap();
-        let mut optimized_kernel = OptimizedOuterRemainder
-            .prepare(
-                &mut optimized_session,
-                dummy_plane,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &no_challenges,
-                },
-            )
-            .unwrap();
+        let mut optimized_kernel =
+            capped_remainder(&mut optimized_session, &inputs(), log_t, depth);
 
-        let rounds = log_t + 1;
-        let challenges: Vec<Fr> = (0..rounds)
+        let challenges: Vec<Fr> = (0..=log_t)
             .map(|i| Fr::from_u64(7919 + seed + 31 * i as u64))
             .collect();
-        let mut bind = None;
-        let mut previous = input_claim;
-        for (round, &challenge) in challenges.iter().enumerate() {
-            let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
-            let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
-            assert_eq!(
-                optimized_round, reference_round,
-                "round {round} polynomial, log_t = {log_t}"
-            );
-            previous = reference_round.evaluate(challenge);
-            bind = Some(challenge);
-        }
-        let last = bind.unwrap();
-        reference_kernel.finish_rounds(last).unwrap();
-        optimized_kernel.finish_rounds(last).unwrap();
+        lockstep_rounds(
+            reference_kernel.as_mut(),
+            &mut optimized_kernel,
+            &challenges,
+            input_claim,
+            depth,
+        );
 
         let reference_outputs = reference_kernel.output_claims(&claims).unwrap();
         let optimized_outputs = optimized_kernel.output_claims(&claims).unwrap();
         assert_eq!(
             optimized_outputs, reference_outputs,
-            "typed output claims, log_t = {log_t}"
+            "typed output claims, log_t = {log_t}, depth {depth}"
         );
 
         let output_points = relation
@@ -1987,21 +2304,28 @@ mod tests {
             .unwrap();
     }
 
+    /// Every Gruen exceptional endpoint, in dense rounds, in a streamed prefix
+    /// with a mid-domain crossover, and with every round streamed.
     #[test]
     fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
         with_sample_backend(|dummy| {
-            for case in ExceptionalEq::ALL {
-                parity_case_with_eq(dummy, 4, 389, Some(case), false);
+            for depth in [0, 2, 5] {
+                for case in ExceptionalEq::ALL {
+                    parity_case_with_eq(dummy, 4, 389, Some(case), false, depth);
+                }
+                parity_case_with_eq(dummy, 4, 389, None, true, depth);
             }
-            parity_case_with_eq(dummy, 4, 389, None, true);
         });
     }
 
+    /// Wide synthetic rows at every crossover round, including none.
     #[test]
     fn synthetic_parity_with_reference_kernels() {
         with_sample_backend(|dummy| {
             for (log_t, seed) in [(1usize, 111u64), (2, 222), (3, 333), (4, 444)] {
-                parity_case(dummy, log_t, seed);
+                for depth in 0..=log_t + 1 {
+                    parity_case_with_eq(dummy, log_t, seed, None, false, depth);
+                }
             }
         });
     }
@@ -2132,6 +2456,197 @@ mod tests {
         #[cfg(feature = "field-inline")]
         crate::optimized::field_registers_testing::structured_field_register_fixture(12)
             .with_plane(4, |backend| sample_case(backend, 4));
+    }
+
+    /// `resident`'s rows behind a replay with `segment_rows`-row checkpoints.
+    fn replayed(
+        resident: &TraceBackend,
+        segment_rows: usize,
+        fail_row: Option<usize>,
+    ) -> TraceBackend {
+        let TraceStorage::Resident(trace) = &resident.trace.trace else {
+            unreachable!("fixtures retain their rows")
+        };
+        let replay = LoggedReplay::new(trace.proof_rows().to_vec(), segment_rows);
+        let replay = match fail_row {
+            Some(row) => replay.failing_at(row),
+            None => replay,
+        };
+        TraceBackend::new(
+            resident.config.clone(),
+            JoltVmWitnessInputs::replayed(
+                &resident.program,
+                &resident.preprocessing,
+                TraceOutput::with_dimensions(
+                    resident.trace.dimensions,
+                    replay,
+                    resident.trace.device.clone(),
+                    None,
+                    None,
+                ),
+            ),
+        )
+    }
+
+    /// Uni-skip, every remainder round and the output claims over replayed
+    /// rows, the tables first fitting at round `depth`, against the reference
+    /// over the same rows retained.
+    #[cfg(not(feature = "field-inline"))]
+    fn replayed_case<F: JoltField>(
+        resident: &TraceBackend,
+        replay: &TraceBackend,
+        log_t: usize,
+        depth: usize,
+    ) {
+        let tau: Vec<F> = (0..log_t + 2)
+            .map(|i| F::from_u64(31 + 17 * i as u64))
+            .collect();
+        let mut reference_session = ProofSession::default();
+        <ReferenceBackend as UniskipKernel<F, OuterRemainder<F>>>::prepare(
+            &ReferenceBackend,
+            &mut reference_session,
+            log_t,
+            &tau,
+            resident,
+        )
+        .unwrap();
+        let mut optimized_session = ProofSession::default();
+        <OptimizedOuterUniskip as UniskipKernel<F, OuterRemainder<F>>>::prepare(
+            &OptimizedOuterUniskip,
+            &mut optimized_session,
+            log_t,
+            &tau,
+            replay,
+        )
+        .unwrap();
+        assert_eq!(
+            <OptimizedOuterUniskip as UniskipKernel<F, OuterRemainder<F>>>::first_round_poly(
+                &OptimizedOuterUniskip,
+                &mut optimized_session,
+                &[],
+                &(),
+            )
+            .unwrap(),
+            <ReferenceBackend as UniskipKernel<F, OuterRemainder<F>>>::first_round_poly(
+                &ReferenceBackend,
+                &mut reference_session,
+                &[],
+                &(),
+            )
+            .unwrap(),
+            "uni-skip first-round polynomial, log_t = {log_t}"
+        );
+
+        let r0 = F::from_u64(7177);
+        let rows: Vec<SpartanOuterRow> = resident.bundles().unwrap();
+        let input_claim = true_input_claim(&rows, &tau, r0, log_t);
+        let relation = OuterRemainder::new(SpartanOuterDimensions::rv64(log_t), tau.clone(), r0);
+        let claims = outer_remainder_input_values_from_uniskip_output(input_claim);
+        let points = SumcheckInputPoints::<F, OuterRemainder<F>>::default();
+        let no_challenges = NoChallenges::<F>::default();
+        let inputs = || ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &no_challenges,
+        };
+        let mut reference_kernel = ReferenceOuterRemainder
+            .prepare(&mut reference_session, resident, inputs())
+            .unwrap();
+        let mut optimized_kernel =
+            capped_remainder(&mut optimized_session, &inputs(), log_t, depth);
+        let challenges: Vec<F> = (0..=log_t)
+            .map(|i| F::from_u64(523 + 17 * i as u64))
+            .collect();
+        lockstep_rounds(
+            reference_kernel.as_mut(),
+            &mut optimized_kernel,
+            &challenges,
+            input_claim,
+            depth,
+        );
+        assert_eq!(
+            optimized_kernel.output_claims(&claims).unwrap(),
+            reference_kernel.output_claims(&claims).unwrap(),
+            "typed output claims, log_t = {log_t}, depth {depth}"
+        );
+    }
+
+    /// Two-row replay checkpoints, task boundaries and a padded proof
+    /// suffix all fall inside the domain; every crossover round, including
+    /// none, in both fields.
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn streamed_rounds_over_replayed_rows_match_reference() {
+        for log_t in [1, 3, 6] {
+            structured_fixture((1 << log_t) - 1).with_plane(log_t, |resident| {
+                let replay = replayed(resident, 2, None);
+                for depth in 0..=log_t + 1 {
+                    replayed_case::<Fr>(resident, &replay, log_t, depth);
+                    #[cfg(feature = "akita")]
+                    replayed_case::<Prime128OffsetA7F7>(resident, &replay, log_t, depth);
+                }
+            });
+        }
+    }
+
+    /// A witness without a row handle fails typed instead of collecting rows,
+    /// and a replay failure surfaces from the dense fill and from a streamed
+    /// round.
+    #[test]
+    fn missing_rows_and_replay_failures_are_typed() {
+        let log_t = 3;
+        let tau: Vec<Fr> = (0..log_t + 2).map(|i| Fr::from_u64(5 + i as u64)).collect();
+        structured_fixture(7).with_plane(log_t, |resident| {
+            // A configured domain shorter than the trace leaves no valid handle.
+            let mut shortened = replayed(resident, 2, None);
+            shortened.config.log_t = 1;
+            let without_rows =
+                <OptimizedOuterUniskip as UniskipKernel<Fr, OuterRemainder<Fr>>>::prepare(
+                    &OptimizedOuterUniskip,
+                    &mut ProofSession::default(),
+                    log_t,
+                    &tau,
+                    &shortened,
+                );
+            assert!(matches!(
+                without_rows,
+                Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+            ));
+
+            let rows = replayed(resident, 2, Some(5)).rows().unwrap();
+            let carry = || SpartanOuterCarry {
+                log_t,
+                tau: tau.clone(),
+                rows: OuterRows::Trace(rows.clone()),
+                #[cfg(feature = "field-inline")]
+                field_rows: Vec::new(),
+                t1_values: Vec::new(),
+            };
+            let relation = OuterRemainder::new(
+                SpartanOuterDimensions::rv64(log_t),
+                tau.clone(),
+                Fr::from_u64(3),
+            );
+            let claims = outer_remainder_input_values_from_uniskip_output(Fr::from_u64(0));
+            let points = SumcheckInputPoints::<Fr, OuterRemainder<Fr>>::default();
+            let no_challenges = NoChallenges::<Fr>::default();
+            let inputs = ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &no_challenges,
+            };
+            assert!(matches!(
+                OuterRemainderKernel::prepare(carry(), &inputs, usize::MAX),
+                Err(KernelError::Witness(WitnessError::Replay { .. }))
+            ));
+            let mut streamed = OuterRemainderKernel::prepare(carry(), &inputs, 0).unwrap();
+            assert!(matches!(
+                streamed.prove_round(None, 0, Fr::from_u64(0)),
+                Err(SumcheckError::MissingEvaluationSource { .. })
+            ));
+        });
     }
 
     /// The integer extension of each base-window basis vector is exactly the
