@@ -1,3 +1,10 @@
+//! Device field storage and the checked boundary to generic host kernels.
+//!
+//! Arithmetic uses BN254 `Fr` in Montgomery form: four consecutive `u64` limbs
+//! per element. The conversion helpers check the host field's `TypeId` before
+//! reinterpreting it; supporting another `JoltField` requires a matching device
+//! arithmetic implementation, not just a limb-compatible host type.
+
 use ark_bn254::Fr as ArkFr;
 use jolt_field::JoltField;
 use std::any::TypeId;
@@ -28,6 +35,8 @@ fn limbs_to_fr(limbs: [u64; LIMBS]) -> Fr {
     Fr::from(ArkFr::new_unchecked(BigInt(limbs)))
 }
 
+/// An owned field buffer paired with its CUDA stream. Reads and device copies
+/// use the logical element count; the backing allocation may retain spare limbs.
 pub struct DeviceFrVec {
     stream: Arc<CudaStream>,
     buffer: CudaSlice<u64>,

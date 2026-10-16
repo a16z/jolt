@@ -1,3 +1,15 @@
+//! CUDA Spartan product uni-skip and remainder kernels.
+//!
+//! Preparation reduces the nine pairwise products of the three native left and
+//! right operand lanes on the device. The host combines this matrix with
+//! centered Lagrange weights to form the uni-skip polynomial, whereas optimized
+//! evaluates the extended domain from typed product rows.
+//!
+//! After uni-skip, CUDA materializes the two challenge-weighted operand tables
+//! on each device. Split-eq remainder rounds fold these tables locally before
+//! gathering the short tail onto GPU 0. Native columns are retained separately
+//! to evaluate the individual output claims.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

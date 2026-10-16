@@ -1,3 +1,15 @@
+//! CUDA virtualization of RAM read-address polynomials.
+//!
+//! As in optimized, the virtual access indicator is a product of committed
+//! chunks, with no-access cycles contributing zero. CUDA reads all chunks from
+//! one packed `u32` address and evaluates the product against split equality
+//! tables on each device.
+//!
+//! The device lookup tables remain lazy for five binds before dense gathering;
+//! optimized's usual lazy-RA path collapses after four. Construction reports a
+//! capability error if the chunks exceed the packed address or message-lane
+//! capacity. Remaining window factors are gathered onto GPU 0.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

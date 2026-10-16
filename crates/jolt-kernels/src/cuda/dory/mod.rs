@@ -1,3 +1,18 @@
+//! CUDA arithmetic for the Dory PCS.
+//!
+//! `CudaDoryScheme` uses the same setup, commitment, proof, and transcript
+//! formats as `DoryScheme`. Clear openings run the shared Dory prover with G1
+//! and G2 arena handles: vector group operations and batched Miller loops use
+//! CUDA, while field-vector folds, final exponentiation, and transcript work
+//! remain on the CPU. A supplied hint reuses row commitments; without one,
+//! the host Dory adapter computes them.
+//!
+//! Witness commitment kernels access GPU tier one and clear batched tier two
+//! through `DeviceTier1Commitment`. Standalone `commit`, ordinary streaming
+//! methods, setup, verification, and ZK operations delegate to `DoryScheme`.
+//! The `jolt-dory` CUDA feature exposes the shared hint and adapter boundary;
+//! the device implementation lives here with the CUDA kernels.
+
 mod arena;
 mod combine;
 mod curve;
@@ -59,6 +74,10 @@ fn resident_prover_setup(setup: &DoryProverSetup, bases: usize) -> ProverSetup<C
     }
 }
 
+/// Dory PCS with CUDA clear openings and witness-commitment integration.
+///
+/// Selecting this PCS is independent of selecting `CudaBackend` for sumcheck
+/// kernels. Its proof and setup types are shared with the CPU PCS.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CudaDoryScheme;
 
@@ -71,6 +90,8 @@ impl CudaDoryScheme {
         DoryScheme::setup_verifier(max_num_vars)
     }
 
+    /// Changes the PCS type of CPU verifier preprocessing without rebuilding
+    /// its setup or program data, re-deriving the canonical program digest.
     pub fn adopt_verifier_preprocessing<VC>(
         source: JoltVerifierPreprocessing<DoryScheme, VC>,
     ) -> Result<JoltVerifierPreprocessing<Self, VC>, CudaError>

@@ -1,3 +1,11 @@
+//! Deferred target-group values for Dory's multi-pairings.
+//!
+//! Pending values record arena spans instead of immediately pairing them.
+//! Reading a pending value, including for transcript serialization, batches
+//! outstanding requests with equal pair counts into GPU Miller loops. Final
+//! exponentiation and subsequent target-group arithmetic use host Arkworks
+//! values. The queue belongs to the current opening's host thread.
+
 use std::cell::RefCell;
 use std::ops::{Add, Mul, Neg, Sub};
 

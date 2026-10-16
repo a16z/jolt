@@ -1,3 +1,12 @@
+//! Device partitions and host-side task dispatch.
+//!
+//! Witness windows are equal, power-of-two cycle ranges so low-to-high binding
+//! stays local until only the device-index variables remain. The planner uses
+//! one window for small or incompatible domains. Commitment windows additionally
+//! preserve complete PCS rows; independent row batches can use uneven aligned
+//! partitions. `CycleWindow::residency` adds the next row needed by flag extraction
+//! without counting it in the work partition.
+
 use super::context::{device_count, enter_device};
 use core::cmp::Reverse;
 

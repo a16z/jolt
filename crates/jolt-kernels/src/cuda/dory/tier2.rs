@@ -1,3 +1,10 @@
+//! Batched transparent tier-two commitments.
+//!
+//! Columns with equal row counts share a GPU multi-Miller launch against the
+//! corresponding G2 setup prefix. Final exponentiation remains on the CPU.
+//! Results carry their original column indices because batching can reorder
+//! columns; the caller restores commitment order.
+
 use ark_ec::pairing::{MillerLoopOutput, Pairing};
 use jolt_crypto::Bn254GT;
 use jolt_dory::{DoryCommitment, DoryProverSetup};

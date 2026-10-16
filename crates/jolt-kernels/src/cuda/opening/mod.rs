@@ -1,3 +1,16 @@
+//! CUDA polynomial views for the joint opening and initial-RAM claims.
+//!
+//! As in optimized, trace columns are embedded lazily in the commitment grid.
+//! CUDA reuses resident hot indices and increment columns; precommitted tables
+//! still come from the host factory. Dory's row fold runs device vector-matrix
+//! products over those compact sources and returns a host vector.
+//!
+//! Lazy row folding avoids expanding one-hot grids, but general evaluation and
+//! row iteration may materialize the full embedding. Field-inline joint views
+//! delegate to optimized. Initial-RAM advice evaluation uploads the oracle
+//! table and reduces it on the GPU, while program-image evaluation uses the
+//! canonical host helper.
+
 #[cfg(feature = "field-inline")]
 use crate::optimized::OptimizedBackend;
 use crate::reference::commitment::ColumnKind;

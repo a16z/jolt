@@ -1,3 +1,13 @@
+//! CUDA committed-program-image claim reduction.
+//!
+//! The canonical host builder pads program words; CUDA uploads their field
+//! values and evaluates shifted RAM equality weights on the device.
+//! Optimized builds those weights by aligned blocks. Both consume the shared
+//! reduction layout for permutation and active rounds.
+//!
+//! The shared device engine parks the bound rows for the matching CUDA address
+//! phase, avoiding a host-table handoff between the two phases.
+
 use jolt_claims::protocols::jolt::{PrecommittedReductionLayout, ProgramImageClaimReductionLayout};
 use jolt_field::JoltField;
 use jolt_verifier::stages::relations::SumcheckInputClaims;

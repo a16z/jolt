@@ -1,3 +1,14 @@
+//! CUDA reduction of the five instruction operand claims.
+//!
+//! Optimized combines the operands into one full cycle table and runs Gruen
+//! rounds. CUDA instead uses the shared prefix/suffix engine: it folds native
+//! atom columns into small `(P, Q)` tables, then regenerates the suffix columns
+//! after the prefix challenges are known. The five individual claims remain
+//! available at the end of the suffix phase.
+//!
+//! Witness folds are distributed over aligned device windows; round tables are
+//! combined on GPU 0. Domains too small for the split use the reference kernel.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

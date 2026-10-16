@@ -1,3 +1,26 @@
+//! BN254 CUDA kernels behind the same relation slots as [`crate::optimized`].
+//!
+//! The host owns relation geometry, challenges, interpolation, and the proof
+//! transcript. Device kernels reduce round evaluations and bind resident
+//! columns; exact field arithmetic preserves the optimized round polynomials.
+//!
+//! Shared implementation choices:
+//!
+//! - Packed trace windows and derived columns live in the [`ProofSession`],
+//!   so successive relations can reuse uploads. Device contexts and compiled
+//!   modules are process-wide; witness data is not.
+//! - Cycle work is partitioned into aligned windows. Sharded round kernels
+//!   combine local messages on the host and move the remaining tables to GPU 0
+//!   once the local cycle variables are bound. Small domains use one device.
+//! - Split-eq and prefix/suffix factorizations follow the optimized algorithms,
+//!   with GPU reductions in place of Rayon walks. Materialization thresholds
+//!   differ where device gathers and dense arithmetic have different costs.
+//!
+//! [`JoltBackend::cuda`] starts from the optimized registry. Field-inline
+//! Spartan, bytecode read/RAF, and field-register slots retain optimized
+//! implementations. [`CudaDoryScheme`] selects CUDA PCS operations separately
+//! from the relation registry; using `DoryScheme` retains its CPU opening path.
+
 use crate::KernelError;
 use crate::ProofSession;
 use jolt_field::JoltField;
@@ -54,8 +77,12 @@ pub use dory::CudaDoryScheme;
 pub use instruction_read_raf::address_driver::DeviceAddressPhase;
 pub use instruction_read_raf::address_phase::{init_raf_buckets, init_suffix_buckets, DeviceRows};
 
+/// Stateless slot provider; witness-dependent device state belongs to the
+/// bound proof session rather than the reusable backend registry.
 pub struct CudaBackend;
 
+/// Initializes the device pool on first use and reports whether its selected
+/// device has a usable kernel context.
 pub fn device_available() -> bool {
     shared_context().is_some()
 }
@@ -72,6 +99,11 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
+    /// Replace the supported optimized slots with CUDA implementations.
+    ///
+    /// Construction is lazy: the first device operation initializes CUDA.
+    /// The PCS must accept device-produced row commitments; choose
+    /// [`CudaDoryScheme`] to also accelerate clear Dory openings.
     pub fn cuda() -> Self
     where
         PCS: DeviceTier1Commitment,

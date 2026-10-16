@@ -1,3 +1,11 @@
+//! Copyable G1/G2 offsets into the current Dory arena.
+//!
+//! Unlike the CPU backend's group values, these handles do not own points.
+//! Batch routines recognize contiguous handle spans and operate on device
+//! storage. Individual group operators load points, use Arkworks arithmetic,
+//! and store their results; serialization also resolves handles to host values.
+//! Handle validity is limited to the current thread's arena lifetime.
+
 use std::ops::{Add, Mul, Neg, Sub};
 
 use ark_bn254::{G1Projective, G2Projective};

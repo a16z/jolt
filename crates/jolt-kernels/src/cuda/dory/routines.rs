@@ -1,3 +1,11 @@
+//! Dory vector arithmetic over resident point spans.
+//!
+//! MSMs and vector multiply-adds use CUDA when their handles form contiguous
+//! arena spans. A declined operation delegates to `jolt-dory`'s host routines
+//! and writes the result back into the arena. G1 fixed-base vectors and
+//! field-vector folds remain on the CPU, as do scalar group operations
+//! implemented by the handles. G2 fixed-base vectors use a device kernel.
+
 use ark_bn254::G1Projective;
 use ark_bn254::G2Projective;
 use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};

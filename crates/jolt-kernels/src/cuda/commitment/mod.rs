@@ -1,3 +1,18 @@
+//! CUDA witness commitment through Dory row commitments.
+//!
+//! For cycle-major grids whose row fits within the trace, native signed
+//! increments feed device MSMs and packed one-hots feed bucketed row sums.
+//! Commitment-aligned windows can share their uploaded trace and hot columns
+//! with later sumcheck and opening kernels.
+//!
+//! `DeviceTier1Commitment` separates these row computations from PCS
+//! finalization. `DoryScheme` pipelines GPU rows into CPU tier-two commitments;
+//! clear `CudaDoryScheme` batches tier-two Miller loops on the devices.
+//! Address-major and wider grids materialize the canonical dense layout on
+//! the host before GPU row MSMs, whereas optimized delegates those layouts
+//! to reference. Advice also uses GPU row MSMs after an oracle-table upload.
+//! Field-inline witness commitments delegate to optimized.
+
 #[cfg(feature = "field-inline")]
 use crate::commitment::FieldInlineWitnessCommitment;
 #[cfg(feature = "field-inline")]
@@ -59,7 +74,13 @@ pub type FinishedColumn<PCS> = (
     <PCS as CommitmentScheme>::OpeningHint,
 );
 
+/// Adapts device-produced G1 row commitments to a streaming PCS.
+///
+/// Bases and returned rows must use the PCS's row order. The default tier-two
+/// path reconstructs a partial commitment and applies mode-specific host
+/// finalization; implementations may batch selected columns instead.
 pub trait DeviceTier1Commitment: CommitmentScheme + ModeStreamingCommitment {
+    /// Enables partitioned commitment work with batched tier-two finalization.
     const BATCHES_TIER2: bool = false;
 
     fn tier1_bases(setup: &Self::ProverSetup, count: usize) -> Result<Vec<AffineLimbs>, CudaError>;

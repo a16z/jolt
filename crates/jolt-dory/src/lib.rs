@@ -24,6 +24,12 @@
 //! - [`DoryProverSetup`] / [`DoryVerifierSetup`] — prover and verifier SRS.
 //! - [`DoryPartialCommitment`] — intermediate state for streaming commitment.
 //! - [`DoryHint`] — row commitments and commitment blind reusable as opening proof hint.
+//!
+//! With `cuda`, this crate also exposes hint components and dory-pcs adapters
+//! for `jolt_kernels::cuda::CudaDoryScheme`. Device arithmetic lives with the
+//! CUDA kernels; it shares this crate's setup, commitment, proof, and transcript
+//! representations. Enabling the feature alone does not change [`DoryScheme`]'s
+//! execution backend.
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).

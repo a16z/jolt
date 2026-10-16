@@ -1,3 +1,17 @@
+//! CUDA register read/write checking with a sparse access matrix.
+//!
+//! Each cycle contributes at most three distinct register entries, combining
+//! the two read indicators with the relation's gamma weights. CUDA builds a
+//! structure of arrays on the device, retaining raw previous/next values and
+//! lookup-table indices for read/write coefficients. Unlike optimized's
+//! deferred startup, the value-coefficient array exists before the first bind.
+//!
+//! Cycle-first rounds merge sparse entries within device windows, then reduce
+//! the remaining address tables on GPU 0. Address-first execution instead uses
+//! the shared RAM-style sparse address engine on GPU 0; optimized uses register
+//! checkpoint chunks for that schedule. Final read claims are evaluated from
+//! the original register indices.
+
 use crate::cuda::common::address_first::AddressFirst;
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

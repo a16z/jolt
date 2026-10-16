@@ -1,3 +1,14 @@
+//! CUDA reduction of register-value claims.
+//!
+//! The prefix/suffix decomposition matches optimized: prefix rounds bind small
+//! `(P, Q)` tables, then the prefix challenges fold the native `rd`, `rs1`, and
+//! `rs2` values into three suffix columns. No full field-valued copy of each
+//! register column is needed before the switch.
+//!
+//! CUDA performs the witness folds over aligned resident windows and assembles
+//! the reduced tables on GPU 0. Domains too small for the split use the
+//! reference kernel.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

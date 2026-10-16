@@ -1,3 +1,15 @@
+//! CUDA bytecode read+RAF checking.
+//!
+//! Address pushforwards use canonical packed bytecode PCs. As in optimized,
+//! the cycle phase fuses the relation's linear terms into one coefficient
+//! column and multiplies it by the committed RA chunks.
+//!
+//! CUDA retains the packed PC and per-chunk lookup tables for five binds
+//! before gathering dense RA values, rather than optimized's usual four-bind
+//! collapse. Window-local cycle rounds are reduced on the host and the short
+//! tail runs on GPU 0. Field-inline bytecode checking is dispatched to optimized
+//! by the backend registry.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

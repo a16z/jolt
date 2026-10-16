@@ -1,3 +1,11 @@
+//! Lazily bound one-hot selectors from device hot indices and address-eq tables.
+//!
+//! Each early bind doubles the challenge-scaled lookup tables; gathers sum the
+//! branches for a cycle without materializing its full one-hot grid. The third
+//! bind materializes `T/8` field values and releases the indices and lookup
+//! tables. Optimized's shared lazy-RA path normally waits until `T/16`.
+//! Both binding orders use the same representation with different gather strides.
+
 #[cfg(test)]
 use super::device::require_fr_slice;
 use cudarc::driver::{CudaSlice, PushKernelArg};

@@ -1,3 +1,15 @@
+//! CUDA Spartan shift checking with prefix/suffix reduction.
+//!
+//! As in optimized, each shifted equality factor has a rank-two decomposition.
+//! Four `(P, Q)` pairs therefore drive the prefix rounds for the two batched
+//! summands. At the phase boundary, the bound prefix weights fold five native
+//! witness columns into suffix tables.
+//!
+//! CUDA uses the shared device prefix/suffix engine: witness folds run over
+//! aligned resident windows, and the reduced tables run on GPU 0. The shift
+//! opening points come from `jolt-claims`. Domains too small for the split use
+//! the reference kernel.
+
 use crate::cuda::common::devices::CycleWindow;
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

@@ -1,3 +1,11 @@
+//! Proof-session cache of derived device columns.
+//!
+//! Like optimized's shared witness bundles, cached columns let later relations
+//! reuse trace-derived values. CUDA keys additionally include device ordinal
+//! and window base. Lookup checks require the same cycle count and a live
+//! address span within the caller's bound; changing the source identity clears
+//! the cache. Shared ownership keeps buffers alive while kernels use them.
+
 #![expect(
     dead_code,
     reason = "`Entry::bytes` is read only by the allocative visitor, and `DeviceBytes` is \

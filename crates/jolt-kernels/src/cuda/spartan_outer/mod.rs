@@ -1,3 +1,17 @@
+//! CUDA Spartan outer uni-skip and remainder kernels.
+//!
+//! The host derives weighted linear forms from the canonical R1CS matrices;
+//! device kernels evaluate them against native-width input columns and reduce
+//! the extended-node sums. Unlike optimized's integer row evaluator and finite
+//! differences, CUDA applies those uploaded field coefficients directly.
+//!
+//! The proof session carries the input columns across uni-skip. Once its
+//! challenge is known, CUDA materializes both stream lanes of `Az` and `Bz`
+//! before the first remainder message; optimized fuses that materialization
+//! with round zero. Remainder rounds use split-eq reductions over cycle windows,
+//! then gather the remaining factors onto GPU 0. Original input columns remain
+//! available for the final witness claims.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

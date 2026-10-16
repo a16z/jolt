@@ -1,3 +1,16 @@
+//! Device extraction of trace-backed witness atoms for the CUDA kernels.
+//!
+//! The trace backend and optimized kernels derive typed bundles on the host.
+//! This module instead packs native row values, uploads a cycle window, and
+//! derives reusable integer columns on the caller's CUDA stream. Instruction
+//! descriptors select device formulas; flags and lookup-table indices come
+//! from the active instruction profile. Unsupported descriptors are rejected
+//! by the upload path.
+//!
+//! This is an extraction interface, not a second `JoltWitnessPlane`: program
+//! metadata and non-trace oracles remain with the host witness. Packing uses
+//! a fixed CUDA ABI rather than Rust enum discriminants or field elements.
+
 use crate::witnesses::WitnessEnv;
 use cudarc::driver::CudaSlice;
 use cudarc::driver::CudaView;
@@ -24,6 +37,12 @@ pub use packed::{
     REGISTER_ABSENT,
 };
 
+/// Native per-cycle values shared by CUDA relations.
+///
+/// Signed increments and the right instruction input use low/high `u64`
+/// pairs in two's-complement form; product magnitudes use unsigned pairs.
+/// Flags occupy the explicit `FLAG_BIT_*` positions. No column here is in
+/// Montgomery form; the arithmetic kernels perform field promotion.
 pub struct DeviceAtomColumns {
     pub flags: CudaSlice<u32>,
     pub table_index: CudaSlice<u32>,
@@ -87,6 +106,8 @@ pub const TABLE_INDEX_ABSENT: u32 = TablesTableIndexAbsent;
 
 pub use tables::{PACK_CIRCUIT_ORDER, PACK_INSTRUCTION_ORDER};
 
+/// CUDA packed-bit position, or `None` for flags outside `PACK_CIRCUIT_ORDER`
+/// (including the field-inline circuit flags).
 pub fn circuit_flag_bit(flag: CircuitFlags) -> Option<u32> {
     let slot = PACK_CIRCUIT_ORDER.iter().position(|&entry| entry == flag)?;
     Some(FLAG_BIT_CIRCUIT_BASE + slot as u32)

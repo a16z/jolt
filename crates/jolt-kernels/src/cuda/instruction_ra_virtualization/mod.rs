@@ -1,3 +1,14 @@
+//! CUDA virtualization of instruction read-address polynomials.
+//!
+//! Each virtual RA is the product of its committed chunks. As in optimized,
+//! one leading chunk per product absorbs the batching weight, and split-eq
+//! recovery reconstructs the round message from quotient evaluations.
+//!
+//! CUDA reads chunks from two packed lookup-index words per cycle and doubles
+//! per-chunk equality tables for four binds before gathering dense values.
+//! Window-local rounds remain on their source devices; the short tail runs on
+//! GPU 0. Output claims remove the batching scales from the individual chunks.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

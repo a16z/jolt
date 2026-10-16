@@ -1,3 +1,10 @@
+//! Linear combination of Dory opening hints by row.
+//!
+//! CUDA partitions output rows across devices and runs one MSM per row with
+//! the shared batching scalars. Shorter hints contribute identity points to
+//! missing rows, matching the CPU combination. Commitment blinds are combined
+//! on the host; a declined device combination delegates to `DoryScheme`.
+
 use ark_bn254::{Fq, G1Projective};
 use ark_ff::BigInt;
 use jolt_crypto::Bn254G1;

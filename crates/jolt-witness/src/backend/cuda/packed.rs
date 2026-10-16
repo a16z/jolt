@@ -1,3 +1,11 @@
+//! Host staging layout shared with `kernels/extract.cu` and `kernels/atoms.cu`.
+//!
+//! Row-wide columns are separate arrays; `extras` holds `EXTRA_WORDS` consecutive
+//! native words per cycle. It carries the canonical bytecode PC from `row.pc()`
+//! separately from the unexpanded instruction address. Register absence, absent
+//! RAM access, and virtual-sequence absence have distinct packed sentinels.
+//! The constants here and the CUDA readers must describe the same layout.
+
 use super::CUDA_PROFILE;
 use jolt_riscv::{CircuitFlags, JoltTraceRow as TraceRow, RamAccess};
 use std::ops::Range;
@@ -29,6 +37,9 @@ pub const KIND_UNMAPPED: u16 = u16::MAX;
 pub const BIT_IS_COMPRESSED: u32 = 16;
 pub const BIT_IS_FIRST_IN_SEQUENCE: u32 = 17;
 
+/// Packed integer rows, before any field conversion. `pack` pads the requested
+/// cycle domain with default no-op rows; `from_source` requires the row source
+/// to supply exactly the requested range.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PackedTrace {
     pub cycles: usize,

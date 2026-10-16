@@ -1,3 +1,15 @@
+//! CUDA booleanity checking across instruction, bytecode, and RAM one-hots.
+//!
+//! The address phase folds cycle equality weights into address masses; the
+//! cycle phase checks the gamma-weighted family using split-eq recovery.
+//! Packed lookup indices, PCs, and RAM addresses share per-family equality
+//! tables rather than starting with one dense field vector per polynomial.
+//!
+//! CUDA doubles the lookup tables through five binds before gathering dense
+//! cycle values. Optimized usually collapses after four and has a categorical
+//! startup for small alphabets; CUDA uses the packed device evaluator for those
+//! rounds. Local window states are gathered onto GPU 0 for the remaining tail.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

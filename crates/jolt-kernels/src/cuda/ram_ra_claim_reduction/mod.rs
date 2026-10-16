@@ -1,3 +1,14 @@
+//! CUDA reduction of RAM RA claims at three cycle points.
+//!
+//! The prefix/suffix decomposition matches optimized: three equality-weighted
+//! `(P, Q)` pairs drive the prefix rounds, followed by a folded access column
+//! and suffix equality tables.
+//!
+//! CUDA first gathers a dense `H[j] = eq(r_address, ram_address[j])` on each
+//! device and retains it until the suffix handoff. Optimized instead derives
+//! both folds from packed hot indices without retaining a full `H` table.
+//! Device-local folds are combined on GPU 0, where the reduced rounds run.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

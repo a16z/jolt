@@ -1,3 +1,14 @@
+//! CUDA reduction of hamming-weight claims across all one-hot families.
+//!
+//! Like optimized, the kernel folds cycle equality weights into per-polynomial
+//! address masses and combines each polynomial's claim weights into one table.
+//! The resulting sum of products runs over the small address-chunk domain.
+//!
+//! CUDA obtains masses from shared resident one-hot shards, assembles them on
+//! GPU 0, and keeps both the weight-table binds and quadratic round reductions
+//! on that device. Only the reduced message lanes and final claims return to
+//! the host.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

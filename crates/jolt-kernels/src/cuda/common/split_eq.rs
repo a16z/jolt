@@ -1,3 +1,15 @@
+//! Device tables for the host's Gruen split-eq state.
+//!
+//! The host `GruenSplitEqPolynomial` owns challenge binding and scalar recovery.
+//! Cached inner/outer equality levels are uploaded once; binding selects shorter
+//! levels instead of rebuilding a dense cycle-eq vector. Shards share the inner
+//! factor and take disjoint slices of the outer factor.
+//!
+//! Device reductions supply genuine endpoint values to the host interpolation
+//! routines. This preserves recovery when an equality endpoint vanishes, without
+//! a second device launch from inside the recovery callback. `with_host` rejects
+//! binding orders other than low-to-high and incompatible shard geometry.
+
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 

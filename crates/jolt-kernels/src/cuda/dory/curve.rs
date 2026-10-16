@@ -1,3 +1,11 @@
+//! Dory curve and transcript adapters for resident group handles.
+//!
+//! Contiguous multi-pairing inputs become deferred device requests; individual
+//! pairings and other input layouts use the CPU curve. Transcript operations
+//! delegate to `JoltToDoryTranscript`, resolving handles through their ordinary
+//! group serialization. The returned transparent proof is converted back to
+//! the shared host proof type before the arena closes.
+
 use ark_bn254::Fq;
 use ark_bn254::Fq12;
 use ark_bn254::Fq2;

@@ -1,3 +1,14 @@
+//! Cycle-to-address pushforwards shared by CUDA one-hot relations.
+//!
+//! Packed lookup indices, PCs, and RAM addresses select buckets weighted by a
+//! device cycle-equality table. Block-local buckets use shared memory when the
+//! address domain fits; larger domains accumulate directly into global slots.
+//! Both paths use unreduced integer lanes before field reduction.
+//!
+//! Unlike a host trace walk, folds operate on resident cycle windows. Only
+//! their address-sized results move between devices, through host staging,
+//! and GPU 0 combines them.
+
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};

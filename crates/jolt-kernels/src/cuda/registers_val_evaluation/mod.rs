@@ -1,3 +1,14 @@
+//! CUDA register-value evaluation from write increments and strict LT.
+//!
+//! The device product combines the write-address indicator, signed increment,
+//! and split LT factor. As in optimized, absent writes contribute zero and the
+//! relation supplies the address/cycle opening geometry.
+//!
+//! CUDA promotes increments during preparation and keeps write RA lazy until
+//! the third bind. Optimized instead materializes both factors at the first
+//! bind. Product rounds run over resident cycle windows before gathering their
+//! remaining factors onto GPU 0.
+
 use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::relations::registers::{

@@ -1,3 +1,14 @@
+//! CUDA RAM value checking as a product of access, increment, and LT factors.
+//!
+//! Packed RAM addresses feed a lazy device RA polynomial; the strict
+//! less-than factor uses the same split-table identity as optimized. CUDA
+//! promotes the signed increment column to field values during preparation,
+//! whereas optimized keeps it native through the first two rounds.
+//!
+//! The shared device RA helper materializes after three binds, versus four in
+//! optimized's usual lazy-RA path. Device windows contribute local product
+//! messages before the short remaining tables are gathered onto GPU 0.
+
 use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,

@@ -1,3 +1,11 @@
+//! CUDA trusted and untrusted advice claim reduction.
+//!
+//! Advice values still come from the witness oracle, as in optimized. CUDA
+//! uploads them, builds equality weights on the device, and permutes both into
+//! the round order owned by `PrecommittedClaimReduction`.
+//! The shared device reduction engine carries the bound rows from the cycle
+//! phase into the matching CUDA address phase.
+
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedClaimReduction,

@@ -1,3 +1,14 @@
+//! CUDA booleanity checking for the RAM hamming-weight column.
+//!
+//! The resident RAM flag is expanded into a field table during preparation.
+//! Every round evaluates the quadratic hamming-weight expression on the
+//! device, with the equality factor kept split. Optimized instead uses a
+//! bit-pattern histogram for its early rounds before materializing a table.
+//!
+//! Reductions return both genuine endpoints and the leading coefficient, so
+//! host Gruen recovery also handles a vanishing equality endpoint. Cycle
+//! windows fold locally before the remaining weights are gathered onto GPU 0.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

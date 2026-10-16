@@ -1,3 +1,14 @@
+//! CUDA RAM RAF evaluation over the address domain.
+//!
+//! As in optimized, a one-hot pushforward scatters cycle equality weights into
+//! RAM address buckets, avoiding an address-by-cycle table. CUDA folds the
+//! resident address windows on their devices and combines the bucket tables on
+//! GPU 0. A dense device product pairs the result with the affine map back to
+//! byte addresses.
+//!
+//! The shared address-round adapter supplies inactive cycle rounds and their
+//! multiplicities from the relation's read/write schedule.
+
 use crate::cuda::common::address_rounds::AddressRounds;
 use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::relations::ram::{

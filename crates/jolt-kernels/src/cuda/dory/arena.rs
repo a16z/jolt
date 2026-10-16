@@ -1,3 +1,14 @@
+//! Point storage for one Dory opening on the calling host thread.
+//!
+//! G1 and G2 handles address append-only device buffers, with an immutable SRS
+//! prefix cached on the host. Additional devices hold mirrors for distributed
+//! vector work; a mirror allocation failure leaves the opening using fewer
+//! devices. Dropping the arena guard releases the per-opening buffers.
+//!
+//! Dory's group traits cannot return storage errors. Handle failures therefore
+//! poison this arena, and `CudaDoryScheme::open` checks that flag after proving.
+//! Handles must stay within the opening and host thread that own their arena.
+
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 

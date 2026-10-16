@@ -1,3 +1,14 @@
+//! Address-first RAM and register rounds over a shared device matrix.
+//!
+//! Address rounds retain sparse entries, initial-value checkpoints, and a
+//! dense cycle-eq table. After the last address bind, `finish_address` produces
+//! dense read/write/value cycle columns and releases that equality table;
+//! the cycle tail uses split-eq reductions.
+//!
+//! Both callers place this state on GPU 0. In particular, registers use the
+//! same sparse address-matrix path as RAM, whereas optimized registers scan
+//! compact access chunks with raw increment checkpoints.
+
 use jolt_field::{Fr, JoltField};
 use jolt_poly::{BindingOrder, UnivariatePoly};
 

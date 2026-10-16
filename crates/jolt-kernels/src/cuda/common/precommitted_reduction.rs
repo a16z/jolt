@@ -1,3 +1,14 @@
+//! Device cycle/address reductions for advice, bytecode, and program images.
+//!
+//! `PrecommittedClaimReduction` owns the round permutation and active rounds.
+//! CUDA packs the value and equality rows into one allocation, permutes them
+//! with that geometry, and binds only active variables. Inactive rounds adjust
+//! the scalar multiplicity rather than duplicating coefficients.
+//!
+//! Unlike the shared host tables used by reference and optimized, the carry
+//! parked between stages 6b and 7 owns device buffers. The corresponding cycle
+//! and address slots must therefore both use the CUDA carry type.
+
 use crate::ProofSession;
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

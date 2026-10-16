@@ -1,3 +1,15 @@
+//! Device sparse matrices shared by RAM and register read/write checking.
+//!
+//! Entries keep row/address indices, a field-valued value coefficient, and
+//! native previous/next checkpoints in separate arrays. Read/write coefficients
+//! may use `u16` indices into small field tables; binding squares those tables
+//! until their index capacity requires direct field coefficients.
+//!
+//! Device count/scan passes allocate disjoint segments for sparse row merges.
+//! Address-first conversion sorts row/address indices on the host, then uses
+//! that permutation to reorder values and coefficients on the device. Both
+//! representations avoid the full address-by-cycle matrix.
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::BindingOrder;

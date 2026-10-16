@@ -1,3 +1,10 @@
+//! Upload and extraction on a caller-owned CUDA stream.
+//!
+//! NVRTC compiles the extraction module on first use, and function handles are
+//! cached per device. Each `DeviceTrace` owns its packed window and instruction
+//! tables; it does not cache witness rows globally. Mapping kernels report
+//! unrepresentable indices through a device rejection flag checked on the host.
+
 use super::packed::EXTRA_KIND_BITS;
 use core::fmt::Display;
 use cudarc::driver::DriverError;
@@ -92,6 +99,11 @@ fn load_extract_functions(stream: &CudaStream) -> Result<ExtractFunctions, Strin
     })
 }
 
+/// A packed trace window whose extraction outputs use local cycle indices.
+///
+/// Callers needing next-row flags must include a successor row at non-final
+/// window boundaries. The supplied stream also owns the resulting allocations;
+/// extraction does not create an independent CUDA context.
 pub struct DeviceTrace {
     stream: Arc<CudaStream>,
     functions: &'static ExtractFunctions,
@@ -333,6 +345,7 @@ impl DeviceTrace {
         Ok(())
     }
 
+    /// The 128-bit lookup index as consecutive low/high words per local cycle.
     #[tracing::instrument(skip_all, name = "cuda_witness_lookup_limbs", fields(cycles = self.cycles))]
     pub fn lookup_index_limbs(&self) -> Result<CudaSlice<u64>, WitnessError> {
         let count = self.count()?;

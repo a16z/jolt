@@ -1,3 +1,11 @@
+//! Proof-session ownership of packed trace windows and lazily extracted atoms.
+//!
+//! Optimized kernels share host rows or recollect compact bundles. CUDA retains
+//! the uploaded window and its atom columns instead. `ResidentTraces::get`
+//! checks witness identity, device, window base, and covered length before reuse.
+//! A window includes its successor row when one exists, so next-row flags agree
+//! at device boundaries; consumers process only the window's logical cycles.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

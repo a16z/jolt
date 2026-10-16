@@ -1,3 +1,14 @@
+//! CUDA instruction-input checking.
+//!
+//! Like optimized, round zero reads eight native columns: four flag bits,
+//! register values, the signed immediate, and the unexpanded PC. The first
+//! bind produces half-sized field tables. CUDA describes the batched relation
+//! to the shared device sum-of-products evaluator and uses split-eq endpoint
+//! reductions; the host reconstructs each round polynomial.
+//!
+//! Resident cycle windows fold independently until their local variables are
+//! exhausted, after which the remaining columns are gathered onto GPU 0.
+
 use crate::cuda::common::devices::CycleWindow;
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

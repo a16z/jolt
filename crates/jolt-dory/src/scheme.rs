@@ -507,6 +507,10 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
         .collect()
 }
 
+/// Host tier-one commitments in Dory row order, without the tier-two pairing.
+/// CUDA openings use this path when no commit-time hint was supplied.
+/// The polynomial's balanced grid must fit the setup; oversized grids return
+/// [`OpeningsError::PolynomialTooLarge`].
 pub fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     setup: &DoryProverSetup,

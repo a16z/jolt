@@ -1,3 +1,11 @@
+//! CUDA committed-bytecode claim reduction.
+//!
+//! The canonical host builder supplies bytecode coefficients in the requested
+//! trace order. CUDA builds lane-weighted cycle equality tables and permutes
+//! both rows into the schedule owned by `PrecommittedClaimReduction`.
+//! Unlike the shared reference/optimized host carry, the bound device rows
+//! must be reclaimed by the matching CUDA address phase.
+
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::COMMITTED_BYTECODE_LANE_CAPACITY;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::{

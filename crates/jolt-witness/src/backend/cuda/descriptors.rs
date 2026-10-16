@@ -1,3 +1,9 @@
+//! Device formula selectors for instruction inputs, operands, outputs, and indices.
+//!
+//! These bytes select the switches in `kernels/atoms.cu`; they are not instruction
+//! ordinals. `tables` indexes the descriptors by the active profile's dense kind
+//! index. Adding a formula requires matching host selectors and device cases.
+
 use jolt_riscv::{JoltInstruction, JoltInstructionKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

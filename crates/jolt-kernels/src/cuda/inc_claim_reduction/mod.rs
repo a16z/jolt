@@ -1,3 +1,15 @@
+//! CUDA reduction of RAM and register increment claims.
+//!
+//! Four equality-weighted terms share two native signed increment columns.
+//! Optimized uses paired-equality tables and promotes increments at the first
+//! bind. CUDA uses prefix/suffix reduction instead: four `(P, Q)` pairs drive
+//! the prefix rounds, then the bound prefix folds materialize suffix columns
+//! from the resident atoms.
+//!
+//! The shared device engine combines window folds on GPU 0 and retains the
+//! separate output claims. Domains too small for the split use the reference
+//! kernel.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

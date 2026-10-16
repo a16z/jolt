@@ -1,3 +1,18 @@
+//! CUDA RAM read/write checking with sparse access entries.
+//!
+//! Like optimized, the kernel retains only touched addresses and raw
+//! previous/next values rather than a dense address-by-cycle matrix. CUDA
+//! builds and merges the sparse structure of arrays on the device. Initial
+//! memory combines first-access values with the final-memory oracle for
+//! untouched addresses.
+//!
+//! Cycle-first execution shards the sparse cycle rounds and gathers the
+//! remaining address state onto GPU 0. Address-first execution uses the shared
+//! sparse address engine on GPU 0, then materializes read, write, and value
+//! cycle columns. The separate read/write columns differ from optimized's RAM
+//! tail, which shares its access indicator. Mixed address/cycle schedules are
+//! rejected during preparation.
+
 use crate::cuda::common::address_first::AddressFirst;
 use crate::cuda::common::devices::CycleWindow;
 #[cfg(feature = "allocative")]

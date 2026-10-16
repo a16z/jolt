@@ -1,3 +1,14 @@
+//! Shared prefix/suffix round engine for linearly combined witness columns.
+//!
+//! As in optimized's shift and claim-reduction kernels, prefix rounds bind
+//! square-root-sized `P` and `Q` tables. At the phase boundary, an eq-weighted
+//! fold of the original columns regenerates the suffix tables and their final
+//! opening claims. Narrow device columns stay in native integer form until
+//! those folds require field values.
+//!
+//! With multiple devices, the full-column folds run on resident windows;
+//! their smaller results are assembled on GPU 0 for the round loop.
+
 use std::sync::Arc;
 
 use jolt_field::JoltField;

@@ -1,3 +1,13 @@
+//! CUDA RAM output checking over the address domain.
+//!
+//! Final memory and public I/O produce the same mask, final-value, and
+//! expected-value tables as optimized. CUDA uploads these address-sized tables
+//! to GPU 0 and binds them there, retaining a split equality factor.
+//!
+//! Device reductions supply the endpoint and leading-coefficient data for
+//! host round recovery. Inactive cycle rounds are handled by the shared
+//! address-round adapter according to the relation's schedule.
+
 use crate::cuda::common::address_rounds::AddressRounds;
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

@@ -1,3 +1,16 @@
+//! BN254 device group arithmetic for commitments and Dory openings.
+//!
+//! Row MSMs use Pippenger buckets built by device count/scan/scatter passes.
+//! G1 window batches use a memory budget informed by free device memory and
+//! fall back to sequential windows when the batch does not fit. One-hot rows
+//! use segmented base sums instead of scalar multiplication, and signed
+//! increments retain separate native magnitudes and signs.
+//!
+//! Resident Dory MSMs use two-dimensional G1 and four-dimensional G2 GLV
+//! decompositions before bucketing. Unlike the optimized CPU vector routines,
+//! G1 multiply-add and G2 fixed-base scaling use full-width scalar loops;
+//! G2 multiply-add uses the four-dimensional Frobenius decomposition.
+
 #[expect(
     clippy::unreadable_literal,
     clippy::type_complexity,

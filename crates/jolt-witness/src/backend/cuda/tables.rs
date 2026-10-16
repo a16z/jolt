@@ -1,3 +1,10 @@
+//! Instruction-profile metadata for packed device dispatch.
+//!
+//! Host row accessors supply flags and lookup-table indices for each supported
+//! kind/row variant. `PACK_CIRCUIT_ORDER` and `PACK_INSTRUCTION_ORDER` define CUDA
+//! bit positions independently of enum ordinals; device extraction combines
+//! this metadata with per-cycle operand values.
+
 use super::CUDA_PROFILE;
 use jolt_lookup_tables::InstructionLookupTable;
 use jolt_riscv::{
