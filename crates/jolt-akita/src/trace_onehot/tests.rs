@@ -23,7 +23,7 @@ use jolt_field::{Fp128x8i32, One, Ring};
 use super::commit::commit_columns;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
 use super::source::TraceOneHotColumnBatchView;
-use crate::{AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
+use crate::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::OneHotPolynomial;
 
@@ -745,7 +745,7 @@ fn small_k256_blocks_commit_like_materialized_onehot() {
         COLUMNS,
         [9; 32],
         K,
-        AkitaScheduleArtifacts::shared_from_default_directory(),
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
     ))
     .unwrap();
     let native = materialized_columns

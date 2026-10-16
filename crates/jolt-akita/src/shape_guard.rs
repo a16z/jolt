@@ -157,12 +157,12 @@ mod tests {
 
     use super::*;
     use akita_config::TrustedScheduleCatalog;
-    use akita_params::ScheduleLookupKey;
+    use akita_params::{ChunkedWitnessCfg, ScheduleLookupKey};
     use jolt_field::Ring;
 
     use crate::{
         adapters::{AkitaBackendFlavor, AkitaConfig},
-        AkitaScheduleArtifacts,
+        AkitaChunkProfile, AkitaScheduleArtifacts,
     };
 
     fn dense_commitment(num_vars: usize, poly_count: usize) -> AkitaCommitment {
@@ -182,11 +182,19 @@ mod tests {
     }
 
     fn dense_schedules() -> TrustedScheduleCatalog<AkitaConfig> {
-        let artifacts =
-            AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
-                .expect("workspace schedule artifacts");
-        TrustedScheduleCatalog::new(artifacts.dense_catalog().expect("dense schedule catalog"))
-            .expect("typed dense schedule catalog")
+        let artifacts = AkitaScheduleArtifacts::from_directory(
+            AkitaScheduleArtifacts::packaged_directory(),
+            AkitaChunkProfile::new(8, 2),
+        )
+        .expect("workspace schedule artifacts");
+        TrustedScheduleCatalog::new(
+            artifacts.dense_catalog().expect("dense schedule catalog"),
+            ChunkedWitnessCfg {
+                num_chunks: 8,
+                num_activated_levels: 2,
+            },
+        )
+        .expect("typed dense schedule catalog")
     }
 
     fn test_selection(
