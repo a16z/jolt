@@ -856,38 +856,24 @@ pub(crate) fn par_sum_pair_groups<F: JoltField>(
     slots: usize,
     accumulate: impl Fn(&mut [F], usize) + Send + Sync,
 ) -> Vec<F> {
-    par_sum_pair_groups_reusing(groups, slots, || (), |acc, (), y| accumulate(acc, y))
-}
-
-/// [`par_sum_pair_groups`] with a per-thread scratch buffer, for kernels
-/// whose group walk reuses an allocation across groups (the scratch is
-/// fully overwritten per group).
-pub(crate) fn par_sum_pair_groups_reusing<F: JoltField, S: Send>(
-    groups: usize,
-    slots: usize,
-    scratch: impl Fn() -> S + Send + Sync,
-    accumulate: impl Fn(&mut [F], &mut S, usize) + Send + Sync,
-) -> Vec<F> {
     #[cfg(feature = "parallel")]
     {
         (0..groups)
             .into_par_iter()
             .fold(
-                || (vec![F::zero(); slots], scratch()),
-                |(mut acc, mut scratch), y| {
-                    accumulate(&mut acc, &mut scratch, y);
-                    (acc, scratch)
+                || vec![F::zero(); slots],
+                |mut acc, y| {
+                    accumulate(&mut acc, y);
+                    acc
                 },
             )
-            .map(|(acc, _)| acc)
             .reduce(|| vec![F::zero(); slots], merge_evals)
     }
     #[cfg(not(feature = "parallel"))]
     {
         let mut acc = vec![F::zero(); slots];
-        let mut scratch = scratch();
         for y in 0..groups {
-            accumulate(&mut acc, &mut scratch, y);
+            accumulate(&mut acc, y);
         }
         acc
     }

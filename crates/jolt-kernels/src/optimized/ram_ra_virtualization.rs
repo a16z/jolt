@@ -21,6 +21,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks
 use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
 use jolt_field::{Accumulator, JoltField};
+use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
@@ -29,9 +30,9 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{visit_resident, ChunkIndexSource, LazyFoldedRa, MATERIALIZE_BYTES};
 use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
 use super::support::{
     accumulate_product_grid, pin_derived_term, product_grid_scratch_len, GruenRoundMessage,
@@ -97,6 +98,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
                 num_committed,
                 committed_chunk_bits,
             },
+            MATERIALIZE_BYTES,
         );
 
         Ok(Box::new(RamRaVirtualizationKernel {
@@ -115,6 +117,8 @@ struct RamAddressChunks {
 }
 
 impl ChunkIndexSource for RamAddressChunks {
+    type Row = u32;
+
     fn num_columns(&self) -> usize {
         self.num_committed
     }
@@ -124,14 +128,22 @@ impl ChunkIndexSource for RamAddressChunks {
     }
 
     #[inline]
-    fn index(&self, i: usize, j: usize) -> Option<usize> {
-        let address = self.addresses[j];
-        if address == NO_ACCESS {
+    fn index(&self, i: usize, address: &u32) -> Option<usize> {
+        if *address == NO_ACCESS {
             return None;
         }
         let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
         let mask = (1u128 << self.committed_chunk_bits) - 1;
-        Some(((u128::from(address) >> shift) & mask) as usize)
+        Some(((u128::from(*address) >> shift) & mask) as usize)
+    }
+
+    fn visit_blocks(
+        &self,
+        range: Range<usize>,
+        block: usize,
+        visit: impl FnMut(usize, &[Self::Row]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        visit_resident(&self.addresses, range, block, visit)
     }
 }
 
@@ -140,8 +152,8 @@ struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
-    /// cycles, served lazily off the shared columns for the first four
-    /// binds instead of `N × T` dense.
+    /// cycles, served lazily off the shared columns until the byte-budgeted
+    /// materialization instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
 }
@@ -173,7 +185,8 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
             grid: Vec<F>,
         }
 
-        let block_lanes = self.gruen.par_fold_out_in(
+        let block_lanes = folded_ra.try_fold_out_in(
+            &self.gruen,
             || Scratch {
                 lanes: vec![F::Accumulator::default(); num_committed],
                 pairs: vec![(F::zero(), F::zero()); num_committed],
@@ -181,8 +194,8 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                 steps: vec![F::zero(); num_committed],
                 grid: vec![F::zero(); product_grid_scratch_len(num_committed)],
             },
-            |scratch, row, _x_in, e_in| {
-                folded_ra.lo_hi_all(row, &mut scratch.pairs);
+            |scratch, block, row, _x_in, e_in| {
+                block.lo_hi_all(row, &mut scratch.pairs);
                 for ((&(lo, hi), eval), step) in scratch
                     .pairs
                     .iter()
@@ -214,20 +227,24 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                 }
                 a
             },
-        );
+        )?;
 
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
-        self.gruen
+        // A failed fallback pass is returned; its placeholder never reaches a message.
+        let mut failure = None;
+        let message = self
+            .gruen
             .checked_toom(&q_evals, previous_claim, round, || {
-                self.gruen.par_fold_out_in(
+                let q_at_zero = folded_ra.try_fold_out_in(
+                    &self.gruen,
                     || {
                         (
                             vec![(F::zero(), F::zero()); num_committed],
                             F::Accumulator::default(),
                         )
                     },
-                    |(pairs, sum), row, _, weight| {
-                        folded_ra.lo_hi_all(row, pairs);
+                    |(pairs, sum), block, row, _, weight| {
+                        block.lo_hi_all(row, pairs);
                         let value = pairs
                             .iter()
                             .fold(F::one(), |product, pair| product * pair.0);
@@ -235,8 +252,13 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                     },
                     |_, weight, (_, sum)| weight * sum.reduce(),
                     |a, b| a + b,
-                )
-            })
+                );
+                q_at_zero.unwrap_or_else(|error| {
+                    failure = Some(error);
+                    F::zero()
+                })
+            });
+        failure.map_or(message, Err)
     }
 
     /// Fewer than two committed chunks: the grid needs `q(1)` among its
@@ -249,16 +271,17 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
 
-        let mut q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.folded_ra.try_fold_out_in(
+            &self.gruen,
             || vec![F::zero(); points],
-            |acc, row, _x_in, e_in| {
+            |acc, block, row, _x_in, e_in| {
                 if num_committed == 0 {
                     for value in acc.iter_mut() {
                         *value += e_in;
                     }
                     return;
                 }
-                let (lo, hi) = self.folded_ra.lo_hi(0, row);
+                let (lo, hi) = block.lo_hi(0, row);
                 let step = hi - lo;
                 let mut eval = lo;
                 for value in acc.iter_mut() {
@@ -278,16 +301,17 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                 }
                 a
             },
-        );
+        )?;
 
         self.gruen
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.gruen.bind(challenge);
-        self.folded_ra.bind(challenge);
+        self.folded_ra.bind(challenge)?;
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -303,14 +327,13 @@ impl<F: JoltField> ProveRounds<F> for RamRaVirtualizationKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -323,7 +346,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
     ) -> Result<RamRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
         Ok(RamRaVirtualizationOutputClaims {
-            ram_ra: self.folded_ra.final_values(),
+            ram_ra: self.folded_ra.final_values()?,
         })
     }
 
