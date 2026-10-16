@@ -185,6 +185,25 @@ impl Cell for SeedEntry {
 }
 
 impl SeedEntry {
+    /// This cell as a field-coefficient entry: `val` materialized and both
+    /// coefficients read from the level-0 LUTs.
+    #[inline]
+    pub(super) fn to_field<F: JoltField>(
+        self,
+        ra_lut: &CoeffLut<F>,
+        wa_lut: &CoeffLut<F>,
+    ) -> SparseEntry<F, F> {
+        SparseEntry {
+            val: F::from_u64(self.prev_val),
+            prev_val: self.prev_val,
+            next_val: self.next_val,
+            row: self.row as usize,
+            ra: self.ra().value(ra_lut),
+            wa: self.wa().value(wa_lut),
+            col: self.col,
+        }
+    }
+
     /// Bind adjacent rows into the indexed layout (materializing `val`); a
     /// missing side has zero `ra`/`wa`.
     #[inline]
@@ -235,50 +254,6 @@ impl SeedEntry {
                     row: (odd.row / 2) as usize,
                     col: odd.col,
                 }
-            }
-            (None, None) => unreachable!("merge visits only represented cells"),
-        }
-    }
-}
-
-impl<F: JoltField> MatrixEntry<F> for SeedEntry {
-    #[inline]
-    fn accumulate_pair_evals(
-        even: Option<&Self>,
-        odd: Option<&Self>,
-        inc_evals: [F; 2],
-        acc: &mut [F::Accumulator; 2],
-        ra_lut: &CoeffLut<F>,
-        wa_lut: &CoeffLut<F>,
-    ) {
-        let coeff_evals = <LutIndex as OneHotCoeff<F>>::eval_pair;
-        match (even, odd) {
-            (Some(even), Some(odd)) => {
-                debug_assert_eq!(even.col, odd.col);
-                let ra = coeff_evals(Some(even.ra()), Some(odd.ra()), ra_lut);
-                let wa = coeff_evals(Some(even.wa()), Some(odd.wa()), wa_lut);
-                let even_val = F::from_u64(even.prev_val);
-                acc[0].fmadd(ra[0], even_val);
-                acc[0].fmadd(wa[0], even_val + inc_evals[0]);
-                let val_m = F::from_u64(odd.prev_val) - even_val;
-                acc[1].fmadd(ra[1], val_m);
-                acc[1].fmadd(wa[1], val_m + inc_evals[1]);
-            }
-            (Some(even), None) => {
-                let ra = coeff_evals(Some(even.ra()), None, ra_lut);
-                let wa = coeff_evals(Some(even.wa()), None, wa_lut);
-                let even_val = F::from_u64(even.prev_val);
-                let val_m = F::from_u64(even.next_val) - even_val;
-                acc[0].fmadd(ra[0], even_val);
-                acc[0].fmadd(wa[0], even_val + inc_evals[0]);
-                acc[1].fmadd(ra[1], val_m);
-                acc[1].fmadd(wa[1], val_m + inc_evals[1]);
-            }
-            (None, Some(odd)) => {
-                let ra = coeff_evals(None, Some(odd.ra()), ra_lut);
-                let wa = coeff_evals(None, Some(odd.wa()), wa_lut);
-                acc[1].fmadd(ra[1], F::zero());
-                acc[1].fmadd(wa[1], inc_evals[1]);
             }
             (None, None) => unreachable!("merge visits only represented cells"),
         }
@@ -356,6 +331,22 @@ impl<F: JoltField, C: OneHotCoeff<F>> SparseEntry<F, C> {
                 }
             }
             (None, None) => unreachable!("merge visits only represented cells"),
+        }
+    }
+}
+
+impl<F: JoltField> SparseEntry<F, LutIndex> {
+    /// This entry with both coefficients read from its level's LUTs.
+    #[inline]
+    pub(super) fn to_field(self, ra_lut: &CoeffLut<F>, wa_lut: &CoeffLut<F>) -> SparseEntry<F, F> {
+        SparseEntry {
+            val: self.val,
+            prev_val: self.prev_val,
+            next_val: self.next_val,
+            row: self.row,
+            ra: self.ra.value(ra_lut),
+            wa: self.wa.value(wa_lut),
+            col: self.col,
         }
     }
 }

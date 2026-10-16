@@ -79,10 +79,8 @@ pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
     }
 }
 
-/// Per-cycle operand registers and signed rd increments.
+/// Per-cycle signed rd increments.
 pub(super) struct RegisterColumns {
-    pub(super) rs1_indices: Vec<Option<u8>>,
-    pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) rd_inc: Vec<i128>,
 }
 
@@ -98,11 +96,9 @@ impl StreamConsumer for CollectRegisterEntries {
     fn consume(&mut self, chunk: &[RegisterCycleRow]) {
         let columns = &mut self.columns;
         for cycle in chunk {
-            let row = columns.rs1_indices.len() as u32;
+            let row = columns.rd_inc.len() as u32;
             let (cells, len) = cycle.entries(row);
             self.entries.extend_from_slice(&cells[..len]);
-            columns.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
-            columns.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
             columns.rd_inc.push(raw_rd_inc(cycle));
         }
     }
@@ -129,8 +125,6 @@ impl RegisterColumns {
         let mut consumers = (CollectRegisterEntries {
             entries: Vec::with_capacity(cycles * 3),
             columns: Self {
-                rs1_indices: Vec::with_capacity(cycles),
-                rs2_indices: Vec::with_capacity(cycles),
                 rd_inc: Vec::with_capacity(cycles),
             },
         },);
@@ -145,25 +139,17 @@ impl RegisterColumns {
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         const CHUNK: usize = 1 << 14;
-        let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-        let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
-        (
-            rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-            rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-            rd_inc.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-        )
-            .into_par_iter()
+        rd_inc.spare_capacity_mut()[..cycles]
+            .par_chunks_mut(CHUNK)
             .enumerate()
-            .for_each(|(chunk_index, (rs1, rs2, inc))| {
+            .for_each(|(chunk_index, inc)| {
                 let base = chunk_index * CHUNK;
-                for offset in 0..rs1.len() {
+                for (offset, slot) in inc.iter_mut().enumerate() {
                     match access.window::<RegisterCycleRow>(base + offset) {
                         Ok(cycle) => {
-                            let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
-                            let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
-                            let _ = inc[offset].write(raw_rd_inc(&cycle));
+                            let _ = slot.write(raw_rd_inc(&cycle));
                         }
                         Err(failure) => {
                             error.record(base + offset, failure);
@@ -176,17 +162,11 @@ impl RegisterColumns {
             return Err(failure.into());
         }
         // SAFETY: the error latch is empty, so every chunk ran to completion
-        // and initialized its whole span of all three columns.
+        // and initialized its whole span of the column.
         unsafe {
-            rs1_indices.set_len(cycles);
-            rs2_indices.set_len(cycles);
             rd_inc.set_len(cycles);
         }
-        Ok(Self {
-            rs1_indices,
-            rs2_indices,
-            rd_inc,
-        })
+        Ok(Self { rd_inc })
     }
 }
 
