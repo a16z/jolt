@@ -61,23 +61,28 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-The workspace pins Akita to `cf95fd05b1d407083096ddf00752aea0048cd0b2`.
+The workspace pins Akita in its root `Cargo.toml`.
 Jolt delegates to Akita's adaptive ring-dimension schedule configuration
 and uses the CPU backend for every fold.
 The checked-in schedule catalogs match this revision.
 
-`ProverConfig::derive_from_dimensions` selects the single-chunk Akita profile. To use
-two, four, or eight chunks, set `config.akita_chunk_profile` before Akita
-preprocessing and use that config for proving. Proving rejects a profile that
-differs from the prepared setup. The selected profile is carried
-by the verifier setup. Four-file schedule directories containing the updated
-dense catalogs remain valid for the default profile; a nondefault profile needs
-an application-supplied companion catalog covering the exact shape. The checked-in
-companions contain integration fixtures; downstream applications generate and
-distribute their own production coverage. The same upstream verifier consumes
-the catalog embedded in the public verifier setup.
+`ProverConfig::derive_from_dimensions` selects the single-chunk geometry
+`AkitaChunkProfile { chunks: 1, levels: 0 }`. Set `config.akita_chunk_profile`
+before preprocessing to choose another chunk count and leading chunked fold
+count, and use the same config for proving. Akita validates the geometry and
+catalog together; proving rejects a profile that differs from preprocessing.
 
-Nondefault chunk profiles bind the `akita_chunk_profile` transcript label.
+Applications supply catalogs covering their selected geometry and exact shapes.
+`AkitaScheduleArtifacts` stores a collection keyed by `(K, chunks, levels)`.
+Its directory loader requires the two dense files and discovers one-hot files
+named `jolt-fp128-onehot-k<K>-w<chunks>r<levels>.aks`; an unsuffixed filename denotes
+`w1r0`. The checked-in catalogs cover repository fixtures. Applications generate
+and distribute their own production coverage.
+
+The same upstream verifier consumes the selected catalog and geometry embedded
+in public verifier preprocessing. Every one-hot setup binds both
+`akita_chunk_profile` (chunks) and `akita_chunked_levels` (levels) into the
+transcript. Verification does not read source catalog files.
 
 Both prover and verifier must be built for the same protocol. The `akita` feature selects native grouped commitments and little-endian scalar challenges. A compiled verifier accepts only its selected protocol configuration and rejects a mismatching proof. Dory and Akita proofs therefore require matching preprocessing and verifier builds.
 

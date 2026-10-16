@@ -1,3 +1,4 @@
+use crate::AkitaScheduleArtifacts;
 use akita_params::{PolynomialGroupLayout, PrecommittedGroupProfiles};
 use akita_pcs::custom_source::RootPolyMeta;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
@@ -23,8 +24,8 @@ use crate::adapters::{
     AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor,
     AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaHintSource, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
-    AkitaScheduleArtifacts, AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts,
-    AkitaVerifierSetup, BackendVerifierCache, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
+    AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup,
+    BackendVerifierCache, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::configs::AkitaChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
@@ -428,7 +429,8 @@ impl CommitmentScheme for AkitaScheme {
     fn setup(
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
-        if params.flavor == AkitaSetupFlavor::Dense && params.akita_chunk_profile.num_chunks() != 1
+        if params.flavor == AkitaSetupFlavor::Dense
+            && params.akita_chunk_profile != AkitaChunkProfile::default()
         {
             return Err(OpeningsError::InvalidSetup(
                 "dense-only Akita setup cannot select one-hot witness chunking".to_owned(),
@@ -480,28 +482,20 @@ impl CommitmentScheme for AkitaScheme {
                 .map_err(invalid_setup)?;
             catalog.to_artifact_bytes().map_err(invalid_setup)
         };
-        let schedule_artifacts = match (params.flavor, params.akita_chunk_profile) {
-            (AkitaSetupFlavor::Both, AkitaChunkProfile::Single) => {
-                AkitaVerifierScheduleArtifacts::Both {
-                    dense: dense_schedule_artifact()?,
-                    one_hot: one_hot_schedule_artifact()?,
-                }
-            }
-            (AkitaSetupFlavor::Both, profile) => AkitaVerifierScheduleArtifacts::BothChunked {
+        let profile = params.akita_chunk_profile;
+        let schedule_artifacts = match params.flavor {
+            AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
+                dense_profile: artifacts.dense_profile(),
                 profile,
                 dense: dense_schedule_artifact()?,
                 one_hot: one_hot_schedule_artifact()?,
             },
-            (AkitaSetupFlavor::OneHot, AkitaChunkProfile::Single) => {
-                AkitaVerifierScheduleArtifacts::OneHot {
-                    one_hot: one_hot_schedule_artifact()?,
-                }
-            }
-            (AkitaSetupFlavor::OneHot, profile) => AkitaVerifierScheduleArtifacts::OneHotChunked {
+            AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
                 profile,
                 one_hot: one_hot_schedule_artifact()?,
             },
-            (AkitaSetupFlavor::Dense, _) => AkitaVerifierScheduleArtifacts::Dense {
+            AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
+                dense_profile: artifacts.dense_profile(),
                 dense: dense_schedule_artifact()?,
             },
         };
@@ -905,14 +899,16 @@ mod tests {
         append_verifier_setup, AkitaBackendFlavor, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
     };
     use crate::configs::JoltDenseBounded;
-    use akita_config::{policy_of, CommitmentConfig};
+    use crate::AkitaOneHotScheduleArtifact;
+    use akita_config::CommitmentConfig;
     use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
 
     #[test]
     fn full_width_objects_do_not_widen_bounded_dense_commitments() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         use crate::schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
         let mut params = AkitaSetupParams::dense_only(14, 1, [7; 32], artifacts);
         params.grouped_schedule = Some(GroupedScheduleParams::new(
@@ -932,7 +928,8 @@ mod tests {
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let setup = AkitaVerifierSetup {
             max_num_vars: 4,
             max_num_polys_per_commitment_group: 1,
@@ -940,6 +937,8 @@ mod tests {
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
+                dense_profile: artifacts.dense_profile(),
+                profile: AkitaChunkProfile::default(),
                 dense: artifacts
                     .dense_catalog()
                     .unwrap()
@@ -998,7 +997,8 @@ mod tests {
 
     #[test]
     fn transparent_object_setup_reuses_backend_for_a_new_layout() {
-        let context = AkitaScheduleArtifacts::shared_from_default_directory();
+        let context =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let (base, _) = <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(
             &context, 14, [3; 32],
         )
@@ -1025,7 +1025,8 @@ mod tests {
         num_vars: usize,
         num_polys: usize,
     ) {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let setup_params =
             AkitaSetupParams::one_hot_only(num_vars, num_polys, [4; 32], one_hot_k, artifacts)
                 .with_akita_chunk_profile(profile);
@@ -1081,25 +1082,26 @@ mod tests {
 
         if num_vars == 16 && num_polys == 1 {
             let one_hot = match &verifier_setup.schedule_artifacts {
-                AkitaVerifierScheduleArtifacts::OneHot { one_hot }
-                | AkitaVerifierScheduleArtifacts::OneHotChunked { one_hot, .. } => one_hot.clone(),
+                AkitaVerifierScheduleArtifacts::OneHot { one_hot, .. } => one_hot.clone(),
                 AkitaVerifierScheduleArtifacts::Dense { .. }
-                | AkitaVerifierScheduleArtifacts::Both { .. }
-                | AkitaVerifierScheduleArtifacts::BothChunked { .. } => {
+                | AkitaVerifierScheduleArtifacts::Both { .. } => {
                     panic!("one-hot fixture must carry a one-hot-only catalog")
                 }
             };
-            let wrong_profile = if profile == AkitaChunkProfile::Four {
-                AkitaChunkProfile::Eight
+            let wrong_profile = if profile == AkitaChunkProfile::new(4, 2) {
+                AkitaChunkProfile::new(8, 2)
             } else {
-                AkitaChunkProfile::Four
+                AkitaChunkProfile::new(4, 2)
             };
             for schedule_artifacts in [
-                AkitaVerifierScheduleArtifacts::OneHotChunked {
+                AkitaVerifierScheduleArtifacts::OneHot {
                     profile: wrong_profile,
                     one_hot: one_hot.clone(),
                 },
-                AkitaVerifierScheduleArtifacts::OneHot { one_hot },
+                AkitaVerifierScheduleArtifacts::OneHot {
+                    profile: AkitaChunkProfile::default(),
+                    one_hot,
+                },
             ] {
                 if schedule_artifacts == verifier_setup.schedule_artifacts {
                     continue;
@@ -1139,12 +1141,7 @@ mod tests {
 
     #[test]
     fn one_hot_k16_roundtrip() {
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             let family = OneHotFamily::from_parts(AKITA_ONE_HOT_K16, profile).unwrap();
             for num_polys in [1, 2] {
                 for num_vars in family.num_vars_range(num_polys).0..=16 {
@@ -1156,12 +1153,7 @@ mod tests {
 
     #[test]
     fn one_hot_k256_roundtrip() {
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             let family = OneHotFamily::from_parts(AKITA_ONE_HOT_K256, profile).unwrap();
             for num_polys in [1, 2] {
                 for num_vars in family.num_vars_range(num_polys).0..=16 {
@@ -1175,7 +1167,8 @@ mod tests {
     /// must re-derive the same backend key from its shape.
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let (_, verifier_setup) =
             AkitaScheme::setup(AkitaSetupParams::new(14, 1, [3; 32], artifacts)).unwrap();
         let json = serde_json::to_string(&verifier_setup).unwrap();
@@ -1202,96 +1195,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_single_setup_keeps_its_transcript() {
-        #[derive(Serialize)]
-        enum LegacyAkitaVerifierScheduleArtifacts<'a> {
-            Dense { dense: &'a [u8] },
-            OneHot { one_hot: &'a [u8] },
-            Both { dense: &'a [u8], one_hot: &'a [u8] },
-        }
-
-        #[derive(Serialize)]
-        struct LegacyAkitaVerifierSetup<'a> {
-            max_num_vars: usize,
-            max_num_polys_per_commitment_group: usize,
-            max_total_batch_polys: usize,
-            default_layout_digest: AkitaLayoutDigest,
-            one_hot_k: usize,
-            schedule_artifacts: LegacyAkitaVerifierScheduleArtifacts<'a>,
-        }
-
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
-        let (_, setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
-            16,
-            1,
-            [3; 32],
-            AKITA_ONE_HOT_K16,
-            artifacts,
-        ))
-        .unwrap();
-        let encode_legacy = |schedule_artifacts| {
-            bincode::serde::encode_to_vec(
-                LegacyAkitaVerifierSetup {
-                    max_num_vars: setup.max_num_vars,
-                    max_num_polys_per_commitment_group: setup.max_num_polys_per_commitment_group,
-                    max_total_batch_polys: setup.max_total_batch_polys,
-                    default_layout_digest: setup.default_layout_digest,
-                    one_hot_k: setup.one_hot_k,
-                    schedule_artifacts,
-                },
-                bincode::config::standard(),
-            )
-            .unwrap()
-        };
-        for schedule_artifacts in [
-            LegacyAkitaVerifierScheduleArtifacts::Dense { dense: &[] },
-            LegacyAkitaVerifierScheduleArtifacts::Both {
-                dense: &[],
-                one_hot: &[],
-            },
-        ] {
-            let bytes = encode_legacy(schedule_artifacts);
-            let (decoded, consumed): (AkitaVerifierSetup, usize) =
-                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
-            assert_eq!(consumed, bytes.len());
-            assert_eq!(decoded.akita_chunk_profile(), AkitaChunkProfile::Single);
-        }
-        let one_hot = match &setup.schedule_artifacts {
-            AkitaVerifierScheduleArtifacts::OneHot { one_hot } => one_hot,
-            AkitaVerifierScheduleArtifacts::Dense { .. }
-            | AkitaVerifierScheduleArtifacts::Both { .. }
-            | AkitaVerifierScheduleArtifacts::OneHotChunked { .. }
-            | AkitaVerifierScheduleArtifacts::BothChunked { .. } => {
-                panic!("single-profile one-hot setup must use the legacy artifact variant")
-            }
-        };
-        let legacy_bytes = encode_legacy(LegacyAkitaVerifierScheduleArtifacts::OneHot { one_hot });
-        let (legacy, consumed): (AkitaVerifierSetup, usize) =
-            bincode::serde::decode_from_slice(&legacy_bytes, bincode::config::standard()).unwrap();
-        assert_eq!(consumed, legacy_bytes.len());
-        assert_eq!(
-            bincode::serde::encode_to_vec(&setup, bincode::config::standard()).unwrap(),
-            legacy_bytes
-        );
-        assert_eq!(legacy.akita_chunk_profile(), AkitaChunkProfile::Single);
-
-        let mut current_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(&mut current_transcript, &setup, AkitaBackendFlavor::OneHot).unwrap();
-        let mut legacy_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(&mut legacy_transcript, &legacy, AkitaBackendFlavor::OneHot).unwrap();
-        // This fixture binds the entire K16 catalog, so catalog changes alter it
-        // even when the selected row and single-chunk transcript encoding are unchanged.
-        assert_eq!(
-            legacy_transcript.state(),
-            [
-                205, 2, 243, 247, 235, 52, 107, 127, 77, 82, 189, 184, 174, 107, 52, 230, 100, 169,
-                34, 174, 75, 3, 75, 147, 196, 211, 62, 205, 25, 116, 31, 213,
-            ]
-        );
-        assert_eq!(current_transcript.state(), legacy_transcript.state());
-    }
-
-    #[test]
     fn serde_transported_recursive_grouped_setup_restores_its_schedule_rows() {
         use crate::schedule_registry::{GroupedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
         use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
@@ -1310,7 +1213,7 @@ mod tests {
             [3; 32],
             AKITA_ONE_HOT_K16,
             Some(grouped_schedule),
-            AkitaScheduleArtifacts::shared_from_default_directory(),
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         ))
         .unwrap();
         let selection = with_one_hot_family!(scheme verifier_setup.one_hot_scheme().unwrap(), |scheme| {
@@ -1355,7 +1258,7 @@ mod tests {
             [3; 32],
             AKITA_ONE_HOT_K16,
             Some(request),
-            AkitaScheduleArtifacts::shared_from_default_directory(),
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         ))
         .expect_err("a grouped request for another final arity must fail during setup");
         assert!(error
@@ -1365,7 +1268,8 @@ mod tests {
 
     #[test]
     fn catalog_digest_prevents_cross_verification_with_the_same_selected_row() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
             14,
             1,
@@ -1408,7 +1312,7 @@ mod tests {
                 .rows()
                 .filter(|row| row.selection() != omitted)
                 .map(|row| (row.profiles().clone(), row.schedule().clone())),
-            &policy_of::<JoltDenseBounded>(),
+            full_catalog.policy(),
             JoltDenseBounded::ring_challenge_config,
         )
         .unwrap();
@@ -1417,24 +1321,30 @@ mod tests {
             full_catalog.catalog_digest(),
             reduced_catalog.catalog_digest()
         );
-        let alternate_artifacts = Arc::new(AkitaScheduleArtifacts::new(
-            reduced_catalog.to_artifact_bytes().unwrap(),
-            artifacts
-                .full_dense_catalog()
-                .unwrap()
-                .to_artifact_bytes()
-                .unwrap(),
-            artifacts
-                .one_hot_catalog(AKITA_ONE_HOT_K16)
-                .unwrap()
-                .to_artifact_bytes()
-                .unwrap(),
-            artifacts
-                .one_hot_catalog(AKITA_ONE_HOT_K256)
-                .unwrap()
-                .to_artifact_bytes()
-                .unwrap(),
-        ));
+        let alternate_artifacts = Arc::new(
+            AkitaScheduleArtifacts::new(
+                artifacts.dense_profile(),
+                reduced_catalog.to_artifact_bytes().unwrap(),
+                artifacts
+                    .full_dense_catalog()
+                    .unwrap()
+                    .to_artifact_bytes()
+                    .unwrap(),
+                [AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256]
+                    .into_iter()
+                    .map(|k| AkitaOneHotScheduleArtifact {
+                        k,
+                        profile: AkitaChunkProfile::default(),
+                        bytes: artifacts
+                            .one_hot_catalog(k)
+                            .unwrap()
+                            .to_artifact_bytes()
+                            .unwrap(),
+                    })
+                    .collect(),
+            )
+            .unwrap(),
+        );
         let (_, alternate_verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
             14,
             1,
@@ -1463,7 +1373,8 @@ mod tests {
 
     #[test]
     fn direct_opening_requires_statement_commitment_layout_digest() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let setup_params = AkitaSetupParams::new(14, 1, [7; 32], artifacts);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let polynomial = Polynomial::new(
