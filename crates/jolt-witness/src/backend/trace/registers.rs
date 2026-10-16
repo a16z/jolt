@@ -17,53 +17,56 @@ impl TraceBackend {
             }
         }
 
-        let cycles = checked_pow2(self.config.log_t)?;
+        let rows = self.trace_rows()?;
+        let cycles = rows.cycles();
         let register_count = checked_pow2(REGISTER_ADDRESS_BITS)?;
         let mut values = jolt_utils::unsafe_allocate_zero_vec(checked_dense_grid_len::<F>(
             register_count,
             cycles,
         )?);
 
+        // Padding rows touch no register, so the walk covers the whole domain.
+        let mut cycle = 0;
         if id == JoltVirtualPolynomial::RegistersVal {
             let mut state = vec![0u64; register_count];
-            for cycle in 0..cycles {
-                for (register, value) in state.iter().copied().enumerate() {
-                    values[register * cycles + cycle] = F::from_u64(value);
+            rows.visit(0..cycles, WALK_ROWS, &mut |chunk, _, _| {
+                for row in chunk {
+                    for (register, value) in state.iter().copied().enumerate() {
+                        values[register * cycles + cycle] = F::from_u64(value);
+                    }
+                    if let Some(register) = row.rd_index() {
+                        let register = usize::from(register);
+                        if register >= register_count {
+                            return Err(invalid_register_address(register as u8));
+                        }
+                        state[register] = row.rd_write_value();
+                    }
+                    cycle += 1;
                 }
+                Ok(())
+            })?;
+            return Ok(values);
+        }
 
-                let Some(row) = self.trace.trace.proof_rows().get(cycle) else {
-                    continue;
+        rows.visit(0..cycles, WALK_ROWS, &mut |chunk, _, _| {
+            for row in chunk {
+                let register = match id {
+                    JoltVirtualPolynomial::Rs1Ra => row.rs1_index(),
+                    JoltVirtualPolynomial::Rs2Ra => row.rs2_index(),
+                    JoltVirtualPolynomial::RdWa => row.rd_index(),
+                    _ => None,
                 };
-                if let Some(register) = row.rd_index() {
+                if let Some(register) = register {
                     let register = usize::from(register);
                     if register >= register_count {
                         return Err(invalid_register_address(register as u8));
                     }
-                    state[register] = row.rd_write_value();
+                    values[register * cycles + cycle] = F::one();
                 }
+                cycle += 1;
             }
-            return Ok(values);
-        }
-
-        for cycle in 0..cycles {
-            let Some(row) = self.trace.trace.proof_rows().get(cycle) else {
-                break;
-            };
-            let register = match id {
-                JoltVirtualPolynomial::Rs1Ra => row.rs1_index(),
-                JoltVirtualPolynomial::Rs2Ra => row.rs2_index(),
-                JoltVirtualPolynomial::RdWa => row.rd_index(),
-                _ => None,
-            };
-            if let Some(register) = register {
-                let register = usize::from(register);
-                if register >= register_count {
-                    return Err(invalid_register_address(register as u8));
-                }
-                values[register * cycles + cycle] = F::one();
-            }
-        }
-
+            Ok(())
+        })?;
         Ok(values)
     }
 }

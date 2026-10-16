@@ -275,7 +275,7 @@ row vector.
 `TraceBackend::try_new` accepts the non-generic `JoltVmWitnessInputs`, rejects
 a `proof_len` beyond the cycle domain, and retains the input `TraceOutput`
 with the producer's `Arc`. `TraceBackend` has no trace-source type parameter or
-`PhantomData`. `RandomAccessRows` and field witnesses borrow or share the
+`PhantomData`. `TraceRows` and field witnesses borrow or share the
 aggregate. `from_compact`, `compact_trace_row`, and `raw_trace_rows` have been
 removed. Chunked replay stays on `ChunkedExecutionBackend`; witness
 construction accepts only a complete `TraceOutput`.

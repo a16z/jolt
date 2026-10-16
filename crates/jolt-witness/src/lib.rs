@@ -13,10 +13,10 @@
 //! [`JoltWitnessOracle`] (the naive interpreter's path — one exhaustive match
 //! over jolt-claims ids, no wildcard) and typed bundles over the streaming
 //! pass. This crate defines **no id vocabulary of its own** — all ids are
-//! jolt-claims'. Row sources support sequential cycle ranges and may expose
-//! random-access views for parallel collection. [`JoltVmWitnessMetadata`] exposes
-//! shapes and program facts without row or polynomial data; unsupported queries
-//! return an unavailable-view error.
+//! jolt-claims'. Row sources support sequential cycle ranges; trace-backed
+//! sources also expose the owned [`TraceRows`] handle over their resident
+//! rows. [`JoltVmWitnessMetadata`] exposes shapes and program facts without row
+//! or polynomial data; unsupported queries return an unavailable-view error.
 
 // Lets derive-generated `::jolt_witness::...` paths resolve inside this
 // crate's own tests.
@@ -32,6 +32,7 @@ pub mod witnesses;
 mod bundle;
 mod consumer;
 mod error;
+mod rows;
 mod shape;
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -46,10 +47,11 @@ pub use backend::{
 };
 pub use bundle::WitnessBundle;
 pub use consumer::{
-    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RandomAccessRows,
-    RowSource, StreamConsumer,
+    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RowSource,
+    StreamConsumer,
 };
 pub use error::WitnessError;
+pub use rows::TraceRows;
 pub use shape::{PolynomialEncoding, Shape};
 
 #[doc(hidden)]

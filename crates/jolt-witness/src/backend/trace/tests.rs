@@ -438,6 +438,38 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
     Ok(())
 }
 
+/// More rows than one walk task, so the parallel column walk writes several
+/// task slices; row `i` sits at address `0x8000_0000 + 4i`.
+#[test]
+fn cycle_columns_cross_walk_tasks() -> Result<(), String> {
+    let log_t = 13;
+    let rows = (0..5000)
+        .map(|index| {
+            JoltTraceRow::new(
+                instruction(0x8000_0000 + 4 * index),
+                RegisterState::default(),
+                RamAccess::NoOp,
+                1,
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut pcs = vec![0; 1 << log_t];
+    for (pc, row) in pcs.iter_mut().zip(&rows) {
+        *pc = row.unexpanded_pc();
+    }
+    let next_pcs = pcs.iter().skip(1).copied().chain([0]).collect::<Vec<_>>();
+    let program = Arc::new(JoltProgram::default());
+    let preprocessing = preprocessing();
+    let witness = TraceBackend::new(
+        config().with_log_t(log_t),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows)),
+    );
+    assert_virtual_values(&witness, JoltVirtualPolynomial::UnexpandedPC, &pcs)?;
+    assert_virtual_values(&witness, JoltVirtualPolynomial::NextUnexpandedPC, &next_pcs)?;
+    Ok(())
+}
+
 #[test]
 fn register_read_write_virtual_views_materialize_address_major_state() -> Result<(), String> {
     let program = Arc::new(JoltProgram::default());
@@ -1049,7 +1081,7 @@ fn witness_metadata_serves_shapes_and_rejects_data_queries() {
         JoltWitnessOracle::<Fr>::oracle_table(&metadata, id),
         Err(WitnessError::UnavailableView { .. })
     ));
-    assert!(metadata.random_access().is_none());
+    assert!(metadata.rows().is_none());
     assert!(matches!(
         metadata.visit_chunks(0..16, 4, &mut |_, _, _| panic!(
             "witness metadata must not emit trace rows"

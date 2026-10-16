@@ -4,7 +4,7 @@ use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
-use jolt_witness::RandomAccessRows;
+use jolt_witness::TraceRows;
 use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -168,7 +168,7 @@ pub(super) enum Seeds {
     /// cells. The witness plane owns the rows and reports them itself.
     #[cfg(feature = "parallel")]
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    Rows(RandomAccessRows),
+    Rows(TraceRows),
 }
 
 impl Seeds {

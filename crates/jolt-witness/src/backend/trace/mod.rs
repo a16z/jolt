@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::backend::ProgramSource;
 use crate::witnesses::ram_access_address;
-use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
+use crate::{TraceRows, WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
 mod advice;
 mod cycle;
@@ -27,6 +27,10 @@ mod ram;
 mod registers;
 
 pub const RV64_LOOKUP_ADDRESS_BITS: usize = 128;
+
+/// Rows per visit callback of the oracle walks, and per parallel task of the
+/// cycle-column walk.
+const WALK_ROWS: usize = 1 << 12;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoltVmWitnessConfig {
@@ -129,16 +133,7 @@ impl TraceBackend {
         config: JoltVmWitnessConfig,
         inputs: JoltVmWitnessInputs,
     ) -> Result<Self, WitnessError> {
-        let cycles = checked_pow2(config.log_t)?;
-        let proof_len = inputs.trace.trace.proof_len();
-        if proof_len > cycles {
-            return Err(WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: format!(
-                    "physical trace has {proof_len} rows but the cycle domain has {cycles}"
-                ),
-            });
-        }
+        TraceRows::check_domain(&inputs.trace.trace, checked_pow2(config.log_t)?)?;
         Ok(Self {
             config,
             program: inputs.program,
@@ -156,6 +151,14 @@ impl TraceBackend {
     /// Trace-independent dimensions and program facts for this witness.
     pub fn metadata(&self) -> JoltVmWitnessMetadata<'_> {
         JoltVmWitnessMetadata::new(&self.config, &self.preprocessing)
+    }
+
+    pub(crate) fn trace_rows(&self) -> Result<TraceRows, WitnessError> {
+        TraceRows::new(
+            Arc::clone(&self.trace.trace),
+            checked_pow2(self.config.log_t)?,
+            Arc::clone(&self.preprocessing),
+        )
     }
 }
 

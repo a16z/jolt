@@ -6,7 +6,7 @@ use jolt_utils::FirstErrorLatch;
 use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 #[cfg(feature = "parallel")]
-use jolt_witness::RandomAccessRows;
+use jolt_witness::TraceRows;
 use jolt_witness::{
     stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
 };
@@ -127,7 +127,7 @@ impl RegisterColumns {
             });
         }
         #[cfg(feature = "parallel")]
-        if let Some(access) = witness.random_access() {
+        if let Some(access) = witness.rows() {
             if cycles <= access.cycles() {
                 return Ok((Self::collect_par(&access, cycles)?, Seeds::Rows(access)));
             }
@@ -148,7 +148,7 @@ impl RegisterColumns {
 
     #[cfg(feature = "parallel")]
     fn collect_par<F: JoltField>(
-        access: &RandomAccessRows,
+        access: &TraceRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         const CHUNK: usize = 1 << 14;

@@ -13,7 +13,7 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::VerifierError;
 use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, RandomAccessRows, RowSource, StreamConsumer, WitnessBundle,
+    stream_witnesses, JoltWitnessPlane, RowSource, StreamConsumer, TraceRows, WitnessBundle,
     WitnessError,
 };
 #[cfg(feature = "parallel")]
@@ -66,7 +66,7 @@ impl RoundProgress {
 const COLLECT_ROWS_CHUNK: usize = 1 << 16;
 
 pub(crate) fn collect_par_map<B: WitnessBundle, V: Copy + Send>(
-    access: &RandomAccessRows,
+    access: &TraceRows,
     cycles: usize,
     pack: impl Fn(B) -> V + Send + Sync,
 ) -> Result<Vec<V>, WitnessError> {
@@ -86,7 +86,7 @@ pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
-    if let Some(access) = source.random_access() {
+    if let Some(access) = source.rows() {
         if cycles <= access.cycles() {
             return collect_par_map(&access, cycles, |bundle: B| bundle);
         }
@@ -996,7 +996,7 @@ impl<F: JoltField> SplitLt<F> {
 pub(crate) enum BundleStore<B> {
     /// The witness plane owns these rows; it reports them itself.
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    Owned(RandomAccessRows),
+    Owned(TraceRows),
     Retained(
         #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
          Vec<B>,
@@ -1011,7 +1011,7 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, crate::KernelError<F>> {
-        match witness.random_access() {
+        match witness.rows() {
             Some(rows) if cycles <= rows.cycles() => Ok(Self::Owned(rows)),
             _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
         }
@@ -1026,7 +1026,7 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
 }
 
 pub(crate) enum BundleAccess<'a, B> {
-    View(&'a RandomAccessRows),
+    View(&'a TraceRows),
     Retained(&'a [B]),
 }
 

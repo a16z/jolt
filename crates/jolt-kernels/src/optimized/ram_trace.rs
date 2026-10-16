@@ -11,7 +11,7 @@ use jolt_poly::EqPolynomial;
 use jolt_utils::FirstErrorLatch;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 #[cfg(feature = "parallel")]
-use jolt_witness::RandomAccessRows;
+use jolt_witness::TraceRows;
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -104,7 +104,7 @@ where
     T: Copy + Send + Sync,
 {
     #[cfg(feature = "parallel")]
-    if let Some(access) = witness.random_access() {
+    if let Some(access) = witness.rows() {
         if cycles <= access.cycles() {
             return collect_split_columns_par(&access, cycles, &split);
         }
@@ -156,7 +156,7 @@ where
 
 #[cfg(feature = "parallel")]
 fn collect_split_columns_par<F: JoltField, B, T, const N: usize>(
-    access: &RandomAccessRows,
+    access: &TraceRows,
     cycles: usize,
     split: &(impl Fn(&B) -> Result<[T; N], KernelError<F>> + Sync),
 ) -> Result<[Vec<T>; N], KernelError<F>>
