@@ -16,12 +16,12 @@ pub use crate::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
 pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary};
-pub use error::TraceError;
+pub use error::{SourceTraceError, TraceError};
 #[cfg(feature = "field-inline")]
 pub use trace::FieldEvent;
 pub use trace::{
-    ExecutionDimensions, JoltProgram, MemoryImage, RamAddressBounds, TraceData, TraceInputs,
-    TraceOutput,
+    ExecutionDimensions, JoltProgram, MemoryImage, RamAddressBounds, SourceTraceRow, TraceData,
+    TraceInputs, TraceOutput,
 };
 
 #[cfg(feature = "image")]

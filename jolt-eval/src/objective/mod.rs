@@ -7,6 +7,7 @@ pub mod synthesis;
 pub mod telemetry;
 
 use code_quality::PROOF_SYSTEM_CRATE_DIRS;
+use performance::source_trace_gen::SourceTraceGenObjective;
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -143,6 +144,7 @@ pub enum PerformanceObjective {
     MulI64(performance::field_mul::MulI64Objective),
     MulU128(performance::field_mul::MulU128Objective),
     MulI128(performance::field_mul::MulI128Objective),
+    SourceTraceGen(SourceTraceGenObjective),
 }
 
 impl PerformanceObjective {
@@ -155,6 +157,7 @@ impl PerformanceObjective {
             Self::MulI64(performance::field_mul::MulI64Objective),
             Self::MulU128(performance::field_mul::MulU128Objective),
             Self::MulI128(performance::field_mul::MulI128Objective),
+            Self::SourceTraceGen(SourceTraceGenObjective),
         ]
     }
 
@@ -167,6 +170,7 @@ impl PerformanceObjective {
             Self::MulI64(o) => o.name(),
             Self::MulU128(o) => o.name(),
             Self::MulI128(o) => o.name(),
+            Self::SourceTraceGen(o) => o.name(),
         }
     }
 
@@ -179,6 +183,7 @@ impl PerformanceObjective {
             Self::MulI64(o) => o.units(),
             Self::MulU128(o) => o.units(),
             Self::MulI128(o) => o.units(),
+            Self::SourceTraceGen(o) => o.units(),
         }
     }
 
@@ -191,6 +196,7 @@ impl PerformanceObjective {
             Self::MulI64(o) => o.description(),
             Self::MulU128(o) => o.description(),
             Self::MulI128(o) => o.description(),
+            Self::SourceTraceGen(o) => o.description(),
         }
     }
 
@@ -198,6 +204,7 @@ impl PerformanceObjective {
         match self {
             Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["crates/jolt-poly/"],
             Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
+            Self::SourceTraceGen(_) => &["tracer/", "crates/jolt-program/src/execution/"],
             Self::MulU64(_) | Self::MulI64(_) | Self::MulU128(_) | Self::MulI128(_) => {
                 &["crates/jolt-field/"]
             }
@@ -225,6 +232,7 @@ pub use code_quality::lloc::LLOC;
 pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
 pub use performance::field_mul::{MUL_I128, MUL_I64, MUL_U128, MUL_U64};
 pub use performance::naive_sort::NAIVE_SORT_TIME;
+pub use performance::source_trace_gen::SOURCE_TRACE_GEN;
 
 impl OptimizationObjective {
     pub fn all() -> Vec<Self> {

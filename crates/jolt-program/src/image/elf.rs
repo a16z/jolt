@@ -1,8 +1,11 @@
 use common::constants::RAM_START_ADDRESS;
-use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
+use jolt_riscv::{
+    uncompress_rv64_instruction, JoltInstructionProfile, SourceExtension, SourceInstruction,
+};
 use object::{Object, ObjectSection, SectionKind};
 use std::collections::BTreeMap;
 
+use super::decode::decode_instruction;
 use crate::ProgramError;
 
 /// Contents decoded directly from an RV64 ELF program image.
@@ -26,10 +29,52 @@ pub struct Rv64ProgramImage {
     pub entry_address: u64,
 }
 
+/// Selects how executable sections containing data are decoded.
+///
+/// `Strict` validates the existing halfword instruction stream. `DataHoles`
+/// examines complete, four-byte-aligned little-endian slots in each merged text
+/// range, in address order without resynchronising. A slot is retained exactly
+/// when instruction decoding under the selected profile succeeds; rejected
+/// slots and leading or trailing fragments are omitted. The instruction list
+/// stays dense and in address order.
+///
+/// Both modes preserve every section byte in `memory_init`, plus `program_end`
+/// and `entry_address`, and return the same errors for invalid ELF objects,
+/// ELF32 images, overflowing section extents and unreadable section data.
+/// Without compressed instructions, any image accepted by `Strict` has the same
+/// decoded image under `DataHoles`. A data word that decodes is an instruction.
+///
+/// `DataHoles` gives up detecting corrupted encodings, unsupported instructions
+/// and truncated intended code: it cannot distinguish data from damage, so an
+/// unreached fault stays undetected and a reached hole in `SourceTracerBackend`
+/// returns `PcOutsideProgram` instead of the suppressed decode error.
+/// `DataHoles` rejects profiles containing compressed instructions with
+/// `DecodeModeUnsupportedByProfile` before ELF parsing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DecodeMode {
+    #[default]
+    Strict,
+    DataHoles,
+}
+
 pub fn decode_elf(
     elf: &[u8],
     profile: JoltInstructionProfile,
 ) -> Result<Rv64ProgramImage, ProgramError> {
+    decode_elf_with_mode(elf, profile, DecodeMode::Strict)
+}
+
+/// Decodes an ELF with the selected executable-section policy, preserving all
+/// loaded bytes, the image end and entry point in either mode.
+pub fn decode_elf_with_mode(
+    elf: &[u8],
+    profile: JoltInstructionProfile,
+    mode: DecodeMode,
+) -> Result<Rv64ProgramImage, ProgramError> {
+    if mode == DecodeMode::DataHoles && profile.source_extensions.contains(&SourceExtension::Rv64C)
+    {
+        return Err(ProgramError::DecodeModeUnsupportedByProfile);
+    }
     let obj =
         object::File::parse(elf).map_err(|_| ProgramError::MalformedImage("invalid ELF object"))?;
     if let object::File::Elf32(_) = &obj {
@@ -48,7 +93,11 @@ pub fn decode_elf(
         .filter(|section| section.address() >= RAM_START_ADDRESS)
     {
         let start = section.address();
-        let end = start + section.size();
+        let end = start
+            .checked_add(section.size())
+            .ok_or(ProgramError::MalformedImage(
+                "section extent overflows address space",
+            ))?;
         program_end = program_end.max(end);
 
         let raw_data = section
@@ -78,7 +127,7 @@ pub fn decode_elf(
         let raw_data: Vec<_> = (start..end)
             .map(|address| memory_image.get(&address).copied().unwrap_or(0))
             .collect();
-        decode_text_section(start, &raw_data, &mut instructions, profile)?;
+        decode_text_section(start, &raw_data, &mut instructions, profile, mode)?;
     }
 
     Ok(Rv64ProgramImage {
@@ -109,7 +158,25 @@ fn decode_text_section(
     raw_data: &[u8],
     instructions: &mut Vec<SourceInstruction>,
     profile: JoltInstructionProfile,
+    mode: DecodeMode,
 ) -> Result<(), ProgramError> {
+    if mode == DecodeMode::DataHoles {
+        let leading = ((4 - section_address % 4) % 4) as usize;
+        for (slot, bytes) in raw_data
+            .get(leading..)
+            .unwrap_or_default()
+            .chunks_exact(4)
+            .enumerate()
+        {
+            let &[b0, b1, b2, b3] = bytes else { continue };
+            let word = u32::from_le_bytes([b0, b1, b2, b3]);
+            let address = section_address + (leading + slot * 4) as u64;
+            if let Ok(instruction) = decode_instruction(word, address, false, profile) {
+                instructions.push(instruction);
+            }
+        }
+        return Ok(());
+    }
     let mut offset = 0;
     while offset < raw_data.len() {
         let address = section_address + offset as u64;
@@ -123,7 +190,7 @@ fn decode_text_section(
         if (first_halfword & 0b11) != 0b11 {
             if first_halfword != 0 {
                 let word = uncompress_rv64_instruction(first_halfword);
-                let instruction = super::decode::decode_instruction(word, address, true, profile)?;
+                let instruction = decode_instruction(word, address, true, profile)?;
                 instructions.push(instruction);
             }
             offset += 2;
@@ -137,7 +204,7 @@ fn decode_text_section(
         };
 
         let word = u32::from_le_bytes([b0, b1, b2, b3]);
-        let instruction = super::decode::decode_instruction(word, address, false, profile)?;
+        let instruction = decode_instruction(word, address, false, profile)?;
         instructions.push(instruction);
         offset += 4;
     }
@@ -152,10 +219,13 @@ fn decode_text_section(
     reason = "fixture decoding failures should fail tests loudly"
 )]
 mod tests {
-    use super::{decode_elf, merge_ranges};
+    use super::{decode_elf, decode_elf_with_mode, merge_ranges, DecodeMode};
     use crate::ProgramError;
     use common::constants::RAM_START_ADDRESS;
-    use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT};
+    use jolt_riscv::{
+        NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow, RV64I,
+        RV64IMAC_JOLT, RV64IM_JOLT,
+    };
 
     const SHSTRTAB: &[u8] = b"\0.text\0.data\0.shstrtab\0";
     const TEXT_NAME: u32 = 1;
@@ -166,9 +236,11 @@ mod tests {
     const SHF_EXECINSTR: u64 = 0x4;
     const SHT_PROGBITS: u32 = 1;
     const SHT_STRTAB: u32 = 3;
+    const SHT_NOBITS: u32 = 8;
 
     struct TestSection {
         name_offset: u32,
+        section_type: u32,
         flags: u64,
         address: u64,
         data: Vec<u8>,
@@ -178,6 +250,7 @@ mod tests {
     fn text_section(address: u64, data: &[u8]) -> TestSection {
         TestSection {
             name_offset: TEXT_NAME,
+            section_type: SHT_PROGBITS,
             flags: SHF_ALLOC | SHF_EXECINSTR,
             address,
             data: data.to_vec(),
@@ -188,6 +261,7 @@ mod tests {
     fn data_section(address: u64, data: &[u8]) -> TestSection {
         TestSection {
             name_offset: DATA_NAME,
+            section_type: SHT_PROGBITS,
             flags: SHF_ALLOC | SHF_WRITE,
             address,
             data: data.to_vec(),
@@ -258,7 +332,7 @@ mod tests {
             push_section_header(
                 &mut out,
                 section.name_offset,
-                SHT_PROGBITS,
+                section.section_type,
                 section.flags,
                 section.address,
                 data_offset,
@@ -360,6 +434,22 @@ mod tests {
     }
 
     #[test]
+    fn decode_elf_rejects_overflowing_section_extent() {
+        let elf = build_elf64(&[TestSection {
+            name_offset: DATA_NAME,
+            section_type: SHT_NOBITS,
+            flags: SHF_ALLOC,
+            address: 0xffff_ffff_ffff_fffc,
+            data: Vec::new(),
+            size_override: Some(8),
+        }]);
+        assert!(matches!(
+            decode_elf(&elf, RV64I),
+            Err(ProgramError::MalformedImage(message)) if message.contains("section extent")
+        ));
+    }
+
+    #[test]
     fn decode_elf_rejects_odd_length_text_section() {
         // c.nop followed by a dangling byte
         let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &[0x01, 0x00, 0x13])]);
@@ -448,5 +538,287 @@ mod tests {
         assert!(image.instructions.is_empty());
         assert!(image.memory_init.is_empty());
         assert_eq!(image.program_end, RAM_START_ADDRESS);
+    }
+
+    #[test]
+    fn decode_elf_enforces_compressed_profile_legality() {
+        let compressed = 0x0085u16; // c.addi x1,1
+        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &compressed.to_le_bytes())]);
+        for profile in [RV64I, RV64IM_JOLT] {
+            assert!(matches!(
+                decode_elf(&elf, profile),
+                Err(ProgramError::IllegalCompressedInstruction { address }) if address == RAM_START_ADDRESS
+            ));
+        }
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("compressed profile accepts c.addi");
+        assert_eq!(image.instructions.len(), 1);
+        let instruction = &image.instructions[0];
+        assert_eq!(instruction.kind(), SourceInstructionKind::ADDI);
+        assert_eq!(instruction.row().address, RAM_START_ADDRESS as usize);
+        assert!(instruction.row().is_compressed);
+        assert_eq!(instruction.row().operands.rd, Some(1));
+        assert_eq!(instruction.row().operands.rs1, Some(1));
+        assert_eq!(instruction.row().operands.imm, 1);
+    }
+
+    #[test]
+    fn decode_elf_enforces_alignment_only_without_rv64c() {
+        let nop = 0x0000_0013u32; // addi x0,x0,0
+        let elf = build_elf64(&[text_section(0x8000_0002, &nop.to_le_bytes())]);
+        assert!(matches!(
+            decode_elf(&elf, RV64I),
+            Err(ProgramError::MalformedImage(
+                "instruction address is not 4-byte aligned"
+            ))
+        ));
+        let image =
+            decode_elf(&elf, RV64IMAC_JOLT).expect("compressed profile permits 2-byte alignment");
+        assert_eq!(image.instructions.len(), 1);
+        assert_eq!(image.instructions[0].kind(), SourceInstructionKind::ADDI);
+        assert_eq!(image.instructions[0].row().address, 0x8000_0002);
+        assert!(!image.instructions[0].row().is_compressed);
+    }
+
+    #[test]
+    fn decode_elf_rv64i_does_not_expand_source_instructions() {
+        let sll = 0x0031_10b3u32; // sll x1,x2,x3
+        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &sll.to_le_bytes())]);
+        let image =
+            decode_elf(&elf, RV64I).expect("source legality does not require expansion closure");
+        assert_eq!(image.instructions.len(), 1);
+        assert_eq!(image.instructions[0].kind(), SourceInstructionKind::SLL);
+        assert_eq!(image.instructions[0].row().operands.rd, Some(1));
+        assert_eq!(image.instructions[0].row().operands.rs1, Some(2));
+        assert_eq!(image.instructions[0].row().operands.rs2, Some(3));
+    }
+
+    #[test]
+    fn executable_data_slots_and_fragments() {
+        enum Rejection {
+            Compressed(u64),
+            Malformed,
+            UnknownOpcode,
+            Mul,
+            None,
+        }
+        let addi = 0x0010_0093_u32.to_le_bytes();
+        let jal = 0x0000_006f_u32.to_le_bytes();
+        let mut cases = Vec::new();
+        for (data, rejection, extra) in [
+            (0x8000_0010_u64, Rejection::Compressed(4), false),
+            (0x8001_0000, Rejection::Compressed(6), false),
+            (0x8003_0000, Rejection::Malformed, false),
+            (0x0000_0013_8000_0010, Rejection::Compressed(4), true),
+        ] {
+            let bytes = [addi.as_slice(), &data.to_le_bytes(), &jal].concat();
+            let mut expected = vec![(0, SourceInstructionKind::ADDI)];
+            if extra {
+                expected.push((8, SourceInstructionKind::ADDI));
+            }
+            expected.push((12, SourceInstructionKind::JAL));
+            cases.push((RAM_START_ADDRESS, bytes, rejection, expected));
+        }
+        for (word, rejection) in [
+            (0x0220_81b3_u32, Rejection::Mul),
+            (0x0000_0085, Rejection::Compressed(4)),
+            (0, Rejection::None),
+            (0xffff_ffff, Rejection::UnknownOpcode),
+        ] {
+            cases.push((
+                RAM_START_ADDRESS,
+                [addi.as_slice(), &word.to_le_bytes(), &jal].concat(),
+                rejection,
+                vec![
+                    (0, SourceInstructionKind::ADDI),
+                    (8, SourceInstructionKind::JAL),
+                ],
+            ));
+        }
+        cases.push((
+            RAM_START_ADDRESS,
+            [0, 0, 0x13, 0, 0, 0, 0, 0].into_iter().chain(jal).collect(),
+            Rejection::Malformed,
+            vec![(8, SourceInstructionKind::JAL)],
+        ));
+        for tail in [&[0x13, 0][..], &[0x13][..]] {
+            cases.push((
+                RAM_START_ADDRESS,
+                [addi.as_slice(), &jal, tail].concat(),
+                Rejection::Malformed,
+                vec![
+                    (0, SourceInstructionKind::ADDI),
+                    (4, SourceInstructionKind::JAL),
+                ],
+            ));
+        }
+        cases.push((
+            RAM_START_ADDRESS + 2,
+            [&[0, 0][..], &jal].concat(),
+            Rejection::None,
+            vec![(4, SourceInstructionKind::JAL)],
+        ));
+        cases.push((
+            0x8000_0000,
+            vec![0x10, 0, 0, 0x80, 0, 0, 0, 0],
+            Rejection::Compressed(0),
+            Vec::new(),
+        ));
+        for (start, bytes, rejection, expected) in cases {
+            let elf = build_elf64(&[text_section(start, &bytes)]);
+            let strict = decode_elf_with_mode(&elf, RV64I, DecodeMode::Strict);
+            match rejection {
+                Rejection::Compressed(offset) => assert!(matches!(
+                    strict, Err(ProgramError::IllegalCompressedInstruction { address })
+                        if address == RAM_START_ADDRESS + offset
+                )),
+                Rejection::Malformed => {
+                    assert!(matches!(strict, Err(ProgramError::MalformedImage(_))));
+                }
+                Rejection::UnknownOpcode => assert!(matches!(
+                    strict,
+                    Err(ProgramError::MalformedImage("unknown RV64 opcode"))
+                )),
+                Rejection::Mul => assert!(matches!(
+                    strict,
+                    Err(ProgramError::IllegalSourceInstruction(
+                        SourceInstructionKind::MUL
+                    ))
+                )),
+                Rejection::None => {
+                    let strict = strict.expect("strict padding decodes");
+                    assert!(strict
+                        .instructions
+                        .iter()
+                        .map(|instruction| (
+                            instruction.row().address as u64 - RAM_START_ADDRESS,
+                            instruction.kind()
+                        ))
+                        .eq(expected.iter().copied()));
+                }
+            }
+            let image = decode_elf_with_mode(&elf, RV64I, DecodeMode::DataHoles)
+                .expect("data slots decode");
+            assert!(image
+                .instructions
+                .iter()
+                .map(|instruction| (
+                    instruction.row().address as u64 - RAM_START_ADDRESS,
+                    instruction.kind()
+                ))
+                .eq(expected));
+            assert_eq!(
+                image.memory_init,
+                bytes
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, byte)| (start + offset as u64, *byte))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(image.program_end, start + bytes.len() as u64);
+            assert_eq!(image.entry_address, RAM_START_ADDRESS);
+        }
+    }
+
+    #[test]
+    fn executable_instruction_values_in_each_decode_mode() {
+        let elf = build_elf64(&[text_section(
+            0x8000_0000,
+            &[0x93, 0, 0x10, 0, 0x6f, 0, 0, 0],
+        )]);
+        let expected_instructions = vec![
+            SourceInstruction::new(
+                SourceInstructionKind::ADDI,
+                SourceInstructionRow {
+                    address: 0x8000_0000,
+                    operands: NormalizedOperands {
+                        rs1: Some(0),
+                        rs2: None,
+                        rd: Some(1),
+                        imm: 1,
+                    },
+                    inline: None,
+                    is_compressed: false,
+                },
+            ),
+            SourceInstruction::new(
+                SourceInstructionKind::JAL,
+                SourceInstructionRow {
+                    address: 0x8000_0004,
+                    operands: NormalizedOperands {
+                        rs1: None,
+                        rs2: None,
+                        rd: Some(0),
+                        imm: 0,
+                    },
+                    inline: None,
+                    is_compressed: false,
+                },
+            ),
+        ];
+        let expected_memory = vec![
+            (0x8000_0000, 0x93),
+            (0x8000_0001, 0),
+            (0x8000_0002, 0x10),
+            (0x8000_0003, 0),
+            (0x8000_0004, 0x6f),
+            (0x8000_0005, 0),
+            (0x8000_0006, 0),
+            (0x8000_0007, 0),
+        ];
+        for mode in [DecodeMode::Strict, DecodeMode::DataHoles] {
+            let image = decode_elf_with_mode(&elf, RV64I, mode)
+                .expect("aligned base instructions decode in each mode");
+            assert_eq!(image.instructions, expected_instructions);
+            assert_eq!(image.memory_init, expected_memory);
+            assert_eq!(image.program_end, 0x8000_0008);
+            assert_eq!(image.entry_address, 0x8000_0000);
+        }
+    }
+
+    #[test]
+    fn data_slots_apply_profile_before_parsing_and_at_each_word() {
+        let text = [0x0010_0093_u32, 0x0220_81b3, 0x0000_006f];
+        let bytes: Vec<_> = text.into_iter().flat_map(u32::to_le_bytes).collect();
+        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &bytes)]);
+        for bytes in [&elf[..], b"no ELF"] {
+            assert!(matches!(
+                decode_elf_with_mode(bytes, RV64IMAC_JOLT, DecodeMode::DataHoles),
+                Err(ProgramError::DecodeModeUnsupportedByProfile)
+            ));
+        }
+        let image = decode_elf_with_mode(&elf, RV64IM_JOLT, DecodeMode::DataHoles)
+            .expect("M profile accepts MUL slot");
+        assert_eq!(image.instructions.len(), 3);
+        assert_eq!(image.instructions[1].kind(), SourceInstructionKind::MUL);
+        for mode in [DecodeMode::Strict, DecodeMode::DataHoles] {
+            assert!(matches!(
+                decode_elf_with_mode(b"no ELF", RV64I, mode),
+                Err(ProgramError::MalformedImage("invalid ELF object"))
+            ));
+            assert!(matches!(
+                decode_elf_with_mode(&build_elf32(), RV64I, mode),
+                Err(ProgramError::UnsupportedArchitecture(
+                    "jolt-program supports RV64/ELF64 program images only"
+                ))
+            ));
+            let mut section = text_section(RAM_START_ADDRESS, &[0x13]);
+            section.size_override = Some(0x1000);
+            assert!(matches!(
+                decode_elf_with_mode(&build_elf64(&[section]), RV64I, mode),
+                Err(ProgramError::MalformedImage("section data is not readable"))
+            ));
+            let section = TestSection {
+                address: u64::MAX - 3,
+                data: Vec::new(),
+                size_override: Some(8),
+                ..text_section(0, &[])
+            };
+            assert!(matches!(
+                decode_elf_with_mode(&build_elf64(&[section]), RV64I, mode),
+                Err(ProgramError::MalformedImage(
+                    "section extent overflows address space"
+                ))
+            ));
+        }
     }
 }

@@ -10,6 +10,9 @@ use rayon::prelude::*;
 use super::{ExecutionBackend, TraceError};
 
 mod data;
+mod source_row;
+
+pub use source_row::SourceTraceRow;
 
 #[cfg(feature = "field-inline")]
 pub use data::FieldEvent;
