@@ -9,6 +9,8 @@
 //! - **Sparse read-write matrix**: one entry per RAM access;
 //!   `prev_val`/`next_val` checkpoints recover every implicit coefficient
 //!   (see `rw_matrix`).
+//! - **Sparse `inc`** over the nonzero increments while cycle variables bind:
+//!   with the matrix, cycle-first state scales with the [`RamEventLog`], not `T`.
 //! - **Gruen split-eq + Dao–Thaler factoring** for the `log_T` cycle rounds:
 //!   cycle-first keeps the eq factor in `O(√T)` tables, and each cubic message is
 //!   reconstructed from the quadratic factor's `[q(0), q_∞]` plus the
@@ -16,7 +18,7 @@
 //! - **Hint-based quadratic address rounds** on the address-major matrix
 //!   against the bound `val_init` column (`s(1)` recovered from the claim).
 //!
-//! `val_init` is reconstructed from the trace and the `RamValFinal` oracle
+//! `val_init` is reconstructed from the event log and the `RamValFinal` oracle
 //! (the witness plane does not expose the initial RAM state): an accessed
 //! address's initial value is its first access's pre-value, an untouched
 //! address's final value IS its initial value. Honest-prover data path; with
@@ -24,7 +26,7 @@
 //! final-claim check rather than a per-round check.
 //!
 //! Supports cycle-first and full address-first binding. Address-first starts
-//! with a dense `T`-element eq table alongside the retained Gruen split-eq
+//! with dense `T`-element eq and `inc` tables alongside the retained Gruen split-eq
 //! tables, plus one `AddressMajorEntry<F>` per RAM access (four field elements
 //! and two `u32` indices; 136 bytes with BN254 `Fr`). This state remains during
 //! the `log_K` address rounds. At the cycle handoff, the dense eq table is
@@ -33,7 +35,6 @@
 //! O(T + K) storage, but with a larger peak constant than cycle-first.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
-use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
@@ -49,12 +50,9 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::{
 };
 use jolt_witness::JoltWitnessPlane;
 
-use super::ram_trace::RamAccessColumns;
+use super::ram_trace::RamEventLog;
 use super::read_write::ReadWriteOrder;
-use super::rw_matrix::{
-    round0_bind, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
-    AddressMajorMatrix, CycleMajorMatrix,
-};
+use super::rw_matrix::{val_slope_term, AddressMajorMatrix, CycleMajorMatrix, SparseCycleColumn};
 use super::support::{pin_derived_term_if_derived, GruenRoundMessage};
 use super::OptimizedBackend;
 use crate::{
@@ -66,24 +64,25 @@ enum Phase<F: JoltField> {
     AddressFirst {
         matrix: AddressMajorMatrix<F>,
         eq: Polynomial<F>,
+        inc: Polynomial<F>,
         gruen: GruenSplitEqPolynomial<F>,
     },
     DenseCycle {
         ra: Polynomial<F>,
         val: Polynomial<F>,
-        gruen: GruenSplitEqPolynomial<F>,
-    },
-    Round0 {
-        columns: RamAccessColumns,
+        inc: Polynomial<F>,
         gruen: GruenSplitEqPolynomial<F>,
     },
     Cycle {
         matrix: CycleMajorMatrix<F>,
+        inc: SparseCycleColumn<F>,
         gruen: GruenSplitEqPolynomial<F>,
     },
+    /// `inc` is bound at every cycle variable: one entry.
     Address {
         matrix: AddressMajorMatrix<F>,
         merged_eq: Polynomial<F>,
+        inc: Polynomial<F>,
     },
     Done {
         merged_eq: Polynomial<F>,
@@ -91,13 +90,14 @@ enum Phase<F: JoltField> {
         final_ra: F,
         #[cfg_attr(feature = "allocative", allocative(skip))]
         final_val: F,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
+        final_inc: F,
     },
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
-    inc: Polynomial<F>,
     val_init: Polynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
@@ -113,63 +113,99 @@ impl<F: JoltField> Phase<F> {
     }
 }
 
-const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
-
 impl<F: JoltField> RamReadWriteKernel<F> {
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
         self.phase = Some(match self.phase.take().ok_or_else(Phase::error)? {
-            Phase::Round0 { columns, gruen } => {
-                let matrix = round0_bind(&columns, r);
-                crate::mem::drop_in_background_thread(columns);
-                self.finish_cycle_bind(matrix, gruen, r, round)
-            }
-            Phase::Cycle { mut matrix, gruen } => {
+            Phase::Cycle {
+                mut matrix,
+                mut inc,
+                mut gruen,
+            } => {
                 matrix.bind(r);
-                self.finish_cycle_bind(matrix, gruen, r, round)
+                inc.bind(r);
+                gruen.bind(r);
+                if round + 1 < self.log_t {
+                    Phase::Cycle { matrix, inc, gruen }
+                } else if self.log_k == 0 {
+                    self.finish_address(
+                        matrix.into_address_major(),
+                        gruen.merge(),
+                        inc.bound_value(),
+                    )
+                } else {
+                    Phase::Address {
+                        matrix: matrix.into_address_major(),
+                        merged_eq: gruen.merge(),
+                        inc: Polynomial::new(vec![inc.bound_value()]),
+                    }
+                }
             }
             Phase::Address {
                 mut matrix,
                 merged_eq,
+                inc,
             } => {
                 matrix.bind(r, &mut self.val_init);
                 if round + 1 == self.log_t + self.log_k {
-                    self.finish_address(matrix, merged_eq)
+                    self.finish_address(matrix, merged_eq, inc.evals()[0])
                 } else {
-                    Phase::Address { matrix, merged_eq }
+                    Phase::Address {
+                        matrix,
+                        merged_eq,
+                        inc,
+                    }
                 }
             }
             Phase::AddressFirst {
                 mut matrix,
                 eq,
+                inc,
                 gruen,
             } => {
                 matrix.bind(r, &mut self.val_init);
                 if round + 1 == self.log_k {
-                    crate::mem::drop_in_background_thread(eq);
+                    drop(eq);
                     let (ra, val) =
                         matrix.into_cycle_tables(1usize << self.log_t, self.val_init.evals()[0]);
-                    Phase::DenseCycle { ra, val, gruen }
+                    Phase::DenseCycle {
+                        ra,
+                        val,
+                        inc,
+                        gruen,
+                    }
                 } else {
-                    Phase::AddressFirst { matrix, eq, gruen }
+                    Phase::AddressFirst {
+                        matrix,
+                        eq,
+                        inc,
+                        gruen,
+                    }
                 }
             }
             Phase::DenseCycle {
                 mut ra,
                 mut val,
+                mut inc,
                 mut gruen,
             } => {
                 let _ = ra.bind_low_to_high_in_place(r);
                 let _ = val.bind_low_to_high_in_place(r);
-                let _ = self.inc.bind_low_to_high_in_place(r);
+                let _ = inc.bind_low_to_high_in_place(r);
                 gruen.bind(r);
                 if round + 1 == self.log_t + self.log_k {
                     Phase::Done {
                         merged_eq: gruen.merge(),
                         final_ra: ra.evals()[0],
                         final_val: val.evals()[0],
+                        final_inc: inc.evals()[0],
                     }
                 } else {
-                    Phase::DenseCycle { ra, val, gruen }
+                    Phase::DenseCycle {
+                        ra,
+                        val,
+                        inc,
+                        gruen,
+                    }
                 }
             }
             Phase::Done { .. } => return Err(Phase::error()),
@@ -177,39 +213,18 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         Ok(())
     }
 
-    fn finish_cycle_bind(
-        &mut self,
-        matrix: CycleMajorMatrix<F>,
-        mut gruen: GruenSplitEqPolynomial<F>,
-        r: F,
-        round: usize,
+    fn finish_address(
+        &self,
+        matrix: AddressMajorMatrix<F>,
+        merged_eq: Polynomial<F>,
+        final_inc: F,
     ) -> Phase<F> {
-        gruen.bind(r);
-        let _ = self.inc.bind_low_to_high_in_place(r);
-        let phase = if round + 1 == self.log_t {
-            let matrix = matrix.into_address_major();
-            let merged_eq = gruen.merge();
-            crate::mem::drop_in_background_thread(gruen);
-            if self.log_k == 0 {
-                self.finish_address(matrix, merged_eq)
-            } else {
-                Phase::Address { matrix, merged_eq }
-            }
-        } else {
-            Phase::Cycle { matrix, gruen }
-        };
-        if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round + 1 == self.log_t {
-            crate::mem::purge_retained_memory(self.log_t);
-        }
-        phase
-    }
-
-    fn finish_address(&self, matrix: AddressMajorMatrix<F>, merged_eq: Polynomial<F>) -> Phase<F> {
         let (final_ra, final_val) = matrix.final_values(&self.val_init);
         Phase::Done {
             merged_eq,
             final_ra,
             final_val,
+            final_inc,
         }
     }
 
@@ -219,22 +234,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let (gruen, [q_0, q_infty]) = match &self.phase {
-            Some(Phase::Round0 { columns, gruen }) => {
-                let e_in = gruen.e_in_current();
-                let e_out = gruen.e_out_current();
-                let in_bits = e_in.len().trailing_zeros() as usize;
-                let in_mask = e_in.len() - 1;
-                (
-                    gruen,
-                    round0_quadratic_coefficients(
-                        columns,
-                        |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
-                        &self.inc,
-                        self.gamma,
-                    ),
-                )
-            }
-            Some(Phase::Cycle { matrix, gruen }) => {
+            Some(Phase::Cycle { matrix, inc, gruen }) => {
                 let e_in = gruen.e_in_current();
                 let e_out = gruen.e_out_current();
                 let in_bits = e_in.len().trailing_zeros() as usize;
@@ -243,12 +243,17 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                     gruen,
                     matrix.quadratic_coefficients(
                         |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
-                        &self.inc,
+                        inc,
                         self.gamma,
                     ),
                 )
             }
-            Some(Phase::DenseCycle { ra, val, gruen }) => {
+            Some(Phase::DenseCycle {
+                ra,
+                val,
+                inc,
+                gruen,
+            }) => {
                 let quadratic = gruen.par_fold_out_in(
                     || [F::zero(); 2],
                     |acc, row, _x_in, e_in| {
@@ -258,7 +263,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                         };
                         let ra = pair(ra);
                         let val = pair(val);
-                        let inc = pair(&self.inc);
+                        let inc = pair(inc);
                         for i in 0..2 {
                             acc[i] += e_in * ra[i] * val_slope_term(val[i], inc[i], self.gamma);
                         }
@@ -277,16 +282,13 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             let in_mask = e_in.len() - 1;
             let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
             match &self.phase {
-                Some(Phase::Round0 { columns, .. }) => {
-                    round0_q_at_one(columns, weight, &self.inc, self.gamma)
-                }
-                Some(Phase::Cycle { matrix, .. }) => matrix.q_at_one(weight, &self.inc, self.gamma),
-                Some(Phase::DenseCycle { ra, val, .. }) => {
+                Some(Phase::Cycle { matrix, inc, .. }) => matrix.q_at_one(weight, inc, self.gamma),
+                Some(Phase::DenseCycle { ra, val, inc, .. }) => {
                     (0..ra.evals().len() / 2).fold(F::zero(), |sum, pair| {
                         let row = 2 * pair + 1;
                         sum + weight(pair)
                             * ra.evals()[row]
-                            * val_slope_term(val.evals()[row], self.inc.evals()[row], self.gamma)
+                            * val_slope_term(val.evals()[row], inc.evals()[row], self.gamma)
                     })
                 }
                 _ => unreachable!("cycle phase was checked above"),
@@ -298,12 +300,18 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         &self,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let (matrix, eq) = match &self.phase {
-            Some(Phase::Address { matrix, merged_eq }) => (matrix, merged_eq),
-            Some(Phase::AddressFirst { matrix, eq, .. }) => (matrix, eq),
+        let (matrix, eq, inc) = match &self.phase {
+            Some(Phase::Address {
+                matrix,
+                merged_eq,
+                inc,
+            }) => (matrix, merged_eq, inc),
+            Some(Phase::AddressFirst {
+                matrix, eq, inc, ..
+            }) => (matrix, eq, inc),
             _ => return Err(Phase::error()),
         };
-        let evals = matrix.address_round_evals(&self.val_init, &self.inc, eq, self.gamma);
+        let evals = matrix.address_round_evals(&self.val_init, inc, eq, self.gamma);
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
 }
@@ -323,7 +331,7 @@ impl<F: JoltField> ProveRounds<F> for RamReadWriteKernel<F> {
             self.ingest(challenge, round - 1)?;
         }
         match &self.phase {
-            Some(Phase::Round0 { .. } | Phase::Cycle { .. } | Phase::DenseCycle { .. }) => {
+            Some(Phase::Cycle { .. } | Phase::DenseCycle { .. }) => {
                 self.cycle_round_message(round, previous_claim)
             }
             Some(Phase::Address { .. } | Phase::AddressFirst { .. }) => {
@@ -348,6 +356,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
         let Some(Phase::Done {
             final_ra,
             final_val,
+            final_inc,
             ..
         }) = &self.phase
         else {
@@ -358,7 +367,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
         Ok(RamReadWriteOutputClaims {
             val: *final_val,
             ra: *final_ra,
-            inc: self.inc.evals()[0],
+            inc: *final_inc,
         })
     }
 
@@ -415,35 +424,33 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
             });
         }
 
-        let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
-        super::ram_trace::validate_addresses(&columns.addresses, 1usize << log_k)?;
-
-        let inc = Polynomial::new(witness.oracle_table(ram_inc().polynomial_id())?);
         let val_final = witness.oracle_table(JoltPolynomialId::Virtual(
             JoltVirtualPolynomial::RamValFinal,
         ))?;
-        if inc.len() != 1usize << log_t || val_final.len() != 1usize << log_k {
+        if val_final.len() != 1usize << log_k {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM read-write witness tables disagree with the relation geometry",
             });
         }
-        let val_init = Polynomial::new(columns.reconstruct_val_init(val_final));
+        let log = RamEventLog::shared(session, witness, log_t, 1usize << log_k)?;
+        let val_init = Polynomial::new(log.val_init(val_final));
 
         let gruen = GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh);
         let phase = match order {
-            ReadWriteOrder::CycleFirst => Phase::Round0 { columns, gruen },
-            ReadWriteOrder::AddressFirst => {
-                let matrix = AddressMajorMatrix::from_columns(&columns);
-                Phase::AddressFirst {
-                    matrix,
-                    eq: gruen.merge(),
-                    gruen,
-                }
-            }
+            ReadWriteOrder::CycleFirst => Phase::Cycle {
+                matrix: CycleMajorMatrix::from_events(log),
+                inc: SparseCycleColumn::increments(log),
+                gruen,
+            },
+            ReadWriteOrder::AddressFirst => Phase::AddressFirst {
+                matrix: AddressMajorMatrix::from_events(log),
+                eq: gruen.merge(),
+                inc: Polynomial::new(log.dense_inc()),
+                gruen,
+            },
         };
         Ok(Box::new(RamReadWriteKernel {
             phase: Some(phase),
-            inc,
             val_init,
             gamma: inputs.challenges.gamma,
             log_t,
@@ -456,15 +463,17 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
 #[expect(clippy::unwrap_used)]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
-    use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
+    use jolt_claims::protocols::jolt::geometry::ram::{ram_inc, ram_ra, ram_val};
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,
     };
+    use jolt_witness::TraceBackend;
 
     use super::super::testing::{
-        assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
+        assert_parity, ram_fixture, random_scalars, silent_ram_fixture, with_ram_fixture,
+        FixtureShape, RamOp,
     };
     use super::*;
     use crate::optimized::parity::ExceptionalEq;
@@ -506,83 +515,85 @@ mod tests {
         ops: Vec<RamOp>,
         phase_splits: &[(usize, usize)],
     ) {
-        run_parity_case(shape, init_words, ops, phase_splits, None);
+        run_parity_case(
+            &ram_fixture(shape, init_words, ops),
+            shape,
+            phase_splits,
+            None,
+        );
     }
 
     fn run_parity_case(
+        resident: &TraceBackend,
         shape: FixtureShape,
-        init_words: Vec<u64>,
-        ops: Vec<RamOp>,
         phase_splits: &[(usize, usize)],
         exceptional: Option<ExceptionalEq>,
     ) {
-        with_ram_fixture_init(shape, init_words, ops, |witness| {
-            let first_cycle = if phase_splits[0].0 == 0 {
-                phase_splits[0].1
-            } else {
-                0
-            };
-            let binds = random_scalars(shape.log_t + shape.log_k(), 71);
-            let tau_low = exceptional.map_or_else(
-                || random_scalars(shape.log_t, 17),
-                |case| case.point(shape.log_t, binds[first_cycle]),
+        let first_cycle = if phase_splits[0].0 == 0 {
+            phase_splits[0].1
+        } else {
+            0
+        };
+        let binds = random_scalars(shape.log_t + shape.log_k(), 71);
+        let tau_low = exceptional.map_or_else(
+            || random_scalars(shape.log_t, 17),
+            |case| case.point(shape.log_t, binds[first_cycle]),
+        );
+        let gamma = random_scalars(1, 23)[0];
+        let claims = RamReadWriteInputClaims {
+            ram_read_value: Fr::from_u64(0),
+            ram_write_value: Fr::from_u64(0),
+        };
+        let points = RamReadWriteInputClaims::<Vec<Fr>>::default();
+        let challenges = RamReadWriteChallenges { gamma };
+        let input_claim = dense_input_claim(resident, &tau_low, gamma, shape.ram_k);
+        for &(phase1, phase2) in phase_splits {
+            let relation = RamReadWriteChecking::<Fr>::new(
+                ReadWriteDimensions::new(shape.log_t, shape.log_k(), phase1, phase2),
+                shape.log_k(),
+                tau_low.clone(),
             );
-            let gamma = random_scalars(1, 23)[0];
-            let claims = RamReadWriteInputClaims {
-                ram_read_value: Fr::from_u64(0),
-                ram_write_value: Fr::from_u64(0),
-            };
-            let points = RamReadWriteInputClaims::<Vec<Fr>>::default();
-            let challenges = RamReadWriteChallenges { gamma };
-            let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k);
-            for &(phase1, phase2) in phase_splits {
-                let relation = RamReadWriteChecking::<Fr>::new(
-                    ReadWriteDimensions::new(shape.log_t, shape.log_k(), phase1, phase2),
-                    shape.log_k(),
-                    tau_low.clone(),
-                );
 
-                let mut reference_session = ProofSession::default();
-                let reference = PrepareKernel::<Fr, _>::prepare(
-                    &ReferenceBackend,
-                    &mut reference_session,
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
-                let mut session = ProofSession::default();
-                let optimized = PrepareKernel::<Fr, _>::prepare(
-                    &OptimizedBackend,
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
+            let mut reference_session = ProofSession::default();
+            let reference = PrepareKernel::<Fr, _>::prepare(
+                &ReferenceBackend,
+                &mut reference_session,
+                resident,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            )
+            .unwrap();
+            let mut session = ProofSession::default();
+            let optimized = PrepareKernel::<Fr, _>::prepare(
+                &OptimizedBackend,
+                &mut session,
+                resident,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            )
+            .unwrap();
 
-                assert_parity(
-                    reference,
-                    optimized,
-                    input_claim,
-                    &ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                    71,
-                );
-            }
-        });
+            assert_parity(
+                reference,
+                optimized,
+                input_claim,
+                &ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+                71,
+            );
+        }
     }
 
     #[test]
@@ -632,7 +643,34 @@ mod tests {
 
     #[test]
     fn matches_reference_without_ram_traffic() {
-        run_parity(FixtureShape { log_t: 3, ram_k: 4 }, vec![RamOp::None; 3]);
+        let shape = FixtureShape { log_t: 3, ram_k: 4 };
+        let splits = [(3, 2), (0, 2), (1, 0)];
+        run_parity_case(&silent_ram_fixture(shape), shape, &splits, None);
+    }
+
+    /// Accesses whose increment is zero and stores to an unmapped address (an
+    /// increment without an access), in both halves of row pairs.
+    #[test]
+    fn matches_reference_on_unmapped_stores_and_zero_increments() {
+        run_parity_init(
+            FixtureShape {
+                log_t: 4,
+                ram_k: 16,
+            },
+            vec![5],
+            vec![
+                RamOp::Write { word: 2, post: 5 },
+                RamOp::UnmappedWrite { pre: 1, post: 9 },
+                RamOp::UnmappedWrite { pre: 6, post: 2 },
+                RamOp::Write { word: 3, post: 4 },
+                RamOp::Write { word: 3, post: 4 },
+                RamOp::Write { word: 2, post: 7 },
+                RamOp::UnmappedWrite { pre: 3, post: 3 },
+                RamOp::Read { word: 3 },
+                RamOp::UnmappedWrite { pre: 0, post: 11 },
+            ],
+            &[(4, 4), (0, 4), (2, 0)],
+        );
     }
 
     #[test]
@@ -721,22 +759,21 @@ mod tests {
             log_t: 4,
             ram_k: 16,
         };
+        let resident = ram_fixture(
+            shape,
+            vec![0, 7, 3, 11],
+            vec![
+                RamOp::Read { word: 1 },
+                RamOp::None,
+                RamOp::Write { word: 1, post: 29 },
+                RamOp::Read { word: 3 },
+                RamOp::Write { word: 2, post: 37 },
+                RamOp::Read { word: 1 },
+            ],
+        );
         for phase in [(shape.log_t, shape.log_k()), (0, shape.log_k())] {
             for case in ExceptionalEq::ALL {
-                run_parity_case(
-                    shape,
-                    vec![0, 7, 3, 11],
-                    vec![
-                        RamOp::Read { word: 1 },
-                        RamOp::None,
-                        RamOp::Write { word: 1, post: 29 },
-                        RamOp::Read { word: 3 },
-                        RamOp::Write { word: 2, post: 37 },
-                        RamOp::Read { word: 1 },
-                    ],
-                    &[phase],
-                    Some(case),
-                );
+                run_parity_case(&resident, shape, &[phase], Some(case));
             }
         }
     }

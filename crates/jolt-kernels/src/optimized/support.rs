@@ -794,6 +794,23 @@ pub(crate) fn merge_evals<F: JoltField>(mut left: Vec<F>, right: Vec<F>) -> Vec<
     left
 }
 
+/// Adds one low-to-high pair of the cubic `a(t) · b(t) · c(t)`, each factor
+/// given by its `(lo, hi)` values, to the deferred-reduction lanes of
+/// `t = 0, 2, 3`.
+#[inline]
+pub(crate) fn accumulate_triple_product<F: JoltField>(
+    acc: &mut [F::Accumulator; 3],
+    (a_0, a_1): (F, F),
+    (b_0, b_1): (F, F),
+    (c_0, c_1): (F, F),
+) {
+    let (a_m, b_m, c_m) = (a_1 - a_0, b_1 - b_0, c_1 - c_0);
+    let (a_2, b_2, c_2) = (a_1 + a_m, b_1 + b_m, c_1 + c_m);
+    acc[0].fmadd(a_0 * b_0, c_0);
+    acc[1].fmadd(a_2 * b_2, c_2);
+    acc[2].fmadd((a_2 + a_m) * (b_2 + b_m), c_2 + c_m);
+}
+
 /// `s(t)` samples at `t ∈ {0, 2, 3}` of the cubic triple-product summand
 /// `Σ_y a(y) · b(y) · c(y)` over the remaining low-to-high `(lo, hi)` pairs,
 /// through the deferred-reduction accumulator; `s(1)` comes from the engine's
@@ -805,14 +822,7 @@ pub(crate) fn triple_product_round_evals<F: JoltField>(
     c: impl Fn(usize) -> (F, F) + Send + Sync,
 ) -> [F; 3] {
     let accumulate = |y: usize, acc: &mut [F::Accumulator; 3]| {
-        let (a_0, a_1) = a(y);
-        let (b_0, b_1) = b(y);
-        let (c_0, c_1) = c(y);
-        let (a_m, b_m, c_m) = (a_1 - a_0, b_1 - b_0, c_1 - c_0);
-        let (a_2, b_2, c_2) = (a_1 + a_m, b_1 + b_m, c_1 + c_m);
-        acc[0].fmadd(a_0 * b_0, c_0);
-        acc[1].fmadd(a_2 * b_2, c_2);
-        acc[2].fmadd((a_2 + a_m) * (b_2 + b_m), c_2 + c_m);
+        accumulate_triple_product(acc, a(y), b(y), c(y));
     };
 
     #[cfg(feature = "parallel")]

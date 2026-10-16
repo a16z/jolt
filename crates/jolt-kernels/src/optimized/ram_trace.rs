@@ -1,7 +1,6 @@
-//! Sparse per-cycle RAM addresses and values shared across RAM kernels.
-//! [`RamEventLog`] serves the stage-2 RAF and stage-5 RA claim reduction;
-//! [`SharedRamAddresses`] survives stages 2–6b; [`RamAccessColumns`] owns the
-//! stage-2-only values.
+//! Sparse per-cycle RAM data shared across RAM kernels. [`RamEventLog`]
+//! serves the RAM factors of stages 2–5; the stage-6b RA virtualization
+//! collects the dense [`SharedRamAddresses`] column.
 
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -9,6 +8,7 @@ use core::ops::Range;
 use std::sync::Arc;
 
 use jolt_field::JoltField;
+use jolt_utils::unsafe_allocate_zero_vec;
 #[cfg(feature = "parallel")]
 use jolt_utils::FirstErrorLatch;
 use jolt_witness::witnesses::{RamInc, RamReadValue, RamWriteValue, RemappedRamAddress};
@@ -32,12 +32,6 @@ const PAR_CHUNK: usize = 1 << 14;
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, WitnessBundle)]
-struct RamValueBundle {
-    pre_value: RamReadValue,
-    post_value: RamWriteValue,
-}
-
-#[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RamAddressBundle {
     address: RemappedRamAddress,
 }
@@ -45,6 +39,8 @@ struct RamAddressBundle {
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RamEventBundle {
     address: RemappedRamAddress,
+    pre_value: RamReadValue,
+    post_value: RamWriteValue,
     inc: RamInc,
 }
 
@@ -65,6 +61,11 @@ pub(crate) struct RamEvent {
     /// The remapped word, below `ram_K`; `None` for a store whose address
     /// remaps to no word.
     pub address: Option<u32>,
+    /// `RamReadValue` and `RamWriteValue` of the cycle.
+    pub pre_value: u64,
+    pub post_value: u64,
+    /// `RamInc` of the cycle.
+    pub inc: i128,
 }
 
 impl RamEvent {
@@ -90,6 +91,9 @@ impl RamEvent {
         Ok(Self {
             cycle: cycle as u32,
             address,
+            pre_value: bundle.pre_value.0,
+            post_value: bundle.post_value.0,
+            inc: bundle.inc.0,
         })
     }
 }
@@ -266,11 +270,38 @@ impl RamEventLog {
         }
         Ok(())
     }
+
+    /// Recover initial values from each address's first access; untouched
+    /// addresses retain their final value.
+    ///
+    /// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
+    pub fn val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
+        let mut val_init = val_final;
+        let mut seen = vec![false; val_init.len()];
+        for event in &self.events {
+            let Some(address) = event.address else {
+                continue;
+            };
+            let address = address as usize;
+            if !seen[address] {
+                seen[address] = true;
+                val_init[address] = F::from_u64(event.pre_value);
+            }
+        }
+        val_init
+    }
+
+    /// The dense `RamInc` column over the cycle domain.
+    pub fn dense_inc<F: JoltField>(&self) -> Vec<F> {
+        let mut inc: Vec<F> = unsafe_allocate_zero_vec(self.cycles);
+        for event in &self.events {
+            inc[event.cycle as usize] = F::from_i128(event.inc);
+        }
+        inc
+    }
 }
 
-/// Pack a remapped address. The column is `u32` because it outlives every
-/// other trace-sized RAM array (stages 2–6b); the sparse matrices index it
-/// as `u32` as well.
+/// Pack a remapped address.
 fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError<F>> {
     let Some(address) = address else {
         return Ok(NO_ACCESS);
@@ -451,62 +482,6 @@ where
     Ok(columns)
 }
 
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct RamAccessColumns {
-    pub addresses: Arc<Vec<u32>>,
-    /// Pre-access value, or zero without an access.
-    pub pre_values: Vec<u64>,
-    /// Post-access word value per cycle (equals the pre-value for reads).
-    pub post_values: Vec<u64>,
-}
-
-impl RamAccessColumns {
-    /// Reuse or create the shared address column, then collect the values.
-    ///
-    /// Two bundle passes instead of one fused pass: the `u32` address column
-    /// outlives the `u64` values by four stages, so it is collected on its
-    /// own. Stage 4 calls this again rather than parking the values from
-    /// stage 2 — re-reading the trace is cheaper than keeping `16·T` bytes
-    /// resident across stages 2–4.
-    pub fn collect_full<F: JoltField>(
-        session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        log_t: usize,
-    ) -> Result<Self, KernelError<F>> {
-        let cycles = 1usize << log_t;
-        let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        let [pre_values, post_values] =
-            collect_split_columns::<F, RamValueBundle, u64, 2>(witness, cycles, |bundle| {
-                Ok([bundle.pre_value.0, bundle.post_value.0])
-            })?;
-        Ok(Self {
-            addresses,
-            pre_values,
-            post_values,
-        })
-    }
-
-    /// Recover initial values from each address's first access; untouched
-    /// addresses retain their final value.
-    ///
-    /// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
-    pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
-        let mut val_init = val_final;
-        let mut seen = vec![false; val_init.len()];
-        for (&address, &pre_value) in self.addresses.iter().zip(&self.pre_values) {
-            if address == NO_ACCESS {
-                continue;
-            }
-            let address = address as usize;
-            if !seen[address] {
-                seen[address] = true;
-                val_init[address] = F::from_u64(pre_value);
-            }
-        }
-        val_init
-    }
-}
-
 pub(crate) fn validate_addresses<F: JoltField>(
     addresses: &[u32],
     ram_k: usize,
@@ -573,18 +548,22 @@ mod tests {
                 RamOp::UnmappedWrite { pre: 9, post: 1 },
             ],
         );
-        // (cycle, word); cycle 7 is the fixture's termination write, cycles
-        // 8.. are padding.
+        // (cycle, word, pre, post, inc); cycle 7 is the fixture's
+        // termination write, cycles 8.. are padding.
         let expected = [
-            (0, Some(2)),
-            (2, None),
-            (3, Some(2)),
-            (5, Some(5)),
-            (6, None),
-            (7, Some(1)),
+            (0, Some(2), 7, 7, 0),
+            (2, None, 3, 8, 5),
+            (3, Some(2), 7, 7, 0),
+            (5, Some(5), 0, 2, 2),
+            (6, None, 9, 1, -8),
+            (7, Some(1), 0, 1, 1),
         ];
         let log = RamEventLog::collect::<Fr>(&resident, shape.log_t, shape.ram_k).unwrap();
-        let events: Vec<_> = log.events().iter().map(|e| (e.cycle, e.address)).collect();
+        let events: Vec<_> = log
+            .events()
+            .iter()
+            .map(|e| (e.cycle, e.address, e.pre_value, e.post_value, e.inc))
+            .collect();
         assert_eq!(events, expected);
         assert_eq!(log.events.capacity(), expected.len());
     }
