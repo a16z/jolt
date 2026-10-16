@@ -141,7 +141,7 @@ impl ProverConfig {
             one_hot_config: one_hot_config(log_T),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
             #[cfg(feature = "akita")]
-            akita_chunk_profile: AkitaChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::new(1, 0),
         })
     }
 

@@ -12,7 +12,8 @@ mod support;
 
 use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
 use jolt_akita::{
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts,
+    AkitaScheme,
 };
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -88,7 +89,7 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
 #[test]
 fn deep_recursive_fold_schedule_roundtrips() {
     const NUM_VARS: usize = 17;
-    let depth = AkitaScheduleArtifacts::shared_from_default_directory()
+    let depth = AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2))
         .dense_catalog()
         .expect("dense catalog")
         .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(

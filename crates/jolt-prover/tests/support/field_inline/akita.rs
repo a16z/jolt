@@ -3,7 +3,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::AkitaProverSetup;
-use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
 use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
 use jolt_prover::JoltBackend;
 use jolt_prover::{akita, ProverConfig};
@@ -53,7 +53,7 @@ pub fn prove<D>(
     let log_t = config.trace_length.ilog2() as usize;
     let untrusted_advice = !case.untrusted_advice.is_empty();
     let prover_preprocessing = akita::preprocessing::preprocess_full_with_advice(
-        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         program_preprocessing,
         &config,
         untrusted_advice,
