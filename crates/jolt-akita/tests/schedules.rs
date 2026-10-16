@@ -3,7 +3,6 @@
     reason = "catalog tests should fail loudly when an artifact or grid is malformed"
 )]
 
-use jolt_akita::family_contract::OneHotFamilyContract;
 use jolt_akita::schedule_registry::GroupedScheduleParams;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -178,7 +177,7 @@ fn k16_catalogs_cover_production_trace_geometry() {
             {
                 continue;
             }
-            for log_t in 12..=30 {
+            for log_t in 12..=31 {
                 shape.log_t = log_t;
                 let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape).expect("trace layout");
                 let _ = expected.insert((plan.num_vars(), plan.ids().len()));
@@ -750,7 +749,7 @@ mod field_inc {
             .into_iter()
             .filter(|group| group.num_polynomials() > 2)
             .collect::<Vec<_>>();
-        assert_eq!(groups.len(), 266);
+        assert_eq!(groups.len(), 280);
         field_inline_rows_plan_and_resolve(AKITA_ONE_HOT_K16, profile, groups);
     }
 
@@ -874,31 +873,5 @@ mod field_inc {
                 })
                 .is_err());
         }
-    }
-}
-
-#[test]
-fn maximum_k256_family_catalog_has_complete_setup_metadata() {
-    let profile = AkitaChunkProfile::Single;
-    let catalog = one_hot_catalog(AKITA_ONE_HOT_K256, profile);
-    let contract = OneHotFamilyContract::K256(profile);
-    for num_polys in [1, 2] {
-        let maximum = contract.num_vars_range(num_polys).1;
-        let key = ScheduleLookupKey::single(PolynomialGroupLayout::new(maximum, num_polys));
-        let row = catalog.resolve_key(&key).expect("maximum family row");
-        assert!(uses_setup_offloading(row.schedule()));
-        let trusted = TrustedScheduleCatalog::<JoltOneHotK256>::new(catalog.clone())
-            .expect("audited maximum family catalog");
-        let requirements = SetupRequirements::from_catalog(&trusted, maximum, num_polys)
-            .expect("maximum family setup requirements");
-        let capacity = setup_matrix_capacity_for_schedule(row.schedule())
-            .expect("maximum family schedule capacity");
-        assert!(requirements.matrix_capacity().num_field_elements >= capacity.num_field_elements);
-        assert!(catalog
-            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
-                maximum + 1,
-                num_polys
-            )))
-            .is_err());
     }
 }

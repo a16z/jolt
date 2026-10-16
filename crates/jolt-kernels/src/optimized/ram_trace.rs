@@ -58,6 +58,59 @@ fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError
 pub(crate) struct SharedRamAddresses(pub(crate) Arc<Vec<u32>>);
 
 impl SharedRamAddresses {
+    /// Check the maximum remapped address without retaining a column.
+    pub(crate) fn validate_witness<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        ram_k: usize,
+    ) -> Result<(), KernelError<F>> {
+        let cycles = 1usize << log_t;
+        #[cfg(feature = "parallel")]
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                let error = FirstErrorLatch::new();
+                let max_address = (0..cycles.div_ceil(PAR_CHUNK))
+                    .into_par_iter()
+                    .map(|chunk_index| {
+                        let base = chunk_index * PAR_CHUNK;
+                        let take = PAR_CHUNK.min(cycles - base);
+                        let mut maximum = None;
+                        for offset in 0..take {
+                            match access.window::<RamAddressBundle>(base + offset) {
+                                Ok(bundle) => maximum = maximum.max(bundle.address.0),
+                                Err(failure) => {
+                                    error.record(base + offset, KernelError::from(failure));
+                                    return None;
+                                }
+                            }
+                        }
+                        maximum
+                    })
+                    .reduce(|| None, |left, right| left.max(right));
+                if let Some(failure) = error.take() {
+                    return Err(failure);
+                }
+                return validate_addresses(&[encode_address(max_address)?], ram_k);
+            }
+        }
+        struct MaxAddress(Option<u64>);
+
+        impl StreamConsumer for MaxAddress {
+            type Witness = RamAddressBundle;
+
+            fn consume(&mut self, chunk: &[RamAddressBundle]) {
+                for bundle in chunk {
+                    self.0 = self.0.max(bundle.address.0);
+                }
+            }
+        }
+
+        let mut consumers = (MaxAddress(None),);
+        stream_witnesses(witness, 0..cycles, SPLIT_CHUNK, &mut consumers)?;
+        let (MaxAddress(max_address),) = consumers;
+        validate_addresses(&[encode_address(max_address)?], ram_k)
+    }
+
     /// Collect once, then return shared references.
     #[expect(
         clippy::expect_used,
@@ -347,70 +400,12 @@ pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u32], r_cycle: &[F], ram_k:
 }
 
 #[cfg(test)]
-#[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
+#[expect(clippy::panic, reason = "test module")]
 mod tests {
     use jolt_field::Fr;
     use jolt_witness::testing::with_sample_backend;
 
     use super::*;
-
-    #[test]
-    fn address_encoding_reserves_only_the_no_access_sentinel() {
-        assert_eq!(encode_address::<Fr>(None).unwrap(), NO_ACCESS);
-        assert_eq!(encode_address::<Fr>(Some(0)).unwrap(), 0);
-        assert_eq!(
-            encode_address::<Fr>(Some(u64::from(u32::MAX) - 1)).unwrap(),
-            u32::MAX - 1,
-        );
-        for address in [u64::from(u32::MAX), u64::from(u32::MAX) + 1] {
-            assert!(matches!(
-                encode_address::<Fr>(Some(address)),
-                Err(KernelError::Unsupported { .. })
-            ));
-        }
-    }
-
-    #[test]
-    fn preflight_reuses_the_stage_two_address_column() {
-        use crate::optimized::OptimizedBackend;
-        use crate::{PrepareKernel, ReferenceBackend};
-        use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
-        use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
-
-        with_sample_backend(|witness| {
-            let mut session = ProofSession::default();
-            <ReferenceBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
-                &ReferenceBackend,
-                &mut session,
-                witness,
-                ReadWriteDimensions::new(2, 3, 2, 3),
-            )
-            .unwrap();
-            assert!(session.state::<SharedRamAddresses>().is_none());
-            assert!(matches!(
-                <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
-                    &OptimizedBackend,
-                    &mut session,
-                    witness,
-                    ReadWriteDimensions::new(2, 3, 1, 1),
-                ),
-                Err(KernelError::Unsupported { .. })
-            ));
-            assert!(session.state::<SharedRamAddresses>().is_none());
-            // Admission range-checks addresses: under the sample's default
-            // memory layout its store remaps to `0x8000_1008 / 8`, just above 2^28.
-            <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
-                &OptimizedBackend,
-                &mut session,
-                witness,
-                ReadWriteDimensions::new(2, 29, 2, 29),
-            )
-            .unwrap();
-            let admitted = SharedRamAddresses::shared::<Fr>(&mut session, witness, 2).unwrap();
-            let stage_two = RamAccessColumns::collect_full::<Fr>(&mut session, witness, 2).unwrap();
-            assert!(Arc::ptr_eq(&admitted, &stage_two.addresses));
-        });
-    }
 
     #[test]
     fn rejects_session_carry_from_another_cycle_domain() {

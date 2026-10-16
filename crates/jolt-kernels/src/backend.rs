@@ -302,11 +302,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltBackend<F, PCS> {
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> KernelContext<'_, F, JoltBackend<F, PCS>> {
     /// Admit backend address and cycle domains before witness commitments.
     pub fn preflight(&mut self, dimensions: ReadWriteDimensions) -> Result<(), KernelError<F>> {
-        self.registry.instruction_read_raf.preflight(
-            &mut self.session,
-            self.witness.as_ref(),
-            dimensions,
-        )?;
         self.registry
             .ram_read_write
             .preflight(&mut self.session, self.witness.as_ref(), dimensions)

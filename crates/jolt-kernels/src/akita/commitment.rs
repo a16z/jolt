@@ -19,40 +19,46 @@ pub struct FieldIncObject<PCS: CommitmentScheme> {
 /// Hints are in protocol order: untrusted advice, trusted advice, then
 /// direct-program objects.
 pub struct WitnessCommitRequest<'a, PCS: CommitmentScheme> {
-    setup: &'a PCS::ProverSetup,
-    shape: OneHotTraceShape,
-    plan: OneHotTraceLayoutPlan,
+    validated: WitnessCommitPlan<'a, PCS>,
     precommitted_hints: &'a [&'a PCS::OpeningHint],
 }
 
-impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
-    pub fn new(
-        setup: &'a PCS::ProverSetup,
-        shape: OneHotTraceShape,
+/// Admitted trace geometry and batch capacity awaiting auxiliary opening hints.
+pub struct WitnessCommitPlan<'a, PCS: CommitmentScheme> {
+    setup: &'a PCS::ProverSetup,
+    shape: OneHotTraceShape,
+    plan: OneHotTraceLayoutPlan,
+    num_precommitted: usize,
+}
+
+impl<'a, PCS: CommitmentScheme> WitnessCommitPlan<'a, PCS> {
+    pub fn with_precommitted_hints(
+        self,
         precommitted_hints: &'a [&'a PCS::OpeningHint],
-    ) -> Result<Self, OpeningsError>
-    where
-        PCS::ProverSetup: GroupSetupMetadata,
-    {
-        let plan = Self::validate_setup(setup, &shape, precommitted_hints.len())?;
-        Ok(Self {
-            setup,
-            shape,
-            plan,
+    ) -> Result<WitnessCommitRequest<'a, PCS>, OpeningsError> {
+        if precommitted_hints.len() != self.num_precommitted {
+            return Err(OpeningsError::InvalidBatch(
+                "Akita auxiliary hint count differs from the admitted batch".into(),
+            ));
+        }
+        Ok(WitnessCommitRequest {
+            validated: self,
             precommitted_hints,
         })
     }
+}
 
+impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
     /// Admit geometry and batch capacity before auxiliary commitments exist.
     pub fn validate_setup(
-        setup: &PCS::ProverSetup,
-        shape: &OneHotTraceShape,
+        setup: &'a PCS::ProverSetup,
+        shape: OneHotTraceShape,
         num_precommitted: usize,
-    ) -> Result<OneHotTraceLayoutPlan, OpeningsError>
+    ) -> Result<WitnessCommitPlan<'a, PCS>, OpeningsError>
     where
         PCS::ProverSetup: GroupSetupMetadata,
     {
-        let plan = ONE_HOT_TRACE_LAYOUT.plan(shape)?;
+        let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape)?;
         if setup.default_layout_digest() != plan.layout_digest() {
             return Err(OpeningsError::InvalidSetup(
                 "the Akita setup's layout digest is not the canonical OneHotTrace digest".into(),
@@ -73,19 +79,24 @@ impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
                 "the Akita setup's dimensions disagree with the canonical OneHotTrace shape".into(),
             ));
         }
-        Ok(plan)
+        Ok(WitnessCommitPlan {
+            setup,
+            shape,
+            plan,
+            num_precommitted,
+        })
     }
 
     pub fn setup(&self) -> &'a PCS::ProverSetup {
-        self.setup
+        self.validated.setup
     }
 
     pub fn shape(&self) -> &OneHotTraceShape {
-        &self.shape
+        &self.validated.shape
     }
 
     pub fn plan(&self) -> &OneHotTraceLayoutPlan {
-        &self.plan
+        &self.validated.plan
     }
 
     pub fn precommitted_hints(&self) -> &'a [&'a PCS::OpeningHint] {

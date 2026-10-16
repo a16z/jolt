@@ -394,7 +394,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
 impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
     fn preflight(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         dimensions: ReadWriteDimensions,
     ) -> Result<(), KernelError<F>> {
@@ -404,11 +404,11 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
             });
         }
         let _ = ReadWriteOrder::new::<F>(dimensions)?;
-        // Stage 2 consumes this same column; moving its extraction forward
-        // admits actual addresses without another trace walk or address copy.
-        let addresses = SharedRamAddresses::shared(session, witness, dimensions.log_t())?;
-        // Same range check `prepare` runs, so it cannot first fail after commitments.
-        super::ram_trace::validate_addresses(&addresses, 1usize << dimensions.log_k())
+        SharedRamAddresses::validate_witness(
+            witness,
+            dimensions.log_t(),
+            1usize << dimensions.log_k(),
+        )
     }
 
     fn prepare(

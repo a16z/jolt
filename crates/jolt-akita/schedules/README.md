@@ -44,22 +44,21 @@ cross-profile commitment-reuse tests exercise compatible producer profiles.
 Changing that policy requires regenerating compatible producer and consumer
 catalogs and their prepared setups.
 
-The default K=16 catalogs cover native arities 16–34 and widths 51–64. K=256
-single-chunk native rows are explicit adapter and benchmark fixtures. One-hot
-rows use direct schedules below logical `2^21` cycles and setup offloading from
-that cutoff. Multi-chunk fixture inventories are declared in
+The default single-chunk K=16 catalog covers native arities 16–35 and widths
+51–64. K=256 single-chunk native rows are explicit adapter and benchmark fixtures.
+One-hot rows use direct schedules below logical `2^21` cycles and setup
+offloading from that cutoff. Multi-chunk fixture inventories are declared in
 `src/schedules/mod.rs`; deployment inventories belong to their applications.
 
-A `2^31`-cycle K=256 trace has 39 variables per native column. Its column
-count depends on the bytecode and RAM domains and must fit the fixed selector
-mask. Supporting that trace requires an exact application-provided schedule row;
-the packaged fixtures do not promise maximum-trace coverage. Every auxiliary
-object must also admit a grouped row under the pinned planner policy. Maximum-size checks inspect metadata without allocating the trace witness.
+The default single-chunk catalog covers traces through `2^31` cycles: each
+K=16 native column then has 35 variables (`31 + 4`), with 51–64 columns
+according to the bytecode and RAM domains. Every auxiliary object must also
+admit a grouped row under the pinned planner policy.
 
-Catalog identity is transcript-bound. Extending a catalog changes that identity
-even when every previously provisioned row is preserved. Existing proofs keep
-their matching serialized verifier preprocessing; newly generated preprocessing
-is a distinct setup and is not interchangeable with the old one.
+Catalog identity is transcript-bound. Extending a catalog changes newly generated
+proof bytes, including proofs selecting previously provisioned rows. Existing
+proofs keep their matching serialized verifier preprocessing; newly generated
+preprocessing is a distinct setup and is not interchangeable with the old one.
 
 Regenerate this repository's catalogs:
 
@@ -74,9 +73,10 @@ the Akita revision pinned in the workspace `Cargo.toml`.
 
 `external_catalog` generates a two-chunk shape absent from the packaged
 fixtures, proves it with that external catalog, and verifies the transported
-public setup in a fresh process after the source catalogs have been deleted. Other tests cover malformed setup, profile
-mismatch, canonical shape checks, and the selected boundary geometries. Production
-coverage matrices and application catalog freshness belong downstream.
+public setup in a fresh process after the source catalogs have been deleted.
+Other tests cover malformed setup, profile mismatch, canonical shape checks, and
+the selected boundary geometries. Production coverage matrices and application
+catalog freshness belong downstream.
 
 The child verifier uses only the exported public inputs and deliberately points
 its catalog environment at a nonexistent directory.

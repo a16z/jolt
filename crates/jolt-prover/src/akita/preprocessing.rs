@@ -1,4 +1,4 @@
-use akita_params::PolynomialGroupLayout;
+use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
 use std::sync::Arc;
 
 use jolt_akita::{
@@ -106,20 +106,17 @@ pub(crate) fn grouped_setup_params(
         .map_err(|error| PreprocessingError::InvalidConfiguration {
             reason: error.to_string(),
         })?;
-    let admitted = catalog.rows().any(|row| {
-        let profiles = row.profiles();
-        profiles.precommitteds.is_empty()
-            && profiles.final_group.group.num_vars() == shape.num_vars
-            && profiles.final_group.group.num_polynomials() == shape.num_polys
-    });
-    if !admitted {
-        return Err(PreprocessingError::InvalidConfiguration {
+    let _ = catalog
+        .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
+            shape.num_vars,
+            shape.num_polys,
+        )))
+        .map_err(|error| PreprocessingError::InvalidConfiguration {
             reason: format!(
-                "Akita K={one_hot_k} catalog has no canonical trace schedule for {} variables and {} polynomials",
+                "Akita K={one_hot_k} catalog has no canonical trace schedule for {} variables and {} polynomials: {error}",
                 shape.num_vars, shape.num_polys,
             ),
-        });
-    }
+        })?;
     let untrusted_physical_vars = untrusted_advice
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Untrusted))
         .transpose()?;
@@ -301,7 +298,7 @@ mod tests {
     use jolt_riscv::RV64IMAC_JOLT;
 
     #[test]
-    fn trace_schedule_admission_rejects_2_to_32_before_setup() {
+    fn trace_schedule_admission_covers_t31_and_rejects_t32_before_setup() {
         let program = JoltProgramPreprocessing::new(
             Vec::new(),
             Vec::new(),
@@ -311,15 +308,19 @@ mod tests {
             RV64IMAC_JOLT,
         )
         .unwrap();
-        let config = ProverConfig {
-            trace_length: 1usize << 32,
+        let mut config = ProverConfig {
+            trace_length: 1usize << 31,
             ram_K: 1 << 12,
-            rw_config: read_write_config(32, 12),
-            one_hot_config: one_hot_config(32),
+            rw_config: read_write_config(31, 12),
+            one_hot_config: one_hot_config(31),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
             akita_chunk_profile: AkitaChunkProfile::Single,
         };
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        assert!(grouped_setup_params(&artifacts, &program, &config, false, false, &[]).is_ok());
+        config.trace_length = 1usize << 32;
+        config.rw_config = read_write_config(32, 12);
+        config.one_hot_config = one_hot_config(32);
         assert!(matches!(
             grouped_setup_params(&artifacts, &program, &config, false, false, &[]),
             Err(PreprocessingError::InvalidConfiguration { reason })

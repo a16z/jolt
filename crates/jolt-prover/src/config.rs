@@ -89,16 +89,12 @@ impl ProverConfig {
             .transpose()
             .map_err(|reason| ProverError::Unsupported { reason })?
             .unwrap_or(0);
-        let image_words =
-            u64::try_from(program_image_len_words).map_err(|_| ProverError::Unsupported {
-                reason: "program image word count exceeds u64",
-            })?;
         let image_end = NonZeroU64::new(min_bytecode_address)
             .map(|address| checked_remap_address(address, memory_layout))
             .transpose()
             .map_err(|reason| ProverError::Unsupported { reason })?
             .unwrap_or(0)
-            .checked_add(image_words)
+            .checked_add(program_image_len_words as u64)
             .and_then(|end| end.checked_add(1))
             .ok_or(ProverError::Unsupported {
                 reason: "program image extent overflows the RAM domain",
