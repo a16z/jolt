@@ -22,6 +22,14 @@
 //!   binds of the dense tables, recomputed instead of carried.
 //! - **Raw `u64` trace values with small-scalar deferred-reduction
 //!   accumulation** (`fmadd_u64`) for the Q build and the phase-2 folds.
+//! - **Two task-partitioned row passes** (`task_ranges`): the Q build and the
+//!   phase-2 fold each read the cycle domain once, every task visiting a
+//!   contiguous run of whole `x_hi` rows serially. The Q build accumulates
+//!   into one caller-allocated `2^prefix`-entry slot per task, merged in place
+//!   before reducing; the phase-2 fold writes each completed `x_hi` row into
+//!   its task's slices of the tables.
+
+use std::ops::Range;
 
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, RegistersClaimReductionPublic,
@@ -38,11 +46,14 @@ use jolt_verifier::stages::stage3::registers_claim_reduction::{
 };
 use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
-use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, TraceRows, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{bind_pairs, fmadd_u64_split, pin_derived_term, BundleStore, RoundChallenges};
+use super::support::{
+    bind_pairs, fmadd_u64_split, map_indices, pin_derived_term, split_at_tasks, task_ranges,
+    RoundChallenges, VISIT_ROWS,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -96,9 +107,18 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
                 reason: "registers claim-reduction tau point has the wrong variable count",
             });
         }
+        const LABEL: &str = "registers claim-reduction trace rows";
         let cycles = 1usize << log_t;
-        let values = BundleStore::<RegisterValuesRow>::resolve(witness, cycles)?;
-        let access = values.access();
+        let rows = witness
+            .rows()
+            .ok_or(WitnessError::UnavailableView { label: LABEL })?;
+        if rows.cycles() != cycles {
+            return Err(WitnessError::InvalidDimensions {
+                label: LABEL,
+                reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
+            }
+            .into());
+        }
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
@@ -106,45 +126,68 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
         let (tau_hi, tau_lo) = tau.split_at(log_t / 2);
         let prefix_vars = tau_lo.len();
         let p = EqPolynomial::<F>::evals(tau_lo, None);
-        let eq_suffix = EqPolynomial::<F>::evals(tau_hi, None);
+        let eq_suffix: Vec<[F; 2]> = EqPolynomial::<F>::evals(tau_hi, None)
+            .into_iter()
+            .map(|eq_hi| [eq_hi, eq_hi.mul_pow_2(32)])
+            .collect();
 
-        const BLOCK: usize = 32;
-        let build_q_block =
-            |(block_index, q_block): (usize, &mut [F])| -> Result<(), WitnessError> {
-                let mut folds = vec![[F::SmallScalarAccumulator::default(); 3]; q_block.len()];
-                for (x_hi, &eq_hi) in eq_suffix.iter().enumerate() {
-                    let eq_hi_shifted = eq_hi.mul_pow_2(32);
-                    let base = x_hi << prefix_vars;
-                    for (i, fold) in folds.iter_mut().enumerate() {
-                        let x_lo = block_index * BLOCK + i;
-                        let row = access.row(base + x_lo)?.0;
-                        fmadd_u64_split(&mut fold[0], eq_hi, eq_hi_shifted, row[0]);
-                        fmadd_u64_split(&mut fold[1], eq_hi, eq_hi_shifted, row[1]);
-                        fmadd_u64_split(&mut fold[2], eq_hi, eq_hi_shifted, row[2]);
-                    }
-                }
-                for (q, fold) in q_block.iter_mut().zip(folds) {
-                    *q = fold[0].reduce() + gamma * fold[1].reduce() + gamma_sq * fold[2].reduce();
-                }
-                Ok(())
+        // Each task visits a contiguous run of whole `x_hi` rows and adds every
+        // row into entry `x_lo` of its own slot, allocated before the pass, so
+        // partial state is `tasks · 2^prefix_vars` entries whatever the
+        // scheduling. The merge gives each accumulator exactly the split terms
+        // one accumulator per `x_lo` would take: its headroom is unchanged.
+        let x_lo_mask = (1 << prefix_vars) - 1;
+        let ranges = task_ranges(cycles, rows.segment_len(), 1 << prefix_vars);
+        let mut slots = map_indices(ranges.len(), |_| {
+            vec![[F::SmallScalarAccumulator::default(); 3]; 1 << prefix_vars]
+        });
+        let accumulate =
+            |(slot, range): (&mut Vec<[F::SmallScalarAccumulator; 3]>, &Range<usize>)| {
+                rows.visit_bundles(
+                    range.clone(),
+                    VISIT_ROWS,
+                    |first, bundles: &[RegisterValuesRow]| {
+                        for (cycle, row) in (first..).zip(bundles) {
+                            let [eq_hi, eq_hi_shifted] = eq_suffix[cycle >> prefix_vars];
+                            let fold = &mut slot[cycle & x_lo_mask];
+                            fmadd_u64_split(&mut fold[0], eq_hi, eq_hi_shifted, row.0[0]);
+                            fmadd_u64_split(&mut fold[1], eq_hi, eq_hi_shifted, row.0[1]);
+                            fmadd_u64_split(&mut fold[2], eq_hi, eq_hi_shifted, row.0[2]);
+                        }
+                        Ok(())
+                    },
+                )
             };
-        let mut q = vec![F::zero(); 1 << prefix_vars];
         #[cfg(feature = "parallel")]
-        q.par_chunks_mut(BLOCK)
-            .enumerate()
-            .try_for_each(build_q_block)?;
+        slots.par_iter_mut().zip(&ranges).try_for_each(accumulate)?;
         #[cfg(not(feature = "parallel"))]
-        q.chunks_mut(BLOCK)
-            .enumerate()
-            .try_for_each(build_q_block)?;
+        slots.iter_mut().zip(&ranges).try_for_each(accumulate)?;
+
+        let (merged, rest) = slots.split_at_mut(1);
+        let merged = &mut merged[0];
+        let rest = &*rest;
+        let merge = |(x_lo, fold): (usize, &mut [F::SmallScalarAccumulator; 3])| {
+            for slot in rest {
+                for (sum, term) in fold.iter_mut().zip(slot[x_lo]) {
+                    sum.merge(term);
+                }
+            }
+        };
+        #[cfg(feature = "parallel")]
+        merged.par_iter_mut().enumerate().for_each(merge);
+        #[cfg(not(feature = "parallel"))]
+        merged.iter_mut().enumerate().for_each(merge);
+        let q: Vec<F> = merged
+            .iter()
+            .map(|fold| fold[0].reduce() + gamma * fold[1].reduce() + gamma_sq * fold[2].reduce())
+            .collect();
 
         Ok(Box::new(ClaimReductionKernel {
             log_t,
             gamma,
             gamma_sq,
             tau: tau.to_vec(),
-            values,
-            phase: Phase::PrefixSuffix { p, q },
+            phase: Phase::PrefixSuffix { p, q, rows },
             challenges: RoundChallenges::new(log_t),
         }))
     }
@@ -152,8 +195,15 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F> {
-    /// First half of the rounds: the P·Q buffers over the prefix variables.
-    PrefixSuffix { p: Vec<F>, q: Vec<F> },
+    /// First half of the rounds: the P·Q buffers over the prefix variables,
+    /// and the rows the transition folds.
+    PrefixSuffix {
+        p: Vec<F>,
+        q: Vec<F>,
+        /// The witness plane owns these rows; it reports them itself.
+        #[cfg_attr(feature = "allocative", allocative(skip))]
+        rows: TraceRows,
+    },
     /// Remaining rounds: the eq table and the three value columns, dense.
     Dense {
         eq: Vec<F>,
@@ -171,66 +221,84 @@ struct ClaimReductionKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_sq: F,
     tau: Vec<F>,
-    values: BundleStore<RegisterValuesRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
 
 impl<F: JoltField> ClaimReductionKernel<F> {
-    fn transition_to_dense(&mut self) -> Result<(), WitnessError> {
+    /// The dense phase at the bound prefix: one pass in which every task folds
+    /// whole `x_hi` rows by `eq(r_prefix, x_lo)` and writes each row's three
+    /// values into its own slices of the tables.
+    fn dense_phase(&self, rows: &TraceRows) -> Result<Phase<F>, WitnessError> {
         let bound = self.challenges.bound();
         let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let eq_prefix = EqPolynomial::<F>::evals(&r_prefix, None);
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
-        let chunk = eq_prefix.len();
-        let remaining = 1usize << (self.log_t - bound);
-        let access = self.values.access();
+        let cycles = 1usize << self.log_t;
+        let x_lo_mask = (1 << bound) - 1;
 
-        let fold_chunk = |chunk_index: usize| -> Result<[F; 3], WitnessError> {
-            let base = chunk_index * chunk;
-            let mut fold = [F::SmallScalarAccumulator::default(); 3];
-            for (offset, (&eq, &eq_shifted)) in
-                eq_prefix.iter().zip(eq_prefix_shifted.iter()).enumerate()
-            {
-                let row = access.row(base + offset)?;
-                fmadd_u64_split(&mut fold[0], eq, eq_shifted, row.0[0]);
-                fmadd_u64_split(&mut fold[1], eq, eq_shifted, row.0[1]);
-                fmadd_u64_split(&mut fold[2], eq, eq_shifted, row.0[2]);
-            }
-            Ok(fold.map(F::SmallScalarAccumulator::reduce))
+        let mut columns: [Vec<F>; 3] = core::array::from_fn(|_| vec![F::zero(); cycles >> bound]);
+        let ranges = task_ranges(cycles, rows.segment_len(), 1 << bound);
+        let slices = split_at_tasks(
+            columns.each_mut().map(Vec::as_mut_slice),
+            &ranges,
+            |cycle| cycle >> bound,
+        );
+        let fold = |(range, mut outputs): (&Range<usize>, [&mut [F]; 3])| {
+            let first_row = range.start >> bound;
+            let mut folds = [F::SmallScalarAccumulator::default(); 3];
+            rows.visit_bundles(
+                range.clone(),
+                VISIT_ROWS,
+                |first, bundles: &[RegisterValuesRow]| {
+                    for (cycle, row) in (first..).zip(bundles) {
+                        let x_lo = cycle & x_lo_mask;
+                        let (eq, eq_shifted) = (eq_prefix[x_lo], eq_prefix_shifted[x_lo]);
+                        fmadd_u64_split(&mut folds[0], eq, eq_shifted, row.0[0]);
+                        fmadd_u64_split(&mut folds[1], eq, eq_shifted, row.0[1]);
+                        fmadd_u64_split(&mut folds[2], eq, eq_shifted, row.0[2]);
+                        if x_lo == x_lo_mask {
+                            let entry = (cycle >> bound) - first_row;
+                            for (output, fold) in outputs.iter_mut().zip(std::mem::take(&mut folds))
+                            {
+                                output[entry] = fold.reduce();
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            )
         };
         #[cfg(feature = "parallel")]
-        let folds: Vec<[F; 3]> = (0..remaining)
-            .into_par_iter()
-            .map(fold_chunk)
-            .collect::<Result<_, _>>()?;
+        ranges.par_iter().zip(slices).try_for_each(fold)?;
         #[cfg(not(feature = "parallel"))]
-        let folds: Vec<[F; 3]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
-
-        self.values = BundleStore::Retained(Vec::new());
+        ranges.iter().zip(slices).try_for_each(fold)?;
 
         let (tau_hi, tau_lo) = self.tau.split_at(self.log_t / 2);
         let eq_prefix_eval = EqPolynomial::<F>::mle(&r_prefix, tau_lo);
-        self.phase = Phase::Dense {
+        let [rd_write_value, rs1_value, rs2_value] = columns;
+        Ok(Phase::Dense {
             eq: EqPolynomial::<F>::evals(tau_hi, Some(eq_prefix_eval)),
-            rd_write_value: folds.iter().map(|fold| fold[0]).collect(),
-            rs1_value: folds.iter().map(|fold| fold[1]).collect(),
-            rs2_value: folds.iter().map(|fold| fold[2]).collect(),
-        };
-        Ok(())
+            rd_write_value,
+            rs1_value,
+            rs2_value,
+        })
     }
 
     fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         self.challenges.push(r);
-        if matches!(&self.phase, Phase::PrefixSuffix { p, .. } if p.len() == 2) {
-            return self.transition_to_dense().map_err(|_| {
-                SumcheckError::MissingEvaluationSource {
-                    kind: "register values row",
-                }
-            });
+        if let Phase::PrefixSuffix { p, rows, .. } = &self.phase {
+            if p.len() == 2 {
+                self.phase =
+                    self.dense_phase(rows)
+                        .map_err(|_| SumcheckError::MissingEvaluationSource {
+                            kind: "register values row",
+                        })?;
+                return Ok(());
+            }
         }
         match &mut self.phase {
-            Phase::PrefixSuffix { p, q } => {
+            Phase::PrefixSuffix { p, q, .. } => {
                 for table in [p, q] {
                     bind_pairs(table, r);
                 }
@@ -267,7 +335,7 @@ impl<F: JoltField> ProveRounds<F> for ClaimReductionKernel<F> {
 
         // Degree-2 member: evals at t = 0 and t = 2; s(1) from the hint.
         let evals: [F; 2] = match &self.phase {
-            Phase::PrefixSuffix { p, q } => {
+            Phase::PrefixSuffix { p, q, .. } => {
                 let mut acc = [F::Accumulator::default(); 2];
                 for y in 0..p.len() / 2 {
                     let (p_0, p_1) = (p[2 * y], p[2 * y + 1]);
@@ -361,54 +429,86 @@ impl<F: JoltField> SumcheckKernel<F> for ClaimReductionKernel<F> {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, Ring};
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Fr, JoltField, Ring};
     use jolt_poly::Polynomial;
+    use jolt_sumcheck::SumcheckError;
     use jolt_verifier::stages::stage3::registers_claim_reduction::{
         RegistersClaimReduction, RegistersClaimReductionChallenges,
         RegistersClaimReductionInputClaims,
     };
-    use jolt_witness::JoltWitnessOracle;
+    use jolt_witness::{JoltWitnessOracle, RowSource, TraceBackend, WitnessError};
 
     use super::super::registers_read_write::test_support::{
         assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture,
         TraceFixture,
     };
-    use super::OptimizedRegistersClaimReduction;
+    use super::super::spartan_shift::tests::{assert_two_task_passes, replayed};
+    use super::super::support::RoundChallenges;
+    use super::{ClaimReductionKernel, OptimizedRegistersClaimReduction, Phase};
+    use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+
+    /// The optimized kernel against the reference tier over `backend`'s rows.
+    fn assert_parity<F: JoltField>(backend: &TraceBackend, log_t: usize, seed: u64) {
+        let tau = challenge_sequence::<F>(log_t, seed ^ 0x7E7E);
+        let relation = RegistersClaimReduction::<F>::new(TraceDimensions::new(log_t), tau.clone());
+        let evaluate = |polynomial: JoltVirtualPolynomial| {
+            let table = JoltWitnessOracle::<F>::oracle_table(
+                backend,
+                JoltPolynomialId::Virtual(polynomial),
+            )
+            .unwrap();
+            Polynomial::new(table).evaluate(&tau)
+        };
+        let gamma = F::from_u64(0x0DDB_A11C_0FFE_E123);
+        let claims = RegistersClaimReductionInputClaims {
+            rd_write_value: evaluate(JoltVirtualPolynomial::RdWriteValue),
+            rs1_value: evaluate(JoltVirtualPolynomial::Rs1Value),
+            rs2_value: evaluate(JoltVirtualPolynomial::Rs2Value),
+        };
+        let input_claim =
+            claims.rd_write_value + gamma * claims.rs1_value + gamma * gamma * claims.rs2_value;
+        assert_nontrivial(input_claim);
+        let round_challenges = challenge_sequence(log_t, seed);
+        assert_kernel_parity(
+            &OptimizedRegistersClaimReduction,
+            backend,
+            &relation,
+            &claims,
+            &RegistersClaimReductionInputClaims::default(),
+            &RegistersClaimReductionChallenges { gamma },
+            input_claim,
+            &round_challenges,
+        );
+    }
 
     fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {
-        fixture.with_plane(log_t, |backend| {
-            let tau = challenge_sequence(log_t, seed ^ 0x7E7E);
-            let relation =
-                RegistersClaimReduction::<Fr>::new(TraceDimensions::new(log_t), tau.clone());
-            let evaluate = |polynomial: JoltVirtualPolynomial| {
-                let table = JoltWitnessOracle::<Fr>::oracle_table(
-                    backend,
-                    JoltPolynomialId::Virtual(polynomial),
-                )
-                .unwrap();
-                Polynomial::new(table).evaluate(&tau)
-            };
-            let gamma = Fr::from_u64(0x0DDB_A11C_0FFE_E123);
-            let claims = RegistersClaimReductionInputClaims {
-                rd_write_value: evaluate(JoltVirtualPolynomial::RdWriteValue),
-                rs1_value: evaluate(JoltVirtualPolynomial::Rs1Value),
-                rs2_value: evaluate(JoltVirtualPolynomial::Rs2Value),
-            };
-            let input_claim =
-                claims.rd_write_value + gamma * claims.rs1_value + gamma * gamma * claims.rs2_value;
-            assert_nontrivial(input_claim);
-            let round_challenges = challenge_sequence(log_t, seed);
-            assert_kernel_parity(
-                &OptimizedRegistersClaimReduction,
-                backend,
-                &relation,
-                &claims,
-                &RegistersClaimReductionInputClaims::default(),
-                &RegistersClaimReductionChallenges { gamma },
-                input_claim,
-                &round_challenges,
-            );
-        });
+        fixture.with_plane(log_t, |backend| assert_parity::<Fr>(backend, log_t, seed));
+    }
+
+    /// The optimized kernel prepared over `witness` for an arbitrary relation.
+    fn prepare_optimized(
+        witness: &TraceBackend,
+        log_t: usize,
+    ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = RegistersClaimReduction<Fr>>>, KernelError<Fr>>
+    {
+        let relation = RegistersClaimReduction::<Fr>::new(
+            TraceDimensions::new(log_t),
+            challenge_sequence(log_t, 5),
+        );
+        OptimizedRegistersClaimReduction.prepare(
+            &mut ProofSession::default(),
+            witness,
+            ProverInputs {
+                relation: &relation,
+                claims: &RegistersClaimReductionInputClaims::default(),
+                points: &RegistersClaimReductionInputClaims::default(),
+                challenges: &RegistersClaimReductionChallenges {
+                    gamma: Fr::from_u64(3),
+                },
+            },
+        )
     }
 
     #[test]
@@ -438,5 +538,69 @@ mod tests {
         fixture.op(Some(9), Some(8), Some(8));
         fixture.op(None, Some(9), Some(8));
         run_parity(fixture, 2, 109);
+    }
+
+    /// Over two-row replay checkpoints, so task boundaries and the padded
+    /// last cycle fall inside the domain: reference parity, then the kernel
+    /// alone reads its rows in exactly two complete task passes.
+    #[test]
+    fn replayed_rows_match_reference_in_two_task_passes() {
+        for log_t in [1, 3, 6] {
+            structured_fixture((1 << log_t) - 1).with_plane(log_t, |resident| {
+                let (witness, replay) = replayed(resident, 2, None);
+                assert_parity::<Fr>(&witness, log_t, 113);
+                #[cfg(feature = "akita")]
+                assert_parity::<Prime128OffsetA7F7>(&witness, log_t, 127);
+                let _ = replay.take_log();
+                let mut kernel = prepare_optimized(&witness, log_t).unwrap();
+                assert_two_task_passes(kernel.as_mut(), &replay, log_t);
+            });
+        }
+    }
+
+    /// A witness without a valid handle or with one of another domain fails
+    /// typed; a replay failure fails `prepare` from the Q build and the
+    /// transition bind from the phase-2 fold.
+    #[test]
+    fn missing_rows_and_replay_failures_are_typed() {
+        structured_fixture(7).with_plane(3, |resident| {
+            let (mut shortened, _) = replayed(resident, 2, None);
+            shortened.config.log_t = 1;
+            assert!(matches!(
+                prepare_optimized(&shortened, 3),
+                Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+            ));
+            let (mut widened, _) = replayed(resident, 2, None);
+            widened.config.log_t = 4;
+            assert!(matches!(
+                prepare_optimized(&widened, 3),
+                Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
+            ));
+            let (failing, _) = replayed(resident, 2, Some(5));
+            assert!(matches!(
+                prepare_optimized(&failing, 3),
+                Err(KernelError::Witness(WitnessError::Replay { .. }))
+            ));
+        });
+        // At log_t = 2 the prefix is one variable, so the first bind folds.
+        structured_fixture(3).with_plane(2, |resident| {
+            let (failing, _) = replayed(resident, 2, Some(1));
+            let mut kernel = ClaimReductionKernel {
+                log_t: 2,
+                gamma: Fr::from_u64(3),
+                gamma_sq: Fr::from_u64(9),
+                tau: challenge_sequence(2, 5),
+                phase: Phase::PrefixSuffix {
+                    p: vec![Fr::from_u64(0); 2],
+                    q: vec![Fr::from_u64(0); 2],
+                    rows: failing.rows().unwrap(),
+                },
+                challenges: RoundChallenges::new(2),
+            };
+            assert!(matches!(
+                kernel.bind(Fr::from_u64(5)),
+                Err(SumcheckError::MissingEvaluationSource { .. })
+            ));
+        });
     }
 }
