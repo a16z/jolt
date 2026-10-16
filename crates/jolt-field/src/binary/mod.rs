@@ -19,6 +19,7 @@ mod f128;
 mod f192;
 mod f64;
 mod f8;
+mod scalar;
 
 #[cfg(any(
     all(target_arch = "aarch64", target_feature = "aes"),
