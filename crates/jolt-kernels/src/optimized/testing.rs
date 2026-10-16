@@ -62,8 +62,19 @@ impl FixtureShape {
 /// so scripts stay trace-consistent by construction.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum RamOp {
-    Read { word: u64 },
-    Write { word: u64, post: u64 },
+    Read {
+        word: u64,
+    },
+    Write {
+        word: u64,
+        post: u64,
+    },
+    /// A store to raw address 0, which remaps to no RAM word: `RamInc`
+    /// changes by `post − pre` without a RAM access.
+    UnmappedWrite {
+        pre: u64,
+        post: u64,
+    },
     None,
 }
 
@@ -93,6 +104,15 @@ pub(crate) fn with_ram_fixture_init<R>(
     ops: Vec<RamOp>,
     f: impl FnOnce(&dyn JoltWitnessPlane<Fr>) -> R,
 ) -> R {
+    f(&ram_fixture(shape, init_words, ops))
+}
+
+/// The [`with_ram_fixture_init`] trace backend.
+pub(crate) fn ram_fixture(
+    shape: FixtureShape,
+    init_words: Vec<u64>,
+    ops: Vec<RamOp>,
+) -> TraceBackend {
     assert!(ops.len() < 1usize << shape.log_t, "script too long");
     assert!(
         init_words.is_empty() || 2 + init_words.len() <= shape.ram_k,
@@ -212,6 +232,25 @@ pub(crate) fn with_ram_fixture_init<R>(
                         }),
                     )
                 }
+                RamOp::UnmappedWrite { pre, post } => (
+                    store,
+                    RegisterState {
+                        rs1: Some(RegisterRead {
+                            register: 2,
+                            value: 0,
+                        }),
+                        rs2: Some(RegisterRead {
+                            register: 3,
+                            value: post,
+                        }),
+                        ..Default::default()
+                    },
+                    RamAccess::Write(RamWrite {
+                        address: 0,
+                        pre_value: pre,
+                        post_value: post,
+                    }),
+                ),
                 RamOp::None => (
                     JoltInstructionRow::default(),
                     RegisterState::default(),
@@ -251,8 +290,26 @@ pub(crate) fn with_ram_fixture_init<R>(
         &preprocessing,
         TraceOutput::new(TraceData::new(rows), device, None, None),
     );
-    let backend = TraceBackend::new(config, inputs);
-    f(&backend)
+    TraceBackend::new(config, inputs)
+}
+
+/// A trace without RAM events: trusted advice starts the termination word at
+/// its final value, so no termination write is needed and every cycle is
+/// padding.
+pub(crate) fn silent_ram_fixture(shape: FixtureShape) -> TraceBackend {
+    let base = ram_fixture(shape, Vec::new(), Vec::new());
+    let device = JoltDevice {
+        trusted_advice: [0u64.to_le_bytes(), 1u64.to_le_bytes()].concat(),
+        ..base.trace.device.clone()
+    };
+    TraceBackend::new(
+        base.config.clone(),
+        JoltVmWitnessInputs::new(
+            &base.program,
+            &base.preprocessing,
+            TraceOutput::new(TraceData::new(Vec::new()), device, None, None),
+        ),
+    )
 }
 
 pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
