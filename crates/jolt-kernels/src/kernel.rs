@@ -122,16 +122,12 @@ pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + MaybeAllocative + Send 
     /// generated stage drivers call it uniformly on every member, after typed
     /// extraction and derived-table validation (both borrow the kernel; this
     /// call consumes it, so it is necessarily last). The default parks
-    /// nothing and passes the kernel to
-    /// [`drop_in_background_thread`](crate::mem::drop_in_background_thread);
-    /// the stage-6b precommitted cycle kernels override it to park their
-    /// post-cycle bound state as plain owned data for stage 7's address-phase
-    /// `prepare` to reclaim.
-    fn park_residue(self: Box<Self>, _session: &mut ProofSession)
-    where
-        Self: 'static,
-    {
-        crate::mem::drop_in_background_thread(self);
+    /// nothing and drops the kernel on the calling thread, so none of its
+    /// tables outlives the call; the stage-6b precommitted cycle kernels
+    /// override it to park their post-cycle bound state as plain owned data
+    /// for stage 7's address-phase `prepare` to reclaim.
+    fn park_residue(self: Box<Self>, _session: &mut ProofSession) {
+        drop(self);
     }
 }
 

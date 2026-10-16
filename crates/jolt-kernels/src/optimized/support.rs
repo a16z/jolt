@@ -711,6 +711,64 @@ pub(crate) fn try_par_sum_vecs<F: JoltField, E: Send>(
     }
 }
 
+/// Rows per callback of a task pass's visit.
+pub(crate) const VISIT_ROWS: usize = 1 << 12;
+
+/// Tasks per pool thread in a [`task_ranges`] partition, so work stealing can
+/// even out unequal row costs between tasks.
+#[cfg(feature = "parallel")]
+const TASKS_PER_THREAD: usize = 8;
+
+/// The task partition of one pass over the cycle domain `0..cycles`: units of
+/// `U = min(cycles, group)` cycles and `min(TASKS_PER_THREAD · pool threads,
+/// cycles / U)` tasks, task `i` holding units `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋`
+/// of the `n = cycles / U`. Both sizes are powers of two, so every task
+/// covers whole `group`-cycle kernel groups. Per-task state allocated before
+/// the pass is held `tasks` times at once, up to `TASKS_PER_THREAD` per pool
+/// thread.
+pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
+    let unit = cycles.min(group);
+    let units = cycles / unit;
+    #[cfg(feature = "parallel")]
+    let tasks = (TASKS_PER_THREAD * rayon::current_num_threads()).min(units);
+    #[cfg(not(feature = "parallel"))]
+    let tasks = 1;
+    (0..tasks)
+        .map(|task| task * units / tasks * unit..(task + 1) * units / tasks * unit)
+        .collect()
+}
+
+/// Splits every table at the task boundaries of `ranges`, where `entry(cycle)`
+/// is the table index at which a boundary cycle's entries start, so each task
+/// fills only its own slices of the final tables.
+pub(crate) fn split_at_tasks<'a, T, const N: usize>(
+    mut tables: [&'a mut [T]; N],
+    ranges: &[Range<usize>],
+    entry: impl Fn(usize) -> usize,
+) -> Vec<[&'a mut [T]; N]> {
+    ranges
+        .iter()
+        .map(|range| {
+            let len = entry(range.end) - entry(range.start);
+            tables.each_mut().map(|table| {
+                let (head, tail) = std::mem::take(table).split_at_mut(len);
+                *table = tail;
+                head
+            })
+        })
+        .collect()
+}
+
+/// The round whose pass materializes a streamed-prefix kernel's dense tables:
+/// the first bind depth `k` at which the tables, `table_bytes` before any
+/// bind, fit `cap` bytes (`⌈table_bytes / 2^k⌉ ≤ cap`), or `rounds` when even
+/// the last round's tables exceed it and every round streams.
+pub(crate) fn dense_crossover(table_bytes: usize, cap: usize, rounds: usize) -> usize {
+    (0..rounds)
+        .find(|&depth| table_bytes.div_ceil(1 << depth) <= cap)
+        .unwrap_or(rounds)
+}
+
 /// Assemble a round message from evaluations at `{0, 2, 3, .., degree}`,
 /// recovering `s(1) = previous_claim − s(0)` — exactly the evaluation vector
 /// the reference tier computes directly (its own round check pins
@@ -1151,6 +1209,47 @@ mod product_grid_tests {
     fn products_match_direct_evaluations_at_every_supported_length_fp128() {
         for factors in 2..=MAX_GRID_FACTORS {
             assert_product_grid::<Prime128OffsetA7F7>(factors);
+        }
+    }
+}
+
+#[cfg(test)]
+mod task_partition_tests {
+    use super::task_ranges;
+    #[cfg(feature = "parallel")]
+    use super::TASKS_PER_THREAD;
+
+    /// Tasks tile the domain in order, each a positive whole number of
+    /// aligned units with the units spread evenly, and never outnumber
+    /// `TASKS_PER_THREAD` per pool thread (one task without `parallel`).
+    #[test]
+    fn tasks_tile_the_domain_in_whole_aligned_units() {
+        #[cfg(feature = "parallel")]
+        let most_tasks = TASKS_PER_THREAD * rayon::current_num_threads();
+        #[cfg(not(feature = "parallel"))]
+        let most_tasks = 1;
+        for (cycles, group) in [
+            (1usize << 12, 1usize << 4),
+            (1 << 12, 1 << 2),
+            (1 << 12, 1 << 12),
+            (1 << 6, 1 << 8),
+            (1 << 20, 1),
+            (1, 1),
+        ] {
+            let unit = cycles.min(group);
+            let units = cycles / unit;
+            let ranges = task_ranges(cycles, group);
+            assert_eq!(ranges.len(), most_tasks.min(units));
+            let (fewest, most) = (units / ranges.len(), units.div_ceil(ranges.len()));
+            let mut next = 0;
+            for range in &ranges {
+                assert_eq!(range.start, next);
+                assert_eq!(range.start % unit, 0);
+                assert_eq!(range.len() % unit, 0);
+                assert!((fewest..=most).contains(&(range.len() / unit)) && !range.is_empty());
+                next = range.end;
+            }
+            assert_eq!(next, cycles);
         }
     }
 }
