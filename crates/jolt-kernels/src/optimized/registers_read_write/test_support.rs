@@ -2,7 +2,7 @@ use core::fmt::Debug;
 
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::{Fr, Ring};
+use jolt_field::JoltField;
 use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -17,14 +17,14 @@ use crate::optimized::testing::trimmed;
 use crate::reference::ReferenceBackend;
 use crate::{PrepareKernel, ProofSession, ProverInputs};
 
-pub(crate) fn challenge_sequence(len: usize, seed: u64) -> Vec<Fr> {
+pub(crate) fn challenge_sequence<F: JoltField>(len: usize, seed: u64) -> Vec<F> {
     let mut state = seed;
     (0..len)
         .map(|_| {
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
-            Fr::from_u64(state | 1)
+            F::from_u64(state | 1)
         })
         .collect()
 }
@@ -49,6 +49,23 @@ impl TraceFixture {
 
     pub(crate) fn noop(&mut self) {
         self.rows.push(TraceRow::default());
+    }
+
+    /// One cycle reading `register` without register-state bookkeeping, so
+    /// the index may lie outside the protocol's register domain.
+    pub(crate) fn unchecked_read(&mut self, register: u8) {
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: 0x8000_0000 + 4 * self.rows.len(),
+            operands: NormalizedOperands {
+                rs1: Some(register),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        self.rows.push(
+            TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1).unwrap(),
+        );
     }
 
     /// One cycle touching the given operands; the write value is a fresh
@@ -175,21 +192,22 @@ pub(crate) fn structured_fixture(cycles: usize) -> TraceFixture {
     clippy::too_many_arguments,
     reason = "mirrors the seam's input decomposition"
 )]
-pub(crate) fn assert_kernel_parity<R>(
-    optimized_slot: &dyn PrepareKernel<Fr, R>,
-    witness: &dyn JoltWitnessPlane<Fr>,
+pub(crate) fn assert_kernel_parity<F, R>(
+    optimized_slot: &dyn PrepareKernel<F, R>,
+    witness: &dyn JoltWitnessPlane<F>,
     relation: &R,
-    claims: &SumcheckInputClaims<Fr, R>,
-    points: &SumcheckInputPoints<Fr, R>,
-    challenges: &ConcreteSumcheckChallenges<Fr, R>,
-    input_claim: Fr,
-    round_challenges: &[Fr],
+    claims: &SumcheckInputClaims<F, R>,
+    points: &SumcheckInputPoints<F, R>,
+    challenges: &ConcreteSumcheckChallenges<F, R>,
+    input_claim: F,
+    round_challenges: &[F],
 ) where
-    R: ConcreteSumcheck<Fr>,
-    ReferenceBackend: PrepareKernel<Fr, R>,
-    SumcheckInputClaims<Fr, R>: InputClaims<Fr, OpeningIdOf<Fr, R>>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr, OpeningIdOf<Fr, R>> + PartialEq + Debug,
-    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, ChallengeIdOf<Fr, R>>,
+    F: JoltField,
+    R: ConcreteSumcheck<F>,
+    ReferenceBackend: PrepareKernel<F, R>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>> + PartialEq + Debug,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
 {
     assert_kernel_parity_with_session(
         &mut ProofSession::default(),
@@ -210,22 +228,23 @@ pub(crate) fn assert_kernel_parity<R>(
     clippy::too_many_arguments,
     reason = "mirrors the seam's input decomposition"
 )]
-pub(crate) fn assert_kernel_parity_with_session<R>(
+pub(crate) fn assert_kernel_parity_with_session<F, R>(
     optimized_session: &mut ProofSession,
-    optimized_slot: &dyn PrepareKernel<Fr, R>,
-    witness: &dyn JoltWitnessPlane<Fr>,
+    optimized_slot: &dyn PrepareKernel<F, R>,
+    witness: &dyn JoltWitnessPlane<F>,
     relation: &R,
-    claims: &SumcheckInputClaims<Fr, R>,
-    points: &SumcheckInputPoints<Fr, R>,
-    challenges: &ConcreteSumcheckChallenges<Fr, R>,
-    input_claim: Fr,
-    round_challenges: &[Fr],
+    claims: &SumcheckInputClaims<F, R>,
+    points: &SumcheckInputPoints<F, R>,
+    challenges: &ConcreteSumcheckChallenges<F, R>,
+    input_claim: F,
+    round_challenges: &[F],
 ) where
-    R: ConcreteSumcheck<Fr>,
-    ReferenceBackend: PrepareKernel<Fr, R>,
-    SumcheckInputClaims<Fr, R>: InputClaims<Fr, OpeningIdOf<Fr, R>>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr, OpeningIdOf<Fr, R>> + PartialEq + Debug,
-    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, ChallengeIdOf<Fr, R>>,
+    F: JoltField,
+    R: ConcreteSumcheck<F>,
+    ReferenceBackend: PrepareKernel<F, R>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>> + PartialEq + Debug,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
 {
     let mut reference_session = ProofSession::default();
     let mut reference = ReferenceBackend
@@ -269,7 +288,7 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
             "round {round} polynomial mismatch"
         );
         assert_eq!(
-            optimized_poly.evaluate(Fr::from_u64(0)) + optimized_poly.evaluate(Fr::from_u64(1)),
+            optimized_poly.evaluate(F::zero()) + optimized_poly.evaluate(F::one()),
             claim,
             "round {round} running-claim mismatch"
         );
@@ -302,15 +321,7 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
 
 /// A fixture guard: an all-zero witness would make parity vacuous, so the
 /// input claim must be a nontrivial field element.
-pub(crate) fn assert_nontrivial(claim: Fr) {
-    assert_ne!(
-        claim,
-        Fr::from_u64(0),
-        "degenerate fixture: zero input claim"
-    );
-    assert_ne!(
-        claim,
-        Fr::from_u64(1),
-        "degenerate fixture: unit input claim"
-    );
+pub(crate) fn assert_nontrivial<F: JoltField>(claim: F) {
+    assert_ne!(claim, F::zero(), "degenerate fixture: zero input claim");
+    assert_ne!(claim, F::one(), "degenerate fixture: unit input claim");
 }

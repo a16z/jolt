@@ -13,7 +13,7 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::sparse::SeedEntry;
+use super::sparse::{SeedEntry, Seeds};
 use crate::KernelError;
 
 /// Operand indices and raw values for one cycle.
@@ -83,35 +83,44 @@ pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
     }
 }
 
-pub(super) struct CollectRegisterEntries {
-    pub(super) entries: Vec<SeedEntry>,
+/// Per-cycle operand registers and signed rd increments.
+pub(super) struct RegisterColumns {
     pub(super) rs1_indices: Vec<Option<u8>>,
     pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) rd_indices: Vec<Option<u8>>,
     pub(super) rd_inc: Vec<i128>,
 }
 
+/// The sequential pass, which also keeps every seed cell.
+struct CollectRegisterEntries {
+    entries: Vec<SeedEntry>,
+    columns: RegisterColumns,
+}
+
 impl StreamConsumer for CollectRegisterEntries {
     type Witness = RegisterCycleRow;
 
     fn consume(&mut self, chunk: &[RegisterCycleRow]) {
+        let columns = &mut self.columns;
         for cycle in chunk {
-            let row = self.rs1_indices.len() as u32;
+            let row = columns.rs1_indices.len() as u32;
             let (cells, len) = cycle.entries(row);
             self.entries.extend_from_slice(&cells[..len]);
-            self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
-            self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
-            self.rd_indices.push(cycle.rd.map(|(k, ..)| k));
-            self.rd_inc.push(raw_rd_inc(cycle));
+            columns.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
+            columns.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
+            columns.rd_indices.push(cycle.rd.map(|(k, ..)| k));
+            columns.rd_inc.push(raw_rd_inc(cycle));
         }
     }
 }
 
-impl CollectRegisterEntries {
+impl RegisterColumns {
+    /// Extracts every cycle once, failing on the first invalid row. Seed
+    /// cells are kept only when the witness cannot serve its rows again.
     pub(super) fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
+    ) -> Result<(Self, Seeds), KernelError<F>> {
         if u32::try_from(cycles.saturating_sub(1)).is_err() {
             return Err(KernelError::InvariantViolation {
                 reason: "cycle count exceeds the seed entries' packed u32 row domain",
@@ -120,36 +129,34 @@ impl CollectRegisterEntries {
         #[cfg(feature = "parallel")]
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                return Self::collect_par(&access, cycles);
+                return Ok((Self::collect_par(&access, cycles)?, Seeds::Rows(access)));
             }
         }
         let mut consumers = (CollectRegisterEntries {
             entries: Vec::with_capacity(cycles * 3),
-            rs1_indices: Vec::with_capacity(cycles),
-            rs2_indices: Vec::with_capacity(cycles),
-            rd_indices: Vec::with_capacity(cycles),
-            rd_inc: Vec::with_capacity(cycles),
+            columns: Self {
+                rs1_indices: Vec::with_capacity(cycles),
+                rs2_indices: Vec::with_capacity(cycles),
+                rd_indices: Vec::with_capacity(cycles),
+                rd_inc: Vec::with_capacity(cycles),
+            },
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-        Ok(consumers.0)
+        let CollectRegisterEntries { entries, columns } = consumers.0;
+        Ok((columns, Seeds::Collected(entries)))
     }
 
-    /// Two-pass parallel build: count and fill columns, then scatter entries.
-    /// Exclusive offsets avoid a second entry-sized allocation.
     #[cfg(feature = "parallel")]
     fn collect_par<F: JoltField>(
         access: &RandomAccessRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
-        use core::mem::MaybeUninit;
         const CHUNK: usize = 1 << 14;
         let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
-        let chunk_count = cycles.div_ceil(CHUNK);
-        let mut counts: Vec<usize> = Vec::new();
         (
             rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
             rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
@@ -158,13 +165,11 @@ impl CollectRegisterEntries {
         )
             .into_par_iter()
             .enumerate()
-            .map(|(chunk_index, (rs1, rs2, rd, inc))| {
+            .for_each(|(chunk_index, (rs1, rs2, rd, inc))| {
                 let base = chunk_index * CHUNK;
-                let mut count = 0usize;
                 for offset in 0..rs1.len() {
                     match access.window::<RegisterCycleRow>(base + offset) {
                         Ok(cycle) => {
-                            count += cycle.entry_count();
                             let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
                             let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
                             let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
@@ -172,13 +177,11 @@ impl CollectRegisterEntries {
                         }
                         Err(failure) => {
                             error.record(base + offset, failure);
-                            return count;
+                            return;
                         }
                     }
                 }
-                count
-            })
-            .collect_into_vec(&mut counts);
+            });
         if let Some(failure) = error.take() {
             return Err(failure.into());
         }
@@ -190,56 +193,7 @@ impl CollectRegisterEntries {
             rd_indices.set_len(cycles);
             rd_inc.set_len(cycles);
         }
-
-        let mut offsets: Vec<usize> = Vec::with_capacity(chunk_count);
-        let mut total = 0usize;
-        for &count in &counts {
-            offsets.push(total);
-            total += count;
-        }
-        let mut entries: Vec<SeedEntry> = Vec::with_capacity(total);
-        {
-            let mut rest: &mut [MaybeUninit<SeedEntry>] =
-                &mut entries.spare_capacity_mut()[..total];
-            let mut windows: Vec<&mut [MaybeUninit<SeedEntry>]> = Vec::with_capacity(chunk_count);
-            for &count in &counts {
-                let (head, tail) = rest.split_at_mut(count);
-                windows.push(head);
-                rest = tail;
-            }
-            let error = FirstErrorLatch::new();
-            windows
-                .into_par_iter()
-                .enumerate()
-                .for_each(|(chunk_index, window)| {
-                    let base = chunk_index * CHUNK;
-                    let top = ((chunk_index + 1) * CHUNK).min(cycles);
-                    let mut written = 0usize;
-                    for row in base..top {
-                        match access.window::<RegisterCycleRow>(row) {
-                            Ok(cycle) => {
-                                let (cells, len) = cycle.entries(row as u32);
-                                for cell in &cells[..len] {
-                                    let _ = window[written].write(*cell);
-                                    written += 1;
-                                }
-                            }
-                            Err(failure) => {
-                                error.record(row, failure);
-                                return;
-                            }
-                        }
-                    }
-                    debug_assert_eq!(written, window.len());
-                });
-            if let Some(failure) = error.take() {
-                return Err(failure.into());
-            }
-        }
-        // SAFETY: exclusive windows cover all `total` initialized slots.
-        unsafe { entries.set_len(total) };
-        Ok(CollectRegisterEntries {
-            entries,
+        Ok(Self {
             rs1_indices,
             rs2_indices,
             rd_indices,

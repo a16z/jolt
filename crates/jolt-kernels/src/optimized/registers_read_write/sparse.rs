@@ -1,8 +1,16 @@
+use core::ops::Range;
+
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
+use jolt_sumcheck::SumcheckError;
+#[cfg(feature = "parallel")]
+use jolt_witness::RandomAccessRows;
+use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "parallel")]
+use super::rows::RegisterCycleRow;
 use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized};
 
 /// Bound one-hot coefficient values indexed by `u16`. Each bind squares the
@@ -147,18 +155,71 @@ use layout::{
 };
 use ops::{
     bind_indexed_in_place_soa, bind_indexed_to_direct, bind_seed_entries_fused,
-    bind_sparse_entries_in_place, sparse_quadratic, sparse_quadratic_fused, sparse_quadratic_soa,
+    bind_sparse_entries_in_place, seed_quadratic, seed_quadratic_fused, sparse_quadratic,
+    sparse_quadratic_soa,
 };
+
+/// The round-0 register cells, held until the second bind replaces them.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(super) enum Seeds {
+    /// Row-major cells, columns sorted within each row.
+    Collected(Vec<SeedEntry>),
+    /// Rows `prepare` extracted without error; each pass regenerates their
+    /// cells. The witness plane owns the rows and reports them itself.
+    #[cfg(feature = "parallel")]
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    Rows(RandomAccessRows),
+}
+
+impl Seeds {
+    /// Visits the nonempty `2^span_bits`-row groups of the span-aligned
+    /// `rows` in row order, with their global group index.
+    pub(super) fn for_each_group(
+        &self,
+        rows: Range<usize>,
+        span_bits: u32,
+        mut visit: impl FnMut(usize, &[SeedEntry]),
+    ) -> Result<(), WitnessError> {
+        match self {
+            Self::Collected(entries) => {
+                let start = entries.partition_point(|entry| entry.row() < rows.start);
+                let end = entries.partition_point(|entry| entry.row() < rows.end);
+                for group in entries[start..end]
+                    .chunk_by(|a, b| a.row() >> span_bits == b.row() >> span_bits)
+                {
+                    visit(group[0].row() >> span_bits, group);
+                }
+            }
+            #[cfg(feature = "parallel")]
+            Self::Rows(access) => {
+                let mut cells = Vec::with_capacity(3 << span_bits);
+                for group in rows.start >> span_bits..rows.end >> span_bits {
+                    cells.clear();
+                    for row in group << span_bits..(group + 1) << span_bits {
+                        let (row_cells, len) =
+                            access.window::<RegisterCycleRow>(row)?.entries(row as u32);
+                        cells.extend_from_slice(&row_cells[..len]);
+                    }
+                    if !cells.is_empty() {
+                        visit(group, &cells);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CyclePhase<F: JoltField> {
     Seed {
-        entries: Vec<SeedEntry>,
+        seeds: Seeds,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
         rd_inc: Vec<i128>,
     },
     SeedBound {
-        entries: Vec<SeedEntry>,
+        seeds: Seeds,
         seed_ra_lut: CoeffLut<F>,
         seed_wa_lut: CoeffLut<F>,
         ra_lut: CoeffLut<F>,
@@ -189,15 +250,25 @@ fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
     bound_pair(|j| F::from_i128(raw[j]), r1, y)
 }
 
+/// The bound cycle row as dense `(ra, wa, val)` address arrays and its `inc`.
+type DenseCycleRow<F> = (Vec<F>, Vec<F>, Vec<F>, F);
+
+/// A seed row failed to re-extract after `prepare` extracted it.
+fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
+    SumcheckError::MissingEvaluationSource {
+        kind: "register read/write trace rows",
+    }
+}
+
 impl<F: JoltField> CycleState<F> {
     pub(super) fn new(
-        entries: Vec<SeedEntry>,
+        seeds: Seeds,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
         rd_inc: Vec<i128>,
     ) -> Self {
         Self(CyclePhase::Seed {
-            entries,
+            seeds,
             ra_lut,
             wa_lut,
             rd_inc,
@@ -208,27 +279,28 @@ impl<F: JoltField> CycleState<F> {
         CoeffLut { values: Vec::new() }
     }
 
-    pub(super) fn quadratic(&self, e_in: &[F], e_out: &[F]) -> [F; 2] {
-        match &self.0 {
+    pub(super) fn quadratic(&self, e_in: &[F], e_out: &[F]) -> Result<[F; 2], SumcheckError<F>> {
+        Ok(match &self.0 {
             CyclePhase::Seed {
-                entries,
+                seeds,
                 ra_lut,
                 wa_lut,
                 rd_inc,
-            } => sparse_quadratic(entries, ra_lut, wa_lut, e_in, e_out, |z| {
+            } => seed_quadratic(seeds, ra_lut, wa_lut, e_in, e_out, |z| {
                 let inc_0 = F::from_i128(rd_inc[2 * z]);
                 [inc_0, F::from_i128(rd_inc[2 * z + 1]) - inc_0]
-            }),
+            })
+            .map_err(rows_unavailable)?,
             CyclePhase::SeedBound {
-                entries,
+                seeds,
                 seed_ra_lut,
                 seed_wa_lut,
                 ra_lut,
                 wa_lut,
                 r1,
                 rd_inc,
-            } => sparse_quadratic_fused(
-                entries,
+            } => seed_quadratic_fused(
+                seeds,
                 seed_ra_lut,
                 seed_wa_lut,
                 ra_lut,
@@ -240,7 +312,8 @@ impl<F: JoltField> CycleState<F> {
                     let inc_0 = raw_bound_inc(rd_inc, *r1, 2 * z);
                     [inc_0, raw_bound_inc(rd_inc, *r1, 2 * z + 1) - inc_0]
                 },
-            ),
+            )
+            .map_err(rows_unavailable)?,
             CyclePhase::Indexed {
                 vals,
                 metas,
@@ -262,26 +335,34 @@ impl<F: JoltField> CycleState<F> {
                     [inc_0, inc[2 * z + 1] - inc_0]
                 })
             }
-        }
+        })
     }
 
-    pub(super) fn q_at_one(&self, e_in: &[F], e_out: &[F]) -> F {
-        match &self.0 {
+    pub(super) fn q_at_one(&self, e_in: &[F], e_out: &[F]) -> Result<F, SumcheckError<F>> {
+        Ok(match &self.0 {
             CyclePhase::Seed {
-                entries,
+                seeds,
                 ra_lut,
                 wa_lut,
                 rd_inc,
-            } => sparse_at_one(
-                entries.iter().copied(),
-                ra_lut,
-                wa_lut,
-                e_in,
-                e_out,
-                |row| F::from_i128(rd_inc[row]),
-            ),
+            } => {
+                let mut sum = F::zero();
+                seeds
+                    .for_each_group(0..rd_inc.len(), 1, |_, pair_group| {
+                        sum += sparse_at_one(
+                            pair_group.iter().copied(),
+                            ra_lut,
+                            wa_lut,
+                            e_in,
+                            e_out,
+                            |row| F::from_i128(rd_inc[row]),
+                        );
+                    })
+                    .map_err(rows_unavailable)?;
+                sum
+            }
             CyclePhase::SeedBound {
-                entries,
+                seeds,
                 seed_ra_lut,
                 seed_wa_lut,
                 ra_lut,
@@ -291,17 +372,19 @@ impl<F: JoltField> CycleState<F> {
             } => {
                 let mut scratch = ops::fused_scratch();
                 let mut sum = F::zero();
-                for group in entries.chunk_by(|a, b| a.row() / 4 == b.row() / 4) {
-                    ops::fused_intermediates(group, seed_ra_lut, seed_wa_lut, *r1, &mut scratch);
-                    sum += sparse_at_one(
-                        scratch.1.iter().copied(),
-                        ra_lut,
-                        wa_lut,
-                        e_in,
-                        e_out,
-                        |row| raw_bound_inc(rd_inc, *r1, row),
-                    );
-                }
+                seeds
+                    .for_each_group(0..rd_inc.len(), 2, |_, quad| {
+                        ops::fused_intermediates(quad, seed_ra_lut, seed_wa_lut, *r1, &mut scratch);
+                        sum += sparse_at_one(
+                            scratch.1.iter().copied(),
+                            ra_lut,
+                            wa_lut,
+                            e_in,
+                            e_out,
+                            |row| raw_bound_inc(rd_inc, *r1, row),
+                        );
+                    })
+                    .map_err(rows_unavailable)?;
                 sum
             }
             CyclePhase::Indexed {
@@ -329,11 +412,11 @@ impl<F: JoltField> CycleState<F> {
                     |row| inc.evals()[row],
                 )
             }
-        }
+        })
     }
 
     /// Bind once; return whether a full entry generation was replaced.
-    pub(super) fn bind(&mut self, r: F) -> bool {
+    pub(super) fn bind(&mut self, r: F) -> Result<bool, SumcheckError<F>> {
         match &mut self.0 {
             CyclePhase::Indexed {
                 vals,
@@ -346,7 +429,7 @@ impl<F: JoltField> CycleState<F> {
                 ra_lut.bind(r);
                 wa_lut.bind(r);
                 inc.bind_with_order(r, BindingOrder::LowToHigh);
-                return false;
+                return Ok(false);
             }
             CyclePhase::Direct { entries, inc } => {
                 let unused = Self::unused_lut();
@@ -354,7 +437,7 @@ impl<F: JoltField> CycleState<F> {
                     SparseEntry::<F, F>::bind(even, odd, r, &unused, &unused)
                 });
                 inc.bind_with_order(r, BindingOrder::LowToHigh);
-                return false;
+                return Ok(false);
             }
             _ => {}
         }
@@ -367,7 +450,7 @@ impl<F: JoltField> CycleState<F> {
         );
         let (next, freed_generation) = match state {
             CyclePhase::Seed {
-                entries,
+                seeds,
                 ra_lut,
                 wa_lut,
                 rd_inc,
@@ -378,7 +461,7 @@ impl<F: JoltField> CycleState<F> {
                 bound_wa.bind(r);
                 (
                     CyclePhase::SeedBound {
-                        entries,
+                        seeds,
                         seed_ra_lut: ra_lut,
                         seed_wa_lut: wa_lut,
                         ra_lut: bound_ra,
@@ -390,7 +473,7 @@ impl<F: JoltField> CycleState<F> {
                 )
             }
             CyclePhase::SeedBound {
-                entries,
+                seeds,
                 seed_ra_lut,
                 seed_wa_lut,
                 mut ra_lut,
@@ -399,15 +482,17 @@ impl<F: JoltField> CycleState<F> {
                 rd_inc,
             } => {
                 let (vals, metas) = bind_seed_entries_fused(
-                    &entries,
+                    &seeds,
+                    rd_inc.len(),
                     &seed_ra_lut,
                     &seed_wa_lut,
                     &ra_lut,
                     &wa_lut,
                     r1,
                     r,
-                );
-                crate::mem::drop_in_background_thread(entries);
+                )
+                .map_err(rows_unavailable)?;
+                crate::mem::drop_in_background_thread(seeds);
                 ra_lut.bind(r);
                 wa_lut.bind(r);
                 (
@@ -441,11 +526,11 @@ impl<F: JoltField> CycleState<F> {
             CyclePhase::Direct { .. } => unreachable!("direct entries bind in place above"),
         };
         self.0 = next;
-        freed_generation
+        Ok(freed_generation)
     }
 
     /// Scatter the final cycle row into dense `(ra, wa, val)` arrays.
-    pub(super) fn take_dense(&mut self, k: usize) -> (Vec<F>, Vec<F>, Vec<F>, F) {
+    pub(super) fn take_dense(&mut self, k: usize) -> Result<DenseCycleRow<F>, SumcheckError<F>> {
         let phase = std::mem::replace(
             &mut self.0,
             CyclePhase::Direct {
@@ -461,7 +546,7 @@ impl<F: JoltField> CycleState<F> {
                 unreachable!("prepare requires log_t ≥ 1, so a cycle bind precedes the collapse")
             }
             CyclePhase::SeedBound {
-                entries,
+                seeds,
                 seed_ra_lut,
                 seed_wa_lut,
                 ra_lut,
@@ -469,18 +554,22 @@ impl<F: JoltField> CycleState<F> {
                 r1,
                 rd_inc,
             } => {
-                let (evens, odds) = split_pair_group(&entries);
-                merge_bind(
-                    evens,
-                    odds,
-                    &|even, odd| SeedEntry::bind(even, odd, r1, &seed_ra_lut, &seed_wa_lut),
-                    |entry| {
-                        debug_assert_eq!(entry.row, 0);
-                        ra[entry.col as usize] = entry.ra.value(&ra_lut);
-                        wa[entry.col as usize] = entry.wa.value(&wa_lut);
-                        val[entry.col as usize] = entry.val;
-                    },
-                );
+                seeds
+                    .for_each_group(0..rd_inc.len(), 1, |_, pair_group| {
+                        let (evens, odds) = split_pair_group(pair_group);
+                        merge_bind(
+                            evens,
+                            odds,
+                            &|even, odd| SeedEntry::bind(even, odd, r1, &seed_ra_lut, &seed_wa_lut),
+                            |entry| {
+                                debug_assert_eq!(entry.row, 0);
+                                ra[entry.col as usize] = entry.ra.value(&ra_lut);
+                                wa[entry.col as usize] = entry.wa.value(&wa_lut);
+                                val[entry.col as usize] = entry.val;
+                            },
+                        );
+                    })
+                    .map_err(rows_unavailable)?;
                 raw_bound_inc(&rd_inc, r1, 0)
             }
             CyclePhase::Indexed {
@@ -508,7 +597,7 @@ impl<F: JoltField> CycleState<F> {
                 inc.evals()[0]
             }
         };
-        (ra, wa, val, inc)
+        Ok((ra, wa, val, inc))
     }
 }
 

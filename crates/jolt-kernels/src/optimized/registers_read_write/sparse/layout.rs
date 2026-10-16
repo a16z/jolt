@@ -15,12 +15,12 @@ pub(crate) trait Cell: Copy + Send + Sync + 'static {
 }
 
 /// Packed SoA metadata: 25 bytes instead of the aligned layout's 32.
-/// `row` fits `u32` because [`CollectRegisterEntries::collect`] rejects wider
+/// `row` fits `u32` because [`RegisterColumns::collect`] rejects wider
 /// domains.
 ///
 /// WARNING: copy packed fields by value; references may be unaligned.
 ///
-/// [`CollectRegisterEntries::collect`]: crate::optimized::registers_read_write::rows::CollectRegisterEntries::collect
+/// [`RegisterColumns::collect`]: crate::optimized::registers_read_write::rows::RegisterColumns::collect
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 pub(super) struct IndexedMeta {
@@ -151,7 +151,7 @@ pub(in crate::optimized::registers_read_write) struct SeedEntry {
     pub(super) next_val: u64,
     /// `u32` is safe because collection rejects wider domains.
     ///
-    /// [`CollectRegisterEntries::collect`]: crate::optimized::registers_read_write::rows::CollectRegisterEntries::collect
+    /// [`RegisterColumns::collect`]: crate::optimized::registers_read_write::rows::RegisterColumns::collect
     pub(super) row: u32,
     pub(super) ra: u8,
     pub(super) wa: u8,
@@ -411,21 +411,6 @@ const WA_ZERO: u8 = 0;
 const WA_HOT: u8 = 1;
 
 impl RegisterCycleRow {
-    #[cfg(feature = "parallel")]
-    pub(in crate::optimized::registers_read_write) fn entry_count(&self) -> usize {
-        let rs1 = self.rs1.map(|(register, _)| register);
-        let rs2 = self.rs2.map(|(register, _)| register);
-        let rd = self.rd.map(|(register, ..)| register);
-        let mut count = usize::from(rs1.is_some());
-        if rs2.is_some() && rs2 != rs1 {
-            count += 1;
-        }
-        if rd.is_some() && rd != rs1 && rd != rs2 {
-            count += 1;
-        }
-        count
-    }
-
     /// Build up to three column-sorted seed entries.
     pub(in crate::optimized::registers_read_write) fn entries(
         &self,
@@ -549,33 +534,4 @@ pub(crate) fn merge_bind<E: Cell, B>(
 pub(crate) fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
     let odd_start = group.partition_point(|entry| entry.row() % 2 == 0);
     group.split_at(odd_start)
-}
-
-#[cfg(all(test, feature = "parallel"))]
-mod tests {
-    use super::*;
-
-    /// The counting pass and the write pass must agree on every operand
-    /// pattern, or the parallel collector's second pass overruns its window.
-    #[test]
-    fn cycle_entry_count_matches_cycle_entries() {
-        let candidates: [Option<u8>; 5] = [None, Some(0), Some(5), Some(127), Some(255)];
-        for rs1 in candidates {
-            for rs2 in candidates {
-                for rd in candidates {
-                    let cycle = RegisterCycleRow {
-                        rs1: rs1.map(|register| (register, 11)),
-                        rs2: rs2.map(|register| (register, 22)),
-                        rd: rd.map(|register| (register, 33, 44)),
-                    };
-                    let (_, len) = cycle.entries(0);
-                    assert_eq!(
-                        cycle.entry_count(),
-                        len,
-                        "count/write divergence for {cycle:?}"
-                    );
-                }
-            }
-        }
-    }
 }

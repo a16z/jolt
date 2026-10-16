@@ -7,6 +7,8 @@
 //! `SeedEntry` omits the round-0 field value. The first challenge is held
 //! without materializing `T/2`; the second bind creates the `T/4` indexed SoA
 //! layout. Coefficients stay as LUT indices until the `u16` domain saturates.
+//! Parallel builds keep no seed entries for a random-access witness: rounds
+//! 0–1 and the second bind regenerate them from the trace rows.
 //!
 //! Supports cycle-first and full address-first binding.
 
@@ -46,7 +48,7 @@ mod tests;
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use address_first::AddressFirstKernel;
-use rows::CollectRegisterEntries;
+use rows::RegisterColumns;
 use sparse::{CoeffLut, CycleState};
 
 pub struct OptimizedRegistersReadWrite;
@@ -89,18 +91,18 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // Sparse entry construction: one trace pass — the typed rows are
-        // never materialized whole (80 bytes per cycle saved at the stage's
-        // peak moment).
-        let CollectRegisterEntries {
-            entries,
-            rs1_indices,
-            rs2_indices,
-            rd_indices,
-            rd_inc,
-        } = CollectRegisterEntries::collect(witness, cycles)?;
+        // One trace pass; the typed rows are never materialized whole.
+        let (
+            RegisterColumns {
+                rs1_indices,
+                rs2_indices,
+                rd_indices,
+                rd_inc,
+            },
+            seeds,
+        ) = RegisterColumns::collect(witness, cycles)?;
         let cycle = CycleState::new(
-            entries,
+            seeds,
             CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
             CoeffLut::new(vec![F::zero(), F::one()]),
             rd_inc,
@@ -141,19 +143,26 @@ impl<F: JoltField> ReadWriteKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let quadratic = self.cycle.quadratic(e_in, e_out);
-        self.gruen
-            .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
-                self.cycle
-                    .q_at_one(self.gruen.e_in_current(), self.gruen.e_out_current())
-            })
+        let quadratic = self.cycle.quadratic(e_in, e_out)?;
+        // `checked_cubic` takes an infallible endpoint; carry a row error out.
+        let mut endpoint = Ok(());
+        let message =
+            self.gruen
+                .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
+                    self.cycle.q_at_one(e_in, e_out).unwrap_or_else(|error| {
+                        endpoint = Err(error);
+                        F::zero()
+                    })
+                });
+        endpoint?;
+        message
     }
 
-    fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         let mut layout_transitioned = false;
         if self.challenges.bound() < self.dimensions.log_t() {
             self.gruen.bind(r);
-            layout_transitioned = self.cycle.bind(r);
+            layout_transitioned = self.cycle.bind(r)?;
         } else {
             self.address.bind(r);
         }
@@ -167,13 +176,14 @@ impl<F: JoltField> ReadWriteKernel<F> {
                 self.address.wa,
                 self.address.val,
                 self.address.inc_scalar,
-            ) = self.cycle.take_dense(1usize << self.dimensions.log_k());
+            ) = self.cycle.take_dense(1usize << self.dimensions.log_k())?;
             self.address.eq_scalar = self.gruen.current_scalar();
         }
 
         if layout_transitioned {
             crate::mem::purge_retained_memory(self.dimensions.log_t());
         }
+        Ok(())
     }
 
     /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the
@@ -237,7 +247,7 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         if self.challenges.bound() < self.dimensions.log_t() {
             self.cycle_round_message(round, previous_claim)
@@ -247,8 +257,7 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
