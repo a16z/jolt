@@ -1,20 +1,8 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_field::JoltField;
-#[cfg(feature = "parallel")]
-use jolt_utils::FirstErrorLatch;
 use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
-#[cfg(feature = "parallel")]
-use jolt_witness::TraceRows;
-use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
-};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
-use super::sparse::{SeedEntry, Seeds};
-use crate::KernelError;
+use jolt_witness::{WitnessBundle, WitnessError};
 
 /// Operand indices and raw values for one cycle.
 /// Manual because atomic witness types do not expose operand indices.
@@ -68,105 +56,12 @@ impl WitnessBundle for RegisterCycleRow {
     }
 }
 
-const COLLECT_CHUNK: usize = 1 << 16;
-
 /// Signed rd write delta, or zero without an rd operand.
 #[inline]
 pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
     match cycle.rd {
         Some((_, pre, post)) => post as i128 - pre as i128,
         None => 0,
-    }
-}
-
-/// Per-cycle signed rd increments.
-pub(super) struct RegisterColumns {
-    pub(super) rd_inc: Vec<i128>,
-}
-
-/// The sequential pass, which also keeps every seed cell.
-struct CollectRegisterEntries {
-    entries: Vec<SeedEntry>,
-    columns: RegisterColumns,
-}
-
-impl StreamConsumer for CollectRegisterEntries {
-    type Witness = RegisterCycleRow;
-
-    fn consume(&mut self, chunk: &[RegisterCycleRow]) {
-        let columns = &mut self.columns;
-        for cycle in chunk {
-            let row = columns.rd_inc.len() as u32;
-            let (cells, len) = cycle.entries(row);
-            self.entries.extend_from_slice(&cells[..len]);
-            columns.rd_inc.push(raw_rd_inc(cycle));
-        }
-    }
-}
-
-impl RegisterColumns {
-    /// Extracts every cycle once, failing on the first invalid row. Seed
-    /// cells are kept only when the witness cannot serve its rows again.
-    pub(super) fn collect<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<(Self, Seeds), KernelError<F>> {
-        if u32::try_from(cycles.saturating_sub(1)).is_err() {
-            return Err(KernelError::InvariantViolation {
-                reason: "cycle count exceeds the seed entries' packed u32 row domain",
-            });
-        }
-        #[cfg(feature = "parallel")]
-        if let Some(access) = witness.rows() {
-            if cycles <= access.cycles() {
-                return Ok((Self::collect_par(&access, cycles)?, Seeds::Rows(access)));
-            }
-        }
-        let mut consumers = (CollectRegisterEntries {
-            entries: Vec::with_capacity(cycles * 3),
-            columns: Self {
-                rd_inc: Vec::with_capacity(cycles),
-            },
-        },);
-        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-        let CollectRegisterEntries { entries, columns } = consumers.0;
-        Ok((columns, Seeds::Collected(entries)))
-    }
-
-    #[cfg(feature = "parallel")]
-    fn collect_par<F: JoltField>(
-        access: &TraceRows,
-        cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
-        const CHUNK: usize = 1 << 14;
-        let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
-        let error = FirstErrorLatch::new();
-        rd_inc.spare_capacity_mut()[..cycles]
-            .par_chunks_mut(CHUNK)
-            .enumerate()
-            .for_each(|(chunk_index, inc)| {
-                let base = chunk_index * CHUNK;
-                for (offset, slot) in inc.iter_mut().enumerate() {
-                    match access.window::<RegisterCycleRow>(base + offset) {
-                        Ok(cycle) => {
-                            let _ = slot.write(raw_rd_inc(&cycle));
-                        }
-                        Err(failure) => {
-                            error.record(base + offset, failure);
-                            return;
-                        }
-                    }
-                }
-            });
-        if let Some(failure) = error.take() {
-            return Err(failure.into());
-        }
-        // SAFETY: the error latch is empty, so every chunk ran to completion
-        // and initialized its whole span of the column.
-        unsafe {
-            rd_inc.set_len(cycles);
-        }
-        Ok(Self { rd_inc })
     }
 }
 
