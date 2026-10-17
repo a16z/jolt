@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = []
+cuda = []
 test-utils = []
 parallel = ["dep:rayon", "jolt-utils/parallel"]
 field-inline = [
