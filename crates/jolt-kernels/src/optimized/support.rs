@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
@@ -714,6 +715,57 @@ pub(crate) fn try_par_sum_vecs<F: JoltField, E: Send>(
 /// Rows per callback of a task pass's visit.
 pub(crate) const VISIT_ROWS: usize = 1 << 12;
 
+/// The rows a streamed kernel's task passes visit: the witness's row handle,
+/// or, in in-module parity tests, typed rows that no trace produces
+/// (full-range words, `i128::MIN` operands).
+pub(crate) enum KernelRows<B> {
+    Trace(TraceRows, PhantomData<fn() -> B>),
+    #[cfg(test)]
+    Synthetic(Vec<B>),
+}
+
+impl<B: WitnessBundle> KernelRows<B> {
+    /// The witness's row handle, which must span exactly the `2^log_t`-cycle
+    /// domain; a witness without one fails instead of collecting rows.
+    pub(crate) fn from_witness<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        label: &'static str,
+    ) -> Result<Self, WitnessError> {
+        let rows = witness
+            .rows()
+            .ok_or(WitnessError::UnavailableView { label })?;
+        if rows.cycles() != 1 << log_t {
+            return Err(WitnessError::InvalidDimensions {
+                label,
+                reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
+            });
+        }
+        Ok(Self::Trace(rows, PhantomData))
+    }
+
+    /// One serial visit of `range` in exact `chunk`-row callbacks
+    /// ([`TraceRows::visit_bundles`]); `visit` must not enter Rayon.
+    pub(crate) fn visit(
+        &self,
+        range: Range<usize>,
+        chunk: usize,
+        visit: impl FnMut(usize, &[B]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        match self {
+            Self::Trace(rows, _) => rows.visit_bundles(range, chunk, visit),
+            #[cfg(test)]
+            Self::Synthetic(rows) => {
+                let mut visit = visit;
+                range
+                    .clone()
+                    .step_by(chunk)
+                    .try_for_each(|start| visit(start, &rows[start..range.end.min(start + chunk)]))
+            }
+        }
+    }
+}
+
 /// Tasks per pool thread in a [`task_ranges`] partition, so work stealing can
 /// even out unequal row costs between tasks.
 #[cfg(feature = "parallel")]
@@ -767,6 +819,174 @@ pub(crate) fn dense_crossover(table_bytes: usize, cap: usize, rounds: usize) -> 
     (0..rounds)
         .find(|&depth| table_bytes.div_ceil(1 << depth) <= cap)
         .unwrap_or(rounds)
+}
+
+/// Contracts consecutive rows into the halves of `2^(log_half + 1)`-row
+/// pairs: row `t` adds its `M` values to half `(t >> log_half) & 1` of pair
+/// `t >> (log_half + 1)`. A walk adds every row of its range in order, so a
+/// pair's last row completes it; halves persist across visit callbacks.
+pub(crate) struct PairHalves<F, const M: usize> {
+    log_half: usize,
+    halves: [[F; 2]; M],
+}
+
+impl<F: JoltField, const M: usize> PairHalves<F, M> {
+    pub(crate) fn new(log_half: usize) -> Self {
+        Self {
+            log_half,
+            halves: [[F::zero(); 2]; M],
+        }
+    }
+
+    /// Row `t`'s offset within its half: the index of its row weights.
+    pub(crate) fn offset(&self, t: usize) -> usize {
+        t & ((1 << self.log_half) - 1)
+    }
+
+    /// Adds row `t`'s values; the pair's last row returns the pair index and
+    /// each value's `[low, high]` halves.
+    pub(crate) fn add(&mut self, t: usize, values: [F; M]) -> Option<(usize, [[F; 2]; M])> {
+        let half = (t >> self.log_half) & 1;
+        for (halves, value) in self.halves.iter_mut().zip(values) {
+            halves[half] += value;
+        }
+        let last = (2 << self.log_half) - 1;
+        if t & last != last {
+            return None;
+        }
+        Some((
+            t >> (self.log_half + 1),
+            std::mem::replace(&mut self.halves, [[F::zero(); 2]; M]),
+        ))
+    }
+}
+
+/// One task's Gruen-grouped sums
+/// `Σ_x_out e_out[x_out] · Σ_x_in e_in[x_in] · terms(x_out·|e_in| + x_in)`.
+struct GruenSums<'a, F, const N: usize> {
+    e_out: &'a [F],
+    e_in: &'a [F],
+    inner: [F; N],
+    total: [F; N],
+}
+
+impl<'a, F: JoltField, const N: usize> GruenSums<'a, F, N> {
+    fn new(e_out: &'a [F], e_in: &'a [F]) -> Self {
+        Self {
+            e_out,
+            e_in,
+            inner: [F::zero(); N],
+            total: [F::zero(); N],
+        }
+    }
+
+    /// Tasks hold whole groups ([`task_ranges`]) and add their pairs in
+    /// order, so a group's last pair closes it.
+    fn add(&mut self, pair: usize, terms: [F; N]) {
+        let x_in = pair & (self.e_in.len() - 1);
+        for (inner, term) in self.inner.iter_mut().zip(terms) {
+            *inner += self.e_in[x_in] * term;
+        }
+        if x_in + 1 == self.e_in.len() {
+            let e_out = self.e_out[pair / self.e_in.len()];
+            for (total, inner) in self.total.iter_mut().zip(&mut self.inner) {
+                *total += e_out * *inner;
+                *inner = F::zero();
+            }
+        }
+    }
+}
+
+/// One task's receiver of a [`gruen_pair_pass`]: writes each completed
+/// pair's halves into the task's slices of the tables being filled, if any,
+/// and folds the pair's summand terms into the task's Gruen sums.
+pub(crate) struct PairSink<'a, F, T, const M: usize, const N: usize> {
+    slices: Option<[&'a mut [F]; M]>,
+    first_pair: usize,
+    terms: &'a T,
+    sums: GruenSums<'a, F, N>,
+}
+
+impl<F, T, const M: usize, const N: usize> PairSink<'_, F, T, M, N>
+where
+    F: JoltField,
+    T: Fn([[F; 2]; M]) -> [F; N],
+{
+    /// `halves[m]` is table `m`'s `[low, high]` pair; every pair of the
+    /// task's range must arrive once, in order.
+    pub(crate) fn emit(&mut self, pair: usize, halves: [[F; 2]; M]) {
+        if let Some(slices) = &mut self.slices {
+            let entry = 2 * (pair - self.first_pair);
+            for (slice, pair_halves) in slices.iter_mut().zip(&halves) {
+                slice[entry..entry + 2].copy_from_slice(pair_halves);
+            }
+        }
+        self.sums.add(pair, (self.terms)(halves));
+    }
+}
+
+/// One pass of a streamed round of the split-eq summand
+/// `Σ_pair E(pair) · terms(pair)`, its pairs spanning `2^log_pair_cycles`
+/// cycles each: the cycle domain (`|e_out| · |e_in|` pairs) splits into
+/// [`task_ranges`] of whole Gruen groups, and each task's `walk` visits its
+/// range once, serially, in callbacks of at most `chunk` rows, passing every
+/// completed pair to its [`PairSink`] in order. A filling pass splits
+/// `tables` (pair `z` at entries `2z, 2z + 1`) at the task boundaries, so
+/// each task writes only its own slices. Task results are `N` field
+/// elements, so they reduce.
+pub(crate) fn gruen_pair_pass<F, T, const M: usize, const N: usize>(
+    split_eq: &GruenSplitEqPolynomial<F>,
+    log_pair_cycles: usize,
+    tables: Option<[&mut [F]; M]>,
+    terms: T,
+    walk: impl Fn(Range<usize>, usize, &mut PairSink<'_, F, T, M, N>) -> Result<(), WitnessError> + Sync,
+) -> Result<[F; N], WitnessError>
+where
+    F: JoltField,
+    T: Fn([[F; 2]; M]) -> [F; N] + Sync,
+{
+    let e_out = split_eq.e_out_current();
+    let e_in = split_eq.e_in_current();
+    let group = e_in.len() << log_pair_cycles;
+    let ranges = task_ranges(e_out.len() * group, group);
+    let slices: Vec<Option<[&mut [F]; M]>> = match tables {
+        Some(tables) => split_at_tasks(tables, &ranges, |cycle| 2 * (cycle >> log_pair_cycles))
+            .into_iter()
+            .map(Some)
+            .collect(),
+        None => ranges.iter().map(|_| None).collect(),
+    };
+    let task =
+        |(range, slices): (&Range<usize>, Option<[&mut [F]; M]>)| -> Result<[F; N], WitnessError> {
+            let mut sink = PairSink {
+                slices,
+                first_pair: range.start >> log_pair_cycles,
+                terms: &terms,
+                sums: GruenSums::new(e_out, e_in),
+            };
+            walk(range.clone(), VISIT_ROWS.min(group), &mut sink)?;
+            Ok(sink.sums.total)
+        };
+    let add = |left: [F; N], right: [F; N]| std::array::from_fn(|i| left[i] + right[i]);
+    #[cfg(feature = "parallel")]
+    return ranges
+        .par_iter()
+        .zip(slices)
+        .map(task)
+        .try_reduce(|| [F::zero(); N], |left, right| Ok(add(left, right)));
+    #[cfg(not(feature = "parallel"))]
+    ranges
+        .iter()
+        .zip(slices)
+        .try_fold([F::zero(); N], |sum, task_input| {
+            Ok(add(sum, task(task_input)?))
+        })
+}
+
+/// `(q(0), q(∞))` terms of one pair of a two-factor product summand `a·b`,
+/// from the factors' `[low, high]` halves.
+pub(crate) fn product_endpoint_terms<F: JoltField>([a, b]: [[F; 2]; 2]) -> [F; 2] {
+    [a[0] * b[0], (a[1] - a[0]) * (b[1] - b[0])]
 }
 
 /// Assemble a round message from evaluations at `{0, 2, 3, .., degree}`,
