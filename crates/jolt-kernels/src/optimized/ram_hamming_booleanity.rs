@@ -28,6 +28,8 @@
 //! exact: the Gruen-reconstructed evaluations equal the true round
 //! polynomial's, and both sides interpolate the same four points.
 
+use std::ops::Range;
+
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_claims::NoChallenges;
 use jolt_field::JoltField;
@@ -41,11 +43,13 @@ use jolt_verifier::stages::stage6b::ram_hamming_booleanity::{
     RamHammingBooleanity, RamHammingBooleanityOutputClaims,
 };
 use jolt_witness::witnesses::RamHammingWeight;
-use jolt_witness::{JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::support::{
-    collect_rows, map_indices, map_reduce_chunks, pin_derived_term_if_derived, scan_chunk_size,
-    GruenRoundMessage, RoundProgress,
+    map_indices, map_reduce_chunks, pin_derived_term_if_derived, scan_chunk_size, split_at_tasks,
+    task_ranges, GruenRoundMessage, RoundProgress, VISIT_ROWS,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -75,7 +79,9 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
                 reason: "stage-1 cycle binding has the wrong variable count",
             });
         }
-        let rows: Vec<HammingRow> = collect_rows(witness, 1 << trace_dimensions.log_t())?;
+        let rows = witness.rows().ok_or(WitnessError::UnavailableView {
+            label: "stage-6b RAM Hamming rows",
+        })?;
         // The verifier's `derive_output_term` pairs the raw sumcheck point
         // against the stage-1 binding positionally, so the eq table's
         // big-endian point is the binding reversed — same orientation as the
@@ -83,12 +89,40 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
         let eq_point: Vec<F> = stage1_cycle_binding.iter().rev().copied().collect();
         let eq = GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh);
         let depth = STARTUP_ROUNDS.min(trace_dimensions.log_t());
+        // Bit `u` of `patterns[z]` is `H` at cycle `2^depth·z + u`; each task
+        // fills its own patterns from one serial visit.
+        let (cycles, width) = (1usize << trace_dimensions.log_t(), 1usize << depth);
+        let mut patterns = vec![0u16; cycles / width];
+        let ranges = task_ranges(cycles, width);
+        let tasks = split_at_tasks([patterns.as_mut_slice()], &ranges, |cycle| cycle / width);
+        let fill = |(range, [out]): (&Range<usize>, [&mut [u16]; 1])| {
+            rows.visit_bundles(
+                range.clone(),
+                VISIT_ROWS,
+                |first, bundles: &[HammingRow]| {
+                    let out = &mut out[(first - range.start) / width..];
+                    for (pattern, block) in out.iter_mut().zip(bundles.chunks_exact(width)) {
+                        *pattern = block.iter().enumerate().fold(0, |bits, (offset, row)| {
+                            bits | u16::from(row.weight.0) << offset
+                        });
+                    }
+                    Ok(())
+                },
+            )
+        };
+        #[cfg(feature = "parallel")]
+        ranges.par_iter().zip(tasks).try_for_each(fill)?;
+        #[cfg(not(feature = "parallel"))]
+        ranges.iter().zip(tasks).try_for_each(fill)?;
         let hamming = if depth == 0 {
             HammingState::Dense(Polynomial::new(
-                rows.iter().map(|row| F::from_bool(row.weight.0)).collect(),
+                patterns
+                    .iter()
+                    .map(|&pattern| F::from_bool(pattern == 1))
+                    .collect(),
             ))
         } else {
-            HammingState::Startup(HammingStartup::new(&rows, depth, &eq))
+            HammingState::Startup(HammingStartup::new(patterns, depth, &eq))
         };
 
         Ok(Box::new(OptimizedRamHammingBooleanityKernel {
@@ -150,17 +184,8 @@ struct HammingStartup<F: JoltField> {
 }
 
 impl<F: JoltField> HammingStartup<F> {
-    fn new(rows: &[HammingRow], depth: usize, eq: &GruenSplitEqPolynomial<F>) -> Self {
+    fn new(patterns: Vec<u16>, depth: usize, eq: &GruenSplitEqPolynomial<F>) -> Self {
         let width = 1usize << depth;
-        let patterns = map_indices(rows.len() / width, |block| {
-            rows[block * width..][..width]
-                .iter()
-                .enumerate()
-                .fold(0u16, |pattern, (offset, row)| {
-                    pattern | u16::from(row.weight.0) << offset
-                })
-        });
-
         let (e_out, e_in) = eq.e_out_in_for_window(depth);
         let in_bits = e_in.len().trailing_zeros();
         let bins = 1usize << (width - 1);
@@ -470,7 +495,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
     use jolt_field::{Fr, One, Ring, Zero};
     use jolt_riscv::JoltTraceRow as TraceRow;
-    use jolt_witness::{JoltWitnessOracle, TraceBackend};
+    use jolt_witness::{JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
 
     use super::*;
     use crate::optimized::booleanity::testing::{
@@ -642,10 +667,12 @@ mod tests {
         }
     }
 
+    /// At `2^13` cycles a serial build's single fill task spans two
+    /// 4,096-row visit callbacks.
     #[test]
     fn every_pattern_above_startup_depth() {
         let width = 1 << STARTUP_ROUNDS;
-        let log_t = STARTUP_ROUNDS + 7;
+        let log_t = STARTUP_ROUNDS + 9;
         let bits: Vec<bool> = (0..1 << (log_t - STARTUP_ROUNDS))
             .flat_map(|block| pattern_bits((block * 0x9e37) & 0xffff, width))
             .collect();
@@ -669,6 +696,47 @@ mod tests {
                 hamming_parity(log_t, &bits[..bits.len().min(1 << log_t)], binding);
             }
         }
+    }
+
+    /// Missing rows fail `prepare` typed.
+    #[test]
+    fn prepare_failures_are_typed() {
+        let log_t = STARTUP_ROUNDS + 1;
+        let rows = hamming_rows(&[true, false, false, true]);
+        with_trace_backend(log_t, 4, rows, |backend, _| {
+            let relation =
+                RamHammingBooleanity::new(TraceDimensions::new(log_t), generic_binding(log_t));
+            let claims = RamHammingBooleanityInputClaims::default();
+            let points = RamHammingBooleanityInputClaims::default();
+            let prepare = |witness: &TraceBackend| {
+                OptimizedRamHammingBooleanity
+                    .prepare(
+                        &mut ProofSession::default(),
+                        witness,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &NoChallenges::default(),
+                        },
+                    )
+                    .map(|_| ())
+            };
+            // A configured domain shorter than the trace leaves no valid handle.
+            let mut shortened = TraceBackend::new(
+                backend.config.clone(),
+                JoltVmWitnessInputs::new(
+                    &backend.program,
+                    &backend.preprocessing,
+                    backend.trace.clone(),
+                ),
+            );
+            shortened.config.log_t = 1;
+            assert!(matches!(
+                prepare(&shortened),
+                Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+            ));
+        });
     }
 
     #[test]

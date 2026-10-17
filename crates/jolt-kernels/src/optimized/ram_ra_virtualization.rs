@@ -22,7 +22,6 @@ use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaim
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
 use jolt_field::{Accumulator, JoltField};
 use std::ops::Range;
-use std::sync::Arc;
 
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -30,13 +29,15 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
-use jolt_witness::{JoltWitnessPlane, WitnessError};
+use jolt_witness::{JoltWitnessPlane, TraceRows, WitnessError};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
-use super::lazy_ra::{visit_resident, ChunkIndexSource, LazyFoldedRa, MATERIALIZE_BYTES};
-use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, MATERIALIZE_BYTES};
+use super::ram_trace::RamAddressBundle;
 use super::support::{
-    accumulate_product_grid, pin_derived_term, product_grid_scratch_len, GruenRoundMessage,
-    RoundProgress, MAX_GRID_FACTORS,
+    accumulate_product_grid, pin_derived_term, product_grid_scratch_len, task_ranges,
+    GruenRoundMessage, RoundProgress, MAX_GRID_FACTORS, VISIT_ROWS,
 };
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -47,7 +48,7 @@ use crate::{
 impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
@@ -82,10 +83,47 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
             });
         }
 
-        let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        // Last RAM consumer: release the session's address handle.
-        let _ = session.take::<SharedRamAddresses>();
-        super::ram_trace::validate_addresses(&addresses, 1usize << ram_reduced_address.len())?;
+        let rows = witness.rows().ok_or(WitnessError::UnavailableView {
+            label: "stage-6b RAM address rows",
+        })?;
+        if rows.cycles() != 1 << log_t {
+            return Err(KernelError::TableSizeMismatch {
+                table: "stage-6b RAM address rows".to_owned(),
+                expected: 1 << log_t,
+                got: rows.cycles(),
+            });
+        }
+        // One bounded pass checks every access against the RAM domain.
+        let ram_k = 1u64 << ram_reduced_address.len();
+        let in_domain = |range: &Range<usize>| -> Result<bool, WitnessError> {
+            let mut valid = true;
+            rows.visit_bundles(
+                range.clone(),
+                VISIT_ROWS,
+                |_, bundles: &[RamAddressBundle]| {
+                    valid &= bundles
+                        .iter()
+                        .all(|row| row.address.0.is_none_or(|address| address < ram_k));
+                    Ok(())
+                },
+            )?;
+            Ok(valid)
+        };
+        let ranges = task_ranges(rows.cycles(), 1);
+        #[cfg(feature = "parallel")]
+        let valid = ranges
+            .par_iter()
+            .map(in_domain)
+            .try_reduce(|| true, |left, right| Ok(left && right))?;
+        #[cfg(not(feature = "parallel"))]
+        let valid = ranges.iter().try_fold(true, |all_valid, range| {
+            Ok::<_, WitnessError>(in_domain(range)? && all_valid)
+        })?;
+        if !valid {
+            return Err(KernelError::InvariantViolation {
+                reason: "RAM access address remapped beyond ram_K",
+            });
+        }
 
         // One eq table per committed chunk point (each `2^w` entries); the
         // point-mass fold stays lazy — one table lookup per accessed cycle —
@@ -94,7 +132,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
             RamAddressChunks {
-                addresses,
+                rows,
                 num_committed,
                 committed_chunk_bits,
             },
@@ -111,30 +149,31 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
-    addresses: Arc<Vec<u32>>,
+    /// The witness plane owns these rows; it reports them itself.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: TraceRows,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
 
 impl ChunkIndexSource for RamAddressChunks {
-    type Row = u32;
+    type Row = RamAddressBundle;
 
     fn num_columns(&self) -> usize {
         self.num_committed
     }
 
     fn cycles(&self) -> usize {
-        self.addresses.len()
+        self.rows.cycles()
     }
 
     #[inline]
-    fn index(&self, i: usize, address: &u32) -> Option<usize> {
-        if *address == NO_ACCESS {
-            return None;
-        }
+    fn index(&self, i: usize, row: &RamAddressBundle) -> Option<usize> {
         let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
         let mask = (1u128 << self.committed_chunk_bits) - 1;
-        Some(((u128::from(*address) >> shift) & mask) as usize)
+        row.address
+            .0
+            .map(|address| ((u128::from(address) >> shift) & mask) as usize)
     }
 
     fn visit_blocks(
@@ -143,7 +182,7 @@ impl ChunkIndexSource for RamAddressChunks {
         block: usize,
         visit: impl FnMut(usize, &[Self::Row]) -> Result<(), WitnessError>,
     ) -> Result<(), WitnessError> {
-        visit_resident(&self.addresses, range, block, visit)
+        self.rows.visit_bundles(range, block, visit)
     }
 }
 
@@ -152,7 +191,7 @@ struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
-    /// cycles, served lazily off the shared columns until the byte-budgeted
+    /// cycles, served lazily from the trace rows until the byte-budgeted
     /// materialization instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
@@ -383,10 +422,11 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::VerifierError;
+    use jolt_witness::TraceBackend;
 
     use super::super::parity::ExceptionalEq;
     use super::super::testing::{
-        assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,
+        assert_parity, ram_fixture, random_scalars, with_ram_fixture, FixtureShape, RamOp,
     };
     use super::*;
     use crate::reference::views::address_fold;
@@ -475,13 +515,9 @@ mod tests {
                 },
             )
             .unwrap();
-            // Pre-warm the session so the kernel exercises the shared-columns
-            // reclaim path (the real pipeline parks them in stage 2).
-            let mut session = ProofSession::default();
-            let _ = SharedRamAddresses::shared::<Fr>(&mut session, witness, shape.log_t).unwrap();
             let optimized = PrepareKernel::<Fr, _>::prepare(
                 &OptimizedBackend,
-                &mut session,
+                &mut ProofSession::default(),
                 witness,
                 ProverInputs {
                     relation: &relation,
@@ -623,6 +659,60 @@ mod tests {
                 }
             },
         );
+    }
+
+    /// Missing rows, rows of another cycle domain and an access beyond
+    /// `ram_K` fail `prepare` typed.
+    #[test]
+    fn prepare_failures_are_typed() {
+        let shape = FixtureShape {
+            log_t: 3,
+            ram_k: 16,
+        };
+        let ops = vec![RamOp::Write { word: 9, post: 4 }, RamOp::Read { word: 9 }];
+        let resident = ram_fixture(shape, Vec::new(), ops.clone());
+        let prepare = |witness: &TraceBackend, log_k: usize| {
+            let relation = RamRaVirtualization::<Fr>::new(
+                RamRaVirtualizationDimensions::new(shape.log_t, 1),
+                random_scalars(log_k, 5),
+                random_scalars(shape.log_t, 7),
+                CHUNK_BITS,
+            );
+            let inputs = ProverInputs {
+                relation: &relation,
+                claims: &Default::default(),
+                points: &Default::default(),
+                challenges: &NoChallenges::default(),
+            };
+            PrepareKernel::<Fr, _>::prepare(
+                &OptimizedBackend,
+                &mut ProofSession::default(),
+                witness,
+                inputs,
+            )
+            .map(|_| ())
+        };
+        // A configured domain shorter than the trace leaves no valid handle.
+        let mut shortened = ram_fixture(shape, Vec::new(), ops.clone());
+        shortened.config.log_t = 1;
+        assert!(matches!(
+            prepare(&shortened, 4),
+            Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
+        let mut widened = ram_fixture(shape, Vec::new(), ops);
+        widened.config.log_t = shape.log_t + 1;
+        assert!(matches!(
+            prepare(&widened, 4),
+            Err(KernelError::TableSizeMismatch {
+                expected: 8,
+                got: 16,
+                ..
+            })
+        ));
+        assert!(matches!(
+            prepare(&resident, 2),
+            Err(KernelError::InvariantViolation { .. })
+        ));
     }
 
     #[test]

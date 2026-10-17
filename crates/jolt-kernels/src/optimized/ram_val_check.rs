@@ -194,7 +194,6 @@ mod tests {
     use jolt_witness::{JoltWitnessOracle, TraceBackend, WitnessError};
 
     use super::super::parity::run_lockstep;
-    use super::super::ram_trace::SharedRamAddresses;
     use super::super::registers_read_write::test_support::challenge_sequence;
     use super::super::testing::{ram_fixture, silent_ram_fixture, FixtureShape, RamOp};
     use super::*;
@@ -213,8 +212,7 @@ mod tests {
     /// The optimized kernel against the reference tier on the same resident
     /// rows, through `binds`: equal round polynomials and output claims, the
     /// staged advice and program-image claims echoed, and both LT pins. The
-    /// kernel leaves the event log parked for stage 5 and publishes no dense
-    /// address column.
+    /// kernel leaves the event log parked for stage 5.
     fn parity_in_field<F: JoltField>(
         resident: &TraceBackend,
         shape: FixtureShape,
@@ -271,10 +269,6 @@ mod tests {
             PrepareKernel::<F, _>::prepare(&OptimizedBackend, &mut session, resident, inputs())
                 .unwrap();
         assert!(session.state::<RamEventLog>().is_some(), "log not parked");
-        assert!(
-            session.state::<SharedRamAddresses>().is_none(),
-            "dense address column published"
-        );
 
         let ra = address_fold::<F>(resident, ram_ra_val_check(), shape.log_t, &r_address).unwrap();
         let inc =
@@ -442,7 +436,6 @@ mod tests {
             Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
         ));
         assert!(session.state::<RamEventLog>().is_none());
-        assert!(session.state::<SharedRamAddresses>().is_none());
 
         let mut session = ProofSession::default();
         let _ = RamEventLog::shared::<Fr>(&mut session, &resident, shape.log_t, 2 * shape.ram_k)
@@ -455,6 +448,5 @@ mod tests {
                 ..
             })
         ));
-        assert!(session.state::<SharedRamAddresses>().is_none());
     }
 }
