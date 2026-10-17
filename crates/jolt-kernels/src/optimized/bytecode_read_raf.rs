@@ -26,11 +26,14 @@
 //!   `13`, with field-identical round messages (multilinear extension is
 //!   linear in the table argument). The RAF weights fold as the legacy
 //!   `raf_int_weight` does: stage 1 carries `γ⁵·int_r`, stage 3 `γ⁶·int_r`.
+//!   `C` stays a weighted sum of split eq tables (`lazy_eq_sum`) until the
+//!   RA family's crossover, so no `T`-entry coefficient table is allocated.
 //! - **Lazy fused increment** (cycle phase, Akita): the extra stages remain
 //!   `Π_i ra_i · FusedInc · C_fused`, preserving the relation's extra
-//!   degree. `FusedInc` binds lazily for three rounds, read from the RA
-//!   family's own source blocks, and materializes at `T / 16` instead of
-//!   allocating a dense field column at prepare.
+//!   degree. `FusedInc` binds lazily with the RA family, read from that
+//!   family's own source blocks, and materializes at the same crossover, as
+//!   does the eq-sum `C_fused`, instead of allocating dense field columns at
+//!   prepare.
 //! - **Eval-at-1 recovery** and **rayon walks**, both phases (see the module
 //!   docs on [`crate::optimized`]).
 //!
@@ -56,6 +59,7 @@ use jolt_field::JoltField;
 use jolt_poly::BindingOrder;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "akita")]
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
@@ -72,17 +76,21 @@ use jolt_witness::{JoltWitnessPlane, TraceRows, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::lazy_ra::{
-    rows_unavailable, ChunkIndexSource, LazyFoldedRa, PairBlock, MATERIALIZE_BYTES,
+    materialize_branches, rows_unavailable, ChunkIndexSource, LazyFoldedRa, PairBlock,
+    MATERIALIZE_BYTES,
 };
 #[cfg(feature = "akita")]
 use super::support::split_at_tasks;
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
-    scaled_eq_table, task_ranges, try_par_sum_vecs, RoundProgress, VISIT_ROWS,
+    task_ranges, try_par_sum_vecs, RoundProgress, VISIT_ROWS,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+mod lazy_eq_sum;
+use lazy_eq_sum::LazyEqSum;
 
 /// The bytecode kernels' per-cycle facts: the mapped PC and, in the Akita
 /// protocol, the fused increment.
@@ -815,13 +823,16 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
 
 /// The fused-increment cycle column, bound lazily while the bytecode RA
 /// family is lazy too: round values gather from that family's source blocks,
-/// so the column opens no reader of its own in the rounds. The fourth bind
-/// materializes only `T / 16` field elements and releases this handle.
+/// so the column opens no reader of its own in the rounds. The bind reaching
+/// `materialize_branches`, the RA family's own crossover
+/// ([`CycleKernel::prepare`]), materializes `T / materialize_branches` field
+/// elements and releases this handle.
 #[cfg(feature = "akita")]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum LazyFusedInc<F: JoltField> {
     Lazy {
         branch_weights: Vec<F>,
+        materialize_branches: usize,
         /// The witness plane owns these rows; it reports them itself.
         #[cfg_attr(feature = "allocative", allocative(skip))]
         rows: TraceRows,
@@ -831,9 +842,10 @@ enum LazyFusedInc<F: JoltField> {
 
 #[cfg(feature = "akita")]
 impl<F: JoltField> LazyFusedInc<F> {
-    fn new(rows: TraceRows) -> Self {
+    fn new(rows: TraceRows, materialize_branches: usize) -> Self {
         Self::Lazy {
             branch_weights: vec![F::one()],
+            materialize_branches,
             rows,
         }
     }
@@ -863,22 +875,23 @@ impl<F: JoltField> LazyFusedInc<F> {
                 };
                 (value(2 * row), value(2 * row + 1))
             }
-            // `materialize_branches` keeps the RA family lazy below 16
-            // branches, the count at which this column materializes.
+            // The RA family materializes in the same bind as this column
+            // (one crossover, `CycleKernel::prepare`).
             (Self::Lazy { .. }, PairBlock::Dense(_)) => {
-                unreachable!("the RA family materializes after the fused increment")
+                unreachable!("the RA family materializes with the fused increment")
             }
         }
     }
 
-    /// The fully bound value; a column still lazy (a domain below 16
-    /// cycles) reads cycles `0..width` in one visit.
+    /// The fully bound value; a column still lazy (a domain shorter than the
+    /// crossover) reads cycles `0..width` in one visit.
     fn final_value(&self) -> Result<F, WitnessError> {
         match self {
             Self::Dense(polynomial) => Ok(polynomial.evals()[0]),
             Self::Lazy {
                 branch_weights,
                 rows,
+                ..
             } => {
                 let width = branch_weights.len();
                 let mut value = F::zero();
@@ -895,13 +908,14 @@ impl<F: JoltField> LazyFusedInc<F> {
         match self {
             Self::Lazy {
                 branch_weights,
+                materialize_branches,
                 rows,
             } => {
                 let one_minus = F::one() - challenge;
                 let mut next = Vec::with_capacity(2 * branch_weights.len());
                 next.extend(branch_weights.iter().map(|weight| one_minus * *weight));
                 next.extend(branch_weights.iter().map(|weight| challenge * *weight));
-                if next.len() < 16 {
+                if next.len() < *materialize_branches {
                     *branch_weights = next;
                 } else {
                     let evals = Self::materialize(rows, &next)?;
@@ -964,8 +978,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
 }
 
 impl<F: JoltField> CycleKernel<F> {
-    /// `materialize_bytes` bounds each dense RA table ([`LazyFoldedRa::new`]);
-    /// production passes [`MATERIALIZE_BYTES`].
+    /// `materialize_bytes` bounds each dense table ([`materialize_branches`]):
+    /// the RA family, the fused increment and both coefficient tables
+    /// materialize in one bind. Production passes [`MATERIALIZE_BYTES`].
     fn prepare(
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
@@ -1005,15 +1020,15 @@ impl<F: JoltField> CycleKernel<F> {
                     .map_err(KernelError::from)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        // One crossover for every lazy family: the fused increment reads the
+        // RA family's source blocks while both are lazy.
+        let branches = materialize_branches::<F>(cycles, materialize_bytes);
         #[cfg(feature = "akita")]
-        let fused_inc = LazyFusedInc::new(rows.clone());
-        let ra = LazyFoldedRa::new(
-            chunk_eqs,
-            BytecodePcChunks { rows, selectors },
-            materialize_bytes,
-        );
+        let fused_inc = LazyFusedInc::new(rows.clone(), branches);
+        let ra =
+            LazyFoldedRa::factored(chunk_eqs, 1, branches, BytecodePcChunks { rows, selectors });
 
-        // The combined coefficient table: every non-RA factor of the summand is linear
+        // The combined coefficient: every non-RA factor of the summand is linear
         // in one cycle table, so   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) +
         // γ⁷·entry·[j = 0] with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf
         // rides the stage-1 cycle point, SpartanShiftRaf the stage-3 one). With
@@ -1062,77 +1077,51 @@ impl<F: JoltField> CycleKernel<F> {
             }
         }
 
-        let mut combined = unsafe_allocate_zero_vec(cycles);
-        for (point, weight) in stage_cycle_points[..base_stages].iter().zip(stage_weights) {
-            let scaled = scaled_eq_table(point, weight);
-            #[cfg(feature = "parallel")]
-            combined
-                .par_iter_mut()
-                .zip(scaled.par_iter())
-                .for_each(|(acc, term)| *acc += *term);
-            #[cfg(not(feature = "parallel"))]
-            combined
-                .iter_mut()
-                .zip(scaled.iter())
-                .for_each(|(acc, term)| *acc += *term);
-        }
+        let terms = stage_weights
+            .into_iter()
+            .zip(stage_cycle_points[..base_stages].iter().map(Vec::as_slice));
         // The field-inline stage-4/5 legs ride their own cycle sub-points at γ³/γ⁴. A
         // trace without field-inline activity folds both weights to zero (its
-        // field-register operands are all absent), so the two dense eq tables are skipped
-        // exactly.
+        // field-register operands are all absent), and `LazyEqSum::new` drops
+        // zero-weight terms.
         #[cfg(feature = "field-inline")]
-        for (point, weight) in [
+        let terms = terms.chain([
             (
-                field_read_write_cycle.as_slice(),
                 gamma_powers[3] * field_folds[3],
+                field_read_write_cycle.as_slice(),
             ),
             (
-                field_val_evaluation_cycle.as_slice(),
                 gamma_powers[4] * field_folds[4],
+                field_val_evaluation_cycle.as_slice(),
             ),
-        ] {
-            if weight.is_zero() {
-                continue;
-            }
-            let scaled = scaled_eq_table(point, weight);
-            #[cfg(feature = "parallel")]
-            combined
-                .par_iter_mut()
-                .zip(scaled.par_iter())
-                .for_each(|(acc, term)| *acc += *term);
-            #[cfg(not(feature = "parallel"))]
-            combined
-                .iter_mut()
-                .zip(scaled.iter())
-                .for_each(|(acc, term)| *acc += *term);
-        }
+        ]);
         let entry_scalar = eq_address[relation.entry_bytecode_index()];
-        combined[0] += gamma_powers[num_stages + 2] * entry_scalar;
+        let combined = LazyEqSum::new(
+            terms,
+            gamma_powers[num_stages + 2] * entry_scalar,
+            dimensions.log_t(),
+            branches,
+        );
 
         #[cfg(feature = "akita")]
         let fused_combined = {
             let store = stage_values[base_stages];
-            let mut combined = unsafe_allocate_zero_vec(cycles);
-            for stage in base_stages..num_stages {
-                let value = if stage < base_stages + 2 {
-                    store
-                } else {
-                    F::one() - store
-                };
-                let scaled =
-                    scaled_eq_table(&stage_cycle_points[stage], gamma_powers[stage] * value);
-                #[cfg(feature = "parallel")]
-                combined
-                    .par_iter_mut()
-                    .zip(scaled.par_iter())
-                    .for_each(|(acc, term)| *acc += *term);
-                #[cfg(not(feature = "parallel"))]
-                combined
-                    .iter_mut()
-                    .zip(scaled.iter())
-                    .for_each(|(acc, term)| *acc += *term);
-            }
-            Polynomial::new(combined)
+            LazyEqSum::new(
+                (base_stages..num_stages).map(|stage| {
+                    let value = if stage < base_stages + 2 {
+                        store
+                    } else {
+                        F::one() - store
+                    };
+                    (
+                        gamma_powers[stage] * value,
+                        stage_cycle_points[stage].as_slice(),
+                    )
+                }),
+                F::zero(),
+                dimensions.log_t(),
+                branches,
+            )
         };
 
         let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
@@ -1146,7 +1135,7 @@ impl<F: JoltField> CycleKernel<F> {
             progress: RoundProgress::new(relation.rounds()),
             degree: relation.degree(),
             ra,
-            combined: Polynomial::new(combined),
+            combined,
             #[cfg(feature = "akita")]
             fused_inc,
             #[cfg(feature = "akita")]
@@ -1198,11 +1187,11 @@ struct CycleKernel<F: JoltField> {
     progress: RoundProgress,
     degree: usize,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
-    combined: Polynomial<F>,
+    combined: LazyEqSum<F>,
     #[cfg(feature = "akita")]
     fused_inc: LazyFusedInc<F>,
     #[cfg(feature = "akita")]
-    fused_combined: Polynomial<F>,
+    fused_combined: LazyEqSum<F>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
@@ -1210,9 +1199,9 @@ struct CycleKernel<F: JoltField> {
 }
 impl<F: JoltField> CycleKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        bind_all([&mut self.combined], challenge);
+        self.combined.bind(challenge);
         #[cfg(feature = "akita")]
-        bind_all([&mut self.fused_combined], challenge);
+        self.fused_combined.bind(challenge);
         self.ra.bind(challenge)?;
         #[cfg(feature = "akita")]
         self.fused_inc.bind(challenge).map_err(rows_unavailable)?;
@@ -1235,14 +1224,14 @@ impl<F: JoltField> CycleKernel<F> {
         ra_pairs: &mut [(F, F)],
     ) {
         block.lo_hi_all(y, ra_pairs);
-        let (c_lo, c_hi) = pair(&self.combined, y);
+        let (c_lo, c_hi) = self.combined.lo_hi(y);
         #[cfg(not(feature = "akita"))]
         let coefficient_at_zero = c_lo;
         #[cfg(not(feature = "akita"))]
         let coefficient_delta = c_hi - c_lo;
         #[cfg(feature = "akita")]
         let (coefficient_at_zero, mut coefficient_delta, second_difference) = {
-            let (fused_coefficient_lo, fused_coefficient_hi) = pair(&self.fused_combined, y);
+            let (fused_coefficient_lo, fused_coefficient_hi) = self.fused_combined.lo_hi(y);
             let (fused_inc_lo, fused_inc_hi) = self.fused_inc.lo_hi(y, block);
             let at_zero = c_lo + fused_inc_lo * fused_coefficient_lo;
             let at_one = c_hi + fused_inc_hi * fused_coefficient_hi;
@@ -1295,7 +1284,8 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let half = self.combined.len() / 2;
+        // The relation's rounds are its `log_t` cycle variables, one bound per round.
+        let half = 1usize << (self.progress.total() - self.progress.bound() - 1);
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
@@ -1807,7 +1797,7 @@ mod akita_tests {
         BytecodeReadRafDimensions, LATTICE_FUSED_INC_STAGES,
     };
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{Fr, Prime128OffsetA7F7, Ring};
     use jolt_riscv::JoltTraceRow as TraceRow;
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold;
@@ -1817,7 +1807,7 @@ mod akita_tests {
     use jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
-        BytecodeReadRafInputClaims, BytecodeReadRafTableFoldInputs,
+        BytecodeReadRafInputClaims, BytecodeReadRafTableFoldInputs, READ_RAF_CYCLE_STAGES,
     };
     use jolt_witness::{ProgramSource, TraceBackend};
 
@@ -1825,7 +1815,10 @@ mod akita_tests {
     use crate::optimized::booleanity::testing::{
         load_row, no_op_row, store_row, with_booleanity_backend, with_trace_backend,
     };
-    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{
+        probe_input_claim, run_lockstep, synthetic_point, ExceptionalEq,
+    };
+    use crate::optimized::registers_read_write::test_support::challenge_sequence;
     use crate::ReferenceBackend;
 
     fn address_parity(log_t: usize, log_k_chunk: u8, committed_program: bool) {
@@ -1929,16 +1922,19 @@ mod akita_tests {
     }
 
     fn cycle_parity(log_t: usize, log_k_chunk: u8) {
-        cycle_parity_with(log_t, log_k_chunk, None, MATERIALIZE_BYTES);
+        cycle_parity_with::<Fr>(log_t, log_k_chunk, None, MATERIALIZE_BYTES, None);
     }
 
     /// `trace`: rows of the booleanity fixture program instead of its four
-    /// default rows.
-    fn cycle_parity_with(
+    /// default rows. `exceptional`: the first and last stage cycle points sit
+    /// at that point, and the first two cycle challenges are literal zero and
+    /// one.
+    fn cycle_parity_with<F: JoltField>(
         log_t: usize,
         log_k_chunk: u8,
         trace: Option<Vec<TraceRow>>,
         materialize_bytes: usize,
+        exceptional: Option<ExceptionalEq>,
     ) {
         let check = |backend: &TraceBackend, base_dimensions: BooleanityDimensions| {
             let program = backend.program_preprocessing();
@@ -1948,31 +1944,40 @@ mod akita_tests {
                 bytecode_len.ilog2() as usize,
                 base_dimensions.layout.bytecode(),
             );
-            let stage_cycle_points =
-                std::array::from_fn(|stage| synthetic_point(log_t, 11 + stage as u64));
+            let mut stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] =
+                std::array::from_fn(|stage| challenge_sequence(log_t, 11 + stage as u64));
+            let mut cycle_challenges = challenge_sequence::<F>(log_t, 211);
+            if let Some(case) = exceptional {
+                cycle_challenges[0] = F::zero();
+                cycle_challenges[1] = F::one();
+                let point = case.point(log_t, cycle_challenges[0]);
+                stage_cycle_points[0].clone_from(&point);
+                stage_cycle_points[READ_RAF_CYCLE_STAGES - 1] = point;
+            }
             let address_challenges = BytecodeReadRafAddressPhaseChallenges {
-                gamma: Fr::from_u64(3),
-                stage1_gamma: Fr::from_u64(5),
-                stage2_gamma: Fr::from_u64(7),
-                stage3_gamma: Fr::from_u64(11),
-                stage4_gamma: Fr::from_u64(13),
-                stage5_gamma: Fr::from_u64(17),
+                gamma: F::from_u64(3),
+                stage1_gamma: F::from_u64(5),
+                stage2_gamma: F::from_u64(7),
+                stage3_gamma: F::from_u64(11),
+                stage4_gamma: F::from_u64(13),
+                stage5_gamma: F::from_u64(17),
             };
             let stage_gammas = address_challenges.stage_gamma_powers();
             #[cfg(feature = "field-inline")]
-            let field_read_write_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 41);
+            let field_read_write_point = challenge_sequence::<F>(FIELD_REGISTERS_LOG_K + log_t, 41);
             #[cfg(feature = "field-inline")]
-            let field_val_evaluation_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 43);
+            let field_val_evaluation_point =
+                challenge_sequence::<F>(FIELD_REGISTERS_LOG_K + log_t, 43);
             let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
                 dimensions,
-                r_address: synthetic_point(dimensions.log_k(), 19),
+                r_address: challenge_sequence(dimensions.log_k(), 19),
                 stage_cycle_points,
                 entry_bytecode_index: 0,
                 committed_chunk_bits: usize::from(log_k_chunk),
                 table_fold: Some(BytecodeReadRafTableFoldInputs {
                     bytecode: &program.bytecode.bytecode,
-                    register_read_write_point: &synthetic_point(REGISTER_ADDRESS_BITS, 23),
-                    register_val_evaluation_point: &synthetic_point(REGISTER_ADDRESS_BITS, 29),
+                    register_read_write_point: &challenge_sequence(REGISTER_ADDRESS_BITS, 23),
+                    register_val_evaluation_point: &challenge_sequence(REGISTER_ADDRESS_BITS, 29),
                     stage_gammas: std::array::from_fn(|stage| stage_gammas[stage].as_slice()),
                 }),
                 // All-inactive and well-formed, mirroring `run_pair`: the composed
@@ -2001,10 +2006,10 @@ mod akita_tests {
             })
             .unwrap();
             let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {
-                gamma: Fr::from_u64(31),
+                gamma: F::from_u64(31),
             };
-            let claims = BytecodeReadRafInputClaims::<Fr>::default();
-            let input_points = BytecodeReadRafInputClaims::<Vec<Fr>>::default();
+            let claims = BytecodeReadRafInputClaims::<F>::default();
+            let input_points = BytecodeReadRafInputClaims::<Vec<F>>::default();
 
             let mut session = ProofSession::default();
             let mut reference = ReferenceBackend
@@ -2032,12 +2037,7 @@ mod akita_tests {
             .unwrap();
 
             let claim = probe_input_claim(reference.as_mut());
-            run_lockstep(
-                reference.as_mut(),
-                &mut optimized,
-                claim,
-                &synthetic_point(log_t, 211),
-            );
+            run_lockstep(reference.as_mut(), &mut optimized, claim, &cycle_challenges);
             assert_eq!(
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap()
@@ -2049,20 +2049,55 @@ mod akita_tests {
         }
     }
 
-    /// A real trace with `T/64`-entry dense RA tables: the RA family stays
-    /// lazy through 32 branches while the fused increment gathers from its
-    /// blocks for three binds and materializes at the fourth.
-    #[test]
-    fn bytecode_cycle_matches_reference_past_the_fused_crossover() {
-        let log_t = 8;
-        let rows = (0..200)
+    /// 200 real rows padded to `2^8`, materializing at `T/64` entries.
+    fn crossover_rows() -> Vec<TraceRow> {
+        (0..200)
             .map(|cycle: u64| match cycle % 3 {
                 0 => load_row(0x8000_1000 + 8 * cycle),
                 1 => store_row(0x8000_1000 + 8 * cycle),
                 _ => no_op_row(),
             })
-            .collect();
-        cycle_parity_with(log_t, 4, Some(rows), (size_of::<Fr>() << log_t) / 64);
+            .collect()
+    }
+
+    /// A real trace with `T/64`-entry dense tables: the RA family, the fused
+    /// increment that gathers from its blocks, and both coefficient tables
+    /// stay lazy through 32 branches and materialize together at the sixth
+    /// bind, in both fields.
+    #[test]
+    fn bytecode_cycle_matches_reference_past_the_fused_crossover() {
+        let log_t = 8;
+        cycle_parity_with::<Fr>(
+            log_t,
+            4,
+            Some(crossover_rows()),
+            (size_of::<Fr>() << log_t) / 64,
+            None,
+        );
+        cycle_parity_with::<Prime128OffsetA7F7>(
+            log_t,
+            4,
+            Some(crossover_rows()),
+            (size_of::<Prime128OffsetA7F7>() << log_t) / 64,
+            None,
+        );
+    }
+
+    /// Stage points with Boolean coordinates or an eq weight that vanishes at
+    /// the first bind, literal zero and one challenges (the entry spike
+    /// vanishes at the second bind), through the same crossover.
+    #[test]
+    fn bytecode_cycle_matches_reference_with_exceptional_eq_across_the_crossover() {
+        let log_t = 8;
+        for case in ExceptionalEq::ALL {
+            cycle_parity_with::<Prime128OffsetA7F7>(
+                log_t,
+                4,
+                Some(crossover_rows()),
+                (size_of::<Prime128OffsetA7F7>() << log_t) / 64,
+                Some(case),
+            );
+        }
     }
 
     #[cfg(feature = "field-inline")]
@@ -2146,11 +2181,11 @@ mod cycle_group_tests {
                 progress: RoundProgress::new(GROUPS.ilog2() as usize + 1),
                 degree,
                 ra: LazyFoldedRa::Dense(ra.clone()),
-                combined: combined.clone(),
+                combined: LazyEqSum::Dense(combined.clone()),
                 #[cfg(feature = "akita")]
                 fused_inc: LazyFusedInc::Dense(fused_inc.clone()),
                 #[cfg(feature = "akita")]
-                fused_combined: fused_combined.clone(),
+                fused_combined: LazyEqSum::Dense(fused_combined.clone()),
                 output_openings: Vec::new(),
             };
             let mut pairs = vec![(Fr::zero(), Fr::zero()); num_ra];
