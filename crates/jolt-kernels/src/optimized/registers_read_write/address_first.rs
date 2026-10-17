@@ -24,9 +24,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::rows::{raw_rd_inc, RegisterCycleRow, SharedRdIndices};
+use super::rows::{raw_rd_inc, RegisterCycleRow};
 use crate::optimized::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
-use crate::{KernelError, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
+use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
 const CHUNK: usize = 1 << 12;
 
@@ -86,7 +86,6 @@ pub(super) struct AddressFirstKernel<F: JoltField> {
 
 impl<F: JoltField> AddressFirstKernel<F> {
     pub(super) fn prepare(
-        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Self, KernelError<F>> {
@@ -94,20 +93,14 @@ impl<F: JoltField> AddressFirstKernel<F> {
         let rows = collect_rows::<Access>(witness, 1usize << dimensions.log_t())?;
         let mut checkpoints = Vec::with_capacity(rows.len().div_ceil(CHUNK));
         let mut values = [0i128; 1 << REGISTER_ADDRESS_BITS];
-        let rd_indices = rows
-            .iter()
-            .enumerate()
-            .map(|(cycle, row)| {
-                if cycle % CHUNK == 0 {
-                    checkpoints.push(values);
-                }
-                if let Some(rd) = row.rd {
-                    values[usize::from(rd)] += row.inc;
-                }
-                row.rd
-            })
-            .collect();
-        session.park(SharedRdIndices(rd_indices));
+        for (cycle, row) in rows.iter().enumerate() {
+            if cycle % CHUNK == 0 {
+                checkpoints.push(values);
+            }
+            if let Some(rd) = row.rd {
+                values[usize::from(rd)] += row.inc;
+            }
+        }
         let gruen =
             GruenSplitEqPolynomial::new(&inputs.points.rd_write_value, BindingOrder::LowToHigh);
         Ok(Self {
