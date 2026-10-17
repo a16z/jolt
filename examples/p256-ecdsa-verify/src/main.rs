@@ -54,8 +54,8 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove_p256_ecdsa_verify(z, r, s, q);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_p256_ecdsa_verify(z, r, s, q, output, program_io.panic, proof);
+    verify_p256_ecdsa_verify(z, r, s, q, output, program_io.panic, proof)
+        .expect("proof verification failed");
 
     info!("output: {:?}", output);
-    info!("valid: {is_valid}");
 }

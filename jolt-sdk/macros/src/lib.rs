@@ -252,7 +252,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
                 preprocessing: jolt::JoltVerifierPreprocessing,
-            ) -> impl ::core::ops::Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> bool + ::core::marker::Sync + ::core::marker::Send
+            ) -> impl ::core::ops::Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> ::core::result::Result<(), jolt::jolt_verifier::VerifierError> + ::core::marker::Sync + ::core::marker::Send
             {
                 let __jolt_preprocessing = ::std::sync::Arc::new(preprocessing);
 
@@ -284,7 +284,7 @@ impl MacroBuilder {
                         &__jolt_io_device,
                         &__jolt_proof,
                         #commitment_arg_in_verify,
-                    ).is_ok()
+                    )
                 };
 
                 __jolt_verify_closure
@@ -1138,31 +1138,17 @@ impl MacroBuilder {
                 proof_bytes: &[u8],
                 io_bytes: &[u8],
                 trusted_advice_commitment_bytes: &[u8],
-            ) -> bool {
+            ) -> ::core::result::Result<(), wasm_bindgen::JsError> {
                 let preprocessing: jolt::JoltVerifierPreprocessing =
-                    match jolt::deserialize_verifier_object(preprocessing_data) {
-                    ::core::result::Result::Ok(preprocessing) => preprocessing,
-                    ::core::result::Result::Err(_) => return false,
-                };
-                let proof: jolt::RV64IMACProof =
-                    match jolt::deserialize_verifier_object(proof_bytes) {
-                    ::core::result::Result::Ok(proof) => proof,
-                    ::core::result::Result::Err(_) => return false,
-                };
-                let io_device: jolt::JoltDevice =
-                    match jolt::deserialize_verifier_object(io_bytes) {
-                    ::core::result::Result::Ok(io_device) => io_device,
-                    ::core::result::Result::Err(_) => return false,
-                };
+                    jolt::deserialize_verifier_object(preprocessing_data)?;
+                let proof: jolt::RV64IMACProof = jolt::deserialize_verifier_object(proof_bytes)?;
+                let io_device: jolt::JoltDevice = jolt::deserialize_verifier_object(io_bytes)?;
                 let trusted_advice_commitment:
                     ::core::option::Option<jolt::VerifierTrustedAdviceCommitment> =
                     if trusted_advice_commitment_bytes.is_empty() {
                         ::core::option::Option::None
                     } else {
-                        match jolt::deserialize_verifier_object(trusted_advice_commitment_bytes) {
-                            ::core::result::Result::Ok(commitment) => commitment,
-                            ::core::result::Result::Err(_) => return false,
-                        }
+                        jolt::deserialize_verifier_object(trusted_advice_commitment_bytes)?
                     };
 
                 jolt::jolt_verifier::verify::<
@@ -1175,7 +1161,7 @@ impl MacroBuilder {
                     &io_device,
                     &proof,
                     trusted_advice_commitment.as_ref(),
-                ).is_ok()
+                ).map_err(wasm_bindgen::JsError::from)
             }
         }
     }

@@ -70,10 +70,9 @@ fn run_nostd(target_dir: &str, should_panic: bool) {
     info!("nostd output: {:?}", output);
     info!("nostd panicked: {}", program_io.panic);
 
-    let is_valid = verify(should_panic, output, program_io.panic, proof);
-    info!("nostd proof valid: {}", is_valid);
+    verify(should_panic, output, program_io.panic, proof)
+        .expect("nostd backtrace proof verification failed");
 
-    assert!(is_valid, "nostd backtrace proof verification failed");
     assert_eq!(program_io.panic, should_panic, "nostd panic flag mismatch");
 }
 
@@ -107,9 +106,8 @@ fn run_std(target_dir: &str, should_panic: bool) {
     info!("std output: {:?}", output);
     info!("std panicked: {}", program_io.panic);
 
-    let is_valid = verify(should_panic, output, program_io.panic, proof);
-    info!("std proof valid: {}", is_valid);
+    verify(should_panic, output, program_io.panic, proof)
+        .expect("std backtrace proof verification failed");
 
-    assert!(is_valid, "std backtrace proof verification failed");
     assert_eq!(program_io.panic, should_panic, "std panic flag mismatch");
 }

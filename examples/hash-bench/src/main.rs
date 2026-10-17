@@ -17,8 +17,7 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove_hashbench();
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_hashbench(output, program_io.panic, proof);
+    verify_hashbench(output, program_io.panic, proof).expect("proof verification failed");
 
     println!("output: {}", hex::encode(output));
-    println!("valid: {is_valid}");
 }
