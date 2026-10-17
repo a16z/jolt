@@ -101,7 +101,7 @@ Host prove call: `prove(..., UntrustedAdvice::new(val))`. The generated verifier
 
 For `PrivateInput<T>`, enable `zk` on the host only (see Step 7). The macro enforces this at compile time.
 
-`TrustedAdvice<T>` is the alternative for data committed by a third party — it requires a `commit_trusted_advice_<fn>(...)` host call and the commitment is passed to the verifier.
+`TrustedAdvice<T>` is the alternative for data committed by a third party — it requires a `commit_trusted_advice_<fn>(...)` host call and the commitment is passed to the verifier. It is bring-your-own-commitment advice: the verifier must obtain that commitment from the third party itself. Jolt does not check where the commitment came from, so one taken from the prover or bundled with the proof lets the prover choose the advice.
 
 **Dependencies** — add to `guest/Cargo.toml`. When wrapping an existing repo, add `<library> = { path = "../.." }`. Avoid `default-features = false` unless you know the library supports it — disabled default features can expose conditionally-compiled modules that still reference missing optional deps. For crypto, prefer `jolt-inlines-sha2`, `jolt-inlines-keccak256`, `jolt-inlines-secp256k1`.
 
