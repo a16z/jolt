@@ -9,9 +9,9 @@ use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "parallel")]
 use super::rows::RegisterCycleRow;
-use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized};
+use super::ROWS_LABEL;
+use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized, KernelRows};
 
 /// Bound one-hot coefficient values indexed by `u16`. Each bind squares the
 /// table: `(a ≪ bits) | b` maps to `b + r·(a − b)`.
@@ -148,6 +148,7 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
 
 pub(crate) mod layout;
 pub(crate) mod ops;
+mod stream;
 
 pub(super) use layout::SeedEntry;
 use layout::{
@@ -155,11 +156,11 @@ use layout::{
 };
 use ops::{
     bind_indexed_in_place_soa, bind_indexed_to_direct, bind_seed_entries_fused,
-    bind_sparse_entries_in_place, seed_quadratic, seed_quadratic_fused, sparse_quadratic,
-    sparse_quadratic_soa,
+    bind_sparse_entries_in_place, sparse_quadratic, sparse_quadratic_soa,
 };
 
-/// The round-0 register cells, held until the second bind replaces them.
+/// The round-0 register cells that the second bind, or a single-round
+/// handoff, merges; round messages regenerate theirs from row visits.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) enum Seeds {
     /// Row-major cells, columns sorted within each row.
@@ -253,11 +254,9 @@ fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
 /// The bound cycle row as dense `(ra, wa, val)` address arrays and its `inc`.
 type DenseCycleRow<F> = (Vec<F>, Vec<F>, Vec<F>, F);
 
-/// A seed row failed to re-extract after `prepare` extracted it.
+/// A row failed to re-extract after `prepare` extracted every row once.
 fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
-    SumcheckError::MissingEvaluationSource {
-        kind: "register read/write trace rows",
-    }
+    SumcheckError::MissingEvaluationSource { kind: ROWS_LABEL }
 }
 
 impl<F: JoltField> CycleState<F> {
@@ -279,39 +278,30 @@ impl<F: JoltField> CycleState<F> {
         CoeffLut { values: Vec::new() }
     }
 
-    pub(super) fn quadratic(&self, e_in: &[F], e_out: &[F]) -> Result<[F; 2], SumcheckError<F>> {
+    pub(super) fn quadratic(
+        &self,
+        rows: &KernelRows<RegisterCycleRow>,
+        e_in: &[F],
+        e_out: &[F],
+    ) -> Result<[F; 2], SumcheckError<F>> {
         Ok(match &self.0 {
-            CyclePhase::Seed {
-                seeds,
-                ra_lut,
-                wa_lut,
-                rd_inc,
-            } => seed_quadratic(seeds, ra_lut, wa_lut, e_in, e_out, |z| {
-                let inc_0 = F::from_i128(rd_inc[2 * z]);
-                [inc_0, F::from_i128(rd_inc[2 * z + 1]) - inc_0]
-            })
-            .map_err(rows_unavailable)?,
+            CyclePhase::Seed { ra_lut, wa_lut, .. } => {
+                stream::quadratic(rows, e_in, e_out, &[], &[[ra_lut, wa_lut]])
+                    .map_err(rows_unavailable)?
+            }
             CyclePhase::SeedBound {
-                seeds,
                 seed_ra_lut,
                 seed_wa_lut,
                 ra_lut,
                 wa_lut,
                 r1,
-                rd_inc,
-            } => seed_quadratic_fused(
-                seeds,
-                seed_ra_lut,
-                seed_wa_lut,
-                ra_lut,
-                wa_lut,
-                *r1,
+                ..
+            } => stream::quadratic(
+                rows,
                 e_in,
                 e_out,
-                |z| {
-                    let inc_0 = raw_bound_inc(rd_inc, *r1, 2 * z);
-                    [inc_0, raw_bound_inc(rd_inc, *r1, 2 * z + 1) - inc_0]
-                },
+                &[*r1],
+                &[[seed_ra_lut, seed_wa_lut], [ra_lut, wa_lut]],
             )
             .map_err(rows_unavailable)?,
             CyclePhase::Indexed {
@@ -338,55 +328,32 @@ impl<F: JoltField> CycleState<F> {
         })
     }
 
-    pub(super) fn q_at_one(&self, e_in: &[F], e_out: &[F]) -> Result<F, SumcheckError<F>> {
+    pub(super) fn q_at_one(
+        &self,
+        rows: &KernelRows<RegisterCycleRow>,
+        e_in: &[F],
+        e_out: &[F],
+    ) -> Result<F, SumcheckError<F>> {
         Ok(match &self.0 {
-            CyclePhase::Seed {
-                seeds,
-                ra_lut,
-                wa_lut,
-                rd_inc,
-            } => {
-                let mut sum = F::zero();
-                seeds
-                    .for_each_group(0..rd_inc.len(), 1, |_, pair_group| {
-                        sum += sparse_at_one(
-                            pair_group.iter().copied(),
-                            ra_lut,
-                            wa_lut,
-                            e_in,
-                            e_out,
-                            |row| F::from_i128(rd_inc[row]),
-                        );
-                    })
-                    .map_err(rows_unavailable)?;
-                sum
+            CyclePhase::Seed { ra_lut, wa_lut, .. } => {
+                stream::at_one(rows, e_in, e_out, &[], &[[ra_lut, wa_lut]])
+                    .map_err(rows_unavailable)?
             }
             CyclePhase::SeedBound {
-                seeds,
                 seed_ra_lut,
                 seed_wa_lut,
                 ra_lut,
                 wa_lut,
                 r1,
-                rd_inc,
-            } => {
-                let mut scratch = ops::fused_scratch();
-                let mut sum = F::zero();
-                seeds
-                    .for_each_group(0..rd_inc.len(), 2, |_, quad| {
-                        ops::fused_intermediates(quad, seed_ra_lut, seed_wa_lut, *r1, &mut scratch);
-                        sum += sparse_at_one(
-                            scratch.1.iter().copied(),
-                            ra_lut,
-                            wa_lut,
-                            e_in,
-                            e_out,
-                            |row| raw_bound_inc(rd_inc, *r1, row),
-                        );
-                    })
-                    .map_err(rows_unavailable)?;
-                sum
-            }
+                ..
+            } => stream::at_one(
+                rows,
+                e_in,
+                e_out,
+                &[*r1],
+                &[[seed_ra_lut, seed_wa_lut], [ra_lut, wa_lut]],
+            )
+            .map_err(rows_unavailable)?,
             CyclePhase::Indexed {
                 vals,
                 metas,

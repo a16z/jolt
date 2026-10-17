@@ -863,15 +863,15 @@ impl<F: JoltField, const M: usize> PairHalves<F, M> {
 
 /// One task's Gruen-grouped sums
 /// `Σ_x_out e_out[x_out] · Σ_x_in e_in[x_in] · terms(x_out·|e_in| + x_in)`.
-struct GruenSums<'a, F, const N: usize> {
+pub(crate) struct GruenSums<'a, F, const N: usize> {
     e_out: &'a [F],
     e_in: &'a [F],
     inner: [F; N],
-    total: [F; N],
+    pub(crate) total: [F; N],
 }
 
 impl<'a, F: JoltField, const N: usize> GruenSums<'a, F, N> {
-    fn new(e_out: &'a [F], e_in: &'a [F]) -> Self {
+    pub(crate) fn new(e_out: &'a [F], e_in: &'a [F]) -> Self {
         Self {
             e_out,
             e_in,
@@ -882,7 +882,7 @@ impl<'a, F: JoltField, const N: usize> GruenSums<'a, F, N> {
 
     /// Tasks hold whole groups ([`task_ranges`]) and add their pairs in
     /// order, so a group's last pair closes it.
-    fn add(&mut self, pair: usize, terms: [F; N]) {
+    pub(crate) fn add(&mut self, pair: usize, terms: [F; N]) {
         let x_in = pair & (self.e_in.len() - 1);
         for (inner, term) in self.inner.iter_mut().zip(terms) {
             *inner += self.e_in[x_in] * term;

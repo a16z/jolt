@@ -11,6 +11,7 @@ use jolt_field::Prime128OffsetA7F7;
 use jolt_field::{Fr, JoltField};
 use jolt_poly::Polynomial;
 use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChallenges, RegistersReadWriteChecking, RegistersReadWriteInputClaims,
 };
@@ -25,12 +26,15 @@ use super::sparse::Seeds;
 use super::test_support::{
     assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture, TraceFixture,
 };
-use super::OptimizedRegistersReadWrite;
-use crate::optimized::parity::ExceptionalEq;
-use crate::KernelError;
+use super::{OptimizedRegistersReadWrite, ReadWriteKernel, RegisterCycleRow, ROWS_LABEL};
+use crate::optimized::parity::{probe_input_claim, run_lockstep, ExceptionalEq};
+use crate::optimized::support::KernelRows;
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, ReferenceBackend, SumcheckKernel,
+};
 
-/// The trace backend without its row handle, so the kernel collects seed
-/// cells instead of regenerating them from rows.
+/// The trace backend without its row handle: collection keeps its seed
+/// cells, and the kernel refuses it.
 struct SequentialRows<'a>(&'a TraceBackend);
 
 impl<F: JoltField> JoltWitnessOracle<F> for SequentialRows<'_> {
@@ -82,8 +86,7 @@ fn run_parity_with_phases(
     run_parity_case(fixture, log_t, seed, phase_splits, None);
 }
 
-/// Every case runs on the row-handle plane (seed cells regenerated from
-/// rows) and on [`SequentialRows`] (seed cells collected), in each field.
+/// Every case runs on the row-handle plane in each field.
 fn run_parity_case(
     fixture: TraceFixture,
     log_t: usize,
@@ -92,27 +95,14 @@ fn run_parity_case(
     exceptional: Option<ExceptionalEq>,
 ) {
     fixture.with_plane(log_t, |backend| {
-        let sequential = SequentialRows(backend);
-        parity_in_field::<Fr>(
-            [backend, &sequential],
-            log_t,
-            seed,
-            phase_splits,
-            exceptional,
-        );
+        parity_in_field::<Fr>(backend, log_t, seed, phase_splits, exceptional);
         #[cfg(feature = "akita")]
-        parity_in_field::<Prime128OffsetA7F7>(
-            [backend, &sequential],
-            log_t,
-            seed,
-            phase_splits,
-            exceptional,
-        );
+        parity_in_field::<Prime128OffsetA7F7>(backend, log_t, seed, phase_splits, exceptional);
     });
 }
 
 fn parity_in_field<F: JoltField>(
-    witnesses: [&dyn JoltWitnessPlane<F>; 2],
+    witness: &dyn JoltWitnessPlane<F>,
     log_t: usize,
     seed: u64,
     phase_splits: &[(usize, usize)],
@@ -129,11 +119,9 @@ fn parity_in_field<F: JoltField>(
         |case| case.point(log_t, round_challenges[first_cycle]),
     );
     let evaluate = |polynomial: JoltVirtualPolynomial| {
-        let table = JoltWitnessOracle::<F>::oracle_table(
-            witnesses[0],
-            JoltPolynomialId::Virtual(polynomial),
-        )
-        .unwrap();
+        let table =
+            JoltWitnessOracle::<F>::oracle_table(witness, JoltPolynomialId::Virtual(polynomial))
+                .unwrap();
         Polynomial::new(table).evaluate(&r_cycle)
     };
     let gamma = F::from_u64(0x5EED_1234_5678_9ABC);
@@ -153,25 +141,23 @@ fn parity_in_field<F: JoltField>(
     if exceptional.is_none() {
         assert_nontrivial(input_claim);
     }
-    for witness in witnesses {
-        for &(phase1, phase2) in phase_splits {
-            let relation = RegistersReadWriteChecking::<F>::new(ReadWriteDimensions::new(
-                log_t,
-                REGISTER_ADDRESS_BITS,
-                phase1,
-                phase2,
-            ));
-            assert_kernel_parity(
-                &OptimizedRegistersReadWrite,
-                witness,
-                &relation,
-                &claims,
-                &points,
-                &challenges,
-                input_claim,
-                &round_challenges,
-            );
-        }
+    for &(phase1, phase2) in phase_splits {
+        let relation = RegistersReadWriteChecking::<F>::new(ReadWriteDimensions::new(
+            log_t,
+            REGISTER_ADDRESS_BITS,
+            phase1,
+            phase2,
+        ));
+        assert_kernel_parity(
+            &OptimizedRegistersReadWrite,
+            witness,
+            &relation,
+            &claims,
+            &points,
+            &challenges,
+            input_claim,
+            &round_challenges,
+        );
     }
 }
 
@@ -275,5 +261,153 @@ fn collection_rejects_out_of_domain_registers_with_either_row_source() {
                     if reason.contains("register index 200")
             ));
         }
+    });
+}
+
+/// [`structured_fixture`] ending with x0 as `rd`, `rs1` and `rs2` of one
+/// cycle, then read back.
+fn x0_fixture(cycles: usize) -> TraceFixture {
+    let mut fixture = structured_fixture(cycles - 2);
+    fixture.op(Some(0), Some(0), Some(0));
+    fixture.op(Some(9), Some(0), None);
+    fixture
+}
+
+/// The reference kernel over the resident plane against the optimized
+/// kernel whose streamed rounds and operand walk read `rows`, in lockstep
+/// through every round: equal round polynomials, `EqCycle` pins and output
+/// claims.
+fn assert_rows_parity<F: JoltField>(
+    resident: &TraceBackend,
+    rows: KernelRows<RegisterCycleRow>,
+    log_t: usize,
+    seed: u64,
+) {
+    let relation = RegistersReadWriteChecking::<F>::new(ReadWriteDimensions::new(
+        log_t,
+        REGISTER_ADDRESS_BITS,
+        log_t,
+        0,
+    ));
+    let r_cycle: Vec<F> = challenge_sequence(log_t, seed ^ 0xA5A5);
+    let claims = RegistersReadWriteInputClaims {
+        rd_write_value: F::zero(),
+        rs1_value: F::zero(),
+        rs2_value: F::zero(),
+    };
+    let points = RegistersReadWriteInputClaims {
+        rd_write_value: r_cycle.clone(),
+        rs1_value: r_cycle.clone(),
+        rs2_value: r_cycle,
+    };
+    let challenges = RegistersReadWriteChallenges {
+        gamma: F::from_u64(0x5EED_1234_5678_9ABC),
+    };
+    let inputs = || ProverInputs {
+        relation: &relation,
+        claims: &claims,
+        points: &points,
+        challenges: &challenges,
+    };
+    let mut reference = ReferenceBackend
+        .prepare(&mut ProofSession::default(), resident, inputs())
+        .unwrap();
+    let mut optimized = ReadWriteKernel::new(resident, rows, &inputs()).unwrap();
+    let input_claim = probe_input_claim(reference.as_mut());
+    assert_nontrivial(input_claim);
+    let round_challenges = challenge_sequence::<F>(log_t + REGISTER_ADDRESS_BITS, seed);
+    run_lockstep(
+        reference.as_mut(),
+        &mut optimized,
+        input_claim,
+        &round_challenges,
+    );
+    let output_points = relation
+        .derive_opening_points(&round_challenges, &points)
+        .unwrap();
+    reference
+        .validate_derived_tables(&relation, &points, &output_points, &challenges)
+        .unwrap();
+    optimized
+        .validate_derived_tables(&relation, &points, &output_points, &challenges)
+        .unwrap();
+    assert_eq!(
+        optimized.output_claims(&claims).unwrap(),
+        reference.output_claims(&claims).unwrap(),
+        "output claims, log_t {log_t}"
+    );
+}
+
+/// Rounds 0 and 1 and the operand walk read the witness's trace rows, with
+/// task boundaries and a padded proof suffix inside the domain, while the
+/// second bind collects from the same plane. At log_t 13 every walk spans
+/// several tasks.
+#[test]
+fn streamed_passes_over_trace_rows_match_reference() {
+    fn case<F: JoltField>(resident: &TraceBackend, log_t: usize) {
+        let rows = KernelRows::from_witness::<F>(resident, log_t, ROWS_LABEL).unwrap();
+        assert_rows_parity::<F>(resident, rows, log_t, 83);
+    }
+    for (log_t, cycles) in [(1, 2), (3, 7), (6, 63)] {
+        x0_fixture(cycles).with_plane(log_t, |resident| {
+            case::<Fr>(resident, log_t);
+            #[cfg(feature = "akita")]
+            case::<Prime128OffsetA7F7>(resident, log_t);
+        });
+    }
+    x0_fixture((1 << 13) - 3).with_plane(13, |resident| case::<Fr>(resident, 13));
+}
+
+fn prepare_on<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+) -> Result<(), KernelError<F>> {
+    let relation = RegistersReadWriteChecking::<F>::new(ReadWriteDimensions::new(
+        log_t,
+        REGISTER_ADDRESS_BITS,
+        log_t,
+        0,
+    ));
+    let r_cycle: Vec<F> = challenge_sequence(log_t, 3);
+    let claims = RegistersReadWriteInputClaims {
+        rd_write_value: F::zero(),
+        rs1_value: F::zero(),
+        rs2_value: F::zero(),
+    };
+    let points = RegistersReadWriteInputClaims {
+        rd_write_value: r_cycle.clone(),
+        rs1_value: r_cycle.clone(),
+        rs2_value: r_cycle,
+    };
+    let challenges = RegistersReadWriteChallenges {
+        gamma: F::from_u64(5),
+    };
+    OptimizedRegistersReadWrite
+        .prepare(
+            &mut ProofSession::default(),
+            witness,
+            ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            },
+        )
+        .map(drop)
+}
+
+/// A witness without a row handle, or with rows over another cycle domain,
+/// fails typed before anything is collected.
+#[test]
+fn preparation_refuses_missing_and_foreign_rows() {
+    structured_fixture(7).with_plane(3, |backend| {
+        assert!(matches!(
+            prepare_on::<Fr>(&SequentialRows(backend), 3),
+            Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
+        assert!(matches!(
+            prepare_on::<Fr>(backend, 4),
+            Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
+        ));
     });
 }
