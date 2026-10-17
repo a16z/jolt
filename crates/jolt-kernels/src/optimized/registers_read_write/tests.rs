@@ -21,11 +21,15 @@ use jolt_witness::{
     TraceBackend, WitnessError,
 };
 
-use super::sparse::{CyclePhase, Level1};
+use super::sparse::layout::SparseEntry;
+use super::sparse::{CyclePhase, Frontier, NextLevel};
 use super::test_support::{
     assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture, TraceFixture,
 };
-use super::{OptimizedRegistersReadWrite, ReadWriteKernel, RegisterCycleRow, ROWS_LABEL};
+use super::{
+    OptimizedRegistersReadWrite, ReadWriteKernel, RegisterCycleRow, REGISTER_FRONTIER_CAP,
+    ROWS_LABEL,
+};
 use crate::optimized::parity::{probe_input_claim, ExceptionalEq};
 use crate::optimized::support::KernelRows;
 use crate::{
@@ -275,27 +279,45 @@ fn structural_counts<F: JoltField>(resident: &TraceBackend, log_t: usize) -> Vec
         .collect()
 }
 
+/// The frontier cap that first admits round `depth`'s level: its structural
+/// entries and increments at their actual sizes, which every earlier level
+/// exceeds. Round `log_t` stands for never.
+fn cap_at_depth<F: JoltField>(structure: &[usize], log_t: usize, depth: usize) -> usize {
+    if depth == log_t {
+        return 0;
+    }
+    size_of::<SparseEntry<F, F>>() * structure[depth] + size_of::<F>() * ((1 << log_t) >> depth)
+}
+
 /// The reference kernel over the resident plane against the optimized
-/// kernel whose streamed rounds and operand walk read `rows`, in lockstep
-/// through every round: equal round polynomials, `EqCycle` pins and output
-/// claims. The round challenges start with `leading`. Round 0 counts the
-/// level-1 entries by definition, round 1 fills them with the increments,
-/// and every later cycle round keeps each level's entries until the final
-/// cycle bind releases them; a one-round domain keeps its pair instead.
+/// kernel over `rows` with frontier cap `cap`, in lockstep through every
+/// round: equal round polynomials, `EqCycle` pins and output claims. The
+/// cycle point is pseudo-random or `exceptional`, and the round challenges
+/// start with `leading`. Each streamed round counts the next level's entries
+/// by definition, and the last keeps its pair; the filled frontier holds
+/// each level's entries in its filling capacity until the final cycle bind
+/// releases it. Returns the filling round.
 fn assert_rows_parity<F: JoltField>(
     resident: &TraceBackend,
     rows: KernelRows<RegisterCycleRow>,
     log_t: usize,
     seed: u64,
     leading: &[F],
-) {
+    exceptional: Option<ExceptionalEq>,
+    cap: usize,
+) -> Option<usize> {
     let relation = RegistersReadWriteChecking::<F>::new(ReadWriteDimensions::new(
         log_t,
         REGISTER_ADDRESS_BITS,
         log_t,
         0,
     ));
-    let r_cycle: Vec<F> = challenge_sequence(log_t, seed ^ 0xA5A5);
+    let mut round_challenges = challenge_sequence::<F>(log_t + REGISTER_ADDRESS_BITS, seed);
+    round_challenges[..leading.len()].copy_from_slice(leading);
+    let r_cycle = exceptional.map_or_else(
+        || challenge_sequence(log_t, seed ^ 0xA5A5),
+        |case| case.point(log_t, round_challenges[0]),
+    );
     let claims = RegistersReadWriteInputClaims {
         rd_write_value: F::zero(),
         rs1_value: F::zero(),
@@ -318,13 +340,14 @@ fn assert_rows_parity<F: JoltField>(
     let mut reference = ReferenceBackend
         .prepare(&mut ProofSession::default(), resident, inputs())
         .unwrap();
-    let mut optimized = ReadWriteKernel::new(rows, &inputs()).unwrap();
+    let mut optimized = ReadWriteKernel::new(rows, &inputs(), cap).unwrap();
     let input_claim = probe_input_claim(reference.as_mut());
-    assert_nontrivial(input_claim);
-    let mut round_challenges = challenge_sequence::<F>(log_t + REGISTER_ADDRESS_BITS, seed);
-    round_challenges[..leading.len()].copy_from_slice(leading);
+    if exceptional.is_none() {
+        assert_nontrivial(input_claim);
+    }
     let structure = structural_counts::<F>(resident, log_t);
     let mut claim = input_claim;
+    let mut filled = None;
     for (round, &challenge) in round_challenges.iter().enumerate() {
         let bind = round
             .checked_sub(1)
@@ -334,28 +357,33 @@ fn assert_rows_parity<F: JoltField>(
         assert_eq!(
             expected.coefficients(),
             actual.coefficients(),
-            "round {round}"
+            "round {round}, cap {cap}"
         );
         match &optimized.cycle.0 {
-            CyclePhase::Seed {
-                level1: Some(Level1::Counts(counts)),
+            CyclePhase::Streamed(Frontier {
+                next: Some(NextLevel::Counts(counts)),
                 ..
-            } => assert_eq!((round, counts.iter().sum::<usize>()), (0, structure[1])),
-            CyclePhase::Seed {
-                level1: Some(Level1::Final(_)),
-                ..
-            } => assert_eq!((round, log_t), (0, 1)),
-            CyclePhase::Direct { entries, inc } if round < log_t => assert_eq!(
-                (entries.len(), inc.len()),
-                (structure[round], (1 << log_t) >> round),
+            }) => assert_eq!(
+                counts.iter().sum::<usize>(),
+                structure[round + 1],
                 "round {round}"
             ),
+            CyclePhase::Streamed(Frontier {
+                next: Some(NextLevel::Final(_)),
+                ..
+            }) => assert_eq!(round + 1, log_t),
+            CyclePhase::Direct { entries, inc } if round < log_t => {
+                let (_, capacity) = *filled.get_or_insert((round, structure[round]));
+                assert_eq!(
+                    (entries.len(), entries.capacity(), inc.len()),
+                    (structure[round], capacity, (1 << log_t) >> round),
+                    "round {round}, cap {cap}"
+                );
+            }
             CyclePhase::Direct { entries, inc } => {
                 assert_eq!((entries.capacity(), inc.len()), (0, 0), "round {round}");
             }
-            CyclePhase::Seed { level1: None, .. } | CyclePhase::Fill { .. } => {
-                unreachable!("round {round} left no pass result")
-            }
+            CyclePhase::Streamed(_) => unreachable!("round {round} left no pass result"),
         }
         claim = expected.evaluate(challenge);
     }
@@ -374,45 +402,93 @@ fn assert_rows_parity<F: JoltField>(
     assert_eq!(
         optimized.output_claims(&claims).unwrap(),
         reference.output_claims(&claims).unwrap(),
-        "output claims, log_t {log_t}"
+        "output claims, log_t {log_t}, cap {cap}"
     );
+    filled.map(|(round, _)| round)
 }
 
-/// Rounds 0 and 1 and the operand walk read the witness's trace rows, with
-/// task boundaries and a padded proof suffix inside the domain. At log_t 13
-/// every walk spans several tasks.
+/// Every round and the operand walk read the witness's trace rows, with task
+/// boundaries and a padded proof suffix inside the domain; the production cap
+/// fills round 1. At log_t 13 every walk spans several tasks, and filling at
+/// round 12 or never, the last rounds' pairs span two 4096-row visit
+/// callbacks.
 #[test]
 fn streamed_passes_over_trace_rows_match_reference() {
-    fn case<F: JoltField>(resident: &TraceBackend, log_t: usize) {
+    fn case<F: JoltField>(resident: &TraceBackend, log_t: usize, cap: usize) -> Option<usize> {
         let rows = KernelRows::from_witness::<F>(resident, log_t, ROWS_LABEL).unwrap();
-        assert_rows_parity::<F>(resident, rows, log_t, 83, &[]);
+        assert_rows_parity::<F>(resident, rows, log_t, 83, &[], None, cap)
     }
     for (log_t, cycles) in [(1, 2), (3, 7), (6, 63)] {
         x0_fixture(cycles).with_plane(log_t, |resident| {
-            case::<Fr>(resident, log_t);
+            let filled = (log_t > 1).then_some(1);
+            assert_eq!(case::<Fr>(resident, log_t, REGISTER_FRONTIER_CAP), filled);
             #[cfg(feature = "akita")]
-            case::<Prime128OffsetA7F7>(resident, log_t);
+            assert_eq!(
+                case::<Prime128OffsetA7F7>(resident, log_t, REGISTER_FRONTIER_CAP),
+                filled
+            );
         });
     }
-    x0_fixture((1 << 13) - 3).with_plane(13, |resident| case::<Fr>(resident, 13));
+    x0_fixture((1 << 13) - 3).with_plane(13, |resident| {
+        let structure = structural_counts::<Fr>(resident, 13);
+        assert_eq!(case::<Fr>(resident, 13, REGISTER_FRONTIER_CAP), Some(1));
+        for depth in [12, 13] {
+            let filled = case::<Fr>(resident, 13, cap_at_depth::<Fr>(&structure, 13, depth));
+            assert_eq!(filled, (depth < 13).then_some(depth));
+        }
+    });
 }
 
-/// Literal 0 and 1 challenges at each of the first five binds: the coefficient
-/// binds' 0/1 shortcuts, and filled entries whose coefficients vanish but
-/// which the structure keeps.
+/// Caps that fill the frontier at each LUT level (1 to 3), at the first field
+/// levels (4 and 6) or never; a cap one byte below round 2's level fills
+/// round 3.
 #[test]
-fn parity_literal_zero_and_one_bind_challenges() {
-    fn case<F: JoltField>(resident: &TraceBackend, log_t: usize) {
+fn streamed_frontier_matches_reference_at_every_crossover() {
+    fn case<F: JoltField>(resident: &TraceBackend) {
+        let structure = structural_counts::<F>(resident, 8);
+        let parity = |cap| {
+            let rows = KernelRows::from_witness::<F>(resident, 8, ROWS_LABEL).unwrap();
+            assert_rows_parity::<F>(resident, rows, 8, 97, &[], None, cap)
+        };
+        for depth in [1, 2, 3, 4, 6, 8] {
+            let filled = parity(cap_at_depth::<F>(&structure, 8, depth));
+            assert_eq!(filled, (depth < 8).then_some(depth), "depth {depth}");
+        }
+        assert_eq!(parity(cap_at_depth::<F>(&structure, 8, 2) - 1), Some(3));
+    }
+    x0_fixture(253).with_plane(8, |resident| {
+        case::<Fr>(resident);
+        #[cfg(feature = "akita")]
+        case::<Prime128OffsetA7F7>(resident);
+    });
+}
+
+/// Literal 0 and 1 challenges at each of the first five binds, at random,
+/// zero, one and zero-prefix cycle points, filling at rounds 1, 2 and 4 or
+/// never: the coefficient binds' 0/1 shortcuts, the streamed and filled
+/// `q(1)` passes, counting under a zero Gruen scalar, and filled entries
+/// whose coefficients vanish but which the structure keeps.
+#[test]
+fn zero_one_challenges_and_degenerate_points_keep_structural_entries() {
+    fn case<F: JoltField>(resident: &TraceBackend) {
+        let structure = structural_counts::<F>(resident, 6);
         let (zero, one) = (F::zero(), F::one());
-        for leading in [[zero, one, zero, one, one], [one, zero, one, zero, zero]] {
-            let rows = KernelRows::from_witness::<F>(resident, log_t, ROWS_LABEL).unwrap();
-            assert_rows_parity::<F>(resident, rows, log_t, 89, &leading);
+        for depth in [1, 2, 4, 6] {
+            for leading in [[zero, one, zero, one, one], [one, zero, one, zero, zero]] {
+                for exceptional in std::iter::once(None).chain(ExceptionalEq::ALL.map(Some)) {
+                    let rows = KernelRows::from_witness::<F>(resident, 6, ROWS_LABEL).unwrap();
+                    let cap = cap_at_depth::<F>(&structure, 6, depth);
+                    let filled =
+                        assert_rows_parity::<F>(resident, rows, 6, 89, &leading, exceptional, cap);
+                    assert_eq!(filled, (depth < 6).then_some(depth));
+                }
+            }
         }
     }
     structured_fixture(60).with_plane(6, |resident| {
-        case::<Fr>(resident, 6);
+        case::<Fr>(resident);
         #[cfg(feature = "akita")]
-        case::<Prime128OffsetA7F7>(resident, 6);
+        case::<Prime128OffsetA7F7>(resident);
     });
 }
 
@@ -477,47 +553,55 @@ fn preparation_refuses_missing_and_foreign_rows() {
             Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
         ));
         let rows = KernelRows::from_witness::<Fr>(backend, 3, ROWS_LABEL).unwrap();
-        let wide = with_inputs::<Fr, _>(33, (33, 0), |inputs| ReadWriteKernel::new(rows, &inputs));
+        let wide = with_inputs::<Fr, _>(33, (33, 0), |inputs| {
+            ReadWriteKernel::new(rows, &inputs, REGISTER_FRONTIER_CAP)
+        });
         assert!(matches!(wide, Err(KernelError::InvariantViolation { .. })));
     });
 }
 
-/// An out-of-domain register fails round 0's count; round-1 rows with fewer
-/// or more level-1 entries than round 0 counted fail round 1's fill before
-/// any entry is published.
+/// An out-of-domain register fails round 0's count; rows with fewer or more
+/// entries than the last pass counted fail the filling round before any entry
+/// is published, filling at round 1 or 2.
 #[test]
 fn row_failures_and_count_divergence_publish_no_entries() {
     fn case<F: JoltField>(resident: &TraceBackend, fewer: &TraceBackend, foreign: &TraceBackend) {
         let rows =
             |witness: &TraceBackend| KernelRows::from_witness::<F>(witness, 3, ROWS_LABEL).unwrap();
-        let new_kernel = |source| {
-            with_inputs::<F, _>(3, (3, 0), |inputs| ReadWriteKernel::new(source, &inputs)).unwrap()
+        let new_kernel = |source, cap| {
+            with_inputs::<F, _>(3, (3, 0), |inputs| {
+                ReadWriteKernel::new(source, &inputs, cap)
+            })
+            .unwrap()
         };
         let challenges = challenge_sequence::<F>(3 + REGISTER_ADDRESS_BITS, 11);
+        let prove = |kernel: &mut ReadWriteKernel<F>, round: usize| {
+            let bind = round.checked_sub(1).map(|previous| challenges[previous]);
+            kernel.prove_round(bind, round, F::zero())
+        };
         let missing = |result: Result<_, SumcheckError<F>>| {
             matches!(result, Err(SumcheckError::MissingEvaluationSource { .. }))
         };
-        let mut kernel = new_kernel(rows(foreign));
-        assert!(missing(kernel.prove_round(None, 0, F::zero())));
-        assert!(matches!(
-            kernel.cycle.0,
-            CyclePhase::Seed { level1: None, .. }
-        ));
-        for (counted, filled) in [(resident, rows(fewer)), (fewer, rows(resident))] {
-            let mut kernel = new_kernel(rows(counted));
-            let _ = kernel.prove_round(None, 0, F::zero()).unwrap();
-            kernel.rows = filled;
-            assert!(missing(kernel.prove_round(
-                Some(challenges[0]),
-                1,
-                F::zero()
-            )));
-            assert!(matches!(kernel.cycle.0, CyclePhase::Fill { .. }));
+        let mut kernel = new_kernel(rows(foreign), REGISTER_FRONTIER_CAP);
+        assert!(missing(prove(&mut kernel, 0)));
+        assert!(matches!(kernel.cycle.0, CyclePhase::Streamed(_)));
+        for (counted, filled) in [(resident, fewer), (fewer, resident)] {
+            let structure = structural_counts::<F>(counted, 3);
+            for depth in [1, 2] {
+                let cap = cap_at_depth::<F>(&structure, 3, depth);
+                let mut kernel = new_kernel(rows(counted), cap);
+                for round in 0..depth {
+                    let _ = prove(&mut kernel, round).unwrap();
+                }
+                kernel.rows = rows(filled);
+                assert!(missing(prove(&mut kernel, depth)), "depth {depth}");
+                assert!(matches!(kernel.cycle.0, CyclePhase::Streamed(_)));
+            }
         }
     }
     // `fewer` repeats `resident`'s first four cycles and leaves the next four
-    // empty, so each one's round-1 rows diverge from the other's count in
-    // one Gruen group only.
+    // empty, so filling either one's rows against the other's count
+    // diverges.
     let mut foreign = structured_fixture(5);
     foreign.unchecked_read(200);
     structured_fixture(7).with_plane(3, |resident| {

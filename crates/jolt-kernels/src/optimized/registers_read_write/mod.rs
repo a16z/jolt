@@ -4,11 +4,12 @@
 //! `ra = γ·rs1_ra + γ²·rs2_ra`. Gruen factoring handles cycle rounds;
 //! address rounds use three dense `K`-sized arrays.
 //!
-//! Cycle rounds 0 and 1 read the witness's row handle in task-partitioned
-//! serial visits that regenerate their entries. Round 0's pass also counts
-//! the half-cycle-domain entries, and round 1's pass fills exactly those
-//! field-coefficient entries and their increments, which later cycle binds
-//! compact in place; a one-round domain keeps only its pair. The two
+//! Cycle rounds read the witness's row handle in task-partitioned serial
+//! visits that regenerate their level's entries and count the next level's,
+//! until the first round from 1 on whose counted entries and increments fit
+//! `REGISTER_FRONTIER_CAP`: its pass fills exactly those field-coefficient
+//! entries and increments, which later cycle binds compact in place. With no
+//! such round, the final cycle bind merges the last round's pair. The two
 //! read-operand openings come from one more row walk.
 //!
 //! Supports cycle-first and full address-first binding.
@@ -86,11 +87,17 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             return Ok(Box::new(AddressFirstKernel::prepare(witness, &inputs)?));
         }
         let rows = KernelRows::from_witness(witness, log_t, ROWS_LABEL)?;
-        Ok(Box::new(ReadWriteKernel::new(rows, &inputs)?))
+        let kernel = ReadWriteKernel::new(rows, &inputs, REGISTER_FRONTIER_CAP)?;
+        Ok(Box::new(kernel))
     }
 }
 
 const ROWS_LABEL: &str = "register read/write trace rows";
+
+/// Bytes the register frontier's filled entries and increments may take:
+/// cycle rounds stream until the first level whose counted entries and
+/// increments fit.
+const REGISTER_FRONTIER_CAP: usize = 3 << 30;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ReadWriteKernel<F: JoltField> {
@@ -106,10 +113,12 @@ struct ReadWriteKernel<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteKernel<F> {
-    /// The cycle-first kernel: rounds 0–1 and the operand walk read `rows`.
+    /// The cycle-first kernel over `rows`; `cap` bounds the frontier's filled
+    /// entries and increments, production passing [`REGISTER_FRONTIER_CAP`].
     fn new(
         rows: KernelRows<RegisterCycleRow>,
         inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
+        cap: usize,
     ) -> Result<Self, KernelError<F>> {
         let dimensions = inputs.relation.register_dimensions();
         if dimensions.log_t() > u32::BITS as usize {
@@ -122,6 +131,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
         let cycle = CycleState::new(
             CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
             CoeffLut::new(vec![F::zero(), F::one()]),
+            cap,
         );
 
         Ok(Self {
@@ -144,14 +154,15 @@ impl<F: JoltField> ReadWriteKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let quadratic = self.cycle.quadratic(&self.rows, e_in, e_out)?;
+        let r = self.challenges.as_slice();
+        let quadratic = self.cycle.quadratic(&self.rows, e_in, e_out, r)?;
         // `checked_cubic` takes an infallible endpoint; carry a row error out.
         let mut endpoint = Ok(());
         let message =
             self.gruen
                 .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
                     self.cycle
-                        .q_at_one(&self.rows, e_in, e_out)
+                        .q_at_one(&self.rows, e_in, e_out, r)
                         .unwrap_or_else(|error| {
                             endpoint = Err(error);
                             F::zero()
@@ -170,7 +181,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
         self.challenges.push(r);
 
         if self.challenges.bound() < self.dimensions.log_t() {
-            self.cycle.bind(r)?;
+            self.cycle.bind(r);
         } else if self.challenges.bound() == self.dimensions.log_t() {
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
