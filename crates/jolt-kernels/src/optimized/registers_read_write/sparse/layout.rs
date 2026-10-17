@@ -1,7 +1,4 @@
-use core::{
-    cmp::Ordering,
-    mem::{size_of, MaybeUninit},
-};
+use core::{cmp::Ordering, mem::size_of};
 
 use jolt_field::{Accumulator, JoltField};
 
@@ -12,121 +9,6 @@ use crate::optimized::support::mul_0_optimized;
 pub(crate) trait Cell: Copy + Send + Sync + 'static {
     fn row(&self) -> usize;
     fn col(&self) -> u8;
-}
-
-/// Packed SoA metadata: 25 bytes instead of the aligned layout's 32.
-/// `row` fits `u32` because [`RegisterColumns::collect`] rejects wider
-/// domains.
-///
-/// WARNING: copy packed fields by value; references may be unaligned.
-///
-/// [`RegisterColumns::collect`]: crate::optimized::registers_read_write::rows::RegisterColumns::collect
-#[derive(Clone, Copy, Debug)]
-#[repr(C, packed)]
-pub(super) struct IndexedMeta {
-    pub(super) prev_val: u64,
-    pub(super) next_val: u64,
-    pub(super) row: u32,
-    pub(super) ra: u16,
-    pub(super) wa: u16,
-    pub(super) col: u8,
-}
-
-const _: () = assert!(size_of::<IndexedMeta>() == 25);
-
-impl Cell for IndexedMeta {
-    #[inline]
-    fn row(&self) -> usize {
-        self.row as usize
-    }
-
-    #[inline]
-    fn col(&self) -> u8 {
-        self.col
-    }
-}
-
-pub(super) type SoaRow<'a, F> = (&'a [F], &'a [IndexedMeta]);
-
-pub(super) type SoaSpareBlock<'a, F> =
-    (&'a mut [MaybeUninit<F>], &'a mut [MaybeUninit<IndexedMeta>]);
-
-#[inline]
-pub(super) fn load_indexed<F: JoltField>(
-    (vals, metas): SoaRow<'_, F>,
-    i: usize,
-) -> SparseEntry<F, LutIndex> {
-    let meta = metas[i];
-    SparseEntry {
-        val: vals[i],
-        prev_val: meta.prev_val,
-        next_val: meta.next_val,
-        row: meta.row as usize,
-        ra: LutIndex(meta.ra),
-        wa: LutIndex(meta.wa),
-        col: meta.col,
-    }
-}
-
-#[inline]
-pub(super) fn split_indexed<F: JoltField>(entry: SparseEntry<F, LutIndex>) -> (F, IndexedMeta) {
-    debug_assert!(u32::try_from(entry.row).is_ok());
-    (
-        entry.val,
-        IndexedMeta {
-            prev_val: entry.prev_val,
-            next_val: entry.next_val,
-            row: entry.row as u32,
-            ra: entry.ra.0,
-            wa: entry.wa.0,
-            col: entry.col,
-        },
-    )
-}
-
-pub(super) fn split_soa_pair_group<'a, F>(
-    vals: &'a [F],
-    metas: &'a [IndexedMeta],
-) -> (SoaRow<'a, F>, SoaRow<'a, F>) {
-    let odd_start = metas.partition_point(|meta| meta.row % 2 == 0);
-    (
-        (&vals[..odd_start], &metas[..odd_start]),
-        (&vals[odd_start..], &metas[odd_start..]),
-    )
-}
-
-#[inline]
-pub(super) fn merge_soa<F: JoltField>(
-    evens: SoaRow<'_, F>,
-    odds: SoaRow<'_, F>,
-    mut visit: impl FnMut(Option<SparseEntry<F, LutIndex>>, Option<SparseEntry<F, LutIndex>>),
-) {
-    let (mut i, mut j) = (0usize, 0usize);
-    while i < evens.1.len() && j < odds.1.len() {
-        match evens.1[i].col.cmp(&odds.1[j].col) {
-            Ordering::Equal => {
-                visit(Some(load_indexed(evens, i)), Some(load_indexed(odds, j)));
-                i += 1;
-                j += 1;
-            }
-            Ordering::Less => {
-                visit(Some(load_indexed(evens, i)), None);
-                i += 1;
-            }
-            Ordering::Greater => {
-                visit(None, Some(load_indexed(odds, j)));
-                j += 1;
-            }
-        }
-    }
-    while i < evens.1.len() {
-        visit(Some(load_indexed(evens, i)), None);
-        i += 1;
-    }
-    while j < odds.1.len() {
-        visit(None, Some(load_indexed(odds, j)));
-        j += 1;
-    }
 }
 
 pub(super) trait MatrixEntry<F: JoltField>: Cell {
@@ -204,7 +86,7 @@ impl SeedEntry {
         }
     }
 
-    /// Bind adjacent rows into the indexed layout (materializing `val`); a
+    /// Bind adjacent rows into LUT-index entries (materializing `val`); a
     /// missing side has zero `ra`/`wa`.
     #[inline]
     pub(super) fn bind<F: JoltField>(
@@ -461,25 +343,6 @@ impl RegisterCycleRow {
         out[..len].sort_unstable_by_key(|entry| entry.col);
         (out, len)
     }
-}
-
-/// Output length of merging two column-sorted rows.
-pub(super) fn merge_count<E: Cell>(evens: &[E], odds: &[E]) -> usize {
-    let mut i = 0;
-    let mut j = 0;
-    let mut produced = 0;
-    while i < evens.len() && j < odds.len() {
-        match evens[i].col().cmp(&odds[j].col()) {
-            Ordering::Equal => {
-                i += 1;
-                j += 1;
-            }
-            Ordering::Less => i += 1,
-            Ordering::Greater => j += 1,
-        }
-        produced += 1;
-    }
-    produced + (evens.len() - i) + (odds.len() - j)
 }
 
 /// Merge-bind adjacent column-sorted rows.

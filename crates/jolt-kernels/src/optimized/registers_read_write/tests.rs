@@ -178,9 +178,9 @@ fn parity_structured_even_log_t() {
 }
 
 #[test]
-fn parity_past_lut_saturation() {
-    // log_t = 6 runs three LUT-mode binds, the deref at the fourth, and
-    // two more cycle binds on direct field coefficients.
+fn parity_in_place_binds_after_promotion() {
+    // log_t = 6: the second bind promotes to field entries, then four cycle
+    // binds compact the entries and the increment in place.
     run_parity(structured_fixture(60), 6, 29);
 }
 
@@ -276,12 +276,13 @@ fn x0_fixture(cycles: usize) -> TraceFixture {
 /// The reference kernel over the resident plane against the optimized
 /// kernel whose streamed rounds and operand walk read `rows`, in lockstep
 /// through every round: equal round polynomials, `EqCycle` pins and output
-/// claims.
+/// claims. The round challenges start with `leading`.
 fn assert_rows_parity<F: JoltField>(
     resident: &TraceBackend,
     rows: KernelRows<RegisterCycleRow>,
     log_t: usize,
     seed: u64,
+    leading: &[F],
 ) {
     let relation = RegistersReadWriteChecking::<F>::new(ReadWriteDimensions::new(
         log_t,
@@ -315,7 +316,8 @@ fn assert_rows_parity<F: JoltField>(
     let mut optimized = ReadWriteKernel::new(resident, rows, &inputs()).unwrap();
     let input_claim = probe_input_claim(reference.as_mut());
     assert_nontrivial(input_claim);
-    let round_challenges = challenge_sequence::<F>(log_t + REGISTER_ADDRESS_BITS, seed);
+    let mut round_challenges = challenge_sequence::<F>(log_t + REGISTER_ADDRESS_BITS, seed);
+    round_challenges[..leading.len()].copy_from_slice(leading);
     run_lockstep(
         reference.as_mut(),
         &mut optimized,
@@ -346,7 +348,7 @@ fn assert_rows_parity<F: JoltField>(
 fn streamed_passes_over_trace_rows_match_reference() {
     fn case<F: JoltField>(resident: &TraceBackend, log_t: usize) {
         let rows = KernelRows::from_witness::<F>(resident, log_t, ROWS_LABEL).unwrap();
-        assert_rows_parity::<F>(resident, rows, log_t, 83);
+        assert_rows_parity::<F>(resident, rows, log_t, 83, &[]);
     }
     for (log_t, cycles) in [(1, 2), (3, 7), (6, 63)] {
         x0_fixture(cycles).with_plane(log_t, |resident| {
@@ -356,6 +358,25 @@ fn streamed_passes_over_trace_rows_match_reference() {
         });
     }
     x0_fixture((1 << 13) - 3).with_plane(13, |resident| case::<Fr>(resident, 13));
+}
+
+/// Literal 0 and 1 challenges at each of the first five binds, the second of
+/// which promotes to field entries: the field coefficient binds' 0/1
+/// shortcuts and promoted entries whose coefficients vanish.
+#[test]
+fn parity_literal_zero_and_one_bind_challenges() {
+    fn case<F: JoltField>(resident: &TraceBackend, log_t: usize) {
+        let (zero, one) = (F::zero(), F::one());
+        for leading in [[zero, one, zero, one, one], [one, zero, one, zero, zero]] {
+            let rows = KernelRows::from_witness::<F>(resident, log_t, ROWS_LABEL).unwrap();
+            assert_rows_parity::<F>(resident, rows, log_t, 89, &leading);
+        }
+    }
+    structured_fixture(60).with_plane(6, |resident| {
+        case::<Fr>(resident, 6);
+        #[cfg(feature = "akita")]
+        case::<Prime128OffsetA7F7>(resident, 6);
+    });
 }
 
 fn prepare_on<F: JoltField>(
