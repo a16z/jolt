@@ -12,9 +12,8 @@
 //! `ra_i(r_chunk_i, j) = eq(r_chunk_i, chunk_i(k_j)) = eq_table_i[chunk_i(k_j)]`
 //!
 //! — `T` lookups per committed chunk instead of a `K × T` grid walk, and no
-//! grid materialization at all. The per-cycle lookup indices are reclaimed
-//! from the [`ProofSession`] through `SharedInstructionRows` when the stage-5
-//! optimized kernel already collected them, or collected fresh otherwise.
+//! grid materialization at all. The per-cycle lookup indices are decoded
+//! block by block from the witness's row handle (`CycleRows`).
 //!
 //! Round messages use the Gruen split-eq factorization: `eq(r_cycle, ·)` is
 //! never materialized or bound as a `T`-sized table; each round computes the
@@ -34,9 +33,7 @@
 //! the fully-bound Gruen scalar must equal `derive_output_term(EqCycle)`,
 //! exactly as the naive tier's bound `EqCycle` table is checked.
 
-use std::sync::Arc;
-
-use super::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
+use super::instruction_read_raf::{CycleRows, LookupIndexChunks};
 use super::lazy_ra::{LazyFoldedRa, MATERIALIZE_BYTES};
 use super::support::{
     accumulate_product_grid, map_indices, pin_derived_term, product_grid_scratch_len,
@@ -56,7 +53,7 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 pub struct OptimizedInstructionRaVirtualization;
 
@@ -65,14 +62,15 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
 {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
     {
         let relation = inputs.relation;
-        let cycles = 1usize << relation.dimensions().log_t();
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+        let rows = witness.rows().ok_or(WitnessError::UnavailableView {
+            label: "stage-6b instruction rows",
+        })?;
         Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
             relation.dimensions().log_t(),
             relation.dimensions().num_virtual_ra_polys(),
@@ -80,7 +78,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
             relation.instruction_address(),
             relation.instruction_read_raf_cycle(),
             relation.committed_chunk_bits(),
-            rows,
+            CycleRows::Trace(rows),
             inputs.challenges.gamma,
             MATERIALIZE_BYTES,
         )?))
@@ -98,7 +96,7 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
     /// batch's first table pre-scaled by `γ^v` so the round loop needs no
-    /// batching multiplies — served lazily off the shared rows until the
+    /// batching multiplies — served lazily off the witness's rows until the
     /// byte-budgeted materialization instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
@@ -115,7 +113,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: CycleRows,
         gamma: F,
         materialize_bytes: usize,
     ) -> Result<Self, KernelError<F>> {
@@ -139,11 +137,11 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                          supports",
             });
         }
-        if rows.len() != 1 << log_t {
+        if rows.cycles() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: "stage-6b instruction rows".to_owned(),
                 expected: 1 << log_t,
-                got: rows.len(),
+                got: rows.cycles(),
             });
         }
         if instruction_read_raf_cycle.len() != log_t {
@@ -462,18 +460,18 @@ mod tests {
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
 
+    use crate::optimized::parity::{probe_input_claim, run_lockstep};
+    use crate::optimized::registers_read_write::test_support::structured_fixture;
     use crate::reference::instruction_read_raf::InstructionReadRafWitness;
     use crate::reference::views::{address_fold, eq_table};
     use crate::{
-        KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
+        KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs,
+        ReferenceBackend, SumcheckKernel,
     };
 
-    use super::super::instruction_read_raf::{
-        InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
-    };
+    use super::super::instruction_read_raf::{CycleRows, InstructionCycleRow};
     use super::super::lazy_ra::MATERIALIZE_BYTES;
     use super::super::support::MAX_GRID_FACTORS;
-    use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
@@ -551,17 +549,12 @@ mod tests {
     /// the reference `prepare` assembles it) vs the optimized kernel, same
     /// challenges: byte-equal round polynomials and output claims, and the
     /// optimized eq-scalar passes the derived-table cross-check.
-    ///
-    /// `with_session` builds the optimized kernel through the `prepare` slot
-    /// with pre-parked stage-5 rows instead of direct construction,
-    /// exercising the session take/park-back carry.
     fn assert_parity(
         log_t: usize,
         num_virtual: usize,
         per_virtual: usize,
         chunk_bits: usize,
         seed: u64,
-        with_session: bool,
     ) {
         assert_parity_with_gamma(
             log_t,
@@ -569,7 +562,6 @@ mod tests {
             per_virtual,
             chunk_bits,
             seed,
-            with_session,
             fr(0xFEED_5EED),
         );
     }
@@ -580,7 +572,6 @@ mod tests {
         per_virtual: usize,
         chunk_bits: usize,
         seed: u64,
-        with_session: bool,
         gamma: Fr,
     ) {
         assert_parity_case(
@@ -589,7 +580,6 @@ mod tests {
             per_virtual,
             chunk_bits,
             seed,
-            with_session,
             gamma,
             None,
             MATERIALIZE_BYTES,
@@ -606,12 +596,10 @@ mod tests {
         per_virtual: usize,
         chunk_bits: usize,
         seed: u64,
-        with_session: bool,
         gamma: Fr,
         exceptional: Option<ExceptionalEq>,
         materialize_bytes: usize,
     ) {
-        assert!(!with_session || materialize_bytes == MATERIALIZE_BYTES);
         let num_committed = num_virtual * per_virtual;
         let dimensions = InstructionRaVirtualizationDimensions::new(
             log_t,
@@ -679,50 +667,18 @@ mod tests {
         )
         .unwrap();
 
-        let mut optimized: Box<dyn SumcheckKernel<Fr, Relation = InstructionRaVirtualization<Fr>>> =
-            if with_session {
-                // The witness plane comes from an unrelated trace fixture: a
-                // missed take of the parked rows would stream that trace's
-                // lookup indices instead and fail the parity loop loudly.
-                let shape = FixtureShape { log_t, ram_k: 16 };
-                with_ram_fixture(shape, Vec::new(), |witness| {
-                    let mut session = ProofSession::default();
-                    session.park(SharedInstructionRows(Arc::new(pack(&rows))));
-                    let kernel = OptimizedInstructionRaVirtualization
-                        .prepare(
-                            &mut session,
-                            witness,
-                            ProverInputs {
-                                relation: &relation,
-                                claims: &input_claims,
-                                points: &input_points,
-                                challenges: &challenges,
-                            },
-                        )
-                        .unwrap();
-                    assert!(
-                        session.state::<SharedInstructionRows>().is_some()
-                            || session.state::<SharedInstructionRowsWeak>().is_some(),
-                        "prepare must park a shared-rows carry back for later consumers"
-                    );
-                    kernel
-                })
-            } else {
-                Box::new(
-                    OptimizedInstructionRaVirtualizationKernel::new(
-                        log_t,
-                        num_virtual,
-                        per_virtual,
-                        &instruction_address,
-                        &r_cycle,
-                        chunk_bits,
-                        Arc::new(pack(&rows)),
-                        gamma,
-                        materialize_bytes,
-                    )
-                    .unwrap(),
-                )
-            };
+        let mut optimized = OptimizedInstructionRaVirtualizationKernel::new(
+            log_t,
+            num_virtual,
+            per_virtual,
+            &instruction_address,
+            &r_cycle,
+            chunk_bits,
+            CycleRows::Collected(Arc::new(pack(&rows))),
+            gamma,
+            materialize_bytes,
+        )
+        .unwrap();
 
         let eq_cycle = eq_table(&r_cycle);
         let mut claim = fr(0);
@@ -791,12 +747,12 @@ mod tests {
     /// 128-bit instruction address).
     #[test]
     fn parity_production_geometry() {
-        assert_parity(4, 8, 4, 4, 42, false);
+        assert_parity(4, 8, 4, 4, 42);
     }
 
     #[test]
     fn parity_eight_factors_past_lazy_materialization() {
-        assert_parity(6, 4, 8, 4, 43, false);
+        assert_parity(6, 4, 8, 4, 43);
     }
 
     /// The product grid's factor bound is a construction error in every
@@ -813,7 +769,7 @@ mod tests {
                 &instruction_address,
                 &[fr(3), fr(5)],
                 1,
-                Arc::new(pack(&fixture_rows(log_t, 47))),
+                CycleRows::Collected(Arc::new(pack(&fixture_rows(log_t, 47)))),
                 fr(7),
                 MATERIALIZE_BYTES,
             );
@@ -830,14 +786,14 @@ mod tests {
 
     #[test]
     fn parity_small_odd_geometry() {
-        assert_parity(3, 3, 2, 2, 1337, false);
+        assert_parity(3, 3, 2, 2, 1337);
     }
 
     #[test]
     fn parity_past_lazy_materialization() {
         // log_t = 6: three lazy binds, dense materialization at the fourth
         // (`T/16` = 4 entries), then two plain multilinear binds.
-        assert_parity(6, 2, 2, 4, 7, false);
+        assert_parity(6, 2, 2, 4, 7);
     }
 
     /// A budget of `T/64` entries per dense table keeps the selectors lazy
@@ -861,7 +817,6 @@ mod tests {
                 per_virtual,
                 4,
                 59,
-                false,
                 fr(0xFEED_5EED),
                 exceptional,
                 materialize_bytes,
@@ -871,32 +826,68 @@ mod tests {
 
     #[test]
     fn parity_zero_batching_challenge_preserves_all_openings() {
-        assert_parity_with_gamma(6, 2, 2, 4, 7, false, fr(0));
-        assert_parity_with_gamma(3, 3, 1, 2, 1337, false, fr(0));
+        assert_parity_with_gamma(6, 2, 2, 4, 7, fr(0));
+        assert_parity_with_gamma(3, 3, 1, 2, 1337, fr(0));
     }
 
-    /// Through the `prepare` slot with pre-parked stage-5 rows: the session
-    /// take/park-back carry serves this kernel the same rows and parks them
-    /// back for the stage-6a/6b booleanity consumers.
+    /// The production `prepare` on a real trace against the reference: 300
+    /// rows padded to 2^9, lazy rounds through materialization.
     #[test]
-    fn parity_with_carried_session_rows() {
-        assert_parity(4, 8, 4, 4, 42, true);
+    fn trace_rows_match_reference() {
+        let log_t = 9;
+        structured_fixture(300).with_plane(log_t, |resident| {
+            let (num_virtual, per_virtual, chunk_bits) = (8, 4, 4);
+            let dimensions = InstructionRaVirtualizationDimensions::new(
+                log_t,
+                NonZeroUsize::new(num_virtual).unwrap(),
+                NonZeroUsize::new(per_virtual).unwrap(),
+            )
+            .unwrap();
+            let relation = InstructionRaVirtualization::<Fr>::new(
+                dimensions,
+                (0..128).map(|i| fr(300 + 13 * i)).collect(),
+                (0..log_t).map(|i| fr(7000 + 29 * i as u64)).collect(),
+                chunk_bits,
+            );
+            let claims = InstructionRaVirtualizationInputClaims {
+                instruction_ra: vec![fr(0); num_virtual],
+            };
+            let points = InstructionRaVirtualizationInputClaims {
+                instruction_ra: vec![Vec::new(); num_virtual],
+            };
+            let challenges = InstructionRaVirtualizationChallenges { gamma: fr(31) };
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+            let mut reference = ReferenceBackend
+                .prepare(&mut ProofSession::default(), resident, inputs())
+                .unwrap();
+            let mut optimized = OptimizedInstructionRaVirtualization
+                .prepare(&mut ProofSession::default(), resident, inputs())
+                .unwrap();
+            let claim = probe_input_claim(reference.as_mut());
+            let sumcheck_point: Vec<Fr> = (0..log_t).map(challenge).collect();
+            run_lockstep(
+                reference.as_mut(),
+                optimized.as_mut(),
+                claim,
+                &sumcheck_point,
+            );
+            assert_eq!(
+                reference.output_claims(&claims).unwrap(),
+                optimized.output_claims(&claims).unwrap()
+            );
+        });
     }
+
     #[test]
     fn parity_exceptional_eq_in_lazy_and_dense_virtualization() {
         for factors in [1usize, 2, 4] {
             for case in ExceptionalEq::ALL {
-                assert_parity_case(
-                    6,
-                    2,
-                    factors,
-                    2,
-                    277,
-                    true,
-                    fr(31),
-                    Some(case),
-                    MATERIALIZE_BYTES,
-                );
+                assert_parity_case(6, 2, factors, 2, 277, fr(31), Some(case), MATERIALIZE_BYTES);
             }
         }
     }
