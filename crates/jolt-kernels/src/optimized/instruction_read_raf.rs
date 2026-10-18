@@ -32,9 +32,12 @@
 //! - **Split-eq flag claims**: the output lookup-table/RAF flag sums use the
 //!   `E_hi ⊗ E_lo` factorization of `eq(r_cycle, ·)` instead of a `T`-sized
 //!   eq table.
-//! - **Block-decoded rows**: every pass decodes the packed rows of its own
-//!   cycle range from the witness's row handle, one block at a time into one
-//!   reused buffer; stage 5 collects no row vector.
+//! - **Block-read rows**: every pass reads its own cycle range from the
+//!   witness's row handle, one block at a time into one reused buffer;
+//!   stage 5 collects no row vector. The address phases and the claim-byte
+//!   fill extract only the relation's per-cycle witness
+//!   (`InstructionReadRafWitness`); the cycle rounds decode packed rows
+//!   through the reader the late one-hot kernels share.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -65,6 +68,7 @@ use super::support::{
     accumulate_product_grid, map_indices, map_reduce_chunks, product_grid_scratch_len,
     split_at_tasks, task_ranges, GruenRoundMessage, RoundProgress,
 };
+use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -211,8 +215,8 @@ impl WideInstructionRow {
     }
 }
 
-/// The per-cycle rows a pass reads: the witness's row handle, decoded block
-/// by block (every production reader), or a collected vector (tests' rows
+/// The per-cycle rows a pass reads: the witness's row handle, read block by
+/// block (every production reader), or a collected vector (tests' rows
 /// that no trace produces, and the empty value the read-RAF handoff leaves
 /// behind).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -250,6 +254,35 @@ impl CycleRows {
                 })
             }
             Self::Collected(rows) => visit_resident(rows, range, block, visit),
+        }
+    }
+
+    /// [`Self::visit_blocks`] over the relation's per-cycle witness only: a
+    /// trace visit hands its bundle buffer to `visit` with no PC, RAM-address
+    /// or fused-increment extraction and no packed-row copy. `visit` must not
+    /// enter Rayon.
+    fn visit_read_raf_blocks(
+        &self,
+        range: Range<usize>,
+        block: usize,
+        mut visit: impl FnMut(usize, &[InstructionReadRafWitness]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        match self {
+            Self::Trace(rows) => {
+                rows.visit_bundles::<InstructionReadRafWitness>(range, block, visit)
+            }
+            Self::Collected(rows) => {
+                let mut witnesses = Vec::with_capacity(block.min(range.len()));
+                visit_resident(rows, range, block, |first, packed| {
+                    witnesses.clear();
+                    witnesses.extend(packed.iter().map(|row| InstructionReadRafWitness {
+                        lookup_index: LookupIndex(row.lookup_index()),
+                        table_index: TableIndex(row.table_index()),
+                        raf_flag: InstructionRafFlag(row.raf_flag()),
+                    }));
+                    visit(first, &witnesses)
+                })
+            }
         }
     }
 }
@@ -553,9 +586,9 @@ struct ScanBlock {
 }
 
 impl ScanBlock {
-    /// Rejects a row whose `table_index()` is not below
+    /// Rejects a row whose `table_index` is not below
     /// `LookupTableKind::COUNT`: its class would index `starts` out of bounds.
-    fn new(rows: &[InstructionCycleRow]) -> Result<Self, WitnessError> {
+    fn new(rows: &[InstructionReadRafWitness]) -> Result<Self, WitnessError> {
         let mut starts = [0u16; SCAN_CLASSES + 1];
         for row in rows {
             let Some(count) = starts.get_mut(Self::class(row) + 1) else {
@@ -579,8 +612,8 @@ impl ScanBlock {
         Ok(Self { starts, offsets })
     }
 
-    fn class(row: &InstructionCycleRow) -> usize {
-        2 * row.table_index().map_or(0, |table| table + 1) + usize::from(row.raf_flag())
+    fn class(row: &InstructionReadRafWitness) -> usize {
+        2 * row.table_index.0.map_or(0, |table| table + 1) + usize::from(row.raf_flag.0)
     }
 }
 
@@ -732,7 +765,7 @@ impl<F: JoltField> PhaseScan<'_, F> {
         let mut slots: Vec<ScanSlot<F>> = ranges.iter().map(|_| ScanSlot::new()).collect();
         let tasks = split_at_tasks([u_evals], &ranges, |cycle| cycle);
         let scan = |((range, [u_evals]), slot): ((&Range<usize>, [&mut [F]; 1]), &mut _)| {
-            rows.visit_blocks(range.clone(), SCAN_BLOCK, |first, block| {
+            rows.visit_read_raf_blocks(range.clone(), SCAN_BLOCK, |first, block| {
                 let start = first - range.start;
                 self.scan_block(block, &mut u_evals[start..start + block.len()], slot)
             })
@@ -760,13 +793,13 @@ impl<F: JoltField> PhaseScan<'_, F> {
     /// accumulates the class runs.
     fn scan_block(
         &self,
-        rows: &[InstructionCycleRow],
+        rows: &[InstructionReadRafWitness],
         u_evals: &mut [F],
         slot: &mut ScanSlot<F>,
     ) -> Result<(), WitnessError> {
         if let Some((shift, v_prev)) = self.condense {
             for (row, u) in rows.iter().zip(u_evals.iter_mut()) {
-                *u *= v_prev[((row.lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                *u *= v_prev[((row.lookup_index.0 >> shift) as usize) & (CHUNK_SIZE - 1)];
             }
         }
         let block = ScanBlock::new(rows)?;
@@ -795,7 +828,7 @@ impl<F: JoltField> PhaseScan<'_, F> {
         &self,
         raf_flag: bool,
         offsets: &[u16],
-        rows: &[InstructionCycleRow],
+        rows: &[InstructionReadRafWitness],
         u_evals: &[F],
         raf: &mut RafScan<F>,
         mut table_scan: Option<&mut TableScan<F>>,
@@ -807,7 +840,7 @@ impl<F: JoltField> PhaseScan<'_, F> {
             ..
         } = self;
         for &offset in offsets {
-            let lookup_index = rows[usize::from(offset)].lookup_index();
+            let lookup_index = rows[usize::from(offset)].lookup_index.0;
             let u = u_evals[usize::from(offset)];
             let chunk = ((lookup_index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
             let suffix_bits = lookup_index & suffix_mask;
@@ -1298,10 +1331,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         let tasks = split_at_tasks([claim_columns.as_mut_slice()], &ranges, |cycle| cycle);
         let rows = &self.rows;
         let fill = |(range, [claims]): (&Range<usize>, [&mut [u8]; 1])| {
-            rows.visit_blocks(range.clone(), SCAN_BLOCK, |first, block| {
+            rows.visit_read_raf_blocks(range.clone(), SCAN_BLOCK, |first, block| {
                 for (claim, row) in claims[first - range.start..].iter_mut().zip(block) {
-                    let table = row.table_index().map_or(0, |index| index as u8 + 1);
-                    *claim = table | (u8::from(row.raf_flag()) << 7);
+                    let table = row.table_index.0.map_or(0, |index| index as u8 + 1);
+                    *claim = table | (u8::from(row.raf_flag.0) << 7);
                 }
                 Ok(())
             })
