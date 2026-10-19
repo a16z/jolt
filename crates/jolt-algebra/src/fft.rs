@@ -61,6 +61,7 @@
 //! and [`SmoothDomain::rs_extend_batch`].
 
 use crate::{AlgebraError, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use std::fmt::Debug;
 
 /// Field with a precomputed primitive root of a supported smooth subgroup.
 ///
@@ -601,7 +602,7 @@ pub struct SmoothDomain<F> {
     inv_stages: Vec<StageData<F>>,
 }
 
-impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
+impl<F: Field + Debug> SmoothDomain<F> {
     /// Allocate reusable scratch for this domain's transforms.
     pub fn workspace(&self) -> FftWorkspace<F> {
         FftWorkspace::new(self.n)
@@ -885,7 +886,7 @@ fn is_primitive_nth_root<F: Field>(omega: F, n: usize, distinct_factors: &[usize
 }
 
 /// Free-function wrapper around [`SmoothDomain::rs_extend_batch`].
-pub fn rs_extend_fft<F: Field + std::fmt::Debug>(
+pub fn rs_extend_fft<F: Field + Debug>(
     evals: &[F],
     domain_k: &SmoothDomain<F>,
     omega_n: F,
@@ -908,7 +909,6 @@ mod test_support {
     //! `smooth_omega_matches_search` per-prime tests as a drift guard
     //! on the hardcoded literal.
     use super::*;
-    use std::fmt::Debug;
     use std::ops::{AddAssign, MulAssign};
 
     pub(super) use super::find_primitive_nth_root;

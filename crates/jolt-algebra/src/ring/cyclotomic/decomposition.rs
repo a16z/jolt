@@ -1,4 +1,5 @@
 use super::*;
+use std::marker::PhantomData;
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
@@ -117,7 +118,7 @@ pub struct BalancedDecomposePow2Params<F: Field + CanonicalEncoding> {
     bias_nonnegative: [u64; 3],
     /// `H - q mod 2^192`, added to residues `> threshold`.
     bias_negative: [u64; 3],
-    field: std::marker::PhantomData<F>,
+    field: PhantomData<F>,
 }
 
 impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
@@ -173,7 +174,7 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
             threshold: decompose_centering_threshold(levels, log_basis, q),
             bias_nonnegative,
             bias_negative: [negative0, negative1, negative2],
-            field: std::marker::PhantomData,
+            field: PhantomData,
         }
     }
 

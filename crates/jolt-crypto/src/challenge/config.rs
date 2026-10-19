@@ -240,7 +240,7 @@ impl SparseChallengeConfig {
     pub fn log2_support_bits<const D: usize>(&self) -> f64 {
         fn log2_binom(n: usize, k: usize) -> f64 {
             if k > n {
-                return f64::NEG_INFINITY;
+                return -f64::INFINITY;
             }
             (1..=k)
                 .map(|i| ((n - k + i) as f64 / i as f64).log2())
@@ -248,7 +248,7 @@ impl SparseChallengeConfig {
         }
         let w = self.weight();
         if w > D {
-            return f64::NEG_INFINITY;
+            return -f64::INFINITY;
         }
         log2_binom(D, w) + log2_binom(w, self.count_pm1) + w as f64
     }

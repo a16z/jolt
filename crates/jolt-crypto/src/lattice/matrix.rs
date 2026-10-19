@@ -7,7 +7,7 @@
 use crate::CryptoError;
 use jolt_field::parallel::*;
 use jolt_field::{field_modulus_be_bytes, CanonicalEncoding, Field};
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, Error, RngCore};
 use serde::{Deserialize, Serialize};
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
@@ -211,7 +211,7 @@ impl RngCore for SetupSeedPageXof {
         XofReader::read(&mut self.reader, dest);
     }
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
         self.fill_bytes(dest);
         Ok(())
     }

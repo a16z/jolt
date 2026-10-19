@@ -10,6 +10,7 @@ use crate::challenge::sampler::position_sample::{
 };
 use crate::challenge::sampler::xof::XofCursor;
 use crate::challenge::SparseChallenge;
+use crate::CryptoError;
 
 /// Stack chunk for random sign bytes.
 const SIGN_BYTE_CHUNK: usize = 64;
@@ -45,7 +46,7 @@ impl SignedSparseScratch {
         d: usize,
         count_pm1: usize,
         count_pm2: usize,
-    ) -> Result<(), crate::CryptoError> {
+    ) -> Result<(), CryptoError> {
         debug_assert_eq!(self.total, count_pm1 + count_pm2);
         sample_distinct_positions_into(cursor, d, &mut self.positions, &mut self.position_scratch)?;
         self.coeffs.resize(self.total, 0);

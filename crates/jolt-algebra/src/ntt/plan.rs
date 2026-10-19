@@ -1,5 +1,7 @@
 //! Host kernel selection for one prepared CRT+NTT parameter set.
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use super::avx::AvxNttMode;
 use super::prime::PrimeWidth;
 
 /// Host kernels selected once when a CRT+NTT parameter set is prepared.
@@ -43,7 +45,7 @@ impl NttKernelPlan {
         {
             if matches!(core::mem::size_of::<W>(), 2 | 4) && super::avx::use_avx2_transform_ntt() {
                 return match super::avx::avx_ntt_mode() {
-                    Some(super::avx::AvxNttMode::Avx512) => Self(NttKernelKind::Avx512),
+                    Some(AvxNttMode::Avx512) => Self(NttKernelKind::Avx512),
                     _ => Self(NttKernelKind::Avx2),
                 };
             }
@@ -74,10 +76,10 @@ impl NttKernelPlan {
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    pub(crate) const fn x86_pointwise_mode(self) -> Option<super::avx::AvxNttMode> {
+    pub(crate) const fn x86_pointwise_mode(self) -> Option<AvxNttMode> {
         match self.0 {
-            NttKernelKind::Avx2 => Some(super::avx::AvxNttMode::Avx2),
-            NttKernelKind::Avx512 => Some(super::avx::AvxNttMode::Avx512),
+            NttKernelKind::Avx2 => Some(AvxNttMode::Avx2),
+            NttKernelKind::Avx512 => Some(AvxNttMode::Avx512),
             NttKernelKind::Scalar | NttKernelKind::Neon => None,
         }
     }

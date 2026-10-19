@@ -10,6 +10,8 @@
 //! - inverse-cyclic NTT using `omega^{-1}`
 //! - post-untwist by `psi^{-i}`
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use super::avx::MontQuotients;
 use super::prime::{pow_mod, MontCoeff, NttPrime, PrimeWidth};
 use super::NttKernelPlan;
 
@@ -57,7 +59,7 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     pub(crate) inv_twiddles: [MontCoeff<W>; D],
     /// Montgomery quotients of the constant tables for the x86 transforms.
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    pub(crate) quotients: super::avx::MontQuotients<W, D>,
+    pub(crate) quotients: MontQuotients<W, D>,
     /// `D^{-1} mod p` in Montgomery form, used for inverse NTT final scaling.
     pub(crate) d_inv: MontCoeff<W>,
     /// Number of active stages in the twiddle arrays (`log2(D)`).
@@ -147,7 +149,7 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
         }
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let quotients = super::avx::MontQuotients::compute(
+        let quotients = MontQuotients::compute(
             prime,
             &fwd_twiddles,
             &inv_twiddles,
