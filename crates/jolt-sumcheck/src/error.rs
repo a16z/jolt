@@ -1,9 +1,15 @@
+use core::convert::Infallible;
+
 use jolt_field::Field;
 use jolt_transcript::TranscriptError;
 
+/// A sumcheck failure: an invariant violation, a rejected proof, or a failure
+/// `K` of the kernel or round context driving a single-instance sumcheck.
+/// Retrying with the same input fails again. The batched engine and the
+/// uni-skip provers keep `K = Infallible`.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum SumcheckError<F: Field> {
+pub enum SumcheckError<F: Field, K = Infallible> {
     /// The proof's transcript rejected a round message.
     #[error("sumcheck transcript: {0}")]
     Transcript(#[from] TranscriptError),
@@ -207,4 +213,155 @@ pub enum SumcheckError<F: Field> {
         /// Number of challenges supplied.
         got: usize,
     },
+
+    /// [`SumcheckDomainSpec::EqFactored`](crate::SumcheckDomainSpec::EqFactored)
+    /// names a family of round domains; the weights need the round's `τ`
+    /// ([`EqFactoredRound`](crate::EqFactoredRound)).
+    #[error("equality-factored round weights need the round's tau")]
+    EqFactoredRoundWithoutTau,
+
+    /// A single-instance sumcheck declared degree bound zero.
+    #[error("sumcheck degree bound must be at least 1")]
+    ZeroDegreeBound,
+
+    /// The prover kernel's round count disagrees with the instance.
+    #[error("sumcheck instance declares {expected} rounds, prover reports {got}")]
+    RoundCountMismatch { expected: usize, got: usize },
+
+    /// An equality-factored instance's equality point has the wrong length.
+    #[error("equality point has {got} coordinates for {expected} rounds")]
+    EqualityPointLengthMismatch { expected: usize, got: usize },
+
+    /// A round index does not fit the `u32` of a transcript site.
+    #[error("sumcheck round {round} does not fit a transcript site")]
+    RoundIndexOverflow { round: usize },
+
+    /// The kernel or the round context failed.
+    #[error("sumcheck kernel: {0}")]
+    Kernel(K),
+}
+
+impl<F: Field> SumcheckError<F, Infallible> {
+    /// Embeds a kernel-free error into a driver whose kernel fails with `K`.
+    pub fn widen<K>(self) -> SumcheckError<F, K> {
+        match self {
+            Self::Transcript(error) => SumcheckError::Transcript(error),
+            Self::RoundCheckFailed {
+                round,
+                expected,
+                actual,
+            } => SumcheckError::RoundCheckFailed {
+                round,
+                expected,
+                actual,
+            },
+            Self::DegreeBoundExceeded { got, max } => {
+                SumcheckError::DegreeBoundExceeded { got, max }
+            }
+            Self::ZeroBatchDegree { max_num_vars } => {
+                SumcheckError::ZeroBatchDegree { max_num_vars }
+            }
+            Self::BatchMemberRoundsOutOfRange {
+                member,
+                rounds,
+                max_num_vars,
+            } => SumcheckError::BatchMemberRoundsOutOfRange {
+                member,
+                rounds,
+                max_num_vars,
+            },
+            Self::BatchPaddingExponentOutOfRange { member, exponent } => {
+                SumcheckError::BatchPaddingExponentOutOfRange { member, exponent }
+            }
+            Self::BatchMemberWindowOverflow {
+                member,
+                offset,
+                rounds,
+            } => SumcheckError::BatchMemberWindowOverflow {
+                member,
+                offset,
+                rounds,
+            },
+            Self::DegreeOverflow { degree } => SumcheckError::DegreeOverflow { degree },
+            Self::RoundSumCoefficientCountMismatch {
+                round,
+                expected,
+                got,
+            } => SumcheckError::RoundSumCoefficientCountMismatch {
+                round,
+                expected,
+                got,
+            },
+            Self::InvalidIntegerDomain { domain_size } => {
+                SumcheckError::InvalidIntegerDomain { domain_size }
+            }
+            Self::EmptyRoundCoefficients => SumcheckError::EmptyRoundCoefficients,
+            Self::MissingEvaluationSource { kind } => {
+                SumcheckError::MissingEvaluationSource { kind }
+            }
+            Self::ZeroCommitmentCapacity => SumcheckError::ZeroCommitmentCapacity,
+            Self::RoundExceedsCommitmentCapacity {
+                coefficients,
+                capacity,
+            } => SumcheckError::RoundExceedsCommitmentCapacity {
+                coefficients,
+                capacity,
+            },
+            Self::BatchMemberCountMismatch { expected, got } => {
+                SumcheckError::BatchMemberCountMismatch { expected, got }
+            }
+            Self::BatchMemberRoundsMismatch {
+                member,
+                expected,
+                got,
+            } => SumcheckError::BatchMemberRoundsMismatch {
+                member,
+                expected,
+                got,
+            },
+            Self::BatchMemberWindowOutOfRange {
+                member,
+                offset,
+                rounds,
+                max_num_vars,
+            } => SumcheckError::BatchMemberWindowOutOfRange {
+                member,
+                offset,
+                rounds,
+                max_num_vars,
+            },
+            Self::MissingRoundMessage { member } => SumcheckError::MissingRoundMessage { member },
+            Self::RoundMemberIndexOutOfRange { member, members } => {
+                SumcheckError::RoundMemberIndexOutOfRange { member, members }
+            }
+            Self::BatchedPointRangeOverflow { offset, num_vars } => {
+                SumcheckError::BatchedPointRangeOverflow { offset, num_vars }
+            }
+            Self::BatchedPointOutOfRange {
+                offset,
+                num_vars,
+                total,
+            } => SumcheckError::BatchedPointOutOfRange {
+                offset,
+                num_vars,
+                total,
+            },
+            Self::IntegerDomainNotDistinct { domain_size } => {
+                SumcheckError::IntegerDomainNotDistinct { domain_size }
+            }
+            Self::WrongNumberOfChallenges { expected, got } => {
+                SumcheckError::WrongNumberOfChallenges { expected, got }
+            }
+            Self::EqFactoredRoundWithoutTau => SumcheckError::EqFactoredRoundWithoutTau,
+            Self::ZeroDegreeBound => SumcheckError::ZeroDegreeBound,
+            Self::RoundCountMismatch { expected, got } => {
+                SumcheckError::RoundCountMismatch { expected, got }
+            }
+            Self::EqualityPointLengthMismatch { expected, got } => {
+                SumcheckError::EqualityPointLengthMismatch { expected, got }
+            }
+            Self::RoundIndexOverflow { round } => SumcheckError::RoundIndexOverflow { round },
+            Self::Kernel(never) => match never {},
+        }
+    }
 }

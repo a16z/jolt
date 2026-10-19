@@ -35,8 +35,13 @@ pub struct EqFactoredRound<E> { pub tau: E }
 impl<E: Field> SumcheckDomain<E> for EqFactoredRound<E> { /* weights [1, τ, τ, …] */ }
 ```
 
-`SumcheckDomainSpec` gains the matching variant. Recovery of the omitted
-coefficient stays with jolt-poly (`CompressedPoly`, `OmittedConstantPoly`).
+`SumcheckDomainSpec` gains the matching variant, a unit `EqFactored`: τ
+differs per round, so the spec names the family and
+`EqFactoredRound { tau: equality_point[i] }` supplies round i's weights; asking
+the spec itself for weights is a typed error. Recovery of the omitted
+coefficient stays with jolt-poly (`CompressedPoly`, and
+`OmittedConstantPoly::{constant_from_claim, evaluate_from_claim}` for
+q0 = claim − τ · (q(1) − q0)).
 
 Two facts the drivers and masking rely on:
 
@@ -142,6 +147,16 @@ pub fn verify_single<F, E, K, C>(/* mirror */) -> Result<SingleReplay<E>, Sumche
 
 `τ_i = equality_point[i]` matches `GruenSplitEq::current_tau` (checked against
 Akita); M2b pins it with a byte-identity test.
+
+The `E: ExtField<F>` split runs Jolt with `F = E = Fr`, so `Fr` implements
+`ExtField<Fr>` with degree 1, as every `PseudoMersenne` field already does. A
+blanket reflexive impl over all fields is not possible: a type with a second
+`ExtField` impl (`F192: ExtField<F64>`, `FpExt2<F, _>: ExtField<F>`) would
+make `T::DEGREE` ambiguous wherever it is named concretely.
+
+M2a lands `prove_single` without the `recorder` parameter, writing the input
+claim and round coefficients to the context's transcript directly; M3a adds
+the parameter once `SumcheckRecorder` has its `Error`, with the same bytes.
 
 ## 2. Private messages (M3a)
 

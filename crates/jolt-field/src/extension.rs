@@ -72,6 +72,50 @@ pub trait ExtField<F: Field>: Field {
     }
 }
 
+/// Implements `ExtField<$ty>` for `$ty`, a field as its own degree-1
+/// extension, so code generic over a base field and its extension runs on a
+/// single field. `PseudoMersenne` fields get this generically; a blanket impl
+/// over every field would make `T::DEGREE` ambiguous for any `T` that also
+/// extends another field.
+macro_rules! reflexive_ext_field {
+    ($ty:ty) => {
+        impl $crate::ExtField<$ty> for $ty {
+            const DEGREE: usize = 1;
+
+            #[inline]
+            fn lift_base(x: $ty) -> Self {
+                x
+            }
+
+            #[inline]
+            fn mul_base(self, x: $ty) -> Self {
+                self * x
+            }
+
+            #[inline]
+            fn from_base_fn<G>(mut f: G) -> Self
+            where
+                G: FnMut(usize) -> $ty,
+            {
+                f(0)
+            }
+
+            #[inline]
+            fn base_coefficient(&self, index: usize) -> $ty {
+                assert_eq!(index, 0);
+                *self
+            }
+
+            #[inline]
+            fn frobenius_pow(self, _power: usize) -> Self {
+                self
+            }
+        }
+    };
+}
+#[cfg(feature = "bn254")]
+pub(crate) use reflexive_ext_field;
+
 /// Deferred-reduction extension-times-base multiply.
 ///
 /// Scales `self` by a base scalar `x` into [`Unreduced::Product`] without

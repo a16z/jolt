@@ -48,7 +48,12 @@ pub trait SumcheckDomain<F: Field> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SumcheckDomainSpec {
     BooleanHypercube,
-    CenteredInteger { domain_size: usize },
+    CenteredInteger {
+        domain_size: usize,
+    },
+    /// Round `i` is [`EqFactoredRound`] at `τ_i`, the `i`-th coordinate of
+    /// the instance's equality point, which this spec does not carry.
+    EqFactored,
 }
 
 impl SumcheckDomainSpec {
@@ -67,6 +72,7 @@ where
             Self::CenteredInteger { domain_size } => {
                 CenteredIntegerDomain::new(domain_size).round_sum_coefficients(degree)
             }
+            Self::EqFactored => Err(SumcheckError::EqFactoredRoundWithoutTau),
         }
     }
 }
@@ -81,6 +87,24 @@ where
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
         Ok(core::iter::once(F::from_u64(2))
             .chain(core::iter::repeat_n(F::one(), degree))
+            .collect())
+    }
+}
+
+/// One round of an equality-factored sumcheck, `s(X) = eq(τ, X) · q(X)`,
+/// checked on `q`: `(1 − τ) q(0) + τ q(1) = claim`, i.e. weights
+/// `[1, τ, τ, …]` on `q`'s coefficients. The claim is normalized: it is the
+/// previous round's `q` at its challenge, without the eq factors, which the
+/// caller applies at the terminal check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EqFactoredRound<E> {
+    pub tau: E,
+}
+
+impl<E: Field> SumcheckDomain<E> for EqFactoredRound<E> {
+    fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<E>, SumcheckError<E>> {
+        Ok(core::iter::once(E::one())
+            .chain(core::iter::repeat_n(self.tau, degree))
             .collect())
     }
 }

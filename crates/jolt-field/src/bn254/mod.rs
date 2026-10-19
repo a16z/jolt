@@ -10,6 +10,7 @@ mod mont;
 
 pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 
+use crate::extension::reflexive_ext_field;
 use crate::{
     CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator, Ring,
     WithAccumulator,
@@ -345,6 +346,8 @@ impl Ring for Fr {
         }
     }
 }
+
+reflexive_ext_field!(Fr);
 
 impl Ring for Fq {
     #[inline]
