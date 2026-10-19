@@ -1,11 +1,11 @@
-//! Ring fold challenge configuration for [`crate::SparseChallenge`].
+//! Ring fold challenge configuration for [`crate::challenge::SparseChallenge`].
 //!
 //! Witness-fold challenges are fixed-weight sparse polynomials: `count_pm1`
 //! coefficients with magnitude 1 and `count_pm2` with magnitude 2, each with
 //! random sign. When `count_pm2 == 0` every non-zero coefficient is ±1; when
 //! `count_pm2 > 0` some coefficients are ±2 (production D=64).
 //!
-//! The actual sampler lives in [`crate::sampler`]; this file is policy-only.
+//! The actual sampler lives in [`crate::challenge::sampler`]; this file is policy-only.
 
 /// Minimum min-entropy (bits) for every ring fold sparse-challenge transcript draw.
 ///
@@ -321,6 +321,7 @@ impl SparseChallengeConfig {
     }
 }
 
+#[expect(clippy::expect_used, reason = "test code")]
 #[cfg(test)]
 mod entropy_tests {
     use super::*;

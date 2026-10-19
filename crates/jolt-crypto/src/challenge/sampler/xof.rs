@@ -44,6 +44,10 @@ fn absorb_bytes(state: &mut [u64; 25], offset: usize, bytes: &[u8]) {
     }
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    reason = "absorbed offsets stay below the 136-byte SHAKE256 rate, inside the 200-byte state"
+)]
 fn xor_state_byte(state: &mut [u64; 25], index: usize, byte: u8) {
     state[index / 8] ^= u64::from(byte) << (8 * (index % 8));
 }
@@ -54,6 +58,10 @@ struct IndexedShakeReader {
 }
 
 impl IndexedShakeReader {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "`pos < SHAKE256_RATE` indexes the state, and `written + lane_take <= out.len()`"
+    )]
     fn read(&mut self, out: &mut [u8]) {
         let mut written = 0;
         while written < out.len() {
@@ -137,6 +145,10 @@ impl XofCursor {
         self.len = XOF_BUFFER_SIZE;
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "`refill` makes `pos < len <= XOF_BUFFER_SIZE`"
+    )]
     #[inline]
     fn next_u8(&mut self) -> u8 {
         if self.pos >= self.len {
@@ -148,6 +160,10 @@ impl XofCursor {
     }
 
     /// Copy `out.len()` bytes from the buffered XOF stream in one pass.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "`pos + take <= len <= XOF_BUFFER_SIZE` and `off + take <= out.len()`"
+    )]
     #[inline]
     pub(crate) fn fill_bytes(&mut self, out: &mut [u8]) {
         let mut off = 0;
@@ -163,6 +179,10 @@ impl XofCursor {
         }
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "guarded by `pos + 4 <= len <= XOF_BUFFER_SIZE`"
+    )]
     #[inline]
     fn next_u32(&mut self) -> u32 {
         if self.pos + 4 <= self.len {
@@ -219,6 +239,7 @@ impl XofCursor {
     }
 }
 
+#[expect(clippy::unwrap_used, reason = "test code")]
 #[cfg(test)]
 mod tests {
     use super::*;

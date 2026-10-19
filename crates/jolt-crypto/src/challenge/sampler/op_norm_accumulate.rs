@@ -4,12 +4,16 @@
 //! `D/2` frequency accumulators from a contiguous row. On aarch64 the inner
 //! row update uses NEON (`i64x2`).
 
-use crate::sampler::op_norm::OpNormTable;
+use crate::challenge::sampler::op_norm::OpNormTable;
 
 pub(super) const FUSED_CHUNK_FREQS: usize = 4;
 
 /// Build `freq_cos_at[pos * half_d + k]` and `freq_sin_at[...]` from the
 /// certified base tables.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "`idx < 2d` indexes the 2d-entry base tables and `row + k < d * half_d` the frequency tables"
+)]
 pub(super) fn build_freq_at_tables(
     d: usize,
     base_cos: &[i64],
@@ -47,6 +51,8 @@ pub(super) fn accumulate_transposed_chunk(
     #[cfg(target_arch = "x86_64")]
     {
         if len == FUSED_CHUNK_FREQS && std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 was detected, and `len == FUSED_CHUNK_FREQS` means the
+            // caller's chunk `start_k..start_k + 4` lies inside the `half_d` rows.
             return unsafe {
                 accumulate_transposed_chunk_avx2(table, positions, coeffs, start_k, half_d)
             };
@@ -55,6 +61,9 @@ pub(super) fn accumulate_transposed_chunk(
     #[cfg(target_arch = "aarch64")]
     {
         if len == FUSED_CHUNK_FREQS {
+            // SAFETY: NEON is baseline on aarch64, and `len == FUSED_CHUNK_FREQS`
+            // means the caller's chunk `start_k..start_k + 4` lies inside the
+            // `half_d` rows.
             return unsafe {
                 accumulate_transposed_chunk_neon(table, positions, coeffs, start_k, half_d)
             };
@@ -64,6 +73,10 @@ pub(super) fn accumulate_transposed_chunk(
     accumulate_transposed_chunk_scalar(table, positions, coeffs, start_k, len, half_d)
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    reason = "`freq_row` returns `half_d`-entry rows and `start_k + len <= half_d`; lanes stay below FUSED_CHUNK_FREQS"
+)]
 #[inline]
 pub(super) fn accumulate_transposed_chunk_scalar(
     table: &OpNormTable,
@@ -88,6 +101,13 @@ pub(super) fn accumulate_transposed_chunk_scalar(
     (acc_re, acc_im)
 }
 
+/// # Safety
+///
+/// The host must support AVX2, and `start_k + FUSED_CHUNK_FREQS <= half_d`.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "the cast pointers only feed unaligned `loadu`/`storeu` intrinsics"
+)]
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn accumulate_transposed_chunk_avx2(
@@ -107,7 +127,10 @@ unsafe fn accumulate_transposed_chunk_avx2(
     for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
         let row = table.freq_row(pos as usize, half_d);
         let (cos_row, sin_row) = row;
+        // SAFETY: `freq_row` returns rows of exactly `half_d` entries, and the
+        // caller guarantees `start_k + 4 <= half_d`; `loadu` needs no alignment.
         let cos_v = unsafe { _mm256_loadu_si256(cos_row.as_ptr().add(start_k).cast::<__m256i>()) };
+        // SAFETY: as for `cos_v`.
         let sin_v = unsafe { _mm256_loadu_si256(sin_row.as_ptr().add(start_k).cast::<__m256i>()) };
         match coeff {
             1 => {
@@ -141,6 +164,7 @@ unsafe fn accumulate_transposed_chunk_avx2(
 
     let mut re = [0i64; FUSED_CHUNK_FREQS];
     let mut im = [0i64; FUSED_CHUNK_FREQS];
+    // SAFETY: each destination holds four `i64`, one unaligned 256-bit store.
     unsafe {
         _mm256_storeu_si256(re.as_mut_ptr().cast::<__m256i>(), acc_re);
         _mm256_storeu_si256(im.as_mut_ptr().cast::<__m256i>(), acc_im);
@@ -148,6 +172,9 @@ unsafe fn accumulate_transposed_chunk_avx2(
     (re, im)
 }
 
+/// # Safety
+///
+/// `start_k + FUSED_CHUNK_FREQS <= half_d`.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn accumulate_transposed_chunk_neon(
@@ -166,9 +193,14 @@ unsafe fn accumulate_transposed_chunk_neon(
     for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
         let row = table.freq_row(pos as usize, half_d);
         let (cos_row, sin_row) = row;
+        // SAFETY: `freq_row` returns rows of exactly `half_d` entries, and the
+        // caller guarantees `start_k + 4 <= half_d`.
         let cos0 = unsafe { vld1q_s64(cos_row.as_ptr().add(start_k)) };
+        // SAFETY: as for `cos0`.
         let sin0 = unsafe { vld1q_s64(sin_row.as_ptr().add(start_k)) };
+        // SAFETY: as for `cos0`.
         let cos1 = unsafe { vld1q_s64(cos_row.as_ptr().add(start_k + 2)) };
+        // SAFETY: as for `cos0`.
         let sin1 = unsafe { vld1q_s64(sin_row.as_ptr().add(start_k + 2)) };
         match coeff {
             1 => {
@@ -210,6 +242,7 @@ unsafe fn accumulate_transposed_chunk_neon(
 
     let mut re = [0i64; FUSED_CHUNK_FREQS];
     let mut im = [0i64; FUSED_CHUNK_FREQS];
+    // SAFETY: each destination holds four `i64`, stored as two 128-bit halves.
     unsafe {
         vst1q_s64(re.as_mut_ptr(), re0);
         vst1q_s64(im.as_mut_ptr(), im0);
@@ -219,6 +252,7 @@ unsafe fn accumulate_transposed_chunk_neon(
     (re, im)
 }
 
+#[expect(clippy::indexing_slicing, reason = "test code")]
 #[inline]
 #[cfg(test)]
 pub(super) fn accumulate_transposed_scalar(
@@ -240,10 +274,11 @@ pub(super) fn accumulate_transposed_scalar(
     }
 }
 
+#[expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sampler::op_norm::OpNormTable;
+    use crate::challenge::sampler::op_norm::OpNormTable;
 
     fn table(d: usize) -> OpNormTable {
         OpNormTable::new(d, 48, (2 * d) as u64, 64).unwrap()
@@ -254,9 +289,11 @@ mod tests {
         let d = 64;
         let t = table(d);
         let half_d = d / 2;
-        let mut state = 0xC0FFEE_u64;
+        let mut state = 0x00C0_FFEE_u64;
         for _ in 0..500 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
             let mut positions = Vec::new();
             let mut coeffs = Vec::new();
             let weight = 8 + (state as usize % 20);
@@ -345,6 +382,7 @@ mod tests {
                 FUSED_CHUNK_FREQS,
                 half_d,
             );
+            // SAFETY: AVX2 was detected above, and `start_k + 4 <= half_d`.
             let avx2 = unsafe {
                 accumulate_transposed_chunk_avx2(&t, &positions, &coeffs, start_k, half_d)
             };

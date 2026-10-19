@@ -31,14 +31,19 @@ bn254 = [
   "dep:num-traits",
   "jolt-field/bn254",
 ]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
+parallel = ["dep:rayon", "jolt-field/parallel", "jolt-poly/parallel"]
 
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
-jolt-field = { path = "../jolt-field", default-features = false }
+jolt-field = { path = "../jolt-field", default-features = false, features = ["solinas"] }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
+thiserror = { workspace = true }
+# Lattice primitives: the sparse-challenge XOF and the public-matrix stream.
+keccak = { version = "0.1.6", features = ["asm"] }
+shake = "0.1.0"
+smallvec = { version = "1.15.2", features = ["const_generics"] }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }

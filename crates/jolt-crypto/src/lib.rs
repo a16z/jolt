@@ -14,7 +14,9 @@
     clippy::wildcard_enum_match_arm
 )]
 
+pub mod challenge;
 pub mod ec;
+pub mod lattice;
 pub use ec::{JoltGroup, PairingGroup};
 #[cfg(feature = "bn254")]
 pub use ec::{Pedersen, PedersenSetup};
@@ -27,3 +29,23 @@ pub use commitment::{
 
 #[cfg(feature = "bn254")]
 pub use ec::bn254::{Bn254, Bn254G1, Bn254G2, Bn254GT};
+
+/// Errors from the lattice primitives: challenge sampling and public-matrix
+/// derivation.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CryptoError {
+    /// A per-call argument is invalid.
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+    /// An argument has the wrong length.
+    #[error("invalid size: expected {expected}, actual {actual}")]
+    InvalidSize { expected: usize, actual: usize },
+    /// A parameter that only setup supplies (a challenge family, a rejection
+    /// policy, a field) is invalid.
+    #[error("invalid setup: {0}")]
+    InvalidSetup(String),
+    /// An invariant this crate maintains failed after its inputs were
+    /// admitted; this reports a bug, never a rejected input.
+    #[error("internal error: {0}")]
+    Internal(String),
+}

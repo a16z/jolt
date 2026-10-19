@@ -2,14 +2,14 @@
 //!
 //! Fisher-Yates partial shuffle helpers shared by the signed-sparse sampler.
 
-use crate::sampler::xof::XofCursor;
-use akita_error::AkitaError;
+use crate::challenge::sampler::xof::XofCursor;
+use crate::CryptoError;
 
 /// Max ring dimension supported by the stack-buffer sampling paths.
 ///
 /// Public API functions reject `D` above this with an error before reaching
 /// the sampling internals.
-pub(crate) const MAX_STACK_RING_DIM: usize = 2048;
+pub const MAX_STACK_RING_DIM: usize = 2048;
 
 /// Largest stack array used by one concrete sampler tier.
 const MAX_STACK_TIER_RING_DIM: usize = 2048;
@@ -33,27 +33,29 @@ impl DistinctPositionScratch {
         }
     }
 
-    fn prepare(&mut self, weight: usize) -> Result<(), AkitaError> {
+    fn prepare(&mut self, weight: usize) -> Result<(), CryptoError> {
         let capacity = weight
             .checked_mul(4)
             .and_then(usize::checked_next_power_of_two)
-            .ok_or_else(|| AkitaError::InvalidInput("sparse permutation size overflow".into()))?
+            .ok_or_else(|| CryptoError::InvalidInput("sparse permutation size overflow".into()))?
             .max(4);
         if self.keys.len() >= capacity {
             return Ok(());
         }
         let additional = capacity
             .checked_sub(self.keys.len())
-            .ok_or(AkitaError::InvalidProof)?;
-        self.keys
-            .try_reserve_exact(additional)
-            .map_err(|_| AkitaError::InvalidInput("sparse permutation allocation failed".into()))?;
-        self.values
-            .try_reserve_exact(additional)
-            .map_err(|_| AkitaError::InvalidInput("sparse permutation allocation failed".into()))?;
+            .ok_or_else(|| CryptoError::Internal("sparse permutation capacity underflow".into()))?;
+        self.keys.try_reserve_exact(additional).map_err(|_| {
+            CryptoError::InvalidInput("sparse permutation allocation failed".into())
+        })?;
+        self.values.try_reserve_exact(additional).map_err(|_| {
+            CryptoError::InvalidInput("sparse permutation allocation failed".into())
+        })?;
         self.generations
             .try_reserve_exact(additional)
-            .map_err(|_| AkitaError::InvalidInput("sparse permutation allocation failed".into()))?;
+            .map_err(|_| {
+                CryptoError::InvalidInput("sparse permutation allocation failed".into())
+            })?;
         self.keys.resize(capacity, 0);
         self.values.resize(capacity, 0);
         self.generations.resize(capacity, 0);
@@ -68,14 +70,14 @@ impl DistinctPositionScratch {
         }
     }
 
-    fn find_slot(&self, key: usize) -> Result<(usize, bool), AkitaError> {
+    fn find_slot(&self, key: usize) -> Result<(usize, bool), CryptoError> {
         let mask = self.keys.len().checked_sub(1).ok_or_else(|| {
-            AkitaError::InvalidSetup("sparse permutation scratch is empty".into())
+            CryptoError::InvalidSetup("sparse permutation scratch is empty".into())
         })?;
         let mut slot = key & mask;
         for _ in 0..self.keys.len() {
             let occupied = self.generations.get(slot).copied().ok_or_else(|| {
-                AkitaError::Internal("sparse permutation slot exceeds the generation map".into())
+                CryptoError::Internal("sparse permutation slot exceeds the generation map".into())
             })? == self.generation;
             if !occupied {
                 return Ok((slot, false));
@@ -85,32 +87,32 @@ impl DistinctPositionScratch {
             }
             slot = slot.wrapping_add(1) & mask;
         }
-        Err(AkitaError::InvalidSetup(
+        Err(CryptoError::InvalidSetup(
             "sparse permutation scratch capacity exhausted".into(),
         ))
     }
 
-    fn get(&self, key: usize) -> Result<usize, AkitaError> {
+    fn get(&self, key: usize) -> Result<usize, CryptoError> {
         let (slot, occupied) = self.find_slot(key)?;
         if occupied {
             self.values.get(slot).copied().ok_or_else(|| {
-                AkitaError::Internal("occupied sparse permutation slot has no value".into())
+                CryptoError::Internal("occupied sparse permutation slot has no value".into())
             })
         } else {
             Ok(key)
         }
     }
 
-    fn insert(&mut self, key: usize, value: usize) -> Result<(), AkitaError> {
+    fn insert(&mut self, key: usize, value: usize) -> Result<(), CryptoError> {
         let (slot, _) = self.find_slot(key)?;
         *self.keys.get_mut(slot).ok_or_else(|| {
-            AkitaError::Internal("sparse permutation insertion key slot is absent".into())
+            CryptoError::Internal("sparse permutation insertion key slot is absent".into())
         })? = key;
         *self.values.get_mut(slot).ok_or_else(|| {
-            AkitaError::Internal("sparse permutation insertion value slot is absent".into())
+            CryptoError::Internal("sparse permutation insertion value slot is absent".into())
         })? = value;
         *self.generations.get_mut(slot).ok_or_else(|| {
-            AkitaError::Internal("sparse permutation insertion generation slot is absent".into())
+            CryptoError::Internal("sparse permutation insertion generation slot is absent".into())
         })? = self.generation;
         Ok(())
     }
@@ -124,7 +126,7 @@ pub(crate) fn sample_distinct_positions_into(
     universe: usize,
     out: &mut [u32],
     scratch: &mut DistinctPositionScratch,
-) -> Result<(), AkitaError> {
+) -> Result<(), CryptoError> {
     debug_assert!(out.len() <= universe);
     debug_assert!(universe <= MAX_STACK_RING_DIM);
     // A dense challenge already has output size Theta(universe), and the flat
@@ -147,7 +149,7 @@ pub(crate) fn sample_distinct_positions_into(
             MAX_STACK_TIER_RING_DIM,
         >(cursor, universe, out),
         _ => {
-            return Err(AkitaError::InvalidInput(format!(
+            return Err(CryptoError::InvalidInput(format!(
                 "ring dimension must be <= {MAX_STACK_RING_DIM}"
             )))
         }
@@ -161,7 +163,7 @@ fn sample_distinct_positions_into_sparse(
     universe: usize,
     out: &mut [u32],
     scratch: &mut DistinctPositionScratch,
-) -> Result<(), AkitaError> {
+) -> Result<(), CryptoError> {
     scratch.prepare(out.len())?;
     scratch.clear();
     for (i, dst) in out.iter_mut().enumerate() {
@@ -171,31 +173,35 @@ fn sample_distinct_positions_into_sparse(
         scratch.insert(i, right)?;
         scratch.insert(j, left)?;
         *dst = u32::try_from(right).map_err(|_| {
-            AkitaError::Internal("sampled sparse permutation position does not fit u32".into())
+            CryptoError::Internal("sampled sparse permutation position does not fit u32".into())
         })?;
     }
     Ok(())
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    reason = "`universe <= N` is checked above and `j < universe`"
+)]
 #[inline]
 fn sample_distinct_positions_into_stack<T, const N: usize>(
     cursor: &mut XofCursor,
     universe: usize,
     out: &mut [u32],
-) -> Result<(), AkitaError>
+) -> Result<(), CryptoError>
 where
     T: Copy + Default + TryFrom<usize>,
     u32: From<T>,
 {
     if out.len() > universe || universe > N || N > MAX_STACK_TIER_RING_DIM {
-        return Err(AkitaError::InvalidInput(
+        return Err(CryptoError::InvalidInput(
             "permutation tier has invalid dimensions".into(),
         ));
     }
     let mut perm = [T::default(); N];
     for (i, slot) in perm[..universe].iter_mut().enumerate() {
         *slot = T::try_from(i).map_err(|_| {
-            AkitaError::Internal("stack permutation position does not fit its tier type".into())
+            CryptoError::Internal("stack permutation position does not fit its tier type".into())
         })?;
     }
     for (i, dst) in out.iter_mut().enumerate() {
@@ -206,6 +212,7 @@ where
     Ok(())
 }
 
+#[expect(clippy::unwrap_used, reason = "test code")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,7 +221,7 @@ mod tests {
     fn sparse_virtual_permutation_matches_dense_partial_fisher_yates() {
         for (universe, weight) in [(128usize, 7usize), (256, 23), (1024, 16), (2048, 14)] {
             let seed = [universe.trailing_zeros() as u8; 32];
-            let prefix = crate::sampler::IndexedXofPrefix::new(&seed).unwrap();
+            let prefix = crate::challenge::sampler::IndexedXofPrefix::new(&seed).unwrap();
             let mut dense_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut sparse_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut dense = vec![0u32; weight];

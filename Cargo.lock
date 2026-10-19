@@ -3275,6 +3275,7 @@ dependencies = [
  "criterion",
  "jolt-field",
  "jolt-poly",
+ "keccak 0.1.6",
  "num-bigint 0.4.6",
  "num-integer",
  "num-traits",
@@ -3283,7 +3284,10 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "shake",
+ "smallvec",
  "spongefish",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

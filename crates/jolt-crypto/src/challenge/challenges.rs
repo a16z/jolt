@@ -1,7 +1,7 @@
 //! Sampled sparse challenges for one folding round.
 
-use crate::SparseChallenge;
-use akita_error::AkitaError;
+use crate::challenge::SparseChallenge;
+use crate::CryptoError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{ExtField, Field, Ring};
@@ -20,6 +20,10 @@ const PARALLEL_FINE_TOTAL_TERMS: usize = 1 << 17;
 
 /// Stage-1 fold challenges in claim-major block order.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the private `challenges` field keeps Akita's name for the flat storage"
+)]
 pub struct Challenges {
     /// Per-(claim, block) sparse challenges.
     challenges: std::sync::Arc<[SparseChallenge]>,
@@ -39,12 +43,12 @@ impl Challenges {
         challenges: Vec<SparseChallenge>,
         num_live_blocks_per_claim: usize,
         num_claims: usize,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, CryptoError> {
         let expected = num_live_blocks_per_claim
             .checked_mul(num_claims)
-            .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".to_string()))?;
+            .ok_or_else(|| CryptoError::InvalidSetup("challenge count overflow".to_string()))?;
         if challenges.len() != expected {
-            return Err(AkitaError::InvalidSize {
+            return Err(CryptoError::InvalidSize {
                 expected,
                 actual: challenges.len(),
             });
@@ -96,7 +100,7 @@ impl Challenges {
     /// # Errors
     ///
     /// Returns an error if the index is out of range or the challenge is invalid.
-    pub fn eval_at_pows<F, E>(&self, index: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
+    pub fn eval_at_pows<F, E>(&self, index: usize, alpha_pows: &[E]) -> Result<E, CryptoError>
     where
         F: Field + Ring,
         E: Field + ExtField<F>,
@@ -104,7 +108,7 @@ impl Challenges {
         self.challenges
             .get(index)
             .ok_or_else(|| {
-                AkitaError::InvalidInput(format!(
+                CryptoError::InvalidInput(format!(
                     "challenge index {index} out of range for {} challenges",
                     self.challenges.len()
                 ))
@@ -117,7 +121,7 @@ impl Challenges {
     /// # Errors
     ///
     /// Returns an error if the powers or any challenge are invalid.
-    pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
+    pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, CryptoError>
     where
         F: Field + Ring,
         E: Field + ExtField<F>,
@@ -134,7 +138,7 @@ impl Challenges {
         if parallel_candidate {
             let sparse_terms = self.challenges.iter().try_fold(0usize, |sum, challenge| {
                 sum.checked_add(challenge.positions.len()).ok_or_else(|| {
-                    AkitaError::InvalidInput("sparse challenge term count overflow".into())
+                    CryptoError::InvalidInput("sparse challenge term count overflow".into())
                 })
             })?;
             if sparse_terms <= PARALLEL_COARSE_LEAF_TERMS {
@@ -154,7 +158,7 @@ impl Challenges {
             evaluations
                 .try_reserve_exact(self.challenges.len())
                 .map_err(|_| {
-                    AkitaError::InvalidInput("challenge evaluation allocation failed".into())
+                    CryptoError::InvalidInput("challenge evaluation allocation failed".into())
                 })?;
             evaluations.resize(self.challenges.len(), E::zero());
             evaluations
@@ -165,7 +169,7 @@ impl Challenges {
                     {
                         *evaluation = challenge.eval_at_pows::<F, E>(alpha_pows)?;
                     }
-                    Ok::<(), AkitaError>(())
+                    Ok::<(), CryptoError>(())
                 })?;
             return Ok(evaluations);
         }
@@ -178,21 +182,25 @@ impl Challenges {
     /// # Errors
     ///
     /// Returns an error if any claim index is out of range.
-    pub fn select_claims(&self, claim_indices: &[usize]) -> Result<Self, AkitaError> {
+    pub fn select_claims(&self, claim_indices: &[usize]) -> Result<Self, CryptoError> {
         let capacity = claim_indices
             .len()
             .checked_mul(self.num_live_blocks_per_claim)
-            .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".to_string()))?;
+            .ok_or_else(|| CryptoError::InvalidSetup("challenge count overflow".to_string()))?;
         let mut selected = Vec::with_capacity(capacity);
         for &claim_index in claim_indices {
             let start = claim_index
                 .checked_mul(self.num_live_blocks_per_claim)
-                .ok_or_else(|| AkitaError::InvalidSetup("challenge offset overflow".to_string()))?;
+                .ok_or_else(|| {
+                    CryptoError::InvalidSetup("challenge offset overflow".to_string())
+                })?;
             let end = start
                 .checked_add(self.num_live_blocks_per_claim)
-                .ok_or_else(|| AkitaError::InvalidSetup("challenge offset overflow".to_string()))?;
+                .ok_or_else(|| {
+                    CryptoError::InvalidSetup("challenge offset overflow".to_string())
+                })?;
             selected.extend_from_slice(self.challenges.get(start..end).ok_or(
-                AkitaError::InvalidSize {
+                CryptoError::InvalidSize {
                     expected: end,
                     actual: self.challenges.len(),
                 },
@@ -219,25 +227,25 @@ impl Challenges {
         challenge_subring_dimension: usize,
         embedding_stride: usize,
         ambient_ring_dimension: usize,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, CryptoError> {
         if challenge_subring_dimension == 0
             || embedding_stride == 0
             || challenge_subring_dimension
                 .checked_mul(embedding_stride)
-                .filter(|&dimension| dimension == ambient_ring_dimension)
-                .is_none()
+                .as_ref()
+                .is_none_or(|&dimension| dimension != ambient_ring_dimension)
         {
-            return Err(AkitaError::InvalidInput(
+            return Err(CryptoError::InvalidInput(
                 "subring challenge embedding dimensions are inconsistent".into(),
             ));
         }
         let embed = |challenge: &SparseChallenge| {
             challenge.validate_dyn(challenge_subring_dimension)?;
-            let mut positions = crate::SparseChallengePositions::new();
+            let mut positions = crate::challenge::SparseChallengePositions::new();
             positions
                 .try_reserve_exact(challenge.positions.len())
                 .map_err(|_| {
-                    AkitaError::InvalidInput("subring challenge position allocation failed".into())
+                    CryptoError::InvalidInput("subring challenge position allocation failed".into())
                 })?;
             for &position in &challenge.positions {
                 let embedded_position = usize::try_from(position)
@@ -246,13 +254,13 @@ impl Challenges {
                     .filter(|&position| position < ambient_ring_dimension)
                     .and_then(|position| u32::try_from(position).ok())
                     .ok_or_else(|| {
-                        AkitaError::InvalidInput(
+                        CryptoError::InvalidInput(
                             "subring challenge embedded position overflow".into(),
                         )
                     })?;
                 positions.push(embedded_position);
             }
-            Ok::<_, AkitaError>(SparseChallenge {
+            Ok::<_, CryptoError>(SparseChallenge {
                 positions,
                 coeffs: challenge.coeffs.clone(),
             })
@@ -268,7 +276,7 @@ impl Challenges {
                         .map_or(0, |challenge| challenge.positions.len()),
                 )
                 .ok_or_else(|| {
-                    AkitaError::InvalidInput("subring challenge embedding work overflow".into())
+                    CryptoError::InvalidInput("subring challenge embedding work overflow".into())
                 })?;
             const PARALLEL_THRESHOLD: usize = 1 << 14;
             if work >= PARALLEL_THRESHOLD {
@@ -293,6 +301,7 @@ impl Challenges {
     }
 }
 
+#[expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 #[cfg(test)]
 mod tests {
     use super::*;

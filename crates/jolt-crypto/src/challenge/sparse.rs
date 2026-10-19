@@ -2,7 +2,7 @@
 //!
 //! A [`SparseChallenge`] is a sparse polynomial in `F[X] / (X^D + 1)` represented
 //! by its non-zero terms. It is the unified output type for every sampling family
-//! in [`crate::SparseChallengeConfig`], so downstream arithmetic can stay uniform
+//! in [`crate::challenge::SparseChallengeConfig`], so downstream arithmetic can stay uniform
 //! regardless of how a challenge was sampled.
 //!
 //! Production challenges are expected to come from the crate's fold-challenge
@@ -13,12 +13,12 @@
 //! This module deliberately depends only on `jolt-field`; it does not pull in
 //! the transcript layer or the sampler.
 
-use akita_error::AkitaError;
+use crate::CryptoError;
 
 use jolt_field::{ExtField, Field, Ring};
 use smallvec::SmallVec;
 
-use crate::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
+use crate::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
 
 /// Inline capacity chosen for the heaviest production family, D64 `(31, 10)`.
 /// Every other production ring dimension has weight at most 31 and also fits.
@@ -75,7 +75,7 @@ impl SparseChallenge {
     /// Returns an error if positions/coefficients have mismatched lengths, if a
     /// position is outside `0..D`, if a coefficient is zero, or if a position is
     /// repeated.
-    pub fn validate<const D: usize>(&self) -> Result<(), AkitaError> {
+    pub fn validate<const D: usize>(&self) -> Result<(), CryptoError> {
         self.validate_dyn(D)
     }
 
@@ -86,9 +86,9 @@ impl SparseChallenge {
     /// Returns an error if positions/coefficients have mismatched lengths, if a
     /// position is outside `0..ring_d`, if a coefficient is zero, or if a
     /// position is repeated.
-    pub fn validate_dyn(&self, ring_d: usize) -> Result<(), AkitaError> {
+    pub fn validate_dyn(&self, ring_d: usize) -> Result<(), CryptoError> {
         if self.positions.len() != self.coeffs.len() {
-            return Err(AkitaError::InvalidInput(
+            return Err(CryptoError::InvalidInput(
                 "sparse challenge positions/coeffs length mismatch".to_string(),
             ));
         }
@@ -97,35 +97,35 @@ impl SparseChallenge {
         let word_count = ring_d.div_ceil(u64::BITS as usize);
         let mut inline_seen = [0u64; INLINE_WORDS];
         let mut heap_seen = Vec::new();
-        let seen = if word_count <= INLINE_WORDS {
-            &mut inline_seen[..word_count]
+        let seen = if let Some(inline) = inline_seen.get_mut(..word_count) {
+            inline
         } else {
-            heap_seen
-                .try_reserve_exact(word_count)
-                .map_err(|_| AkitaError::InvalidInput("challenge dimension is too large".into()))?;
+            heap_seen.try_reserve_exact(word_count).map_err(|_| {
+                CryptoError::InvalidInput("challenge dimension is too large".into())
+            })?;
             heap_seen.resize(word_count, 0);
             heap_seen.as_mut_slice()
         };
         for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
             let idx = pos as usize;
             if idx >= ring_d {
-                return Err(AkitaError::InvalidInput(format!(
+                return Err(CryptoError::InvalidInput(format!(
                     "sparse challenge position {pos} out of range for D={ring_d}"
                 )));
             }
             if coeff == 0 {
-                return Err(AkitaError::InvalidInput(
+                return Err(CryptoError::InvalidInput(
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
             let word = seen.get_mut(idx / u64::BITS as usize).ok_or_else(|| {
-                AkitaError::Internal(
+                CryptoError::Internal(
                     "validated sparse challenge position exceeds its bitmap".into(),
                 )
             })?;
             let mask = 1u64 << (idx % u64::BITS as usize);
             if *word & mask != 0 {
-                return Err(AkitaError::InvalidInput(
+                return Err(CryptoError::InvalidInput(
                     "sparse challenge positions must be unique".to_string(),
                 ));
             }
@@ -146,14 +146,14 @@ impl SparseChallenge {
     /// term would index outside the supplied powers. This method assumes the
     /// challenge came from the crate's fold-challenge sampler and therefore
     /// does not re-check uniqueness of positions on the hot path.
-    pub fn eval_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    pub fn eval_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<E, CryptoError>
     where
         F: Field + Ring,
         E: Field + ExtField<F>,
     {
         let ring_d = alpha_pows.len();
         if self.positions.len() != self.coeffs.len() {
-            return Err(AkitaError::InvalidInput(
+            return Err(CryptoError::InvalidInput(
                 "sparse challenge positions/coeffs length mismatch".to_string(),
             ));
         }
@@ -161,22 +161,23 @@ impl SparseChallenge {
         let mut acc = E::zero();
         for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
             let idx = pos as usize;
-            if idx >= ring_d {
-                return Err(AkitaError::InvalidInput(format!(
+            let Some(&alpha_pow) = alpha_pows.get(idx) else {
+                return Err(CryptoError::InvalidInput(format!(
                     "sparse challenge position {idx} out of range for D={ring_d}"
                 )));
-            }
+            };
             if coeff == 0 {
-                return Err(AkitaError::InvalidInput(
+                return Err(CryptoError::InvalidInput(
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
-            accumulate_small_signed::<F, E>(&mut acc, alpha_pows[idx], i64::from(coeff));
+            accumulate_small_signed::<F, E>(&mut acc, alpha_pow, i64::from(coeff));
         }
         Ok(acc)
     }
 }
 
+#[expect(clippy::unwrap_used, reason = "test code")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,7 +221,7 @@ mod tests {
             .eval_at_pows::<F, F>(&alpha_pows()[..D - 1])
             .unwrap_err();
 
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
+        assert!(matches!(err, CryptoError::InvalidInput(_)));
     }
 
     #[test]
@@ -232,7 +233,7 @@ mod tests {
 
         let err = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap_err();
 
-        assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("out of range")));
+        assert!(matches!(err, CryptoError::InvalidInput(msg) if msg.contains("out of range")));
     }
 
     #[test]
@@ -244,7 +245,7 @@ mod tests {
 
         let err = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap_err();
 
-        assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("length mismatch")));
+        assert!(matches!(err, CryptoError::InvalidInput(msg) if msg.contains("length mismatch")));
     }
 
     #[test]
@@ -256,6 +257,6 @@ mod tests {
 
         let err = challenge.validate::<D>().unwrap_err();
 
-        assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("unique")));
+        assert!(matches!(err, CryptoError::InvalidInput(msg) if msg.contains("unique")));
     }
 }

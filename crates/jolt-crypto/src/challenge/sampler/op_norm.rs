@@ -39,7 +39,7 @@
 //! challenges: the crate's private sparse sampler retains a sampled challenge
 //! only if it passes [`OpNormTable::accept_strict_parts`].
 
-use akita_error::AkitaError;
+use crate::CryptoError;
 
 use super::op_norm_accumulate;
 
@@ -96,18 +96,18 @@ impl OpNormTable {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] if `d` is not a positive multiple of
+    /// Returns [`CryptoError::InvalidSetup`] if `d` is not a positive multiple of
     /// 4, if `q` is outside `1..=56`, or if the worst-case accumulator/square
     /// bounds for `(max_l1, max_t)` do not fit `i128`.
     #[doc(hidden)]
-    pub(crate) fn new(d: usize, q: u32, max_l1: u64, max_t: u64) -> Result<Self, AkitaError> {
+    pub(crate) fn new(d: usize, q: u32, max_l1: u64, max_t: u64) -> Result<Self, CryptoError> {
         if d < 4 || !d.is_multiple_of(4) {
-            return Err(AkitaError::InvalidSetup(format!(
+            return Err(CryptoError::InvalidSetup(format!(
                 "OpNormTable: ring degree d = {d} must be a positive multiple of 4"
             )));
         }
         if !(1..=56).contains(&q) {
-            return Err(AkitaError::InvalidSetup(format!(
+            return Err(CryptoError::InvalidSetup(format!(
                 "OpNormTable: scale q = {q} out of supported range 1..=56"
             )));
         }
@@ -119,12 +119,12 @@ impl OpNormTable {
         validate_no_overflow(q, eps_root, max_l1, max_t)?;
         validate_i64_accumulators(q, max_l1)?;
 
-        let downcast = |table: &[i128], name: &str| -> Result<Vec<i64>, AkitaError> {
+        let downcast = |table: &[i128], name: &str| -> Result<Vec<i64>, CryptoError> {
             table
                 .iter()
                 .map(|&v| {
                     i64::try_from(v).map_err(|_| {
-                        AkitaError::InvalidSetup(format!(
+                        CryptoError::InvalidSetup(format!(
                             "OpNormTable: {name} entry does not fit i64 accumulator path"
                         ))
                     })
@@ -152,6 +152,7 @@ impl OpNormTable {
     }
 
     /// `i64` downcast of `base_cos[idx]` (certified entry, `|entry| <= 2^q`).
+    #[expect(clippy::indexing_slicing, reason = "test code")]
     #[cfg(test)]
     #[inline]
     pub(super) fn base_cos_i64(&self, idx: usize) -> i64 {
@@ -159,12 +160,17 @@ impl OpNormTable {
     }
 
     /// `i64` downcast of `base_sin[idx]`.
+    #[expect(clippy::indexing_slicing, reason = "test code")]
     #[cfg(test)]
     #[inline]
     pub(super) fn base_sin_i64(&self, idx: usize) -> i64 {
         self.base_sin[idx] as i64
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "positions are below d, so `pos * half_d + half_d <= d * half_d`, the table length; a sampler bug panics rather than reading past the table"
+    )]
     #[inline]
     pub(super) fn freq_row(&self, pos: usize, half_d: usize) -> (&[i64], &[i64]) {
         let row = pos * half_d;
@@ -182,16 +188,16 @@ impl OpNormTable {
         positions: &[u32],
         coeffs: &[i8],
         t: u64,
-    ) -> Result<Decision, AkitaError> {
+    ) -> Result<Decision, CryptoError> {
         if positions.len() != coeffs.len() {
-            return Err(AkitaError::InvalidInput(
+            return Err(CryptoError::InvalidInput(
                 "operator-norm predicate: positions/coeffs length mismatch".to_string(),
             ));
         }
         let mut l1: i128 = 0;
         for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
             if pos as usize >= self.d {
-                return Err(AkitaError::InvalidInput(format!(
+                return Err(CryptoError::InvalidInput(format!(
                     "operator-norm predicate: position {pos} out of range for D = {}",
                     self.d
                 )));
@@ -199,7 +205,7 @@ impl OpNormTable {
             l1 += i128::from(coeff.unsigned_abs());
         }
         if l1 > self.max_l1 {
-            return Err(AkitaError::InvalidInput(format!(
+            return Err(CryptoError::InvalidInput(format!(
                 "operator-norm predicate: ||c||_1 = {l1} exceeds validated max_l1 = {}",
                 self.max_l1
             )));
@@ -209,7 +215,7 @@ impl OpNormTable {
         // a debug-overflow panic or a release wrap that would corrupt the
         // comparison.
         if i128::from(t) > self.max_t {
-            return Err(AkitaError::InvalidInput(format!(
+            return Err(CryptoError::InvalidInput(format!(
                 "operator-norm predicate: threshold t = {t} exceeds validated max_t = {}",
                 self.max_t
             )));
@@ -228,7 +234,7 @@ impl OpNormTable {
         positions: &[u32],
         coeffs: &[i8],
         t: u64,
-    ) -> Result<bool, AkitaError> {
+    ) -> Result<bool, CryptoError> {
         Ok(self.decide_parts(positions, coeffs, t)? == Decision::Accept)
     }
 
@@ -273,7 +279,10 @@ impl OpNormTable {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "the chunk accumulators hold FUSED_CHUNK_FREQS lanes and `len` never exceeds it"
+)]
 fn decide_transposed_fused(
     table: &OpNormTable,
     positions: &[u32],
@@ -282,7 +291,7 @@ fn decide_transposed_fused(
     two_r: i128,
     two_r_sq: i128,
     threshold: i128,
-) -> Result<Decision, AkitaError> {
+) -> Result<Decision, CryptoError> {
     let num_freqs = table.d / 2;
     let mut indeterminate = false;
     let mut start_k = 0;
@@ -312,7 +321,7 @@ fn decide_transposed_fused(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 #[inline]
 fn frequency_accepts_upper(
     abs_re: i128,
@@ -329,7 +338,7 @@ fn frequency_accepts_upper(
     upper <= threshold
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 #[inline]
 fn decide_frequency(
     abs_re: i128,
@@ -340,7 +349,7 @@ fn decide_frequency(
     two_r: i128,
     two_r_sq: i128,
     threshold: i128,
-) -> Result<bool, AkitaError> {
+) -> Result<bool, CryptoError> {
     if frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold) {
         return Ok(false);
     }
@@ -351,9 +360,9 @@ fn decide_frequency(
 }
 
 /// Validate worst-case `i64` accumulator magnitudes for the transposed path.
-fn validate_i64_accumulators(q: u32, max_l1: i128) -> Result<(), AkitaError> {
+fn validate_i64_accumulators(q: u32, max_l1: i128) -> Result<(), CryptoError> {
     let overflow = || {
-        AkitaError::InvalidSetup(
+        CryptoError::InvalidSetup(
             "OpNormTable: worst-case i64 accumulator does not fit i64".to_string(),
         )
     };
@@ -373,9 +382,9 @@ fn validate_no_overflow(
     eps_root: i128,
     max_l1: i128,
     max_t: i128,
-) -> Result<(), AkitaError> {
+) -> Result<(), CryptoError> {
     let overflow = || {
-        AkitaError::InvalidSetup(
+        CryptoError::InvalidSetup(
             "OpNormTable: worst-case accumulator does not fit i128".to_string(),
         )
     };
@@ -410,6 +419,10 @@ fn validate_no_overflow(
 
 /// Build `base_cos`, `base_sin` at scale `2^q` for `t in 0..2d`, returning the
 /// sound global error bound `eps_root`.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "`t` ranges over the 2d entries both tables are allocated with"
+)]
 fn build_tables(d: usize, q: u32) -> (Vec<i128>, Vec<i128>, i128) {
     let two_d = 2 * d;
     let (pi_lo, pi_hi) = pi_enclosure();
@@ -621,10 +634,16 @@ fn arctan_inv(x: i128) -> (i128, i128) {
     (sum - slack, sum + slack)
 }
 
+#[expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    reason = "test code"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SparseChallenge;
+    use crate::challenge::SparseChallenge;
     use std::f64::consts::PI;
 
     const Q: u32 = 48;
@@ -638,7 +657,7 @@ mod tests {
         table: &OpNormTable,
         challenge: &SparseChallenge,
         threshold: u64,
-    ) -> Result<Decision, AkitaError> {
+    ) -> Result<Decision, CryptoError> {
         table.decide_parts(&challenge.positions, &challenge.coeffs, threshold)
     }
 

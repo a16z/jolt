@@ -11,16 +11,16 @@ mod position_sample;
 mod signed_sparse;
 mod xof;
 
-pub(crate) use position_sample::MAX_STACK_RING_DIM;
+pub use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::{IndexedXofPrefix, XofCursor};
 
-use akita_error::AkitaError;
+use crate::CryptoError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 use std::sync::{Arc, LazyLock};
 
-use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
+use crate::challenge::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
 
 use op_norm::OpNormTable;
 
@@ -30,7 +30,7 @@ const MAX_OP_NORM_ATTEMPTS: usize = 4096;
 const PARALLEL_SAMPLING_WORK_THRESHOLD: usize = 1 << 14;
 static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
     LazyLock::new(|| {
-        let config = crate::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let config = crate::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
         let policy = OperatorNormRejection::D64_SELECTIVE_L2;
         let table = OpNormTable::new(
             64,
@@ -51,7 +51,7 @@ static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'stati
     });
 static D128_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
     LazyLock::new(|| {
-        let config = crate::D128_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let config = crate::challenge::D128_SELECTIVE_L2_CHALLENGE_CONFIG;
         let policy = OperatorNormRejection::D128_SELECTIVE_L2;
         let table = OpNormTable::new(
             128,
@@ -85,18 +85,18 @@ impl IndexedSamplingPolicy {
         ring_d: usize,
         cfg: &SparseChallengeConfig,
         rejection: Option<OperatorNormRejection>,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Self, CryptoError> {
         let Some(rejection) = rejection else {
             return Ok(Self::Unrestricted);
         };
         rejection
             .validate(ring_d, cfg)
-            .map_err(|error| AkitaError::InvalidSetup(error.into()))?;
+            .map_err(|error| CryptoError::InvalidSetup(error.into()))?;
         let table = match rejection {
             OperatorNormRejection::D64_SELECTIVE_L2 => &*D64_SELECTIVE_L2_OP_NORM_TABLE,
             OperatorNormRejection::D128_SELECTIVE_L2 => &*D128_SELECTIVE_L2_OP_NORM_TABLE,
             _ => {
-                return Err(AkitaError::InvalidSetup(
+                return Err(CryptoError::InvalidSetup(
                     "unsupported operator-norm rejection policy".into(),
                 ));
             }
@@ -104,7 +104,7 @@ impl IndexedSamplingPolicy {
         let table = Arc::clone(
             table
                 .as_ref()
-                .map_err(|message| AkitaError::InvalidSetup((*message).into()))?,
+                .map_err(|message| CryptoError::InvalidSetup((*message).into()))?,
         );
         Ok(Self::OperatorNorm {
             threshold: rejection.threshold,
@@ -139,7 +139,7 @@ impl IndexedChallengeWorker {
         coordinate_index: u64,
         ring_d: usize,
         cfg: &SparseChallengeConfig,
-    ) -> Result<SparseChallenge, AkitaError> {
+    ) -> Result<SparseChallenge, CryptoError> {
         self.cursor
             .reset_indexed_prefix(&self.prefix, coordinate_index);
         let IndexedSamplingPolicy::OperatorNorm { threshold, table } = &self.policy else {
@@ -158,33 +158,39 @@ impl IndexedChallengeWorker {
                 return Ok(self.scratch.take_challenge());
             }
         }
-        Err(AkitaError::InvalidInput(format!(
+        Err(CryptoError::InvalidInput(format!(
             "operator-norm rejection exceeded {MAX_OP_NORM_ATTEMPTS} attempts at coordinate {coordinate_index}"
         )))
     }
 }
 
-pub(crate) fn sample_indexed_challenges_from_seed(
+/// Sample `n` sparse challenges, coordinate `i` from its own SHAKE256 stream
+/// keyed by `seed` and `i`, so coordinates are independent and parallel
+/// sampling matches sequential sampling.
+///
+/// With `rejection`, each coordinate redraws until the challenge passes the
+/// operator-norm test, failing after a fixed attempt budget.
+pub fn sample_indexed_challenges_from_seed(
     seed: &[u8],
     ring_d: usize,
     n: usize,
     cfg: &SparseChallengeConfig,
     rejection: Option<OperatorNormRejection>,
-) -> Result<Vec<SparseChallenge>, AkitaError> {
+) -> Result<Vec<SparseChallenge>, CryptoError> {
     if n == 0 {
         return Ok(Vec::new());
     }
-    u64::try_from(n - 1).map_err(|_| {
-        AkitaError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
+    let _: u64 = u64::try_from(n - 1).map_err(|_| {
+        CryptoError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
     })?;
     let policy = IndexedSamplingPolicy::new(ring_d, cfg, rejection)?;
     let prefix =
-        IndexedXofPrefix::new(seed).map_err(|message| AkitaError::InvalidSetup(message.into()))?;
+        IndexedXofPrefix::new(seed).map_err(|message| CryptoError::InvalidSetup(message.into()))?;
     #[cfg(feature = "parallel")]
     {
         let work = n
             .checked_mul(cfg.weight())
-            .ok_or_else(|| AkitaError::InvalidSetup("sparse challenge work overflow".into()))?;
+            .ok_or_else(|| CryptoError::InvalidSetup("sparse challenge work overflow".into()))?;
         if work >= PARALLEL_SAMPLING_WORK_THRESHOLD {
             return (0..n)
                 .into_par_iter()
@@ -192,7 +198,7 @@ pub(crate) fn sample_indexed_challenges_from_seed(
                     || IndexedChallengeWorker::new(&prefix, cfg, &policy),
                     |worker, index| {
                         let coordinate_index = u64::try_from(index).map_err(|_| {
-                            AkitaError::InvalidSetup(
+                            CryptoError::InvalidSetup(
                                 "sparse challenge coordinate index exceeds u64".into(),
                             )
                         })?;
@@ -211,7 +217,7 @@ fn sample_indexed_challenges_sequential(
     n: usize,
     cfg: &SparseChallengeConfig,
     policy: &IndexedSamplingPolicy,
-) -> Result<Vec<SparseChallenge>, AkitaError> {
+) -> Result<Vec<SparseChallenge>, CryptoError> {
     sample_indexed_challenges_sequential_with(prefix, n, cfg, policy, |worker, index| {
         worker.sample(index, ring_d, cfg)
     })
@@ -222,19 +228,20 @@ fn sample_indexed_challenges_sequential_with(
     n: usize,
     cfg: &SparseChallengeConfig,
     policy: &IndexedSamplingPolicy,
-    mut sample: impl FnMut(&mut IndexedChallengeWorker, u64) -> Result<SparseChallenge, AkitaError>,
-) -> Result<Vec<SparseChallenge>, AkitaError> {
+    mut sample: impl FnMut(&mut IndexedChallengeWorker, u64) -> Result<SparseChallenge, CryptoError>,
+) -> Result<Vec<SparseChallenge>, CryptoError> {
     let mut worker = IndexedChallengeWorker::new(prefix, cfg, policy);
     (0..n)
         .map(|index| {
             let coordinate_index = u64::try_from(index).map_err(|_| {
-                AkitaError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
+                CryptoError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
             })?;
             sample(&mut worker, coordinate_index)
         })
         .collect()
 }
 
+#[expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,12 +312,12 @@ mod tests {
         for (ring_d, cfg, rejection) in [
             (
                 64,
-                crate::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+                crate::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
                 OperatorNormRejection::D64_SELECTIVE_L2,
             ),
             (
                 128,
-                crate::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+                crate::challenge::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
                 OperatorNormRejection::D128_SELECTIVE_L2,
             ),
         ] {

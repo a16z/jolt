@@ -5,9 +5,11 @@
 //! `count_pm2` at magnitude 2. When `count_pm2 == 0` every non-zero
 //! coefficient is ±1.
 
-use crate::sampler::position_sample::{sample_distinct_positions_into, DistinctPositionScratch};
-use crate::sampler::xof::XofCursor;
-use crate::SparseChallenge;
+use crate::challenge::sampler::position_sample::{
+    sample_distinct_positions_into, DistinctPositionScratch,
+};
+use crate::challenge::sampler::xof::XofCursor;
+use crate::challenge::SparseChallenge;
 
 /// Stack chunk for random sign bytes.
 const SIGN_BYTE_CHUNK: usize = 64;
@@ -32,6 +34,10 @@ impl SignedSparseScratch {
     }
 
     /// Draw one signed-sparse candidate into the scratch buffers.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "`take <= SIGN_BYTE_CHUNK`, and `coeffs` was resized to `total > i`"
+    )]
     #[inline]
     pub(crate) fn sample(
         &mut self,
@@ -39,7 +45,7 @@ impl SignedSparseScratch {
         d: usize,
         count_pm1: usize,
         count_pm2: usize,
-    ) -> Result<(), akita_error::AkitaError> {
+    ) -> Result<(), crate::CryptoError> {
         debug_assert_eq!(self.total, count_pm1 + count_pm2);
         sample_distinct_positions_into(cursor, d, &mut self.positions, &mut self.position_scratch)?;
         self.coeffs.resize(self.total, 0);
