@@ -16,7 +16,7 @@ The RISC-V execution model and sumcheck-based approach remain shared with Dory, 
 
 This object contains the instruction, bytecode, and RAM address columns, together with balanced-digit increment columns and a signed carry. The increment columns encode a fused increment value derived by the sumcheck relations; Akita does not separately commit the `RdInc` and `RamInc` polynomials used by Dory. Production Akita traces use four-bit address chunks (K=16). Eight-bit chunks (K=256) are supported by the shipped catalogs only for explicit fixture and benchmark shapes listed in the [schedule policy](../../../crates/jolt-akita/schedules/README.md). Other K=256 shapes require a deployment-owned catalog containing the exact shape. The prover supplies selected row indices to Akita's native one-hot commitment path.
 
-Advice and committed-program data have their own commitments. Trusted and untrusted advice use dense word polynomials. In committed-program mode, bytecode chunks and the initial program image are committed as bounded dense objects and opened directly. These objects are separate from `OneHotTrace` because they have their own sizes, layouts, and commitment lifetimes.
+Advice and committed-program data have their own commitments. Trusted and untrusted advice use dense word polynomials. In committed-program mode, the whole bytecode and the initial program image are committed as bounded dense objects and opened directly. These objects are separate from `OneHotTrace` because they have their own sizes, layouts, and commitment lifetimes.
 
 ## Native batching and opening
 
@@ -50,8 +50,10 @@ and shape. The canonical order is:
 
 1. Untrusted advice, when present.
 2. Trusted advice, when present.
-3. Bytecode chunks in index order, followed by the initial program image, in committed-program mode.
+3. One whole-bytecode object (`ProgramBytecode`), followed by the initial program image, in committed-program mode.
 4. `OneHotTrace`.
+
+The bytecode group has `9 + log2(padded_bytecode_rows)` logical variables and a physical arity of at least 14, independent of the trace size. Each native group keeps its own opening point, so a short execution does not require splitting bytecode. Dory also commits one whole-bytecode table and embeds its balanced matrix into the joint opening grid. This is separate from Akita response chunk profiles and the address-bit chunks of `BytecodeRa`. Dory has no bytecode-table partitioning parameter: when the bytecode matrix exceeds the trace grid, it enlarges the joint opening grid and can increase proving time and memory.
 
 The verifier derives the expected layouts and roles from preprocessing and protocol configuration. It checks the assembled statement before invoking Akita verification. This replaces Dory's commitment-level linear combination with a grouped proof over the original commitments.
 
@@ -59,18 +61,21 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-The workspace pins Akita to `318c322113dc66aeed31f9f3c640e84099ba043f`.
+The workspace pins Akita to `2514b2396757add941305c5b9bf364ee0a566ed9`.
 Jolt delegates to Akita's adaptive ring-dimension schedule configuration
 and uses the CPU backend for every fold.
 The checked-in schedule catalogs match this revision.
 
-`ProverConfig::derive` selects the single-chunk Akita profile. To use
+`ProverConfig::derive_from_dimensions` selects the single-chunk Akita profile. To use
 two, four, or eight chunks, set `config.akita_chunk_profile` before Akita
 preprocessing and use that config for proving. Proving rejects a profile that
 differs from the prepared setup. The selected profile is carried
 by the verifier setup. Four-file schedule directories containing the updated
 dense catalogs remain valid for the default profile; a nondefault profile needs
-its matching companion catalog for the selected one-hot domain size.
+an application-supplied companion catalog covering the exact shape. The checked-in
+companions contain integration fixtures; downstream applications generate and
+distribute their own production coverage. The same upstream verifier consumes
+the catalog embedded in the public verifier setup.
 
 Nondefault chunk profiles bind the `akita_chunk_profile` transcript label.
 
@@ -84,7 +89,8 @@ The main implementation paths are:
 - `crates/jolt-claims/src/protocols/jolt/lattice/`: canonical layouts and Akita-specific sumcheck relations.
 - `crates/jolt-openings/src/schemes.rs`: native group claims and metadata checks.
 - `crates/jolt-openings/src/prefix.rs`: zero-prefix embeddings for auxiliary objects.
-- `crates/jolt-prover/src/akita/`: witness assembly, commitments, and the final grouped opening.
+- `crates/jolt-kernels/src/reference/akita/`: native trace assembly and commitment kernels.
+- `crates/jolt-prover/src/akita/`: preprocessing, advice objects, and final grouped opening orchestration.
 - `crates/jolt-verifier/src/stages/stage8/akita.rs`: verifier assembly of the final opening claims.
 
 The modular prover's end-to-end suite covers arithmetic execution, both one-hot chunk sizes, advice, committed programs, and rejection of modified claims. Run it with:

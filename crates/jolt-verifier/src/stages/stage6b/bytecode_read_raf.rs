@@ -208,7 +208,7 @@ fn fold_stage_values<F: JoltField>(
     }
     let address_eq_evals = EqPolynomial::<F>::evals(r_address, None);
     let bytecode_rows = fold.bytecode;
-    let stage_values = bytecode::read_raf_folded_stage_values(
+    let stage_values = bytecode::read_raf_fold_stage_values(
         BytecodeReadRafStageValueInputs {
             bytecode: bytecode_rows,
             register_read_write_point: fold.register_read_write_point,
@@ -220,7 +220,8 @@ fn fold_stage_values<F: JoltField>(
             stage5_gammas: fold.stage_gammas[4],
         },
         &address_eq_evals,
-    );
+    )
+    .map_err(public_input_failed)?;
     #[cfg(feature = "field-inline")]
     let field_registers = {
         use jolt_claims::protocols::field_inline::geometry::bytecode::{

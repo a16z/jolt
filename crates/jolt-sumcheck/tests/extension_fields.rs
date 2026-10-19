@@ -1,8 +1,4 @@
-#![expect(
-    clippy::panic,
-    clippy::unwrap_used,
-    reason = "tests may panic on assertion failures"
-)]
+#![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
 use std::marker::PhantomData;
 
@@ -12,11 +8,10 @@ use jolt_field::{
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     append_opening_claims, prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude,
-    BooleanHypercube, CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder,
-    CompressedSumcheckProof, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError,
-    SumcheckProof, SumcheckRecorder, SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-    UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    BooleanHypercube, CenteredIntegerDomain, ClearSumcheckRecorder, CompressedSumcheckProof,
+    ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
+    SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::Zero;
@@ -248,9 +243,7 @@ where
     let recorded = recorder
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = recorded.proof else {
-        panic!("clear recorder returned a non-compressed proof")
-    };
+    let proof = recorded.proof;
 
     let wire = bincode::serde::encode_to_vec(&proof, bincode::config::standard()).unwrap();
     let (proof, read): (CompressedSumcheckProof<F>, usize) =
@@ -289,7 +282,7 @@ where
         .map(|point| polynomial.evaluate(F::from_i64(point)))
         .sum();
     let mut prover_transcript = ExtensionTranscript::<F>::new(b"extension-uniskip");
-    let proved = prove_uniskip_clear::<F, (), _>(
+    let proved = prove_uniskip_clear::<F, _>(
         polynomial.clone(),
         input_claim,
         2,
@@ -299,8 +292,7 @@ where
     .unwrap();
 
     let mut verifier_transcript = ExtensionTranscript::<F>::new(b"extension-uniskip");
-    let reduced = proved
-        .proof
+    let reduced = SumcheckProof::<F, ()>::from(proved.proof)
         .verify(
             &SumcheckClaim::new(1, 2, input_claim),
             CenteredIntegerDomain::new(3),

@@ -41,7 +41,7 @@ jobs:
         with:
           components: clippy
       - name: Install nextest
-        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: nextest
       # The Linux workspace jobs build only the uninhabited backend; this is

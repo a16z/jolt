@@ -1038,8 +1038,7 @@ The current default source profile should include:
 - `SourceExtension::Zicsr`: `CSRRW` and `CSRRS`;
 - `SourceExtension::RvPrivileged`: `MRET`;
 - `SourceExtension::JoltCustom`: custom decoded source rows such as
-  `VirtualRev8W`, `VirtualAssertEQ`, `VirtualHostIO`, `AdviceLB/LH/LW/LD`, and
-  `VirtualAdviceLen`;
+  `VirtualRev8W`, `VirtualAssertEQ`, `VirtualHostIO`, and `AdviceLB/LH/LW/LD`;
 - `SourceExtension::JoltInline`: source rows whose dispatch payload is keyed by
   `(opcode, funct3, funct7)`.
 
@@ -1055,8 +1054,7 @@ include these `JoltTargetExtension` families:
 - `JoltTargetExtension::ControlFlow`: final branch/jump instructions such as
   `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`, and `FENCE`;
 - `JoltTargetExtension::LoadStore64`: final `LD` and `SD` instructions;
-- `JoltTargetExtension::Advice`: `VirtualAdvice`, `VirtualAdviceLen`, and
-  `VirtualAdviceLoad`;
+- `JoltTargetExtension::Advice`: `VirtualAdvice` and `VirtualAdviceLoad`;
 - `JoltTargetExtension::HostIO`: `VirtualHostIO`;
 - `JoltTargetExtension::VirtualAssertions`: `VirtualAssertEQ`,
   `VirtualAssertLTE`, `VirtualAssertValidDiv0`,

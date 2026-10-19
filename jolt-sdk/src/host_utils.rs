@@ -159,17 +159,26 @@ pub fn preprocess_shared_program(
     )?)
 }
 
+#[cfg(feature = "host")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramPreprocessingMode {
+    Full,
+    Committed,
+}
+
 #[cfg(all(feature = "host", not(feature = "akita")))]
 pub fn preprocess_program(
     source: &mut dyn host::JoltProgramSource,
     memory_config: MemoryConfig,
     max_trace_length: usize,
-    bytecode_chunk_count: Option<usize>,
+    mode: ProgramPreprocessingMode,
 ) -> Result<JoltProverPreprocessing, PreprocessingError> {
     let program = program_preprocessing(source, memory_config, max_trace_length)?;
-    match bytecode_chunk_count {
-        Some(chunk_count) => jolt_prover::dory::preprocess_committed(program, chunk_count),
-        None => JoltSharedPreprocessing::new(program).and_then(jolt_prover::dory::from_shared),
+    match mode {
+        ProgramPreprocessingMode::Committed => jolt_prover::dory::preprocess_committed(program),
+        ProgramPreprocessingMode::Full => {
+            JoltSharedPreprocessing::new(program).and_then(jolt_prover::dory::from_shared)
+        }
     }
 }
 
@@ -312,8 +321,8 @@ pub fn prove_program(
     .with_advice_tape(advice_tape);
     let trace = program.trace_with(&mut TracerBackend::new(), trace_inputs)?;
     let public_io = trace.device.clone();
-    let config = ProverConfig::derive::<F>(
-        trace.trace.proof_rows(),
+    let config = ProverConfig::derive_from_dimensions::<F>(
+        trace.dimensions,
         memory_layout,
         preprocessing.verifier.program.min_bytecode_address(),
         preprocessing.verifier.program.program_image_len_words(),
@@ -342,12 +351,11 @@ pub fn prove_program(
         }
     };
     let backend = jolt_prover::JoltBackend::<F, PCS>::optimized();
-    let proof = jolt_prover::dory::prove::<F, PCS, VerifierVC, ProofTranscript, _>(
-        &backend,
+    let proof = jolt_prover::dory::prove::<F, PCS, VerifierVC, ProofTranscript>(
+        backend.with_witness(&witness),
         preprocessing,
         &config,
         trusted_advice.as_ref(),
-        &witness,
         &public_io,
     )?;
     Ok((proof, public_io))

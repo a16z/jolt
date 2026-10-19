@@ -267,7 +267,7 @@ where
 /// over-length trailing entries are never algebraically consumed and would
 /// otherwise reach the Fiat-Shamir absorb, letting a malicious prover pass off
 /// padded, non-canonical proofs. Also checks the bytecode reduction's
-/// intermediate-vs-chunks shape. Member presence is enforced separately by the
+/// intermediate-vs-final shape. Member presence is enforced separately by the
 /// hand-listed `validate_member_presence` calls; a missing advice inner opening is caught by
 /// `expected_final_claim` (the advice cycle phase's `expected_output`).
 fn validate_cycle_phase_claim_shape<F: JoltField>(
@@ -349,18 +349,7 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         claims.bytecode_reduction.as_ref(),
     ) {
         let has_address_phase = layout.dimensions().has_address_phase();
-        // The wire shape must match the reduction mode: an `intermediate` (no
-        // chunks) when an address phase follows, else exactly `chunk_count`
-        // chunks (no intermediate).
-        let shape_ok = match (
-            &output_claims.intermediate,
-            output_claims.chunks.is_empty(),
-            has_address_phase,
-        ) {
-            (Some(_), true, true) => true,
-            (None, false, false) => output_claims.chunks.len() == layout.chunk_count(),
-            _ => false,
-        };
+        let shape_ok = output_claims.intermediate().is_some() == has_address_phase;
         if !shape_ok {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::BytecodeClaimReductionCyclePhase,

@@ -522,7 +522,7 @@ where
     }
 
     let address_eq_evals = EqPolynomial::<F>::evals(inputs.r_address, None);
-    let folded = read_raf_folded_stage_values(
+    let folded = read_raf_fold_stage_values(
         BytecodeReadRafStageValueInputs {
             bytecode: inputs.bytecode,
             register_read_write_point: inputs.register_read_write_point,
@@ -534,7 +534,7 @@ where
             stage5_gammas: inputs.stage5_gammas,
         },
         &address_eq_evals,
-    );
+    )?;
     // The base monolith publics carry the five gamma'd stages only; the
     // lattice sixth (store) staged value never flows through this path.
     let mut stage_values: [F; 5] = std::array::from_fn(|stage| folded[stage]);
@@ -747,13 +747,23 @@ fn stage_gammas<'a, F>(inputs: &BytecodeReadRafStageValueInputs<'a, F>) -> [&'a 
 /// gamma and per register operand, and the buckets meet the gammas once. This
 /// equals summing [`read_raf_stage_values`] weighted by `address_eq`, with
 /// additions per row instead of one field multiplication per stage.
-pub fn read_raf_folded_stage_values<F>(
+///
+/// # Errors
+///
+/// Rejects an `address_eq` whose length differs from the bytecode table's.
+pub fn read_raf_fold_stage_values<F>(
     inputs: BytecodeReadRafStageValueInputs<'_, F>,
     address_eq: &[F],
-) -> [F; NUM_BYTECODE_VAL_STAGES]
+) -> Result<[F; NUM_BYTECODE_VAL_STAGES], PointGeometryError>
 where
     F: JoltField,
 {
+    if inputs.bytecode.len() != address_eq.len() {
+        return Err(PointGeometryError::EvaluationDomainLengthMismatch {
+            expected: inputs.bytecode.len(),
+            got: address_eq.len(),
+        });
+    }
     let register_eq = read_raf_register_eq_evals(
         inputs.register_read_write_point,
         inputs.register_val_evaluation_point,
@@ -763,7 +773,7 @@ where
         std::array::from_fn(|stage| vec![F::zero(); BYTECODE_STAGE_GAMMA_COUNTS[stage]]);
     let mut register_buckets: [Vec<F>; 3] = std::array::from_fn(|_| vec![F::zero(); registers]);
     let mut store = F::zero();
-    let rows = inputs.bytecode.len().min(address_eq.len());
+    let rows = inputs.bytecode.len();
     let mut addresses = Vec::with_capacity(rows);
     let mut imms = Vec::with_capacity(rows);
     let mut classes = FlagClasses::with_rows(rows);
@@ -796,10 +806,10 @@ where
             store += weight;
         }
     }
-    let eq = &address_eq[..rows];
+    let eq = address_eq;
     let gammas = stage_gammas(&inputs);
     let weighted_read_write = register_eq.weighted_read_write(inputs.stage4_gammas);
-    assemble_stage_values(
+    Ok(assemble_stage_values(
         F::dot_product(&addresses, eq),
         F::dot_product(&imms, eq),
         std::array::from_fn(|stage| F::dot_product(gammas[stage], &gamma_buckets[stage])),
@@ -811,7 +821,7 @@ where
             .fold(F::zero(), |sum, term| sum + term),
         F::dot_product(&register_eq.val_evaluation, &register_buckets[0]),
         store,
-    )
+    ))
 }
 
 fn register_eq<F: JoltField>(register: Option<u8>, eq: &[F]) -> F {
@@ -1055,6 +1065,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::unwrap_used)]
     fn folded_stage_values_match_weighted_row_values() {
         let row = |instruction_kind, address, rs1, rs2, rd, imm| JoltInstructionRow {
             instruction_kind,
@@ -1112,7 +1123,7 @@ mod tests {
             }
         }
         assert_eq!(
-            read_raf_folded_stage_values(inputs(), &address_eq),
+            read_raf_fold_stage_values(inputs(), &address_eq).unwrap(),
             expected
         );
     }

@@ -18,7 +18,7 @@ use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
     append_opening_claims, prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound,
     ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, SequentialRounds,
-    SumcheckDomain, SumcheckError, SumcheckRecorder,
+    SumcheckDomain, SumcheckError, SumcheckProof, SumcheckRecorder,
 };
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
@@ -153,7 +153,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
         91,
     );
 
-    let mut recorder = ClearSumcheckRecorder::<Fr, Bn254G1>::new();
+    let mut recorder = ClearSumcheckRecorder::<Fr>::new();
     let (batch, prover_coefficients) = sumchecks
         .begin_batch(
             &inputs,
@@ -181,7 +181,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
     // absorbs (the low-level clear path the composed `verify_clear` wraps).
     let mut verifier_transcript = Blake2bTranscript::new(b"engine-twin");
     let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-    let mut verifier_recorder = ClearSumcheckRecorder::<Fr, Bn254G1>::new();
+    let mut verifier_recorder = ClearSumcheckRecorder::<Fr>::new();
     let (verifier_batch, verifier_coefficients) = sumchecks
         .begin_batch(
             &inputs,
@@ -190,8 +190,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
             &mut verifier_transcript,
         )
         .unwrap();
-    let reduction = recorded
-        .proof
+    let reduction = SumcheckProof::<Fr, Bn254G1>::from(recorded.proof)
         .verify_compressed_boolean(
             verifier_batch.max_num_vars,
             verifier_batch.max_degree,
@@ -308,7 +307,7 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
     );
 
     let mut prover_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
-    let proved = prove_uniskip_clear::<Fr, Bn254G1, _>(
+    let proved = prove_uniskip_clear::<Fr, _>(
         poly,
         input_claim,
         degree,
@@ -319,7 +318,7 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
 
     let mut verifier_transcript = Blake2bTranscript::new(b"uniskip-stage-twin");
     let challenge = uniskip::verify_clear(
-        &proved.proof,
+        &SumcheckProof::<Fr, Bn254G1>::from(proved.proof),
         &params,
         input_claim,
         proved.output_claim,

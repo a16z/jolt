@@ -8,10 +8,17 @@ use std::sync::Arc;
 
 use crate::PreprocessingError;
 
-pub(crate) fn validate_committed_mode() -> Result<(), PreprocessingError> {
+pub(crate) fn validate_committed_mode(
+    program: &JoltProgramPreprocessing,
+) -> Result<(), PreprocessingError> {
     if cfg!(feature = "field-inline") {
         return Err(PreprocessingError::InvalidCommittedProgram {
             reason: "field-inline requires full public bytecode preprocessing".to_owned(),
+        });
+    }
+    if program.bytecode.code_size != program.bytecode.bytecode.len() {
+        return Err(PreprocessingError::InvalidCommittedProgram {
+            reason: "declared bytecode size differs from padded rows".to_owned(),
         });
     }
     Ok(())
@@ -122,11 +129,11 @@ use crate::akita::witness::DirectProgramObjects;
 /// The prover-retained committed-program data: the verifier's preprocessing
 /// carries only the program COMMITMENTS in committed mode, but the prover
 /// still needs the full program (witness generation, the bytecode stage-value
-/// folds, the reduction chunk grids, the stage-8 materialization) and the
+/// folds, the whole-bytecode reduction grid, the stage-8 materialization) and the
 /// commitments' opening material (the stage-8 openings). Mirrors legacy's
 /// `CommittedProgramProverData`.
 ///
-/// On the Akita (`akita`) build the per-chunk/image plans and hints are
+/// On the Akita (`akita`) build the bytecode/image plans and hints are
 /// retained in direct bounded-dense program objects built at preprocessing
 /// time, so proving consumes them directly instead of re-deriving them.
 #[derive(Clone)]
@@ -140,18 +147,18 @@ use crate::akita::witness::DirectProgramObjects;
 )]
 pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     pub full: Arc<JoltProgramPreprocessing>,
-    /// One opening hint per committed bytecode chunk, in chunk order.
+    /// Opening hint for the whole committed bytecode table.
     #[cfg(not(feature = "akita"))]
-    pub bytecode_chunk_hints: Vec<PCS::OpeningHint>,
+    pub bytecode_hint: PCS::OpeningHint,
     #[cfg(not(feature = "akita"))]
     pub program_image_hint: PCS::OpeningHint,
-    /// Direct program objects in canonical order (bytecode chunks, then
+    /// Direct program objects in canonical order (whole bytecode, then
     /// program image); their commitments must match the verifier
-    /// preprocessing's `direct_program_commitments` (stage 0 checks
+    /// preprocessing's named commitments (stage 0 checks
     /// fail-closed).
     #[cfg(feature = "akita")]
     pub direct_program: DirectProgramObjects<PCS>,
-    /// The trace order the chunk commitments' coefficient grids were built
+    /// The trace order the bytecode commitment's coefficient grid was built
     /// under at preprocessing time. Stage 0 rejects a proof config whose
     /// order disagrees because the reduction point would address the
     /// committed grid in the wrong order.

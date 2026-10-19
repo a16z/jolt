@@ -1,16 +1,15 @@
-//! eq-polynomial MLE evaluation over BN254 Fr through the raw field-inline
-//! instructions: eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)), folded in
-//! the field register file and checked against a host-provided expected value
-//! with FIELD_ASSERT_EQ.
+//! eq-polynomial MLE evaluation in the proof field through the raw
+//! field-inline instructions: eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)),
+//! folded in the field register file and checked against a host-provided
+//! expected value with FIELD_ASSERT_EQ.
 
 #![cfg_attr(feature = "guest", no_std)]
 
 /// Evaluates eq(r, x) over the `(r_i, x_i)` coordinate pairs in the field-inline
-/// register file and FIELD_ASSERT_EQs it against the expected value, supplied
-/// as canonical little-endian u64 limbs and recomposed in-field by accumulating
-/// the limbs from most significant to least significant. Returns
-/// 42, read out of the field-inline file as `acc − expected + 42` through
-/// AdviceLimb followed by AssertZero on the remaining quotient.
+/// register file and FIELD_ASSERT_EQs it against the expected value, imported
+/// from its canonical little-endian u64 limbs with `field_from_limbs!`. Returns
+/// 42, read out of the field-inline file as `acc − expected + 42` with
+/// `field_to_limbs!`.
 #[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
 fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     jolt::field_load_imm!(0, 1);
@@ -28,19 +27,13 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
         jolt::field_mul!(1, 1, 4);
     }
 
-    // Horner-recompose the expected value: ((l3·2^64 + l2)·2^64 + l1)·2^64 + l0.
-    // Each limb crosses the bridge as a u64; only the in-field partial sums
-    // exceed 64 bits.
-    let [l0, l1, l2, l3] = expected_limbs;
-    jolt::field_load_imm!(8, 0);
-    for limb in [l3, l2, l1, l0] {
-        jolt::field_load_accumulate_from_register!(8, limb);
-    }
-
+    // The host computes the expected value in the proof field, so its limbs
+    // are canonical there; an fp128 value leaves the upper two limbs zero.
+    jolt::field_from_limbs!(8, expected_limbs);
     jolt::field_assert_eq!(1, 8);
 
-    // Memory ingress and advice egress round-trip an independently pinned
-    // 128-bit integer, below both supported proof fields' moduli.
+    // Memory ingress round-trips an independently pinned 128-bit integer
+    // through the checked readout.
     #[cfg(target_arch = "riscv64")]
     {
         let limbs = [0x1234_5678_9abc_def0u64, 9];
@@ -51,37 +44,16 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
             core::arch::asm!(
                 ".word {load_high}",
                 ".word {load_low}",
-                load_high = const jolt::field_inline_r_word(0x61, 5, 11, 10, 12),
-                load_low = const jolt::field_inline_r_word(0x60, 5, 11, 10, 12),
+                load_high = const jolt::field_inline::memory_accumulate_word(12, 1),
+                load_low = const jolt::field_inline::memory_accumulate_word(12, 0),
                 in("a0") limbs.as_ptr(),
                 out("a1") _,
                 options(nostack, readonly),
             );
         }
-        for readout in 0..2 {
-            let low: u64;
-            let high: u64;
-            // SAFETY: each instruction consumes field register 12 in place;
-            // its integer output is bound to the matching asm operand.
-            unsafe {
-                core::arch::asm!(
-                    ".word {low}",
-                    ".word {high}",
-                    low = const jolt::field_inline_r_word(1, 6, 11, 12, 12),
-                    high = const jolt::field_inline_r_word(1, 6, 12, 12, 12),
-                    out("a1") low,
-                    out("a2") high,
-                    options(nostack),
-                );
-            }
-            jolt::field_assert_zero!(12);
-            // The pinned integer is below both supported field moduli, so
-            // this equality also pins the canonical representative.
-            assert_eq!([low, high], limbs);
-            if readout == 0 {
-                jolt::field_load_accumulate_from_register!(12, high);
-                jolt::field_load_accumulate_from_register!(12, low);
-            }
+        // The readout restores register 12, so a second one reads it again.
+        for _ in 0..2 {
+            assert_eq!(jolt::field_to_limbs!(12, 2), limbs);
         }
     }
     jolt::field_load_imm!(13, 3);
@@ -89,29 +61,10 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     jolt::field_mul!(12, 12, 13);
     jolt::field_assert_eq!(12, 0);
 
-    // acc − expected is zero by the assert above, so one limb and a zero
-    // quotient suffice. Its unique u64 representative is 42 in both fields.
+    // acc − expected is zero by the assert above, so the result fits one limb.
     jolt::field_sub!(10, 1, 8);
     jolt::field_load_imm!(11, 42);
     jolt::field_add!(10, 10, 11);
-    #[cfg(target_arch = "riscv64")]
-    {
-        let result: u64;
-        // SAFETY: the instruction consumes field register 10 in place and
-        // writes a0, which is declared as the asm output.
-        unsafe {
-            core::arch::asm!(
-                ".word {advice}",
-                advice = const jolt::field_inline_r_word(1, 6, 10, 10, 10),
-                out("a0") result,
-                options(nostack),
-            );
-        }
-        jolt::field_assert_zero!(10);
-        result
-    }
-    #[cfg(not(target_arch = "riscv64"))]
-    {
-        42
-    }
+    let [result] = jolt::field_to_limbs!(10, 1);
+    result
 }

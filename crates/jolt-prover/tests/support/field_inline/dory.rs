@@ -2,7 +2,7 @@ use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
-use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
+use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig, ProverError};
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
@@ -17,13 +17,20 @@ pub fn prove(
     case: &GuestCase,
     backend: JoltBackend<Fr, DoryScheme>,
 ) -> (VerifierPreprocessing, JoltDevice, Proof) {
+    try_prove(support::prepare(case), backend).expect("modular field-inline prove")
+}
+
+pub fn try_prove(
+    prepared: PreparedGuest,
+    backend: JoltBackend<Fr, DoryScheme>,
+) -> Result<(VerifierPreprocessing, JoltDevice, Proof), ProverError<Fr>> {
     let PreparedGuest {
         program,
         preprocessing,
         trace,
-    } = support::prepare(case);
-    let config = ProverConfig::derive::<Fr>(
-        trace.trace.proof_rows(),
+    } = prepared;
+    let config = ProverConfig::derive_from_dimensions::<Fr>(
+        trace.dimensions,
         &preprocessing.memory_layout,
         preprocessing.ram.min_bytecode_address,
         preprocessing.ram.bytecode_words.len(),
@@ -49,16 +56,14 @@ pub fn prove(
     )
     .with_field_inline()
     .expect("field-inline witness view");
-    let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-        &backend,
+    let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        backend.with_witness(&witness),
         &preprocessing,
         &config,
         None,
-        &witness,
         &public_io,
-    )
-    .expect("modular field-inline prove");
-    (preprocessing.verifier, public_io, proof)
+    )?;
+    Ok((preprocessing.verifier, public_io, proof))
 }
 
 pub fn verify_full(

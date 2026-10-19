@@ -77,7 +77,7 @@ pub struct PreparedGuest {
     pub trace: TraceOutput,
 }
 
-fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
+pub fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
     MemoryConfig {
         max_untrusted_advice_size: layout.max_untrusted_advice_size,
         max_trusted_advice_size: layout.max_trusted_advice_size,
@@ -106,7 +106,7 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
     let (_, sizing_trace, _, device) =
         source.trace(&case.inputs, &case.untrusted_advice, &case.trusted_advice);
     case.assert_output(&device);
-    // Same padding law as `ProverConfig::derive`: one row is reserved beyond
+    // Same padding law as `ProverConfig::derive_from_dimensions`: one row is reserved beyond
     // the executed trace.
     assert!(
         (sizing_trace.len() + 1).next_power_of_two() <= case.max_padded_trace_length,

@@ -14,7 +14,7 @@ use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout};
+use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout, ProgramPreprocessingMode};
 #[cfg(not(feature = "akita"))]
 use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof};
 use serde::{de::DeserializeOwned, Serialize};
@@ -124,8 +124,8 @@ enum Commands {
         #[arg(long, value_name = "DIRECTORY", default_value = "output")]
         workdir: PathBuf,
         /// Use committed program mode for the inner guest proof
-        #[arg(long, value_name = "CHUNKS")]
-        committed_bytecode: Option<usize>,
+        #[arg(long)]
+        committed_bytecode: bool,
         /// Number of inner proofs the recursion guest verifies in one run
         #[arg(long, value_name = "COUNT", default_value_t = 1)]
         proofs: usize,
@@ -382,15 +382,9 @@ fn preprocess_guest_prover(
     guest_prog: &mut Program,
     memory_config: MemoryConfig,
     max_trace_length: usize,
-    bytecode_chunk_count: Option<usize>,
+    mode: ProgramPreprocessingMode,
 ) -> JoltProverPreprocessing {
-    jolt_sdk::preprocess_program(
-        guest_prog,
-        memory_config,
-        max_trace_length,
-        bytecode_chunk_count,
-    )
-    .unwrap()
+    jolt_sdk::preprocess_program(guest_prog, memory_config, max_trace_length, mode).unwrap()
 }
 
 /// The packed (Akita) inner proofs use the modular prover over fp128 and the
@@ -401,7 +395,7 @@ fn collect_guest_proofs(
     guest: GuestProgram,
     target_dir: &str,
     _use_embed: bool,
-    bytecode_chunk_count: Option<usize>,
+    mode: ProgramPreprocessingMode,
     proofs: usize,
 ) -> Vec<u8> {
     use jolt_akita::AkitaScheduleArtifacts;
@@ -460,14 +454,13 @@ fn collect_guest_proofs(
             max_trace_length,
         )
         .expect("inner proof configuration");
-        let prover_preprocessing = match bytecode_chunk_count {
-            Some(chunks) => preprocessing::preprocess_committed(
+        let prover_preprocessing = match mode {
+            ProgramPreprocessingMode::Committed => preprocessing::preprocess_committed(
                 &schedule_artifacts,
                 program_data.as_ref().clone(),
                 &config,
-                chunks,
             ),
-            None => preprocessing::preprocess_full(
+            ProgramPreprocessingMode::Full => preprocessing::preprocess_full(
                 &schedule_artifacts,
                 program_data.as_ref().clone(),
                 &config,
@@ -565,7 +558,7 @@ fn collect_guest_proofs(
     guest: GuestProgram,
     target_dir: &str,
     use_embed: bool,
-    bytecode_chunk_count: Option<usize>,
+    mode: ProgramPreprocessingMode,
     proofs: usize,
 ) -> Vec<u8> {
     info!("Starting collect_guest_proofs for {}", guest.name());
@@ -586,12 +579,8 @@ fn collect_guest_proofs(
     program.build(target_dir);
     info!("Getting ELF contents...");
     info!("Preprocessing guest prover...");
-    let guest_prover_preprocessing = preprocess_guest_prover(
-        &mut program,
-        memory_config,
-        max_trace_length,
-        bytecode_chunk_count,
-    );
+    let guest_prover_preprocessing =
+        preprocess_guest_prover(&mut program, memory_config, max_trace_length, mode);
     info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
         jolt_sdk::verifier_preprocessing_from_prover(&guest_prover_preprocessing);
@@ -828,7 +817,7 @@ fn load_proof_data(guest: GuestProgram, workdir: &Path) -> Vec<u8> {
 fn generate_proofs(
     guest: GuestProgram,
     workdir: &Path,
-    bytecode_chunk_count: Option<usize>,
+    mode: ProgramPreprocessingMode,
     proofs: usize,
 ) {
     info!(
@@ -838,8 +827,7 @@ fn generate_proofs(
 
     let target_dir = "/tmp/jolt-guest-targets";
 
-    let all_groups_data =
-        collect_guest_proofs(guest, target_dir, false, bytecode_chunk_count, proofs);
+    let all_groups_data = collect_guest_proofs(guest, target_dir, false, mode, proofs);
 
     save_proof_data(guest, &all_groups_data, workdir);
 
@@ -975,8 +963,12 @@ fn run_recursion_proof(
             }
             #[cfg(not(feature = "akita"))]
             {
-                let preprocessing =
-                    preprocess_guest_prover(&mut program, memory_config, max_trace_length, None);
+                let preprocessing = preprocess_guest_prover(
+                    &mut program,
+                    memory_config,
+                    max_trace_length,
+                    ProgramPreprocessingMode::Full,
+                );
                 let verifier = jolt_sdk::verifier_preprocessing_from_prover(&preprocessing);
                 let (proof, io_device): (RV64IMACProof, _) = jolt_sdk::prove_program(
                     &program,
@@ -1080,7 +1072,16 @@ fn main() {
                     return;
                 }
             };
-            generate_proofs(guest, workdir, *committed_bytecode, *proofs);
+            generate_proofs(
+                guest,
+                workdir,
+                if *committed_bytecode {
+                    ProgramPreprocessingMode::Committed
+                } else {
+                    ProgramPreprocessingMode::Full
+                },
+                *proofs,
+            );
         }
         Some(Commands::Verify {
             example,
@@ -1141,7 +1142,7 @@ fn main() {
             info!("Examples:");
             info!("  cargo run --release -- generate --example fibonacci");
             info!("  cargo run --release -- generate --example fibonacci --workdir ./output");
-            info!("  cargo run --release -- generate --example fibonacci --committed-bytecode 16");
+            info!("  cargo run --release -- generate --example fibonacci --committed-bytecode");
             info!("  cargo run --release -- verify --example fibonacci");
             info!("  cargo run --release -- verify --example fibonacci --workdir ./output --embed");
             info!("  cargo run --release -- trace --example fibonacci --embed");

@@ -188,11 +188,14 @@ mod twin_tests {
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_kernels::{
-        KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
-        SumcheckKernelError,
+        KernelContext, KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs,
+        SumcheckKernel, SumcheckKernelError,
     };
     use jolt_poly::UnivariatePoly;
-    use jolt_sumcheck::{ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckError};
+    use jolt_sumcheck::{
+        ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds, SequentialRounds,
+        SumcheckError, SumcheckProof,
+    };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
     use jolt_verifier::VerifierError;
@@ -739,7 +742,7 @@ mod twin_tests {
     fn drive(
         beta: bool,
     ) -> (
-        Proved<Fr, ToyDriverSumchecks<Fr>, Fr>,
+        Proved<Fr, ToyDriverSumchecks<Fr>, CompressedSumcheckProof<Fr>>,
         Vec<&'static str>,
         Vec<JoltRelationId>,
     ) {
@@ -753,19 +756,18 @@ mod twin_tests {
             23,
         )));
 
+        let mut context = KernelContext::new(&kernels, NoWitness, session);
         let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
-                &kernels,
-                &mut session,
+                &mut context,
                 &mut SequentialRounds,
-                &NoWitness,
                 &inputs,
                 &input_points,
                 &challenges,
-                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                ClearSumcheckRecorder::<Fr>::new(),
                 &mut prover_transcript,
             )
             .unwrap();
@@ -781,7 +783,7 @@ mod twin_tests {
                 &input_points,
                 &verifier_challenges,
                 &proved.output_claims,
-                &proved.recorded.proof,
+                &SumcheckProof::<Fr, Fr>::from(proved.recorded.proof.clone()),
                 &mut verifier_transcript,
                 0,
             )
@@ -790,8 +792,18 @@ mod twin_tests {
 
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
-        let calls = session.take::<PrepareCallLog>().unwrap().0;
-        let residues = session.take::<ResidueCallLog>().unwrap().0;
+        let calls = context
+            .session()
+            .state::<PrepareCallLog>()
+            .unwrap()
+            .0
+            .clone();
+        let residues = context
+            .session()
+            .state::<ResidueCallLog>()
+            .unwrap()
+            .0
+            .clone();
         (proved, calls, residues)
     }
 
@@ -853,21 +865,20 @@ mod twin_tests {
             }),
             delta: Box::new(HeadDensePrepare { seed: 37 }),
         };
-        let mut session = ProofSession::default();
+        let session = ProofSession::default();
 
+        let mut context = KernelContext::new(&kernels, NoWitness, session);
         let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
-                &kernels,
-                &mut session,
+                &mut context,
                 &mut SequentialRounds,
-                &NoWitness,
                 &inputs,
                 &input_points,
                 &challenges,
-                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                ClearSumcheckRecorder::<Fr>::new(),
                 &mut prover_transcript,
             )
             .unwrap();
@@ -880,7 +891,7 @@ mod twin_tests {
                 &input_points,
                 &verifier_challenges,
                 &proved.output_claims,
-                &proved.recorded.proof,
+                &SumcheckProof::<Fr, Fr>::from(proved.recorded.proof),
                 &mut verifier_transcript,
                 0,
             )
@@ -895,8 +906,18 @@ mod twin_tests {
         );
         assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
         assert_eq!(proved.output_claims.delta.opening_values().len(), 1);
-        let calls = session.take::<PrepareCallLog>().unwrap().0;
-        let residues = session.take::<ResidueCallLog>().unwrap().0;
+        let calls = context
+            .session()
+            .state::<PrepareCallLog>()
+            .unwrap()
+            .0
+            .clone();
+        let residues = context
+            .session()
+            .state::<ResidueCallLog>()
+            .unwrap()
+            .0
+            .clone();
         assert_eq!(calls, vec!["alpha", "delta"]);
         assert_eq!(
             residues,
@@ -912,20 +933,16 @@ mod twin_tests {
         let sumchecks = fixture(false);
         let inputs = inputs(false);
         let kernels = toy_kernels();
-        let mut session = ProofSession::default();
-
         let mut transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let result = sumchecks.prove(
-            &kernels,
-            &mut session,
+            &mut KernelContext::new(&kernels, NoWitness, ProofSession::default()),
             &mut SequentialRounds,
-            &NoWitness,
             &inputs,
             &input_points,
             &challenges,
-            ClearSumcheckRecorder::<Fr, Fr>::new(),
+            ClearSumcheckRecorder::<Fr>::new(),
             &mut transcript,
         );
         assert!(matches!(
@@ -937,7 +954,6 @@ mod twin_tests {
     #[test]
     fn populated_cells_for_absent_member_fail_at_prepare() {
         let kernels = toy_kernels();
-        let mut session = ProofSession::default();
         let claims = ToyBetaInputs {
             claimed_sum: Fr::from_u64(777),
         };
@@ -946,10 +962,8 @@ mod twin_tests {
         };
 
         let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, _>(
-            &kernels,
+            &mut KernelContext::new(&kernels, NoWitness, ProofSession::default()),
             None,
-            &mut session,
-            &NoWitness,
             Some(&claims),
             Some(&points),
             Some(&NoChallenges::default()),

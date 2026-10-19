@@ -22,6 +22,7 @@
 
 mod adapters;
 pub mod configs;
+pub mod family_contract;
 mod native_batching;
 mod one_hot_family;
 mod planning;

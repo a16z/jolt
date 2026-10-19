@@ -135,7 +135,6 @@ macro_rules! for_each_instruction_kind {
                 AdviceLH => AdviceLh => "jolt.advice.lh",
                 AdviceLW => AdviceLw => "jolt.advice.lw",
                 VirtualAdvice => VirtualAdvice => "jolt.virtual.advice",
-                VirtualAdviceLen => VirtualAdviceLen => "jolt.virtual.advice_len",
                 VirtualAdviceLoad => VirtualAdviceLoad => "jolt.virtual.advice_load",
                 VirtualAssertEQ => AssertEq => "jolt.virtual.assert_eq",
                 VirtualAssertHalfwordAlignment => AssertHalfwordAlignment => "jolt.virtual.assert_halfword_alignment",
@@ -250,7 +249,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 XOR => Xor => (0x0036, "rv64.xor"),
                 XORI => XorI => (0x0037, "rv64.xori"),
                 VirtualAdvice => VirtualAdvice => (0x0061, "jolt.virtual.advice"),
-                VirtualAdviceLen => VirtualAdviceLen => (0x0062, "jolt.virtual.advice_len"),
+                // Tag 0x0062 is retired and must not be reused.
                 VirtualAdviceLoad => VirtualAdviceLoad => (0x0063, "jolt.virtual.advice_load"),
                 VirtualAssertEQ => AssertEq => (0x0064, "jolt.virtual.assert_eq"),
                 VirtualAssertHalfwordAlignment => AssertHalfwordAlignment => (0x0065, "jolt.virtual.assert_halfword_alignment"),

@@ -31,7 +31,7 @@ use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 // Program digests derive from the serde encoding (`ProgramPreprocessing::digest`);
 // fixtures carrying the legacy digest layout must regenerate.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0005";
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0006";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -267,15 +267,10 @@ pub fn fresh_standard_muldiv_address_major_case() -> VerifierFixtureCase {
 }
 
 #[cfg(not(feature = "zk"))]
-pub fn fresh_standard_committed_muldiv_address_major_case(
-    bytecode_chunk_count: usize,
-) -> VerifierFixtureCase {
+pub fn fresh_standard_committed_muldiv_address_major_case() -> VerifierFixtureCase {
     let _guard = verifier_fixture_lock();
     fresh_case_from_accepted_fixture(|| {
-        generate_committed_muldiv_with_order(
-            bytecode_chunk_count,
-            TracePolynomialOrder::AddressMajor,
-        )
+        generate_committed_muldiv_with_order(TracePolynomialOrder::AddressMajor)
     })
 }
 
@@ -628,7 +623,7 @@ fn generate_advice_consumer_with_committed_program(
     let run = prepare_guest(program, &inputs, &untrusted_advice, &trusted_advice);
     let config = derive_config(&run);
     let preprocessing = if committed_program {
-        jolt_prover::dory::preprocess_committed(run.program_preprocessing, 2)
+        jolt_prover::dory::preprocess_committed(run.program_preprocessing)
             .expect("committed preprocessing")
     } else {
         let shared =
@@ -645,24 +640,18 @@ fn generate_advice_consumer_with_committed_program(
 }
 
 fn generate_committed_muldiv() -> GeneratedVerifierFixture {
-    generate_committed_muldiv_with_order(2, TracePolynomialOrder::CycleMajor)
+    generate_committed_muldiv_with_order(TracePolynomialOrder::CycleMajor)
 }
 
-fn generate_committed_muldiv_with_order(
-    bytecode_chunk_count: usize,
-    order: TracePolynomialOrder,
-) -> GeneratedVerifierFixture {
+fn generate_committed_muldiv_with_order(order: TracePolynomialOrder) -> GeneratedVerifierFixture {
     let program = Program::new("muldiv-guest");
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(program, &inputs, &[], &[]);
     let mut config = derive_config(&run);
     config.trace_polynomial_order = order;
-    let preprocessing = jolt_prover::dory::preprocess_committed_with_order(
-        run.program_preprocessing,
-        bytecode_chunk_count,
-        order,
-    )
-    .expect("committed preprocessing");
+    let preprocessing =
+        jolt_prover::dory::preprocess_committed_with_order(run.program_preprocessing, order)
+            .expect("committed preprocessing");
     prove_prepared(run.program, run.trace, config, preprocessing, &[])
 }
 
@@ -704,8 +693,8 @@ fn generate_verifier_fixture_with_order(
 }
 
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
-    ProverConfig::derive::<Fr>(
-        run.trace.trace.proof_rows(),
+    ProverConfig::derive_from_dimensions::<Fr>(
+        run.trace.dimensions,
         &run.program_preprocessing.memory_layout,
         run.program_preprocessing.ram.min_bytecode_address,
         run.program_preprocessing.ram.bytecode_words.len(),
@@ -736,16 +725,14 @@ fn prove_prepared(
         jolt_prover::dory::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof =
-        jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &JoltBackend::optimized(),
-            &preprocessing,
-            &config,
-            trusted.as_ref(),
-            &witness,
-            &public_io,
-        )
-        .expect("prove verifier fixture");
+    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        JoltBackend::optimized().with_witness(&witness),
+        &preprocessing,
+        &config,
+        trusted.as_ref(),
+        &public_io,
+    )
+    .expect("prove verifier fixture");
     GeneratedVerifierFixture {
         preprocessing: preprocessing.verifier,
         public_io,
@@ -813,8 +800,8 @@ mod field_inline {
         let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
         let public_io = trace_output.device.clone();
 
-        let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.proof_rows(),
+        let config = ProverConfig::derive_from_dimensions::<Fr>(
+            trace_output.dimensions,
             &memory_layout,
             program_preprocessing.ram.min_bytecode_address,
             program_preprocessing.ram.bytecode_words.len(),
@@ -842,12 +829,11 @@ mod field_inline {
         let witness = Arc::new(witness);
 
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            backend.with_witness(&witness),
             &prover_preprocessing,
             &config,
             None,
-            witness.as_ref(),
             &public_io,
         )
         .expect("modular field-inline prove");

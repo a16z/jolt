@@ -1235,13 +1235,13 @@ mod tests {
 
         let mut transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
         append_verifier_setup(&mut transcript, &setup, AkitaBackendFlavor::OneHot).unwrap();
-        // This fixture binds the entire K16 catalog, so catalog expansions change it
+        // This fixture binds the entire K16 catalog, so catalog changes alter it
         // even when the selected row and single-chunk transcript encoding are unchanged.
         assert_eq!(
             transcript.state(),
             [
-                109, 233, 68, 211, 200, 35, 139, 113, 67, 223, 201, 26, 245, 17, 32, 159, 119, 108,
-                174, 18, 232, 57, 53, 27, 41, 8, 45, 129, 154, 249, 44, 135,
+                205, 2, 243, 247, 235, 52, 107, 127, 77, 82, 189, 184, 174, 107, 52, 230, 100, 169,
+                34, 174, 75, 3, 75, 147, 196, 211, 62, 205, 25, 116, 31, 213,
             ]
         );
     }

@@ -25,4 +25,6 @@ pub enum TraceError {
     BytecodePcTooWide { pc: usize },
     #[error("field event at cycle {cycle} is out of range or not strictly ordered")]
     InvalidFieldEvent { cycle: usize },
+    #[error("RAM minimum address exceeds maximum address")]
+    InvalidRamBounds,
 }

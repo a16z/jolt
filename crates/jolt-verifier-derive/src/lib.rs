@@ -633,7 +633,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         {
             use #relations::ConcreteSumcheck as _;
 
-            let mut __recorder = ::jolt_sumcheck::ClearSumcheckRecorder::<#f, __C>::new();
+            let mut __recorder = ::jolt_sumcheck::ClearSumcheckRecorder::<#f>::new();
             let (__batch, __coefficients) =
                 self.begin_batch(inputs, challenges, &mut __recorder, transcript)?;
 
