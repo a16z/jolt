@@ -20,8 +20,9 @@ fn main() {
     reason = "the profiling executable reports measurements and fails on invalid runs"
 )]
 mod profile {
-    use std::sync::Arc;
-    use std::time::Instant;
+    use std::sync::{mpsc, Arc};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use clap::{Parser, ValueEnum};
     use common::jolt_device::MemoryConfig;
@@ -31,7 +32,10 @@ mod profile {
     use jolt_host::{JoltProgramSource, Program};
     use jolt_inlines_keccak256 as _;
     use jolt_inlines_sha2 as _;
-    use jolt_kernels::cuda::CudaDoryScheme;
+    use jolt_kernels::cuda::{
+        device_available, device_count, device_memory_used, request_devices, xfer_stats,
+        CudaDoryScheme,
+    };
     use jolt_kernels::JoltBackend;
     use jolt_profiling::PeakMemory;
     use jolt_program::execution::{ExecutionBackend, TraceInputs};
@@ -64,6 +68,8 @@ mod profile {
         iterations: u32,
         #[arg(long, value_enum, default_value = "cuda")]
         backend: Backend,
+        #[arg(long, default_value_t = 1)]
+        gpus: usize,
         #[arg(long, default_value_t = 2)]
         repetitions: usize,
         /// Run address rounds before cycle rounds in RAM/register read-write checks.
@@ -73,7 +79,7 @@ mod profile {
 
     pub fn run() {
         let args = Args::parse();
-        assert!(args.iterations > 0 && args.repetitions > 0);
+        assert!(args.iterations > 0 && args.repetitions > 0 && args.gpus > 0);
         let (name, inputs) = match args.name {
             Workload::Fibonacci => (
                 "fibonacci-guest",
@@ -88,6 +94,11 @@ mod profile {
                 postcard::to_stdvec(&([5u8; 32], args.iterations)).expect("chain input"),
             ),
         };
+        if args.backend == Backend::Cuda {
+            request_devices(args.gpus);
+            assert!(device_available(), "CUDA device and kernels must load");
+            assert_eq!(device_count(), args.gpus, "all requested GPUs must load");
+        }
         let mut source = Program::new(name);
         let (_, sizing, _, device) = source.trace(&inputs, &[], &[]);
         assert!(!device.panic, "guest execution failed");
@@ -162,6 +173,25 @@ mod profile {
         let cpu = JoltBackend::<Fr, DoryScheme>::optimized();
         let cuda = JoltBackend::<Fr, CudaDoryScheme>::cuda();
         for repetition in 0..args.repetitions {
+            xfer_stats::reset();
+            let (stop, stopped) = mpsc::channel();
+            let gpu = args.backend == Backend::Cuda;
+            let memory = thread::spawn(move || {
+                let mut peak = Vec::<usize>::new();
+                if gpu {
+                    loop {
+                        let used = device_memory_used();
+                        peak.resize(used.len(), 0);
+                        for (peak, used) in peak.iter_mut().zip(used) {
+                            *peak = (*peak).max(used);
+                        }
+                        if stopped.recv_timeout(Duration::from_millis(50)).is_ok() {
+                            break;
+                        }
+                    }
+                }
+                peak
+            });
             macro_rules! prove {
                 ($pcs:ty, $backend:expr, $preprocessing:expr) => {{
                     let start = Instant::now();
@@ -194,6 +224,9 @@ mod profile {
                 Backend::Optimized => prove!(DoryScheme, cpu, &cpu_preprocessing),
                 Backend::Cuda => prove!(CudaDoryScheme, cuda, &cuda_preprocessing),
             };
+            let _ = stop.send(());
+            let device_peak = memory.join().expect("memory sampler");
+            let transfers = xfer_stats::snapshot();
             println!(
                 "{}",
                 json!({
@@ -201,6 +234,7 @@ mod profile {
                     "iterations": args.iterations,
                     "trace_length": config.trace_length,
                     "backend": format!("{:?}", args.backend).to_lowercase(),
+                    "gpus": if gpu { args.gpus } else { 0 },
                     "repetition": repetition,
                     "address_first": args.address_first,
                     "setup_seconds": setup_seconds,
@@ -208,6 +242,11 @@ mod profile {
                     "verify_seconds": verify_seconds,
                     "proof_bytes": proof_bytes,
                     "process_peak_rss_bytes": PeakMemory::sample().rss_bytes,
+                    "sampled_device_used_peak_bytes": device_peak,
+                    "transfer_counters_enabled": xfer_stats::enabled(),
+                    "h2d_bytes": transfers.h2d.bytes,
+                    "d2h_bytes": transfers.d2h.bytes,
+                    "d2d_bytes": transfers.d2d.bytes,
                 })
             );
         }

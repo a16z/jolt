@@ -3,6 +3,10 @@
 //! [`JoltBackend::cuda`] uses the optimized registry. [`CudaDoryScheme`] selects
 //! the PCS independently and shares its proof and setup types with `DoryScheme`.
 //! Both entry points execute entirely on the CPU.
+//!
+//! The shared CUDA runtime owns process-wide device contexts and compiled
+//! modules. [`DeviceFrVec`] stores BN254 Montgomery limbs on its owning stream;
+//! [`CudaKernelContext::fr_identity`] copies those elements on the device.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -12,8 +16,20 @@ use crate::{JoltBackend, ModeStreamingCommitment};
 mod common;
 mod dory;
 
+pub use common::context::{
+    context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,
+    CudaKernelContext, DEVICE_COUNT_VARIABLE,
+};
+pub use common::device::{DeviceFrVec, LIMBS};
 pub use common::error::CudaError;
+pub use common::xfer_stats;
 pub use dory::CudaDoryScheme;
+
+/// Initializes the device pool on first use and reports whether its selected
+/// device has a usable kernel context.
+pub fn device_available() -> bool {
+    shared_context().is_some()
+}
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
@@ -26,5 +42,90 @@ where
         PCS: ModeStreamingCommitment,
     {
         Self::optimized()
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test module: device operations fail loudly"
+)]
+mod tests {
+    use cudarc::driver::CudaContext;
+    use jolt_field::{Fr, Ring};
+
+    use super::shared_context;
+
+    macro_rules! require_device {
+        () => {
+            match shared_context() {
+                Some(context) => context,
+                None => return,
+            }
+        };
+    }
+
+    fn sample(count: usize) -> Vec<Fr> {
+        (0..count as u64).map(|i| Fr::from_u64(i * 7 + 3)).collect()
+    }
+
+    #[test]
+    fn kernel_source_compiles_when_a_device_is_present() {
+        if CudaContext::new(0).is_err() {
+            return;
+        }
+        assert!(
+            shared_context().is_some(),
+            "a CUDA device is present but the kernel module failed to build; every \
+             device test would otherwise skip and report success",
+        );
+    }
+
+    #[test]
+    fn upload_launch_download_round_trips() {
+        let context = require_device!();
+        for count in [1usize, 5, 256, 1000] {
+            let values = sample(count);
+            let device = context.upload(&values).expect("upload");
+            assert_eq!(device.len(), count);
+            let copied = context.fr_identity(&device).expect("launch identity");
+            assert_eq!(copied.to_host().expect("download"), values);
+        }
+    }
+
+    #[test]
+    fn empty_upload_round_trips() {
+        let context = require_device!();
+        let device = context.upload(&[]).expect("upload empty");
+        assert!(device.is_empty());
+        assert!(device.to_host().expect("download empty").is_empty());
+    }
+
+    #[test]
+    fn first_reads_element_zero() {
+        let context = require_device!();
+        let values = sample(64);
+        let device = context.upload(&values).expect("upload");
+        assert_eq!(device.first().expect("first"), values[0]);
+    }
+
+    #[test]
+    fn device_clone_copies_contents() {
+        let context = require_device!();
+        let values = sample(32);
+        let device = context.upload(&values).expect("upload");
+        let clone = device.try_clone().expect("clone");
+        assert_eq!(clone.to_host().expect("download"), values);
+    }
+
+    #[test]
+    fn pool_reuse_does_not_leak_stale_limbs() {
+        let context = require_device!();
+        let large = sample(512);
+        let large_device = context.upload(&large).expect("upload large");
+        assert_eq!(large_device.to_host().expect("download large"), large);
+        let small: Vec<Fr> = sample(8).into_iter().map(|v| v + Fr::from_u64(1)).collect();
+        let small_device = context.upload(&small).expect("upload small");
+        assert_eq!(small_device.to_host().expect("download small"), small);
     }
 }

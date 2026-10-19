@@ -14,6 +14,9 @@ workspace = true
 [features]
 default = ["parallel"]
 cuda = [
+  "dep:cudarc",
+  "dep:ark-bn254",
+  "dep:ark-ff",
   "dep:jolt-crypto",
   "dep:jolt-dory",
   "dep:jolt-transcript",
@@ -49,6 +52,9 @@ field-inline = [
 ]
 
 [dependencies]
+cudarc = { workspace = true, optional = true }
+ark-bn254 = { workspace = true, optional = true }
+ark-ff = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
 jolt-transcript = { workspace = true, optional = true }
