@@ -49,6 +49,7 @@ members = [
   "crates/jolt-transcript",
   "crates/jolt-utils",
   "crates/jolt-profiling",
+  "crates/jolt-algebra",
   "crates/jolt-field",
   "crates/jolt-host",
   "crates/jolt-kernels",
@@ -450,6 +451,7 @@ jolt-dory = { path = "./crates/jolt-dory" }
 jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-spartan-verifier = { path = "./crates/jolt-spartan-verifier" }
 jolt-spartan-prover = { path = "./crates/jolt-spartan-prover" }
+jolt-algebra = { path = "./crates/jolt-algebra" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-host = { path = "./crates/jolt-host" }
 jolt-openings = { path = "./crates/jolt-openings" }

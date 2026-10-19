@@ -31,10 +31,18 @@ bn254 = [
   "dep:num-traits",
   "jolt-field/bn254",
 ]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
-# Whiteout's lattice primitives: the prover-only Gaussian sampler and
-# joint rejection rule in `sample`.
-lattice = ["dep:subtle", "dep:num-bigint"]
+parallel = ["dep:rayon", "jolt-field/parallel", "jolt-poly/parallel"]
+# Lattice primitives: sparse ring challenges, the Ajtai public-matrix stream,
+# and Whiteout's prover-only Gaussian sampler and joint rejection rule. Off by
+# default so curve-only builds, including the verifier, do not compile them.
+lattice = [
+  "dep:keccak",
+  "dep:shake",
+  "dep:smallvec",
+  "dep:thiserror",
+  "dep:subtle",
+  "dep:num-bigint",
+]
 
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
@@ -43,6 +51,10 @@ jolt-poly = { path = "../jolt-poly", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 subtle = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+keccak = { version = "0.1.6", features = ["asm"], optional = true }
+shake = { version = "0.1.0", optional = true }
+smallvec = { version = "1.15.2", features = ["const_generics"], optional = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -57,6 +69,8 @@ rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 ark-std = { workspace = true }
+# The lattice tests instantiate Solinas fields.
+jolt-field = { path = "../jolt-field", default-features = false, features = ["solinas"] }
 rand_chacha = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }

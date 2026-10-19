@@ -29,6 +29,7 @@ akita-types.workspace = true
 # Canonical trace geometry without selecting the Akita PIOP feature.
 jolt-claims.workspace = true
 jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
+  "lattice",
   "parallel",
 ] }
 jolt-field = { path = "../jolt-field", default-features = false, features = [

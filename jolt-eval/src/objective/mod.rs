@@ -199,7 +199,7 @@ impl PerformanceObjective {
             Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["crates/jolt-poly/"],
             Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
             Self::MulU64(_) | Self::MulI64(_) | Self::MulU128(_) | Self::MulI128(_) => {
-                &["crates/jolt-field/"]
+                &["crates/jolt-algebra/"]
             }
         }
     }
