@@ -13,6 +13,9 @@
 //! summation reduces on the device and downloads only the final field element.
 //! Equality tables use separate input/output buffers at each level to avoid races;
 //! less-than tables expand in place. Levels run in order on the owning stream.
+//! Integer inputs upload as compact limbs and convert to Montgomery form on the
+//! device. Host `i128` inputs use separate signs and magnitudes; device `i128`
+//! inputs use two's-complement limbs.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

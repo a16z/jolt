@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use cudarc::driver::{
-    CudaContext as DriverContext, CudaFunction, CudaStream, LaunchConfig, PushKernelArg,
+    CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
 use cudarc::nvrtc::Ptx;
 use jolt_field::Fr;
@@ -29,6 +29,9 @@ pub struct CudaKernelContext {
     pub(super) bind_low_to_high: CudaFunction,
     pub(super) bind_high_to_low: CudaFunction,
     pub(super) sum_reduce: CudaFunction,
+    pub(super) u64_to_mont: CudaFunction,
+    pub(super) i128_to_mont: CudaFunction,
+    pub(super) twos_i128_to_mont: CudaFunction,
     pub(super) eq_double: CudaFunction,
     pub(super) lt_double: CudaFunction,
 }
@@ -53,6 +56,9 @@ impl CudaKernelContext {
             bind_low_to_high: module.load_function("bind_low_to_high_kernel")?,
             bind_high_to_low: module.load_function("bind_high_to_low_kernel")?,
             sum_reduce: module.load_function("sum_reduce_kernel")?,
+            u64_to_mont: module.load_function("u64_to_mont_kernel")?,
+            i128_to_mont: module.load_function("i128_to_mont_kernel")?,
+            twos_i128_to_mont: module.load_function("twos_i128_to_mont_kernel")?,
             eq_double: module.load_function("eq_double_kernel")?,
             lt_double: module.load_function("lt_double_kernel")?,
         })
@@ -74,6 +80,18 @@ impl CudaKernelContext {
             buffer,
             values.len(),
         ))
+    }
+
+    pub(crate) fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    pub(crate) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
     }
 
     pub fn alloc(&self, len: usize) -> Result<DeviceFrVec, CudaError> {

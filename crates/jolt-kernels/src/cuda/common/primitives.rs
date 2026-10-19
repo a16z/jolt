@@ -1,5 +1,5 @@
 use cudarc::driver::CudaFunction;
-use cudarc::driver::{LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, Ring};
 use jolt_poly::BindingOrder;
 
@@ -284,6 +284,131 @@ impl CudaKernelContext {
         }
         Ok(table)
     }
+
+    pub fn u64_to_montgomery(&self, values: &[u64]) -> Result<DeviceFrVec, CudaError> {
+        if values.is_empty() {
+            return self.alloc(0);
+        }
+        let input = self.upload_u64_slice(values)?;
+        self.u64_to_montgomery_device(&input, values.len())
+    }
+
+    pub fn u64_to_montgomery_device(
+        &self,
+        input: &CudaSlice<u64>,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        if len == 0 {
+            return Ok(output);
+        }
+        if input.len() < len {
+            return Err(CudaError::LengthMismatch {
+                expected: len,
+                got: input.len(),
+            });
+        }
+        let count = Self::count_of(len)?;
+        let mut builder = self.stream().launch_builder(&self.u64_to_mont);
+        let _ = builder.arg(input);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads only `input[i]` (checked above to hold
+        // at least `count` elements) and writes only `out[i*4..i*4+4]` of a
+        // `count * LIMBS` buffer; the two are distinct allocations. Threads with
+        // `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub fn i128_to_montgomery_device(
+        &self,
+        value: &CudaSlice<u64>,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        if len == 0 {
+            return Ok(output);
+        }
+        if value.len() < len * 2 {
+            return Err(CudaError::LengthMismatch {
+                expected: len * 2,
+                got: value.len(),
+            });
+        }
+        let count = Self::count_of(len)?;
+        let mut builder = self.stream().launch_builder(&self.twos_i128_to_mont);
+        let _ = builder.arg(value);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads `value[2i]` and `value[2i + 1]`,
+        // checked above to be inside a `2 * count`-word buffer, and writes only
+        // `out[i*4..i*4+4]` of a `count * LIMBS` buffer; the two are distinct
+        // allocations. Threads with `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub fn i128_to_montgomery(&self, values: &[i128]) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(values.len())?;
+        if values.is_empty() {
+            return Ok(output);
+        }
+        let mut magnitude = Vec::with_capacity(values.len() * 2);
+        let mut negative = Vec::with_capacity(values.len());
+        for &value in values {
+            let unsigned = value.unsigned_abs();
+            magnitude.push(unsigned as u64);
+            magnitude.push((unsigned >> 64) as u64);
+            negative.push(u8::from(value.is_negative()));
+        }
+        let magnitude = self.upload_u64_slice(&magnitude)?;
+        let negative = self.upload_u8_slice(&negative)?;
+        let count = Self::count_of(values.len())?;
+        let mut builder = self.stream().launch_builder(&self.i128_to_mont);
+        let _ = builder.arg(&magnitude);
+        let _ = builder.arg(&negative);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads `magnitude[2i]`, `magnitude[2i+1]`
+        // (a `2 * count`-element buffer) and `negative[i]` (a `count`-element
+        // buffer), and writes only `out[i*4..i*4+4]` of `count * LIMBS`. All
+        // three are distinct allocations. Threads with `i >= count` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub fn u128_to_montgomery(&self, values: &[u128]) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(values.len())?;
+        if values.is_empty() {
+            return Ok(output);
+        }
+        let mut magnitude = Vec::with_capacity(values.len() * 2);
+        for &value in values {
+            magnitude.push(value as u64);
+            magnitude.push((value >> 64) as u64);
+        }
+        let magnitude = self.upload_u64_slice(&magnitude)?;
+        let negative = self.upload_u8_slice(&vec![0u8; values.len()])?;
+        let count = Self::count_of(values.len())?;
+        let mut builder = self.stream().launch_builder(&self.i128_to_mont);
+        let _ = builder.arg(&magnitude);
+        let _ = builder.arg(&negative);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: identical launch to `i128_to_montgomery`, differing only in
+        // that every `negative` byte is zero: thread `i < count` reads
+        // `magnitude[2i]`, `magnitude[2i+1]` (a `2 * count`-element buffer) and
+        // `negative[i]` (a `count`-element buffer), and writes only
+        // `out[i*4..i*4+4]` of `count * LIMBS`. All three are distinct
+        // allocations. Threads with `i >= count` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
 }
 
 #[cfg(test)]
@@ -507,6 +632,67 @@ mod tests {
                 .expect("download");
             prop_assert_eq!(got, expected);
         }
+
+        #[test]
+        fn u64_to_montgomery_matches_cpu(values in vec(any::<u64>(), 1..300)) {
+            let Some(context) = device() else { return Ok(()); };
+            let expected: Vec<Fr> = values.iter().copied().map(Fr::from_u64).collect();
+            let got = context
+                .u64_to_montgomery(&values)
+                .expect("device u64_to_montgomery")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn i128_to_montgomery_device_matches_the_host_input_form(
+            values in vec(any::<i128>(), 1..300),
+        ) {
+            let Some(context) = device() else { return Ok(()); };
+            let mut limbs = Vec::with_capacity(values.len() * 2);
+            for &value in &values {
+                let bits = value as u128;
+                limbs.push(bits as u64);
+                limbs.push((bits >> 64) as u64);
+            }
+            let uploaded = context.upload_u64_slice(&limbs).expect("upload limbs");
+            let got = context
+                .i128_to_montgomery_device(&uploaded, values.len())
+                .expect("device two's-complement conversion")
+                .to_host()
+                .expect("download");
+            let expected = context
+                .i128_to_montgomery(&values)
+                .expect("host-input conversion")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn i128_to_montgomery_matches_cpu(values in vec(any::<i128>(), 1..300)) {
+            let Some(context) = device() else { return Ok(()); };
+            let expected: Vec<Fr> = values.iter().copied().map(Fr::from_i128).collect();
+            let got = context
+                .i128_to_montgomery(&values)
+                .expect("device i128_to_montgomery")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn u128_to_montgomery_matches_cpu(values in vec(any::<u128>(), 1..300)) {
+            let Some(context) = device() else { return Ok(()); };
+            let expected: Vec<Fr> = values.iter().copied().map(Fr::from_u128).collect();
+            let got = context
+                .u128_to_montgomery(&values)
+                .expect("device u128_to_montgomery")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected);
+        }
     }
 
     fn boundary_values() -> Vec<Fr> {
@@ -563,6 +749,40 @@ mod tests {
                 .to_host()
                 .expect("download"),
             expected_mul,
+        );
+    }
+
+    #[test]
+    fn integer_conversion_matches_cpu_at_extremes() {
+        let Some(context) = device() else {
+            return;
+        };
+        let u64_values = [0u64, 1, u64::MAX, u64::MAX - 1, 1 << 63];
+        assert_eq!(
+            context
+                .u64_to_montgomery(&u64_values)
+                .expect("u64_to_montgomery")
+                .to_host()
+                .expect("download"),
+            u64_values
+                .iter()
+                .copied()
+                .map(Fr::from_u64)
+                .collect::<Vec<_>>(),
+        );
+
+        let i128_values = [0i128, 1, -1, i128::MAX, i128::MIN + 1, -(1i128 << 100)];
+        assert_eq!(
+            context
+                .i128_to_montgomery(&i128_values)
+                .expect("i128_to_montgomery")
+                .to_host()
+                .expect("download"),
+            i128_values
+                .iter()
+                .copied()
+                .map(Fr::from_i128)
+                .collect::<Vec<_>>(),
         );
     }
 
