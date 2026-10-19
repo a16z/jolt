@@ -312,6 +312,51 @@ extern "C" __global__ void msm_g1_add_kernel(const u64 *__restrict__ left,
     }
 }
 
+extern "C" __global__ void msm_jacobian_z_kernel(const u64 *__restrict__ jacobian,
+                                                unsigned int count, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 z[LIMBS];
+    load4(jacobian + ((unsigned long long)i * 3 + 2) * LIMBS, z);
+    if (fq_is_zero(z)) {
+        u64 placeholder[LIMBS];
+        placeholder[0] = 1ull;
+        for (int limb = 1; limb < LIMBS; limb++) placeholder[limb] = 0ull;
+        store4(out + (unsigned long long)i * LIMBS, placeholder);
+        return;
+    }
+    store4(out + (unsigned long long)i * LIMBS, z);
+}
+
+extern "C" __global__ void msm_jacobian_to_affine_kernel(const u64 *__restrict__ jacobian,
+                                                         const u64 *__restrict__ z_inverses,
+                                                         unsigned int count,
+                                                         u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 x[LIMBS], y[LIMBS], z[LIMBS];
+    load4(jacobian + ((unsigned long long)i * 3) * LIMBS, x);
+    load4(jacobian + ((unsigned long long)i * 3 + 1) * LIMBS, y);
+    load4(jacobian + ((unsigned long long)i * 3 + 2) * LIMBS, z);
+
+    u64 zero[LIMBS];
+    for (int limb = 0; limb < LIMBS; limb++) zero[limb] = 0ull;
+    if (fq_is_zero(z)) {
+        store4(out + ((unsigned long long)i * 2) * LIMBS, zero);
+        store4(out + ((unsigned long long)i * 2 + 1) * LIMBS, zero);
+        return;
+    }
+
+    u64 inv[LIMBS], inv2[LIMBS], inv3[LIMBS], affine[LIMBS];
+    load4(z_inverses + (unsigned long long)i * LIMBS, inv);
+    fq_sqr(inv, inv2);
+    fq_mul(inv2, inv, inv3);
+    fq_mul(x, inv2, affine);
+    store4(out + ((unsigned long long)i * 2) * LIMBS, affine);
+    fq_mul(y, inv3, affine);
+    store4(out + ((unsigned long long)i * 2 + 1) * LIMBS, affine);
+}
+
 extern "C" __global__ void msm_g1_add_affine_kernel(const u64 *__restrict__ left,
                                                     const u64 *__restrict__ right,
                                                     u64 *__restrict__ out, unsigned int count) {

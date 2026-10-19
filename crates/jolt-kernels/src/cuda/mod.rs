@@ -41,6 +41,8 @@
 //! assigns independent chunks to GPU threads and preserves zero entries.
 //! G1 kernels double and add Jacobian points, including mixed affine addends.
 //! Batched affine-pair addition uses those inversions for finite, distinct-x pairs.
+//! G1 normalization batch-inverts Jacobian z-coordinates and keeps the resulting
+//! affine base table on the device.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

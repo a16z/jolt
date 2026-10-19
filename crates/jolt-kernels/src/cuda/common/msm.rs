@@ -9,11 +9,18 @@
 //! Batched affine-pair addition instead inverts x-coordinate differences.
 //! Callers must supply finite points with distinct x-coordinates in each pair;
 //! this precondition is not checked by the wrapper or kernels.
+//!
+//! Affine base tables remain on their owning stream. Normalization extracts
+//! Jacobian z-coordinates, batch-inverts them on the device, and converts the
+//! selected span without downloading its coordinates.
 
-use cudarc::driver::{CudaFunction, CudaSlice, PushKernelArg};
+use std::sync::Arc;
+
+use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, PushKernelArg};
 
 use super::context::CudaKernelContext;
 use super::error::CudaError;
+use super::xfer_stats::{self, Phase};
 
 pub const FQ_LIMBS: usize = 4;
 
@@ -50,6 +57,39 @@ impl JacobianLimbs {
 
     pub const fn is_identity(&self) -> bool {
         self.z[0] == 0 && self.z[1] == 0 && self.z[2] == 0 && self.z[3] == 0
+    }
+}
+
+pub struct DeviceG1Bases {
+    stream: Arc<CudaStream>,
+    limbs: CudaSlice<u64>,
+    count: usize,
+}
+
+impl DeviceG1Bases {
+    pub const fn count(&self) -> usize {
+        self.count
+    }
+
+    pub fn to_host(&self) -> Result<Vec<AffineLimbs>, CudaError> {
+        if self.count == 0 {
+            return Ok(Vec::new());
+        }
+        let bytes = self.count * AFFINE_LIMBS * size_of::<u64>();
+        let raw = xfer_stats::timed(Phase::D2h, bytes, || {
+            Ok::<_, CudaError>(self.stream.clone_dtoh(&self.limbs)?)
+        })?;
+        Ok(raw
+            .chunks_exact(AFFINE_LIMBS)
+            .map(|chunk| {
+                let mut x = [0u64; FQ_LIMBS];
+                let mut y = [0u64; FQ_LIMBS];
+                x.copy_from_slice(&chunk[..FQ_LIMBS]);
+                y.copy_from_slice(&chunk[FQ_LIMBS..]);
+                let infinity = x == [0; FQ_LIMBS] && y == [0; FQ_LIMBS];
+                AffineLimbs { x, y, infinity }
+            })
+            .collect())
     }
 }
 
@@ -108,6 +148,20 @@ fn unflatten_affine(flat: &[u64]) -> Vec<AffineLimbs> {
 }
 
 impl CudaKernelContext {
+    pub fn upload_g1_bases(&self, bases: &[AffineLimbs]) -> Result<DeviceG1Bases, CudaError> {
+        let flat = flatten_affine(bases);
+        let limbs = if flat.is_empty() {
+            self.alloc_u64(0)?
+        } else {
+            self.upload_u64_slice(&flat)?
+        };
+        Ok(DeviceG1Bases {
+            stream: self.stream().clone(),
+            limbs,
+            count: bases.len(),
+        })
+    }
+
     fn fq_binary(
         &self,
         kernel: &CudaFunction,
@@ -351,6 +405,69 @@ impl CudaKernelContext {
         self.stream().synchronize()?;
         Ok(unflatten_affine(&self.download_u64(&output)?))
     }
+
+    pub fn upload_raw_u64(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
+        self.upload_u64_slice(values)
+    }
+
+    pub fn normalise_g1_span(
+        &self,
+        jacobian: &CudaSlice<u64>,
+        offset: usize,
+        count: usize,
+    ) -> Result<DeviceG1Bases, CudaError> {
+        if count == 0 {
+            return self.upload_g1_bases(&[]);
+        }
+        let words = 3 * FQ_LIMBS;
+        let end = offset
+            .checked_add(count)
+            .and_then(|last| last.checked_mul(words))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a G1 span to normalise overflowed the buffer index space",
+            })?;
+        if end > jacobian.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: end,
+                got: jacobian.len(),
+            });
+        }
+        let span = jacobian.slice(offset * words..end);
+        let count_arg = Self::count_of(count)?;
+
+        let mut packed = self.alloc_u64(count * FQ_LIMBS)?;
+        let mut builder = self.stream().launch_builder(self.msm_jacobian_z());
+        let _ = builder.arg(&span);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut packed);
+        // SAFETY: thread `i < count` reads the `z` limbs of point `i` of the
+        // `count`-point view (12 limbs per point, bounds-checked above) and
+        // writes only `out[i]` (4 limbs) of a `count * FQ_LIMBS` u64 fresh
+        // allocation, one thread per element.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+
+        let mut inverses = self.alloc_u64(count * FQ_LIMBS)?;
+        self.launch_batch_inverse(&packed, &mut inverses, count)?;
+
+        let mut affine = self.alloc_u64(count * AFFINE_LIMBS)?;
+        let mut builder = self.stream().launch_builder(self.msm_jacobian_to_affine());
+        let _ = builder.arg(&span);
+        let _ = builder.arg(&inverses);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut affine);
+        // SAFETY: thread `i < count` reads the 12 limbs of point `i` of the same
+        // bounds-checked view plus `inverses[i]` (4 limbs of a
+        // `count * FQ_LIMBS` buffer) and writes only the two limb groups of
+        // `out[i]` in a `count * AFFINE_LIMBS` u64 fresh allocation, one thread
+        // per point.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+
+        Ok(DeviceG1Bases {
+            stream: self.stream().clone(),
+            limbs: affine,
+            count,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -439,12 +556,20 @@ mod tests {
     use super::{AffineLimbs, JacobianLimbs, FQ_LIMBS};
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
 
+    const MSM_ROW_LEN: usize = 8;
+
+    const RESIDENT_MSM_LENS: [usize; 6] = [1, 2, 255, 256, 1024, 4096];
+
     fn device() -> Option<&'static CudaKernelContext> {
         shared_context()
     }
 
     fn limbs(values: &[Fq]) -> Vec<[u64; FQ_LIMBS]> {
         values.iter().copied().map(fq_limbs).collect()
+    }
+
+    fn msm_bases() -> Vec<G1Affine> {
+        (0..MSM_ROW_LEN).map(|i| affine(i as u64 + 3)).collect()
     }
 
     fn affine_pairs(count: usize, offset: u64) -> (Vec<G1Affine>, Vec<G1Affine>) {
@@ -531,6 +656,23 @@ mod tests {
             affine_limbs(<G1Affine as AffineRepr>::zero()),
             AffineLimbs::IDENTITY,
         );
+    }
+
+    #[test]
+    fn g1_base_upload_round_trips() {
+        let Some(context) = device() else {
+            return;
+        };
+        let bases: Vec<AffineLimbs> = msm_bases()
+            .into_iter()
+            .map(affine_limbs)
+            .chain(std::iter::once(affine_limbs(
+                <G1Affine as AffineRepr>::zero(),
+            )))
+            .collect();
+        let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+        assert_eq!(device_bases.count(), bases.len());
+        assert_eq!(device_bases.to_host().expect("download bases"), bases);
     }
 
     #[test]
@@ -750,6 +892,69 @@ mod tests {
                 })
                 .collect();
             prop_assert_eq!(got, expected);
+        }
+    }
+
+    fn jacobian_span(count: usize, seed: u64) -> Vec<G1Projective> {
+        (0..count)
+            .map(|index| {
+                if (index as u64 + seed).is_multiple_of(41) {
+                    G1Projective::zero()
+                } else {
+                    point(index as u64 + seed + 3)
+                }
+            })
+            .collect()
+    }
+
+    fn flat_jacobian(points: &[G1Projective]) -> Vec<u64> {
+        let mut flat = Vec::with_capacity(points.len() * 3 * FQ_LIMBS);
+        for value in points {
+            let limbs = jacobian_limbs(*value);
+            flat.extend_from_slice(&limbs.x);
+            flat.extend_from_slice(&limbs.y);
+            flat.extend_from_slice(&limbs.z);
+        }
+        flat
+    }
+
+    #[test]
+    fn normalise_g1_span_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        for count in RESIDENT_MSM_LENS {
+            for offset in [0usize, 3] {
+                let lead = jacobian_span(offset, 7);
+                let points = jacobian_span(count, 11);
+                let mut flat = flat_jacobian(&lead);
+                flat.extend_from_slice(&flat_jacobian(&points));
+                let device_points = context.upload_raw_u64(&flat).expect("upload span");
+
+                let expected: Vec<AffineLimbs> = points
+                    .iter()
+                    .map(|value| affine_limbs(value.into_affine()))
+                    .collect();
+                let got = context
+                    .normalise_g1_span(&device_points, offset, count)
+                    .expect("normalise span")
+                    .to_host()
+                    .expect("read affine bases");
+
+                assert_eq!(
+                    got.len(),
+                    expected.len(),
+                    "base count diverged at count {count}, offset {offset}"
+                );
+                let divergence = got
+                    .iter()
+                    .zip(&expected)
+                    .position(|(got, expected)| got != expected);
+                assert_eq!(
+                    divergence, None,
+                    "normalised span diverged at count {count}, offset {offset}"
+                );
+            }
         }
     }
 }

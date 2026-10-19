@@ -82,6 +82,10 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_affine_combine: CudaFunction,
     #[cfg(test)]
+    msm_jacobian_z: CudaFunction,
+    #[cfg(test)]
+    msm_jacobian_to_affine: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -155,6 +159,10 @@ impl CudaKernelContext {
             msm_affine_denominators: module.load_function("msm_affine_denominators_kernel")?,
             #[cfg(test)]
             msm_affine_combine: module.load_function("msm_affine_combine_kernel")?,
+            #[cfg(test)]
+            msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
+            #[cfg(test)]
+            msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]
@@ -375,6 +383,16 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_affine_combine(&self) -> &CudaFunction {
         &self.msm_affine_combine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_jacobian_z(&self) -> &CudaFunction {
+        &self.msm_jacobian_z
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_jacobian_to_affine(&self) -> &CudaFunction {
+        &self.msm_jacobian_to_affine
     }
 
     #[cfg(test)]
