@@ -6,6 +6,8 @@ pub(crate) mod half_fold;
 pub(crate) mod lt_poly;
 pub mod primitives;
 #[cfg(test)]
+pub(crate) mod split_eq;
+#[cfg(test)]
 pub(crate) mod sum_of_products;
 #[cfg(test)]
 pub(crate) mod testing;

@@ -24,6 +24,9 @@
 //! Contiguous rows use a block reduction; strided columns use one thread per output.
 //! Sum-of-products rounds evaluate finite points and leading coefficients on
 //! device, then reduce the per-block results for each evaluation separately.
+//! Gruen-weighted rounds cache the host's split-equality levels on device and
+//! return both endpoints and the leading coefficient to the shared host
+//! interpolation routines.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

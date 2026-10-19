@@ -46,6 +46,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     sop_round: CudaFunction,
     #[cfg(test)]
+    sopg_round: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -83,6 +85,8 @@ impl CudaKernelContext {
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             #[cfg(test)]
             sop_round: module.load_function("sop_round_kernel")?,
+            #[cfg(test)]
+            sopg_round: module.load_function("sopg_round_kernel")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]
@@ -154,6 +158,16 @@ impl CudaKernelContext {
         Ok((total.saturating_sub(free), total))
     }
 
+    #[cfg(test)]
+    pub(crate) fn require_owned(&self, ordinal: usize) -> Result<(), CudaError> {
+        if ordinal == self.ordinal {
+            return Ok(());
+        }
+        Err(CudaError::InvariantViolation {
+            reason: "a CUDA kernel was launched against a buffer resident on another device",
+        })
+    }
+
     pub(crate) fn launch_config(count: u32) -> LaunchConfig {
         LaunchConfig {
             grid_dim: (count.div_ceil(BLOCK), 1, 1),
@@ -191,6 +205,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn sop_round(&self) -> &CudaFunction {
         &self.sop_round
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn sopg_round(&self) -> &CudaFunction {
+        &self.sopg_round
     }
 
     #[cfg(test)]

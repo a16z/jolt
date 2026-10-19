@@ -50,6 +50,11 @@ impl DeviceFrVec {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn ordinal(&self) -> usize {
+        self.buffer.ordinal()
+    }
+
     pub const fn len(&self) -> usize {
         self.len
     }
