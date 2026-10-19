@@ -113,9 +113,17 @@ impl DeviceRaPolynomial {
         self.cycles >> self.rounds_bound
     }
 
+    pub const fn order(&self) -> BindingOrder {
+        self.order
+    }
+
     #[cfg(test)]
     pub const fn is_collapsed(&self) -> bool {
         self.dense.is_some()
+    }
+
+    pub const fn dense(&self) -> Option<&DeviceFrVec> {
+        self.dense.as_ref()
     }
 
     pub fn coefficients(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {

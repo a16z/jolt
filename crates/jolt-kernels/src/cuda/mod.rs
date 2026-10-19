@@ -30,6 +30,9 @@
 //! Lazy one-hot selectors gather from hot indices and challenge-scaled address
 //! tables for both binding orders. CUDA materializes a dense table at the third
 //! bind (`T/8` entries); optimized's shared lazy-RA path normally waits until `T/16`.
+//! Dense-product rounds combine dense factors with lazy one-hot and split
+//! less-than factors. Shards sum their round evaluations on the host, then
+//! gather their final scalars onto one device to bind the remaining shard bits.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

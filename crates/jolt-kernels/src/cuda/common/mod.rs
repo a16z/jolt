@@ -1,5 +1,9 @@
 pub mod context;
+#[cfg(test)]
+pub(crate) mod dense_product;
 pub mod device;
+#[cfg(test)]
+pub(crate) mod devices;
 pub mod error;
 #[cfg(test)]
 pub(crate) mod half_fold;

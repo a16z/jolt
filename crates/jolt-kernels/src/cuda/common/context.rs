@@ -42,6 +42,8 @@ pub struct CudaKernelContext {
     pub(super) scan_u32_add_offsets: CudaFunction,
     lt_reconstruct: CudaFunction,
     #[cfg(test)]
+    dense_product_round: CudaFunction,
+    #[cfg(test)]
     lane_sum_total: CudaFunction,
     #[cfg(test)]
     sop_round: CudaFunction,
@@ -85,6 +87,8 @@ impl CudaKernelContext {
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
             lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
+            #[cfg(test)]
+            dense_product_round: module.load_function("dense_product_round_kernel")?,
             #[cfg(test)]
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             #[cfg(test)]
@@ -206,6 +210,11 @@ impl CudaKernelContext {
     }
 
     #[cfg(test)]
+    pub(crate) const fn dense_product_round(&self) -> &CudaFunction {
+        &self.dense_product_round
+    }
+
+    #[cfg(test)]
     pub(crate) const fn lane_sum_total(&self) -> &CudaFunction {
         &self.lane_sum_total
     }
@@ -246,6 +255,21 @@ impl CudaKernelContext {
             self.upload_u64_slice(&pointers)?,
             self.upload_u32_slice(&descriptors)?,
         ))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn device_pointers(
+        &self,
+        tables: &[&DeviceFrVec],
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let pointers: Vec<u64> = tables
+            .iter()
+            .map(|table| {
+                let (pointer, _guard) = table.limbs().device_ptr(&self.stream);
+                pointer
+            })
+            .collect();
+        self.upload_u64_slice(&pointers)
     }
 
     pub fn fr_identity(&self, input: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
