@@ -37,6 +37,8 @@
 //! lanes using atomic additions, then perform one field reduction per bucket.
 //! One-hot cycle folds use shared-memory buckets when the address domain fits
 //! and otherwise accumulate into global slots before field reduction.
+//! BN254 base-field arithmetic supports curve coordinates. Batch inversion
+//! assigns independent chunks to GPU threads and preserves zero entries.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

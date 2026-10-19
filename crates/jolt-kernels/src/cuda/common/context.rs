@@ -64,6 +64,14 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     ohf_affine: CudaFunction,
     #[cfg(test)]
+    msm_fq_add: CudaFunction,
+    #[cfg(test)]
+    msm_fq_sub: CudaFunction,
+    #[cfg(test)]
+    msm_fq_mul: CudaFunction,
+    #[cfg(test)]
+    msm_fq_batch_inverse: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -120,6 +128,14 @@ impl CudaKernelContext {
             #[cfg(test)]
             ohf_affine: module.load_function("ohf_affine_kernel")?,
             #[cfg(test)]
+            msm_fq_add: module.load_function("msm_fq_add_kernel")?,
+            #[cfg(test)]
+            msm_fq_sub: module.load_function("msm_fq_sub_kernel")?,
+            #[cfg(test)]
+            msm_fq_mul: module.load_function("msm_fq_mul_kernel")?,
+            #[cfg(test)]
+            msm_fq_batch_inverse: module.load_function("msm_fq_batch_inverse_kernel")?,
+            #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
@@ -174,6 +190,13 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
         Ok(self.stream.alloc_zeros::<u64>(len)?)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
     }
 
     pub(crate) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
@@ -287,6 +310,26 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn ohf_affine(&self) -> &CudaFunction {
         &self.ohf_affine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_fq_add(&self) -> &CudaFunction {
+        &self.msm_fq_add
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_fq_sub(&self) -> &CudaFunction {
+        &self.msm_fq_sub
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_fq_mul(&self) -> &CudaFunction {
+        &self.msm_fq_mul
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_fq_batch_inverse(&self) -> &CudaFunction {
+        &self.msm_fq_batch_inverse
     }
 
     #[cfg(test)]

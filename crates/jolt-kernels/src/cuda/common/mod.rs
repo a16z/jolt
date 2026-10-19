@@ -11,6 +11,8 @@ pub mod error;
 pub(crate) mod half_fold;
 pub(crate) mod lt_poly;
 #[cfg(test)]
+pub(crate) mod msm;
+#[cfg(test)]
 pub(crate) mod one_hot_fold;
 #[cfg(test)]
 pub(crate) mod pack;

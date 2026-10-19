@@ -9,6 +9,7 @@ const KERNEL_FILES: &[&str] = &[
     "probe.cu",
     "arith.cu",
     "tables.cu",
+    "msm.cu",
     "scan.cu",
     "lt_poly.cu",
     "half_fold.cu",
