@@ -336,6 +336,7 @@ rand = { version = "0.8.5", default-features = false }
 rand_chacha = { version = "0.3.0", default-features = false }
 rand_core = { version = "0.6.4", default-features = false }
 rand_distr = "0.4.3"
+subtle = { version = "2.6.1", default-features = false, features = ["i128"] }
 
 # Serialization
 serde = { version = "1.0", default-features = false, features = [
@@ -364,6 +365,7 @@ num-integer = { version = "0.1.45", default-features = false }
 num-bigint = { version = "0.4.6", default-features = false }
 num-derive = "0.5.1"
 num-traits = { version = "0.2.19", default-features = false }
+libm = "0.2.16"
 
 # System and Platform
 sysinfo = "0.39"

@@ -15,6 +15,7 @@
 )]
 
 pub mod ec;
+pub mod sample;
 pub use ec::{JoltGroup, PairingGroup};
 #[cfg(feature = "bn254")]
 pub use ec::{Pedersen, PedersenSetup};
