@@ -278,7 +278,8 @@ impl ExecutionBackend for X86TracerBackend {
         let (data, dimensions) = Observation::reassemble_rows(
             &program.expanded_bytecode,
             record.compiled.pc_map(),
-            &record.observations,
+            record.observations,
+            0,
         )?;
         Ok(TraceOutput::with_dimensions(
             dimensions,
@@ -302,48 +303,55 @@ impl Observation {
     fn reassemble_rows(
         bytecode: &[JoltInstructionRow],
         pc_map: &BytecodePCMapper,
-        observations: &[Self],
+        observations: Vec<Self>,
+        skip_rows: usize,
     ) -> Result<(TraceData, ExecutionDimensions), TraceError> {
         let mut bounds = RamAddressBounds::default();
-        let mut rows = Vec::with_capacity(observations.len());
-        for observation in observations {
-            let row = bytecode
-                .get(observation.row_index as usize)
-                .ok_or(TraceError::Backend("observation row index out of range"))?;
-            let pc = pc_map
-                .get_instruction_pc(row)
-                .ok_or(TraceError::MissingBytecodePc {
-                    address: row.address as u64,
-                    virtual_sequence_remaining: row.virtual_sequence_remaining,
-                })?;
-            let pc = u32::try_from(pc).map_err(|_| TraceError::BytecodePcTooWide { pc })?;
-            let operands = row.integer_operands();
-            let access = observation.ram_access(row.instruction_kind);
-            bounds.observe(match access {
-                RamAccess::Read(read) => read.address,
-                RamAccess::Write(write) => write.address,
-                RamAccess::NoOp => 0,
-            });
-            rows.push(JoltTraceRow::new(
-                *row,
-                RegisterState {
-                    rs1: Self::register_read(operands.rs1, observation.rs1),
-                    rs2: Self::register_read(operands.rs2, observation.rs2),
-                    rd: operands.rd.map(|register| RegisterWrite {
-                        register,
-                        // x0 reads as zero on both sides of a write.
-                        pre_value: if register == 0 { 0 } else { observation.rd_pre },
-                        post_value: if register == 0 {
-                            0
-                        } else {
-                            observation.rd_post
-                        },
-                    }),
-                },
-                access,
-                pc,
-            )?);
-        }
+        // Consuming the observations lets Vec's in-place collection reuse their
+        // allocation when the row layouts permit it. Conversion remains checked.
+        let rows = observations
+            .into_iter()
+            .skip(skip_rows)
+            .map(|observation| {
+                let row = bytecode
+                    .get(observation.row_index as usize)
+                    .ok_or(TraceError::Backend("observation row index out of range"))?;
+                let pc = pc_map
+                    .get_instruction_pc(row)
+                    .ok_or(TraceError::MissingBytecodePc {
+                        address: row.address as u64,
+                        virtual_sequence_remaining: row.virtual_sequence_remaining,
+                    })?;
+                let pc = u32::try_from(pc).map_err(|_| TraceError::BytecodePcTooWide { pc })?;
+                let operands = row.integer_operands();
+                let access = observation.ram_access(row.instruction_kind);
+                bounds.observe(match access {
+                    RamAccess::Read(read) => read.address,
+                    RamAccess::Write(write) => write.address,
+                    RamAccess::NoOp => 0,
+                });
+                JoltTraceRow::new(
+                    *row,
+                    RegisterState {
+                        rs1: Self::register_read(operands.rs1, observation.rs1),
+                        rs2: Self::register_read(operands.rs2, observation.rs2),
+                        rd: operands.rd.map(|register| RegisterWrite {
+                            register,
+                            // x0 reads as zero on both sides of a write.
+                            pre_value: if register == 0 { 0 } else { observation.rd_pre },
+                            post_value: if register == 0 {
+                                0
+                            } else {
+                                observation.rd_post
+                            },
+                        }),
+                    },
+                    access,
+                    pc,
+                )
+                .map_err(TraceError::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let data = TraceData::new(rows);
         let dimensions = ExecutionDimensions {
             trace_length: data.proof_len(),
@@ -662,7 +670,8 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         let (data, _) = Observation::reassemble_rows(
             &checkpoint.bytecode,
             checkpoint.compiled.pc_map(),
-            &observations[checkpoint.skip_rows..],
+            observations,
+            checkpoint.skip_rows,
         )?;
         Ok(data)
     }
