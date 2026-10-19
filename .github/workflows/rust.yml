@@ -782,6 +782,11 @@ jobs:
       - name: Test jolt-utils with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
+      # jolt-crypto's lattice primitives (sparse challenges, matrix derivation)
+      # sit behind a non-default feature.
+      - name: Test jolt-crypto with lattice
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-crypto --no-default-features --features lattice,parallel --cargo-quiet
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
