@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualPow2IW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPow2IW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualPow2IW as RISCVInstruction>::RamAccess) {
         cpu.write_register(self.operands.rd as usize, 1 << (self.operands.imm % 32))
     }
 }

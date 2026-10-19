@@ -44,7 +44,9 @@ use akita_pcs::{
 use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
-    configs::{JoltDenseBounded as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
+    configs::{
+        CatalogChunking, JoltDenseBounded as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig,
+    },
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
@@ -329,14 +331,18 @@ fn akita_case(num_vars: usize) -> AkitaCase {
     ))
     .unwrap();
     let dense_scheme = BackendScheme::new(
-        TrustedScheduleCatalog::new(artifacts.dense_catalog().expect("dense catalog"))
-            .expect("dense scheme"),
+        TrustedScheduleCatalog::new(
+            artifacts.dense_catalog().expect("dense catalog"),
+            AkitaConfig::CHUNKING,
+        )
+        .expect("dense scheme"),
     );
     let one_hot_scheme = OneHotBackendScheme::new(
         TrustedScheduleCatalog::new(
             artifacts
                 .one_hot_catalog(AKITA_ONE_HOT_K256)
                 .expect("one-hot catalog"),
+            AkitaOneHotConfig::CHUNKING,
         )
         .expect("one-hot scheme"),
     );
@@ -636,7 +642,7 @@ fn akita_prover_open_dense(
 ) -> Vec<u8> {
     case.akita_prover_setup
         .dense_scheme
-        .prove_standalone(
+        .batched_prove(
             &case.akita_prover_setup.dense_prover,
             akita_prover_claims::<AkitaConfig>(
                 case.akita_prover_setup.dense_scheme.schedules(),
@@ -661,7 +667,7 @@ fn akita_prover_open_one_hot(
     let backend_point = reverse_point(&case.point);
     case.akita_prover_setup
         .one_hot_scheme
-        .prove_standalone(
+        .batched_prove(
             &case.akita_prover_setup.one_hot_prover,
             akita_prover_claims::<AkitaOneHotConfig>(
                 case.akita_prover_setup.one_hot_scheme.schedules(),

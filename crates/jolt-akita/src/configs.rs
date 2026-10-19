@@ -28,8 +28,8 @@ macro_rules! delegate_preset {
         impl CommitmentConfig for $name {
             type Field = <$base as CommitmentConfig>::Field;
             type ExtField = <$base as CommitmentConfig>::ExtField;
-            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-                <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+            const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+                <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE;
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
 
             fn schedule_family_name() -> &'static str {
@@ -66,15 +66,29 @@ macro_rules! delegate_preset {
                 $committed_source_class
             }
 
-            fn chunked_witness_cfg() -> akita_params::ChunkedWitnessCfg {
-                $chunked_witness_cfg
-            }
-
             fn recursive_setup_planning() -> bool {
                 <$base>::recursive_setup_planning()
             }
         }
+
+        impl CatalogChunking for $name {
+            const CHUNKING: ChunkedWitnessCfg = $chunked_witness_cfg;
+        }
     };
+}
+
+/// The witness chunking one Jolt catalog family is planned and admitted under.
+///
+/// Akita takes chunking from its caller at catalog admission rather than from
+/// the config; every Jolt family fixes its own, so this trait is its one owner.
+pub trait CatalogChunking: CommitmentConfig {
+    const CHUNKING: ChunkedWitnessCfg;
+}
+
+impl<Direct: CatalogChunking + RecursiveScheduleConfig> CatalogChunking
+    for RecursiveCommitmentConfig<Direct>
+{
+    const CHUNKING: ChunkedWitnessCfg = Direct::CHUNKING;
 }
 
 delegate_preset!(

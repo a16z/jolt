@@ -425,11 +425,6 @@ impl<F: JoltField> Polynomial<F> {
     pub fn evaluations(&self) -> &[F] {
         &self.evals
     }
-
-    #[inline]
-    pub fn evaluations_mut(&mut self) -> &mut [F] {
-        &mut self.evals
-    }
 }
 
 impl<F: JoltField> From<Vec<F>> for Polynomial<F> {

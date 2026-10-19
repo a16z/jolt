@@ -17,7 +17,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualSRA {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRA as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRA as RISCVInstruction>::RamAccess) {
         let shift = cpu.x[self.operands.rs2 as usize].trailing_zeros();
         cpu.write_register(
             self.operands.rd as usize,

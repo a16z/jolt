@@ -18,7 +18,7 @@ impl VirtualAssertWordAlignment {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        _: &mut <VirtualAssertWordAlignment as RISCVInstruction>::RAMAccess,
+        _: &mut <VirtualAssertWordAlignment as RISCVInstruction>::RamAccess,
     ) {
         let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm as i64);
         assert!(

@@ -63,12 +63,6 @@ pub struct Emulator {
     pub end_signature_addr: u64,
 }
 
-pub type EmulatorState = Emulator;
-
-pub fn get_mut_emulator(state: &mut EmulatorState) -> &mut Emulator {
-    state
-}
-
 impl Emulator {
     /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
     /// is internally used for transferring input/output data to/from `Emulator`.
@@ -93,28 +87,16 @@ impl Emulator {
         self.cpu.advice_tape = tape;
     }
 
-    pub fn get_advice_tape(&self) -> &cpu::AdviceTape {
-        &self.cpu.advice_tape
-    }
-
-    pub fn get_mut_advice_tape(&mut self) -> &mut cpu::AdviceTape {
-        &mut self.cpu.advice_tape
-    }
-
     /// Take ownership of the advice tape, replacing it with an empty one
     pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
         std::mem::take(&mut self.cpu.advice_tape)
     }
 
     /// Method for running [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
-    /// The differences from `run_program()` are
-    /// * Disassembles every instruction and dumps to terminal
-    /// * The emulator stops when the test finishes
-    /// * Displays the result message (pass/fail) to terminal
     ///
     /// Returns the HTIF termination code extracted from the `tohost` write:
     /// * `0` — clean exit (RVMODEL_HALT_PASS, or PC-stall termination used by
-    ///   Jolt guests that call `jolt_exit()`)
+    ///   Jolt guests that call `platform_exit()`)
     /// * non-zero — `tohost payload >> 1` from RVMODEL_HALT_FAIL (gp-derived,
     ///   ACT4 uses this for signature-mismatch failures)
     ///
@@ -132,9 +114,8 @@ impl Emulator {
             }
 
             // Check for infinite loop termination (PC stall detection)
-            // This is used by Jolt guests that terminate via `j .` instruction.
-            // The trap handler (in guest_std_boot.rs or guest_no_std_boot.rs) calls
-            // jolt_exit() which enters an infinite loop for clean termination.
+            // This is used by Jolt guests that terminate via `j .` instruction:
+            // jolt-platform's platform_exit() enters this loop for clean termination.
             let pc = self.cpu.read_pc();
             if prev_pc == pc {
                 tracing::info!("Program exited successfully (code 0) after {cycle_count} cycles");

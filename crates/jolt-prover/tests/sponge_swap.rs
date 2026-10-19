@@ -19,7 +19,6 @@ mod keccak {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_program::execution::OwnedTrace;
     use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_transcript::{Blake2b512, Keccak};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -40,8 +39,8 @@ mod keccak {
             ..GuestCase::new("muldiv-guest")
         };
         let prepared = support::prepare(&case);
-        let config = ProverConfig::derive_compact::<Fr>(
-            prepared.trace.trace.as_slice(),
+        let config = ProverConfig::derive_from_dimensions::<Fr>(
+            prepared.trace.dimensions,
             &prepared.preprocessing.memory_layout,
             prepared.preprocessing.ram.min_bytecode_address,
             prepared.preprocessing.ram.bytecode_words.len(),
@@ -56,7 +55,7 @@ mod keccak {
             .program_arc()
             .expect("full program preprocessing");
         let public_io = prepared.trace.device.clone();
-        let witness = TraceBackend::<OwnedTrace>::from_compact(
+        let witness = TraceBackend::new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
@@ -65,12 +64,11 @@ mod keccak {
             JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
         );
 
-        let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Keccak, _>(
-            &JoltBackend::optimized(),
+        let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Keccak>(
+            JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
             None,
-            &witness,
             &public_io,
         )
         .expect("Keccak proof");

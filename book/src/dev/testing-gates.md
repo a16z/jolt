@@ -5,9 +5,10 @@
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
 profile. The ordinary profile has nine cases: muldiv, fibonacci, memory-ops,
 stdlib, sha2, sha3 through both its unaligned and aligned entry points,
-advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`
-and `muldiv`, covering both active field operations and an ordinary
-guest proved under the field-inline protocol with no field activity.
+advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`,
+`field_limbs`, and `muldiv`, covering active field operations, the SDK's
+checked limb conversions, and an ordinary guest proved under the field-inline
+protocol with no field activity.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, trace bound, and field activity, then proves it with
@@ -18,7 +19,8 @@ Dory ZK with `zk`, or Akita with `akita`. The mode is part of every test name
 modes, so a guest added to either table gains all three arms at once.
 Specialized checks (tampering, committed programs, forced one-hot sizes)
 stay in `zk_e2e.rs` and `akita_e2e.rs`; field-inline parity and tampering
-checks stay in `field_inline_e2e.rs` and `akita_field_inline_e2e.rs`.
+checks stay in `field_inline_e2e.rs` and `akita_field_inline_e2e.rs`; limb
+conversion policy and dishonest-advice checks stay in `field_inline_limbs.rs`.
 
 ```bash
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
@@ -95,9 +97,9 @@ Never regenerate it merely to make CI pass.
 ## Akita committed-program batching
 
 Committed-program Akita preprocessing must provision one native grouped
-opening for every direct bytecode chunk, the program image, optional advice,
-and the main trace. The largest admitted statement has 256 chunks plus the
-image, two advice objects, and the trace: 260 groups/polynomials. The schedule
+opening for one whole-bytecode object, the program image, optional advice,
+and the main trace. Committed-program statements have at most 5 groups and
+68 polynomials (including up to 64 trace columns). The schedule
 registry plans only the setup's final arity, with at most four rows for the
 reachable advice-presence combinations. Its 128-row bound applies to one
 provisioning request, not to the process cache.
@@ -115,6 +117,18 @@ Run the schedule and catalog gates with:
 cargo nextest run -p jolt-akita --cargo-quiet
 ```
 
-Failures at the 128-row or 260-group shape limit are protocol-capacity
-failures. Do not work around them by lowering the public 256-chunk limit or
-selecting a different committed-program encoding.
+The generic backend still tests larger group-capacity limits independently.
+Bytecode-table chunking is absent in both backends; response chunk profiles and
+address-bit chunking remain active. A whole-bytecode arity above 34 or an
+unsupported schedule must fail preprocessing before dense allocation.
+
+### Field-inline conversion boundaries
+
+`python3 jolt-sdk/tests/field_limb_compile.py` compiles the actual SDK and then
+code-generates separate macro call sites. It checks zero-width and out-of-range
+register rejection after monomorphization, alongside valid boundary calls.
+
+The `field_inline_limbs` prover test binary exercises both matching and foreign
+modulus guest ELFs in the Dory and Akita field-inline lanes. The Dory
+`field_inline_e2e` suite also attempts to prove a trace that advises the modulus
+as the limb representation of zero; the proof path must reject it.

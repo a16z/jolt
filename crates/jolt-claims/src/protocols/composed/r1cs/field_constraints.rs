@@ -474,6 +474,67 @@ mod tests {
     }
 
     #[test]
+    fn modulus_binding_cannot_replace_the_residual_assertion() {
+        let constraints = field_inline_trace_constraints::<Fr>();
+        // A guest compiled for fp128 is executing in BN254.
+        let modulus = [0xffff_ffff_0000_5809u64, u64::MAX];
+        let radix = limb_radix::<Fr>();
+        let guest_modulus = Fr::from_u64(modulus[0]) + radix * Fr::from_u64(modulus[1]);
+        let mut quotient = -guest_modulus;
+        let inverse = radix.inverse().expect("nonzero radix");
+        for _ in modulus {
+            let next = quotient * inverse;
+            let mut split = witness(
+                quotient,
+                Fr::zero(),
+                next,
+                &[(flag_column(CircuitFlags::FieldAdviceLimb), one())],
+            );
+            split[V_RD_WRITE_VALUE] = Fr::zero();
+            constraints
+                .check_witness(&split)
+                .expect("zero limbs satisfy the advice rows");
+            quotient = next;
+        }
+        let residual = witness(
+            quotient,
+            Fr::zero(),
+            Fr::zero(),
+            &[(flag_column(CircuitFlags::FieldAssertZero), one())],
+        );
+        assert_eq!(constraints.check_witness(&residual), Err(ROW_ASSERT_ZERO));
+        // Omitting that check lets the residual cancel the guest modulus.
+        for limb in modulus.into_iter().rev() {
+            let word = Fr::from_u64(limb);
+            let next = radix * quotient + word;
+            let mut load = witness(
+                quotient,
+                Fr::zero(),
+                next,
+                &[(
+                    flag_column(CircuitFlags::FieldLoadAccumulateFromMemory),
+                    one(),
+                )],
+            );
+            load[V_RD_WRITE_VALUE] = word;
+            constraints
+                .check_witness(&load)
+                .expect("memory accumulation relation");
+            quotient = next;
+        }
+        assert_eq!(quotient, Fr::zero());
+        let combined = witness(
+            quotient,
+            Fr::zero(),
+            Fr::zero(),
+            &[(flag_column(CircuitFlags::FieldAssertZero), one())],
+        );
+        constraints
+            .check_witness(&combined)
+            .expect("the combined assertion alone accepts");
+    }
+
+    #[test]
     fn load_imm_binds_the_destination_to_the_bytecode_value() {
         let mut row = witness(
             Fr::from_u64(5),

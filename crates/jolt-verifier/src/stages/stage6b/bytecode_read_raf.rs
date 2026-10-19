@@ -48,7 +48,7 @@ type CycleSymbolicCommitted = relations::bytecode::ReadRafCyclePhaseCommitted;
 type CycleSymbolicCommitted =
     jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafCyclePhaseCommitted;
 
-/// The cycle-phase produced-claims type: `BytecodeRa` openings, plus (packed)
+/// The cycle-phase produced-claims type: `BytecodeRa` openings, plus (Akita)
 /// the `FusedInc` opening at the bound cycle point.
 #[cfg(not(feature = "akita"))]
 pub type BytecodeReadRafCycleOutputClaims<C> = BytecodeReadRafOutputClaims<C>;
@@ -206,22 +206,20 @@ fn fold_stage_values<F: JoltField>(
     }
     let address_eq_evals = EqPolynomial::<F>::evals(r_address, None);
     let bytecode_rows = fold.bytecode;
-    let row_values = bytecode::read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: bytecode_rows,
-        register_read_write_point: fold.register_read_write_point,
-        register_val_evaluation_point: fold.register_val_evaluation_point,
-        stage1_gammas: fold.stage_gammas[0],
-        stage2_gammas: fold.stage_gammas[1],
-        stage3_gammas: fold.stage_gammas[2],
-        stage4_gammas: fold.stage_gammas[3],
-        stage5_gammas: fold.stage_gammas[4],
-    });
-    let mut stage_values = [F::zero(); NUM_BYTECODE_VAL_STAGES];
-    for (row_values, eq_address) in row_values.into_iter().zip(&address_eq_evals) {
-        for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
-            *stage_value += row_value * *eq_address;
-        }
-    }
+    let stage_values = bytecode::read_raf_fold_stage_values(
+        BytecodeReadRafStageValueInputs {
+            bytecode: bytecode_rows,
+            register_read_write_point: fold.register_read_write_point,
+            register_val_evaluation_point: fold.register_val_evaluation_point,
+            stage1_gammas: fold.stage_gammas[0],
+            stage2_gammas: fold.stage_gammas[1],
+            stage3_gammas: fold.stage_gammas[2],
+            stage4_gammas: fold.stage_gammas[3],
+            stage5_gammas: fold.stage_gammas[4],
+        },
+        &address_eq_evals,
+    )
+    .map_err(public_input_failed)?;
     #[cfg(feature = "field-inline")]
     let field_registers = {
         use jolt_claims::protocols::field_inline::geometry::bytecode::{
@@ -403,7 +401,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                 challenges.gamma,
             )
         }
-        // The packed fused-inc stages: the store fold (and its complement)
+        // The Akita fused-inc stages: the store fold (and its complement)
         // bound to the four consuming relations' cycle points, resolved
         // through the lattice cycle output expression against the `FusedInc`
         // opening.
@@ -474,8 +472,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
     }
 }
 
-// The dory-shaped composition pins (base input-claims struct, five stage points); the packed
-// composition is covered by the prover's field-inline stage round-trips and the packed e2e
+// The dory-shaped composition pins (base input-claims struct, five stage points); the Akita
+// composition is covered by the prover's field-inline stage round-trips and the Akita e2e
 // suite.
 #[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(
@@ -673,7 +671,7 @@ mod field_inline_tests {
 }
 
 /// Derive the cycle-phase produced opening points: one `(chunk ++ r_cycle)`
-/// point per committed `BytecodeRa` chunk, plus (packed) the `FusedInc` cycle
+/// point per committed `BytecodeRa` chunk, plus (Akita) the `FusedInc` cycle
 /// point.
 fn derive_cycle_opening_points<F: JoltField>(
     r_address: &[F],
@@ -698,7 +696,7 @@ fn derive_cycle_opening_points<F: JoltField>(
 }
 
 /// Construction inputs for the committed-program bytecode cycle relation.
-/// One cycle point per relation stage — five in base mode, nine on the packed
+/// One cycle point per relation stage — five in base mode, nine on the Akita
 /// path (the four fused-inc consumer points follow the base five).
 pub struct BytecodeReadRafCommittedCycleInputs<F: JoltField> {
     pub dimensions: BytecodeReadRafDimensions,

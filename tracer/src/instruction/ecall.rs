@@ -36,7 +36,7 @@ declare_riscv_instr!(
 );
 
 impl ECALL {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <ECALL as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <ECALL as RISCVInstruction>::RamAccess) {
         let trap_type = match cpu.privilege_mode {
             PrivilegeMode::User => TrapType::EnvironmentCallFromUMode,
             PrivilegeMode::Supervisor => TrapType::EnvironmentCallFromSMode,

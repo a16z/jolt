@@ -28,7 +28,7 @@ use jolt_transcript::{Channel, ProverTranscript, Sponge, TranscriptError, Verifi
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
-use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
+use crate::configs::{AkitaChunkProfile, CatalogChunking, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{
     with_one_hot_family, AkitaOneHotBackendScheme, AkitaOneHotBackendVerifier, OneHotFamily,
 };
@@ -167,7 +167,7 @@ impl AkitaScheduleArtifacts {
     /// four required `.aks` files and any present profile companions, so hosts
     /// still load once at preprocessing and pass
     /// the bundle to each setup. Callers that must compare setup provenance
-    /// keep their own handle rather than calling this twice — the packed
+    /// keep their own handle rather than calling this twice — the Akita
     /// prover's advice guards test bundle identity with `Arc::ptr_eq`.
     ///
     /// Panics rather than returning: the packaged `schedules/` directory is
@@ -188,19 +188,28 @@ impl AkitaScheduleArtifacts {
     }
 
     pub fn dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(&self.dense)
-            .map(|catalog| catalog.catalog().clone())
+        TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(
+            &self.dense,
+            JoltDenseBounded::CHUNKING,
+        )
+        .map(|catalog| catalog.catalog().clone())
     }
 
     pub fn full_dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        TrustedScheduleCatalog::<JoltDenseFull>::from_artifact_bytes(&self.full_dense)
-            .map(|catalog| catalog.catalog().clone())
+        TrustedScheduleCatalog::<JoltDenseFull>::from_artifact_bytes(
+            &self.full_dense,
+            JoltDenseFull::CHUNKING,
+        )
+        .map(|catalog| catalog.catalog().clone())
     }
 
     pub(crate) fn full_dense_scheme(
         &self,
     ) -> Result<AkitaCommitmentScheme<JoltDenseFull>, AkitaError> {
-        AkitaCommitmentScheme::<JoltDenseFull>::from_schedule_artifact(&self.full_dense)
+        AkitaCommitmentScheme::<JoltDenseFull>::from_schedule_artifact(
+            &self.full_dense,
+            JoltDenseFull::CHUNKING,
+        )
     }
 
     pub fn one_hot_catalog(
@@ -217,7 +226,7 @@ impl AkitaScheduleArtifacts {
     ) -> Result<ValidatedScheduleCatalog, AkitaError> {
         let family = OneHotFamily::from_parts(one_hot_k, profile)?;
         with_one_hot_family!(family, |Cfg| {
-            TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(family.artifact(self))
+            TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(family.artifact(self), Cfg::CHUNKING)
                 .map(|catalog| catalog.catalog().clone())
         })
     }
@@ -340,7 +349,7 @@ pub fn host_parallel_verifier_threads() -> usize {
 /// (the bridge splitter re-splits whenever a job migrates to a stealing
 /// worker, and the fold kernels carry large frames), which overflows rayon's
 /// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
-/// the packed prover at trace-scale shapes. Every backend setup/commit/
+/// the Akita prover at trace-scale shapes. Every backend setup/commit/
 /// prove/verify entry funnels through this pool. Nested calls reuse it.
 pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     #[cfg(feature = "profiling")]
@@ -414,7 +423,7 @@ impl AkitaSetupParams {
     }
 
     /// Setup parameters for a commitment object that only ever commits and
-    /// opens through the one-hot flavor (the packed `OneHotTrace` group): skips
+    /// opens through the one-hot flavor (the native `OneHotTrace` group): skips
     /// building the dense-flavor backend setup of the same shape.
     pub fn one_hot_only(
         max_num_vars: usize,
@@ -704,7 +713,7 @@ impl AkitaVerifierSetup {
                 .dense()
                 .ok_or_else(|| "Akita verifier setup has no dense schedule artifact".to_string())
                 .and_then(|bytes| {
-                    AkitaBackendScheme::from_schedule_artifact(bytes)
+                    AkitaBackendScheme::from_schedule_artifact(bytes, AkitaConfig::CHUNKING)
                         .map_err(|error| error.to_string())
                 })
         });
@@ -947,6 +956,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaVerifierSetup {
     fn one_hot_k(&self) -> usize {
         self.one_hot_k()
     }
+
+    fn one_hot_num_chunks(&self) -> usize {
+        self.akita_chunk_profile().num_chunks()
+    }
 }
 
 impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
@@ -968,6 +981,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
 
     fn one_hot_k(&self) -> usize {
         self.one_hot_k()
+    }
+
+    fn one_hot_num_chunks(&self) -> usize {
+        self.verifier.akita_chunk_profile().num_chunks()
     }
 }
 
@@ -1182,7 +1199,7 @@ pub struct AkitaProverHint {
 pub(crate) enum AkitaHintSource {
     Dense { poly_count: usize },
     OneHot { poly_count: usize, one_hot_k: usize },
-    TraceOneHot { one_hot_k: usize },
+    TraceOneHot { poly_count: usize, one_hot_k: usize },
 }
 
 impl Default for AkitaHintSource {
@@ -1209,8 +1226,9 @@ impl AkitaHintSource {
 
     pub(crate) const fn len(self) -> usize {
         match self {
-            Self::Dense { poly_count } | Self::OneHot { poly_count, .. } => poly_count,
-            Self::TraceOneHot { .. } => 1,
+            Self::Dense { poly_count }
+            | Self::OneHot { poly_count, .. }
+            | Self::TraceOneHot { poly_count, .. } => poly_count,
         }
     }
 }

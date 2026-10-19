@@ -1,13 +1,13 @@
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId};
 use jolt_field::Fr;
 use jolt_program::{
-    execution::{
-        JoltProgram, OwnedTrace, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
-        TraceOutput, TraceRow,
-    },
+    execution::{JoltProgram, TraceData, TraceOutput},
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+use jolt_riscv::{
+    JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NormalizedOperands, RamAccess, RamWrite,
+    RegisterRead, RegisterState, RegisterWrite, RV64IMAC_JOLT,
+};
 use std::sync::Arc;
 
 use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -15,7 +15,7 @@ use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
 
 /// Runs `f` against a small canned backend: an ADDI and a store, padded to `2^2`.
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
-pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
+pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend) -> R) -> R {
     let instruction = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::ADDI,
         address: 0x8000_0000,
@@ -53,7 +53,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
     });
     let program = Arc::new(JoltProgram::default());
     let rows = vec![
-        TraceRow::new(
+        JoltTraceRow::new(
             instruction,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -68,9 +68,10 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
                 ..Default::default()
             },
             RamAccess::NoOp,
+            u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap(),
         )
         .unwrap(),
-        TraceRow::new(
+        JoltTraceRow::new(
             store,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -88,6 +89,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
                 pre_value: 7,
                 post_value: 11,
             }),
+            u32::try_from(preprocessing.bytecode.get_pc(&store).unwrap()).unwrap(),
         )
         .unwrap(),
     ];
@@ -102,7 +104,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+        TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)

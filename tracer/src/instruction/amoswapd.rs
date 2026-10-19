@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{format::format_amo::FormatAMO, Cycle, RAMWrite, RISCVInstruction, RISCVTrace};
+use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace, RamWrite};
 
 declare_riscv_instr!(
     name   = AMOSWAPD,
@@ -12,11 +12,11 @@ declare_riscv_instr!(
     match  = 0x0800302f,
     format = FormatAMO,
     registers = RegisterStateAMO,
-    ram    = RAMWrite
+    ram    = RamWrite
 );
 
 impl AMOSWAPD {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOSWAPD as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOSWAPD as RISCVInstruction>::RamAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let new_value = cpu.x[self.operands.rs2 as usize] as u64;
 

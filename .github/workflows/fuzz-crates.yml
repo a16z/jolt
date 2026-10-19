@@ -128,7 +128,7 @@ jobs:
           components: llvm-tools-preview,rust-src
           targets: ${{ matrix.workspace == 'jolt-eval' && 'riscv64imac-unknown-none-elf' || '' }}
       - name: Install pinned cargo-fuzz
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: cargo-fuzz@0.13.2
       - name: Install guest builder
@@ -205,7 +205,7 @@ jobs:
             done
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: fuzz-failure-${{ matrix.workspace }}-${{ github.run_id }}
           path: |
@@ -215,7 +215,7 @@ jobs:
           retention-days: 7
       - name: Upload weekly coverage
         if: success() && steps.profile.outputs.name == 'weekly'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: fuzz-coverage-${{ matrix.workspace }}-${{ github.run_id }}
           path: ${{ matrix.directory }}/coverage/

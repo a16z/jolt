@@ -173,7 +173,7 @@ pub struct ProofCommitments<C> {
     /// One commitment per committed trace polynomial.
     #[cfg(not(feature = "akita"))]
     pub trace: JoltCommitments<C>,
-    /// The single packed `OneHotTrace` commitment carrying every per-proof column.
+    /// The single native `OneHotTrace` group commitment carrying every per-proof column.
     #[cfg(feature = "akita")]
     pub one_hot_trace: C,
     /// The direct commitment to the full field-register increment polynomial.

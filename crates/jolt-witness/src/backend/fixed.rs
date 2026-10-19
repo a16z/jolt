@@ -23,7 +23,6 @@ pub(crate) const FIXED_LABEL: &str = "fixed";
 #[derive(Clone, Debug, Default)]
 pub struct FixedBackend<F> {
     columns: HashMap<JoltPolynomialId, (Shape, Vec<F>)>,
-    committed_order: Vec<JoltCommittedPolynomial>,
     #[cfg(feature = "field-inline")]
     field_inline: Option<FixedFieldInline<F>>,
 }
@@ -98,17 +97,12 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for FixedFieldInline<F> {
             .copied()
             .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
     }
-
-    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
-        Vec::new()
-    }
 }
 
 impl<F> FixedBackend<F> {
     pub fn new() -> Self {
         Self {
             columns: HashMap::new(),
-            committed_order: Vec::new(),
             #[cfg(feature = "field-inline")]
             field_inline: None,
         }
@@ -134,11 +128,6 @@ impl<F> FixedBackend<F> {
         Ok(())
     }
 
-    /// The proof-payload order reported by [`JoltWitnessOracle::committed_order`].
-    pub fn set_committed_order(&mut self, order: Vec<JoltCommittedPolynomial>) {
-        self.committed_order = order;
-    }
-
     fn column(&self, id: JoltPolynomialId) -> Result<&(Shape, Vec<F>), WitnessError> {
         self.columns
             .get(&id)
@@ -161,7 +150,9 @@ impl<F: JoltField> JoltWitnessOracle<F> for FixedBackend<F> {
     }
 
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
-        Ok(self.committed_order.clone())
+        Err(WitnessError::UnavailableView {
+            label: "fixed committed order",
+        })
     }
 
     #[cfg(feature = "field-inline")]

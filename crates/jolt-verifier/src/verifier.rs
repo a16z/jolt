@@ -231,8 +231,8 @@ where
     })
 }
 
-/// The Akita verification path: the same stage spine, with a random-selector
-/// reduction of the packed trace and one native opening for the trace, advice,
+/// The Akita verification path: the same stage spine, with ordered native
+/// trace-column claims and one batch opening for the trace, advice,
 /// and committed-program objects. No homomorphism bounds and no ZK tail.
 #[cfg(feature = "akita")]
 pub fn verify<F, PCS, VC, H>(
@@ -429,7 +429,7 @@ pub fn absorb_public_preamble<C: Channel>(checked: &CheckedInputs, channel: &mut
 
 /// Absorbs the commitments both sides hold, after the proof's own: the trusted
 /// advice commitment, then the committed program's preprocessing-held
-/// commitments (bytecode chunks, then the program image).
+/// commitments (the whole bytecode, then the program image).
 pub fn absorb_public_commitments<PCS, VC, C>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     trusted_advice_commitment: Option<&PCS::Output>,
@@ -445,17 +445,8 @@ pub fn absorb_public_commitments<PCS, VC, C>(
     let Some(committed) = preprocessing.program.committed() else {
         return;
     };
-    #[cfg(not(feature = "akita"))]
-    {
-        for commitment in &committed.bytecode_chunk_commitments {
-            PCS::absorb_commitment(commitment, channel);
-        }
-        PCS::absorb_commitment(&committed.program_image_commitment, channel);
-    }
-    #[cfg(feature = "akita")]
-    for commitment in &committed.direct_program_commitments {
-        PCS::absorb_commitment(commitment, channel);
-    }
+    PCS::absorb_commitment(&committed.bytecode_commitment, channel);
+    PCS::absorb_commitment(&committed.program_image_commitment, channel);
 }
 
 /// Validates the public inputs and the proof header against the preprocessing.
@@ -579,7 +570,6 @@ where
         program
             .committed()
             .map(|committed| {
-                #[cfg(feature = "akita")]
                 if committed.trace_order != trace_polynomial_order {
                     return Err(VerifierError::InvalidCommittedProgram {
                         reason: "committed-program trace order disagrees with the proof".to_owned(),
@@ -607,7 +597,6 @@ where
                     })?;
                 Ok(CommittedProgramSchedule {
                     bytecode_len: meta.bytecode_len,
-                    bytecode_chunk_count: committed.bytecode_chunk_count(),
                     program_image_len_words: meta.program_image_len_words,
                     program_image_start_index,
                 })

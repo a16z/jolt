@@ -5,9 +5,6 @@ pub enum OpeningsError {
     #[error("opening proof verification failed")]
     VerificationFailed,
 
-    #[error("commitment mismatch: expected {expected}, got {actual}")]
-    CommitmentMismatch { expected: String, actual: String },
-
     #[error("invalid setup parameters: {0}")]
     InvalidSetup(String),
 

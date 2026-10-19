@@ -46,7 +46,7 @@ pub struct Stage7Sumchecks<F: JoltField> {
     /// phase; present only when that phase runs.
     #[cfg(not(feature = "akita"))]
     pub untrusted_advice: Option<UntrustedAdviceAddressPhase<F>>,
-    /// Final `BytecodeChunk(i)` claims from the committed-bytecode reduction's
+    /// Final committed-bytecode claims from the committed-bytecode reduction's
     /// address phase; present only when that phase runs.
     pub bytecode_address_phase: Option<BytecodeReductionAddressPhase<F>>,
     /// Final `ProgramImageInit` claim from the program-image reduction's address
@@ -80,12 +80,12 @@ impl<F: JoltField> Stage7OutputPoints<F> {
         }
     }
 
-    /// The committed-bytecode address-phase final opening point (shared by every
-    /// chunk), present only when that address phase ran.
+    /// The whole-bytecode final opening point, present only when its
+    /// address phase ran.
     pub fn bytecode_point(&self) -> Option<&[F]> {
         self.bytecode_address_phase
             .as_ref()
-            .and_then(|points| points.chunks().first().map(Vec::as_slice))
+            .map(|points| points.bytecode())
     }
 
     /// The program-image address-phase final opening point, present only when that
@@ -190,8 +190,7 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     #[test]
     fn wire_claims_follow_canonical_order() {
-        let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
-            (5, 6, 7, 8, 9, 6, 9);
+        let (trusted, untrusted, bytecode, image, plain_last, committed_last) = (5, 6, 7, 8, 6, 8);
         let hamming = HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![fr(1), fr(2)],
             bytecode_ra: vec![fr(3)],
@@ -221,7 +220,7 @@ mod tests {
             trusted_advice: Some(trusted_advice),
             untrusted_advice: Some(untrusted_advice),
             bytecode_address_phase: Some(BytecodeReductionAddressPhaseOutputClaims {
-                chunks: vec![fr(chunk1), fr(chunk2)],
+                bytecode: fr(bytecode),
             }),
             program_image_address_phase: Some(ProgramImageReductionAddressPhaseOutputClaims {
                 program_image: fr(image),
@@ -272,9 +271,8 @@ mod tests {
             assert_eq!(untrusted_advice.expected_output_openings::<Fr>().len(), 1);
         }
 
-        let chunk_count = 4;
-        let bytecode = BytecodeAddressPhase::new((reduction_dimensions, chunk_count));
-        assert_eq!(bytecode.expected_output_openings::<Fr>().len(), chunk_count);
+        let bytecode = BytecodeAddressPhase::new(reduction_dimensions);
+        assert_eq!(bytecode.expected_output_openings::<Fr>().len(), 1);
 
         let program_image = ProgramImageAddressPhase::new(reduction_dimensions);
         assert_eq!(program_image.expected_output_openings::<Fr>().len(), 1);

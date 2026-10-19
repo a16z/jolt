@@ -36,7 +36,7 @@ impl CSRRW {
         (self.operands.imm & 0xfff) as u16
     }
 
-    fn exec(&self, cpu: &mut Cpu, _: &mut <CSRRW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <CSRRW as RISCVInstruction>::RamAccess) {
         let csr_addr = self.csr_address();
         let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
 

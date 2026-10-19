@@ -96,8 +96,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // Requests also provision singleton prefixes. Share those audited
                 // rows so each worker searches only its distinct paired row.
                 for arity in advice_arities.iter().copied().flatten() {
-                    let params =
-                        GroupedScheduleParams::new(None, Some(arity), Vec::new(), final_arity);
+                    let params = GroupedScheduleParams::new(
+                        None,
+                        Some(arity),
+                        Vec::new(),
+                        PolynomialGroupLayout::new(final_arity, 1),
+                    );
                     if let Ok(extended) =
                         params.extend_catalog(&dense, &full_dense, &catalog, k, profile)
                     {
@@ -133,7 +137,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     untrusted,
                                     trusted,
                                     Vec::new(),
-                                    final_arity,
+                                    PolynomialGroupLayout::new(final_arity, 1),
                                 );
                                 let result = params.extend_catalog(&dense, &full_dense, &catalog, k, profile)
                                     .and_then(|extended| {
@@ -203,7 +207,12 @@ mod tests {
     #[test]
     fn only_the_known_scalar_guide_rejection_is_expected() -> Result<(), Box<dyn Error>> {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
-        let params = GroupedScheduleParams::new(None, Some(14), Vec::new(), 12);
+        let params = GroupedScheduleParams::new(
+            None,
+            Some(14),
+            Vec::new(),
+            PolynomialGroupLayout::new(12, 1),
+        );
         let result = params
             .extend_catalog(
                 &artifacts.dense_catalog()?,

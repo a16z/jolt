@@ -101,10 +101,7 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
     pub fn recorder(&self) -> Result<ModeRecorder<'a, VC>, ProverError<VC::Field>> {
         #[cfg(feature = "zk")]
         {
-            Ok(CommittedSumcheckRecorder::new(
-                self.vc_setup,
-                rand_core::OsRng,
-            )?)
+            Ok(CommittedSumcheckRecorder::new(self.vc_setup, OsRng)?)
         }
         #[cfg(not(feature = "zk"))]
         {
@@ -132,7 +129,7 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
                 degree,
                 domain_size,
                 self.vc_setup,
-                rand_core::OsRng,
+                OsRng,
                 transcript,
             )?;
             Ok(ProvedUniskipMode {

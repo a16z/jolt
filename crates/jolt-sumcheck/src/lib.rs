@@ -10,6 +10,19 @@
 //! polynomial $s_i(X)$ and the verifier checks $s_i(0) + s_i(1)$ against
 //! the running sum, then sets $r_i$ and recurses.
 //!
+//! # Binary fields
+//!
+//! [`BatchPrelude`], [`prove_batch`] with [`ClearSumcheckRecorder`], Boolean
+//! round checks, and the full and compressed clear verifiers support
+//! characteristic 2. Members construct their round polynomials in coefficient
+//! form; interpolation over consecutive integers is not supported there.
+//! Mixed-length batches use the padding contract on [`BatchPrelude`], including
+//! its output multiplier when checking the final oracle evaluations.
+//! [`CenteredIntegerDomain`] and the uni-skip provers reject domains whose
+//! integer points collide in the field, before transcript absorption. Thus
+//! binary fields support integer-domain sizes 1 and 2, but reject larger sizes.
+//! The committed recorder and R1CS lowering are not supported over binary fields.
+//!
 //! # Crate structure
 //!
 //! | Module | Purpose |

@@ -1,7 +1,7 @@
 //! Verifier-selected protocol configuration.
 //!
 //! Every protocol axis is fixed at compile time — the `zk` feature selects
-//! BlindFold, the `akita` feature selects packed commitments, the
+//! BlindFold, the `akita` feature selects Akita commitments, the
 //! `field-inline` feature enables the native field-register extension — so one
 //! compiled verifier runs exactly one protocol. The verifier absorbs its own
 //! configuration into the transcript ([`JoltProtocolConfig::transcript_bytes`]);
@@ -22,7 +22,7 @@ use crate::VerifierError;
 #[cfg(all(feature = "zk", feature = "akita"))]
 compile_error!(
     "the `zk` and `akita` features are mutually exclusive: no zk protocol exists over the \
-     packed commitment axis (a lattice-friendly hiding commitment is a future workstream)"
+     Akita commitment axis (a lattice-friendly hiding commitment is a future workstream)"
 );
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,9 +38,9 @@ pub enum CommitmentConfig {
     /// Per-polynomial commitments, RLC batch opening (requires additive
     /// homomorphism).
     Homomorphic,
-    /// Packed one-hot trace and dense advice commitments with heterogeneous
-    /// Akita opening and verification.
-    Packed,
+    /// Native one-hot trace groups and dense auxiliary commitments with
+    /// heterogeneous Akita opening and verification.
+    Akita,
 }
 
 /// The protocol axes a proof is produced under.
@@ -74,7 +74,7 @@ impl JoltProtocolConfig {
         };
         let commitment = match self.commitment {
             CommitmentConfig::Homomorphic => 0,
-            CommitmentConfig::Packed => 1,
+            CommitmentConfig::Akita => 1,
         };
         let representation = match self.field_inline.representation {
             FieldInlineRepresentation::NativeFieldElement => 0,
@@ -115,7 +115,7 @@ pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::BlindFold;
 pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::Transparent;
 
 #[cfg(feature = "akita")]
-pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Packed;
+pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Akita;
 
 #[cfg(not(feature = "akita"))]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Homomorphic;
@@ -168,6 +168,22 @@ mod tests {
         assert_eq!(
             protocol.transcript_bytes(),
             [0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        let akita_protocol = JoltProtocolConfig {
+            commitment: CommitmentConfig::Akita,
+            ..protocol
+        };
+        assert_eq!(
+            postcard::to_stdvec(&akita_protocol).unwrap(),
+            [0, 1, 0, 4, 0]
+        );
+        assert_eq!(
+            postcard::from_bytes::<JoltProtocolConfig>(&[0, 1, 0, 4, 0]).unwrap(),
+            akita_protocol
+        );
+        assert_eq!(
+            akita_protocol.transcript_bytes(),
+            [0, 1, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0]
         );
     }
 

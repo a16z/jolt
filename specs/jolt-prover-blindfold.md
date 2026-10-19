@@ -47,11 +47,11 @@ Key abstractions introduced or modified:
 - **Mode-selected recorder** (`jolt-prover/src/recorder.rs`, new): one constructor
   `stage_recorder(...)` whose *return type* is `#[cfg]`-selected —
   `CommittedSumcheckRecorder<'_, F, VC, OsRng>` under `zk`,
-  `ClearSumcheckRecorder<F, VC::Output>` otherwise. Both have `Commitment = VC::Output`,
-  so `Proved<F, S, VC::Output>` and every downstream type are mode-independent. The eight
-  stage call sites replace their hardcoded `ClearSumcheckRecorder::new()` with this one
-  call and change nothing else — the generated `StageProver::prove` drivers are already
-  recorder-generic and stay untouched.
+  `ClearSumcheckRecorder<F>` otherwise. `SumcheckRecorder::Proof` selects the proof
+  encoding carried by `Proved<F, S, Rec::Proof>`: a `SumcheckProof<F, VC::Output>` in ZK
+  mode or a `CompressedSumcheckProof<F>` in clear mode. The stage fronts wrap clear
+  proofs in `SumcheckProof` when assembling their outputs. The generated
+  `StageProver::prove` drivers stay recorder-generic.
 - **Committed-witness retention** (stage outputs): each `StageNProverOutput` gains a
   `#[cfg(feature = "zk")] pub committed_witness: CommittedSumcheckWitness<F>` field
   (stages 1 and 2 additionally a `uniskip_witness`), populated from

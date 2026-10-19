@@ -13,7 +13,7 @@ use jolt_claims::protocols::composed::r1cs::{
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -26,7 +26,6 @@ use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput,
 };
 use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{ProverError, StageProver as _};
@@ -43,11 +42,9 @@ pub struct Stage1ProverOutput<F: JoltField> {
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage1<F, PCS, VC, H>(
-    backend: &JoltBackend<F, PCS>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     log_t: usize,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut ProverTranscript<H>,
 ) -> Result<Stage1ProverOutput<F>, ProverError<F>>
 where
@@ -61,18 +58,11 @@ where
     // Backend-neutral kernel-seam spans at the call boundary, so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's
     // kernel-seam contract.
-    tracing::info_span!("SpartanOuterUniskip::prepare").in_scope(|| {
-        backend
-            .spartan_outer_uniskip
-            .prepare(session, log_t, &tau, witness)
-    })?;
+    tracing::info_span!("SpartanOuterUniskip::prepare")
+        .in_scope(|| backend.prepare_outer_uniskip(log_t, &tau))?;
 
-    let uniskip_poly =
-        tracing::info_span!("SpartanOuterUniskip::first_round_poly").in_scope(|| {
-            backend
-                .spartan_outer_uniskip
-                .first_round_poly(session, &[], &())
-        })?;
+    let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
+        .in_scope(|| backend.outer_uniskip_poly())?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
@@ -97,12 +87,10 @@ where
         ),
     };
 
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &challenges,
@@ -134,7 +122,6 @@ mod field_inline_round_trip {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
-    use jolt_program::execution::OwnedTrace;
     use jolt_verifier::stages::stage2::product_tau_low;
     use jolt_verifier::JoltSponge;
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
@@ -145,18 +132,16 @@ mod field_inline_round_trip {
         test_checked_inputs, verify_through, FixturePreprocessing, Through, LOG_T,
     };
 
-    fn round_trip(trace_backend: TraceBackend<OwnedTrace>, preprocessing: FixturePreprocessing) {
+    fn round_trip(trace_backend: TraceBackend, preprocessing: FixturePreprocessing) {
         let witness = trace_backend.with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let mut session = backend.begin_proof();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let mut prover_transcript = fixture_transcript();
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
-            &backend,
-            &mut session,
+            &mut context,
             &mode,
             LOG_T,
-            &witness,
             &mut prover_transcript,
         )
         .unwrap();
@@ -215,17 +200,15 @@ mod field_inline_zk {
     #[test]
     fn committed_stage1_witness_carries_the_composed_rows_and_verifies() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let mut session = backend.begin_proof();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
         let setup = test_vc_setup();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let mut prover_transcript = fixture_transcript();
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
-            &backend,
-            &mut session,
+            &mut context,
             &mode,
             LOG_T,
-            &witness,
             &mut prover_transcript,
         )
         .unwrap();

@@ -1,4 +1,4 @@
-//! Id-free balanced-digit algebra shared by the packed (lattice) protocol
+//! Id-free balanced-digit algebra shared by the Akita (lattice) protocol
 //! families: the 64-bit balanced radix window, its chunking, the centered
 //! row-value MLE, and the honest row encoder.
 //!
@@ -33,7 +33,7 @@ pub enum BalancedChunkingError {
 ///
 /// The chunk width is fixed to the shared one-hot chunk size (`log_k_chunk`)
 /// so the digit polynomials sit in the `Ra` families' variable-count class
-/// and can share their final packed point (see `specs/lattice-claims.md`).
+/// and can share their final Akita point (see `specs/lattice-claims.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BalancedIncChunking {
     chunk_width: usize,

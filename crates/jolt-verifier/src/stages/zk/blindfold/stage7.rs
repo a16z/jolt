@@ -1,5 +1,7 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase as BytecodeAddressPhase;
+
 pub(super) fn add_stage7<PCS, VC>(
     input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
@@ -32,12 +34,10 @@ where
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
     let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().and_then(|layout| {
-        layout.dimensions().has_address_phase().then(|| {
-            relations::claim_reductions::bytecode::AddressPhase::new((
-                layout.dimensions(),
-                layout.chunk_count(),
-            ))
-        })
+        layout
+            .dimensions()
+            .has_address_phase()
+            .then(|| BytecodeAddressPhase::new(layout.dimensions()))
     });
     let program_image_reduction_claims =
         program_image_reduction_layout.as_ref().and_then(|layout| {
@@ -128,10 +128,7 @@ where
     if let Some(claim) = untrusted_claims {
         claims.push(relation_claim(&claim));
     }
-    if let (Some(_), Some(claim)) = (
-        bytecode_reduction_layout.as_ref(),
-        bytecode_reduction_claims,
-    ) {
+    if let Some(claim) = bytecode_reduction_claims {
         claims.push(relation_claim(&claim));
     }
     if let Some(claim) = program_image_reduction_claims {

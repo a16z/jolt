@@ -156,6 +156,7 @@ mod tests {
     )]
 
     use super::*;
+    use crate::configs::CatalogChunking;
     use akita_config::TrustedScheduleCatalog;
     use akita_params::ScheduleLookupKey;
     use jolt_field::Ring;
@@ -185,8 +186,11 @@ mod tests {
         let artifacts =
             AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
                 .expect("workspace schedule artifacts");
-        TrustedScheduleCatalog::new(artifacts.dense_catalog().expect("dense schedule catalog"))
-            .expect("typed dense schedule catalog")
+        TrustedScheduleCatalog::new(
+            artifacts.dense_catalog().expect("dense schedule catalog"),
+            AkitaConfig::CHUNKING,
+        )
+        .expect("typed dense schedule catalog")
     }
 
     fn test_selection(

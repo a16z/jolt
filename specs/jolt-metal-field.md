@@ -192,7 +192,7 @@ implementation, not a refactor of the CPU code.
   `2^64 − 2^32 + 1`, whose offset is the largest `jolt::Fp64` accepts.
   `Ext2` runs over four bases: `Prime64Offset59`; `2^64 − 0x7fffffd3`,
   whose offset is the largest prime offset below `2^31`, the bound of the
-  `Fp64` forms that reduce a sum of three products once; and, through the
+  `Fp64` forms that reduce a sum of two products once; and, through the
   generic Karatsuba forms, `2^64 − 2^32 + 1` and `Prime128Offset275`.
   A shared model (`tests/support/fp64.rs`) recomputes the reduction in
   `u128` arithmetic, and the suites assert that every `fold2_canonicalize`
@@ -201,18 +201,10 @@ implementation, not a refactor of the CPU code.
   the low word, which random operands reach with probability about
   `2^−64`. Inputs for the rare branches are built from the modulus:
   with `a = 2^63` and `b = 2m`, the product is `m · 2^64`, and `m` is chosen
-  so that `C·m` lands just below `(k + 1) · 2^64`. The `2^64 − 0x7fffffd3`
-  suite caught a real bug during development: the carry into the second
-  fold, up to `3C`, was held in 32 bits, which overflows for `C` near
-  `2^31`. Since `Ext2` over non-field bases is exercised (the Goldilocks
-  prime has `p ≡ 1 (mod 8)`, so `u^2 − 2` splits), the suites test the
-  arithmetic, not the field axioms, which `jolt_field` covers. Of 40
-  mutants of `fp64.h` and `ext2.h`, covering each carry, fold, sign step,
-  coefficient term and the non-residue, 39 fail the suites. The low-word
-  carry was added after its mutant first survived. The other survivor is
-  equivalent: narrowing the bound of the reduce-once overloads, which
-  changes speed, not results. Widening it past `2^31` fails to compile,
-  through `reduce_sum`'s `static_assert`.
+  so that `C·m` lands just below `(k + 1) · 2^64`. Since `Ext2` over
+  non-field bases is exercised (the Goldilocks prime has `p ≡ 1 (mod 8)`,
+  so `u^2 − 2` splits), the suites test the arithmetic, not the field
+  axioms, which `jolt_field` covers.
 - **Mutation testing.** The suite's strength is checked by hand-made
   mutants of each carry, shift, fold, and sign-handling step. In step 2,
   all 23 mutants of the code in the final `fp128.h` fail the suite. Two
@@ -329,52 +321,29 @@ for `square`. Load moved the absolute rates of both runs, so the rates above
 are indicative only; the ratios hold because each round times every variant
 back to back.
 
-**Fp64 and Ext2 forms** (step 4). A paired A/B on the unmerged branch
-`metal/fp64-ext2-ab` (`benches/fp64_ab.rs`) chose the product, the square,
-and the `Ext2` multiply and square. Each variant is the merged header with
-exactly one function replaced. The rule, fixed before the first round, is
-the limb-layout rule made explicit: the fastest variant on the dependent
-chain wins if it beats every other there by at least 3% and is at most 3%
-slower than the best on four chains and on the inner product at 2^20;
-otherwise the simplest variant within 3% of the best on the chain wins.
-Four rounds ran on an M4 Max on AC power, at load 9–37, each with 31
-rounds per case. Times relative to the variant named first, median per-round
-ratio:
+**Fp64 and Ext2 forms** (step 4). Where a function has alternative forms,
+the choice follows the limb-layout rule made explicit and fixed before
+measuring: in a paired A/B (each variant the merged header with one
+function replaced), the fastest variant on the dependent chain wins if it
+beats every other there by at least 3% and is at most 3% slower than the
+best on four chains and on the inner product at 2^20; otherwise the
+simplest variant within 3% of the best on the chain wins. The PR that makes
+a choice reports its paired comparison (see Regression bound).
 
-| round | choice | chain | four chains | inner product 2^20 |
-|---|---|---|---|---|
-| 1 | 64×64 product: row-by-row (as `fp128.h`) / cross products first | 0.848 | 0.838 | 0.994 |
-| 1 | the same, MSL `*` and `mulhi` / cross products first | 1.073 | 1.064 | 0.996 |
-| 2 | square: `mul_wide(a, a)` / three-product square | 0.847 | — | — |
-| 3 | square: row-by-row, cross product once / `mul_wide(a, a)` | 1.001 | — | — |
-| 3 | `Ext2` multiply: reduce each coefficient once / Karatsuba | 0.962 | 0.987 | 1.015 |
-| 3 | `Ext2` multiply: base-field `dot2` / Karatsuba | 0.992 | 0.992 | 1.004 |
-| 3 | `Ext2` multiply: schoolbook / Karatsuba | 1.108 | 1.130 | 1.010 |
-| 3 | `Ext2` square: reduce `c0` once / generic | 0.914 | — | — |
-| 3 | `Ext2` square: base-field `dot2` / generic | 0.949 | — | — |
-| 4 | merged `Ext2` multiply / Karatsuba | 0.960 | 0.985 | 1.009 |
-| 4 | merged `Ext2` square / generic | 0.910 | — | — |
-
-The row-by-row product is 15% faster than the four-product form it
-replaced, and the three-product square did not beat squaring through it, so
-`square(a)` is `a * a`. The `Ext2` multiply over `Fp64<C>` with `C < 2^31`
-sums each coefficient's products, `a0 b0 + 2 a1 b1` and `a0 b1 + a1 b0`,
-unreduced and reduces once: four base products and two reductions against
-Karatsuba's three and three. In round 3 it ran the chain 3.8% faster than
-Karatsuba. The two medians against Karatsuba suggest a roughly 3% advantage
-over `dot2`, but their quotient is not the median of direct per-round ratios.
-These aggregates do not establish that the selected form beats `dot2` by the
-rule's 3% margin. That selection remains provisional pending a direct paired
-comparison, including its spread, under quieter conditions. `dot2` sums two
-products and
-reduces once, which is valid for every `C < 2^32`, but it must reduce the
-doubled `a1` first. On inner products every form ties within the
-round-to-round spread, since the kernel is memory-bound; at 2^24 the merged
-multiply measured 1.4–1.7% slower than Karatsuba in rounds 2–4, inside that
-spread. Round 4 timed forced Karatsuba and generic squaring against the
-merged forms (1.042, 1.015, 0.991 and 1.099); the table inverts those
-ratios. Offsets from `2^31` up keep Karatsuba: there a sum of three
-products can exceed the bound `C (t2 + 1) ≤ p` of `fold2_canonicalize`.
+- `mul_wide` is the row-by-row product of `fp128.h`, and `square(a)` is
+  `a * a`: a dedicated three-product square was not faster.
+- Over `Fp64<C>` with `C < 2^31`, the `Ext2` multiply and square reduce
+  each coefficient's two products once (`fp64_detail::reduce_sum`):
+  `c0 = a0 b0 + (2 a1) b1` and `c1 = a0 b1 + a1 b0`, and the square's
+  `c0 = c0^2 + (2 c1) c1`. The square wins the rule outright against the
+  generic form. The multiply does not beat Karatsuba by 3% on the chain, so
+  the rule alone would keep Karatsuba; it uses the square's reduction
+  because the conformance suite can reach that reduction's rare branches
+  only through the multiply's independent operands. Summing `c0` as three
+  products, `a0 b0 + a1 b1 + a1 b1`, before one reduction lost to these
+  forms by more than 3% on both chains.
+- Offsets from `2^31` up keep Karatsuba and the generic square, outside the
+  bound `reduce_sum` proves.
 
 Regression bound: after the first measurement, a PR that changes an MSL
 arithmetic header reports the table and a paired comparison against its base
@@ -693,15 +662,15 @@ together with #1848.
 4. **`Fp64` and `Ext2`.** Contents:
    - `fp64.h`: `jolt::Fp64<C>` with the operations of `Fp128`, for 64-bit
      moduli with odd `C < 2^32`, and `fp64_detail::reduce_sum`, which
-     reduces a sum of up to three 128-bit products once for `C < 2^31`;
+     reduces a sum of two 128-bit products once for `C < 2^31`;
    - `ext2.h`: `jolt::Ext2<F>` over either base, with multiplication by a
      base-field element (`mul_base`). Multiply and square are Karatsuba
      forms, overloaded over `Fp64<C>` with `C < 2^31` by forms that reduce
      each coefficient once;
    - `MetalField` for `Fp64<P>` with 64-bit `P` and for `Ext2<F>`, and the
      `bytemuck` impls behind them;
-   - the conformance suites, the generic field benchmarks
-     (`benches/field.rs`), and the A/B under Performance.
+   - the conformance suites and the generic field benchmarks
+     (`benches/field.rs`).
 5. **`Fp32` and `FpExt4`.** `Fp32` for `Prime32Offset99`, and `FpExt4` in
    the `[1, e1, e2, e3]` cyclotomic basis matching
    `PseudoMersenne::ext4_mul`, each landed when a consumer first needs it.

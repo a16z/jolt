@@ -13,7 +13,7 @@
 //
 // Multiply and square dispatch to ext2_mul and ext2_square: generic
 // Karatsuba forms, and forms over Fp64<C> with C < 2^31 that sum each
-// coefficient's products unreduced and reduce once. The dispatch is by
+// coefficient's two products unreduced and reduce once. The dispatch is by
 // overload; results agree either way, since both are canonical. The Fp64
 // forms need jolt/field/fp64.h first, as FIELD_HEADERS orders them.
 
@@ -70,28 +70,27 @@ Ext2<F> ext2_square(Ext2<F> a) {
                    (a.c0 + a.c0) * a.c1};
 }
 
-// Over Fp64<C> with C < 2^31, each coefficient is a sum of at most three
-// 128-bit products, which fp64_detail::reduce_sum reduces once:
-// c0 = a0 b0 + 2 a1 b1 and c1 = a0 b1 + a1 b0, with the non-residue 2 as a
-// second add of a1 b1. Four multiplies and two reductions against
-// Karatsuba's three and three; faster on the GPU (specs/jolt-metal-field.md).
+// Over Fp64<C> with C < 2^31, each coefficient is a sum of two 128-bit
+// products, which fp64_detail::reduce_sum reduces once:
+// c0 = a0 b0 + (2 a1) b1 and c1 = a0 b1 + a1 b0. specs/jolt-metal-field.md
+// (Performance) records why these forms replace Karatsuba here.
 template <uint C>
 metal::enable_if_t<(C < (1u << 31)), Ext2<Fp64<C>>> ext2_mul(Ext2<Fp64<C>> a,
                                                              Ext2<Fp64<C>> b) {
     using namespace fp64_detail;
-    Wide v1 = mul_wide(a.c1.word, b.c1.word);
-    Sum3 c0 = add(add(sum(mul_wide(a.c0.word, b.c0.word)), v1), v1);
-    Sum3 c1 = add(sum(mul_wide(a.c0.word, b.c1.word)), mul_wide(a.c1.word, b.c0.word));
-    return Ext2<Fp64<C>>{Fp64<C>{reduce_sum<C>(c0)}, Fp64<C>{reduce_sum<C>(c1)}};
+    Fp64<C> twice_a1 = Ext2<Fp64<C>>::mul_non_residue(a.c1);
+    ulong c0 = reduce_sum<C>(mul_wide(a.c0.word, b.c0.word), mul_wide(twice_a1.word, b.c1.word));
+    ulong c1 = reduce_sum<C>(mul_wide(a.c0.word, b.c1.word), mul_wide(a.c1.word, b.c0.word));
+    return Ext2<Fp64<C>>{Fp64<C>{c0}, Fp64<C>{c1}};
 }
 
-// c0 = c0^2 + 2 c1^2 reduced once; c1 = 2 c0 c1 as in the generic form.
+// c0 = c0^2 + (2 c1) c1 reduced once; c1 = 2 c0 c1 as in the generic form.
 template <uint C>
 metal::enable_if_t<(C < (1u << 31)), Ext2<Fp64<C>>> ext2_square(Ext2<Fp64<C>> a) {
     using namespace fp64_detail;
-    Wide v1 = mul_wide(a.c1.word, a.c1.word);
-    Sum3 c0 = add(add(sum(mul_wide(a.c0.word, a.c0.word)), v1), v1);
-    return Ext2<Fp64<C>>{Fp64<C>{reduce_sum<C>(c0)}, (a.c0 + a.c0) * a.c1};
+    Fp64<C> twice_c1 = Ext2<Fp64<C>>::mul_non_residue(a.c1);
+    ulong c0 = reduce_sum<C>(mul_wide(a.c0.word, a.c0.word), mul_wide(twice_c1.word, a.c1.word));
+    return Ext2<Fp64<C>>{Fp64<C>{c0}, (a.c0 + a.c0) * a.c1};
 }
 
 } // namespace jolt

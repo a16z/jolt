@@ -15,6 +15,8 @@ use rayon::prelude::*;
 use super::views::dense_view;
 use crate::commitment::CommitmentGrid;
 use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
+#[cfg(feature = "field-inline")]
+use crate::{field_inline::FieldIncrementColumn, trace_column::DenseTraceColumnPoly};
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
 impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
@@ -47,9 +49,10 @@ impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
                     });
                 }
                 let embedded = match polynomial {
+                    JoltCommittedPolynomial::Reserved4(retired) => match retired {},
                     JoltCommittedPolynomial::TrustedAdvice
                     | JoltCommittedPolynomial::UntrustedAdvice
-                    | JoltCommittedPolynomial::BytecodeChunk(_)
+                    | JoltCommittedPolynomial::ProgramBytecode
                     | JoltCommittedPolynomial::ProgramImageInit => {
                         block_embed(&table, grid, polynomial)?
                     }
@@ -65,6 +68,24 @@ impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
                 Ok(Box::new(embedded) as Box<dyn MultilinearPoly<F>>)
             })
             .collect()
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn prepare_field_inline(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        grid: CommitmentGrid,
+    ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>> {
+        let oracle = witness.field_inline().ok_or(KernelError::Unsupported {
+            reason: "the stage-8 FieldRdInc opening requires a witness plane serving the field-inline oracle",
+        })?;
+        let table = FieldIncrementColumn::resolve(session, oracle, 1usize << grid.log_t)?;
+        let column =
+            DenseTraceColumnPoly::new(table, grid).ok_or(KernelError::InvariantViolation {
+                reason: "FieldRdInc table exceeds the commitment grid",
+            })?;
+        Ok(Box::new(column))
     }
 }
 

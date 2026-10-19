@@ -77,9 +77,8 @@ impl<F: MslType> Ext2Spelling<F> {
     const HOST_SUFFIX: Spelling = spell(&[b"ext2_", F::HOST_SUFFIX.as_bytes()]);
 }
 
-/// Longest spelling any field type needs, with room for one more level of
-/// extension.
-const SPELLING_CAPACITY: usize = 96;
+/// Longest spelling any field type needs: `jolt::Ext2<jolt::Fp128<0xffffa7f7u>>`.
+const SPELLING_CAPACITY: usize = 36;
 
 /// An ASCII name assembled at compile time: the first `len` bytes.
 struct Spelling {

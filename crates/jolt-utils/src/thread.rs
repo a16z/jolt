@@ -1,14 +1,8 @@
-//! Rayon-backed threading utilities: background drops and deterministic-error
-//! index-parallel collection.
+//! Rayon-backed deterministic-error index-parallel collection.
 
 use std::sync::Mutex;
 
 use rayon::prelude::*;
-
-/// Drops `data` in a background rayon task to avoid blocking the caller.
-pub fn drop_in_background_thread<T: Send + 'static>(data: T) {
-    rayon::spawn(move || drop(data));
-}
 
 /// The parallel scatter grain of [`par_collect_windows`]: big enough to
 /// amortize rayon dispatch, small enough to load-balance skewed work.

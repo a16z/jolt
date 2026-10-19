@@ -1,7 +1,6 @@
 //! Per-instruction impls for virtual (synthesized) instructions.
 
 pub mod advice;
-pub mod advice_len;
 pub mod advice_load;
 pub mod align_addr;
 pub mod assert_eq;

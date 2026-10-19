@@ -49,14 +49,12 @@ jolt-verifier::config.rs::JoltProtocolConfig.field_inline
 jolt-verifier::config.rs::JoltProtocolConfig.zk
 jolt-verifier::config.rs::ZkConfig::BlindFold
 jolt-verifier::config.rs::ZkConfig::Transparent
-jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.bytecode_chunk_commitments @cfg(not(feature="akita"))
-jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.bytecode_chunk_count @cfg(feature="akita")
-jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.direct_program_commitments @cfg(feature="akita")
+jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.bytecode_commitment
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.max_padded_trace_length
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.memory_layout
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.meta
-jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.program_image_commitment @cfg(not(feature="akita"))
-jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.trace_order @cfg(feature="akita")
+jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.program_image_commitment
+jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.trace_order
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.pcs_setup
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.preprocessing_digest
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.program

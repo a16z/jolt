@@ -60,17 +60,21 @@ mod base {
         checks::committed_program_tampers(
             &standard_committed_muldiv_case(),
             &[
-                ("swapped bytecode chunk commitments", |preprocessing| {
-                    let committed = checks::committed_mut(preprocessing);
-                    assert!(committed.bytecode_chunk_commitments.len() >= 2);
-                    committed.bytecode_chunk_commitments.swap(0, 1);
-                }),
                 (
-                    "program image replaced by a chunk commitment",
+                    "swapped bytecode and program image commitments",
                     |preprocessing| {
                         let committed = checks::committed_mut(preprocessing);
-                        committed.program_image_commitment =
-                            committed.bytecode_chunk_commitments[0].clone();
+                        std::mem::swap(
+                            &mut committed.bytecode_commitment,
+                            &mut committed.program_image_commitment,
+                        );
+                    },
+                ),
+                (
+                    "program image replaced by the bytecode commitment",
+                    |preprocessing| {
+                        let committed = checks::committed_mut(preprocessing);
+                        committed.program_image_commitment = committed.bytecode_commitment.clone();
                     },
                 ),
             ],

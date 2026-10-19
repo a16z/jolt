@@ -376,9 +376,9 @@ where
     SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
     SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
-    OpeningIdOf<F, R>: Sync,
-    DerivedIdOf<F, R>: Ord + Sync,
-    ChallengeIdOf<F, R>: Ord + Sync,
+    OpeningIdOf<F, R>: Send + Sync,
+    DerivedIdOf<F, R>: Ord + Send + Sync,
+    ChallengeIdOf<F, R>: Ord + Send + Sync,
 {
     type Relation = R;
 

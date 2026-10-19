@@ -185,11 +185,14 @@ the search limits and opening-assignment enumeration. The exact audited result i
 during preprocessing and consumed by proving and verification.
 
 At the kernel boundary, Akita supplies a `DecomposeFoldBatchPlan::SparseChunked` with a
-claim-major challenge carrier and canonical chunk ranges. Jolt validates the singleton
-streamed batch, checks the ranges, prepares rotations once, and accumulates into a
-position-by-chunk buffer. It expands digits independently for each chunk and returns
-`CpuFoldResponses::chunked`, which includes Akita's aggregated global response. The scalar
-fold path calls the same streamed implementation with one chunk.
+claim-major challenge carrier and canonical chunk ranges. With native trace batching,
+Jolt validates the ordered column views over one shared trace owner, checks the ranges,
+prepares rotations once, and accumulates into a position-by-chunk buffer across all
+columns. It expands digits independently for each chunk and returns
+`CpuFoldResponses::chunked`, which includes Akita's aggregated global response. The
+single-chunk batch uses the same streamed implementation with one chunk. Native batching
+establishes first-fold cycle locality; recursive ownership alignment remains the
+follow-up described in [the native batching spec](akita-native-trace-batching.md).
 
 Internal enums dispatch the eight concrete Akita scheme and verifier types through commitment,
 opening, and verification. Akita owns proof-byte parsing. This keeps the profile and trusted

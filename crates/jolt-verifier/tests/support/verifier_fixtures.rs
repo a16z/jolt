@@ -13,7 +13,6 @@ use std::{
 #[cfg(unix)]
 use std::{os::fd::AsRawFd, os::raw::c_int};
 
-use super::guest_fixtures::FixtureTrace;
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::{Bn254G1, Pedersen};
@@ -278,15 +277,10 @@ pub fn fresh_standard_muldiv_address_major_case() -> VerifierFixtureCase {
 }
 
 #[cfg(not(feature = "zk"))]
-pub fn fresh_standard_committed_muldiv_address_major_case(
-    bytecode_chunk_count: usize,
-) -> VerifierFixtureCase {
+pub fn fresh_standard_committed_muldiv_address_major_case() -> VerifierFixtureCase {
     let _guard = verifier_fixture_lock();
     fresh_case_from_accepted_fixture(|| {
-        generate_committed_muldiv_with_order(
-            bytecode_chunk_count,
-            TracePolynomialOrder::AddressMajor,
-        )
+        generate_committed_muldiv_with_order(TracePolynomialOrder::AddressMajor)
     })
 }
 
@@ -639,7 +633,7 @@ fn generate_advice_consumer_with_committed_program(
     let run = prepare_guest(program, &inputs, &untrusted_advice, &trusted_advice);
     let config = derive_config(&run);
     let preprocessing = if committed_program {
-        jolt_prover::dory::preprocess_committed(run.program_preprocessing, 2)
+        jolt_prover::dory::preprocess_committed(run.program_preprocessing)
             .expect("committed preprocessing")
     } else {
         let shared =
@@ -656,24 +650,18 @@ fn generate_advice_consumer_with_committed_program(
 }
 
 fn generate_committed_muldiv() -> GeneratedVerifierFixture {
-    generate_committed_muldiv_with_order(2, TracePolynomialOrder::CycleMajor)
+    generate_committed_muldiv_with_order(TracePolynomialOrder::CycleMajor)
 }
 
-fn generate_committed_muldiv_with_order(
-    bytecode_chunk_count: usize,
-    order: TracePolynomialOrder,
-) -> GeneratedVerifierFixture {
+fn generate_committed_muldiv_with_order(order: TracePolynomialOrder) -> GeneratedVerifierFixture {
     let program = Program::new("muldiv-guest");
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(program, &inputs, &[], &[]);
     let mut config = derive_config(&run);
     config.trace_polynomial_order = order;
-    let preprocessing = jolt_prover::dory::preprocess_committed_with_order(
-        run.program_preprocessing,
-        bytecode_chunk_count,
-        order,
-    )
-    .expect("committed preprocessing");
+    let preprocessing =
+        jolt_prover::dory::preprocess_committed_with_order(run.program_preprocessing, order)
+            .expect("committed preprocessing");
     prove_prepared(run.program, run.trace, config, preprocessing, &[])
 }
 
@@ -715,33 +703,19 @@ fn generate_verifier_fixture_with_order(
 }
 
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
-    #[cfg(not(feature = "field-inline"))]
-    {
-        ProverConfig::derive_compact::<Fr>(
-            run.trace.trace.as_slice(),
-            &run.program_preprocessing.memory_layout,
-            run.program_preprocessing.ram.min_bytecode_address,
-            run.program_preprocessing.ram.bytecode_words.len(),
-            1 << 16,
-        )
-        .expect("derive config")
-    }
-    #[cfg(feature = "field-inline")]
-    {
-        ProverConfig::derive::<Fr>(
-            run.trace.trace.rows(),
-            &run.program_preprocessing.memory_layout,
-            run.program_preprocessing.ram.min_bytecode_address,
-            run.program_preprocessing.ram.bytecode_words.len(),
-            1 << 16,
-        )
-        .expect("derive config")
-    }
+    ProverConfig::derive_from_dimensions::<Fr>(
+        run.trace.dimensions,
+        &run.program_preprocessing.memory_layout,
+        run.program_preprocessing.ram.min_bytecode_address,
+        run.program_preprocessing.ram.bytecode_words.len(),
+        1 << 16,
+    )
+    .expect("derive config")
 }
 
 fn prove_prepared(
     program: Arc<JoltProgram>,
-    trace: TraceOutput<FixtureTrace>,
+    trace: TraceOutput,
     config: ProverConfig,
     preprocessing: DoryProverPreprocessing,
     trusted_advice: &[u8],
@@ -761,12 +735,11 @@ fn prove_prepared(
         jolt_prover::dory::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
-        &JoltBackend::optimized(),
+    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        JoltBackend::optimized().with_witness(&witness),
         &preprocessing,
         &config,
         trusted.as_ref(),
-        &witness,
         &public_io,
     )
     .expect("prove verifier fixture");
@@ -786,9 +759,7 @@ mod field_inline {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
-    };
+    use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_verifier::JoltSponge;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -839,22 +810,14 @@ mod field_inline {
         let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
         let public_io = trace_output.device.clone();
 
-        let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.rows(),
+        let config = ProverConfig::derive_from_dimensions::<Fr>(
+            trace_output.dimensions,
             &memory_layout,
             program_preprocessing.ram.min_bytecode_address,
             program_preprocessing.ram.bytecode_words.len(),
             MAX_PADDED_TRACE_LENGTH,
         )
         .expect("derive config");
-        let mut rows = trace_output.trace.rows().to_vec();
-        rows.resize(config.trace_length, TraceRow::default());
-        let padded_output = TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-            trace_output.advice_tape,
-        );
         let prover_preprocessing = jolt_prover::dory::from_shared(
             JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
         )
@@ -862,25 +825,25 @@ mod field_inline {
         let program_preprocessing = prover_preprocessing
             .program_arc()
             .expect("full preprocessing");
-        let witness = TraceBackend::new(
+        let witness = TraceBackend::try_new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
                 config.one_hot_config,
             ),
-            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         )
+        .expect("trace witness")
         .with_field_inline()
         .expect("field-inline witness view");
         let witness = Arc::new(witness);
 
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
-            &backend,
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+            backend.with_witness(&witness),
             &prover_preprocessing,
             &config,
             None,
-            witness.as_ref(),
             &public_io,
         )
         .expect("modular field-inline prove");
@@ -897,7 +860,7 @@ mod field_inline {
         program: &JoltProgram,
         memory_layout: &MemoryLayout,
         inputs: &[u8],
-    ) -> TraceOutput<OwnedTrace> {
+    ) -> TraceOutput {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
             max_trusted_advice_size: memory_layout.max_trusted_advice_size,

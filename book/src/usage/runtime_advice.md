@@ -6,12 +6,20 @@ Runtime advice is distinct from the [advice inputs](./guests_hosts/guests.md#adv
 
 ## How it works
 
-Jolt uses a **two-pass** execution model for advice:
+The honest Jolt prover uses a **two-pass** execution model for advice:
 
 1. **First pass (compute_advice)**: The guest is compiled with the `compute_advice` feature flag. Advice functions execute their body and write results to the advice tape.
 2. **Second pass (proving)**: The guest is compiled without `compute_advice`. Advice functions read precomputed results from the advice tape instead of recomputing them.
 
 The prover handles both passes automatically. The guest code only needs to define advice functions and verify their outputs.
+
+## Security model
+
+Runtime advice consists of **prover-chosen witness values**. A valid proof establishes that the proving-pass guest executed with some such values and satisfied the checks it reached. It does not establish that the advice-function body ran or produced those values. The first pass is a way for the standard prover to compute advice, not part of the computation being proved.
+
+`AdviceTapeIO` provides serialization, not authentication. Lengths, capacities, indices, and flags received through advice are as untrusted as the other contents. The tracer maintains a backing tape and read cursor and reports an error on exhaustion, but these are properties of the standard prover's execution. The proof does not authenticate a runtime tape length or establish that the guest consumed all supplied advice.
+
+Guest checks must establish the claimed result on every successful execution path. When advice controls how many checks run, validate that count against the computation's requirements. For example, if the guest needs one witness per public-input element, check that the counts match before iterating. Checking only the returned elements would let a prover supply an empty collection, skip all checks, and return successfully. Invalid advice can therefore cause an incorrect successful result as well as a panic if validation is incomplete.
 
 ## Defining advice functions
 
@@ -37,7 +45,7 @@ Requirements:
 
 ## Verifying advice
 
-Advice values are **untrusted** -- the prover could supply arbitrary data. The guest must verify correctness using `check_advice!` or `check_advice_eq!`. These macros emit prover-enforced assertions: if the condition is false, proof generation fails.
+Advice values are **untrusted** -- the prover could supply arbitrary data. The guest must verify correctness using `check_advice!` or `check_advice_eq!`. On RISC-V guests, these macros emit virtual assertion instructions enforced by the proof constraints: an executed false check cannot appear in a valid proof.
 
 ```rust
 #[jolt::provable]
@@ -61,6 +69,8 @@ jolt::check_advice!(1 < a && a <= b && b < n, "factors out of range");
 ```
 
 Both macros accept an optional error message string as the last argument. The message is used in `assert!`/`assert_eq!` on non-RISC-V targets (useful for debugging) but is stripped from the guest binary.
+
+A failing ordinary Rust `assert!`, `assert_eq!`, or `panic!` can instead be proved as a panicking execution. Applications requiring successful completion must require `program_io.panic == false`; verification of a panic does not establish successful advice validation.
 
 ## Supported types
 

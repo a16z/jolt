@@ -86,8 +86,8 @@ fn wrong_protocols(proof: &JoltProof) -> Vec<JoltProtocolConfig> {
     };
     let mut commitment = proof.protocol;
     commitment.commitment = match commitment.commitment {
-        CommitmentConfig::Homomorphic => CommitmentConfig::Packed,
-        CommitmentConfig::Packed => CommitmentConfig::Homomorphic,
+        CommitmentConfig::Homomorphic => CommitmentConfig::Akita,
+        CommitmentConfig::Akita => CommitmentConfig::Homomorphic,
     };
     vec![zk, commitment]
 }
@@ -434,6 +434,20 @@ pub fn committed_program_tampers<C: TracedCase>(
             Region::statement_deadline(),
         );
     }
+
+    let mut preprocessing = case.preprocessing().clone();
+    let committed = committed_mut(&mut preprocessing);
+    committed.trace_order = match committed.trace_order {
+        TracePolynomialOrder::CycleMajor => TracePolynomialOrder::AddressMajor,
+        TracePolynomialOrder::AddressMajor => TracePolynomialOrder::CycleMajor,
+    };
+    assert!(
+        matches!(
+            case.verify_statement_with(&preprocessing),
+            Err(VerifierError::InvalidCommittedProgram { .. })
+        ),
+        "a committed program with another trace order must be rejected"
+    );
 }
 
 /// Mutable committed-program preprocessing.

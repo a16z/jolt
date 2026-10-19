@@ -75,14 +75,6 @@ impl<F, O, P, C> ClaimSourceTable<F, O, P, C> {
         self.insert_opening_source(id, SourceValue::variable(variable));
     }
 
-    pub fn insert_opening_lc(&mut self, id: O, linear_combination: LinearCombination<F>)
-    where
-        F: JoltField,
-        O: PartialEq,
-    {
-        self.insert_opening_source(id, SourceValue::linear_combination(linear_combination));
-    }
-
     pub fn insert_opening_source(&mut self, id: O, source: SourceValue<F>)
     where
         O: PartialEq,

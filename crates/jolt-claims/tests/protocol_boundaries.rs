@@ -203,7 +203,7 @@ fn twist_reference_no_protocol_module() {
     );
 }
 
-/// The shared balanced-digit algebra is id-free like `twist`: both packed
+/// The shared balanced-digit algebra is id-free like `twist`: both Akita
 /// protocol families ride it, so it must not reference either protocol
 /// module.
 #[test]

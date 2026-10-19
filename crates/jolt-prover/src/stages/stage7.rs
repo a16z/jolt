@@ -14,7 +14,7 @@
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -26,7 +26,6 @@ use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weigh
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
 use jolt_verifier::CheckedInputs;
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
@@ -42,15 +41,13 @@ pub struct Stage7ProverOutput<F: JoltField> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage7<F, PCS, VC, H>(
-    backend: &JoltBackend<F, PCS>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut ProverTranscript<H>,
 ) -> Result<Stage7ProverOutput<F>, ProverError<F>>
 where
@@ -83,12 +80,10 @@ where
     let inputs = stage7_input_values_from_upstream(&sumchecks, stage6b)?;
     let input_points = sumchecks.empty_input_points();
 
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &challenges,

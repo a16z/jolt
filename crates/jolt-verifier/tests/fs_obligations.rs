@@ -40,9 +40,9 @@ use serde_json::Value;
 use syn::{
     punctuated::Punctuated,
     visit::{self, Visit},
-    Attribute, Expr, ExprCall, ExprClosure, ExprMethodCall, FnArg, Generics, ImplItemFn, Item,
-    ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, Local, Macro, Pat,
-    Signature, Token, TraitItemFn, WherePredicate,
+    Attribute, Expr, ExprCall, ExprClosure, ExprLit, ExprMethodCall, FnArg, Generics, ImplItemFn,
+    Item, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemTrait, Lit, Local, Macro,
+    Meta, Pat, Signature, Token, TraitItemFn, WherePredicate,
 };
 
 const ABSORB_INVENTORY: &str = "tests/fs_inventory/absorb-sites.inventory";
@@ -296,7 +296,21 @@ fn production_sources(workspace: &Path) -> Vec<PackageSource> {
 /// are not test-gated. Feature-gated modules are included: every build's
 /// transcript sites are inventoried.
 fn module_tree(src: &Path) -> Vec<PathBuf> {
-    fn declared_modules(items: &[Item], dir: &Path, output: &mut Vec<PathBuf>) {
+    /// A `#[path = "..."]` override, relative to the declaring file's directory.
+    fn path_attribute(attrs: &[Attribute]) -> Option<String> {
+        attrs.iter().find_map(|attr| match &attr.meta {
+            Meta::NameValue(meta) if meta.path.is_ident("path") => match &meta.value {
+                Expr::Lit(ExprLit {
+                    lit: Lit::Str(path),
+                    ..
+                }) => Some(path.value()),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    fn declared_modules(items: &[Item], dir: &Path, file_dir: &Path, output: &mut Vec<PathBuf>) {
         for item in items {
             let Item::Mod(module) = item else {
                 continue;
@@ -306,12 +320,18 @@ fn module_tree(src: &Path) -> Vec<PathBuf> {
             }
             let name = module.ident.to_string();
             if let Some((_, items)) = &module.content {
-                declared_modules(items, &dir.join(&name), output);
+                declared_modules(items, &dir.join(&name), file_dir, output);
                 continue;
             }
             let file = dir.join(format!("{name}.rs"));
             let nested = dir.join(&name).join("mod.rs");
-            let path = if file.is_file() { file } else { nested };
+            let path = if let Some(path) = path_attribute(&module.attrs) {
+                file_dir.join(path)
+            } else if file.is_file() {
+                file
+            } else {
+                nested
+            };
             assert!(
                 path.is_file(),
                 "module `{name}` under {} has no source file",
@@ -333,7 +353,7 @@ fn module_tree(src: &Path) -> Vec<PathBuf> {
             None => panic!("source file {} has no stem", path.display()),
         };
         output.push(path.to_path_buf());
-        declared_modules(&syntax.items, &dir, output);
+        declared_modules(&syntax.items, &dir, parent, output);
     }
 
     let mut output = Vec::new();

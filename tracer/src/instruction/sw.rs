@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::Instruction;
-use super::RAMWrite;
+use super::RamWrite;
 
 use super::{format::format_s::FormatS, Cycle, RISCVInstruction, RISCVTrace};
 
@@ -14,11 +14,11 @@ declare_riscv_instr!(
     match  = 0x00002023,
     format = FormatS,
     registers = RegisterStateS,
-    ram    = RAMWrite
+    ram    = RamWrite
 );
 
 impl SW {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SW as RISCVInstruction>::RamAccess) {
         *ram_access = cpu
             .mmu
             .store_word(

@@ -1,4 +1,4 @@
-use akita_params::PrecommittedGroupProfiles;
+use akita_params::{PolynomialGroupLayout, PrecommittedGroupProfiles};
 use akita_pcs::custom_source::RootPolyMeta;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
 use jolt_crypto::Commitment;
@@ -28,7 +28,7 @@ use crate::adapters::{
 use crate::configs::AkitaChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
-use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
+use crate::trace_onehot::{TraceOneHotColumn, TraceOneHotRows};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
@@ -59,7 +59,7 @@ fn commit_one_hot_source(
     .map(split_commit_output)
 }
 
-/// Prover seam for committing the packed trace directly from selected one-hot rows.
+/// Prover seam for committing the native trace columns directly from selected one-hot rows.
 pub trait TraceOneHotCommitment: CommitmentScheme {
     /// Witness chunk profile fixed by preprocessing.
     fn akita_chunk_profile(setup: &Self::VerifierSetup) -> AkitaChunkProfile;
@@ -67,7 +67,6 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     fn commit_trace_one_hot(
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
-        column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
         group_hints: &[&Self::OpeningHint],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
@@ -208,12 +207,11 @@ impl AkitaScheme {
         )
     }
 
-    /// Commits the prefix-packed trace without constructing padded per-column
+    /// Commits the native trace batch without constructing per-column
     /// index vectors or Akita's generic one-hot block representation.
     pub fn commit_trace_one_hot(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
-        column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
         group_hints: &[&AkitaProverHint],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
@@ -222,19 +220,19 @@ impl AkitaScheme {
         } else {
             Some(Self::group_profiles(setup, group_hints)?)
         };
-        let source = TracePackedOneHot::new(
-            setup.one_hot_k(),
-            AKITA_SOURCE_RING_DIMENSION,
-            column_capacity,
-            rows,
-        )
-        .map_err(commit_failed)?;
-        let num_vars = RootPolyMeta::num_vars(&source);
-        Self::validate_commit_shape(setup, num_vars, 1)?;
+        let source = TraceOneHotColumn::new(setup.one_hot_k(), AKITA_SOURCE_RING_DIMENSION, rows)
+            .map_err(commit_failed)?;
+        let num_vars = RootPolyMeta::num_vars(
+            source
+                .first()
+                .ok_or_else(|| commit_failed("empty trace batch"))?,
+        );
+        let poly_count = source.len();
+        Self::validate_commit_shape(setup, num_vars, poly_count)?;
         let one_hot_k = setup.one_hot_k();
         let (_, backend) = setup.one_hot_backend()?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            let source = backend.import_source(vec![source])?;
+            let source = backend.import_source(source)?;
             let context = profiles.as_ref().map_or_else(
                 GroupContext::scheduler_without_precommitted_groups,
                 GroupContext::scheduler_with_precommitted_groups,
@@ -247,7 +245,10 @@ impl AkitaScheme {
             num_vars,
             backend_commitment,
             backend_hint,
-            AkitaHintSource::TraceOneHot { one_hot_k },
+            AkitaHintSource::TraceOneHot {
+                poly_count,
+                one_hot_k,
+            },
         )
     }
 
@@ -339,7 +340,7 @@ impl AkitaScheme {
         let one_hot_k = match source {
             AkitaHintSource::Dense { .. } => 0,
             AkitaHintSource::OneHot { one_hot_k, .. }
-            | AkitaHintSource::TraceOneHot { one_hot_k } => one_hot_k,
+            | AkitaHintSource::TraceOneHot { one_hot_k, .. } => one_hot_k,
         };
         let commitment = AkitaCommitment {
             backend_flavor,
@@ -400,11 +401,10 @@ impl TraceOneHotCommitment for AkitaScheme {
     fn commit_trace_one_hot(
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
-        column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
         group_hints: &[&Self::OpeningHint],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Self::commit_trace_one_hot(setup, layout_digest, column_capacity, rows, group_hints)
+        Self::commit_trace_one_hot(setup, layout_digest, rows, group_hints)
     }
 
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError> {
@@ -437,18 +437,20 @@ impl CommitmentScheme for AkitaScheme {
                 .and_then(|family| {
                     family.validate_num_vars(
                         params.max_num_vars,
-                        params.max_num_polys_per_commitment_group.min(2),
+                        params.max_num_polys_per_commitment_group,
                     )
                 })
                 .map_err(invalid_setup)?;
         }
-        if params
-            .grouped_schedule
-            .as_ref()
-            .is_some_and(|request| request.final_num_vars() != params.max_num_vars)
-        {
+        if params.grouped_schedule.as_ref().is_some_and(|request| {
+            request.final_group()
+                != PolynomialGroupLayout::new(
+                    params.max_num_vars,
+                    params.max_num_polys_per_commitment_group,
+                )
+        }) {
             return Err(OpeningsError::InvalidSetup(
-                "the grouped schedule request final arity must equal setup max_num_vars".to_owned(),
+                "the grouped schedule request final shape must equal setup shape".to_owned(),
             ));
         }
         let artifacts = &params.schedule_artifacts;
@@ -895,7 +897,7 @@ mod tests {
     use crate::adapters::{
         absorb_setup_catalog, AkitaBackendFlavor, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
     };
-    use crate::configs::JoltDenseBounded;
+    use crate::configs::{CatalogChunking, JoltDenseBounded};
     use crate::test_transcripts::{
         assert_transcripts_agree, new_prover_transcript, new_verifier_transcript,
     };
@@ -913,7 +915,7 @@ mod tests {
             None,
             None,
             vec![DenseGroupLayout::FullWidth { num_vars: 14 }],
-            14,
+            PolynomialGroupLayout::new(14, 1),
         ));
         let (bounded, _) = AkitaScheme::setup(params).unwrap();
         let polynomial = Polynomial::new(vec![AkitaField::pow2(80); 1 << 14]);
@@ -1216,14 +1218,14 @@ mod tests {
     #[test]
     fn serde_transported_recursive_grouped_setup_restores_its_schedule_rows() {
         use crate::schedule_registry::{GroupedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
-        use crate::schedules::emit::{K16_PACKING_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
+        use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
-        let final_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES;
+        let final_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + K16_COLUMN_VARIABLES;
         let grouped_schedule = GroupedScheduleParams::new(
             None,
             Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
             Vec::new(),
-            final_num_vars,
+            PolynomialGroupLayout::new(final_num_vars, 1),
         );
         let (_, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
             final_num_vars,
@@ -1264,7 +1266,12 @@ mod tests {
     fn grouped_setup_rejects_a_final_arity_different_from_the_main_setup() {
         use crate::schedule_registry::GroupedScheduleParams;
 
-        let request = GroupedScheduleParams::new(None, Some(14), Vec::new(), 15);
+        let request = GroupedScheduleParams::new(
+            None,
+            Some(14),
+            Vec::new(),
+            PolynomialGroupLayout::new(15, 1),
+        );
         let error = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
             14,
             1,
@@ -1277,7 +1284,7 @@ mod tests {
         .expect_err("a grouped request for another final arity must fail during setup");
         assert!(error
             .to_string()
-            .contains("final arity must equal setup max_num_vars"));
+            .contains("final shape must equal setup shape"));
     }
 
     #[test]
@@ -1329,7 +1336,7 @@ mod tests {
                 .rows()
                 .filter(|row| row.selection() != omitted)
                 .map(|row| (row.profiles().clone(), row.schedule().clone())),
-            &policy_of::<JoltDenseBounded>(),
+            &policy_of::<JoltDenseBounded>(JoltDenseBounded::CHUNKING),
             JoltDenseBounded::ring_challenge_config,
         )
         .unwrap();

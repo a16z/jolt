@@ -46,7 +46,7 @@ inline Wide mul_wide(ulong a, ulong b) {
 
 // Reduces t + t2 * 2^64 into [0, p) for any 64-bit t and any t2 with
 // C (t2 + 1) <= p. reduce_product passes t2 <= C, which C (C + 1) < p gives
-// for every C < 2^32; reduce_sum passes t2 <= 3C with C < 2^31.
+// for every C < 2^32; reduce_sum passes t2 <= 2C with C < 2^31.
 //
 // C * t2 < p < 2^64. Let v = t + C * t2, so the 64-bit sum s wraps at most
 // once (`overflow`).
@@ -88,37 +88,22 @@ inline ulong reduce_product(Wide x) {
     return fold2_canonicalize<C>(f.lo, f.hi);
 }
 
-// A sum of up to three products, unreduced: lo + hi 2^64 + top 2^128.
-// Each product is below 2^128, so top <= 2.
-struct Sum3 {
-    ulong lo;
-    ulong hi;
-    uint top;
-};
-
-inline Sum3 sum(Wide x) { return Sum3{x.lo, x.hi, 0u}; }
-
-// x + y, carrying into top.
-inline Sum3 add(Sum3 x, Wide y) {
+// Reduces x + y, a sum of two products, into [0, p), for C < 2^31.
+//
+// x + y < 2^129 is lo + hi 2^64 + top 2^128 with top <= 1. The first fold
+// of lo + hi 2^64 leaves t + c 2^64 with c <= C, and top 2^128 = top C 2^64
+// (mod p) joins it: t2 = c + top C <= 2C. C (2C + 1) < 2^63 + 2^31 < p for
+// C < 2^31, as fold2_canonicalize requires.
+template <uint C>
+inline ulong reduce_sum(Wide x, Wide y) {
+    static_assert(C < (1u << 31), "reduce_sum needs C < 2^31");
     ulong lo = x.lo + y.lo;
     ulong hi = x.hi + y.hi;
-    uint top = x.top + (hi < y.hi ? 1u : 0u);
+    uint top = hi < y.hi ? 1u : 0u;
     ulong carried = hi + (lo < y.lo ? 1ul : 0ul);
     top += carried < hi ? 1u : 0u;
-    return Sum3{lo, carried, top};
-}
-
-// Reduces a sum of up to three products into [0, p), for C < 2^31.
-//
-// The first fold of lo + hi 2^64 leaves t + c 2^64 with c <= C, and
-// top 2^128 = top C 2^64 (mod p) joins it: t2 = c + top C <= 3C, which can
-// exceed 32 bits. C (3C + 1) < 3 2^62 + 2^31 < p for C < 2^31, as
-// fold2_canonicalize requires.
-template <uint C>
-inline ulong reduce_sum(Sum3 x) {
-    static_assert(C < (1u << 31), "reduce_sum needs C < 2^31");
-    Wide f = first_fold<C>(Wide{x.lo, x.hi});
-    return fold2_canonicalize<C>(f.lo, f.hi + ulong(x.top) * C);
+    Wide f = first_fold<C>(Wide{lo, carried});
+    return fold2_canonicalize<C>(f.lo, f.hi + ulong(top) * C);
 }
 
 // With a, b < p, a + b < 2^65 wraps at most once. Without the wrap, s + C

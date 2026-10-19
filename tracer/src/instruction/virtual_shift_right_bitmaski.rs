@@ -18,7 +18,7 @@ impl VirtualShiftRightBitmaskI {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        _: &mut <VirtualShiftRightBitmaskI as RISCVInstruction>::RAMAccess,
+        _: &mut <VirtualShiftRightBitmaskI as RISCVInstruction>::RamAccess,
     ) {
         let shift = self.operands.imm % 64;
         let ones = (1u128 << (64 - shift)) - 1;

@@ -15,6 +15,7 @@ use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
 use jolt_riscv::RV64IMAC_JOLT;
+use parallel::TwoPassConfig;
 
 pub mod emulator;
 pub mod execution_backend;
@@ -25,14 +26,14 @@ pub mod trace_row;
 pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
-pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
+pub use cpu::{advice_tape_read, advice_tape_write, AdviceTape};
 pub use execution_backend::TracerBackend;
 pub use instruction::inline::{
     list_registered_inlines, InlineAdviceContext, InlineAdviceError, InlineRegistration,
     TracerInlineExpansionProvider,
 };
 pub use jolt_riscv::InlineExtension;
-pub use trace_row::{build_trace_rows, cycle_to_trace_row, CycleConversionError};
+pub use trace_row::cycle_to_trace_row;
 
 use crate::emulator::{
     memory::{Memory, MemoryData},
@@ -312,12 +313,12 @@ pub fn trace_checkpoints(
 /// unparsable = serial — a single worker would only re-trace what pass-1
 /// already executed); `JOLT_TRACER_CHUNK_ROWS` overrides the default chunk
 /// size and `JOLT_TRACER_CAPACITY_ROWS` the up-front output reservation.
-fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
+pub(crate) fn parallel_config_from_env() -> Option<TwoPassConfig> {
     let workers: usize = std::env::var("TRACER_PARALLEL").ok()?.parse().ok()?;
     if workers <= 1 {
         return None;
     }
-    Some(parallel::TwoPassConfig {
+    Some(TwoPassConfig {
         workers,
         chunk_rows: env_rows("JOLT_TRACER_CHUNK_ROWS", parallel::DEFAULT_CHUNK_ROWS),
         capacity_rows: env_rows("JOLT_TRACER_CAPACITY_ROWS", parallel::DEFAULT_CAPACITY_ROWS),
@@ -593,26 +594,6 @@ impl CheckpointingTracer {
         }
     }
 
-    pub fn new_for_test() -> Self {
-        let minimal_elf = vec![
-            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
-
-        use crate::MemoryConfig;
-        let memory_config = MemoryConfig {
-            program_size: Some(1024),
-            ..Default::default()
-        };
-
-        let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
-
-        Self::new(emulator_state)
-    }
-
     /// Start recording memory accesses so that checkpoints can be saved using
     /// [`CheckpointingTracer::save_checkpoint`].
     pub fn start_saving_checkpoints(&mut self) {
@@ -769,36 +750,6 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         image.program_end,
         image.entry_address,
     )
-}
-
-pub struct IterChunks<I: Iterator> {
-    chunk_size: usize,
-    iter: I,
-}
-
-pub trait ChunksIterator: Iterator + Sized {
-    fn iter_chunks(self, size: usize) -> IterChunks<Self> {
-        assert!(size != 0, "chunk size must be non-zero");
-        IterChunks {
-            chunk_size: size,
-            iter: self,
-        }
-    }
-}
-
-impl<I: Iterator + Sized> ChunksIterator for I {}
-
-impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
-    type Item = Vec<I::Item>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut chunk = Vec::with_capacity(self.chunk_size);
-        chunk.extend(self.iter.by_ref().take(self.chunk_size));
-        if chunk.is_empty() {
-            return None;
-        }
-        Some(chunk)
-    }
 }
 
 #[cfg(test)]

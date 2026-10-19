@@ -1,3 +1,5 @@
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase as BytecodeCyclePhase;
+
 use super::*;
 
 pub(super) fn add_stage6b<PCS, VC>(
@@ -38,12 +40,9 @@ where
     let untrusted_claims = untrusted_layout.as_ref().map(|layout| {
         relations::claim_reductions::advice::UntrustedCyclePhase::new(layout.dimensions())
     });
-    let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().map(|layout| {
-        relations::claim_reductions::bytecode::CyclePhase::new((
-            layout.dimensions(),
-            layout.chunk_count(),
-        ))
-    });
+    let bytecode_reduction_claims = bytecode_reduction_layout
+        .as_ref()
+        .map(|layout| BytecodeCyclePhase::new(layout.dimensions()));
     let program_image_reduction_claims = program_image_reduction_layout.as_ref().map(|layout| {
         relations::claim_reductions::program_image::CyclePhase::new(layout.dimensions())
     });

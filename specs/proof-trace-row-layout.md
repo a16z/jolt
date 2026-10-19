@@ -4,10 +4,15 @@
 |-------------|-------|
 | Author(s)   | Quang Dao |
 | Created     | 2026-05-14 |
-| Status      | in progress (foundation implemented) |
+| Status      | historical; superseded by trace-row unification |
 | PR          | follow-up to [#1522](https://github.com/a16z/jolt/pull/1522) |
 
-> **Implementation status (foundation slice).** The accessor API, builder,
+> **Superseded.** [Unified trace rows](./unified-trace-row.md) describes the
+> current constructor, production boundary, and shared execution/proof storage.
+> The constructor and conversion APIs, implementation status, and deferred work
+> below are historical context for the original layout design.
+
+> **Historical implementation status (foundation slice).** The accessor API, builder,
 > parity tests, and one default layout have landed; consumer cutover and the
 > performance gate are deferred follow-ups.
 >

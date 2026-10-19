@@ -24,7 +24,10 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{BasisMode, OpeningScheduleSelection};
-use akita_pcs::{AkitaError, SelectedProverOpeningData};
+use akita_pcs::{
+    batched_prove, AkitaCommitmentScheme, AkitaError, BackendRegistry, FixedFoldRoute,
+    SelectedProverOpeningData,
+};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_openings::{
     BatchOpeningScheme, GroupOpeningClaim, GroupOpeningWithHint, OpeningsError,
@@ -36,10 +39,10 @@ use tracing::info_span;
 
 use crate::adapters::{
     absorb_setup_catalog, akita_error, invalid_batch, prove_failed, receive_selection,
-    reverse_point, send_selection, validate_one_hot_k, with_backend_pool, AkitaBackendCommitment,
-    AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint, AkitaCommitment, AkitaConfig,
-    AkitaField, AkitaHintSource, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    reverse_point, send_selection, validate_one_hot_k, with_backend_pool, AkitaBackend,
+    AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint,
+    AkitaBackendProverSetup, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource,
+    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::scheme::validate_group_order;
@@ -117,10 +120,10 @@ fn validate_trace_batch_statement(
     validate_grouped_claim("main-trace", main)?;
     if main.commitment.backend_flavor != AkitaBackendFlavor::OneHot
         || main.commitment.one_hot_k != setup.one_hot_k
-        || main.commitment.poly_count != 1
+        || main.commitment.poly_count != setup.max_num_polys_per_commitment_group
     {
         return Err(invalid_batch(
-            "Akita final trace group must be one setup-matched one-hot polynomial",
+            "Akita final trace group must be a setup-matched one-hot batch",
         ));
     }
     let supported_grouped_config =
@@ -179,6 +182,41 @@ fn bind_verifier_opening<H: Sponge>(
     receive_selection(transcript)
 }
 
+/// Runs Akita's core prover for `opening` on the caller's `transcript`, with
+/// every fold on `backend`: the embedding counterpart of
+/// `AkitaCommitmentScheme::batched_prove`, which proves into a fresh
+/// transcript instead.
+fn prove_on_transcript<Cfg, H>(
+    scheme: &AkitaCommitmentScheme<Cfg>,
+    setup: &AkitaBackendProverSetup,
+    opening: AkitaOpening<'_>,
+    backend: &AkitaBackend,
+    transcript: &mut ProverTranscript<H>,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaBackendExtField>,
+    H: Sponge,
+{
+    let resolved = scheme.schedules().resolve_selection(opening.selection())?;
+    let required_prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
+        resolved.schedule(),
+        opening.opening_layout(),
+    )?;
+    let prefix_slots = backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
+    let mut registry = BackendRegistry::<Cfg, H>::new()?;
+    let root = registry.register(backend, &prefix_slots)?;
+    let mut route = FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
+    batched_prove::<Cfg, _, _>(
+        setup.expanded.descriptor(),
+        scheme.schedules(),
+        &registry,
+        opening,
+        transcript,
+        BasisMode::Lagrange,
+        &mut route,
+    )
+}
+
 fn prove_one_hot_opening<H: Sponge>(
     setup: &AkitaProverSetup,
     opening: AkitaOpening<'_>,
@@ -188,12 +226,12 @@ fn prove_one_hot_opening<H: Sponge>(
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     let scheme = setup.verifier.one_hot_scheme()?;
     with_backend_pool(|| {
-        with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove(
+        with_one_hot_family!(scheme scheme, |scheme| prove_on_transcript(
+            scheme,
             backend_prover_setup,
             opening,
             backend,
             transcript,
-            BasisMode::Lagrange,
         ))?;
         // Akita never trims its NTT caches itself; drop the root and suffix
         // transforms built for this proof instead of keeping them resident.
@@ -266,10 +304,10 @@ impl AkitaNativeBatching {
         }
         if !matches!(
             main_hint.source,
-            AkitaHintSource::TraceOneHot { .. } | AkitaHintSource::OneHot { poly_count: 1, .. }
+            AkitaHintSource::TraceOneHot { .. } | AkitaHintSource::OneHot { .. }
         ) {
             return Err(invalid_batch(
-                "Akita main-trace hint must retain one one-hot source",
+                "Akita main-trace hint must retain the one-hot batch",
             ));
         }
         let (main_backend_commitment, main_backend_hint) = main_hint
@@ -584,12 +622,12 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 let (backend_prover_setup, backend) = setup.dense_backend()?;
                 let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
                 with_backend_pool(|| {
-                    scheme.batched_prove(
+                    prove_on_transcript(
+                        scheme,
                         backend_prover_setup,
                         opening,
                         backend,
                         transcript,
-                        BasisMode::Lagrange,
                     )?;
                     let _ = backend.trim_caches()?;
                     Ok::<_, AkitaError>(())

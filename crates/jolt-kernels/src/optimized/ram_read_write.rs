@@ -120,7 +120,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         self.phase = Some(match self.phase.take().ok_or_else(Phase::error)? {
             Phase::Round0 { columns, gruen } => {
                 let matrix = round0_bind(&columns, r);
-                drop(columns);
+                crate::mem::drop_in_background_thread(columns);
                 self.finish_cycle_bind(matrix, gruen, r, round)
             }
             Phase::Cycle { mut matrix, gruen } => {
@@ -145,7 +145,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             } => {
                 matrix.bind(r, &mut self.val_init);
                 if round + 1 == self.log_k {
-                    drop(eq);
+                    crate::mem::drop_in_background_thread(eq);
                     let (ra, val) =
                         matrix.into_cycle_tables(1usize << self.log_t, self.val_init.evals()[0]);
                     Phase::DenseCycle { ra, val, gruen }
@@ -189,7 +189,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         let phase = if round + 1 == self.log_t {
             let matrix = matrix.into_address_major();
             let merged_eq = gruen.merge();
-            drop(gruen);
+            crate::mem::drop_in_background_thread(gruen);
             if self.log_k == 0 {
                 self.finish_address(matrix, merged_eq)
             } else {
@@ -198,7 +198,6 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         } else {
             Phase::Cycle { matrix, gruen }
         };
-        // Purge after raw columns, late bind tails, and the cycle matrix.
         if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round + 1 == self.log_t {
             crate::mem::purge_retained_memory(self.log_t);
         }

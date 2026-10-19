@@ -3,11 +3,9 @@ use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier};
 use akita_types::AkitaVerifierSetup;
 
 use crate::adapters::AkitaScheduleArtifacts;
-use crate::configs::{AkitaChunkProfile, JoltOneHotK16};
-use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
-
-pub const AKITA_ONE_HOT_K16: usize = 16;
-pub const AKITA_ONE_HOT_K256: usize = 256;
+use crate::configs::{AkitaChunkProfile, CatalogChunking, JoltOneHotK16};
+use crate::family_contract::OneHotFamilyContract;
+pub use crate::family_contract::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
 macro_rules! one_hot_families {
     ($callback:ident { $($args:tt)* }) => {
@@ -69,21 +67,12 @@ macro_rules! define_family_types {
             }
 
             pub(crate) fn num_vars_range(self, num_polys: usize) -> (usize, usize) {
-                let (base_min, max) = if self.k() == AKITA_ONE_HOT_K16 {
-                    K16_NUM_VARS
+                let contract = if self.k() == AKITA_ONE_HOT_K16 {
+                    OneHotFamilyContract::K16(self.profile())
                 } else {
-                    K256_NUM_VARS
+                    OneHotFamilyContract::K256(self.profile())
                 };
-                // Two-polynomial rows provide more live blocks for the two
-                // chunked levels. These floors are admitted by the pinned planner.
-                let min = match (self.profile(), num_polys) {
-                    (AkitaChunkProfile::Single | AkitaChunkProfile::Two, _)
-                    | (AkitaChunkProfile::Four, 2) => base_min,
-                    (AkitaChunkProfile::Four, _)
-                    | (AkitaChunkProfile::Eight, 2) => base_min + 1,
-                    (AkitaChunkProfile::Eight, _) => base_min + 2,
-                };
-                (min, max)
+                contract.num_vars_range(num_polys)
             }
 
             pub(crate) fn validate_num_vars(
@@ -121,7 +110,7 @@ macro_rules! define_family_types {
             ) -> Result<Self, AkitaError> {
                 match family {
                     $(OneHotFamily::$variant =>
-                        AkitaCommitmentScheme::<$cfg>::from_schedule_artifact(bytes)
+                        AkitaCommitmentScheme::<$cfg>::from_schedule_artifact(bytes, <$cfg>::CHUNKING)
                             .map(Self::$variant)),+
                 }
             }

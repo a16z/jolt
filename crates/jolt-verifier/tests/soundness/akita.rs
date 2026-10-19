@@ -1,19 +1,15 @@
-//! Akita (packed lattice) fixtures. Legacy-shape fixtures run with
-//! field-inline disabled; the packed field-inline eq-MLE fixture runs with
+//! Akita (native lattice) fixtures. Legacy-shape fixtures run with
+//! field-inline disabled; the Akita field-inline eq-MLE fixture runs with
 //! it enabled.
 
 use super::checks;
 
 #[cfg(not(feature = "field-inline"))]
 mod base {
-    use jolt_claims::protocols::jolt::TracePolynomialOrder;
-    use jolt_verifier::VerifierError;
-
     use super::checks;
     use crate::support::akita_fixtures::{
         akita_advice_case, akita_committed_muldiv_case, akita_muldiv_case,
     };
-    use crate::support::narg::TracedCase;
 
     #[test]
     fn akita_muldiv_message_sweep() {
@@ -43,23 +39,17 @@ mod base {
         checks::message_sweep(case, None);
         checks::committed_program_tampers(
             case,
-            &[("swapped direct program commitments", |preprocessing| {
-                let committed = checks::committed_mut(preprocessing);
-                assert!(committed.direct_program_commitments.len() >= 2);
-                committed.direct_program_commitments.swap(0, 1);
-            })],
+            &[(
+                "swapped bytecode and program image commitments",
+                |preprocessing| {
+                    let committed = checks::committed_mut(preprocessing);
+                    std::mem::swap(
+                        &mut committed.bytecode_commitment,
+                        &mut committed.program_image_commitment,
+                    );
+                },
+            )],
         );
-
-        let mut preprocessing = case.preprocessing.clone();
-        let committed = checks::committed_mut(&mut preprocessing);
-        committed.trace_order = match committed.trace_order {
-            TracePolynomialOrder::CycleMajor => TracePolynomialOrder::AddressMajor,
-            TracePolynomialOrder::AddressMajor => TracePolynomialOrder::CycleMajor,
-        };
-        assert!(matches!(
-            case.verify_statement_with(&preprocessing),
-            Err(VerifierError::InvalidCommittedProgram { .. })
-        ));
     }
 }
 

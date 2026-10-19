@@ -54,11 +54,16 @@ fn zk_committed_message_sweep() {
     checks::message_sweep(&case, SAMPLE);
     checks::committed_program_tampers(
         &case,
-        &[("swapped bytecode chunk commitments", |preprocessing| {
-            let committed = checks::committed_mut(preprocessing);
-            assert!(committed.bytecode_chunk_commitments.len() >= 2);
-            committed.bytecode_chunk_commitments.swap(0, 1);
-        })],
+        &[(
+            "swapped bytecode and program image commitments",
+            |preprocessing| {
+                let committed = checks::committed_mut(preprocessing);
+                std::mem::swap(
+                    &mut committed.bytecode_commitment,
+                    &mut committed.program_image_commitment,
+                );
+            },
+        )],
     );
 }
 

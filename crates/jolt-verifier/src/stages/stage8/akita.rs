@@ -1,7 +1,7 @@
 //! The Akita final opening.
 //!
-//! `OneHotTrace` prefix-packs its semantic columns into one physical
-//! polynomial. Advice, field increments, and direct committed-program objects
+//! `OneHotTrace` batches its native columns at one common point. Advice,
+//! field increments, and direct committed-program objects
 //! join it as auxiliary Akita groups and are discharged by one joint opening.
 
 use std::collections::BTreeMap;
@@ -14,6 +14,7 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
     OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig};
+use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
@@ -48,7 +49,7 @@ fn validate_one_hot_trace_metadata<C, S>(
     commitment: &C,
     setup: &S,
     canonical_digest: [u8; 32],
-    packed_arity: usize,
+    column_arity: usize,
     physical_poly_count: usize,
     one_hot_k: usize,
 ) -> Result<(), VerifierError>
@@ -71,9 +72,9 @@ where
             "OneHotTrace commitment has a noncanonical layout digest",
         ));
     }
-    if commitment.num_vars() != packed_arity || setup.max_num_vars() != packed_arity {
+    if commitment.num_vars() != column_arity || setup.max_num_vars() != column_arity {
         return Err(batch_failed(format!(
-            "OneHotTrace commitment/setup arity must equal canonical packed arity {packed_arity}"
+            "OneHotTrace commitment/setup arity must equal canonical column arity {column_arity}"
         )));
     }
     if commitment.poly_count() != physical_poly_count
@@ -232,7 +233,7 @@ where
     PCS: CommitmentScheme,
     PCS::Output: Clone + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
-    VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
+    VC: VectorCommitment<Field = PCS::Field>,
     H: Sponge,
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
@@ -252,8 +253,8 @@ where
         one_hot_trace_commitment,
         &preprocessing.pcs_setup,
         plan.layout_digest(),
-        plan.packing().packed_num_vars(),
-        1,
+        plan.num_vars(),
+        plan.ids().len(),
         1 << chunk_width,
     )?;
     let leaves = leaf_claims(
@@ -263,11 +264,7 @@ where
         stage6b,
         stage7,
     )?;
-    let packed_claims = one_hot_trace_packed_claims(&plan, chunk_width, &leaves)?;
-    let packed_claim = plan
-        .packing()
-        .reduce_claims(&packed_claims, transcript)
-        .map_err(batch_failed)?;
+    let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)?;
     let untrusted = advice_object::<PCS>(
         leaves.get(&JoltCommittedPolynomial::UntrustedAdvice),
         untrusted_advice_commitment,
@@ -292,32 +289,20 @@ where
         None
     };
 
-    let committed = preprocessing.program.committed();
-    let program_plan = committed
+    let program = preprocessing
+        .program
+        .committed()
         .map(|committed| {
             committed_program_packing_plan(
                 preprocessing.program.bytecode_len(),
-                committed.bytecode_chunk_count(),
                 preprocessing.program.program_image_len_words(),
                 committed.trace_order,
             )
+            .map(|plan| (committed, plan))
             .map_err(batch_failed)
         })
         .transpose()?;
-    let plans = program_plan
-        .as_ref()
-        .map(|plan| plan.objects().cloned().collect::<Vec<_>>())
-        .unwrap_or_default();
-    if committed.map_or(0, |program| program.direct_program_commitments.len()) != plans.len() {
-        return Err(batch_failed(
-            "direct committed-program commitments do not match the canonical plan",
-        ));
-    }
-
-    let capacity = 2usize
-        .checked_add(plans.len())
-        .ok_or_else(|| batch_failed("auxiliary group capacity overflows"))?;
-    let mut auxiliary_groups = Vec::with_capacity(capacity);
+    let mut auxiliary_groups = Vec::with_capacity(5);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),
         (trusted.as_ref(), trusted_claim.as_ref()),
@@ -341,15 +326,18 @@ where
         auxiliary_groups.push(field_inc_claim(commitment, stage6b)?);
     }
 
-    if let Some(committed) = committed {
-        for (plan, commitment) in plans.into_iter().zip(&committed.direct_program_commitments) {
+    if let Some((committed, plan)) = program {
+        for (plan, commitment) in [
+            (plan.bytecode, &committed.bytecode_commitment),
+            (plan.program_image, &committed.program_image_commitment),
+        ] {
             let object: ResolvedObject<'_, PCS> = ResolvedObject { plan, commitment };
             validate_packed_object_metadata(object.commitment, &object.plan)?;
             let physical = reduce_object(&object, &leaves, transcript)?;
             auxiliary_groups.push(TaggedGroupOpeningClaim::new(
                 object.plan.group_role(),
                 GroupOpeningClaim::new(
-                    (*object.commitment).clone(),
+                    object.commitment.clone(),
                     physical.point.as_slice().to_vec(),
                     vec![physical.value],
                 ),
@@ -357,11 +345,6 @@ where
         }
     }
 
-    let main_group = GroupOpeningClaim::new(
-        one_hot_trace_commitment.clone(),
-        packed_claim.point.as_slice().to_vec(),
-        vec![packed_claim.value],
-    );
     PCS::verify_batch(
         &preprocessing.pcs_setup,
         &auxiliary_groups,
@@ -373,18 +356,19 @@ where
     Ok(())
 }
 
-/// Assembles the `OneHotTrace` prefix-packed claims: every canonical
+/// Assembles the native `OneHotTrace` group claim: every canonical
 /// column's leaf claim, its point mapped to the committed row-major order,
 /// all required to share one canonical opening point. Shared verbatim by the
-/// packed prover's stage 8, so both sides derive the same packed statement.
-pub fn one_hot_trace_packed_claims<F: JoltField>(
+/// Akita prover's stage 8, so both sides derive the same native statement.
+pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
     plan: &OneHotTraceLayoutPlan,
     chunk_width: usize,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
-) -> Result<jolt_openings::PrefixPackedClaims<F>, VerifierError> {
+    commitment: &C,
+) -> Result<GroupOpeningClaim<F, C>, VerifierError> {
     let mut common_point: Option<Vec<F>> = None;
-    let mut evaluations = Vec::with_capacity(plan.packing().ids().len());
-    for polynomial in plan.packing().ids() {
+    let mut evaluations = Vec::with_capacity(plan.ids().len());
+    for polynomial in plan.ids() {
         let claim = leaves.get(polynomial).ok_or_else(|| {
             batch_failed(format!(
                 "missing final OneHotTrace claim for {polynomial:?}"
@@ -405,11 +389,20 @@ pub fn one_hot_trace_packed_claims<F: JoltField>(
         evaluations.push(claim.value);
     }
     let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
-    Ok(plan.packed_claims(common_point, evaluations))
+    if common_point.len() != plan.num_vars() {
+        return Err(batch_failed(
+            "OneHotTrace opening point has incorrect arity",
+        ));
+    }
+    Ok(GroupOpeningClaim::new(
+        commitment.clone(),
+        common_point,
+        evaluations,
+    ))
 }
 
 /// One precommitted object's leaf claims: each of the plan's canonical columns
-/// paired with its resolved leaf claim. Shared verbatim by the packed
+/// paired with its resolved leaf claim. Shared verbatim by the Akita
 /// prover's stage 8, so both sides fail on the same missing leaf.
 pub fn object_leaf_claims<F: JoltField>(
     plan: &PrefixPackedObjectPlan,
@@ -432,10 +425,10 @@ pub fn object_leaf_claims<F: JoltField>(
         .collect()
 }
 
-/// Every packed column's single leaf claim, resolved from stage 4, the
+/// Every committed column's single leaf claim, resolved from stage 4, the
 /// precommitted reductions, and stage 7, keyed by committed polynomial. The
 /// canonical object plans check coverage, point arity, and suffix compatibility.
-/// Shared verbatim by the packed prover's stage 8.
+/// Shared verbatim by the Akita prover's stage 8.
 pub fn leaf_claims<F: JoltField>(
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<F>,
@@ -454,7 +447,7 @@ pub fn leaf_claims<F: JoltField>(
     ) -> Result<(), VerifierError> {
         if leaves.insert(polynomial, claim).is_some() {
             return Err(batch_failed(format!(
-                "duplicate packed final claim for {polynomial:?}"
+                "duplicate Akita final claim for {polynomial:?}"
             )));
         }
         Ok(())

@@ -229,11 +229,12 @@ mod tests {
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, ReadWriteDimensions};
     use jolt_field::{Fr, Ring};
-    use jolt_program::execution::{JoltProgram, MemoryImage, OwnedTrace, TraceOutput, TraceRow};
+    use jolt_program::execution::{JoltProgram, MemoryImage, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, PublicIoMemory, RAMPreprocessing,
     };
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RegisterState};
     use jolt_verifier::stages::stage2::ram_output_check::{
         RamOutputCheckChallenges, RamOutputCheckInputClaims,
     };
@@ -289,7 +290,18 @@ mod tests {
             memory_layout: device.memory_layout.clone(),
             max_padded_trace_length: 1 << log_t,
         });
-        let rows = vec![TraceRow::from_instruction(instruction).unwrap()];
+        let rows = vec![TraceRow::new(
+            instruction,
+            RegisterState::default(),
+            RamAccess::NoOp,
+            preprocessing
+                .bytecode
+                .get_pc(&instruction)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        )
+        .unwrap()];
         // Post-execution DRAM bytes (outside the IO mask): nonzero
         // `val_final − val_io` there keeps the later round polynomials
         // nontrivial while the Boolean-point sum stays zero.
@@ -313,7 +325,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory), None),
+            TraceOutput::new(TraceData::new(rows), device, Some(final_memory), None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend, public_memory)

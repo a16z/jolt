@@ -1,4 +1,4 @@
-//! Packed (Akita) field-inline parity and tamper tests over fp128.
+//! Akita field-inline parity and tamper tests over fp128.
 //!
 //! Both kernel backends prove the field-ops guest with full-width `FieldRdInc`
 //! values and muldiv with an identically zero `FieldRdInc`, producing identical
@@ -33,7 +33,7 @@ mod clear {
     };
     use jolt_field::Ring;
     use jolt_openings::{CommitmentScheme, GroupCommitmentMetadata};
-    use jolt_prover::akita::JoltAkitaBackend;
+    use jolt_prover::JoltBackend;
     use jolt_prover::ProverConfig;
     use std::ops::Range;
 
@@ -52,7 +52,7 @@ mod clear {
         bytes: Range<usize>,
     }
 
-    /// The commitments a packed field-inline proof sends, in
+    /// The commitments an Akita field-inline proof sends, in
     /// `ProofCommitments::send` order, as the verifier's own stage-0 read sees
     /// them.
     struct SentCommitments {
@@ -110,15 +110,12 @@ mod clear {
         sent
     }
 
-    type BackendCase = (
-        &'static str,
-        fn() -> JoltAkitaBackend<AkitaField, AkitaScheme>,
-    );
+    type BackendCase = (&'static str, fn() -> JoltBackend<AkitaField, AkitaScheme>);
 
     fn backends() -> [BackendCase; 2] {
         [
-            ("reference", JoltAkitaBackend::reference),
-            ("optimized", JoltAkitaBackend::optimized),
+            ("reference", JoltBackend::reference),
+            ("optimized", JoltBackend::optimized),
         ]
     }
 
@@ -187,13 +184,13 @@ mod clear {
                 &output.proof,
             )
             .unwrap_or_else(|error| {
-                panic!("packed field-inline proof must verify ({label}): {error}")
+                panic!("Akita field-inline proof must verify ({label}): {error}")
             });
             proofs.push(output.proof);
         }
         assert!(
             proofs[0] == proofs[1],
-            "reference and optimized packed field-inline proofs must be identical wire objects",
+            "reference and optimized Akita field-inline proofs must be identical wire objects",
         );
     }
 
@@ -219,19 +216,19 @@ mod clear {
                 &output.proof,
             )
             .unwrap_or_else(|error| {
-                panic!("field-inactive packed proof must verify ({label}): {error}")
+                panic!("field-inactive Akita proof must verify ({label}): {error}")
             });
             proofs.push(output.proof);
         }
         assert!(
             proofs[0] == proofs[1],
-            "reference and optimized field-inactive packed proofs must be identical wire objects",
+            "reference and optimized field-inactive Akita proofs must be identical wire objects",
         );
     }
 
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
-        let (output, inc) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), collect_inc);
+        let (output, inc) = akita::prove(&field_ops(), JoltBackend::optimized(), collect_inc);
         akita::verify_full(
             &output.verifier_preprocessing,
             &output.public_io,
@@ -301,7 +298,7 @@ mod clear {
             assert!(
                 akita::verify_full(&output.verifier_preprocessing, &output.public_io, &tampered)
                     .is_err(),
-                "tampered packed field-inline proof must be rejected: {name}",
+                "tampered Akita field-inline proof must be rejected: {name}",
             );
         }
     }
@@ -314,7 +311,7 @@ mod clear {
         use jolt_claims::protocols::field_inline::lattice::field_inc_group_role;
         use jolt_openings::{GroupOpeningClaim, TaggedGroupOpeningClaim};
 
-        let (output, ()) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), |_, _, _| ());
+        let (output, ()) = akita::prove(&field_ops(), JoltBackend::optimized(), |_, _, _| ());
         let sent = sent_commitments(&output);
         let commitment = sent.field_inc.commitment;
         let point = vec![AkitaField::from_u64(3); GroupCommitmentMetadata::num_vars(&commitment)];

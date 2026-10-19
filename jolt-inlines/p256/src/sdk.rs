@@ -850,6 +850,21 @@ pub(crate) fn verify_ecdsa_inner(
 ) -> Result<(), P256Error> {
     let g = P256Point::generator();
 
+    // R1/R2 limbs are prover-supplied fake-GLV advice (VIRTUAL_ADVICE range
+    // checks only). Non-canonical limbs pass `is_on_curve` because the
+    // mul/square inlines are residue-correct, but they violate the canonical
+    // operand contract of add_mod/sub_mod and the raw-limb branch selection in
+    // `AffinePoint::add`: an x-limb shifted by p degenerates the final
+    // `r1.add(&r2)` slope division to 0/0, handing the prover a free slope
+    // and with it the ECDSA result.
+    if is_non_canonical(&r1.x().e(), &P256_MODULUS)
+        || is_non_canonical(&r1.y().e(), &P256_MODULUS)
+        || is_non_canonical(&r2.x().e(), &P256_MODULUS)
+        || is_non_canonical(&r2.y().e(), &P256_MODULUS)
+    {
+        spoil_proof();
+    }
+
     if !r1.is_on_curve() {
         spoil_proof();
     }

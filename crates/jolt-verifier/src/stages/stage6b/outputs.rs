@@ -80,7 +80,7 @@ pub struct Stage6bSumchecks<F: JoltField> {
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
-    /// Absent on the packed path: the inc claims are discharged inside the
+    /// Absent on the Akita path: the inc claims are discharged inside the
     /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
@@ -164,7 +164,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
         &self.field_registers_inc_claim_reduction.rd_inc
     }
 
-    /// The packed fused-inc opening point: the read-raf cycle suffix (the
+    /// The Akita fused-inc opening point: the read-raf cycle suffix (the
     /// stage-6b cycle point).
     #[cfg(feature = "akita")]
     pub fn fused_inc_opening_point(&self) -> &[F] {
@@ -197,14 +197,13 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     }
 
     /// The bytecode claim-reduction cycle-phase opening point, present only in
-    /// committed-program mode. Every produced chunk (or the intermediate) shares
-    /// the single cycle opening point, so the first cell is canonical.
+    /// committed-program mode, for either the intermediate or final claim.
     pub fn bytecode_reduction_opening_point(&self) -> Option<&[F]> {
         let reduction = self.bytecode_reduction.as_ref()?;
-        match &reduction.intermediate {
-            Some(point) => Some(point.as_slice()),
-            None => reduction.chunks.first().map(Vec::as_slice),
-        }
+        reduction
+            .intermediate()
+            .or_else(|| reduction.bytecode())
+            .map(Vec::as_slice)
     }
 
     /// The advice cycle-phase `cycle_phase_variables` for `kind`: the raw active
@@ -269,7 +268,7 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
         }
     }
 
-    /// The packed-shape twin of [`Self::new`]: the lattice batch has no increment or advice
+    /// The Akita-shape twin of [`Self::new`]: the lattice batch has no increment or advice
     /// members, and the field-register increment-reduction slot again defaults to the inert
     /// all-zero claim.
     #[cfg(feature = "akita")]
@@ -345,8 +344,8 @@ pub struct Stage6bClearOutput<F: JoltField> {
     /// Stages 7 and 8 read each relation's opening point off these cells (via the
     /// `Stage6bOutputPoints<F>` accessors).
     pub output_points: Stage6bOutputPoints<F>,
-    /// Committed-program mode only: the bytecode claim-reduction's per-chunk
-    /// weights (`r_bc`, chunk weights, gamma-folded lane weights). These are
+    /// Committed-program mode only: the bytecode claim-reduction's address
+    /// point and gamma-folded lane weights. These are
     /// public derived data (not openings), so stage 7's bytecode address phase
     /// reads them here rather than recomputing them.
     pub bytecode_reduction_weights: Option<BytecodeReductionWeights<F>>,
@@ -398,13 +397,11 @@ impl<F: JoltField, C> Stage6bOutput<F, C> {
 }
 
 /// Public bytecode claim-reduction state shared by the cycle and address
-/// phases: the per-chunk weights over dropped address bits, the chunk-local
-/// cycle point, and the gamma-folded lane weights.
+/// phases: the full bytecode point and gamma-folded lane weights.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReductionWeights<F: JoltField> {
     pub r_bc: Vec<F>,
-    pub chunk_rbc_weights: Vec<F>,
     pub lane_weights: Vec<F>,
 }
 
@@ -414,7 +411,6 @@ impl<F: JoltField> BytecodeReductionWeights<F> {
     pub(crate) fn as_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {
         BytecodeOutputWeightInputs {
             r_bc: &self.r_bc,
-            chunk_rbc_weights: &self.chunk_rbc_weights,
             lane_weights: &self.lane_weights,
         }
     }
