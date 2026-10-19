@@ -54,6 +54,8 @@
 //! host staging rejects inputs outside `[-u64::MAX, u64::MAX]`.
 //! One-hot row MSMs count and scatter indices on device, using shared-memory
 //! tallies when they fit. The host scans counts before the segmented G1 sums.
+//! For fully covered chunks, dominant buckets can use the total base sum minus
+//! the other buckets; cold cycles disable this complement shortcut.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

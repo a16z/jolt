@@ -25,6 +25,8 @@
 //! use batched affine addition.
 //! Device one-hot rows count and scatter base indices with flat atomics or
 //! shared-memory tallies; the host scans the histogram and selects segment classes.
+//! Fully covered chunks can reconstruct a dominant bucket from the total base sum
+//! minus the other buckets. Chunks containing cold cycles use direct segment sums.
 //!
 //! Weighted bucket sums split across blocks and merge their partials per row.
 //! Window folding combines each row's results from the most significant window
@@ -130,6 +132,11 @@ pub(crate) fn plan_classes(counts: &[u32]) -> HostClasses {
         fat_entries,
         live_thin,
     }
+}
+
+struct OneHotComplements {
+    counts: CudaSlice<u32>,
+    targets: CudaSlice<u32>,
 }
 
 pub struct SignedColumn {
@@ -860,6 +867,42 @@ impl CudaKernelContext {
         })
     }
 
+    fn one_hot_complement_targets(
+        counts: &mut [u32],
+        chunk_count: usize,
+        chunk_len: usize,
+    ) -> Result<Vec<u32>, CudaError> {
+        if chunk_count == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = (chunk_len / 2)
+            .max(CLASS_FLOOR)
+            .max(counts.len() / chunk_count);
+        if limit >= chunk_len {
+            return Ok(Vec::new());
+        }
+        let mut covered = vec![0u64; chunk_count];
+        let mut dominant = vec![None; chunk_count];
+        for (segment, &count) in counts.iter().enumerate() {
+            let chunk = segment % chunk_count;
+            covered[chunk] += u64::from(count);
+            if count as usize > limit {
+                dominant[chunk] = Some(segment);
+            }
+        }
+        let mut targets = Vec::new();
+        for (chunk, segment) in dominant.into_iter().enumerate() {
+            // A cold cycle would make the total base sum an invalid complement.
+            if covered[chunk] == chunk_len as u64 {
+                if let Some(segment) = segment {
+                    targets.push(Self::count_of(segment)?);
+                    counts[segment] = 0;
+                }
+            }
+        }
+        Ok(targets)
+    }
+
     pub(crate) const fn one_hot_slots(one_hot_k: usize, chunk_len: usize) -> usize {
         one_hot_k.saturating_mul((BLOCK as usize - 1) / chunk_len + 2)
     }
@@ -990,9 +1033,9 @@ impl CudaKernelContext {
         self.stream().synchronize()?;
         drop(count_span);
 
-        let (offsets, classes, total, widest) =
+        let (offsets, classes, total, widest, complements) =
             tracing::info_span!("cuda_commit_one_hot_scan", segments).in_scope(|| {
-                let histogram = self.download_u32(&counts)?;
+                let mut histogram = self.download_u32(&counts)?;
                 if histogram[segments] != 0 {
                     return Err(CudaError::InvariantViolation {
                         reason: "a one-hot address lies outside the declared address count",
@@ -1010,12 +1053,27 @@ impl CudaKernelContext {
                             reason: "a one-hot segment plan holds more than u32::MAX entries",
                         })?;
                 }
+                let targets = Self::one_hot_complement_targets(
+                    &mut histogram[..segments],
+                    chunk_count,
+                    chunk_len,
+                )?;
+                let complements = if targets.is_empty() {
+                    None
+                } else {
+                    widest = histogram[..segments].iter().copied().max().unwrap_or(0);
+                    Some(OneHotComplements {
+                        counts: self.upload_u32_slice(&histogram[..segments])?,
+                        targets: self.upload_u32_slice(&targets)?,
+                    })
+                };
                 let classes = self.upload_classes(&plan_classes(&histogram[..segments]))?;
                 Ok((
                     self.upload_u32_slice(&offsets)?,
                     classes,
                     running as usize,
                     widest as usize,
+                    complements,
                 ))
             })?;
 
@@ -1092,7 +1150,7 @@ impl CudaKernelContext {
                 SegmentPlan {
                     indices: &indices,
                     offsets: &offsets,
-                    counts: &counts,
+                    counts: complements.as_ref().map_or(&counts, |plan| &plan.counts),
                     segments,
                     widest,
                     mode: SegmentMode::Auto,
@@ -1100,10 +1158,89 @@ impl CudaKernelContext {
                 },
                 &mut output,
             )?;
+            if let Some(plan) = &complements {
+                self.complete_one_hot_buckets(
+                    bases,
+                    chunk_len,
+                    chunk_count,
+                    one_hot_k,
+                    &plan.targets,
+                    &mut output,
+                )?;
+            }
             Ok::<_, CudaError>(())
         })?;
         tracing::info_span!("cuda_commit_one_hot_download", segments)
             .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&output)?)))
+    }
+
+    fn complete_one_hot_buckets(
+        &self,
+        bases: &DeviceG1Bases,
+        chunk_len: usize,
+        chunk_count: usize,
+        one_hot_k: usize,
+        targets: &CudaSlice<u32>,
+        output: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let base_count = Self::count_of(chunk_len)?;
+        let base_indices: Vec<u32> = (0..base_count).collect();
+        let tile_len = chunk_len.div_ceil(64);
+        let counts: Vec<u32> = (0..chunk_len)
+            .step_by(tile_len)
+            .map(|start| Self::count_of(tile_len.min(chunk_len - start)))
+            .collect::<Result<_, _>>()?;
+        let plan = self.upload_segments(bases, &base_indices, &counts)?;
+        let mut partials = self.alloc_u64(plan.segments * 3 * FQ_LIMBS)?;
+        self.launch_segment_sums(
+            bases,
+            SegmentPlan {
+                indices: &plan.indices,
+                offsets: &plan.offsets,
+                counts: &plan.counts,
+                segments: plan.segments,
+                widest: plan.widest,
+                mode: SegmentMode::Heavy,
+                classes: None,
+            },
+            &mut partials,
+        )?;
+        let mut total = self.alloc_u64(3 * FQ_LIMBS)?;
+        let rows = 1u32;
+        let tiles = Self::count_of(plan.segments)?;
+        let mut builder = self.stream().launch_builder(self.msm_point_rows_sum());
+        let _ = builder.arg(&partials);
+        let _ = builder.arg(&rows);
+        let _ = builder.arg(&tiles);
+        let _ = builder.arg(&mut total);
+        // SAFETY: one block reads the tiles produced above and reduces through
+        // POINT_BLOCK * 3 * LIMBS shared u64s. All threads reach the barriers;
+        // thread 0 alone writes the fresh, single-point total.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (1, 1, 1),
+                block_dim: (POINT_BLOCK, 1, 1),
+                shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+
+        let target_count = Self::count_of(targets.len())?;
+        let chunks = Self::count_of(chunk_count)?;
+        let addresses = Self::count_of(one_hot_k)?;
+        let mut builder = self.stream().launch_builder(self.msm_one_hot_complement());
+        let _ = builder.arg(&total);
+        let _ = builder.arg(targets);
+        let _ = builder.arg(&target_count);
+        let _ = builder.arg(&chunks);
+        let _ = builder.arg(&addresses);
+        let _ = builder.arg(output);
+        // SAFETY: targets contains at most one segment per fully covered chunk.
+        // Each thread reads only other addresses in its own chunk, then writes
+        // its target. Thus no thread reads a segment another thread writes,
+        // and all segment indices are below one_hot_k * chunk_count.
+        let _ = unsafe { builder.launch(Self::launch_config(target_count)) }?;
+        self.stream().synchronize()?;
+        Ok(())
     }
 
     fn canonical_scalars(&self, values: &DeviceFrVec) -> Result<CudaSlice<u64>, CudaError> {
@@ -2850,6 +2987,97 @@ mod tests {
                 "the device CSR build accepted an address past the chunk: the scatter drops such \
                  a cycle, so the commitment would silently omit it"
             );
+        }
+    }
+
+    #[test]
+    fn one_hot_complements_preserve_cold_chunks_and_base_prefixes() {
+        let Some(context) = device() else { return };
+        const CHUNK: usize = 4096;
+        const CHUNKS: usize = 7;
+        const K: usize = 4;
+        let hot: Vec<u32> = (0..CHUNK * CHUNKS)
+            .map(|cycle| {
+                let column = cycle % CHUNK;
+                match cycle / CHUNK {
+                    0 => 0,
+                    1 | 2 if cycle / CHUNK == 2 && column == CHUNK - 1 => COLD,
+                    1 | 2 if column < 3 * CHUNK / 4 => 2,
+                    1 | 2 => [0, 1, 3][column % 3],
+                    3 => u32::from(column >= CHUNK / 2),
+                    4 => COLD,
+                    5 if column < 3 * CHUNK / 4 => 3,
+                    5 => (column % 3) as u32,
+                    _ => (column % K) as u32,
+                }
+            })
+            .collect();
+        let mut histogram = vec![0u32; K * CHUNKS];
+        for (cycle, &address) in hot.iter().enumerate() {
+            if address != COLD {
+                histogram[address as usize * CHUNKS + cycle / CHUNK] += 1;
+            }
+        }
+        assert_eq!(
+            CudaKernelContext::one_hot_complement_targets(&mut histogram, CHUNKS, CHUNK)
+                .expect("plan complements"),
+            vec![0, (2 * CHUNKS + 1) as u32, (3 * CHUNKS + 5) as u32],
+        );
+        let device_hot = context.upload_u32_slice(&hot).expect("upload addresses");
+        for balanced in [false, true] {
+            // Known generator multiples provide an independent oracle; balanced
+            // bases sum to identity, and the extra bases must never contribute.
+            let weights: Vec<i64> = (0..CHUNK + 3)
+                .map(|index| {
+                    if index >= CHUNK {
+                        10_000 + index as i64
+                    } else if balanced && index >= CHUNK / 2 {
+                        -((index - CHUNK / 2 + 1) as i64)
+                    } else {
+                        (index + 1) as i64
+                    }
+                })
+                .collect();
+            let bases: Vec<AffineLimbs> = weights
+                .iter()
+                .map(|&weight| {
+                    let p = point(weight.unsigned_abs());
+                    affine_limbs(if weight < 0 { -p } else { p }.into_affine())
+                })
+                .collect();
+            let mut sums = vec![0i64; K * CHUNKS];
+            for (cycle, &address) in hot.iter().enumerate() {
+                if address != COLD {
+                    sums[address as usize * CHUNKS + cycle / CHUNK] += weights[cycle % CHUNK];
+                }
+            }
+            let expected: Vec<G1Projective> = sums
+                .iter()
+                .map(|&sum| {
+                    let p = point(sum.unsigned_abs());
+                    if sum < 0 {
+                        -p
+                    } else {
+                        p
+                    }
+                })
+                .collect();
+            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+            for mode in [OneHotMode::Flat, OneHotMode::Shared] {
+                let got = projectives(
+                    &context
+                        .one_hot_rows_device_with(
+                            &device_bases,
+                            &device_hot.as_view(),
+                            hot.len(),
+                            K,
+                            CHUNK,
+                            mode,
+                        )
+                        .expect("one-hot complement sums"),
+                );
+                assert_eq!(got, expected, "{mode:?}, balanced = {balanced}");
+            }
         }
     }
 

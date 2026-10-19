@@ -109,6 +109,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_one_hot_scatter_shared: CudaFunction,
     #[cfg(test)]
+    msm_one_hot_complement: CudaFunction,
+    #[cfg(test)]
     msm_segment_sum: CudaFunction,
     #[cfg(test)]
     msm_segment_sum_warp: CudaFunction,
@@ -219,6 +221,8 @@ impl CudaKernelContext {
             #[cfg(test)]
             msm_one_hot_scatter_shared: module
                 .load_function("msm_one_hot_scatter_shared_kernel")?,
+            #[cfg(test)]
+            msm_one_hot_complement: module.load_function("msm_one_hot_complement_kernel")?,
             #[cfg(test)]
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             #[cfg(test)]
@@ -565,6 +569,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_one_hot_scatter_shared(&self) -> &CudaFunction {
         &self.msm_one_hot_scatter_shared
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_one_hot_complement(&self) -> &CudaFunction {
+        &self.msm_one_hot_complement
     }
 
     #[cfg(test)]

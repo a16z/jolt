@@ -784,6 +784,32 @@ extern "C" __global__ void msm_segment_sum_classed_kernel(
     }
 }
 
+extern "C" __global__ void msm_one_hot_complement_kernel(
+    const u64 *__restrict__ total, const unsigned int *__restrict__ targets,
+    unsigned int target_count, unsigned int chunks, unsigned int addresses, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= target_count) return;
+    unsigned int target = targets[i];
+    unsigned int chunk = target % chunks;
+    u64 acc[3 * LIMBS], point[3 * LIMBS], tmp[3 * LIMBS];
+    jac_set_zero(acc);
+    for (unsigned int address = 0; address < addresses; address++) {
+        unsigned long long segment = (unsigned long long)address * chunks + chunk;
+        if (segment == target) continue;
+        for (int limb = 0; limb < 3; limb++) {
+            load4(out + (segment * 3 + limb) * LIMBS, point + limb * LIMBS);
+        }
+        jac_add(acc, point, tmp);
+        jac_copy(tmp, acc);
+    }
+    fq_neg(acc + LIMBS, tmp);
+    fq_copy(tmp, acc + LIMBS);
+    jac_add(total, acc, tmp);
+    for (int limb = 0; limb < 3; limb++) {
+        store4(out + ((unsigned long long)target * 3 + limb) * LIMBS, tmp + limb * LIMBS);
+    }
+}
+
 extern "C" __global__ void msm_window_fold_kernel(const u64 *__restrict__ window_points,
                                                  unsigned int rows, unsigned int windows,
                                                  unsigned int window_bits,
