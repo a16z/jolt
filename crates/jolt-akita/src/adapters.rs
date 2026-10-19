@@ -1143,49 +1143,6 @@ impl NargDeserialize for CommitmentHeader {
     }
 }
 
-/// The transparent stand-in for a hiding evaluation commitment: the
-/// evaluation's canonical encoding. Akita has no ZK opening, so nothing
-/// verifies against it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AkitaHidingCommitment {
-    pub(crate) eval: [u8; <AkitaField as CanonicalBytes>::NUM_BYTES],
-}
-
-impl AkitaHidingCommitment {
-    pub(crate) fn new(eval: AkitaField) -> Self {
-        let mut bytes = [0; <AkitaField as CanonicalBytes>::NUM_BYTES];
-        eval.to_bytes_le(&mut bytes);
-        Self { eval: bytes }
-    }
-}
-
-impl CanonicalBytes for AkitaHidingCommitment {
-    const NUM_BYTES: usize = <AkitaField as CanonicalBytes>::NUM_BYTES;
-
-    fn to_bytes_le(&self, out: &mut [u8]) {
-        out.copy_from_slice(&self.eval);
-    }
-}
-
-impl Encoding<[u8]> for AkitaHidingCommitment {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        ::jolt_field::narg::encode(self)
-    }
-}
-
-impl CanonicalDecode for AkitaHidingCommitment {
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        AkitaField::from_bytes_le_checked(bytes).map(Self::new)
-    }
-}
-
-impl NargDeserialize for AkitaHidingCommitment {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        ::jolt_field::narg::deserialize(buf)
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct AkitaProverHint {
     pub(crate) commitment: AkitaCommitment,
@@ -1450,12 +1407,6 @@ pub(crate) fn commit_failed(error: impl ToString) -> OpeningsError {
 
 pub(crate) fn prove_failed(error: impl ToString) -> OpeningsError {
     OpeningsError::ProveFailed(error.to_string())
-}
-
-pub(crate) fn transparent_zk_error() -> OpeningsError {
-    OpeningsError::InvalidBatch(
-        "Akita backend adapter is transparent-only and does not support ZK openings yet".to_owned(),
-    )
 }
 
 #[cfg(test)]
