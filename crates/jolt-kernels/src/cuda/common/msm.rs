@@ -3,6 +3,7 @@
 //! Row MSMs use Pippenger buckets built by device count/scan/scatter passes.
 //! G1 window batches use a memory budget informed by free device memory and
 //! fall back to sequential windows when the batch does not fit.
+//! Signed increments retain separate native magnitudes and signs.
 //!
 //! Inputs and outputs use four Montgomery limbs per field element. Each GPU
 //! thread inverts a chunk using its output range for prefix products; zero
@@ -113,6 +114,12 @@ pub(crate) fn plan_classes(counts: &[u32]) -> HostClasses {
         ids.push(u32::try_from(segment).unwrap_or(u32::MAX));
     }
     HostClasses { ids, fat }
+}
+
+pub struct SignedColumn {
+    magnitudes: CudaSlice<u64>,
+    signs: CudaSlice<u8>,
+    len: usize,
 }
 
 pub struct DeviceG1Bases {
@@ -273,6 +280,35 @@ fn take_limbs(chunk: &[u64]) -> [u64; FQ_LIMBS] {
     let mut limbs = [0u64; FQ_LIMBS];
     limbs.copy_from_slice(chunk);
     limbs
+}
+
+#[cfg(feature = "parallel")]
+fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u8]) -> bool {
+    use rayon::prelude::*;
+
+    magnitudes
+        .par_iter_mut()
+        .zip(signs.par_iter_mut())
+        .zip(rows.par_iter())
+        .map(|((magnitude, sign), &scalar)| {
+            let value = scalar.unsigned_abs();
+            *magnitude = u64::try_from(value).unwrap_or_default();
+            *sign = u8::from(scalar.is_negative());
+            value <= u128::from(u64::MAX)
+        })
+        .reduce(|| true, |a, b| a && b)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u8]) -> bool {
+    let mut fits = true;
+    for ((magnitude, sign), &scalar) in magnitudes.iter_mut().zip(signs.iter_mut()).zip(rows) {
+        let value = scalar.unsigned_abs();
+        *magnitude = u64::try_from(value).unwrap_or_default();
+        *sign = u8::from(scalar.is_negative());
+        fits &= value <= u128::from(u64::MAX);
+    }
+    fits
 }
 
 fn unflatten_jacobian(flat: &[u64]) -> Vec<JacobianLimbs> {
@@ -638,6 +674,54 @@ impl CudaKernelContext {
             limbs: affine,
             count,
         })
+    }
+
+    pub fn signed_column(&self, rows: &[i128]) -> Result<SignedColumn, CudaError> {
+        tracing::info_span!("cuda_msm_i128_stage", len = rows.len()).in_scope(|| {
+            let mut magnitudes = vec![0u64; rows.len()];
+            let mut signs = vec![0u8; rows.len()];
+            if !split_signed_magnitudes(rows, &mut magnitudes, &mut signs) {
+                return Err(CudaError::InvariantViolation {
+                    reason: "signed MSM scalars must fit in [-u64::MAX, u64::MAX]",
+                });
+            }
+            Ok(SignedColumn {
+                magnitudes: self.upload_u64_slice(&magnitudes)?,
+                signs: self.upload_u8_slice(&signs)?,
+                len: rows.len(),
+            })
+        })
+    }
+
+    pub fn msm_rows_signed(
+        &self,
+        bases: &DeviceG1Bases,
+        column: &SignedColumn,
+        row_len: usize,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        self.require_owned(bases.ordinal())?;
+        let accumulator = self.pippenger_device(
+            bases,
+            DeviceScalars {
+                values: &column.magnitudes,
+                limbs: 1,
+            },
+            &column.signs,
+            column.len,
+            row_len,
+            64,
+        )?;
+        tracing::info_span!("cuda_msm_i128_download", len = column.len)
+            .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&accumulator)?)))
+    }
+
+    pub fn msm_rows_i128(
+        &self,
+        bases: &DeviceG1Bases,
+        rows: &[i128],
+        row_len: usize,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        self.msm_rows_signed(bases, &self.signed_column(rows)?, row_len)
     }
 
     pub fn one_hot_chunk_sums(
@@ -1512,9 +1596,11 @@ pub(crate) mod testing {
 )]
 mod tests {
     use ark_bn254::{Fq, Fr as ArkFr, G1Affine, G1Projective};
+    use ark_ec::scalar_mul::variable_base::msm_i128;
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup, VariableBaseMSM};
     use ark_ff::{PrimeField, Zero};
     use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
+    use jolt_field::{Fr, Ring};
     use proptest::collection::vec;
     use proptest::prelude::*;
 
@@ -1544,6 +1630,10 @@ mod tests {
 
     fn limbs(values: &[Fq]) -> Vec<[u64; FQ_LIMBS]> {
         values.iter().copied().map(fq_limbs).collect()
+    }
+
+    fn arb_msm_scalar() -> impl Strategy<Value = i128> {
+        (-(u64::MAX as i128))..=(u64::MAX as i128)
     }
 
     fn msm_bases() -> Vec<G1Affine> {
@@ -2093,6 +2183,42 @@ mod tests {
                 &context
                     .msm_rows_fr(&device_bases, &device_rows, MSM_ROW_LEN)
                     .expect("device msm_rows_fr"),
+            );
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn msm_rows_i128_matches_arkworks(
+            scalars in vec(arb_msm_scalar(), MSM_ROWS * MSM_ROW_LEN),
+        ) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases = msm_bases();
+            let expected: Vec<G1Projective> = scalars
+                .chunks(MSM_ROW_LEN)
+                .map(|row| msm_i128::<G1Projective>(&bases, row, true))
+                .collect();
+            let definition: Vec<G1Projective> = scalars
+                .chunks(MSM_ROW_LEN)
+                .map(|row| {
+                    row.iter()
+                        .zip(&bases)
+                        .map(|(&scalar, &base)| base * ark_fr(Fr::from_i128(scalar)))
+                        .sum()
+                })
+                .collect();
+            prop_assert_eq!(
+                &expected,
+                &definition,
+                "the arkworks signed MSM disagrees with the sum-of-scalar-multiples it is \
+                 supposed to compute, so it cannot serve as the oracle",
+            );
+            let device_bases = context
+                .upload_g1_bases(&bases.iter().copied().map(affine_limbs).collect::<Vec<_>>())
+                .expect("upload bases");
+            let got = projectives(
+                &context
+                    .msm_rows_i128(&device_bases, &scalars, MSM_ROW_LEN)
+                    .expect("device msm_rows_i128"),
             );
             prop_assert_eq!(got, expected);
         }

@@ -50,6 +50,8 @@
 //! window folding combines those results from the most significant window down.
 //! Fr row MSMs extract scalar windows and build buckets on the device. Windows
 //! batch within a memory budget and otherwise accumulate sequentially.
+//! Signed row MSMs reuse those buckets with 64-bit magnitudes and separate signs;
+//! host staging rejects inputs outside `[-u64::MAX, u64::MAX]`.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
