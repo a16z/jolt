@@ -26,11 +26,15 @@ bn254 = [
   "dep:ark-ff",
   "dep:ark-serialize",
   "dep:ark-std",
+  "dep:num-bigint",
   "dep:num-integer",
   "dep:num-traits",
   "jolt-field/bn254",
 ]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
+# Whiteout's lattice primitives: the prover-only Gaussian sampler and
+# joint rejection rule in `sample`.
+lattice = ["dep:subtle", "dep:num-bigint"]
 
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
@@ -38,8 +42,7 @@ jolt-field = { path = "../jolt-field", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
-subtle = { workspace = true }
-num-bigint = { workspace = true }
+subtle = { workspace = true, optional = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -47,6 +50,7 @@ ark-ec = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }
 ark-std = { workspace = true, optional = true }
+num-bigint = { workspace = true, optional = true }
 num-integer = { workspace = true, optional = true }
 num-traits = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
@@ -78,6 +82,10 @@ required-features = ["bn254"]
 [[test]]
 name = "serialization"
 required-features = ["bn254"]
+
+[[example]]
+name = "sample_dudect"
+required-features = ["lattice"]
 
 [[bench]]
 name = "crypto"

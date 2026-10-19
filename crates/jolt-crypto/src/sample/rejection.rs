@@ -18,6 +18,8 @@ use super::{GaussianWidth, SampleError};
 const MAX_BOUND: u64 = 1 << 62;
 /// Bound on `|P|` and `Q`, so restoring division never overflows `u128`.
 const MAX_NUMERATOR: u128 = 1 << 126;
+/// Bound on `α` and `ε_bits`, so computing `M` cannot overflow.
+const MAX_REJECTION_PARAMETER: u32 = 1 << 16;
 
 /// One block of Gaussian-masked coordinates. Public coordinates of `s` are
 /// never part of a block.
@@ -59,6 +61,9 @@ impl JointRejection {
     /// `M = exp(t/α + 1/(2α²))` with `t = √(2·epsilon_bits·ln 2)`, so that
     /// `ε = e^{−t²/2} = 2^{−epsilon_bits}`. `M^{−1}` is floored, which runs
     /// the rule with some `M' ≥ M`.
+    ///
+    /// Requires `M ≤ 4`: the evaluation clamps the exponent so that the
+    /// ratio saturates only for `M^{−1} ≥ 1/4` (Whiteout's `M ≈ 2.37`).
     pub fn new(
         blocks: Vec<BlockParams>,
         alpha: u32,
@@ -67,7 +72,12 @@ impl JointRejection {
         if blocks.is_empty() {
             return Err(SampleError::NoBlocks);
         }
-        if alpha == 0 || epsilon_bits == 0 {
+        let in_range = |p: u32| (1..=MAX_REJECTION_PARAMETER).contains(&p);
+        if !(in_range(alpha) && in_range(epsilon_bits)) {
+            return Err(SampleError::BadRejectionParameters);
+        }
+        let inverse_m = inverse_repetition_rate(alpha, epsilon_bits);
+        if inverse_m.0[2] < 1 << 62 {
             return Err(SampleError::BadRejectionParameters);
         }
         if blocks
@@ -115,7 +125,7 @@ impl JointRejection {
 
         Ok(Self {
             exp_table: pow2_neg_table(denominator, 128 - denominator.leading_zeros()),
-            inverse_m: inverse_repetition_rate(alpha, epsilon_bits),
+            inverse_m,
             blocks,
             scales,
             denominator,
@@ -127,6 +137,10 @@ impl JointRejection {
     /// centred-integer negacyclic product. Both are laid out block-major.
     /// Every coordinate is processed and the accept bit is the only value
     /// derived from them that leaves.
+    ///
+    /// [`SampleError::ShiftOutOfRange`] can only fire on a malformed
+    /// witness. The caller must treat it as fatal and abort the proof; it
+    /// must never retry or record it in the transcript.
     pub fn accept<R: RngCore + CryptoRng>(
         &self,
         z: &[i64],
@@ -151,6 +165,9 @@ impl JointRejection {
         }
     }
 
+    // Kept out of line so the reviewed constant-time code is the code that
+    // runs, whatever the caller's inlining.
+    #[inline(never)]
     pub(crate) fn acceptance(&self, z: &[i64], v: &[i64]) -> Acceptance {
         let mut in_box = Choice::from(1);
         let mut shift_ok = Choice::from(1);
@@ -215,7 +232,11 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
+    use std::f64::consts::LN_2;
+
     const ALPHA: u32 = 16;
+    /// The smallest integer `α` with `M < 4` at `ε = 2^{−137}` (`M ≈ 3.99`).
+    const ALPHA_NEAR_BOUND: u32 = 10;
     const EPSILON_BITS: u32 = 137;
 
     fn width(k: u64) -> GaussianWidth {
@@ -240,9 +261,9 @@ mod tests {
     }
 
     /// `M` from the definition in f64.
-    fn repetition_rate() -> f64 {
-        let t = (2.0 * f64::from(EPSILON_BITS) * std::f64::consts::LN_2).sqrt();
-        (t / f64::from(ALPHA) + 1.0 / (2.0 * f64::from(ALPHA * ALPHA))).exp()
+    fn repetition_rate(alpha: u32) -> f64 {
+        let t = (2.0 * f64::from(EPSILON_BITS) * LN_2).sqrt();
+        (t / f64::from(alpha) + 1.0 / (2.0 * f64::from(alpha * alpha))).exp()
     }
 
     /// `ln(π_0(z)/π_v(z)) = Σ_i (v_i² − 2 z_i v_i)/(2σ_{b(i)}²)`.
@@ -321,9 +342,15 @@ mod tests {
 
     #[test]
     fn acceptance_probability_matches_definition() {
+        for alpha in [ALPHA, ALPHA_NEAR_BOUND] {
+            check_acceptance_probability(alpha);
+        }
+    }
+
+    fn check_acceptance_probability(alpha: u32) {
         let blocks = small_blocks();
-        let rule = JointRejection::new(blocks.clone(), ALPHA, EPSILON_BITS).unwrap();
-        let m = repetition_rate();
+        let rule = JointRejection::new(blocks.clone(), alpha, EPSILON_BITS).unwrap();
+        let m = repetition_rate(alpha);
         let mut rng = ChaCha20Rng::seed_from_u64(3);
         let (mut interior, mut saturated) = (0, 0);
         for _ in 0..20_000 {
@@ -363,9 +390,19 @@ mod tests {
 
     #[test]
     fn rejection_matches_exact_rate_and_law() {
+        check_rate_and_law(ALPHA, 4);
+    }
+
+    /// `M ≈ 3.99`, just inside the `M ≤ 4` bound of the saturation clamp.
+    #[test]
+    fn rejection_matches_exact_rate_and_law_near_m_bound() {
+        check_rate_and_law(ALPHA_NEAR_BOUND, 8);
+    }
+
+    fn check_rate_and_law(alpha: u32, seed: u64) {
         let blocks = small_blocks();
-        let rule = JointRejection::new(blocks.clone(), ALPHA, EPSILON_BITS).unwrap();
-        let m = repetition_rate();
+        let rule = JointRejection::new(blocks.clone(), alpha, EPSILON_BITS).unwrap();
+        let m = repetition_rate(alpha);
         let v = [3i64, -5, 6];
         let samplers: Vec<GaussianSampler> = blocks
             .iter()
@@ -396,7 +433,7 @@ mod tests {
         }
         let exact_rate: f64 = accepted_mass.iter().sum();
 
-        let mut rng = ChaCha20Rng::seed_from_u64(4);
+        let mut rng = ChaCha20Rng::seed_from_u64(seed);
         let trials = 1_000_000u64;
         let mut accepted = 0u64;
         let mut counts = vec![0u64; cells];
@@ -420,7 +457,7 @@ mod tests {
             .map(|w| w / exact_rate * accepted as f64)
             .collect();
         let p_law = chi_square_p(&counts, &expected);
-        println!("acceptance {rate:.5} vs exact {exact_rate:.5}: p = {p_rate:.4}; accepted law chi-square p = {p_law:.4}");
+        println!("alpha = {alpha}: acceptance {rate:.5} vs exact {exact_rate:.5}: p = {p_rate:.4}; accepted law chi-square p = {p_law:.4}");
         assert!(p_rate > 1e-4 && p_law > 1e-4);
     }
 
@@ -453,5 +490,40 @@ mod tests {
             JointRejection::new(huge, ALPHA, EPSILON_BITS).err(),
             Some(SampleError::ArithmeticBound)
         );
+        let block = |k: u64, bound: u64| BlockParams {
+            width: width(k),
+            box_bound: bound,
+            shift_bound: 1,
+            len: 1,
+        };
+        assert_eq!(
+            JointRejection::new(vec![block(3, MAX_BOUND + 1)], ALPHA, EPSILON_BITS).err(),
+            Some(SampleError::ArithmeticBound)
+        );
+        // Q = (2^31)²·(2^31 − 1)²·3² ≥ 2^126.
+        let wide = vec![block(1 << 31, 1), block((1 << 31) - 1, 1), block(3, 1)];
+        assert_eq!(
+            JointRejection::new(wide, ALPHA, EPSILON_BITS).err(),
+            Some(SampleError::ArithmeticBound)
+        );
+    }
+
+    #[test]
+    fn rejects_bad_rejection_parameters() {
+        // α = 8 gives M ≈ 5.64 > 4, outside the saturation clamp's range.
+        for (alpha, epsilon_bits) in [
+            (0, EPSILON_BITS),
+            (ALPHA, 0),
+            (8, EPSILON_BITS),
+            (MAX_REJECTION_PARAMETER + 1, EPSILON_BITS),
+            (ALPHA, MAX_REJECTION_PARAMETER + 1),
+        ] {
+            assert_eq!(
+                JointRejection::new(small_blocks(), alpha, epsilon_bits).err(),
+                Some(SampleError::BadRejectionParameters),
+                "alpha = {alpha}, epsilon_bits = {epsilon_bits}"
+            );
+        }
+        assert!(JointRejection::new(small_blocks(), ALPHA_NEAR_BOUND, EPSILON_BITS).is_ok());
     }
 }

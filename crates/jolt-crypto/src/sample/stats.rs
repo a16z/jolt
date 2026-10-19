@@ -6,8 +6,10 @@
     reason = "test statistics over paired slices"
 )]
 
+use std::f64::consts::SQRT_2;
+
 pub(crate) fn normal_cdf(x: f64) -> f64 {
-    0.5 * libm::erfc(-x / std::f64::consts::SQRT_2)
+    0.5 * libm::erfc(-x / SQRT_2)
 }
 
 /// Upper tail of Pearson's statistic over cells with expected count ≥ 5;
@@ -48,7 +50,7 @@ pub(crate) fn ks_p(d: f64, n: usize) -> f64 {
 
 /// Two-sided p-value of a standard normal score.
 pub(crate) fn normal_two_sided_p(z: f64) -> f64 {
-    libm::erfc(z.abs() / std::f64::consts::SQRT_2)
+    libm::erfc(z.abs() / SQRT_2)
 }
 
 /// `Q(a, x) = Γ(a, x)/Γ(a)`, by the series for `x < a + 1` and Lentz's

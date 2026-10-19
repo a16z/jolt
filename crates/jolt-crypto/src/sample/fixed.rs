@@ -3,13 +3,14 @@
 
 use num_bigint::BigUint;
 use rand_core::RngCore;
-use subtle::{Choice, ConditionallySelectable};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 /// A value in `[0, 1)` stored as `Σ limb_i 2^{64i} / 2^{192}`.
 ///
 /// Every operation runs a fixed instruction sequence independent of the
 /// limb values.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct Fix192(pub(crate) [u64; 3]);
 
 impl ConditionallySelectable for Fix192 {
@@ -156,7 +157,7 @@ pub(crate) fn ct_floor_div(dividend: i128, divisor: u128) -> (i128, u128) {
         remainder = u128::conditional_select(&remainder, &remainder.wrapping_sub(divisor), fits);
         quotient |= u128::from(fits.unwrap_u8()) << i;
     }
-    let inexact = !subtle::ConstantTimeEq::ct_eq(&remainder, &0u128);
+    let inexact = !remainder.ct_eq(&0u128);
     let negative_quotient = (quotient as i128).wrapping_neg() - i128::from(inexact.unwrap_u8());
     let negative_remainder =
         u128::conditional_select(&0, &divisor.wrapping_sub(remainder), inexact);

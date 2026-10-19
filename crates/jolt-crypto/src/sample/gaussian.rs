@@ -39,26 +39,6 @@ impl GaussianWidth {
         }
     }
 
-    /// The smallest realizable width at least `sigma`, up to `f64`
-    /// rounding of `σ_2`. Public parameter path only.
-    pub fn at_least(sigma: f64) -> Result<Self, SampleError> {
-        if !(sigma.is_finite() && sigma > 0.0) {
-            return Err(SampleError::WidthOutOfRange);
-        }
-        let mut k = (sigma / BINARY_GAUSSIAN_SIGMA).ceil();
-        if k * BINARY_GAUSSIAN_SIGMA < sigma {
-            k += 1.0;
-        }
-        if k > MAX_MULTIPLIER as f64 {
-            return Err(SampleError::WidthOutOfRange);
-        }
-        Self::from_multiplier(k as u64)
-    }
-
-    pub fn multiplier(&self) -> u64 {
-        self.k
-    }
-
     pub fn sigma(&self) -> f64 {
         self.k as f64 * BINARY_GAUSSIAN_SIGMA
     }
@@ -110,6 +90,9 @@ impl GaussianSampler {
         }
     }
 
+    // Kept out of line so the reviewed constant-time code is the code that
+    // runs, whatever the caller's inlining.
+    #[inline(never)]
     fn trial<R: RngCore>(&self, rng: &mut R) -> (i64, Choice) {
         let k = self.width.k;
         let u = Fix192::random(rng);
@@ -264,14 +247,29 @@ mod tests {
         }
     }
 
+    /// The table has exactly one factor per bit of the largest exponent
+    /// `27k² − 1`.
     #[test]
-    fn production_exponent_tables_cover_every_trial() {
-        let lens: Vec<usize> = [16_080_468, 1_005_030]
-            .map(|k| GaussianSampler::new(GaussianWidth::from_multiplier(k).unwrap()))
-            .iter()
-            .map(|s| s.exp_table.len())
-            .collect();
-        assert_eq!(lens, [53, 45]);
+    fn exponent_tables_cover_every_trial() {
+        for k in [1, 3, 1_005_030, 16_080_468, MAX_MULTIPLIER] {
+            let sampler = GaussianSampler::new(GaussianWidth::from_multiplier(k).unwrap());
+            let len = sampler.exp_table.len() as u32;
+            let max_exponent = 27 * u128::from(k) * u128::from(k) - 1;
+            assert!(
+                1u128 << (len - 1) <= max_exponent && max_exponent < 1u128 << len,
+                "k = {k}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_out_of_range_multipliers() {
+        for k in [0, MAX_MULTIPLIER + 1] {
+            assert_eq!(
+                GaussianWidth::from_multiplier(k),
+                Err(SampleError::WidthOutOfRange)
+            );
+        }
     }
 
     /// Exact `D_σ` pmf on `[−bound, bound]` from the definition.
