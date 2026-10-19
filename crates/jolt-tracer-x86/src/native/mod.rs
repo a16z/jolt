@@ -275,12 +275,21 @@ impl ExecutionBackend for X86TracerBackend {
                 "record pass emitted a different row count than the fast pass",
             ));
         }
-        let (data, dimensions) = Observation::reassemble_rows(
+        let (rows, ram_bounds) = Observation::reassemble_rows(
             &program.expanded_bytecode,
             record.compiled.pc_map(),
             record.observations,
             0,
         )?;
+        let data = TraceData::new(rows);
+        let dimensions = ExecutionDimensions {
+            trace_length: data.proof_len(),
+            ends_in_jump: data
+                .proof_rows()
+                .last()
+                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+            ram_bounds,
+        };
         Ok(TraceOutput::with_dimensions(
             dimensions,
             Arc::new(data),
@@ -305,7 +314,7 @@ impl Observation {
         pc_map: &BytecodePCMapper,
         observations: Vec<Self>,
         skip_rows: usize,
-    ) -> Result<(TraceData, ExecutionDimensions), TraceError> {
+    ) -> Result<(Vec<JoltTraceRow>, RamAddressBounds), TraceError> {
         let mut bounds = RamAddressBounds::default();
         // Consuming the observations lets Vec's in-place collection reuse their
         // allocation when the row layouts permit it. Conversion remains checked.
@@ -352,16 +361,7 @@ impl Observation {
                 .map_err(TraceError::from)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let data = TraceData::new(rows);
-        let dimensions = ExecutionDimensions {
-            trace_length: data.proof_len(),
-            ends_in_jump: data
-                .proof_rows()
-                .last()
-                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
-            ram_bounds: bounds,
-        };
-        Ok((data, dimensions))
+        Ok((rows, bounds))
     }
 
     fn register_read(register: Option<u8>, value: u64) -> Option<RegisterRead> {
@@ -667,13 +667,17 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             ));
         }
         observations.truncate(needed);
-        let (data, _) = Observation::reassemble_rows(
+        let (mut rows, _) = Observation::reassemble_rows(
             &checkpoint.bytecode,
             checkpoint.compiled.pc_map(),
             observations,
             checkpoint.skip_rows,
         )?;
-        Ok(data)
+        // The in-place conversion keeps the buffer sized for the skipped prefix
+        // and the overshoot slack; release it so a retained chunk holds only
+        // its own rows.
+        rows.shrink_to_fit();
+        Ok(TraceData::new(rows))
     }
 }
 
