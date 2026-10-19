@@ -4,7 +4,7 @@ The recursion example executes Jolt's Akita verifier as a RISC-V guest: it
 verifies an inner Akita, field-inline proof and reports the verdict. The cost of
 interest is the guest's **total trace rows**, the length an outer proof of that
 execution would have to cover, including setup and proof decoding. The working
-target is a Fibonacci inner proof below 2^26 rows; this revision is 12,226,590
+target is a Fibonacci inner proof below 2^26 rows; this revision is 11,920,382
 rows above it (see [Measurements](#measurements)). This document records the
 mechanisms the guest uses, the trust they rely on, and where the rows go.
 
@@ -204,12 +204,13 @@ companion; the last row traces a fresh proof at this revision.
 | + inline-store limits, Blake2b word packing, word-copy `realloc` | 67,622,320 |
 | Merge `main`: native Akita trace batching (#2012), Akita `d98400c5` (#175), fresh proof | 78,896,208 |
 | Akita review revisions of LayerZero-Labs/akita#186-#190 on Akita `main` `401e7972`, spongefish's own Blake2b sponge, lent-accumulator `signed_sum`, fresh proof | 79,348,402 |
-| **Merge `main`: Akita `318c3221` (#193), unified trace rows (#1996), fallible chunked decode and live-entry residual tables, fresh proof** (77,245,072 verification cycles) | **79,335,454** |
+| Merge `main`: Akita `318c3221` (#193), unified trace rows (#1996), fallible chunked decode and live-entry residual tables, fresh proof (77,245,072 verification cycles) | 79,335,454 |
+| **Merge `main`: Akita `cf95fd05` (BlockDigits dense commit, #236-#242), whole-table bytecode (#2030), fresh proof** (76,943,979 verification cycles) | **79,029,246** |
 
 The first row was rebuilt and re-measured from its archived sources and
 reproduces its recorded numbers exactly. Input mode, which reads the setup
-from the guest input, accepts at 86,683,656 rows. A proof with one bit flipped
-in its Akita opening proof is rejected after 60,396,286 rows, inside the PCS
+from the guest input, accepts at 86,457,835 rows. A proof with one bit flipped
+in its Akita opening proof is rejected after 60,132,513 rows, inside the PCS
 verifier.
 
 The merge's increase is inside the Akita trace-batch opening
