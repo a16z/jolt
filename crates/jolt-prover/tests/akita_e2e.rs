@@ -344,7 +344,11 @@ mod akita_tests {
                 witness_config(&config, false, false),
                 JoltVmWitnessInputs::new(&run.program, &program, run.trace),
             );
-            for requested in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
+            for requested in [
+                AkitaChunkProfile::new(1, 0),
+                AkitaChunkProfile::new(8, 2),
+                AkitaChunkProfile::new(8, 3),
+            ] {
                 if requested == setup_profile {
                     continue;
                 }
