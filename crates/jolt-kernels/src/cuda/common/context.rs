@@ -2,6 +2,8 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+#[cfg(test)]
+use cudarc::driver::DevicePtr;
 use cudarc::driver::{
     CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
@@ -10,6 +12,8 @@ use jolt_field::Fr;
 
 use super::device::{fill_staging, DeviceFrVec, LIMBS};
 use super::error::CudaError;
+#[cfg(test)]
+use super::half_fold::FoldColumn;
 use super::xfer_stats::{self, Phase};
 
 pub const BLOCK: u32 = 256;
@@ -37,6 +41,10 @@ pub struct CudaKernelContext {
     pub(super) scan_u32_block: CudaFunction,
     pub(super) scan_u32_add_offsets: CudaFunction,
     lt_reconstruct: CudaFunction,
+    #[cfg(test)]
+    lane_sum_total: CudaFunction,
+    #[cfg(test)]
+    sop_round: CudaFunction,
     #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
@@ -71,6 +79,10 @@ impl CudaKernelContext {
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
             lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
+            #[cfg(test)]
+            lane_sum_total: module.load_function("lane_sum_total_kernel")?,
+            #[cfg(test)]
+            sop_round: module.load_function("sop_round_kernel")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]
@@ -169,6 +181,34 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn hf_row_fold(&self) -> &CudaFunction {
         &self.hf_row_fold
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn lane_sum_total(&self) -> &CudaFunction {
+        &self.lane_sum_total
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn sop_round(&self) -> &CudaFunction {
+        &self.sop_round
+    }
+
+    #[cfg(test)]
+    pub(crate) fn device_columns(
+        &self,
+        columns: &[FoldColumn<'_>],
+    ) -> Result<(CudaSlice<u64>, CudaSlice<u32>), CudaError> {
+        let mut pointers = Vec::with_capacity(columns.len());
+        let mut descriptors = Vec::with_capacity(columns.len() * 4);
+        for column in columns {
+            let (pointer, _guard) = column.words().device_ptr(&self.stream);
+            pointers.push(pointer);
+            descriptors.extend_from_slice(&column.descriptor()?);
+        }
+        Ok((
+            self.upload_u64_slice(&pointers)?,
+            self.upload_u32_slice(&descriptors)?,
+        ))
     }
 
     pub fn fr_identity(&self, input: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {

@@ -22,6 +22,8 @@
 //! binding; optimized stores the shift in its high table and later combines the factors.
 //! Weighted half-fold kernels promote packed integers when loading them.
 //! Contiguous rows use a block reduction; strided columns use one thread per output.
+//! Sum-of-products rounds evaluate finite points and leading coefficients on
+//! device, then reduce the per-block results for each evaluation separately.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -35,7 +37,7 @@ pub use common::context::{
     context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,
     CudaKernelContext, DEVICE_COUNT_VARIABLE,
 };
-pub use common::device::{as_fr_slice, DeviceFrVec, LIMBS};
+pub use common::device::{as_fr_slice, fr_into, DeviceFrVec, LIMBS};
 pub use common::error::CudaError;
 pub use common::lt_poly::DeviceLtPolynomial;
 pub use common::xfer_stats;

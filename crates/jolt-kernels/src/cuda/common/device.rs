@@ -140,3 +140,12 @@ pub fn as_fr_slice<F: JoltField>(values: &[F]) -> Option<&[Fr]> {
     // identical layout, length, and validity. The lifetime is preserved.
     Some(unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<Fr>(), values.len()) })
 }
+
+pub fn fr_into<F: JoltField>(value: Fr) -> Option<F> {
+    if TypeId::of::<F>() != TypeId::of::<Fr>() {
+        return None;
+    }
+    // SAFETY: the TypeId check proves `F == Fr`, so this reads an `Fr` as the
+    // identical type. `Fr: Copy`, so the source needs no forgetting.
+    Some(unsafe { std::ptr::read((&raw const value).cast::<F>()) })
+}

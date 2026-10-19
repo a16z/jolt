@@ -113,6 +113,11 @@ impl FoldColumn<'_> {
         }
     }
 
+    pub fn descriptor(&self) -> Result<[u32; 4], CudaError> {
+        let (stride, offset, bit) = self.geometry()?;
+        Ok([self.kind(), stride, offset, bit])
+    }
+
     pub fn covers(&self, len: usize) -> bool {
         match self {
             Self::Field(column) => column.len() == len,

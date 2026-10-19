@@ -3,9 +3,45 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, Ring};
 use jolt_poly::BindingOrder;
 
+#[cfg(test)]
+use super::context::BLOCK;
 use super::context::{CudaKernelContext, BLOCK as BLOCK_SIZE};
 use super::device::DeviceFrVec;
+#[cfg(test)]
+use super::device::LIMBS;
 use super::error::CudaError;
+
+#[cfg(test)]
+pub(crate) fn reduce_lanes(
+    context: &CudaKernelContext,
+    partials: DeviceFrVec,
+    lanes: u32,
+    width: u32,
+) -> Result<DeviceFrVec, CudaError> {
+    if width <= 1 {
+        return Ok(partials);
+    }
+    let mut totals = context.alloc(lanes as usize)?;
+    let mut builder = context.stream().launch_builder(context.lane_sum_total());
+    let _ = builder.arg(partials.limbs());
+    let _ = builder.arg(totals.limbs_mut());
+    let _ = builder.arg(&width);
+    // SAFETY: block `lane = blockIdx.x < lanes` reads `in[lane * width + i]`
+    // for `i` striding from `threadIdx.x` by `blockDim.x` while `i < width`,
+    // so every read is inside `in`'s `lanes * width` elements, and writes only
+    // `out[lane]` of `lanes`. Shared memory is `BLOCK * LIMBS` u64s, matching
+    // `shared_mem_bytes`, every thread reaches each `__syncthreads()` because
+    // the strided loop and the tree are outside any early return, and `BLOCK`
+    // is a power of two so the tree covers the whole block.
+    let _ = unsafe {
+        builder.launch(LaunchConfig {
+            grid_dim: (lanes, 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+        })
+    }?;
+    Ok(totals)
+}
 
 impl CudaKernelContext {
     fn binary_op(
@@ -484,6 +520,36 @@ mod tests {
 
     fn device() -> Option<&'static CudaKernelContext> {
         shared_context()
+    }
+
+    #[test]
+    fn lane_folds_match_the_host_fold() {
+        let Some(context) = device() else {
+            return;
+        };
+        for lanes in [1usize, 6] {
+            for width in [1usize, 2, 3, 5, 8, 17] {
+                let values: Vec<Fr> = (0..lanes * width)
+                    .map(|index| Fr::from_u64(index as u64 * 31 + 7))
+                    .collect();
+                let expected: Vec<Fr> = (0..lanes)
+                    .map(|lane| {
+                        values[lane * width..(lane + 1) * width]
+                            .iter()
+                            .fold(Fr::from_u64(0), |acc, &value| acc + value)
+                    })
+                    .collect();
+                let partials = context.upload(&values).expect("upload partials");
+                let got = super::reduce_lanes(context, partials, lanes as u32, width as u32)
+                    .expect("device lane fold")
+                    .to_host()
+                    .expect("download");
+                assert_eq!(
+                    got, expected,
+                    "reduce_lanes diverged at {lanes} lanes of width {width}",
+                );
+            }
+        }
     }
 
     fn arb_fr() -> impl Strategy<Value = Fr> {
