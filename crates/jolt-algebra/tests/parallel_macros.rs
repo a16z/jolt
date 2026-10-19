@@ -111,3 +111,22 @@ fn try_fold_reduce_matches_serial_and_propagates_errors() {
     );
     assert_eq!(failed, Err("sentinel"));
 }
+
+#[test]
+fn try_fold_reduce_uses_identity_factory() {
+    let sum = cfg_try_fold_reduce!(
+        0usize..100,
+        usize::default,
+        |acc, value| acc.checked_add(value),
+        |lhs, rhs| lhs.checked_add(rhs)
+    );
+    assert_eq!(sum, Some((0usize..100).sum()));
+
+    let empty = cfg_try_fold_reduce!(
+        0usize..0,
+        usize::default,
+        |acc, value| acc.checked_add(value),
+        |lhs, rhs| lhs.checked_add(rhs)
+    );
+    assert_eq!(empty, Some(0));
+}

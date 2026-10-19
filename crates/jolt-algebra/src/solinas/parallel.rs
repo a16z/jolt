@@ -119,17 +119,21 @@ macro_rules! cfg_fold_reduce {
 
 /// Fallible parallel fold-reduce over a range.
 ///
-/// Without `parallel`, this uses the equivalent sequential `try_fold`.
+/// The identity argument is a zero-argument factory, evaluated once and
+/// shared by reference, matching Rayon's `try_fold` and `try_reduce`
+/// contracts. Without `parallel`, this uses the equivalent sequential
+/// `try_fold`, calling the factory once for its initial accumulator.
 #[macro_export]
 macro_rules! cfg_try_fold_reduce {
-    ($range:expr, $identity:expr, $fold_op:expr, $reduce_op:expr) => {{
+    ($range:expr, $identity_factory:expr, $fold_op:expr, $reduce_op:expr) => {{
+        let identity_factory = $identity_factory;
         #[cfg(feature = "parallel")]
         let result = $range
             .into_par_iter()
-            .try_fold($identity, $fold_op)
-            .try_reduce($identity, $reduce_op);
+            .try_fold(&identity_factory, $fold_op)
+            .try_reduce(&identity_factory, $reduce_op);
         #[cfg(not(feature = "parallel"))]
-        let result = $range.into_iter().try_fold(($identity)(), $fold_op);
+        let result = $range.into_iter().try_fold(identity_factory(), $fold_op);
         result
     }};
 }
