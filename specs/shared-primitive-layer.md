@@ -231,15 +231,12 @@ Design decisions:
   serving requests must report a bad input or a kernel bug as an error, not
   abort the process.
 - The driver is generic over the kernel's error type: `SumcheckError<E, K>` with
-  a `Kernel(K)` variant. It is not `Box<dyn Error>`. The error separates two
-  classes, because callers react to them differently:
-  - **Invariant violations:** a shape mismatch, a degree above the bound, or a
-    failed self-check. These are bugs, and retrying with the same input fails
-    again.
-  - **Aborts:** a randomized step failed and may be retried with fresh
-    randomness. Whiteout needs this class: a one-shot fold response that
-    overflows its digit range (W2) and a Σ-protocol rejection both abort, and the
-    caller retries.
+  a `Kernel(K)` variant. It is not `Box<dyn Error>`. A sumcheck error is always
+  an invariant violation or a kernel failure: retrying with the same input fails
+  again. Retryable aborts (a one-shot fold response that overflows its digit
+  range, W2, and a Σ-protocol rejection, W4) happen outside any sumcheck, so they
+  live in the prove-level errors of `jolt-zk` and Akita, and the caller retries
+  the whole proof with fresh randomness.
 - The driver checks the shape of every round message, including its degree
   against the bound. The prover self-check `s(0)+s(1) = claim` runs in release
   builds and returns a typed error, so a kernel bug surfaces at the point of
@@ -457,7 +454,7 @@ are Whiteout work.
 | M1b | Copy Akita's ring, NTT/CRT, FFT, digit decomposition, checked arithmetic, and signed accumulators into `jolt-algebra`, unchanged; one runtime SIMD dispatcher | jolt | P0 |
 | M1c | Akita switches to `jolt-algebra` and deletes those modules from `akita-algebra` | Akita `main` | P0 |
 | M1d | Delete the `jolt-field` re-export crate | jolt | P0 |
-| M2a | `jolt-sumcheck`: fallible prover, error classes (kernel error type, abort), release self-check, shape checks; round formats, challenge policies, sites, base/extension split. Additive. | jolt | P0 |
+| M2a | `jolt-sumcheck`: fallible prover with a kernel error type, release self-check, shape checks; round formats, challenge policies, sites, base/extension split. Additive. | jolt | P0 |
 | M2b | Port Akita's driver onto `jolt-sumcheck`; Akita's kernels implement the prover trait; delete `akita-sumcheck`'s driver and test-only proof types | Akita `main` | P0 |
 | M2c | Delete Jolt's superseded sumcheck call paths | jolt | P0 |
 | M3a | `jolt-transcript`: private-message seam; `ClaimRecorder` and `SumcheckRecorder` built on it | jolt | P0 |
