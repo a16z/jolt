@@ -275,11 +275,21 @@ impl ExecutionBackend for X86TracerBackend {
                 "record pass emitted a different row count than the fast pass",
             ));
         }
-        let (data, dimensions) = Observation::reassemble_rows(
+        let (rows, ram_bounds) = Observation::reassemble_rows(
             &program.expanded_bytecode,
             record.compiled.pc_map(),
-            &record.observations,
+            record.observations,
+            0,
         )?;
+        let data = TraceData::new(rows);
+        let dimensions = ExecutionDimensions {
+            trace_length: data.proof_len(),
+            ends_in_jump: data
+                .proof_rows()
+                .last()
+                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+            ram_bounds,
+        };
         Ok(TraceOutput::with_dimensions(
             dimensions,
             Arc::new(data),
@@ -302,58 +312,56 @@ impl Observation {
     fn reassemble_rows(
         bytecode: &[JoltInstructionRow],
         pc_map: &BytecodePCMapper,
-        observations: &[Self],
-    ) -> Result<(TraceData, ExecutionDimensions), TraceError> {
+        observations: Vec<Self>,
+        skip_rows: usize,
+    ) -> Result<(Vec<JoltTraceRow>, RamAddressBounds), TraceError> {
         let mut bounds = RamAddressBounds::default();
-        let mut rows = Vec::with_capacity(observations.len());
-        for observation in observations {
-            let row = bytecode
-                .get(observation.row_index as usize)
-                .ok_or(TraceError::Backend("observation row index out of range"))?;
-            let pc = pc_map
-                .get_instruction_pc(row)
-                .ok_or(TraceError::MissingBytecodePc {
-                    address: row.address as u64,
-                    virtual_sequence_remaining: row.virtual_sequence_remaining,
-                })?;
-            let pc = u32::try_from(pc).map_err(|_| TraceError::BytecodePcTooWide { pc })?;
-            let operands = row.integer_operands();
-            let access = observation.ram_access(row.instruction_kind);
-            bounds.observe(match access {
-                RamAccess::Read(read) => read.address,
-                RamAccess::Write(write) => write.address,
-                RamAccess::NoOp => 0,
-            });
-            rows.push(JoltTraceRow::new(
-                *row,
-                RegisterState {
-                    rs1: Self::register_read(operands.rs1, observation.rs1),
-                    rs2: Self::register_read(operands.rs2, observation.rs2),
-                    rd: operands.rd.map(|register| RegisterWrite {
-                        register,
-                        // x0 reads as zero on both sides of a write.
-                        pre_value: if register == 0 { 0 } else { observation.rd_pre },
-                        post_value: if register == 0 {
-                            0
-                        } else {
-                            observation.rd_post
-                        },
-                    }),
-                },
-                access,
-                pc,
-            )?);
-        }
-        let data = TraceData::new(rows);
-        let dimensions = ExecutionDimensions {
-            trace_length: data.proof_len(),
-            ends_in_jump: data
-                .proof_rows()
-                .last()
-                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
-            ram_bounds: bounds,
-        };
-        Ok((data, dimensions))
+        // Consuming the observations lets Vec's in-place collection reuse their
+        // allocation when the row layouts permit it. Conversion remains checked.
+        let rows = observations
+            .into_iter()
+            .skip(skip_rows)
+            .map(|observation| {
+                let row = bytecode
+                    .get(observation.row_index as usize)
+                    .ok_or(TraceError::Backend("observation row index out of range"))?;
+                let pc = pc_map
+                    .get_instruction_pc(row)
+                    .ok_or(TraceError::MissingBytecodePc {
+                        address: row.address as u64,
+                        virtual_sequence_remaining: row.virtual_sequence_remaining,
+                    })?;
+                let pc = u32::try_from(pc).map_err(|_| TraceError::BytecodePcTooWide { pc })?;
+                let operands = row.integer_operands();
+                let access = observation.ram_access(row.instruction_kind);
+                bounds.observe(match access {
+                    RamAccess::Read(read) => read.address,
+                    RamAccess::Write(write) => write.address,
+                    RamAccess::NoOp => 0,
+                });
+                JoltTraceRow::new(
+                    *row,
+                    RegisterState {
+                        rs1: Self::register_read(operands.rs1, observation.rs1),
+                        rs2: Self::register_read(operands.rs2, observation.rs2),
+                        rd: operands.rd.map(|register| RegisterWrite {
+                            register,
+                            // x0 reads as zero on both sides of a write.
+                            pre_value: if register == 0 { 0 } else { observation.rd_pre },
+                            post_value: if register == 0 {
+                                0
+                            } else {
+                                observation.rd_post
+                            },
+                        }),
+                    },
+                    access,
+                    pc,
+                )
+                .map_err(TraceError::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((rows, bounds))
     }
 
     fn register_read(register: Option<u8>, value: u64) -> Option<RegisterRead> {
@@ -659,12 +667,17 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             ));
         }
         observations.truncate(needed);
-        let (data, _) = Observation::reassemble_rows(
+        let (mut rows, _) = Observation::reassemble_rows(
             &checkpoint.bytecode,
             checkpoint.compiled.pc_map(),
-            &observations[checkpoint.skip_rows..],
+            observations,
+            checkpoint.skip_rows,
         )?;
-        Ok(data)
+        // The in-place conversion keeps the buffer sized for the skipped prefix
+        // and the overshoot slack; release it so a retained chunk holds only
+        // its own rows.
+        rows.shrink_to_fit();
+        Ok(TraceData::new(rows))
     }
 }
 
