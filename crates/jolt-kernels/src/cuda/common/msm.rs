@@ -13,10 +13,15 @@
 //! Affine base tables remain on their owning stream. Normalization extracts
 //! Jacobian z-coordinates, batch-inverts them on the device, and converts the
 //! selected span without downloading its coordinates.
+//!
+//! Segmented sums encode negation in the high bit of each base index. The host
+//! checks index ranges and selects thread, warp, block, or size-class reductions.
+//! One-hot chunks use Jacobian accumulators on CUDA; CPU streaming commitments
+//! use batched affine addition.
 
 use std::sync::Arc;
 
-use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, PushKernelArg};
+use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
 
 use super::context::CudaKernelContext;
 use super::error::CudaError;
@@ -60,6 +65,47 @@ impl JacobianLimbs {
     }
 }
 
+pub struct DeviceSegments {
+    indices: CudaSlice<u32>,
+    offsets: CudaSlice<u32>,
+    counts: CudaSlice<u32>,
+    segments: usize,
+    widest: usize,
+    classes: DeviceClasses,
+}
+
+impl DeviceSegments {
+    pub const fn widest(&self) -> usize {
+        self.widest
+    }
+}
+
+pub(crate) struct DeviceClasses {
+    ids: CudaSlice<u32>,
+    fat: usize,
+    thin: usize,
+}
+
+pub(crate) struct HostClasses {
+    ids: Vec<u32>,
+    fat: usize,
+}
+
+pub(crate) fn plan_classes(counts: &[u32]) -> HostClasses {
+    let total: u64 = counts.iter().map(|&count| u64::from(count)).sum();
+    let mean = total / counts.len().max(1) as u64;
+    let limit = u32::try_from(mean.saturating_mul(2).max(CLASS_FLOOR as u64)).unwrap_or(u32::MAX);
+    let mut ids = Vec::with_capacity(counts.len());
+    for (segment, _) in counts.iter().enumerate().filter(|(_, &c)| c > limit) {
+        ids.push(u32::try_from(segment).unwrap_or(u32::MAX));
+    }
+    let fat = ids.len();
+    for (segment, _) in counts.iter().enumerate().filter(|(_, &c)| c <= limit) {
+        ids.push(u32::try_from(segment).unwrap_or(u32::MAX));
+    }
+    HostClasses { ids, fat }
+}
+
 pub struct DeviceG1Bases {
     stream: Arc<CudaStream>,
     limbs: CudaSlice<u64>,
@@ -69,6 +115,14 @@ pub struct DeviceG1Bases {
 impl DeviceG1Bases {
     pub const fn count(&self) -> usize {
         self.count
+    }
+
+    pub(crate) const fn limbs(&self) -> &CudaSlice<u64> {
+        &self.limbs
+    }
+
+    pub(crate) fn ordinal(&self) -> usize {
+        self.limbs.ordinal()
     }
 
     pub fn to_host(&self) -> Result<Vec<AffineLimbs>, CudaError> {
@@ -96,6 +150,39 @@ impl DeviceG1Bases {
 const BATCH_INVERSE_TARGET_THREADS: usize = 8192;
 
 const BATCH_INVERSE_MAX_CHUNK: usize = 128;
+
+const POINT_BLOCK: u32 = 128;
+
+const MAX_BASE_INDEX: usize = 0x7fff_ffff;
+
+const SMALL_SEGMENT_LIMIT: usize = 64;
+
+const WARP_LANES: u32 = 32;
+
+const WARP_WIDEST_LIMIT: usize = 4_096;
+
+const WARP_SEGMENT_FLOOR: usize = 2_048;
+
+const CLASS_FLOOR: usize = 1_024;
+
+struct SegmentPlan<'a> {
+    indices: &'a CudaSlice<u32>,
+    offsets: &'a CudaSlice<u32>,
+    counts: &'a CudaSlice<u32>,
+    segments: usize,
+    widest: usize,
+    mode: SegmentMode,
+    classes: Option<&'a DeviceClasses>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SegmentMode {
+    Auto,
+    Small,
+    Heavy,
+    Warp,
+    Classes,
+}
 
 fn flatten_affine(points: &[AffineLimbs]) -> Vec<u64> {
     let mut flat = Vec::with_capacity(points.len() * AFFINE_LIMBS);
@@ -468,6 +555,349 @@ impl CudaKernelContext {
             count,
         })
     }
+
+    pub fn one_hot_chunk_sums(
+        &self,
+        bases: &DeviceG1Bases,
+        hot: &[Option<usize>],
+        one_hot_k: usize,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        if one_hot_k == 0 {
+            return Err(CudaError::InvariantViolation {
+                reason: "one-hot chunk sums require a nonzero address count",
+            });
+        }
+        let mut counts = vec![0u32; one_hot_k];
+        for &row in hot {
+            let Some(row) = row else { continue };
+            if row >= one_hot_k {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a one-hot address lies outside the declared address count",
+                });
+            }
+            counts[row] += 1;
+        }
+        let mut offsets = Vec::with_capacity(one_hot_k);
+        let mut running = 0u32;
+        for &count in &counts {
+            offsets.push(running);
+            running += count;
+        }
+        let mut cursor = offsets.clone();
+        let mut indices = vec![0u32; running as usize];
+        for (column, row) in hot.iter().enumerate() {
+            let Some(row) = *row else { continue };
+            if column > MAX_BASE_INDEX {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a one-hot column index exceeds the signed-index encoding",
+                });
+            }
+            indices[cursor[row] as usize] = column as u32;
+            cursor[row] += 1;
+        }
+        if bases.count() < hot.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: hot.len(),
+                got: bases.count(),
+            });
+        }
+        let plan = self.upload_segments(bases, &indices, &counts)?;
+        self.segment_sums(bases, &plan, SegmentMode::Auto)
+    }
+
+    pub fn upload_segments(
+        &self,
+        bases: &DeviceG1Bases,
+        indices: &[u32],
+        counts: &[u32],
+    ) -> Result<DeviceSegments, CudaError> {
+        let mut offsets = Vec::with_capacity(counts.len());
+        let mut running = 0u32;
+        let mut widest = 0u32;
+        for &count in counts {
+            offsets.push(running);
+            widest = widest.max(count);
+            running = running
+                .checked_add(count)
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a segment plan holds more than u32::MAX entries",
+                })?;
+        }
+        if running as usize != indices.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: running as usize,
+                got: indices.len(),
+            });
+        }
+        let base_count = u32::try_from(bases.count()).unwrap_or(u32::MAX);
+        if indices
+            .iter()
+            .any(|&index| (index & 0x7fff_ffff) >= base_count)
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "a segment plan names a base outside the uploaded table",
+            });
+        }
+        let classes = self.upload_classes(&plan_classes(counts))?;
+        Ok(DeviceSegments {
+            indices: if indices.is_empty() {
+                self.alloc_u32(1)?
+            } else {
+                self.upload_u32_slice(indices)?
+            },
+            offsets: self.upload_u32_slice(&offsets)?,
+            counts: self.upload_u32_slice(counts)?,
+            segments: counts.len(),
+            widest: widest as usize,
+            classes,
+        })
+    }
+
+    pub(crate) fn upload_classes(&self, plan: &HostClasses) -> Result<DeviceClasses, CudaError> {
+        Ok(DeviceClasses {
+            ids: if plan.ids.is_empty() {
+                self.alloc_u32(1)?
+            } else {
+                self.upload_u32_slice(&plan.ids)?
+            },
+            fat: plan.fat,
+            thin: plan.ids.len() - plan.fat,
+        })
+    }
+
+    pub fn segment_sums(
+        &self,
+        bases: &DeviceG1Bases,
+        plan: &DeviceSegments,
+        mode: SegmentMode,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        self.require_owned(bases.ordinal())?;
+        let mut output = self.alloc_u64(plan.segments * 3 * FQ_LIMBS)?;
+        self.launch_segment_sums(
+            bases,
+            SegmentPlan {
+                indices: &plan.indices,
+                offsets: &plan.offsets,
+                counts: &plan.counts,
+                segments: plan.segments,
+                widest: plan.widest,
+                mode,
+                classes: Some(&plan.classes),
+            },
+            &mut output,
+        )?;
+        Ok(unflatten_jacobian(&self.download_u64(&output)?))
+    }
+
+    const fn segment_mode(segments: usize, widest: usize, classed: bool) -> SegmentMode {
+        if widest <= SMALL_SEGMENT_LIMIT {
+            SegmentMode::Small
+        } else if classed {
+            SegmentMode::Classes
+        } else if widest <= WARP_WIDEST_LIMIT && segments >= WARP_SEGMENT_FLOOR {
+            SegmentMode::Warp
+        } else {
+            SegmentMode::Heavy
+        }
+    }
+
+    fn launch_classed_segments(
+        &self,
+        bases: &DeviceG1Bases,
+        indices: &CudaSlice<u32>,
+        offsets: &CudaSlice<u32>,
+        counts: &CudaSlice<u32>,
+        classes: &DeviceClasses,
+        output: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let warps = POINT_BLOCK / WARP_LANES;
+        let fat = Self::count_of(classes.fat)?;
+        let thin = Self::count_of(classes.thin)?;
+        let blocks = fat + thin.div_ceil(warps);
+        if blocks == 0 {
+            return Ok(());
+        }
+        let mut builder = self.stream().launch_builder(self.msm_segment_sum_classed());
+        let _ = builder.arg(bases.limbs());
+        let _ = builder.arg(indices);
+        let _ = builder.arg(offsets);
+        let _ = builder.arg(counts);
+        let _ = builder.arg(&classes.ids);
+        let _ = builder.arg(&fat);
+        let _ = builder.arg(&thin);
+        let _ = builder.arg(output);
+        // SAFETY: `ids` holds the `fat + thin` segment ids the host wrote, the
+        // fat class first, and the two classes partition the segments. A block
+        // `b < fat` takes `ids[b]` and reduces that segment across all
+        // `blockDim.x` threads through the `POINT_BLOCK * 3 * LIMBS` u64s of
+        // dynamic shared memory declared here and matching the kernel's
+        // `extern __shared__`, with `__syncthreads()` on both sides of every
+        // tree level (the branch is block-uniform, so no thread skips a
+        // barrier); only its thread 0 writes. Every other block gives each of
+        // its warps slot `(b - fat) * warps + w`, returns unless that is
+        // `< thin` — warp-uniform, so no live warp reaches a `__syncwarp()` its
+        // siblings skipped — takes `ids[fat + slot]`, and reduces inside the
+        // warp, reading only lanes of the same warp (`threadIdx.x + stride`
+        // with `stride < WARP_LANES` and `lane < stride`); only its lane 0
+        // writes. Either way the segment's `offsets`/`counts` entry delimits the
+        // only `indices` window read, and the host builds those as a partition
+        // of `indices`, so windows are disjoint across blocks and warps;
+        // `bases` is read at the affine points those indices name (masked to 31
+        // bits, checked against `bases.count()` on the host). Writes go to
+        // `out[segment]` (12 limbs) of a `segments * 12` u64 allocation distinct
+        // from every input, and the class partition makes exactly one writer per
+        // slot.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (POINT_BLOCK, 1, 1),
+                shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+        self.stream().synchronize()?;
+        Ok(())
+    }
+
+    fn launch_warp_segments(
+        &self,
+        bases: &DeviceG1Bases,
+        indices: &CudaSlice<u32>,
+        offsets: &CudaSlice<u32>,
+        counts: &CudaSlice<u32>,
+        segments: u32,
+        output: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let warps = POINT_BLOCK / WARP_LANES;
+        let mut builder = self.stream().launch_builder(self.msm_segment_sum_warp());
+        let _ = builder.arg(bases.limbs());
+        let _ = builder.arg(indices);
+        let _ = builder.arg(offsets);
+        let _ = builder.arg(counts);
+        let _ = builder.arg(&segments);
+        let _ = builder.arg(output);
+        // SAFETY: the warp `w` of block `b` owns segment `b * warps + w`, read
+        // from `offsets`/`counts` and skipped entirely when it is `>= segments`
+        // — a warp-uniform guard, so no live warp can reach a `__syncwarp()` its
+        // siblings skipped. Its lanes read only the `indices` window that
+        // segment delimits, which the host builds as a partition of `indices`
+        // (whether the segments are the caller's or the pieces of a split), so
+        // windows are disjoint across warps, and `bases` at the affine points
+        // those indices name (masked to 31 bits, checked against
+        // `bases.count()` on the host). Each lane owns `scratch[threadIdx.x]` of
+        // the `POINT_BLOCK * 3 * LIMBS` u64s declared in the launch config and
+        // matching the kernel's `extern __shared__`; the tree only ever reads
+        // lanes of the same warp (`threadIdx.x + stride` with
+        // `stride < WARP_LANES` and `lane < stride`), with `__syncwarp()` after
+        // every level. Only lane 0 writes, to `out[segment]` (12 limbs) of a
+        // `segments * 12` u64 allocation distinct from every input, so writes
+        // are one per warp and non-aliasing.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (segments.div_ceil(warps), 1, 1),
+                block_dim: (POINT_BLOCK, 1, 1),
+                shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+        self.stream().synchronize()?;
+        Ok(())
+    }
+
+    fn launch_segment_sums(
+        &self,
+        bases: &DeviceG1Bases,
+        plan: SegmentPlan<'_>,
+        output: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let SegmentPlan {
+            indices,
+            offsets,
+            counts,
+            segments,
+            widest,
+            mode,
+            classes,
+        } = plan;
+        let segment_count = Self::count_of(segments)?;
+        if segment_count == 0 {
+            return Ok(());
+        }
+        let mode = match mode {
+            SegmentMode::Auto => Self::segment_mode(segments, widest, classes.is_some()),
+            forced => forced,
+        };
+        if mode == SegmentMode::Classes {
+            let classes = classes.ok_or(CudaError::InvariantViolation {
+                reason: "the size-classed segment sum needs a host-built class plan",
+            })?;
+            if classes.fat + classes.thin != segments {
+                return Err(CudaError::LengthMismatch {
+                    expected: segments,
+                    got: classes.fat + classes.thin,
+                });
+            }
+            self.launch_classed_segments(bases, indices, offsets, counts, classes, output)?;
+            return Ok(());
+        }
+        if mode == SegmentMode::Warp {
+            return self.launch_warp_segments(
+                bases,
+                indices,
+                offsets,
+                counts,
+                segment_count,
+                output,
+            );
+        }
+        if mode == SegmentMode::Small {
+            let mut builder = self.stream().launch_builder(self.msm_segment_sum_small());
+            let _ = builder.arg(bases.limbs());
+            let _ = builder.arg(indices);
+            let _ = builder.arg(offsets);
+            let _ = builder.arg(counts);
+            let _ = builder.arg(&segment_count);
+            let _ = builder.arg(output);
+            // SAFETY: thread `s < segments` reads `offsets[s]`/`counts[s]` and
+            // only the `indices` window they delimit — the host builds those as
+            // a partition of `indices`, so windows are disjoint across threads
+            // — and reads `bases` at the affine points those indices name
+            // (masked to 31 bits, checked against `bases.count()` on the host).
+            // Small segments have one writer; larger ones are selected once
+            // by their warp's ballot and only lane 0 writes the result. Every
+            // one of the BLOCK = 256 threads, including out-of-range lanes
+            // with zero counts, reaches the full-warp ballots and shuffles.
+            // The launch bound matches BLOCK; no shared memory is required.
+            let _ = unsafe { builder.launch(Self::launch_config(segment_count)) }?;
+            self.stream().synchronize()?;
+            return Ok(());
+        }
+        let mut builder = self.stream().launch_builder(self.msm_segment_sum());
+        let _ = builder.arg(bases.limbs());
+        let _ = builder.arg(indices);
+        let _ = builder.arg(offsets);
+        let _ = builder.arg(counts);
+        let _ = builder.arg(&segment_count);
+        let _ = builder.arg(output);
+        // SAFETY: block `s < segments` reads `offsets[s]`/`counts[s]` and only
+        // the `indices` window they delimit — the host builds those as a
+        // partition of `indices`, so windows are disjoint across blocks — and
+        // reads `bases` at the affine points those indices name (every index is
+        // masked to 31 bits and checked against `bases.count()` on the host).
+        // The block reduces through `POINT_BLOCK * 3 * LIMBS` u64s of dynamic
+        // shared memory, declared in the launch config and matching the
+        // kernel's `extern __shared__`, with `__syncthreads()` on both sides of
+        // every tree level. Only thread 0 writes, to `out[s]` (12 limbs) of a
+        // `segments * 12` u64 fresh allocation, so writes are one per block and
+        // non-aliasing.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (segment_count, 1, 1),
+                block_dim: (POINT_BLOCK, 1, 1),
+                shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+        self.stream().synchronize()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -546,6 +976,7 @@ mod tests {
     use ark_bn254::{Fq, G1Affine, G1Projective};
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup};
     use ark_ff::{PrimeField, Zero};
+    use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
     use proptest::collection::vec;
     use proptest::prelude::*;
 
@@ -553,10 +984,16 @@ mod tests {
         affine, affine_limbs, arb_fq, fq_from_limbs, fq_limbs, jacobian_limbs, point, projective,
         projectives,
     };
-    use super::{AffineLimbs, JacobianLimbs, FQ_LIMBS};
+    use super::{
+        AffineLimbs, JacobianLimbs, SegmentMode, CLASS_FLOOR, FQ_LIMBS, SMALL_SEGMENT_LIMIT,
+    };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
 
     const MSM_ROW_LEN: usize = 8;
+
+    const ONE_HOT_K: usize = 5;
+
+    const SEGMENT_BASES: usize = 64;
 
     const RESIDENT_MSM_LENS: [usize; 6] = [1, 2, 255, 256, 1024, 4096];
 
@@ -570,6 +1007,58 @@ mod tests {
 
     fn msm_bases() -> Vec<G1Affine> {
         (0..MSM_ROW_LEN).map(|i| affine(i as u64 + 3)).collect()
+    }
+
+    fn segment_shapes() -> Vec<Vec<u32>> {
+        vec![
+            vec![0, 1, 31, 32, 33, 63, 64, 100, 7],
+            vec![0, 0, 0],
+            vec![0, 500, 0],
+            vec![3; 100],
+            vec![1024, 0, 0, 0, 1],
+            vec![65; 4],
+            vec![1025],
+            vec![4096],
+            vec![2049, 1, 0, 3000, 1024],
+            vec![9000, 1, 0, 4096, 5000],
+            vec![16384, 512],
+        ]
+    }
+
+    fn segment_indices(counts: &[u32], seed: u64) -> Vec<u32> {
+        let total: usize = counts.iter().map(|&count| count as usize).sum();
+        let mut state = seed | 1;
+        (0..total)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let index = (state % SEGMENT_BASES as u64) as u32;
+                index | (u32::from(state & (1 << 40) != 0) << 31)
+            })
+            .collect()
+    }
+
+    fn one_hot_chunk() -> Vec<Option<usize>> {
+        (0..MSM_ROW_LEN)
+            .map(|column| {
+                if column % 3 == 2 {
+                    None
+                } else {
+                    Some((column * 5 + 1) % (ONE_HOT_K - 1))
+                }
+            })
+            .collect()
+    }
+
+    fn columns_per_row(hot: &[Option<usize>]) -> Vec<Vec<usize>> {
+        let mut rows = vec![Vec::new(); ONE_HOT_K];
+        for (column, row) in hot.iter().copied().enumerate() {
+            if let Some(row) = row {
+                rows[row].push(column);
+            }
+        }
+        rows
     }
 
     fn affine_pairs(count: usize, offset: u64) -> (Vec<G1Affine>, Vec<G1Affine>) {
@@ -892,6 +1381,180 @@ mod tests {
                 })
                 .collect();
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn classed_segment_sums_match_the_block_kernel(seed in any::<u64>()) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
+                .map(|column| affine_limbs(affine(column as u64 + 1)))
+                .collect();
+            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+            let mut mixed = 0usize;
+            for (index, counts) in segment_shapes().into_iter().enumerate() {
+                let indices = segment_indices(&counts, seed ^ index as u64);
+                let plan = context
+                    .upload_segments(&device_bases, &indices, &counts)
+                    .expect("upload segment plan");
+                mixed += usize::from(plan.widest() > CLASS_FLOOR);
+                let expected = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
+                        .expect("block segment sums"),
+                );
+                let got = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Classes)
+                        .expect("classed segment sums"),
+                );
+                prop_assert_eq!(
+                    got,
+                    expected,
+                    "shape {} ({} segments, widest {}): the classed kernels diverged from the \
+                     block kernel",
+                    index,
+                    counts.len(),
+                    plan.widest()
+                );
+            }
+            prop_assert!(
+                mixed > 0,
+                "no shape exceeds CLASS_FLOOR, so the fat-class launch is untested"
+            );
+        }
+
+        #[test]
+        fn warp_segment_sums_match_the_block_kernels(seed in any::<u64>()) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
+                .map(|column| affine_limbs(affine(column as u64 + 1)))
+                .collect();
+            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+            for (index, counts) in segment_shapes().into_iter().enumerate() {
+                let indices = segment_indices(&counts, seed ^ index as u64);
+                let plan = context
+                    .upload_segments(&device_bases, &indices, &counts)
+                    .expect("upload segment plan");
+                let expected = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
+                        .expect("block segment sums"),
+                );
+                let got = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Warp)
+                        .expect("warp segment sums"),
+                );
+                prop_assert_eq!(
+                    got,
+                    expected.clone(),
+                    "shape {} ({} segments, widest {}): the warp kernel diverged from the \
+                     block kernel",
+                    index,
+                    counts.len(),
+                    plan.widest()
+                );
+                if plan.widest() <= SMALL_SEGMENT_LIMIT {
+                    let small = projectives(
+                        &context
+                            .segment_sums(&device_bases, &plan, SegmentMode::Small)
+                            .expect("thread segment sums"),
+                    );
+                    prop_assert_eq!(
+                        small,
+                        expected,
+                        "shape {}: the thread-per-segment kernel diverged from the block kernel",
+                        index
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn one_hot_chunk_sums_matches_arkworks(offset in 1u64..1_000) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases: Vec<G1Affine> =
+                (0..MSM_ROW_LEN).map(|i| affine(i as u64 + offset)).collect();
+            let hot = one_hot_chunk();
+            let rows = columns_per_row(&hot);
+            let expected: Vec<G1Projective> = batch_g1_additions_multi_affine(&bases, &rows)
+                .into_iter()
+                .zip(&rows)
+                .map(|(sum, columns)| {
+                    if columns.is_empty() {
+                        G1Projective::zero()
+                    } else {
+                        sum.into()
+                    }
+                })
+                .collect();
+            let device_bases = context
+                .upload_g1_bases(&bases.iter().copied().map(affine_limbs).collect::<Vec<_>>())
+                .expect("upload bases");
+            let got = projectives(
+                &context
+                    .one_hot_chunk_sums(&device_bases, &hot, ONE_HOT_K)
+                    .expect("device one_hot_chunk_sums"),
+            );
+            prop_assert_eq!(got, expected);
+        }
+    }
+
+    #[test]
+    fn small_segment_sums_handle_skew_and_partial_warps() {
+        let Some(context) = device() else { return };
+        // Base i is i times the generator, so signed index sums are an independent oracle.
+        let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
+            .map(|index| affine_limbs(affine(index as u64)))
+            .collect();
+        let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+        for segments in [1, 31, 32, 33, 255, 256, 257] {
+            let counts: Vec<u32> = (0..segments)
+                .map(|index| {
+                    if index + 1 == segments {
+                        4097
+                    } else {
+                        [0, 1, 63, 64, 65, 66, 1024][index % 7]
+                    }
+                })
+                .collect();
+            let mut indices = Vec::new();
+            let expected: Vec<G1Projective> = counts
+                .iter()
+                .enumerate()
+                .map(|(segment, &count)| {
+                    let mut sum = 0i64;
+                    for term in 0..count {
+                        let index = (term / 2 + segment as u32 + 1) % SEGMENT_BASES as u32;
+                        let negate = if segment % 2 == 0 {
+                            term % 2 != 0
+                        } else {
+                            term % 3 == 0
+                        };
+                        indices.push(index | (u32::from(negate) << 31));
+                        sum += if negate {
+                            -i64::from(index)
+                        } else {
+                            i64::from(index)
+                        };
+                    }
+                    let result = point(sum.unsigned_abs());
+                    if sum < 0 {
+                        -result
+                    } else {
+                        result
+                    }
+                })
+                .collect();
+            let plan = context
+                .upload_segments(&device_bases, &indices, &counts)
+                .expect("upload mixed segment plan");
+            let got = projectives(
+                &context
+                    .segment_sums(&device_bases, &plan, SegmentMode::Small)
+                    .expect("adaptive small segment sums"),
+            );
+            assert_eq!(got, expected, "{segments} segments");
         }
     }
 

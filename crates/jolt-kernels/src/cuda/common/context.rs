@@ -82,6 +82,14 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_affine_combine: CudaFunction,
     #[cfg(test)]
+    msm_segment_sum: CudaFunction,
+    #[cfg(test)]
+    msm_segment_sum_warp: CudaFunction,
+    #[cfg(test)]
+    msm_segment_sum_classed: CudaFunction,
+    #[cfg(test)]
+    msm_segment_sum_small: CudaFunction,
+    #[cfg(test)]
     msm_jacobian_z: CudaFunction,
     #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
@@ -159,6 +167,14 @@ impl CudaKernelContext {
             msm_affine_denominators: module.load_function("msm_affine_denominators_kernel")?,
             #[cfg(test)]
             msm_affine_combine: module.load_function("msm_affine_combine_kernel")?,
+            #[cfg(test)]
+            msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
+            #[cfg(test)]
+            msm_segment_sum_warp: module.load_function("msm_segment_sum_warp_kernel")?,
+            #[cfg(test)]
+            msm_segment_sum_classed: module.load_function("msm_segment_sum_classed_kernel")?,
+            #[cfg(test)]
+            msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
             #[cfg(test)]
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             #[cfg(test)]
@@ -383,6 +399,26 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_affine_combine(&self) -> &CudaFunction {
         &self.msm_affine_combine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_segment_sum(&self) -> &CudaFunction {
+        &self.msm_segment_sum
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_segment_sum_warp(&self) -> &CudaFunction {
+        &self.msm_segment_sum_warp
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_segment_sum_classed(&self) -> &CudaFunction {
+        &self.msm_segment_sum_classed
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_segment_sum_small(&self) -> &CudaFunction {
+        &self.msm_segment_sum_small
     }
 
     #[cfg(test)]

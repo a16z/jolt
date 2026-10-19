@@ -43,6 +43,8 @@
 //! Batched affine-pair addition uses those inversions for finite, distinct-x pairs.
 //! G1 normalization batch-inverts Jacobian z-coordinates and keeps the resulting
 //! affine base table on the device.
+//! Segmented G1 sums select thread, warp, or block reductions according to segment
+//! sizes. One-hot chunks build their segment plan on the host and sum on device.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
