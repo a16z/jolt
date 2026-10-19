@@ -43,9 +43,9 @@ pub use adapters::{
     with_single_threaded_verifier_backend,
 };
 pub use adapters::{
-    AkitaBackendFlavor, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaProverHint,
-    AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupParams, AkitaVerifierSetup,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AkitaBackendFlavor, AkitaCommitment, AkitaField, AkitaProverHint, AkitaProverSetup,
+    AkitaScheduleArtifacts, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16,
+    AKITA_ONE_HOT_K256,
 };
 pub use configs::AkitaChunkProfile;
 pub use native_batching::{

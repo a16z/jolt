@@ -5,9 +5,9 @@ use jolt_crypto::Commitment;
 use jolt_openings::{
     BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme, EvaluationClaim, GroupOpeningClaim,
     GroupOpeningWithHint, OpeningsError, TaggedGroupOpeningClaim, TransparentObjectSetup,
-    VerifierOpeningClaim, ZkBatchOpening, ZkBatchOpeningScheme, ZkOpeningScheme,
+    VerifierOpeningClaim,
 };
-use jolt_poly::{MultilinearPoly, OneHotPolynomial, Point, Polynomial, HIGH_TO_LOW};
+use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,12 +18,12 @@ use std::{
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, commit_failed, dense_polynomials, invalid_batch,
     invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackend,
-    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor,
-    AkitaBackendHint, AkitaBackendOneHotPoly, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaHintSource, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts,
-    AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup,
-    BackendVerifierCache, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
+    validate_one_hot_k, with_backend_pool, AkitaBackend, AkitaBackendCommitment,
+    AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint,
+    AkitaBackendOneHotPoly, AkitaCommitment, AkitaField, AkitaHintSource, AkitaLayoutDigest,
+    AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupFlavor, AkitaSetupParams,
+    AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
+    FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::configs::AkitaChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
@@ -820,69 +820,6 @@ impl TransparentObjectSetup for AkitaScheme {
         retagged.verifier.default_layout_digest = layout_digest;
         let verifier = retagged.verifier.clone();
         Ok((retagged, verifier))
-    }
-}
-
-impl ZkOpeningScheme for AkitaScheme {
-    type HidingCommitment = AkitaHidingCommitment;
-    type Blind = ();
-
-    fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        setup: &Self::ProverSetup,
-    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Self::commit(poly, setup)
-    }
-
-    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
-        poly: &P,
-        point: &[Self::Field],
-        eval: Self::Field,
-        setup: &Self::ProverSetup,
-        hint: Self::OpeningHint,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(Self::HidingCommitment, Self::Blind), OpeningsError> {
-        Self::open(poly, point, eval, setup, Some(hint), transcript)?;
-        Ok((AkitaHidingCommitment::new(eval), ()))
-    }
-
-    fn verify_zk<H: Sponge>(
-        _commitment: &Self::Output,
-        _point: &[Self::Field],
-        _setup: &Self::VerifierSetup,
-        _transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self::HidingCommitment, OpeningsError> {
-        Err(transparent_zk_error())
-    }
-}
-
-impl ZkBatchOpeningScheme for AkitaNativeBatching {
-    type Commitment = AkitaCommitment;
-    type HidingCommitment = AkitaHidingCommitment;
-    type Blind = ();
-
-    fn prove_batch_zk<'a, H: Sponge>(
-        _setup: &Self::ProverSetup,
-        _point: Point<HIGH_TO_LOW, Self::Field>,
-        _commitments: Vec<Self::Commitment>,
-        _polynomials: Self::Polynomials<'a>,
-        _hints: Self::Hints,
-        _evaluations: Vec<Self::Field>,
-        _transcript: &mut ProverTranscript<H>,
-    ) -> Result<ZkBatchOpening<Self>, OpeningsError>
-    where
-        Self: 'a,
-    {
-        Err(transparent_zk_error())
-    }
-
-    fn verify_batch_zk<H: Sponge>(
-        _setup: &Self::VerifierSetup,
-        _point: Point<HIGH_TO_LOW, Self::Field>,
-        _commitments: Vec<Self::Commitment>,
-        _transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self::HidingCommitment, OpeningsError> {
-        Err(transparent_zk_error())
     }
 }
 

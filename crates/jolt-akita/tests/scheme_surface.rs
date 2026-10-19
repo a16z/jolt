@@ -7,11 +7,9 @@
 mod support;
 
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaHidingCommitment, AkitaScheduleArtifacts, AkitaScheme,
-    AkitaSetupParams, AKITA_ONE_HOT_K16,
+    AkitaBackendFlavor, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
 };
-use jolt_field::{CanonicalBytes, CanonicalDecode};
-use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
+use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use support::{
     assert_transcripts_agree, f, layout, new_prover_transcript, new_verifier_transcript,
@@ -152,51 +150,4 @@ fn open_without_hint_recommits_deterministically() {
     )
     .expect("hint-free proof should verify against the original commitment");
     assert_transcripts_agree(prover_transcript, verifier_transcript);
-}
-
-/// The transparent hiding commitment is the evaluation's canonical encoding:
-/// it round-trips through the checked decoder and tracks the evaluation.
-#[test]
-fn hiding_commitment_encodes_the_evaluation() {
-    let (prover_setup, _) = setup_for(DENSE_VARS, 1, layout(7));
-    let poly = polynomial(DENSE_VARS, 50);
-    let point: Vec<_> = (0..DENSE_VARS).map(|index| f(index as u64 + 2)).collect();
-    let eval = poly.evaluate(&point);
-    let (_, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).expect("commit_zk succeeds");
-
-    let mut transcript = new_prover_transcript(b"akita-hiding");
-    let (hiding, ()) = AkitaScheme::open_zk(
-        &poly,
-        &point,
-        eval,
-        &prover_setup,
-        hint.clone(),
-        &mut transcript,
-    )
-    .expect("open_zk should produce a hiding commitment");
-    let encoded = hiding.to_bytes_le_vec();
-    assert_eq!(encoded, eval.to_bytes_le_vec());
-    assert_eq!(
-        AkitaHidingCommitment::from_bytes_le_checked(&encoded),
-        Some(hiding.clone())
-    );
-
-    let mut other_point = point.clone();
-    other_point[DENSE_VARS - 1] += f(1);
-    let other_eval = poly.evaluate(&other_point);
-    assert_ne!(eval, other_eval, "fixture needs distinct evaluations");
-    let mut transcript = new_prover_transcript(b"akita-hiding");
-    let (other_hiding, ()) = AkitaScheme::open_zk(
-        &poly,
-        &other_point,
-        other_eval,
-        &prover_setup,
-        hint,
-        &mut transcript,
-    )
-    .expect("open_zk should produce a hiding commitment");
-    assert_ne!(
-        hiding, other_hiding,
-        "distinct evaluations must encode distinctly"
-    );
 }
