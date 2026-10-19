@@ -13,17 +13,18 @@ Design only. Labels refer to `akita-paper/sections/whiteout/` (read
   (§6.2). The script gives six blocks, 6,220,582 coordinates, and two
   distinct widths: `σ ≈ 1.366·10⁷ (2^23.70)` for `w`, `t_hat`, `const_ops`
   and `σ ≈ 8.536·10⁵ (2^19.70)` for `anchor_salt`, `pads`, `pad_salt`.
- 
+  Realized: `k_b = 16,080,468` and `1,005,030`.
 - **Realized widths.** The sampler (§2) needs `σ_b = k_b·σ_2` with integer
   `k_b` and `σ_2 = 1/√(2 ln 2)`. The parameter layer rounds `k_b` up. A wider
   width keeps `‖cs‖_σ ≤ 1/α`, and the box and digit counts are derived from
   the realized `σ_b`.
 - **Vectors.** Each private coordinate of `s` is a ring element. Its `d`
   coefficients are i.i.d. `D_{σ_b}`, lifted to F_q by a constant-time
-  select of `z` or `q − |z|`. Public coordinates get `y = 0`, and that branch
-  depends only on the public layout (§4.2 "Public coordinates").
+  select of `z` or `q − |z|`. Public coordinates get `y = 0`, are excluded
+  from every block, and never enter the rejection step; that branch depends
+  only on the public layout (§4.2 "Public coordinates").
 - **Tail.** There is no separate tail cut; the sampler's support ends at
-  `13k_b ≈ 15.3σ_b` (§2). The acceptance box `𝓑` is
+  `14k_b ≈ 16.5σ_b` (§2). The acceptance box `𝓑` is
   `|z_i| ≤ L_b = ⌊τσ_b⌋`, with `τ = √(2 ln(2N/(1−p_𝓑))) ≈ 6.82` for
   `p_𝓑 ≥ 0.999` (§2.5, bound after Thm `wo:thm:joint-rejection`). §4.3
   requires `𝓑 ⊆ 𝓑_cert`.
@@ -51,13 +52,15 @@ A CDT for the target width is infeasible: `τσ ≈ 10⁸` entries. The sampler
 is BLISS's binary-Gaussian method (Ducas et al. 2013, Alg. 10–11), made
 isochronous as in Howe–Prest–Ricosset–Rossi 2020. One trial for block `b`:
 
-1. Draw `x ← D⁺_{σ_2}` (`∝ 2^{−x²}`, `x ∈ [0,12]`) from a 13-entry CDT
-   with 192-bit entries. The whole table is scanned; `x` is the sum of the
-   `u ≥ T[j]` bits, computed with constant-time compares.
+1. Draw `x ← D⁺_{σ_2}` (`∝ 2^{−x²}`, `x ∈ [0,13]`) from 13 CDT
+   thresholds `T_j = ⌊2^{192}·Pr[X ≤ j]⌋`, `j ∈ [0,12]`. The whole table is
+   scanned; `x` is the sum of the `u ≥ T_j` bits, computed with
+   constant-time compares. The dropped mass `Pr[X ≥ 14] ≈ 2^{−196.6}` is
+   below the table's resolution.
 2. Draw `y` uniform in `[0, k_b)` with the shared uniform rejection sampler.
 3. Set `z = k_b x + y`. Accept with probability
-   `exp(−(y² + 2k_b xy)/(2σ_b²)) = 2^{−N/k_b²}`, where `N = y² + 2k_b xy < 25k_b²`.
-   `2^{−N/k_b²}` is computed as a product over all `ℓ_b = ⌈log₂ 25k_b²⌉`
+   `exp(−(y² + 2k_b xy)/(2σ_b²)) = 2^{−N/k_b²}`, where `N = y² + 2k_b xy < 27k_b²`.
+   `2^{−N/k_b²}` is computed as a product over all `ℓ_b = ⌈log₂ 27k_b²⌉`
    bits of `N` (53 and 45 bits here). Every factor is a constant-time select
    between 1 and a public 192-bit entry `2^{−2^i/k_b²}`. Then compare with
    one 192-bit uniform.
@@ -75,34 +78,64 @@ isochrony argument), and `k_b` is public. So the running time depends on
 independent coins only, never on the output or the witness. Secret data
 gets no hardware division, no `f64`, and no table index.
 
-**Precision.** The CDT error is at most `13·2^{−192}`, the support cut costs
-`2^{−169}`, and the exp product is accurate to `53·2^{−190}`. A trial is
-then within `2^{−168}` of exact and an output within `2^{−167}`. Counting
-every sample of every attempt, `6.2·10⁶ × 163 ≈ 2^{29.9}`, the sampler adds
-at most `2^{−137}` to Thm `wo:thm:zk`'s `2^{−128.8}` (§6.2 asks
-implementations to add this term).
+**Constants.** Every runtime constant (`T_j`, `2^{−2^i/k_b²}`,
+`2^{−2^i/Q}`, `M^{−1}`) is computed directly in `new` from public inputs by
+a variable-time big-integer fixed-point routine at 320-bit working
+precision (`ln 2` by its binary series, `exp` by Taylor series after range
+reduction, square root by integer `sqrt`). Its error is below `2^{−300}`,
+and each constant is then floored to 192 bits, so it lies in
+`(x − 2^{−192}, x]`. Constants are never derived from one another; for
+example, repeated squaring of `2^{−1/k²}` would amplify the error by about
+`2^{52}`. Tests compare them with mpmath vectors (400-bit).
+
+**Precision.** Per trial, the CDT floors move at most `26·2^{−192}` of mass,
+the exp product has absolute error at most `(2ℓ_b+1)·2^{−192}` (`ℓ_b`
+truncations, `ℓ_b` floored factors, and the initial `1 − 2^{−192}`), and
+the dropped tail is `2^{−196.6}`. The trial's joint law of `(accept, z)` is
+then within `δ ≤ 134·2^{−192} ≈ 2^{−184.9}`, and one output is within
+`2δ/P_acc ≈ 2^{−183.3}` (`P_acc ≈ 0.68` per trial). Over every sample of
+every attempt, `6.2·10⁶ × 163 ≈ 2^{29.9}` at the headline configuration
+and about `2^{34}` at larger traces, the sampler adds at most `2^{−149}` to
+Thm `wo:thm:zk`'s `2^{−128.8}` (§6.2 asks implementations to add this
+term).
 
 **Randomness.** `R: RngCore + CryptoRng` (rand_core 0.6, as
 `whiteout-interfaces.md` §5). For parallel sampling, the caller draws one
-32-byte seed from `R` per chunk and expands it with ChaCha20.
+32-byte seed from `R` per chunk and expands it with ChaCha20. This adds a
+PRG assumption on ChaCha20 to the otherwise statistical zero-knowledge
+argument (the prover's coins are pseudorandom, not uniform).
 
 ## 3. Rejection rule in constant time
 
-- `S_b` and `V_b` are exact `i128` multiply-accumulates. With `|z| < 2^{28}`,
-  `|v| < 2^{13}` (`‖c‖₁ = 53` times digits ≤ 128), and `N_b < 2^{23}`, the
-  sums stay below `2^{64}`.
-- Box membership is an AND of constant-time compares across all coordinates,
-  with no early exit.
-- `X = P/Q` with `Q = Π k_b²` over the distinct widths (`< 2^{96}`) and
-  `P` in `I256`. A constant-time `div_rem` by the public `Q` splits `X`
-  into `n + r/Q` (crypto-bigint `Uint` shift-subtract; never `udiv`).
-- `2^{r/Q}` uses the same bit-product method (`⌈log₂ Q⌉` public factors).
-  `2^n` is a barrel shift by constant-time selects, clamped to `n ≥ −256`,
-  where the probability is already below `2^{−200}`.
-- `M^{−1}` is rounded down to 192 bits. That is exact for some `M' ≥ M`, and
-  Thm `wo:thm:joint-rejection` holds for any larger `M`.
-- Compare `P_acc` with a 192-bit uniform. The relative error is at most
-  `2^{−182}` per attempt, negligible beside `ε`.
+- **Shift bound.** `v = cs` must be the exact centred-integer negacyclic
+  product (not a reduction mod q). Each block carries a public bound
+  `|v_i| ≤ V_b` (honestly `‖c‖₁ ·` max digit). `accept` checks it in
+  constant time over all coordinates and returns a typed error only when
+  it fails, which an honest prover never triggers.
+- `S_b = Σ z_i v_i` and `V_b = Σ v_i²` are exact `i128` sums over `z`
+  clamped (constant time) to the box, so arithmetic never overflows even
+  for an out-of-box `z`, which is rejected anyway. At the headline
+  configuration `|V_b − 2S_b| < 2^{66}` and `Q/k_b² < 2^{48}`, so
+  `P = Σ_b (V_b − 2S_b)·Q/k_b²` fits `i128`. `new` checks the worst case
+  `Σ_b (2L_bV_b + V_b²)·len_b·Q/k_b² < 2^{126}` and rejects the
+  parameters otherwise.
+- Box membership is an AND of constant-time compares across all
+  coordinates, with no early exit.
+- `X = P/Q` with `Q = Π k_b²` over the distinct widths (`2^{87.8}` here).
+  A constant-time restoring division (128 fixed iterations of
+  shift-compare-select; never `udiv`) gives the floor quotient `n` and
+  `r ∈ [0, Q)`, with a constant-time sign fix for negative `P`.
+- `2^X/M = 2^{n+1}·G` with `G = 2^{−(Q−r)/Q}·M^{−1} ∈ (1/8, 1/2)`.
+  `2^{−(Q−r)/Q}` uses the bit-product method over `⌈log₂ Q⌉ + 1` public
+  factors `2^{−2^i/Q}`. `n` is clamped to `[−256, 2]` in constant time.
+  For `n + 1 ≤ 0`, `G` is shifted right by a barrel shifter of
+  constant-time selects; for `n + 1 > 0` the result saturates at 1 when the
+  top `n + 1` bits of `G` are nonzero, so nothing wraps.
+- `M` is computed in `new` from `(α, ε bits)`: `t = √(2·ε_bits·ln 2)`,
+  `M = exp(t/α + 1/(2α²))`. `M^{−1}` is floored to 192 bits, which is exact
+  for some `M' ≥ M`; Thm `wo:thm:joint-rejection` holds for any larger `M`.
+- Compare the result with a 192-bit uniform. Its absolute error is below
+  `2^{−181}` per attempt, negligible beside `ε`.
 
 Only the accept bit (`Choice`) leaves the step; `jolt-zk::whiteout`
 branches on it. Its law depends on the state only within `ε/M` (H3 of Thm
@@ -111,35 +144,51 @@ branches on it. Its law depends on the state only within `ε/M` (H3 of Thm
 ## 4. API sketch (`jolt_crypto::sample`)
 
 ```rust
-pub struct GaussianWidth { k: u64 }               // σ = k·σ_2, k ≥ 1
+pub struct GaussianWidth { k: u64 }               // σ = k·σ_2, 1 ≤ k ≤ 2^31
 impl GaussianWidth {
+    pub fn from_multiplier(k: u64) -> Result<Self, SampleError>;
     pub fn at_least(sigma: f64) -> Result<Self, SampleError>;    // public parameter path only
+    pub fn multiplier(&self) -> u64;
     pub fn sigma(&self) -> f64;
 }
-pub struct GaussianSampler { width: GaussianWidth, exp_table: Box<[U192]> }
+pub struct GaussianSampler { /* k, CDT, exp table */ }
 impl GaussianSampler {
     pub fn new(width: GaussianWidth) -> Self;
     pub fn sample<R: RngCore + CryptoRng>(&self, rng: &mut R) -> i64;
     pub fn fill<R: RngCore + CryptoRng>(&self, rng: &mut R, out: &mut [i64]);
 }
-/// Public: widths per block, box L_b, M (rounded up). Built once from parameters.
-pub struct JointRejection { blocks: Vec<BlockParams>, m_inv: U192 }
-pub struct BlockParams { pub width: GaussianWidth, pub bound: u64, pub len: usize }
+/// Public parameters, built once. Blocks cover only Gaussian-masked
+/// coordinates; public coordinates are excluded.
+pub struct BlockParams { pub width: GaussianWidth, pub box_bound: u64, pub shift_bound: u64, pub len: usize }
+pub struct JointRejection { /* blocks, Q, exp table, M^{-1} */ }
 impl JointRejection {
-    pub fn new(blocks: Vec<BlockParams>, m: f64) -> Result<Self, SampleError>;
-    /// `z`, `v` laid out block-major; lengths fixed by `blocks`.
+    /// Computes M = exp(t/α + 1/(2α²)), t = √(2·epsilon_bits·ln 2).
+    pub fn new(blocks: Vec<BlockParams>, alpha: u32, epsilon_bits: u32) -> Result<Self, SampleError>;
+    /// `z = y + v` and `v = cs` (exact centred-integer negacyclic product),
+    /// block-major, lengths fixed by `blocks`.
     pub fn accept<R: RngCore + CryptoRng>(&self, z: &[i64], v: &[i64], rng: &mut R)
         -> Result<Choice, SampleError>;
 }
-pub enum SampleError { ZeroWidth, WidthTooLarge, LengthMismatch { expected: usize, got: usize }, BoxExceedsSupport }
+pub enum SampleError { WidthOutOfRange, NoBlocks, BadRejectionParameters,
+    ArithmeticBound, LengthMismatch { expected: usize, got: usize }, ShiftOutOfRange }
 ```
 
-Errors cover public shape only. `jolt-zk::whiteout` owns attempts,
+Errors cover public shape, plus `ShiftOutOfRange` (the release check on
+`v`).
+
+**Dependencies.** `subtle` (2.6.1, already in `Cargo.lock` through the
+arkworks and sha3 stacks) for `Choice` and constant-time selects. The
+192-bit arithmetic is a three-limb hand-written type, so `crypto-bigint`
+(0.5.5, also already locked) is not needed. `num-bigint` (already an
+optional dependency of jolt-crypto) becomes unconditional for the public
+constant computation. `jolt-zk::whiteout` owns attempts,
 nonces, and `T_att` (`whiteout-interfaces.md` §5).
 
 ## 5. Verification
 
-- **Ground truth.** For `σ ≫ η_ε(Z) ≈ 5.6`, the discrete Gaussian's
+- **Ground truth.** For `σ ≫ η_ε(Z) ≈ 5.6` (smoothing parameter in the
+  `ρ_s(x) = e^{−πx²/s²}` convention, `ε = 2^{−140}`, which corresponds to
+  width `σ = s/√(2π) ≈ 2.2` in this note's convention), the discrete Gaussian's
   binned mass equals the normal CDF to within f64 precision, by the Poisson
   summation formula. That gives the test oracle.
 - **Chi-square tests.** Point-wise at small `k ∈ {1, 2, 3, 10}` against the
@@ -166,11 +215,15 @@ nonces, and `T_att` (`whiteout-interfaces.md` §5).
 
 ## 6. Performance
 
-Estimated, not measured: a trial is 13 three-limb compares plus up to 53
-192-bit multiplications, about 100–200 ns on one core, so 150–300 ns per
-sample. 6.22·10⁶ samples × 2.37 attempts on 16 threads take 0.14–0.28 s,
-against the paper's 10 ns/sample assumption (0.15 s; §6 "Limitations of the
-model"). The upper end adds about 0.13 s to the 1.15 s overhead.
+Estimated: a trial is 13 three-limb compares plus 53 sequential 192-bit
+multiplications (each a dependent 3×3-limb product), about 0.25–0.4 µs on
+one core, so about 0.35–0.6 µs per sample at 1.47 trials. The cost script
+charges `Ns · att · T_GAUSS = 6.22·10⁶ × 2.37 × 10 ns = 0.148 s` with no
+thread count. Under the same accounting, 16 threads with perfect scaling
+give 0.33–0.55 s, which moves the 4.7% prover overhead to about 5.5–6.5%;
+serial accounting would give 5–9 s, which would dominate the overhead. The
+sampler's cost is therefore a thread-count assumption the paper should
+state.
 
 ## 7. Open questions
 
@@ -183,5 +236,5 @@ model"). The upper end adds about 0.13 s to the 1.15 s overhead.
    `⌊τσ_b⌋` or the envelope? Either must satisfy `𝓑 ⊆ 𝓑_cert`.
 3. **Block list.** The paper names no blocks; the script defines six. The
    paper should list them, or W4 should derive them from `PadLayout`.
-4. **`|v|` bound.** The `i128` headroom assumes digits ≤ 128 (`const_ops`
-   base 256). This must be rechecked if the alphabets change.
+Q1 and Q3 are paper-author decisions and do not block M5a: the API is
+generic over the block list and the precision argument is statistical.
