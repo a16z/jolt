@@ -225,6 +225,10 @@ serial accounting would give 5–9 s, which would dominate the overhead. The
 sampler's cost is therefore a thread-count assumption the paper should
 state.
 
+Measured (M5a implementation, `examples/sample_dudect.rs`, Apple M4 Max,
+one thread): 0.51 µs per sample at `k = 16,080,468`, including timer
+overhead.
+
 ## 7. Open questions
 
 1. **Precision versus Rényi divergence.** Statistical distance forces
