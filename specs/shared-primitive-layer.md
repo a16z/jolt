@@ -514,6 +514,71 @@ graph LR
   RP5 --> After["After Whiteout: M7, M8, M9, M10, M11"]
 ```
 
+### Development workflow
+
+Review points govern what lands upstream, not how fast the work proceeds. All
+development happens on one integration branch per repo, which runs as far ahead
+of upstream as needed. At each review point, the tickets due are extracted into
+PRs by cherry-picking.
+
+**Branches.**
+
+| Repo | Integration branch | Started from | Extraction targets |
+|---|---|---|---|
+| jolt (a16z/jolt) | `whiteout/dev` | the transcript-unification branch (#2000) | `main` |
+| Akita (LayerZero-Labs/akita) | `whiteout/dev` | Akita `dev`, plus #185 merged in | `main` for seams (M1c, M2b, M3b, M5c); `dev` for the rest |
+
+The integration branches never merge into upstream `main` or `dev`; only
+extracted PRs do. They are never force-pushed, because several agents share
+them. The jolt integration branch pins Akita's `whiteout/dev` by revision
+through ordinary pin commits, and the Akita integration branch pins jolt's. For
+local work across both repos, an untracked `.cargo/config.toml` `[patch]`
+pointing at sibling checkouts replaces the pins without committing them.
+
+**Commits.** Extraction works only if the history is already shaped like the
+PRs:
+
+- Every commit belongs to exactly one ticket and one repo, and its subject
+  starts with the ticket ID: `[M2a] jolt-sumcheck: add RoundFormat`. Pin bumps
+  are tagged `[pin]` and upstream syncs are merge commits; neither is ever
+  extracted.
+- A change to a ticket that already has commits is a new commit tagged with that
+  ticket: `fixup! [M2a] ...`. Extraction squashes it in.
+- Work follows ticket order. A commit for a ticket depends only on commits for
+  the same ticket or for tickets earlier in the review-point order.
+- The add-first rule holds on the integration branch too. Making a breaking
+  change in both repos at once would be faster to write, but it would have to be
+  rewritten at extraction.
+- Akita seam tickets touch only code that also exists on Akita `main`, so they
+  cherry-pick onto `main` cleanly.
+
+**Extraction.** For each ticket due at a review point:
+
+1. Branch `whiteout/pr/<ticket>` from the upstream target.
+2. Cherry-pick the ticket's commits in order, squashing its `fixup!` commits.
+3. Set pins to upstream revisions only, never an integration revision.
+4. Run that repo's suites, check the I3 byte-identical claim, and open the PR.
+
+A ticket that does not cherry-pick cleanly signals a commit-discipline problem.
+Fix that on the integration branch with a `fixup!`, not only in the PR.
+
+**Convergence.** Once a PR merges upstream (possibly changed in review), merge
+the upstream branch into the integration branch. Conflicts in that ticket's code
+resolve to the upstream version, because landed code is canonical. Then run the
+combined suites. Merge upstream into the integration branches at every
+review-point gate and whenever upstream moves under unlanded work.
+
+**Testing the integration branches.** Agents run the full jolt suites, the Akita
+suites, and the combined `akita` + `zk` build locally before pushing. To get CI
+on them, each repo keeps a draft PR from `whiteout/dev` titled
+"DO NOT MERGE: Whiteout integration".
+
+**Cost.** The further the integration branch runs ahead of what has landed, the
+more convergence work each review produces. When review changes a ticket
+heavily, later tickets that build on it are re-resolved against the landed
+version during convergence. That cost is accepted in exchange for never waiting
+on a review to keep working.
+
 ### Deferred tickets
 
 M7–M11 run after RP5, each as its own add-then-remove sequence. While they wait,
