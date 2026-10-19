@@ -662,7 +662,9 @@ mod tests {
         let input_claim = relation.input_claim(&inputs, &challenges).unwrap();
         assert_eq!(input_claim, claimed_sum);
         let mut recorder = ClearSumcheckRecorder::<Fr>::new();
-        recorder.absorb_input_claims(&[input_claim], &mut prover_transcript);
+        recorder
+            .absorb_input_claims(&[input_claim], &mut prover_transcript)
+            .unwrap();
         let coefficient: Fr = prover_transcript.challenge();
         let prelude = BatchPrelude::new(
             vec![BatchMember {

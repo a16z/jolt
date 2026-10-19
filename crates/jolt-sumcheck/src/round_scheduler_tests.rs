@@ -62,7 +62,9 @@ fn traversal_fixture() -> (
 
     let mut transcript = prover(b"traversal-seam");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
-    recorder.absorb_input_claims(&[sum_long, sum_short], &mut transcript);
+    recorder
+        .absorb_input_claims(&[sum_long, sum_short], &mut transcript)
+        .unwrap();
     let coeff_long: F = transcript.challenge_small();
     let coeff_short: F = transcript.challenge_small();
     let prelude = BatchPrelude::new(

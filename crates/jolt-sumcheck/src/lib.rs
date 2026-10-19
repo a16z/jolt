@@ -33,6 +33,7 @@
 //! | [`prover`] | [`ProveRounds`], [`prove_batch`], and the uni-skip provers — the prove-side engine |
 //! | [`prover`] | [`RoundScheduler`] / [`SequentialRounds`] — the per-round member-traversal seam |
 //! | [`recorder`] | [`SumcheckRecorder`] — the clear/ZK proof-recording seam |
+//! | [`single`] | [`prove_single`] / [`verify_single`] — one unbatched instance, compressed or eq-factored, under a round context |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
 //! | [`round_proof`] | Round polynomials on the wire: fixed-width full and compressed forms |
@@ -49,6 +50,7 @@
 //! - [`CommittedOutputClaims<C>`] — row commitments to a committed sumcheck's output claims.
 //! - [`BooleanHypercube`] — the standard `{0,1}` sumcheck round domain.
 //! - [`CenteredIntegerDomain`] — centered consecutive-integer sumcheck round domain.
+//! - [`EqFactoredRound`] — one equality-factored round, checked on `q` at `τ`.
 //! - [`SumcheckError`] — error variants, including `RoundCheckFailed`,
 //!   `DegreeBoundExceeded`, and `Transcript`.
 //!
@@ -103,6 +105,7 @@ pub mod prover;
 pub mod r1cs;
 pub mod recorder;
 pub mod round_proof;
+pub mod single;
 pub mod verifier;
 
 #[cfg(all(test, feature = "committed"))]
@@ -118,7 +121,9 @@ pub use committed::{
     BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedSumcheckConsistency,
     CommittedSumcheckWitness, VerifiedCommittedRound,
 };
-pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
+pub use domain::{
+    BooleanHypercube, CenteredIntegerDomain, EqFactoredRound, SumcheckDomain, SumcheckDomainSpec,
+};
 pub use error::SumcheckError;
 pub use prover::{
     prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
@@ -136,7 +141,11 @@ pub use r1cs::{
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, SumcheckRecorder};
 pub use round_proof::{
-    padded_coefficients, receive_compressed_round, receive_full_round, send_compressed_round,
-    send_full_round,
+    padded_coefficients, receive_compressed_round, receive_full_round, receive_private_value,
+    send_compressed_round, send_full_round, send_private_value,
+};
+pub use single::{
+    prove_single, verify_single, ProverRoundContext, SingleFormat, SingleInstance, SingleReduction,
+    SumcheckRole, SumcheckSite, VerifierRoundContext,
 };
 pub use verifier::SumcheckVerifier;

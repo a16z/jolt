@@ -40,7 +40,7 @@ fn main() -> Result<(), SumcheckError<F>> {
 
     let mut prover_transcript = ProverTranscript::<Keccak>::new(&PROTOCOL, SESSION);
     let mut recorder = ClearSumcheckRecorder::<F>::new();
-    recorder.absorb_input_claims(&[claim.claimed_sum], &mut prover_transcript);
+    recorder.absorb_input_claims(&[claim.claimed_sum], &mut prover_transcript)?;
     let coefficient: F = prover_transcript.challenge_small();
     let prelude = BatchPrelude::try_new(
         vec![BatchMember {

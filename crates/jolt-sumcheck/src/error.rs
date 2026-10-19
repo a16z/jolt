@@ -207,4 +207,25 @@ pub enum SumcheckError<F: Field> {
         /// Number of challenges supplied.
         got: usize,
     },
+
+    /// A single-instance sumcheck declared degree bound zero.
+    #[error("sumcheck degree bound must be at least 1")]
+    ZeroDegreeBound,
+
+    /// The prover kernel's round count disagrees with the instance.
+    #[error("sumcheck instance declares {expected} rounds, prover reports {got}")]
+    RoundCountMismatch { expected: usize, got: usize },
+
+    /// An equality-factored instance's equality point has the wrong length.
+    #[error("equality point has {got} coordinates for {expected} rounds")]
+    EqualityPointLengthMismatch { expected: usize, got: usize },
+
+    /// A single-instance shape whose round indices do not fit a transcript
+    /// site, or whose proof size `degree × rounds` overflows.
+    #[error("sumcheck shape of {rounds} rounds at degree {degree} is not representable")]
+    ShapeOverflow { rounds: usize, degree: usize },
+
+    /// An equality-factored instance declared no rounds.
+    #[error("equality-factored sumcheck needs at least one round")]
+    EqFactoredZeroRounds,
 }

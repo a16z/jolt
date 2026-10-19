@@ -52,8 +52,15 @@ const DELEGATION_INVENTORY: &str = "tests/fs_inventory/delegation-sites.inventor
 const SITE_INVENTORY: &str = "tests/fs_inventory/site-tags.inventory";
 const SOURCE_INVENTORY: &str = "tests/fs_inventory/source-schema.inventory";
 
-/// Public-input absorbs on a [`jolt_transcript::Channel`].
-const ABSORB_METHODS: &[&str] = &["public", "public_all", "public_bytes"];
+/// Public-input absorbs on a [`jolt_transcript::Channel`], and derived claims
+/// bound through the [`jolt_transcript::PrivateChannel`] seam.
+const ABSORB_METHODS: &[&str] = &[
+    "public",
+    "public_all",
+    "public_bytes",
+    "bind_derived",
+    "bind_derived_base",
+];
 /// Prover messages: written by `ProverTranscript`, read by `VerifierTranscript`,
 /// or exchanged role-generically through `Channel`.
 const MESSAGE_METHODS: &[&str] = &[
@@ -71,6 +78,8 @@ const MESSAGE_METHODS: &[&str] = &[
     "check_grind",
     "exchange",
     "exchange_all",
+    "exchange_private",
+    "exchange_private_base",
 ];
 const CHALLENGE_METHODS: &[&str] = &[
     "challenge",
@@ -83,6 +92,8 @@ const CHALLENGE_METHODS: &[&str] = &[
 /// (`PCS::send_commitment(..)`, `<PCS as CommitmentScheme>::..`).
 const PCS_ABSORBS: &[&str] = &["absorb_commitment"];
 const PCS_MESSAGES: &[&str] = &["send_commitment", "receive_commitment"];
+/// `jolt-sumcheck`'s single-value private-message helpers, recognised by name.
+const PRIVATE_VALUE_MESSAGES: &[&str] = &["send_private_value", "receive_private_value"];
 
 /// Types whose shape is part of the proof or of the public statement. The
 /// header and commitments are the proof's leading prover messages; the
@@ -756,7 +767,9 @@ impl<'ast> Visit<'ast> for InventoryVisitor<'_> {
             .to_owned();
         if PCS_ABSORBS.contains(&name.as_str()) {
             self.record_with_expression(Kind::Absorb, &name, expression);
-        } else if PCS_MESSAGES.contains(&name.as_str()) {
+        } else if PCS_MESSAGES.contains(&name.as_str())
+            || PRIVATE_VALUE_MESSAGES.contains(&name.as_str())
+        {
             self.record_with_expression(Kind::Message, &name, expression);
         } else if expression
             .args

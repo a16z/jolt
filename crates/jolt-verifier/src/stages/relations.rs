@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use jolt_blindfold::OpeningAlias;
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
+use jolt_sumcheck::receive_private_value;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
@@ -407,7 +408,7 @@ where
         let id: ComposedOpeningId = (*id).into();
         let source = match routes.of(&id, &static_aliases) {
             ClaimRoute::Sent => {
-                let value: F = transcript.receive()?;
+                let (value, _pads) = receive_private_value(transcript)?;
                 let _ = received.insert(id, value);
                 return Ok(value);
             }

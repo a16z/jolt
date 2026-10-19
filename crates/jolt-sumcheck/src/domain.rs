@@ -85,6 +85,24 @@ where
     }
 }
 
+/// One round of an equality-factored sumcheck, `s(X) = eq(τ, X) · q(X)`,
+/// checked on `q`: `(1 − τ) q(0) + τ q(1) = claim`, i.e. weights
+/// `[1, τ, τ, …]` on `q`'s coefficients. The claim is normalized: it is the
+/// previous round's `q` at its challenge, without the eq factors, which the
+/// caller applies at the terminal check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EqFactoredRound<E> {
+    pub tau: E,
+}
+
+impl<E: Field> SumcheckDomain<E> for EqFactoredRound<E> {
+    fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<E>, SumcheckError<E>> {
+        Ok(core::iter::once(E::one())
+            .chain(core::iter::repeat_n(self.tau, degree))
+            .collect())
+    }
+}
+
 /// Collisions among this many leading offsets are reported before the power
 /// sums are computed, so a small characteristic is named even when the power
 /// sums would overflow. The remaining offsets are scanned only once the power

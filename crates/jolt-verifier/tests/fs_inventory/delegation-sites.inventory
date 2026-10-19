@@ -160,6 +160,12 @@ jolt-sumcheck::prover.rs::prove_uniskip_committed::.finish#1
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_round::send_compressed_round#0
 jolt-sumcheck::recorder.rs::CommittedSumcheckRecorder<'_,F,VC,R>::absorb_round::.commit_round#0
 jolt-sumcheck::recorder.rs::CommittedSumcheckRecorder<'_,F,VC,R>::finish::.finish#0
+jolt-sumcheck::round_proof.rs::receive_compressed_round::receive_private#0
+jolt-sumcheck::round_proof.rs::receive_full_round::receive_private#0
+jolt-sumcheck::single.rs::prove_single::mark#0
+jolt-sumcheck::single.rs::prove_single::mark#2
+jolt-sumcheck::single.rs::verify_single::mark#0
+jolt-sumcheck::single.rs::verify_single::mark#2
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::receive_full_round#0
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::receive_compressed_round#0
 jolt-verifier::proof.rs::JoltProof::header::ProofHeader::receive#0

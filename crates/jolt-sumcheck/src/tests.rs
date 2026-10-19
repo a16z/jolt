@@ -11,7 +11,10 @@
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};
+use jolt_transcript::{
+    Blake2b512, Channel, PrivateChannel, ProtocolId, ProverTranscript, TranscriptError,
+    VerifierTranscript,
+};
 
 use crate::batch::{BatchMember, BatchPrelude};
 use crate::claim::{SumcheckClaim, SumcheckStatement};
@@ -410,7 +413,9 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
 
     let mut prover_transcript = prover(b"recorder");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
-    recorder.absorb_input_claims(&[claimed_sum], &mut prover_transcript);
+    recorder
+        .absorb_input_claims(&[claimed_sum], &mut prover_transcript)
+        .unwrap();
 
     let mut buf = evals;
     for _round in 0..num_vars {
@@ -564,12 +569,12 @@ impl ProveRounds<F> for FusedDenseMember {
 
 /// The `begin_batch` head both roles run: input claims absorbed by the
 /// recorder (publicly for the clear one), then one coefficient per member.
-fn batch_head<R: SumcheckRecorder<F>, C: Channel>(
-    recorder: &mut R,
-    input_claims: &[F],
-    channel: &mut C,
-) -> Vec<F> {
-    recorder.absorb_input_claims(input_claims, channel);
+fn batch_head<R, C>(recorder: &mut R, input_claims: &[F], channel: &mut C) -> Vec<F>
+where
+    R: SumcheckRecorder<F, Error = SumcheckError<F>>,
+    C: Channel + PrivateChannel<Error = TranscriptError>,
+{
+    recorder.absorb_input_claims(input_claims, channel).unwrap();
     channel.challenges_small(input_claims.len())
 }
 

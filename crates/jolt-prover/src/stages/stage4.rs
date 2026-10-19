@@ -187,7 +187,7 @@ where
     // proof sends them before the batch; a committed proof carries them in its
     // output-claim rows instead.
     if !<ModeRecorder<'_, VC> as ClaimRecorder>::RECORDS_STAGED {
-        ram_val_check_init.staged_openings().send(transcript);
+        ram_val_check_init.staged_openings().send(transcript)?;
     }
 
     let inputs = stage4_input_values_from_upstream(

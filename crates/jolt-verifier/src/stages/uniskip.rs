@@ -23,8 +23,8 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::CanonicalDecode;
 use jolt_field::JoltField;
 use jolt_sumcheck::{
-    CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckStatement,
-    SumcheckVerifier,
+    receive_private_value, CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim,
+    SumcheckStatement, SumcheckVerifier,
 };
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
@@ -158,7 +158,7 @@ where
         transcript,
     )
     .map_err(|error| params.sumcheck_failed(error))?;
-    let output_claim: F = transcript.receive()?;
+    let (output_claim, _pads) = receive_private_value(transcript)?;
     if reduction.value != output_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: params.stage_number,

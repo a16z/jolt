@@ -273,7 +273,9 @@ fn external_field_runs_stock_clear_prover_and_verifier() {
     let input_claim = ExternalField::from_u64(8);
     let mut prover_transcript = ProverTranscript::<Keccak>::new(&PROTOCOL, SESSION);
     let mut recorder = ClearSumcheckRecorder::<ExternalField>::new();
-    recorder.absorb_input_claims(&[input_claim], &mut prover_transcript);
+    recorder
+        .absorb_input_claims(&[input_claim], &mut prover_transcript)
+        .unwrap();
     let coefficient: ExternalField = prover_transcript.challenge_small();
     let prelude = BatchPrelude::try_new(
         vec![BatchMember {

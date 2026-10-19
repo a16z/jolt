@@ -35,8 +35,12 @@ pub struct EqFactoredRound<E> { pub tau: E }
 impl<E: Field> SumcheckDomain<E> for EqFactoredRound<E> { /* weights [1, τ, τ, …] */ }
 ```
 
-`SumcheckDomainSpec` gains the matching variant. Recovery of the omitted
-coefficient stays with jolt-poly (`CompressedPoly`, `OmittedConstantPoly`).
+`SumcheckDomainSpec` gains no variant yet: τ differs per round, so the spec
+would need the equality point, and nothing consumes it until BlindFold lowers
+an eq-factored instance; that ticket adds a τ-carrying form. Recovery of the omitted
+coefficient stays with jolt-poly (`CompressedPoly`, and
+`OmittedConstantPoly::{constant_from_claim, evaluate_from_claim}` for
+q0 = claim − τ · (q(1) − q0)).
 
 Two facts the drivers and masking rely on:
 
@@ -81,27 +85,22 @@ caller needs `prove_single`.
 ### Kernels and errors
 
 ```rust
-pub trait ProveRounds<E: Field, K = Infallible> {
+pub trait ProveRounds<E: Field, Err = SumcheckError<E>> {
     fn num_rounds(&self) -> usize;
     /// For eq-factored instances, returns the full q. Kernels that produce
     /// [q1..qd] rebuild q0 with the jolt-poly recovery, not a local formula.
     fn prove_round(&mut self, bind: Option<E>, round: usize, previous_claim: E)
-        -> Result<UnivariatePoly<E>, SumcheckError<E, K>>;
-    fn finish_rounds(&mut self, bind: E) -> Result<(), SumcheckError<E, K>>;
-}
-
-pub enum SumcheckError<E, K = Infallible> { /* existing variants */ Kernel(K) }
-impl<E> SumcheckError<E, Infallible> {
-    pub fn widen<K>(self) -> SumcheckError<E, K>;
+        -> Result<UnivariatePoly<E>, Err>;
+    fn finish_rounds(&mut self, bind: E) -> Result<(), Err>;
 }
 ```
 
-`K` appears only on `prove_single`/`verify_single` and the kernels they drive.
-The batched engine keeps `K = Infallible`, so `MemberRound`, `MemberFinish`, and
-`RoundScheduler` do not change. A blanket `From` impl is impossible
-(conflicts with `impl<T> From<T> for T`), so internal helpers return
-`SumcheckError<E>` and the single driver calls `widen`. Akita uses
-`K = AkitaError`. Akita's fused-API adapter runs `bind_challenge(round − 1, b)`
+`SumcheckError<E>` keeps one parameter. `prove_single`/`verify_single` are
+generic over the caller's `Err: From<SumcheckError<E>>`, which the kernel and
+the round context also return, so a kernel failure reaches the caller
+unchanged. The batched engine keeps the default `Err = SumcheckError<E>`, so
+`MemberRound`, `MemberFinish`, and `RoundScheduler` do not change. Akita uses
+`Err = AkitaError` with `impl From<SumcheckError<E>> for AkitaError`. Akita's fused-API adapter runs `bind_challenge(round − 1, b)`
 then `round_polynomial` inside `prove_round`, and `bind_challenge` then
 `finish` inside `finish_rounds`.
 
@@ -120,28 +119,50 @@ pub struct SingleInstance<E> {
 }
 
 /// Byte-for-byte Akita's `prove_sumcheck` / `prove_eq_factored_sumcheck` in clear
-/// mode: input claim bound through the recorder at the Claim site; per round,
-/// wire coefficients at the RoundBody site, then `context.challenge`. Sends no
-/// output claims.
-pub fn prove_single<F, E, K, C, R>(
-    member: &mut dyn ProveRounds<E, K>,
+/// mode: input claim through `bind_derived` at the Claim site; per round,
+/// wire coefficients through `exchange_private` at the RoundBody site, then
+/// `context.challenge`. Sends no output claims.
+pub fn prove_single<F, E, Err, C>(
+    member: &mut dyn ProveRounds<E, Err>,
     instance: &SingleInstance<E>,
     context: &mut C,
-    recorder: &mut R,
-) -> Result<ProvedSingle<E>, SumcheckError<E, K>>
+) -> Result<SingleReduction<E>, Err>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
-    C: ProverRoundContext<E, Error = K>,
-    R: SumcheckRecorder<E, Error = K>;
+    Err: From<SumcheckError<E>>,
+    C: ProverRoundContext<E, Error = Err>;
 
-/// Replays the rounds and returns (output claim, challenges) before any oracle
-/// check, as Akita's `verify_*_rounds` do; Akita exchanges late claims first.
-pub fn verify_single<F, E, K, C>(/* mirror */) -> Result<SingleReplay<E>, SumcheckError<E, K>>;
+/// Replays the rounds and returns the reduction before any oracle check, as
+/// Akita's `verify_*_rounds` do; Akita exchanges late claims first.
+pub fn verify_single<F, E, Err, C>(/* mirror */) -> Result<SingleReduction<E>, Err>;
+
+/// Both roles' result: challenges and the final (normalized) running claim.
+pub struct SingleReduction<E> { pub challenges: Vec<E>, pub output_claim: E }
 ```
+
+Both drivers validate the shape before any transcript operation, as Akita's
+`SumcheckShape` and `GruenSplitEq::new` do: `degree ≥ 1`, `rounds ≤ u32::MAX`,
+`degree × rounds` representable, and for eq-factored instances `rounds ≥ 1` and
+one equality coordinate per round.
 
 `τ_i = equality_point[i]` matches `GruenSplitEq::current_tau` (checked against
 Akita); M2b pins it with a byte-identity test.
+
+A base field drives the driver as `F = E` only through a reflexive
+`ExtField<F> for F`, which every `PseudoMersenne` field has. `Fr` has none, and
+gets one only with a production caller of `prove_single` over `Fr`. A blanket
+reflexive impl over all fields is not possible: a type with a second
+`ExtField` impl (`F192: ExtField<F64>`, `FpExt2<F, _>: ExtField<F>`) would
+make `T::DEGREE` ambiguous wherever it is named concretely.
+
+`prove_single` takes no recorder. Like `verify_single`, it calls
+`bind_derived` and `exchange_private` on `context.transcript_mut()`, so the
+two roles are symmetric. Masked mode is supplied through the context's
+channel, which also assigns the verifier's pad slots (designed in M6b). A
+`SumcheckRecorder<E>` cannot serve here anyway: its `absorb_round` draws
+`challenge_small`, which needs `E: CanonicalEncoding`, and extension fields
+implement only `CanonicalDecode`.
 
 ## 2. Private messages (M3a)
 
@@ -159,21 +180,39 @@ pub struct PadSlots { /* start, len */ }
 /// returns the pad slots the prover used.
 pub trait PrivateChannel {
     type Error;
-    /// Exchanges `values` in place (filled from the proof on the verifier).
+    /// Exchanges `values` in place: the prover leaves them unchanged, the
+    /// verifier fills them from the proof.
     fn exchange_private<F, E>(&mut self, values: &mut [E]) -> Result<PadSlots, Self::Error>
     where F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode;
     /// Binds a claim the verifier can already derive. Clear: absorbed as a
     /// public value. Masked: nothing, since earlier masked slots bind it.
     fn bind_derived<F, E>(&mut self, claim: &E) -> Result<(), Self::Error>
     where F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode;
+    /// The same for elements of the pad field itself, one pad each.
+    fn exchange_private_base<F>(&mut self, values: &mut [F]) -> Result<PadSlots, Self::Error>
+    where F: Field + CanonicalEncoding;
+    fn bind_derived_base<F>(&mut self, claim: &F) -> Result<(), Self::Error>
+    where F: Field + CanonicalEncoding;
 }
 ```
+
+The base forms exist because Jolt is generic over `F: JoltField` and
+`F: ExtField<F>` is not available generically: there is no blanket reflexive
+impl (see §1), and adding `ExtField<Self>` to `JoltField` would make
+`F192`'s `ExtField<F64>` API ambiguous at every concrete call. Jolt's
+batched recorder, uni-skip round and claimed evaluations use the base forms,
+single claimed values through `jolt-sumcheck`'s `send_private_value` /
+`receive_private_value`, which return the `PadSlots`; `prove_single` and
+`verify_single` use the extension forms.
 
 Pads cover base-field coordinates, so an extension element takes `E::DEGREE`
 pads. `SumcheckRecorder` is built on this seam: input claims go through
 `bind_derived`, round coefficients and output claims through `exchange_private`.
 `SumcheckRecorder` and `PrivateChannel` carry an associated `Error`, so pad
-exhaustion has a channel in both.
+exhaustion has a channel in both. `absorb_input_claims` is fallible and takes
+any `PrivateChannel<Error = TranscriptError>`. The clear and committed
+recorders use `Error = SumcheckError<F>`, which the batched engine and the
+generated drivers require.
 
 Messages that go through the seam:
 

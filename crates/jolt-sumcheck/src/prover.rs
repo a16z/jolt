@@ -23,7 +23,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{Channel, ProverTranscript, Sponge};
+use jolt_transcript::{Channel, PadSlots, ProverTranscript, Sponge};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -33,7 +33,7 @@ use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
 use crate::domain::{CenteredIntegerDomain, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::recorder::SumcheckRecorder;
-use crate::round_proof::{padded_coefficients, send_full_round};
+use crate::round_proof::{padded_coefficients, send_full_round, send_private_value};
 
 /// One batch member's prove-side round interface, consumed by
 /// [`prove_batch`]'s round loop. Object-safe on purpose: a stage's members are
@@ -52,7 +52,11 @@ use crate::round_proof::{padded_coefficients, send_full_round};
 /// engine threads the challenge bookkeeping: `bind` is `None` exactly on the
 /// member's first active round, and the final active round's challenge arrives
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
-pub trait ProveRounds<F: Field> {
+///
+/// `Err` is the kernel's failure type. Batch members keep the default;
+/// [`prove_single`](crate::prove_single) drives kernels with any `Err` that
+/// embeds [`SumcheckError`].
+pub trait ProveRounds<F: Field, Err = SumcheckError<F>> {
     fn num_rounds(&self) -> usize;
 
     /// Bind `bind` — the member's previous active round's challenge (`None`
@@ -66,12 +70,12 @@ pub trait ProveRounds<F: Field> {
         bind: Option<F>,
         round: usize,
         previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+    ) -> Result<UnivariatePoly<F>, Err>;
 
     /// Bind the member's final active round's challenge. Called once by the
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
+    fn finish_rounds(&mut self, bind: F) -> Result<(), Err>;
 }
 
 pub struct MemberRound<'a, F: Field> {
@@ -191,7 +195,7 @@ pub fn prove_batch<F, R, H>(
 ) -> Result<ProvedBatch<F>, SumcheckError<F>>
 where
     F: Field,
-    R: SumcheckRecorder<F>,
+    R: SumcheckRecorder<F, Error = SumcheckError<F>>,
     H: Sponge,
 {
     if members.len() != prelude.members.len() {
@@ -415,7 +419,7 @@ where
     send_full_round(&round_poly, degree, transcript)?;
     let challenge = transcript.challenge_small();
     let output_claim = round_poly.evaluate(challenge);
-    transcript.send(&output_claim);
+    let _: PadSlots = send_private_value(output_claim, transcript)?;
 
     Ok(ProvedUniskip {
         challenge,

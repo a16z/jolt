@@ -542,8 +542,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #krate::VerifierError,
             >
             where
-                __R: ::jolt_sumcheck::SumcheckRecorder<#f>,
-                __C: ::jolt_transcript::Channel,
+                __R: ::jolt_sumcheck::SumcheckRecorder<#f, Error = ::jolt_sumcheck::SumcheckError<#f>>,
+                __C: ::jolt_transcript::Channel
+                    + ::jolt_transcript::PrivateChannel<Error = ::jolt_transcript::TranscriptError>,
             {
                 use #relations::ConcreteSumcheck as _;
                 use ::jolt_transcript::Channel as _;
@@ -556,7 +557,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
                 let mut __input_claims = ::std::vec::Vec::new();
                 #(#sum_collects)*
-                recorder.absorb_input_claims(&__input_claims, transcript);
+                recorder
+                    .absorb_input_claims(&__input_claims, transcript)
+                    .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
+                        stage: #base_lit.to_string(),
+                        reason: error.to_string(),
+                    })?;
 
                 #(#coeff_draws)*
                 let __coefficients = #batching_coefficients_name {

@@ -111,7 +111,9 @@ fn run_batched_roundtrip<F: Field + CanonicalEncoding>(
 
     let mut prover_transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, b"batched");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
-    recorder.absorb_input_claims(&[input_claim], &mut prover_transcript);
+    recorder
+        .absorb_input_claims(&[input_claim], &mut prover_transcript)
+        .unwrap();
     let coefficient: F = prover_transcript.challenge_small();
     let prelude = BatchPrelude::try_new(
         vec![BatchMember {

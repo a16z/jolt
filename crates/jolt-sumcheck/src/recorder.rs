@@ -23,7 +23,9 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{Channel, ProverTranscript, Sponge};
+use jolt_transcript::{
+    Channel, PadSlots, PrivateChannel, ProverTranscript, Sponge, TranscriptError,
+};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -36,16 +38,30 @@ use crate::round_proof::send_compressed_round;
 /// abstracting over clear vs. committed (ZK) recording: `absorb_input_claims`
 /// once (from `begin_batch`), `absorb_round` per round (returning the
 /// Fiat-Shamir challenge), then `finish` with the flattened output-claim values.
+///
+/// The clear recorder is written against the private-message seam
+/// ([`PrivateChannel`]): input claims are derived claims, round coefficients
+/// and output claims are private messages.
 pub trait SumcheckRecorder<F: Field> {
     /// What the prover retains after recording: nothing for a clear recorder,
     /// the openings of every commitment sent for a committed one.
     type Witness;
 
+    /// Why recording failed: a [`SumcheckError`] for the clear and committed
+    /// recorders; a masking recorder may add pad exhaustion.
+    type Error;
+
     /// Absorb the batch's per-member input claims (present members, in
-    /// declaration order). Clear: absorbed as public values. Committed: no-op,
+    /// declaration order). Clear: bound as derived claims. Committed: no-op,
     /// since the claims' commitments were already sent by the stage that
     /// produced them, so the transcript never sees the scalars.
-    fn absorb_input_claims<C: Channel>(&mut self, input_claims: &[F], channel: &mut C);
+    fn absorb_input_claims<C>(
+        &mut self,
+        input_claims: &[F],
+        channel: &mut C,
+    ) -> Result<(), Self::Error>
+    where
+        C: PrivateChannel<Error = TranscriptError>;
 
     /// Record one round polynomial of degree bound `degree` and draw the round
     /// challenge. Clear: sent compressed. Committed: its commitment is sent.
@@ -54,7 +70,7 @@ pub trait SumcheckRecorder<F: Field> {
         round_poly: &UnivariatePoly<F>,
         degree: usize,
         transcript: &mut ProverTranscript<H>,
-    ) -> Result<F, SumcheckError<F>>;
+    ) -> Result<F, Self::Error>;
 
     /// Record the flattened output-claim values (canonical order). Clear: each
     /// value is sent. Committed: the values are row-committed and only the
@@ -63,10 +79,10 @@ pub trait SumcheckRecorder<F: Field> {
         self,
         output_claim_values: &[F],
         transcript: &mut ProverTranscript<H>,
-    ) -> Result<Self::Witness, SumcheckError<F>>;
+    ) -> Result<Self::Witness, Self::Error>;
 }
 
-/// The clear recorder: absorbs input claims publicly and sends compressed
+/// The clear recorder: binds input claims publicly and sends compressed
 /// round polynomials and output claims, exactly what the clear verifier reads
 /// back.
 pub struct ClearSumcheckRecorder<F> {
@@ -89,9 +105,20 @@ impl<F> ClearSumcheckRecorder<F> {
 
 impl<F: Field + CanonicalEncoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
     type Witness = ();
+    type Error = SumcheckError<F>;
 
-    fn absorb_input_claims<C: Channel>(&mut self, input_claims: &[F], channel: &mut C) {
-        channel.public_all(input_claims);
+    fn absorb_input_claims<C>(
+        &mut self,
+        input_claims: &[F],
+        channel: &mut C,
+    ) -> Result<(), SumcheckError<F>>
+    where
+        C: PrivateChannel<Error = TranscriptError>,
+    {
+        for claim in input_claims {
+            channel.bind_derived_base(claim)?;
+        }
+        Ok(())
     }
 
     fn absorb_round<H: Sponge>(
@@ -109,7 +136,7 @@ impl<F: Field + CanonicalEncoding> SumcheckRecorder<F> for ClearSumcheckRecorder
         output_claim_values: &[F],
         transcript: &mut ProverTranscript<H>,
     ) -> Result<(), SumcheckError<F>> {
-        transcript.send_all(output_claim_values);
+        let _: PadSlots = transcript.exchange_private_base(&mut output_claim_values.to_vec())?;
         Ok(())
     }
 }
@@ -152,8 +179,18 @@ where
     R: RngCore,
 {
     type Witness = CommittedSumcheckWitness<F>;
+    type Error = SumcheckError<F>;
 
-    fn absorb_input_claims<C: Channel>(&mut self, _input_claims: &[F], _channel: &mut C) {}
+    fn absorb_input_claims<C>(
+        &mut self,
+        _input_claims: &[F],
+        _channel: &mut C,
+    ) -> Result<(), SumcheckError<F>>
+    where
+        C: PrivateChannel<Error = TranscriptError>,
+    {
+        Ok(())
+    }
 
     fn absorb_round<H: Sponge>(
         &mut self,

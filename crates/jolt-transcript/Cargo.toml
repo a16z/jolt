@@ -34,6 +34,7 @@ jolt-field = { path = "../jolt-field", default-features = false }
 
 [dev-dependencies]
 criterion = { workspace = true }
+jolt-field = { path = "../jolt-field", default-features = false, features = ["solinas"] }
 
 [[bench]]
 name = "transcript_ops"
@@ -51,6 +52,10 @@ required-features = [
   "transcript-keccak",
   "transcript-poseidon",
 ]
+
+[[test]]
+name = "private"
+required-features = ["transcript-blake2b"]
 
 [[test]]
 name = "narg"
