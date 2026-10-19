@@ -638,9 +638,11 @@ work:
       are reported against the paper's estimate.
 - [ ] M6c: clear, ZK, and verifier-fixture suites pass, and the ZK fixtures are
       regenerated.
-- [ ] M5a: the Gaussian sampler and the rejection rule have no branch, loop
-      bound, or memory address that depends on secret data, confirmed by review
-      of the generated code. A documented dudect-style timing tool
+- [ ] M5a: in the Gaussian sampler and the rejection rule, every branch, loop
+      bound, and memory address is independent of the output and the witness,
+      confirmed by review of the generated code. (The sampler's trial loop
+      depends on fresh coins but not on the output, which rejection sampling
+      guarantees.) A documented dudect-style timing tool
       (fixed-vs.-random secret inputs) shows no detectable timing difference.
       The tool is kept as an intentional diagnostic, not a CI test.
 - [ ] I4: no shared eq or multilinear-evaluation API takes an untyped `&[F]`
