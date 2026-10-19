@@ -20,7 +20,10 @@ use crate::CryptoError;
 use jolt_field::parallel::*;
 use std::sync::{Arc, LazyLock};
 
-use crate::challenge::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
+use crate::challenge::{
+    OperatorNormRejection, SparseChallenge, SparseChallengeConfig,
+    D128_SELECTIVE_L2_CHALLENGE_CONFIG, D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+};
 
 use op_norm::OpNormTable;
 
@@ -30,7 +33,7 @@ const MAX_OP_NORM_ATTEMPTS: usize = 4096;
 const PARALLEL_SAMPLING_WORK_THRESHOLD: usize = 1 << 14;
 static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
     LazyLock::new(|| {
-        let config = crate::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let config = D64_SELECTIVE_L2_CHALLENGE_CONFIG;
         let policy = OperatorNormRejection::D64_SELECTIVE_L2;
         let table = OpNormTable::new(
             64,
@@ -51,7 +54,7 @@ static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'stati
     });
 static D128_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
     LazyLock::new(|| {
-        let config = crate::challenge::D128_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let config = D128_SELECTIVE_L2_CHALLENGE_CONFIG;
         let policy = OperatorNormRejection::D128_SELECTIVE_L2;
         let table = OpNormTable::new(
             128,
@@ -335,12 +338,12 @@ mod tests {
         for (ring_d, cfg, rejection) in [
             (
                 64,
-                crate::challenge::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+                D64_SELECTIVE_L2_CHALLENGE_CONFIG,
                 OperatorNormRejection::D64_SELECTIVE_L2,
             ),
             (
                 128,
-                crate::challenge::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+                D128_SELECTIVE_L2_CHALLENGE_CONFIG,
                 OperatorNormRejection::D128_SELECTIVE_L2,
             ),
         ] {

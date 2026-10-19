@@ -42,6 +42,7 @@
 use crate::CryptoError;
 
 use super::op_norm_accumulate;
+use super::op_norm_accumulate::FUSED_CHUNK_FREQS;
 
 /// Internal fixed-point scale for the certified `pi` and trig interval math.
 /// Chosen so that products of two scaled values stay within `i128`
@@ -296,7 +297,7 @@ fn decide_transposed_fused(
     let mut indeterminate = false;
     let mut start_k = 0;
     while start_k < num_freqs {
-        let len = (num_freqs - start_k).min(op_norm_accumulate::FUSED_CHUNK_FREQS);
+        let len = (num_freqs - start_k).min(FUSED_CHUNK_FREQS);
         let (acc_re, acc_im) = op_norm_accumulate::accumulate_transposed_chunk(
             table, positions, coeffs, start_k, len, num_freqs,
         );

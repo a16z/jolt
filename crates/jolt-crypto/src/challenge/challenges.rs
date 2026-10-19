@@ -1,10 +1,11 @@
 //! Sampled sparse challenges for one folding round.
 
-use crate::challenge::SparseChallenge;
+use crate::challenge::{SparseChallenge, SparseChallengePositions};
 use crate::CryptoError;
 #[cfg(feature = "parallel")]
 use jolt_field::parallel::*;
 use jolt_field::{ExtField, Field, Ring};
+use std::sync::Arc;
 
 #[cfg(feature = "parallel")]
 // Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
@@ -26,7 +27,7 @@ const PARALLEL_FINE_TOTAL_TERMS: usize = 1 << 17;
 )]
 pub struct Challenges {
     /// Per-(claim, block) sparse challenges.
-    challenges: std::sync::Arc<[SparseChallenge]>,
+    challenges: Arc<[SparseChallenge]>,
     /// Exact number of live blocks packed into one claim.
     num_live_blocks_per_claim: usize,
     /// Number of claims represented by this vector.
@@ -241,7 +242,7 @@ impl Challenges {
         }
         let embed = |challenge: &SparseChallenge| {
             challenge.validate_dyn(challenge_subring_dimension)?;
-            let mut positions = crate::challenge::SparseChallengePositions::new();
+            let mut positions = SparseChallengePositions::new();
             positions
                 .try_reserve_exact(challenge.positions.len())
                 .map_err(|_| {

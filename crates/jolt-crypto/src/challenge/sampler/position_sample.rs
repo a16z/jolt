@@ -216,12 +216,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::challenge::sampler::IndexedXofPrefix;
 
     #[test]
     fn sparse_virtual_permutation_matches_dense_partial_fisher_yates() {
         for (universe, weight) in [(128usize, 7usize), (256, 23), (1024, 16), (2048, 14)] {
             let seed = [universe.trailing_zeros() as u8; 32];
-            let prefix = crate::challenge::sampler::IndexedXofPrefix::new(&seed).unwrap();
+            let prefix = IndexedXofPrefix::new(&seed).unwrap();
             let mut dense_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut sparse_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut dense = vec![0u32; weight];
