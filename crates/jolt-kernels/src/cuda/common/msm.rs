@@ -1,5 +1,9 @@
 //! BN254 base-field and G1 arithmetic on the device.
 //!
+//! Row MSMs use Pippenger buckets built by device count/scan/scatter passes.
+//! G1 window batches use a memory budget informed by free device memory and
+//! fall back to sequential windows when the batch does not fit.
+//!
 //! Inputs and outputs use four Montgomery limbs per field element. Each GPU
 //! thread inverts a chunk using its output range for prefix products; zero
 //! entries remain zero.
@@ -28,6 +32,7 @@ use std::sync::Arc;
 use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
 
 use super::context::CudaKernelContext;
+use super::device::DeviceFrVec;
 use super::error::CudaError;
 use super::xfer_stats::{self, Phase};
 
@@ -169,6 +174,51 @@ const WARP_SEGMENT_FLOOR: usize = 2_048;
 
 const CLASS_FLOOR: usize = 1_024;
 
+const FR_SCALAR_BITS: usize = 254;
+
+const MAX_WINDOW_BITS: usize = 16;
+
+const TARGET_REDUCE_BLOCKS: usize = 1024;
+
+const BATCHED_WINDOW_BYTES: usize = 64 << 20;
+
+const MAX_G1_BATCHED_WINDOW_BYTES: usize = 4 << 30;
+
+struct DeviceScalars<'a> {
+    values: &'a CudaSlice<u64>,
+    limbs: usize,
+}
+
+struct IndexPlan<'a> {
+    scalars: &'a CudaSlice<u64>,
+    scalar_limbs: usize,
+    signs: &'a CudaSlice<u8>,
+    row_len: usize,
+    buckets: usize,
+    segments: usize,
+    lane: usize,
+    shifts: &'a [usize],
+}
+
+struct BucketIndex {
+    indices: CudaSlice<u32>,
+    offsets: CudaSlice<u32>,
+    counts: CudaSlice<u32>,
+    widest: usize,
+}
+
+struct PassPlan<'a> {
+    bases: &'a DeviceG1Bases,
+    scalars: &'a CudaSlice<u64>,
+    scalar_limbs: usize,
+    signs: &'a CudaSlice<u8>,
+    row_len: usize,
+    buckets: usize,
+    rows: usize,
+    lane: usize,
+    shifts: &'a [usize],
+}
+
 struct SegmentPlan<'a> {
     indices: &'a CudaSlice<u32>,
     offsets: &'a CudaSlice<u32>,
@@ -186,6 +236,14 @@ pub enum SegmentMode {
     Heavy,
     Warp,
     Classes,
+}
+
+fn window_bits(row_len: usize) -> usize {
+    if row_len < 32 {
+        3
+    } else {
+        ((row_len as f64).ln() as usize + 2).min(MAX_WINDOW_BITS)
+    }
 }
 
 fn flatten_affine(points: &[AffineLimbs]) -> Vec<u64> {
@@ -497,6 +555,28 @@ impl CudaKernelContext {
         Ok(unflatten_affine(&self.download_u64(&output)?))
     }
 
+    pub fn msm_rows_fr(
+        &self,
+        bases: &DeviceG1Bases,
+        rows: &DeviceFrVec,
+        row_len: usize,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        let canonical = self.canonical_scalars(rows)?;
+        let signs = self.alloc_u8(rows.len())?;
+        let accumulator = self.pippenger_device(
+            bases,
+            DeviceScalars {
+                values: &canonical,
+                limbs: FQ_LIMBS,
+            },
+            &signs,
+            rows.len(),
+            row_len,
+            FR_SCALAR_BITS,
+        )?;
+        Ok(unflatten_jacobian(&self.download_u64(&accumulator)?))
+    }
+
     pub fn upload_raw_u64(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
         self.upload_u64_slice(values)
     }
@@ -609,6 +689,34 @@ impl CudaKernelContext {
         self.segment_sums(bases, &plan, SegmentMode::Auto)
     }
 
+    fn canonical_scalars(&self, values: &DeviceFrVec) -> Result<CudaSlice<u64>, CudaError> {
+        let mut output = self.alloc_u64(values.len() * FQ_LIMBS)?;
+        if values.is_empty() {
+            return Ok(output);
+        }
+        let count = Self::count_of(values.len())?;
+        let mut builder = self.stream().launch_builder(self.msm_from_montgomery());
+        let _ = builder.arg(values.limbs());
+        let _ = builder.arg(&mut output);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads only `values[i]` and writes only
+        // `out[i]` (4 limbs each); both buffers hold `count * LIMBS` u64s and
+        // `out` is a fresh allocation distinct from the input. Threads with
+        // `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    fn reduce_chunks(rows: usize, buckets: usize) -> usize {
+        if rows == 0 || buckets <= 1 {
+            return 1;
+        }
+        let saturated = (buckets - 1) / POINT_BLOCK as usize;
+        let wanted = TARGET_REDUCE_BLOCKS.div_ceil(rows);
+        saturated.min(wanted).max(1)
+    }
+
     fn launch_bucket_reduce_chunked(
         &self,
         bucket_points: &CudaSlice<u64>,
@@ -696,6 +804,128 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    fn batched_window_bytes(rows: usize, buckets: usize, windows: usize, len: usize) -> usize {
+        let segments = windows.saturating_mul(rows).saturating_mul(buckets);
+        // Include counts, offsets, cursors and scan scratch alongside the buckets.
+        let bucket_bytes =
+            segments.saturating_mul(3 * FQ_LIMBS * size_of::<u64>() + 4 * size_of::<u32>());
+        let index_bytes = windows
+            .saturating_mul(len)
+            .saturating_mul(2 * size_of::<u32>() + size_of::<u8>());
+        let output_bytes = windows
+            .saturating_mul(rows)
+            .saturating_mul(3 * FQ_LIMBS * size_of::<u64>());
+        bucket_bytes
+            .saturating_add(index_bytes)
+            .saturating_add(output_bytes)
+    }
+
+    fn batched_window_budget(free: usize) -> usize {
+        (free / 8).clamp(BATCHED_WINDOW_BYTES, MAX_G1_BATCHED_WINDOW_BYTES)
+    }
+
+    fn batched_windows(
+        &self,
+        rows: usize,
+        buckets: usize,
+        windows: usize,
+        len: usize,
+    ) -> Result<bool, CudaError> {
+        let bytes = Self::batched_window_bytes(rows, buckets, windows, len);
+        if windows <= 1 || bytes > MAX_G1_BATCHED_WINDOW_BYTES {
+            return Ok(false);
+        }
+        if bytes <= BATCHED_WINDOW_BYTES {
+            return Ok(true);
+        }
+        let (free, _) = self.stream().context().mem_get_info()?;
+        Ok(bytes <= Self::batched_window_budget(free))
+    }
+
+    fn bucket_index_pass(&self, plan: IndexPlan<'_>) -> Result<BucketIndex, CudaError> {
+        let IndexPlan {
+            scalars,
+            scalar_limbs,
+            signs,
+            row_len,
+            buckets,
+            segments,
+            lane,
+            shifts,
+        } = plan;
+        let total = lane.saturating_mul(shifts.len());
+        let count = Self::count_of(total)?;
+        let lane_count = Self::count_of(lane)?;
+        let row_len_arg = Self::count_of(row_len)?;
+        let buckets_arg = Self::count_of(buckets)?;
+        let mask = Self::count_of(buckets - 1)?;
+        let limbs_arg = Self::count_of(scalar_limbs)?;
+
+        let mut digits = self.alloc_u32_unset(total)?;
+        for (index, &shift_bits) in shifts.iter().enumerate() {
+            let shift = Self::count_of(shift_bits)?;
+            let mut lane_digits = digits.slice_mut(index * lane..(index + 1) * lane);
+            let mut builder = self.stream().launch_builder(self.msm_digits());
+            let _ = builder.arg(scalars);
+            let _ = builder.arg(&lane_count);
+            let _ = builder.arg(&limbs_arg);
+            let _ = builder.arg(&shift);
+            let _ = builder.arg(&mask);
+            let _ = builder.arg(&mut lane_digits);
+            // SAFETY: thread `i < lane_count` reads only `scalars[i]` (4 limbs of
+            // a `lane * LIMBS` buffer) and writes only element `i` of the
+            // `lane`-element view `digits[index * lane ..]`, so lanes are
+            // disjoint and in bounds. The digit extraction reads at most limbs
+            // `shift/64` and `shift/64 + 1`, both bounds-checked in the kernel.
+            let _ = unsafe { builder.launch(Self::launch_config(lane_count)) }?;
+        }
+
+        let mut counts = self.alloc_u32(segments)?;
+        let mut builder = self.stream().launch_builder(self.msm_bucket_count());
+        let _ = builder.arg(&digits);
+        let _ = builder.arg(&count);
+        let _ = builder.arg(&row_len_arg);
+        let _ = builder.arg(&buckets_arg);
+        let _ = builder.arg(&mut counts);
+        // SAFETY: thread `i < count` reads `digits[i]` and atomically increments
+        // `counts[(i / row_len) * buckets + digit]`. The digit is masked to
+        // `buckets - 1` by the digit kernel and `i / row_len < rows` because
+        // `count = rows * row_len`, so the index stays inside the
+        // `segments = rows * buckets` u32 allocation, which was zeroed by
+        // `alloc_u32`. The increment is an atomic, so concurrent hits on one
+        // counter are safe.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+
+        let offsets = self.exclusive_scan_u32_on_device(&counts, segments)?;
+        let mut cursor = self.clone_u32(&offsets)?;
+        let mut indices = self.alloc_u32_unset(total.max(1))?;
+        let mut builder = self.stream().launch_builder(self.msm_bucket_scatter());
+        let _ = builder.arg(&digits);
+        let _ = builder.arg(signs);
+        let _ = builder.arg(&count);
+        let _ = builder.arg(&row_len_arg);
+        let _ = builder.arg(&buckets_arg);
+        let _ = builder.arg(&mut cursor);
+        let _ = builder.arg(&mut indices);
+        // SAFETY: thread `i < count` reads `digits[i]` and `signs[i]` (`count`
+        // elements each — the caller replicates `signs` once per shift lane),
+        // atomically bumps `cursor[(i / row_len) * buckets + digit]` inside the
+        // `segments` u32 copy of the scan offsets, and writes the returned slot
+        // of `indices`. Because the cursor starts at the exclusive scan of the
+        // same counts the previous kernel produced, the slots handed out are
+        // exactly the `total` positions of `indices`, each to one thread — so
+        // writes are disjoint and in bounds.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+
+        Ok(BucketIndex {
+            indices,
+            offsets,
+            counts,
+            widest: total.div_ceil(segments.max(1)).saturating_mul(4),
+        })
+    }
+
     pub fn upload_segments(
         &self,
         bases: &DeviceG1Bases,
@@ -778,6 +1008,62 @@ impl CudaKernelContext {
             &mut output,
         )?;
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
+    }
+
+    fn pippenger_pass(
+        &self,
+        plan: PassPlan<'_>,
+        out: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let PassPlan {
+            bases,
+            scalars,
+            scalar_limbs,
+            signs,
+            row_len,
+            buckets,
+            rows,
+            lane,
+            shifts,
+        } = plan;
+        let total = lane.saturating_mul(shifts.len());
+        if total == 0 {
+            return Ok(());
+        }
+        let segments = rows * buckets;
+        let index = self.bucket_index_pass(IndexPlan {
+            scalars,
+            scalar_limbs,
+            signs,
+            row_len,
+            buckets,
+            segments,
+            lane,
+            shifts,
+        })?;
+
+        let mut bucket_points = self.alloc_u64(segments * 3 * FQ_LIMBS)?;
+        self.launch_segment_sums(
+            bases,
+            SegmentPlan {
+                indices: &index.indices,
+                offsets: &index.offsets,
+                counts: &index.counts,
+                segments,
+                widest: index.widest,
+                mode: SegmentMode::Auto,
+                classes: None,
+            },
+            &mut bucket_points,
+        )?;
+
+        self.launch_bucket_reduce_chunked(
+            &bucket_points,
+            rows,
+            buckets,
+            Self::reduce_chunks(rows, buckets),
+            out,
+        )
     }
 
     fn launch_window_fold(
@@ -1019,6 +1305,122 @@ impl CudaKernelContext {
         self.stream().synchronize()?;
         Ok(())
     }
+
+    fn pippenger_device(
+        &self,
+        bases: &DeviceG1Bases,
+        scalars: DeviceScalars<'_>,
+        signs: &CudaSlice<u8>,
+        len: usize,
+        row_len: usize,
+        scalar_bits: usize,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let DeviceScalars {
+            values: scalars,
+            limbs: scalar_limbs,
+        } = scalars;
+        if row_len == 0 || !len.is_multiple_of(row_len) {
+            return Err(CudaError::LengthMismatch {
+                expected: row_len,
+                got: len,
+            });
+        }
+        if bases.count() < row_len {
+            return Err(CudaError::LengthMismatch {
+                expected: row_len,
+                got: bases.count(),
+            });
+        }
+        if row_len > MAX_BASE_INDEX {
+            return Err(CudaError::InvariantViolation {
+                reason: "a Pippenger row is wider than the signed-index encoding allows",
+            });
+        }
+        let rows = len / row_len;
+        let window_bits = window_bits(row_len);
+        let buckets = 1usize << window_bits;
+        let windows = scalar_bits.div_ceil(window_bits);
+
+        let mut accumulator = self.alloc_u64(rows * 3 * FQ_LIMBS)?;
+        let rows_arg = Self::count_of(rows)?;
+
+        if self.batched_windows(rows, buckets, windows, len)? {
+            let _batched = tracing::info_span!(
+                "cuda_pippenger_batched",
+                rows,
+                windows,
+                buckets,
+                lanes = signs.len() * windows
+            )
+            .entered();
+            let device_lane_signs = self.replicate_u8(signs, windows)?;
+            let shifts: Vec<usize> = (0..windows).map(|window| window * window_bits).collect();
+            let mut all_window_points = self.alloc_u64(windows * rows * 3 * FQ_LIMBS)?;
+            self.pippenger_pass(
+                PassPlan {
+                    bases,
+                    scalars,
+                    scalar_limbs,
+                    signs: &device_lane_signs,
+                    row_len,
+                    buckets,
+                    rows: windows * rows,
+                    lane: len,
+                    shifts: &shifts,
+                },
+                &mut all_window_points,
+            )?;
+            self.launch_window_fold(
+                &all_window_points,
+                rows,
+                windows,
+                window_bits,
+                &mut accumulator,
+            )?;
+            self.stream().synchronize()?;
+            return Ok(accumulator);
+        }
+
+        let _looped =
+            tracing::info_span!("cuda_pippenger_looped", rows, windows, buckets).entered();
+        let mut window_points = self.alloc_u64(rows * 3 * FQ_LIMBS)?;
+        for window in (0..windows).rev() {
+            self.pippenger_pass(
+                PassPlan {
+                    bases,
+                    scalars,
+                    scalar_limbs,
+                    signs,
+                    row_len,
+                    buckets,
+                    rows,
+                    lane: len,
+                    shifts: &[window * window_bits],
+                },
+                &mut window_points,
+            )?;
+            self.stream().synchronize()?;
+
+            let doublings = if window + 1 == windows {
+                0
+            } else {
+                Self::count_of(window_bits)?
+            };
+            let mut builder = self.stream().launch_builder(self.msm_window_accumulate());
+            let _ = builder.arg(&mut accumulator);
+            let _ = builder.arg(&window_points);
+            let _ = builder.arg(&rows_arg);
+            let _ = builder.arg(&doublings);
+            // SAFETY: thread `row < rows` read-modify-writes only
+            // `accumulator[row]` and reads only `window[row]` (12 limbs each of
+            // two distinct `rows * 12` u64 allocations), so both accesses are
+            // one-per-thread and in bounds.
+            let _ = unsafe { builder.launch(Self::launch_config(rows_arg)) }?;
+            self.stream().synchronize()?;
+        }
+
+        Ok(accumulator)
+    }
 }
 
 #[cfg(test)]
@@ -1026,6 +1428,7 @@ pub(crate) mod testing {
     use ark_bn254::{Fq, Fr as ArkFr, G1Affine, G1Projective};
     use ark_ec::{CurveGroup, PrimeGroup};
     use ark_ff::{BigInt, PrimeField};
+    use jolt_field::Fr;
     use proptest::prelude::*;
 
     use super::{AffineLimbs, JacobianLimbs, FQ_LIMBS};
@@ -1036,6 +1439,10 @@ pub(crate) mod testing {
 
     pub fn fq_limbs(value: Fq) -> [u64; FQ_LIMBS] {
         value.0 .0
+    }
+
+    pub fn ark_fr(value: Fr) -> ArkFr {
+        ArkFr::new_unchecked(BigInt(value.inner_limbs()))
     }
 
     pub fn affine_limbs(point: G1Affine) -> AffineLimbs {
@@ -1086,6 +1493,16 @@ pub(crate) mod testing {
             Fq::from_le_bytes_mod_order(&bytes)
         })
     }
+
+    pub fn arb_fr() -> impl Strategy<Value = Fr> {
+        any::<[u64; FQ_LIMBS]>().prop_map(|limbs| {
+            let mut bytes = [0u8; 32];
+            for (chunk, limb) in bytes.chunks_exact_mut(8).zip(limbs) {
+                chunk.copy_from_slice(&limb.to_le_bytes());
+            }
+            Fr::from(ArkFr::from_le_bytes_mod_order(&bytes))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1095,21 +1512,23 @@ pub(crate) mod testing {
 )]
 mod tests {
     use ark_bn254::{Fq, Fr as ArkFr, G1Affine, G1Projective};
-    use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup};
+    use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup, VariableBaseMSM};
     use ark_ff::{PrimeField, Zero};
     use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
     use proptest::collection::vec;
     use proptest::prelude::*;
 
     use super::testing::{
-        affine, affine_limbs, arb_fq, fq_from_limbs, fq_limbs, jacobian_limbs, point, projective,
-        projectives,
+        affine, affine_limbs, arb_fq, arb_fr, ark_fr, fq_from_limbs, fq_limbs, jacobian_limbs,
+        point, projective, projectives,
     };
     use super::{
         unflatten_jacobian, AffineLimbs, JacobianLimbs, SegmentMode, CLASS_FLOOR, FQ_LIMBS,
         SMALL_SEGMENT_LIMIT,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
+
+    const MSM_ROWS: usize = 3;
 
     const MSM_ROW_LEN: usize = 8;
 
@@ -1235,6 +1654,42 @@ mod tests {
                 .iter()
                 .any(|&(a, b)| !a.is_zero() && !b.is_zero() && a != b && !(a + b).is_zero()),
             "no pair is the ordinary generic case",
+        );
+    }
+
+    #[test]
+    fn fixture_msm_rows_and_one_hot_chunk_discriminate() {
+        let bases = msm_bases();
+        assert!(
+            bases.iter().all(|base| !base.infinity),
+            "an infinity base makes every scalar at that column irrelevant",
+        );
+        assert!(
+            bases
+                .iter()
+                .enumerate()
+                .all(|(i, base)| bases[i + 1..].iter().all(|other| other != base)),
+            "repeated bases let a kernel that mixes up columns pass",
+        );
+        assert!(
+            (MSM_ROWS * MSM_ROW_LEN) / bases.len() > 1,
+            "the scalar vector spans one row, so a kernel that ignores the row stride \
+             would pass",
+        );
+
+        let hot = one_hot_chunk();
+        let rows = columns_per_row(&hot);
+        assert!(
+            hot.iter().any(Option::is_none),
+            "no idle cycle, so a kernel that ignored the `None` case would pass",
+        );
+        assert!(
+            rows.iter().any(|columns| columns.len() > 1),
+            "no row accumulates two bases, so a broken segmented sum would pass",
+        );
+        assert!(
+            rows.iter().any(Vec::is_empty),
+            "every row is hit, so a kernel that never emits the identity would pass",
         );
     }
 
@@ -1620,6 +2075,27 @@ mod tests {
             );
             prop_assert_eq!(got, expected);
         }
+
+        #[test]
+        fn msm_rows_fr_matches_arkworks(scalars in vec(arb_fr(), MSM_ROWS * MSM_ROW_LEN)) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases = msm_bases();
+            let ark_scalars: Vec<ArkFr> = scalars.iter().copied().map(ark_fr).collect();
+            let expected: Vec<G1Projective> = ark_scalars
+                .chunks(MSM_ROW_LEN)
+                .map(|row| G1Projective::msm(&bases, row).expect("arkworks msm"))
+                .collect();
+            let device_bases = context
+                .upload_g1_bases(&bases.iter().copied().map(affine_limbs).collect::<Vec<_>>())
+                .expect("upload bases");
+            let device_rows = context.upload(&scalars).expect("upload scalars");
+            let got = projectives(
+                &context
+                    .msm_rows_fr(&device_bases, &device_rows, MSM_ROW_LEN)
+                    .expect("device msm_rows_fr"),
+            );
+            prop_assert_eq!(got, expected);
+        }
     }
 
     #[test]
@@ -1741,6 +2217,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn batched_window_budget_reserves_device_headroom() {
+        let mib = 1usize << 20;
+        assert_eq!(CudaKernelContext::batched_window_budget(0), 64 * mib);
+        assert_eq!(
+            CudaKernelContext::batched_window_budget(1024 * mib),
+            128 * mib
+        );
+        assert_eq!(
+            CudaKernelContext::batched_window_budget(usize::MAX),
+            4096 * mib
+        );
+        let large = CudaKernelContext::batched_window_bytes(1024, 2048, 6, 1 << 24);
+        assert!(large > CudaKernelContext::batched_window_budget(8 << 30));
+        assert!(large < CudaKernelContext::batched_window_budget(32 << 30));
+        assert_eq!(
+            CudaKernelContext::batched_window_bytes(usize::MAX, 2, 2, 1),
+            usize::MAX
+        );
     }
 
     const FOLD_SHAPES: [(usize, usize, usize); 5] =

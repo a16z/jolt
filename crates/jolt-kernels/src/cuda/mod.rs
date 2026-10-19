@@ -17,7 +17,8 @@
 //! device. Host `i128` inputs use separate signs and magnitudes; device `i128`
 //! inputs use two's-complement limbs.
 //! `u32` prefix scans combine per-block scans with recursively scanned block
-//! sums; the host-input API transfers those sums and offsets between levels.
+//! sums; the host-input API transfers those sums and offsets between levels,
+//! while the device-input API keeps them on the device.
 //! [`DeviceLtPolynomial`] keeps its shift and split factors separate throughout
 //! binding; optimized stores the shift in its high table and later combines the factors.
 //! Weighted half-fold kernels promote packed integers when loading them.
@@ -47,6 +48,8 @@
 //! sizes. One-hot chunks build their segment plan on the host and sum on device.
 //! Weighted G1 bucket sums split across blocks and merge their partials per row;
 //! window folding combines those results from the most significant window down.
+//! Fr row MSMs extract scalar windows and build buckets on the device. Windows
+//! batch within a memory budget and otherwise accumulate sequentially.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

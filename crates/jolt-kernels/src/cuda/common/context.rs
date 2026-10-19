@@ -2,11 +2,11 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
-#[cfg(test)]
-use cudarc::driver::DevicePtr;
 use cudarc::driver::{
     CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
+#[cfg(test)]
+use cudarc::driver::{DevicePtr, DevicePtrMut, DeviceRepr};
 use cudarc::nvrtc::Ptx;
 use jolt_field::Fr;
 
@@ -15,6 +15,15 @@ use super::error::CudaError;
 #[cfg(test)]
 use super::half_fold::FoldColumn;
 use super::xfer_stats::{self, Phase};
+
+#[cfg(test)]
+const POISON_BYTE: u8 = 0xA5;
+
+#[cfg(test)]
+fn poison_byte() -> Option<u8> {
+    static POISON: OnceLock<Option<u8>> = OnceLock::new();
+    *POISON.get_or_init(|| std::env::var_os("JOLT_CUDA_POISON").map(|_| POISON_BYTE))
+}
 
 pub const BLOCK: u32 = 256;
 
@@ -81,6 +90,16 @@ pub struct CudaKernelContext {
     msm_affine_denominators: CudaFunction,
     #[cfg(test)]
     msm_affine_combine: CudaFunction,
+    #[cfg(test)]
+    msm_from_montgomery: CudaFunction,
+    #[cfg(test)]
+    msm_digits: CudaFunction,
+    #[cfg(test)]
+    msm_bucket_count: CudaFunction,
+    #[cfg(test)]
+    msm_bucket_scatter: CudaFunction,
+    #[cfg(test)]
+    msm_window_accumulate: CudaFunction,
     #[cfg(test)]
     msm_segment_sum: CudaFunction,
     #[cfg(test)]
@@ -174,6 +193,16 @@ impl CudaKernelContext {
             #[cfg(test)]
             msm_affine_combine: module.load_function("msm_affine_combine_kernel")?,
             #[cfg(test)]
+            msm_from_montgomery: module.load_function("msm_from_montgomery_kernel")?,
+            #[cfg(test)]
+            msm_digits: module.load_function("msm_digits_kernel")?,
+            #[cfg(test)]
+            msm_bucket_count: module.load_function("msm_bucket_count_kernel")?,
+            #[cfg(test)]
+            msm_bucket_scatter: module.load_function("msm_bucket_scatter_kernel")?,
+            #[cfg(test)]
+            msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
+            #[cfg(test)]
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             #[cfg(test)]
             msm_segment_sum_warp: module.load_function("msm_segment_sum_warp_kernel")?,
@@ -244,6 +273,62 @@ impl CudaKernelContext {
     }
 
     #[cfg(test)]
+    pub(crate) fn alloc_u8(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u8>(len)?)
+    }
+
+    #[cfg(test)]
+    fn alloc_unset<T: DeviceRepr>(&self, len: usize) -> Result<CudaSlice<T>, CudaError> {
+        // SAFETY: `alloc` leaves the elements unset, which every caller of this
+        // helper is required to tolerate: each writes all of `len` before any
+        // read, or reads only positions it wrote. Nothing here observes the
+        // contents. `JOLT_CUDA_POISON` turns that requirement into a test by
+        // filling the block with a non-zero pattern instead, so a stale read
+        // cannot pass as a zero.
+        let mut buffer = unsafe { self.stream.alloc::<T>(len) }?;
+        if let Some(byte) = poison_byte() {
+            let bytes = len * size_of::<T>();
+            let (pointer, _record) = buffer.device_ptr_mut(&self.stream);
+            // SAFETY: `pointer` is the freshly allocated block above and `bytes`
+            // is exactly its length, so the fill stays inside it; the memset is
+            // ordered on the same stream as every later use.
+            unsafe {
+                cudarc::driver::result::memset_d8_async(
+                    pointer,
+                    byte,
+                    bytes,
+                    self.stream.cu_stream(),
+                )
+            }?;
+        }
+        Ok(buffer)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn alloc_u32_unset(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
+        self.alloc_unset::<u32>(len)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replicate_u8(
+        &self,
+        buffer: &CudaSlice<u8>,
+        copies: usize,
+    ) -> Result<CudaSlice<u8>, CudaError> {
+        let len = buffer.len();
+        let mut out = self.alloc_u8(len * copies)?;
+        xfer_stats::timed(Phase::D2d, len * copies, || -> Result<(), CudaError> {
+            for copy in 0..copies {
+                let source = buffer.slice(..);
+                let mut target = out.slice_mut(copy * len..(copy + 1) * len);
+                self.stream.memcpy_dtod(&source, &mut target)?;
+            }
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    #[cfg(test)]
     pub(crate) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
         Ok(self.stream.alloc_zeros::<u64>(len)?)
     }
@@ -252,6 +337,13 @@ impl CudaKernelContext {
     pub(crate) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clone_u32(&self, buffer: &CudaSlice<u32>) -> Result<CudaSlice<u32>, CudaError> {
+        xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtod(buffer)?)
         })
     }
 
@@ -411,6 +503,31 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_affine_combine(&self) -> &CudaFunction {
         &self.msm_affine_combine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_from_montgomery(&self) -> &CudaFunction {
+        &self.msm_from_montgomery
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_digits(&self) -> &CudaFunction {
+        &self.msm_digits
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_bucket_count(&self) -> &CudaFunction {
+        &self.msm_bucket_count
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_bucket_scatter(&self) -> &CudaFunction {
+        &self.msm_bucket_scatter
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {
+        &self.msm_window_accumulate
     }
 
     #[cfg(test)]

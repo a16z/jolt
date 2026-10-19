@@ -421,6 +421,75 @@ extern "C" __global__ void msm_affine_combine_kernel(const u64 *__restrict__ lef
     store4(out + ((unsigned long long)i * 2 + 1) * LIMBS, y3);
 }
 
+extern "C" __global__ void msm_from_montgomery_kernel(const u64 *__restrict__ values,
+                                                      u64 *__restrict__ out, unsigned int count) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 value[LIMBS], one[LIMBS], result[LIMBS];
+    load4(values + (unsigned long long)i * LIMBS, value);
+    one[0] = 1;
+    one[1] = 0;
+    one[2] = 0;
+    one[3] = 0;
+    fr_mul(value, one, result);
+    store4(out + (unsigned long long)i * LIMBS, result);
+}
+
+__device__ __forceinline__ unsigned int msm_digit(const u64 *scalar, unsigned int shift,
+                                                  unsigned int mask) {
+    unsigned int limb = shift >> 6;
+    unsigned int bit = shift & 63u;
+    if (limb >= LIMBS) return 0;
+    u64 value = scalar[limb] >> bit;
+    if (bit != 0 && limb + 1 < LIMBS) value |= scalar[limb + 1] << (64u - bit);
+    return (unsigned int)(value & (u64)mask);
+}
+
+extern "C" __global__ void msm_digits_kernel(const u64 *__restrict__ scalars, unsigned int count,
+                                             unsigned int limbs, unsigned int shift,
+                                             unsigned int mask,
+                                             unsigned int *__restrict__ digits) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 scalar[LIMBS];
+    const u64 *source = scalars + (unsigned long long)i * limbs;
+    if (limbs >= LIMBS) {
+        load4(source, scalar);
+    } else {
+        for (int l = 0; l < LIMBS; l++) scalar[l] = 0;
+        for (unsigned int l = 0; l < limbs; l++) scalar[l] = source[l];
+    }
+    digits[i] = msm_digit(scalar, shift, mask);
+}
+
+extern "C" __global__ void msm_bucket_count_kernel(const unsigned int *__restrict__ digits,
+                                                   unsigned int count, unsigned int row_len,
+                                                   unsigned int buckets,
+                                                   unsigned int *__restrict__ counts) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    unsigned int digit = digits[i];
+    if (digit == 0) return;
+    unsigned int row = i / row_len;
+    atomicAdd(&counts[row * buckets + digit], 1u);
+}
+
+extern "C" __global__ void msm_bucket_scatter_kernel(const unsigned int *__restrict__ digits,
+                                                     const unsigned char *__restrict__ signs,
+                                                     unsigned int count, unsigned int row_len,
+                                                     unsigned int buckets,
+                                                     unsigned int *__restrict__ cursor,
+                                                     unsigned int *__restrict__ indices) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    unsigned int digit = digits[i];
+    if (digit == 0) return;
+    unsigned int row = i / row_len;
+    unsigned int column = i % row_len;
+    unsigned int position = atomicAdd(&cursor[row * buckets + digit], 1u);
+    indices[position] = column | ((unsigned int)signs[i] << 31);
+}
+
 extern "C" __global__ void msm_segment_sum_kernel(const u64 *__restrict__ bases,
                                                   const unsigned int *__restrict__ indices,
                                                   const unsigned int *__restrict__ offsets,
@@ -630,6 +699,27 @@ extern "C" __global__ void msm_window_fold_kernel(const u64 *__restrict__ window
     }
     for (int limb = 0; limb < 3; limb++) {
         store4(out + ((unsigned long long)row * 3 + limb) * LIMBS, acc + limb * LIMBS);
+    }
+}
+
+extern "C" __global__ void msm_window_accumulate_kernel(u64 *__restrict__ accumulator,
+                                                        const u64 *__restrict__ window,
+                                                        unsigned int rows,
+                                                        unsigned int doublings) {
+    unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= rows) return;
+    u64 acc[3 * LIMBS], addend[3 * LIMBS], tmp[3 * LIMBS];
+    for (int limb = 0; limb < 3; limb++) {
+        load4(accumulator + ((unsigned long long)row * 3 + limb) * LIMBS, acc + limb * LIMBS);
+        load4(window + ((unsigned long long)row * 3 + limb) * LIMBS, addend + limb * LIMBS);
+    }
+    for (unsigned int i = 0; i < doublings; i++) {
+        jac_double(acc, tmp);
+        jac_copy(tmp, acc);
+    }
+    jac_add(acc, addend, tmp);
+    for (int limb = 0; limb < 3; limb++) {
+        store4(accumulator + ((unsigned long long)row * 3 + limb) * LIMBS, tmp + limb * LIMBS);
     }
 }
 
