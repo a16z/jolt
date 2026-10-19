@@ -48,12 +48,7 @@ pub trait SumcheckDomain<F: Field> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SumcheckDomainSpec {
     BooleanHypercube,
-    CenteredInteger {
-        domain_size: usize,
-    },
-    /// Round `i` is [`EqFactoredRound`] at `τ_i`, the `i`-th coordinate of
-    /// the instance's equality point, which this spec does not carry.
-    EqFactored,
+    CenteredInteger { domain_size: usize },
 }
 
 impl SumcheckDomainSpec {
@@ -72,7 +67,6 @@ where
             Self::CenteredInteger { domain_size } => {
                 CenteredIntegerDomain::new(domain_size).round_sum_coefficients(degree)
             }
-            Self::EqFactored => Err(SumcheckError::EqFactoredRoundWithoutTau),
         }
     }
 }

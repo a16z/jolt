@@ -145,7 +145,7 @@ pub use round_proof::{
     send_compressed_round, send_full_round, send_private_value,
 };
 pub use single::{
-    prove_single, verify_single, ProvedSingle, ProverRoundContext, SingleFormat, SingleInstance,
-    SingleReplay, SumcheckRole, SumcheckSite, VerifierRoundContext,
+    prove_single, verify_single, ProverRoundContext, SingleFormat, SingleInstance, SingleReduction,
+    SumcheckRole, SumcheckSite, VerifierRoundContext,
 };
 pub use verifier::SumcheckVerifier;

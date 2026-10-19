@@ -1,14 +1,14 @@
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
-use core::convert::Infallible;
+use core::fmt::Write;
 use core::marker::PhantomData;
 
-use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Ext2, ExtField, Field, Fr};
-use jolt_field::{One, Prime64Offset59, Zero};
+use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Ext2, ExtField, Field};
+use jolt_field::{One, Prime128Offset275 as P, Prime64Offset59, Ring, Zero};
 use jolt_poly::{OmittedConstantPoly, Point, UnivariatePoly};
 use jolt_sumcheck::{
     prove_single, verify_single, EqFactoredRound, ProveRounds, ProverRoundContext, SingleFormat,
-    SingleInstance, SingleReplay, SumcheckDomain, SumcheckError, SumcheckSite,
+    SingleInstance, SingleReduction, SumcheckDomain, SumcheckError, SumcheckSite,
     VerifierRoundContext,
 };
 use jolt_transcript::{
@@ -45,7 +45,7 @@ struct ProverContext<E> {
 
 impl<E: Field> ProverRoundContext<E> for ProverContext<E> {
     type Sponge = H;
-    type Error = Infallible;
+    type Error = SumcheckError<E>;
 
     fn transcript_mut(&mut self) -> &mut ProverTranscript<H> {
         &mut self.transcript
@@ -55,7 +55,7 @@ impl<E: Field> ProverRoundContext<E> for ProverContext<E> {
         Some(site(sumcheck_site))
     }
 
-    fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<E, Infallible> {
+    fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<E, SumcheckError<E>> {
         self.transcript.site(site(sumcheck_site));
         Ok(self.transcript.challenge())
     }
@@ -68,7 +68,7 @@ struct VerifierContext<'proof, E> {
 
 impl<'proof, E: Field> VerifierRoundContext<'proof, E> for VerifierContext<'proof, E> {
     type Sponge = H;
-    type Error = Infallible;
+    type Error = SumcheckError<E>;
 
     fn transcript_mut(&mut self) -> &mut VerifierTranscript<'proof, H> {
         &mut self.transcript
@@ -78,7 +78,7 @@ impl<'proof, E: Field> VerifierRoundContext<'proof, E> for VerifierContext<'proo
         Some(site(sumcheck_site))
     }
 
-    fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<E, Infallible> {
+    fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<E, SumcheckError<E>> {
         self.transcript.site(site(sumcheck_site));
         Ok(self.transcript.challenge())
     }
@@ -221,7 +221,7 @@ where
 fn replay<F, E>(
     instance: &SingleInstance<E>,
     proof: &[u8],
-) -> Result<SingleReplay<E>, SumcheckError<E>>
+) -> Result<SingleReduction<E>, SumcheckError<E>>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
@@ -237,7 +237,7 @@ where
 
 /// The terminal oracle check of the product relation: the normalized claim
 /// is `a(r) b(r)`, the eq factors `Π eq(τ_i, r_i)` being the caller's.
-fn oracle_accepts<E: Field>(tables: &(Vec<E>, Vec<E>), replay: &SingleReplay<E>) -> bool {
+fn oracle_accepts<E: Field>(tables: &(Vec<E>, Vec<E>), replay: &SingleReduction<E>) -> bool {
     replay.output_claim == mle(&tables.0, &replay.challenges) * mle(&tables.1, &replay.challenges)
 }
 
@@ -260,7 +260,7 @@ where
 #[test]
 fn honest_compressed_and_eq_factored_proofs_verify() {
     for eq_factored in [false, true] {
-        round_trip::<Fr, Fr>(eq_factored, 11);
+        round_trip::<P, P>(eq_factored, 11);
         round_trip::<Prime64Offset59, Ext2<Prime64Offset59>>(eq_factored, 12);
     }
 }
@@ -368,11 +368,195 @@ fn tampered_coefficient_or_claim_is_rejected() {
 
 #[test]
 fn truncated_proof_is_rejected() {
-    let mut kernel = ProductKernel::<Fr>::sampled::<Fr>(3, 41, true);
+    let mut kernel = ProductKernel::<P>::sampled::<P>(3, 41, true);
     let instance = instance(&kernel, 0);
-    let (_, proof) = prove::<Fr, Fr>(&mut kernel, &instance);
+    let (_, proof) = prove::<P, P>(&mut kernel, &instance);
     assert!(matches!(
-        replay::<Fr, Fr>(&instance, &proof[..proof.len() - 1]),
+        replay::<P, P>(&instance, &proof[..proof.len() - 1]),
         Err(SumcheckError::Transcript(_))
     ));
+}
+
+fn verify_shape<E>(instance: &SingleInstance<E>) -> SumcheckError<E>
+where
+    E: ExtField<P> + CanonicalDecode,
+{
+    replay::<P, E>(instance, &[]).unwrap_err()
+}
+
+#[test]
+fn zero_round_compressed_instance_reduces_to_its_input_claim() {
+    let instance = SingleInstance {
+        input_claim: P::from_u64(17),
+        rounds: 0,
+        degree: 2,
+        format: SingleFormat::Compressed,
+        invocation: 0,
+    };
+    let mut kernel = ProductKernel::<P>::sampled::<P>(0, 51, false);
+    let (point, proof) = prove::<P, P>(&mut kernel, &instance);
+    assert!(point.is_empty() && proof.is_empty());
+    let replay = replay::<P, P>(&instance, &proof).unwrap();
+    assert_eq!(
+        replay,
+        SingleReduction {
+            challenges: Vec::new(),
+            output_claim: instance.input_claim,
+        }
+    );
+}
+
+#[test]
+fn malformed_shapes_are_rejected_before_any_transcript_operation() {
+    let compressed = |rounds, degree| SingleInstance {
+        input_claim: P::from_u64(1),
+        rounds,
+        degree,
+        format: SingleFormat::Compressed,
+        invocation: 0,
+    };
+    let eq_factored = |rounds, coordinates: u64| SingleInstance {
+        format: SingleFormat::EqFactored {
+            equality_point: Point::low_to_high(
+                (0..coordinates).map(P::from_u64).collect::<Vec<_>>(),
+            ),
+        },
+        ..compressed(rounds, 1)
+    };
+    assert!(matches!(
+        verify_shape(&compressed(2, 0)),
+        SumcheckError::ZeroDegreeBound
+    ));
+    assert!(matches!(
+        verify_shape(&compressed(2, usize::MAX)),
+        SumcheckError::ShapeOverflow { .. }
+    ));
+    assert!(matches!(
+        verify_shape(&eq_factored(3, 2)),
+        SumcheckError::EqualityPointLengthMismatch {
+            expected: 3,
+            got: 2
+        }
+    ));
+    assert!(matches!(
+        verify_shape(&eq_factored(0, 0)),
+        SumcheckError::EqFactoredZeroRounds
+    ));
+
+    let mut kernel = ProductKernel::<P>::sampled::<P>(3, 52, false);
+    let mut context = ProverContext {
+        transcript: ProverTranscript::new(&PROTOCOL, SESSION),
+        _field: PhantomData,
+    };
+    let instance = SingleInstance {
+        rounds: 4,
+        ..instance(&kernel, 0)
+    };
+    assert!(matches!(
+        prove_single::<P, P, _, _>(&mut kernel, &instance, &mut context),
+        Err(SumcheckError::RoundCountMismatch {
+            expected: 4,
+            got: 3
+        })
+    ));
+    assert!(context.transcript.narg().is_empty());
+}
+
+#[derive(Debug)]
+enum BackendError {
+    Sumcheck,
+    Device,
+}
+
+impl<E: Field> From<SumcheckError<E>> for BackendError {
+    fn from(_: SumcheckError<E>) -> Self {
+        Self::Sumcheck
+    }
+}
+
+/// A kernel whose backend fails on its second round.
+struct FailingKernel(ProductKernel<P>);
+
+impl ProveRounds<P, BackendError> for FailingKernel {
+    fn num_rounds(&self) -> usize {
+        self.0.num_rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind_challenge: Option<P>,
+        round: usize,
+        previous_claim: P,
+    ) -> Result<UnivariatePoly<P>, BackendError> {
+        if round == 1 {
+            return Err(BackendError::Device);
+        }
+        Ok(self.0.prove_round(bind_challenge, round, previous_claim)?)
+    }
+
+    fn finish_rounds(&mut self, bind_challenge: P) -> Result<(), BackendError> {
+        Ok(self.0.finish_rounds(bind_challenge)?)
+    }
+}
+
+struct BackendContext(ProverTranscript<H>);
+
+impl ProverRoundContext<P> for BackendContext {
+    type Sponge = H;
+    type Error = BackendError;
+
+    fn transcript_mut(&mut self) -> &mut ProverTranscript<H> {
+        &mut self.0
+    }
+
+    fn site(&self, _: SumcheckSite) -> Option<SiteId> {
+        None
+    }
+
+    fn challenge(&mut self, _: SumcheckSite) -> Result<P, BackendError> {
+        Ok(self.0.challenge())
+    }
+}
+
+#[test]
+fn kernel_errors_surface_unchanged() {
+    let kernel = ProductKernel::<P>::sampled::<P>(3, 53, false);
+    let instance = instance(&kernel, 0);
+    let mut context = BackendContext(ProverTranscript::new(&PROTOCOL, SESSION));
+    assert!(matches!(
+        prove_single::<P, P, _, _>(&mut FailingKernel(kernel), &instance, &mut context),
+        Err(BackendError::Device)
+    ));
+}
+
+/// A frozen digest of the proof bytes: any change to the claim binding, the
+/// round-body or challenge order, or the wire format of either round format
+/// changes the second round's coefficients. Taken from this driver, which
+/// reproduced Akita's own snapshots when it was written.
+#[test]
+fn proof_bytes_match_their_frozen_digest() {
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut out, byte| {
+            write!(out, "{byte:02x}").unwrap();
+            out
+        })
+    }
+    let proof = |eq_factored: bool| {
+        let mut kernel = ProductKernel::<P> {
+            a: (1..=4).map(P::from_u64).collect(),
+            b: (5..=8).map(P::from_u64).collect(),
+            tau: eq_factored.then(|| vec![P::from_u64(2), P::from_u64(3)]),
+            seen_claims: Vec::new(),
+        };
+        let instance = instance(&kernel, 7);
+        hex(&prove::<P, P>(&mut kernel, &instance).1)
+    };
+    assert_eq!(
+        proof(false),
+        "1a000000000000000000000000000000020000000000000000000000000000004923fb8d5bbc0ada0aa890f8a0cf93ae04000000000000000000000000000000"
+    );
+    assert_eq!(
+        proof(true),
+        "1200000000000000000000000000000001000000000000000000000000000000dd0a05b4e47efc07ef55e7728b7c90cb04000000000000000000000000000000"
+    );
 }

@@ -35,10 +35,9 @@ pub struct EqFactoredRound<E> { pub tau: E }
 impl<E: Field> SumcheckDomain<E> for EqFactoredRound<E> { /* weights [1, τ, τ, …] */ }
 ```
 
-`SumcheckDomainSpec` gains the matching variant, a unit `EqFactored`: τ
-differs per round, so the spec names the family and
-`EqFactoredRound { tau: equality_point[i] }` supplies round i's weights; asking
-the spec itself for weights is a typed error. Recovery of the omitted
+`SumcheckDomainSpec` gains no variant yet: τ differs per round, so the spec
+would need the equality point, and nothing consumes it until BlindFold lowers
+an eq-factored instance; that ticket adds a τ-carrying form. Recovery of the omitted
 coefficient stays with jolt-poly (`CompressedPoly`, and
 `OmittedConstantPoly::{constant_from_claim, evaluate_from_claim}` for
 q0 = claim − τ · (q(1) − q0)).
@@ -86,27 +85,22 @@ caller needs `prove_single`.
 ### Kernels and errors
 
 ```rust
-pub trait ProveRounds<E: Field, K = Infallible> {
+pub trait ProveRounds<E: Field, Err = SumcheckError<E>> {
     fn num_rounds(&self) -> usize;
     /// For eq-factored instances, returns the full q. Kernels that produce
     /// [q1..qd] rebuild q0 with the jolt-poly recovery, not a local formula.
     fn prove_round(&mut self, bind: Option<E>, round: usize, previous_claim: E)
-        -> Result<UnivariatePoly<E>, SumcheckError<E, K>>;
-    fn finish_rounds(&mut self, bind: E) -> Result<(), SumcheckError<E, K>>;
-}
-
-pub enum SumcheckError<E, K = Infallible> { /* existing variants */ Kernel(K) }
-impl<E> SumcheckError<E, Infallible> {
-    pub fn widen<K>(self) -> SumcheckError<E, K>;
+        -> Result<UnivariatePoly<E>, Err>;
+    fn finish_rounds(&mut self, bind: E) -> Result<(), Err>;
 }
 ```
 
-`K` appears only on `prove_single`/`verify_single` and the kernels they drive.
-The batched engine keeps `K = Infallible`, so `MemberRound`, `MemberFinish`, and
-`RoundScheduler` do not change. A blanket `From` impl is impossible
-(conflicts with `impl<T> From<T> for T`), so internal helpers return
-`SumcheckError<E>` and the single driver calls `widen`. Akita uses
-`K = AkitaError`. Akita's fused-API adapter runs `bind_challenge(round − 1, b)`
+`SumcheckError<E>` keeps one parameter. `prove_single`/`verify_single` are
+generic over the caller's `Err: From<SumcheckError<E>>`, which the kernel and
+the round context also return, so a kernel failure reaches the caller
+unchanged. The batched engine keeps the default `Err = SumcheckError<E>`, so
+`MemberRound`, `MemberFinish`, and `RoundScheduler` do not change. Akita uses
+`Err = AkitaError` with `impl From<SumcheckError<E>> for AkitaError`. Akita's fused-API adapter runs `bind_challenge(round − 1, b)`
 then `round_polynomial` inside `prove_round`, and `bind_challenge` then
 `finish` inside `finish_rounds`.
 
@@ -128,27 +122,37 @@ pub struct SingleInstance<E> {
 /// mode: input claim through `bind_derived` at the Claim site; per round,
 /// wire coefficients through `exchange_private` at the RoundBody site, then
 /// `context.challenge`. Sends no output claims.
-pub fn prove_single<F, E, K, C>(
-    member: &mut dyn ProveRounds<E, K>,
+pub fn prove_single<F, E, Err, C>(
+    member: &mut dyn ProveRounds<E, Err>,
     instance: &SingleInstance<E>,
     context: &mut C,
-) -> Result<ProvedSingle<E>, SumcheckError<E, K>>
+) -> Result<SingleReduction<E>, Err>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
-    C: ProverRoundContext<E, Error = K>;
+    Err: From<SumcheckError<E>>,
+    C: ProverRoundContext<E, Error = Err>;
 
-/// Replays the rounds and returns (output claim, challenges) before any oracle
-/// check, as Akita's `verify_*_rounds` do; Akita exchanges late claims first.
-pub fn verify_single<F, E, K, C>(/* mirror */) -> Result<SingleReplay<E>, SumcheckError<E, K>>;
+/// Replays the rounds and returns the reduction before any oracle check, as
+/// Akita's `verify_*_rounds` do; Akita exchanges late claims first.
+pub fn verify_single<F, E, Err, C>(/* mirror */) -> Result<SingleReduction<E>, Err>;
+
+/// Both roles' result: challenges and the final (normalized) running claim.
+pub struct SingleReduction<E> { pub challenges: Vec<E>, pub output_claim: E }
 ```
+
+Both drivers validate the shape before any transcript operation, as Akita's
+`SumcheckShape` and `GruenSplitEq::new` do: `degree ≥ 1`, `rounds ≤ u32::MAX`,
+`degree × rounds` representable, and for eq-factored instances `rounds ≥ 1` and
+one equality coordinate per round.
 
 `τ_i = equality_point[i]` matches `GruenSplitEq::current_tau` (checked against
 Akita); M2b pins it with a byte-identity test.
 
-The `E: ExtField<F>` split runs Jolt with `F = E = Fr`, so `Fr` implements
-`ExtField<Fr>` with degree 1, as every `PseudoMersenne` field already does. A
-blanket reflexive impl over all fields is not possible: a type with a second
+A base field drives the driver as `F = E` only through a reflexive
+`ExtField<F> for F`, which every `PseudoMersenne` field has. `Fr` has none, and
+gets one only with a production caller of `prove_single` over `Fr`. A blanket
+reflexive impl over all fields is not possible: a type with a second
 `ExtField` impl (`F192: ExtField<F64>`, `FpExt2<F, _>: ExtField<F>`) would
 make `T::DEGREE` ambiguous wherever it is named concretely.
 

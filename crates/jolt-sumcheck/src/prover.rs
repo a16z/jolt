@@ -17,8 +17,6 @@
 //! — coefficients in the clear), so it is not a batch member and does not go
 //! through the recorder.
 
-use core::convert::Infallible;
-
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
 #[cfg(feature = "committed")]
@@ -55,10 +53,10 @@ use crate::round_proof::{padded_coefficients, send_full_round, send_private_valu
 /// member's first active round, and the final active round's challenge arrives
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
 ///
-/// `K` is the kernel's own failure type. Batch members keep
-/// `K = Infallible`; [`prove_single`](crate::prove_single) drives kernels
-/// with any `K`.
-pub trait ProveRounds<F: Field, K = Infallible> {
+/// `Err` is the kernel's failure type. Batch members keep the default;
+/// [`prove_single`](crate::prove_single) drives kernels with any `Err` that
+/// embeds [`SumcheckError`].
+pub trait ProveRounds<F: Field, Err = SumcheckError<F>> {
     fn num_rounds(&self) -> usize;
 
     /// Bind `bind` — the member's previous active round's challenge (`None`
@@ -72,12 +70,12 @@ pub trait ProveRounds<F: Field, K = Infallible> {
         bind: Option<F>,
         round: usize,
         previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F, K>>;
+    ) -> Result<UnivariatePoly<F>, Err>;
 
     /// Bind the member's final active round's challenge. Called once by the
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F, K>>;
+    fn finish_rounds(&mut self, bind: F) -> Result<(), Err>;
 }
 
 pub struct MemberRound<'a, F: Field> {
