@@ -19,4 +19,6 @@ pub(crate) mod split_eq;
 pub(crate) mod sum_of_products;
 #[cfg(test)]
 pub(crate) mod testing;
+#[cfg(test)]
+pub(crate) mod unreduced;
 pub mod xfer_stats;

@@ -54,6 +54,10 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     ra_gather: CudaFunction,
     #[cfg(test)]
+    unr_mul_scatter: CudaFunction,
+    #[cfg(test)]
+    unr_reduce: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -99,6 +103,10 @@ impl CudaKernelContext {
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             #[cfg(test)]
             ra_gather: module.load_function("ra_gather_kernel")?,
+            #[cfg(test)]
+            unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
+            #[cfg(test)]
+            unr_reduce: module.load_function("unr_reduce_kernel")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]
@@ -149,6 +157,11 @@ impl CudaKernelContext {
 
     pub(crate) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
         Ok(self.stream.alloc_zeros::<u32>(len)?)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u64>(len)?)
     }
 
     pub(crate) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
@@ -237,6 +250,16 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn ra_gather(&self) -> &CudaFunction {
         &self.ra_gather
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn unr_mul_scatter(&self) -> &CudaFunction {
+        &self.unr_mul_scatter
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
+        &self.unr_reduce
     }
 
     #[cfg(test)]

@@ -33,6 +33,8 @@
 //! Dense-product rounds combine dense factors with lazy one-hot and split
 //! less-than factors. Shards sum their round evaluations on the host, then
 //! gather their final scalars onto one device to bind the remaining shard bits.
+//! Integer-weighted scatters accumulate unreduced products in split 32-bit
+//! lanes using atomic additions, then perform one field reduction per bucket.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
