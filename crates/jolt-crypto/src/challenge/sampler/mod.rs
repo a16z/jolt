@@ -11,13 +11,13 @@ mod position_sample;
 mod signed_sparse;
 mod xof;
 
-pub use position_sample::MAX_STACK_RING_DIM;
+use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::{IndexedXofPrefix, XofCursor};
 
 use crate::CryptoError;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
+use jolt_field::parallel::*;
 use std::sync::{Arc, LazyLock};
 
 use crate::challenge::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
@@ -170,6 +170,9 @@ impl IndexedChallengeWorker {
 ///
 /// With `rejection`, each coordinate redraws until the challenge passes the
 /// operator-norm test, failing after a fixed attempt budget.
+///
+/// Returns an error if `ring_d` exceeds the sampler's stack limit or `cfg` is
+/// invalid for `ring_d`.
 pub fn sample_indexed_challenges_from_seed(
     seed: &[u8],
     ring_d: usize,
@@ -177,6 +180,14 @@ pub fn sample_indexed_challenges_from_seed(
     cfg: &SparseChallengeConfig,
     rejection: Option<OperatorNormRejection>,
 ) -> Result<Vec<SparseChallenge>, CryptoError> {
+    if ring_d > MAX_STACK_RING_DIM {
+        return Err(CryptoError::InvalidInput(format!(
+            "ring dimension {ring_d} exceeds supported stack sampler limit ({MAX_STACK_RING_DIM})"
+        )));
+    }
+    cfg.validate_dyn(ring_d).map_err(|error| {
+        CryptoError::InvalidInput(format!("invalid sparse challenge config: {error}"))
+    })?;
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -245,6 +256,18 @@ fn sample_indexed_challenges_sequential_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_oversized_ring_dimension_and_invalid_config() {
+        let cfg = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let seed = [0u8; 32];
+        for ring_d in [2 * MAX_STACK_RING_DIM, 4] {
+            assert!(matches!(
+                sample_indexed_challenges_from_seed(&seed, ring_d, 1, &cfg, None),
+                Err(CryptoError::InvalidInput(_))
+            ));
+        }
+    }
 
     #[test]
     fn indexed_draw_matches_individual_coordinate_streams() {

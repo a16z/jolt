@@ -45,14 +45,18 @@ pub(super) fn accumulate_transposed_chunk(
     len: usize,
     half_d: usize,
 ) -> ([i64; FUSED_CHUNK_FREQS], [i64; FUSED_CHUNK_FREQS]) {
-    debug_assert!(len <= FUSED_CHUNK_FREQS);
-    debug_assert!(start_k + len <= half_d);
+    // The SIMD paths below read four entries past `start_k` through raw
+    // pointers, so this bound is checked in release builds.
+    assert!(
+        len <= FUSED_CHUNK_FREQS && start_k.checked_add(len).is_some_and(|end| end <= half_d),
+        "frequency chunk {start_k}..+{len} exceeds {half_d} frequencies"
+    );
 
     #[cfg(target_arch = "x86_64")]
     {
         if len == FUSED_CHUNK_FREQS && std::arch::is_x86_feature_detected!("avx2") {
-            // SAFETY: AVX2 was detected, and `len == FUSED_CHUNK_FREQS` means the
-            // caller's chunk `start_k..start_k + 4` lies inside the `half_d` rows.
+            // SAFETY: AVX2 was detected, and the assert above with
+            // `len == FUSED_CHUNK_FREQS` gives `start_k + 4 <= half_d`.
             return unsafe {
                 accumulate_transposed_chunk_avx2(table, positions, coeffs, start_k, half_d)
             };
@@ -61,9 +65,8 @@ pub(super) fn accumulate_transposed_chunk(
     #[cfg(target_arch = "aarch64")]
     {
         if len == FUSED_CHUNK_FREQS {
-            // SAFETY: NEON is baseline on aarch64, and `len == FUSED_CHUNK_FREQS`
-            // means the caller's chunk `start_k..start_k + 4` lies inside the
-            // `half_d` rows.
+            // SAFETY: NEON is baseline on aarch64, and the assert above with
+            // `len == FUSED_CHUNK_FREQS` gives `start_k + 4 <= half_d`.
             return unsafe {
                 accumulate_transposed_chunk_neon(table, positions, coeffs, start_k, half_d)
             };

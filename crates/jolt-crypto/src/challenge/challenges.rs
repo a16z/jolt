@@ -3,7 +3,7 @@
 use crate::challenge::SparseChallenge;
 use crate::CryptoError;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
+use jolt_field::parallel::*;
 use jolt_field::{ExtField, Field, Ring};
 
 #[cfg(feature = "parallel")]

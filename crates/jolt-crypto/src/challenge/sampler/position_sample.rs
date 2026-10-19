@@ -9,7 +9,7 @@ use crate::CryptoError;
 ///
 /// Public API functions reject `D` above this with an error before reaching
 /// the sampling internals.
-pub const MAX_STACK_RING_DIM: usize = 2048;
+pub(crate) const MAX_STACK_RING_DIM: usize = 2048;
 
 /// Largest stack array used by one concrete sampler tier.
 const MAX_STACK_TIER_RING_DIM: usize = 2048;

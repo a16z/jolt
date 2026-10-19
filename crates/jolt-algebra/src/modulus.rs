@@ -1,5 +1,4 @@
-use crate::CryptoError;
-use jolt_field::{CanonicalEncoding, Field};
+use crate::{AlgebraError, CanonicalEncoding, Field};
 
 /// Exact field modulus, padded to 32-byte big-endian form.
 ///
@@ -7,10 +6,10 @@ use jolt_field::{CanonicalEncoding, Field};
 ///
 /// # Errors
 ///
-/// Returns [`CryptoError::InvalidSetup`] if the modulus exceeds 256 bits.
-pub fn field_modulus_be_bytes<F: Field + CanonicalEncoding>() -> Result<[u8; 32], CryptoError> {
+/// Returns [`AlgebraError::InvalidSetup`] if the modulus exceeds 256 bits.
+pub fn field_modulus_be_bytes<F: Field + CanonicalEncoding>() -> Result<[u8; 32], AlgebraError> {
     let too_wide =
-        || CryptoError::InvalidSetup("field modulus exceeds the 256-bit descriptor bound".into());
+        || AlgebraError::InvalidSetup("field modulus exceeds the 256-bit descriptor bound".into());
     if F::NUM_BYTES == 0 {
         return Err(too_wide());
     }

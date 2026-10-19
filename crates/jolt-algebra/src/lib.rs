@@ -111,6 +111,7 @@ pub mod fft;
 #[cfg(feature = "solinas")]
 mod fp128_accumulators;
 mod limbs;
+mod modulus;
 pub mod narrowing;
 #[cfg(feature = "solinas")]
 pub mod ntt;
@@ -128,6 +129,7 @@ mod unreduced;
 pub use accum::reduce_signed_accum;
 #[cfg(feature = "solinas")]
 pub use fft::SmoothFftField;
+pub use modulus::field_modulus_be_bytes;
 #[cfg(feature = "solinas")]
 pub use ntt::{
     tables, CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth,

@@ -4,11 +4,11 @@
 //! prefixes of it into role-specific ring matrices; any prefix of a uniformly
 //! random vector is uniformly random, so every such view is binding.
 
-use crate::lattice::modulus::field_modulus_be_bytes;
 use crate::CryptoError;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_field::parallel::*;
+use jolt_field::{field_modulus_be_bytes, CanonicalEncoding, Field};
 use rand_core::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
 
@@ -16,13 +16,33 @@ const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-field-stream";
 const PUBLIC_MATRIX_DERIVATION_TAG: &[u8] = b"shake256-paged-v1";
 
 /// Versioned derivation algorithm for the public field stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PublicMatrixDerivation {
     /// Fixed 4096-field-element SHAKE256 pages with exact field sampling.
     Shake256PagedV1,
 }
 
 impl PublicMatrixDerivation {
+    /// Canonical one-byte tag of [`Self::Shake256PagedV1`].
+    pub const SHAKE256_PAGED_V1_TAG: u8 = 1;
+
+    /// Canonical one-byte tag naming this derivation.
+    #[must_use]
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Shake256PagedV1 => Self::SHAKE256_PAGED_V1_TAG,
+        }
+    }
+
+    /// Derivation named by a canonical tag, or `None` for an unknown tag.
+    #[must_use]
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            Self::SHAKE256_PAGED_V1_TAG => Some(Self::Shake256PagedV1),
+            _ => None,
+        }
+    }
+
     /// Number of field elements in one independently derived page.
     #[must_use]
     pub const fn page_field_elements(self) -> usize {
@@ -33,7 +53,7 @@ impl PublicMatrixDerivation {
 }
 
 /// Semantic identity of the infinite public field stream.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicMatrixSeed {
     /// Coefficient derivation algorithm.
     pub derivation: PublicMatrixDerivation,
@@ -49,6 +69,31 @@ impl PublicMatrixSeed {
             derivation: PublicMatrixDerivation::Shake256PagedV1,
             seed,
         }
+    }
+
+    /// Length of [`Self::to_canonical_bytes`].
+    pub const CANONICAL_LEN: usize = 33;
+
+    /// Canonical encoding: the derivation tag, then the 32 seed bytes. Setup
+    /// digests hash exactly these bytes.
+    #[must_use]
+    pub fn to_canonical_bytes(&self) -> [u8; Self::CANONICAL_LEN] {
+        let mut bytes = [self.derivation.tag(); Self::CANONICAL_LEN];
+        for (byte, &seed_byte) in bytes.iter_mut().skip(1).zip(&self.seed) {
+            *byte = seed_byte;
+        }
+        bytes
+    }
+
+    /// Decode [`Self::to_canonical_bytes`].
+    ///
+    /// Returns an error for an unknown derivation tag.
+    pub fn from_canonical_bytes(bytes: &[u8; Self::CANONICAL_LEN]) -> Result<Self, CryptoError> {
+        let [tag, seed @ ..] = *bytes;
+        let derivation = PublicMatrixDerivation::from_tag(tag).ok_or_else(|| {
+            CryptoError::InvalidInput(format!("unsupported public matrix derivation tag {tag}"))
+        })?;
+        Ok(Self { derivation, seed })
     }
 }
 
@@ -89,6 +134,10 @@ pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
 
 /// Check that `matrix` is exactly the prefix of the public stream derived
 /// from `id`.
+///
+/// WARNING: this checks only the coefficients present, so an empty or
+/// truncated matrix passes. Callers must check the matrix length against the
+/// shape they expect.
 ///
 /// Returns an error if the field modulus exceeds 256 bits or if any
 /// coefficient differs from the derived stream.
@@ -187,6 +236,22 @@ fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
 mod tests {
     use super::*;
     use jolt_field::{Fp32, Fp64, One, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+
+    #[test]
+    fn seed_canonical_bytes_are_tag_then_seed() {
+        let seed = PublicMatrixSeed::shake256_paged_v1([9u8; 32]);
+        let bytes = seed.to_canonical_bytes();
+        assert_eq!(bytes[0], 1);
+        assert_eq!(bytes[1..], [9u8; 32]);
+        assert_eq!(PublicMatrixSeed::from_canonical_bytes(&bytes), Ok(seed));
+
+        let mut unknown = bytes;
+        unknown[0] = 2;
+        assert!(matches!(
+            PublicMatrixSeed::from_canonical_bytes(&unknown),
+            Err(CryptoError::InvalidInput(_))
+        ));
+    }
 
     type SmallF = Fp64<4_294_967_197>;
     const SMALL_D: usize = 64;
