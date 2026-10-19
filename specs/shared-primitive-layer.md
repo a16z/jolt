@@ -144,7 +144,11 @@ only Jolt-specific code and is accepted until M11.
   through spongefish codecs, with lengths bounded by the protocol's shape. serde
   never parses verifier input. No verifier parses the proof into a struct and then
   re-serializes it for comparison.
-- **I6. The verifier closure keeps its lints.** `jolt-algebra`, `jolt-crypto`,
+- **I6. The verifier closure keeps its lints.** Lattice code stays out of the
+  default (Dory) build: `jolt-algebra`'s ring, NTT, and FFT modules and
+  `jolt-crypto`'s `challenge` and `lattice` modules sit behind features that only
+  Akita-mode crates enable, so the default verifier closure keeps its unsafe
+  budget. Beyond that: `jolt-algebra`, `jolt-crypto`,
   `jolt-sumcheck`, and `jolt-transcript` stay in the verifier closure
   (`specs/verifier-closure-lints.md`). Code moved in must meet that crate's lints,
   or carry a narrowly scoped `#[expect]` with a reason. SIMD modules keep
@@ -296,8 +300,11 @@ natively. This deletes `jolt-akita/src/{scheme.rs (adapter parts), adapters.rs
 
 ### 6. `jolt-crypto`
 
-- `lattice`: derivation of Ajtai public matrices (Akita's SHAKE256 paged sampler),
-  the inner/outer commitment operation, and outer hiding randomness. The
+- `lattice`: derivation of Ajtai public matrices (Akita's SHAKE256 paged sampler,
+  moved in M5b), then in W4 the Ajtai operation A·G⁻¹(x), its matrix-layout type,
+  and outer hiding randomness. `jolt-crypto` owns the definition and layout;
+  Akita's planner fills the layout, and Akita's kernels are the optimized tier,
+  tested in Akita against the `jolt-crypto` operation. The
   randomness is drawn from a box with unit differences and fresh per slice, as
   in Whiteout §4.1. Akita's planner keeps choosing ranks and moduli, and its SIS
   tables stay in Akita (rule 3).
@@ -465,7 +472,7 @@ are Whiteout work.
 |---|---|---|---|
 | M0 | Transcript unification (jolt #2000, akita #185 on `main`), then sync `main` → `dev` | both | P0 |
 | M1a | Rename `jolt-field` → `jolt-algebra`; keep `jolt-field` as a re-export crate | jolt | P0 |
-| M1b | Copy Akita's ring, NTT/CRT, FFT, digit decomposition, checked arithmetic, and signed accumulators into `jolt-algebra`, unchanged; one runtime SIMD dispatcher | jolt | P0 |
+| M1b | Copy Akita's ring, NTT/CRT, FFT, digit decomposition, checked arithmetic, and signed accumulators into `jolt-algebra`, unchanged except where jolt's lints require, behind a feature | jolt | P0 |
 | M1c | Akita switches to `jolt-algebra` and deletes those modules from `akita-algebra` | Akita `main` | P0 |
 | M1d | Delete the `jolt-field` re-export crate | jolt | P0 |
 | M2a | `jolt-sumcheck`: fallible prover with a kernel error type, release self-check, shape checks; round formats, challenge policies, sites, base/extension split. Additive. | jolt | P0 |
@@ -475,8 +482,8 @@ are Whiteout work.
 | M3b | Route Akita's partial-evaluation messages through the seam | Akita `main` | P0 |
 | M4 | Delete `jolt-akita`'s placeholder `ZkOpeningScheme` / `ZkBatchOpeningScheme` impls | jolt | P0 |
 | M5a | `jolt-crypto::sample`: constant-time discrete Gaussian and rejection rule | jolt | P0 |
-| M5b | Copy Akita's sparse challenges, operator-norm rejection, Ajtai commitment, and matrix derivation into `jolt-crypto`, unchanged | jolt | P0 |
-| M5c | Akita switches to `jolt-crypto`; delete `akita-challenges` and the generic Ajtai code | Akita `main` | P0 |
+| M5b | Copy Akita's sparse challenges, operator-norm rejection, and public-matrix derivation into `jolt-crypto`, behind a feature. Akita's commitment operation is not separable from its plans and kernels, so the Ajtai operation lands with W4 (below). | jolt | P0 |
+| M5c | Akita switches to `jolt-crypto`'s challenges and matrix derivation; delete `akita-challenges` and Akita's copy of the derivation; keep Akita's matrix-length check and its truncated-prefix test | Akita `main` | P0 |
 | M6a | Rename `jolt-blindfold` → `jolt-zk` (pure rename) | jolt | P0 |
 | M6b | `jolt-zk::masking`: pad schedule, masking recorders, residual-relation rows, the back-end trait | jolt | P0 |
 | M6c | BlindFold onto committed pads (Dory); remove per-round Pedersen commitments | jolt | P0 |
@@ -485,7 +492,7 @@ are Whiteout work.
 | W1 | Akita: outer hiding randomness per slice, carried into the next fold's witness | Akita `dev` | P0 |
 | W2 | Akita: one-shot fold responses in ZK mode; overflow is an abort, not a retry | Akita `dev` | P0 |
 | W3 | Akita fold verifier implements `ResidualRows`; masked cut point at fold k | Akita `dev` | P0 |
-| W4 | `jolt-zk::whiteout`: Σ-protocol with Gaussian mask and joint rejection, response statement, `ResponseProver` trait; `VectorCommitment::Blind` and the lattice pad commitment | jolt | P0 |
+| W4 | `jolt-zk::whiteout`: Σ-protocol with Gaussian mask and joint rejection, response statement, `ResponseProver` trait; `jolt-crypto::lattice`'s Ajtai operation and layout type; `VectorCommitment::Blind` and the lattice pad commitment | jolt | P0 |
 | W5 | Akita implements `ResponseProver` (digit ranges, ring-quadratic reduction, setup offloading); the last PR turns ZK mode on and adds hidden-vs-transparent tests | Akita `dev` | P0 |
 | W6 | Jolt + Akita ZK integration: pin Akita `dev`; split `HidingCommitment` / `ZkOpening`, and `jolt-akita` implements `HidingCommitment`; the `akita` and `zk` features become compatible; end-to-end prover and verifier | jolt | P0 |
 | M7 | eq / multilinear evaluation into `jolt-poly` with typed bit order | both | P1 |
@@ -493,6 +500,7 @@ are Whiteout work.
 | M9 | Delete `akita-serialization` and `ark-serialize` | both | P2 |
 | M10 | `jolt-crypto::hash`; delete Akita's hand-rolled XOF | both | P2 |
 | M11 | `akita-cpu-backend` → `jolt-prover` / `jolt-kernels` architecture | both | P3 |
+| M12 | One runtime SIMD dispatcher in `jolt-algebra`, replacing the per-module detection and Akita's `AKITA_*` overrides (an operational change for Akita) | both | P2 |
 
 ### Review points
 
@@ -517,8 +525,11 @@ same repo: M3a builds on M2a, M6c and M6d build on M6b, and W4 builds on M6d.
 Because `dev` needs no maintainer gate, RP4 lands PR by PR without building a
 stack.
 
-Akita pins jolt at the start of RP2 (post-RP1 jolt) and again at the start of RP4
-(post-RP3 jolt, for `jolt-zk`). Jolt pins Akita `dev` at the start of RP5.
+Akita pins jolt at the start of RP2 (post-RP1 jolt) and again at the start of
+RP4 (post-RP3 jolt, for `jolt-zk`). The RP2 pin is the first to name
+`jolt-algebra` and `jolt-crypto` by git, so the jolt-side pin-bump commit adds
+both to jolt's `[patch]` redirect list; otherwise Cargo resolves two copies and
+the ring and field types stop matching. Jolt pins Akita `dev` at the start of RP5.
 
 ```mermaid
 graph LR
