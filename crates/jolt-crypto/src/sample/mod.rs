@@ -1,7 +1,7 @@
-//! Sampling primitives. Under the `lattice` feature: constant-time discrete
-//! Gaussian sampling and the joint rejection rule of Whiteout's Σ-protocol
-//! (`specs/whiteout-gaussian.md`), which are prover-only and stay out of the
-//! default verifier closure.
+//! Sampling primitives: constant-time discrete Gaussian sampling and the joint
+//! rejection rule of Whiteout's Σ-protocol (`specs/whiteout-gaussian.md`).
+//! They are prover-only, so the `sample` feature gates them separately from
+//! `lattice` and no verifier build compiles them.
 //!
 //! Neither the sampler's running time, branches, nor memory addresses depend
 //! on the value it returns, and [`JointRejection::accept`] reads its secret
@@ -13,28 +13,20 @@
 //! is computed from public parameters at 320-bit precision and floored to
 //! 192 bits (the note's §2 "Constants" and "Precision").
 
-#[cfg(feature = "lattice")]
 mod fixed;
-#[cfg(feature = "lattice")]
 mod gaussian;
-#[cfg(feature = "lattice")]
 mod rejection;
-#[cfg(all(test, feature = "lattice"))]
+#[cfg(test)]
 mod stats;
 
-#[cfg(feature = "lattice")]
 pub use gaussian::{GaussianSampler, GaussianWidth};
-#[cfg(feature = "lattice")]
 pub use rejection::{BlockParams, JointRejection};
 
-#[cfg(feature = "lattice")]
 use std::error::Error;
-#[cfg(feature = "lattice")]
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 /// Errors of the sampling layer. Every variant except
 /// [`SampleError::ShiftOutOfRange`] concerns public parameters or shapes.
-#[cfg(feature = "lattice")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SampleError {
     /// A Gaussian width multiplier outside `[1, 2^31]`, or a requested width
@@ -55,7 +47,6 @@ pub enum SampleError {
     ShiftOutOfRange,
 }
 
-#[cfg(feature = "lattice")]
 impl Display for SampleError {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
@@ -73,5 +64,4 @@ impl Display for SampleError {
     }
 }
 
-#[cfg(feature = "lattice")]
 impl Error for SampleError {}

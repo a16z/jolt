@@ -22,6 +22,7 @@ pub mod challenge;
 pub mod ec;
 #[cfg(feature = "lattice")]
 pub mod lattice;
+#[cfg(feature = "sample")]
 pub mod sample;
 pub use ec::{JoltGroup, PairingGroup};
 #[cfg(feature = "bn254")]

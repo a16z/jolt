@@ -259,4 +259,28 @@ mod tests {
 
         assert!(matches!(err, CryptoError::InvalidInput(msg) if msg.contains("unique")));
     }
+
+    #[test]
+    fn validate_rejects_zero_coefficient() {
+        let challenge = SparseChallenge {
+            positions: vec![0, 1].into(),
+            coeffs: vec![1, 0].into(),
+        };
+
+        let err = challenge.validate::<D>().unwrap_err();
+
+        assert!(matches!(err, CryptoError::InvalidInput(msg) if msg.contains("non-zero")));
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_position() {
+        let challenge = SparseChallenge {
+            positions: vec![0, D as u32].into(),
+            coeffs: vec![1, 1].into(),
+        };
+
+        let err = challenge.validate::<D>().unwrap_err();
+
+        assert!(matches!(err, CryptoError::InvalidInput(msg) if msg.contains("out of range")));
+    }
 }

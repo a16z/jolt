@@ -335,6 +335,24 @@ mod tests {
     }
 
     #[test]
+    fn from_sparse_rejects_challenge_count_mismatch() {
+        let challenge = SparseChallenge {
+            positions: Vec::new().into(),
+            coeffs: Vec::new().into(),
+        };
+
+        let err = Challenges::from_sparse(vec![challenge], 2, 1).unwrap_err();
+
+        assert_eq!(
+            err,
+            CryptoError::InvalidSize {
+                expected: 2,
+                actual: 1
+            }
+        );
+    }
+
+    #[test]
     fn subring_embedding_preserves_coefficients_and_batch_order() {
         let source = Challenges::from_sparse(
             vec![

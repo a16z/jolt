@@ -2,7 +2,7 @@
 //! intentional diagnostic, not a CI test).
 //!
 //! ```text
-//! cargo run --release -p jolt-crypto --features lattice --example sample_dudect -- \
+//! cargo run --release -p jolt-crypto --features sample --example sample_dudect -- \
 //!     [measurements per test, default 10^7] [seeds, default 3]
 //! ```
 //!

@@ -182,16 +182,17 @@ transcript.
 
 **Feature gate.** The sampler and the rejection rule (`gaussian`,
 `rejection`, and their fixed-point helpers) are prover-only and sit behind
-jolt-crypto's `lattice` feature, which enables `subtle` and `num-bigint`.
-They stay out of the default Dory verifier closure; the rest of `sample`
-(the uniform mod-q sampler, a separate ticket) is not gated.
+jolt-crypto's `sample` feature, which enables `subtle` and `num-bigint`.
+`sample` is separate from `lattice`, which the Akita verifier enables for
+challenges and matrix derivation, so no verifier build compiles them. The
+uniform mod-q sampler (a separate ticket) decides its own gate when it lands.
 
 **Dependencies.** `subtle` (2.6.1, already in `Cargo.lock` through the
 arkworks and sha3 stacks) for `Choice` and constant-time selects. The
 192-bit arithmetic is a three-limb hand-written type, so `crypto-bigint`
 (0.5.5, also already locked) is not needed. `num-bigint` (already an
 optional dependency of jolt-crypto under `bn254`) is also enabled by
-`lattice`, for the public constant computation. `jolt-zk::whiteout` owns attempts,
+`sample`, for the public constant computation. `jolt-zk::whiteout` owns attempts,
 nonces, and `T_att` (`whiteout-interfaces.md` §5).
 
 ## 5. Verification

@@ -310,7 +310,11 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
         let high = (canonical >> 64) as u64;
         let threshold_low = self.threshold as u64;
         let threshold_high = (self.threshold >> 64) as u64;
-        let negative = (high > threshold_high) || (high == threshold_high) && (low > threshold_low);
+        #[expect(
+            clippy::needless_bitwise_bool,
+            reason = "constant-time: no short-circuit on witness digits"
+        )]
+        let negative = (high > threshold_high) | ((high == threshold_high) & (low > threshold_low));
         let select = u64::from(negative).wrapping_neg();
         let [nonnegative0, nonnegative1, nonnegative2] = self.bias_nonnegative;
         let [negative0, negative1, negative2] = self.bias_negative;

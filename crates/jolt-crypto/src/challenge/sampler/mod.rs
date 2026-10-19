@@ -259,6 +259,106 @@ fn sample_indexed_challenges_sequential_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::challenge::{OperatorNormRejection, D64_SELECTIVE_L2_CHALLENGE_CONFIG};
+
+    /// Frozen output of Akita's pre-move sampler (`akita-challenges` at
+    /// LayerZero-Labs/akita 7543f3ce8) for seed `0, 1, ..., 31`, `D = 64`, and
+    /// three coordinates, as `(positions, coefficients)` per coordinate.
+    type FrozenChallenges = [(&'static [u32], &'static [i8]); 3];
+
+    const FROZEN_D64_PRODUCTION: FrozenChallenges = [
+        (
+            &[
+                10, 45, 49, 11, 62, 34, 15, 23, 47, 22, 53, 61, 5, 59, 4, 24, 3, 33, 9, 50, 13, 54,
+                48, 35, 56, 29, 55, 37, 32, 40, 14, 18, 28, 6, 43, 27, 42, 1, 58, 36, 2,
+            ],
+            &[
+                -1, -1, -1, 1, -1, -1, -1, 1, -1, 1, -1, 1, -1, -1, -1, 1, 1, 1, 1, -1, 1, -1, -1,
+                -1, 1, -1, 1, -1, -1, -1, 1, -2, -2, 2, -2, 2, 2, 2, 2, 2, 2,
+            ],
+        ),
+        (
+            &[
+                11, 41, 58, 31, 15, 23, 33, 57, 7, 36, 16, 54, 26, 40, 32, 8, 20, 12, 27, 39, 34,
+                1, 46, 18, 19, 42, 29, 55, 44, 43, 14, 37, 53, 6, 45, 21, 35, 38, 56, 50, 51,
+            ],
+            &[
+                1, -1, -1, -1, -1, 1, -1, -1, -1, 1, 1, -1, -1, 1, -1, -1, -1, 1, 1, 1, -1, 1, -1,
+                1, -1, 1, 1, 1, 1, 1, -1, 2, -2, 2, 2, 2, -2, -2, -2, -2, -2,
+            ],
+        ),
+        (
+            &[
+                33, 30, 0, 61, 62, 48, 55, 9, 44, 2, 7, 58, 15, 4, 17, 45, 28, 26, 36, 53, 35, 56,
+                39, 54, 43, 1, 25, 5, 21, 38, 8, 6, 27, 51, 40, 47, 3, 22, 14, 31, 16,
+            ],
+            &[
+                1, 1, -1, 1, -1, -1, 1, 1, 1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, -1, 1, 1, -1, -1,
+                -1, 1, 1, -1, 1, -1, -1, -2, 2, -2, 2, 2, 2, -2, -2, 2, -2,
+            ],
+        ),
+    ];
+
+    /// The third coordinate's first draw fails the operator-norm test, so
+    /// this vector also pins the redraw stream.
+    const FROZEN_D64_SELECTIVE_L2: FrozenChallenges = [
+        (
+            &[
+                10, 45, 49, 11, 62, 34, 15, 23, 47, 22, 53, 61, 5, 59, 4, 24, 3, 33, 9, 50, 13, 54,
+                48, 35, 56, 29, 55, 37, 32, 40, 14, 18, 28, 6, 43, 27, 42, 1, 58, 36, 2, 60,
+            ],
+            &[
+                -1, 1, -1, -1, -1, 1, -1, 1, -1, 1, -1, -1, -1, 1, 1, 1, 1, -1, 1, -1, -1, -1, 1,
+                -1, 1, -1, -1, -1, 1, -1, -1, 2, -2, 2, 2, 2, 2, 2, 2, 2, 2, -2,
+            ],
+        ),
+        (
+            &[
+                11, 41, 58, 31, 15, 23, 33, 57, 7, 36, 16, 54, 26, 40, 32, 8, 20, 12, 27, 39, 34,
+                1, 46, 18, 19, 42, 29, 55, 44, 43, 14, 37, 53, 6, 45, 21, 35, 38, 56, 50, 51, 17,
+            ],
+            &[
+                -1, -1, -1, -1, 1, -1, -1, -1, 1, 1, -1, -1, 1, -1, -1, -1, 1, 1, 1, -1, 1, -1, 1,
+                -1, 1, 1, 1, 1, 1, -1, 1, -2, 2, 2, 2, -2, -2, -2, -2, -2, 2, -2,
+            ],
+        ),
+        (
+            &[
+                24, 41, 25, 43, 58, 31, 35, 63, 23, 50, 40, 26, 17, 59, 37, 8, 45, 9, 51, 30, 55,
+                33, 54, 49, 11, 7, 38, 15, 39, 19, 46, 16, 44, 42, 13, 14, 20, 6, 1, 57, 53, 0,
+            ],
+            &[
+                -1, -1, -1, 1, -1, 1, 1, 1, -1, 1, 1, 1, 1, 1, 1, -1, 1, 1, -1, -1, -1, -1, -1, 1,
+                -1, -1, -1, 1, 1, 1, -1, 2, -2, 2, -2, 2, -2, -2, -2, 2, -2, 2,
+            ],
+        ),
+    ];
+
+    fn assert_frozen(actual: &[SparseChallenge], expected: &FrozenChallenges) {
+        assert_eq!(actual.len(), expected.len());
+        for (challenge, (positions, coeffs)) in actual.iter().zip(expected) {
+            assert_eq!(&challenge.positions[..], *positions);
+            assert_eq!(&challenge.coeffs[..], *coeffs);
+        }
+    }
+
+    #[test]
+    fn indexed_sampling_matches_frozen_akita_vectors() {
+        let seed: [u8; 32] = core::array::from_fn(|index| index as u8);
+        let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let plain = sample_indexed_challenges_from_seed(&seed, 64, 3, &production, None).unwrap();
+        assert_frozen(&plain, &FROZEN_D64_PRODUCTION);
+
+        let rejected = sample_indexed_challenges_from_seed(
+            &seed,
+            64,
+            3,
+            &D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+            Some(OperatorNormRejection::D64_SELECTIVE_L2),
+        )
+        .unwrap();
+        assert_frozen(&rejected, &FROZEN_D64_SELECTIVE_L2);
+    }
 
     #[test]
     fn rejects_oversized_ring_dimension_and_invalid_config() {

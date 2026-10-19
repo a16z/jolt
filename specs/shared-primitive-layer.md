@@ -148,7 +148,8 @@ only Jolt-specific code and is accepted until M11.
   default (Dory) build: `jolt-algebra`'s ring, NTT, and FFT modules and
   `jolt-crypto`'s `challenge` and `lattice` modules sit behind features that only
   Akita-mode crates enable, so the default verifier closure keeps its unsafe
-  budget. Beyond that: `jolt-algebra`, `jolt-crypto`,
+  budget. `jolt-crypto`'s prover-only `sample` module has its own `sample`
+  feature, so the Akita verifier's `lattice` build does not compile it. Beyond that: `jolt-algebra`, `jolt-crypto`,
   `jolt-sumcheck`, and `jolt-transcript` stay in the verifier closure
   (`specs/verifier-closure-lints.md`). Code moved in must meet that crate's lints,
   or carry a narrowly scoped `#[expect]` with a reason. SIMD modules keep

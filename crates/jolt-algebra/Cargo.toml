@@ -72,6 +72,16 @@ harness = false
 required-features = ["solinas"]
 
 [[bench]]
+name = "crt_ntt_ops"
+harness = false
+required-features = ["solinas"]
+
+[[bench]]
+name = "fft_smooth"
+harness = false
+required-features = ["solinas"]
+
+[[bench]]
 name = "binary_kernels"
 harness = false
 required-features = ["binary"]

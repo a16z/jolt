@@ -8,7 +8,6 @@ use crate::CryptoError;
 use jolt_field::parallel::*;
 use jolt_field::{field_modulus_be_bytes, CanonicalEncoding, Field};
 use rand_core::{CryptoRng, Error, RngCore};
-use serde::{Deserialize, Serialize};
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
 
@@ -16,7 +15,7 @@ const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-field-stream";
 const PUBLIC_MATRIX_DERIVATION_TAG: &[u8] = b"shake256-paged-v1";
 
 /// Versioned derivation algorithm for the public field stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicMatrixDerivation {
     /// Fixed 4096-field-element SHAKE256 pages with exact field sampling.
     Shake256PagedV1,
@@ -53,7 +52,7 @@ impl PublicMatrixDerivation {
 }
 
 /// Semantic identity of the infinite public field stream.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicMatrixSeed {
     /// Coefficient derivation algorithm.
     pub derivation: PublicMatrixDerivation,
