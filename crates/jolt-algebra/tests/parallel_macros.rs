@@ -1,5 +1,5 @@
 //! Serial-vs-parallel equivalence for the `cfg_*!` conditional-parallelism
-//! macros (`solinas::parallel`).
+//! macros (`parallel`).
 //!
 //! The macros dispatch on the `parallel` feature at the expansion site, so
 //! this suite exercises the sequential expansions when run without the
@@ -12,7 +12,7 @@
 use jolt_algebra::{Prime64Offset59, Ring, Zero};
 
 #[cfg(feature = "parallel")]
-use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::parallel::*;
 use jolt_algebra::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
     cfg_try_fold_reduce,
@@ -112,21 +112,20 @@ fn try_fold_reduce_matches_serial_and_propagates_errors() {
     assert_eq!(failed, Err("sentinel"));
 }
 
+/// The factory expression runs once even though the parallel expansion
+/// needs the factory twice (fold and reduce).
 #[test]
-fn try_fold_reduce_uses_identity_factory() {
+fn try_fold_reduce_evaluates_identity_factory_once() {
+    let evaluations = std::cell::Cell::new(0);
     let sum = cfg_try_fold_reduce!(
         0usize..100,
-        usize::default,
+        {
+            evaluations.set(evaluations.get() + 1);
+            usize::default
+        },
         |acc, value| acc.checked_add(value),
         |lhs, rhs| lhs.checked_add(rhs)
     );
     assert_eq!(sum, Some((0usize..100).sum()));
-
-    let empty = cfg_try_fold_reduce!(
-        0usize..0,
-        usize::default,
-        |acc, value| acc.checked_add(value),
-        |lhs, rhs| lhs.checked_add(rhs)
-    );
-    assert_eq!(empty, Some(0));
+    assert_eq!(evaluations.get(), 1);
 }

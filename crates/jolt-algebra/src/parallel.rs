@@ -9,12 +9,9 @@
 //! the baseline's design, ported unchanged; within this crate the expansion
 //! site is this crate, so its `parallel` feature governs.
 //!
-//! Consumer audit (checkpoint 9): no crate in the workspace, and nothing in
-//! this rebuild, currently expands any of these macros — see the
-//! dropped-specialization notes in `specs/jolt-field-rebuild.md`. The component is ported whole
-//! because the approved parity scope names the rayon helpers and all seven
-//! macros are equally (un)consumed, leaving no evidence basis for a partial
-//! subset.
+//! These helpers are backend-independent and available in every feature
+//! configuration. Consumers: the ring and NTT code here, jolt-crypto's
+//! lattice primitives, and Akita's kernels.
 
 #[cfg(feature = "parallel")]
 pub use rayon::prelude::*;

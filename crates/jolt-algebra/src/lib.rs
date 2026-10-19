@@ -51,8 +51,7 @@
 //!
 //! - `bn254` (default) — the arkworks-backed BN254 backend.
 //! - `solinas` — the pseudo-Mersenne backend (scalar, extension, unreduced,
-//!   packed, and the conditional-parallelism helpers in
-//!   `solinas::parallel`).
+//!   packed), and the ring, NTT, and FFT modules built on it.
 //! - `binary` — the binary-field backend, off by default.
 //! - `asm` — opts into architecture-specific Fp128 assembly kernels on
 //!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
@@ -117,6 +116,7 @@ pub mod narrowing;
 pub mod ntt;
 mod ops;
 mod packed;
+pub mod parallel;
 #[cfg(feature = "solinas")]
 pub mod ring;
 mod schedules;
