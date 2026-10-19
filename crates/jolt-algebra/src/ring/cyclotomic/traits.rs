@@ -1,4 +1,5 @@
 use super::*;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 impl<F: Field, const D: usize> CyclotomicRing<F, D> {
     /// Samples a ring element with uniformly random coefficients.
@@ -126,8 +127,8 @@ impl<F: Field, const D: usize> One for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field, const D: usize> fmt::Display for CyclotomicRing<F, D> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<F: Field, const D: usize> Display for CyclotomicRing<F, D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_tuple("CyclotomicRing")
             .field(&self.coeffs.as_slice())
             .finish()

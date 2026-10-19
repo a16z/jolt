@@ -11,7 +11,11 @@
 //! and `i32` (R = 2^32, for primes < 2^30). All NTT types are generic over
 //! `W: PrimeWidth`; monomorphization produces optimal code for each width.
 
-use std::fmt;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
+#[cfg(target_arch = "aarch64")]
+use super::neon::BarrettTwiddles;
+use sealed::Sealed;
 
 /// Largest raw i32 Montgomery dot batch whose signed reduction is safe for
 /// every supported prime below `2^30`.
@@ -26,9 +30,7 @@ mod sealed {
 /// Integer width abstraction for NTT prime arithmetic.
 ///
 /// Sealed with exactly two implementations: `i16` and `i32`.
-pub trait PrimeWidth:
-    sealed::Sealed + Copy + Clone + Eq + Default + fmt::Debug + Send + Sync + 'static
-{
+pub trait PrimeWidth: Sealed + Copy + Clone + Eq + Default + Debug + Send + Sync + 'static {
     /// Double-width type for intermediate Montgomery products.
     type Wide: Copy + Clone;
 
@@ -37,7 +39,7 @@ pub trait PrimeWidth:
     /// never read them.
     #[cfg(target_arch = "aarch64")]
     #[doc(hidden)]
-    type NeonTables<const D: usize>: Clone + fmt::Debug + PartialEq + Eq + Send + Sync;
+    type NeonTables<const D: usize>: Clone + Debug + PartialEq + Eq + Send + Sync;
 
     /// log2(R) for Montgomery reduction: 16 for `i16`, 32 for `i32`.
     const R_LOG: u32;
@@ -157,7 +159,7 @@ impl PrimeWidth for i16 {
 impl PrimeWidth for i32 {
     type Wide = i64;
     #[cfg(target_arch = "aarch64")]
-    type NeonTables<const D: usize> = super::neon::BarrettTwiddles<i32, D>;
+    type NeonTables<const D: usize> = BarrettTwiddles<i32, D>;
     const R_LOG: u32 = 32;
 
     #[inline]
@@ -218,7 +220,7 @@ impl PrimeWidth for i32 {
         d_inv_psi_inv: &[MontCoeff<Self>; D],
         d_inv: MontCoeff<Self>,
     ) -> Self::NeonTables<D> {
-        super::neon::BarrettTwiddles::compute(
+        BarrettTwiddles::compute(
             prime,
             fwd_twiddles,
             inv_twiddles,
@@ -252,8 +254,8 @@ impl<W: PrimeWidth> MontCoeff<W> {
     }
 }
 
-impl<W: PrimeWidth> fmt::Debug for MontCoeff<W> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<W: PrimeWidth> Debug for MontCoeff<W> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "Mont({:?})", self.0)
     }
 }

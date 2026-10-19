@@ -1,7 +1,7 @@
 use std::arch::aarch64::*;
 
 use super::BalancedDecomposePow2Params;
-use crate::CanonicalEncoding;
+use crate::{CanonicalEncoding, Field};
 
 /// Broadcast constants of the fp32 add-bias decomposition.
 struct U32BiasConstants {
@@ -58,7 +58,7 @@ unsafe fn biased_words_neon(values: uint32x4_t, constants: &U32BiasConstants) ->
 unsafe fn balanced_decompose_u32_block_neon<const N: usize, const WORDS: usize>(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params<impl crate::Field + CanonicalEncoding>,
+    params: &BalancedDecomposePow2Params<impl Field + CanonicalEncoding>,
     base: usize,
     constants: &U32BiasConstants,
 ) {
@@ -137,7 +137,7 @@ unsafe fn balanced_decompose_u32_block_neon<const N: usize, const WORDS: usize>(
 pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_neon(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params<impl crate::Field + CanonicalEncoding>,
+    params: &BalancedDecomposePow2Params<impl Field + CanonicalEncoding>,
 ) {
     // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
@@ -173,7 +173,7 @@ pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_neon(
 unsafe fn balanced_decompose_u32_blocks_neon<const WORDS: usize>(
     canonical: &[u32],
     out: &mut [i8],
-    params: &BalancedDecomposePow2Params<impl crate::Field + CanonicalEncoding>,
+    params: &BalancedDecomposePow2Params<impl Field + CanonicalEncoding>,
     constants: &U32BiasConstants,
 ) {
     // SAFETY: the caller upholds the `# Safety` contract above.

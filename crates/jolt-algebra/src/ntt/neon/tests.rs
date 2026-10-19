@@ -8,7 +8,7 @@ use super::super::butterfly::{
     NttTwiddles,
 };
 use super::super::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
-use super::super::tables::Q128_RAW_PRIMES;
+use super::super::tables::{I16_TAIL_PRIME, Q128_RAW_PRIMES};
 use super::super::NttKernelPlan;
 use super::*;
 
@@ -50,7 +50,7 @@ fn random_mont_array_i16<const D: usize>(prime: NttPrime<i16>, seed: u64) -> [Mo
 }
 
 const TEST_PRIME_I32: i32 = 1_073_692_673;
-const TEST_PRIME_I16: i16 = crate::ntt::tables::I16_TAIL_PRIME.p;
+const TEST_PRIME_I16: i16 = I16_TAIL_PRIME.p;
 
 fn assert_neon_ntt_i32_matches_scalar<const D: usize>() {
     let prime = NttPrime::compute(TEST_PRIME_I32);

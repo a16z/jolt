@@ -10,7 +10,6 @@ mod wide;
 use crate::{AdditiveGroup, CanonicalEncoding, Field, One, Ring, Zero};
 use rand_core::RngCore;
 use std::array::from_fn;
-use std::fmt;
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 

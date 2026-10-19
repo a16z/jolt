@@ -5,6 +5,7 @@
 //! Q128: `logq = 128` with five `i32` NTT-friendly primes.
 
 use super::prime::NttPrime;
+use crate::AlgebraError;
 
 /// Maximum ring degree for Q128 CRT+NTT profile (challenge-supported paths).
 pub const Q128_MAX_RING_D: usize = 1024;
@@ -106,17 +107,14 @@ pub fn q128_primes() -> [NttPrime<i32>; Q128_NUM_PRIMES] {
 /// Validate CRT+NTT `ring_d` against a profile-specific maximum.
 ///
 /// Not used for B/D matrix degrees below 64; callers skip validation there.
-pub fn validate_profile_crt_ring_degree(
-    ring_d: usize,
-    max_d: usize,
-) -> Result<(), crate::AlgebraError> {
+pub fn validate_profile_crt_ring_degree(ring_d: usize, max_d: usize) -> Result<(), AlgebraError> {
     if ring_d == 0 || !ring_d.is_power_of_two() {
-        return Err(crate::AlgebraError::InvalidSetup(format!(
+        return Err(AlgebraError::InvalidSetup(format!(
             "CRT ring degree must be a non-zero power of two, got {ring_d}"
         )));
     }
     if ring_d > max_d {
-        return Err(crate::AlgebraError::InvalidSetup(format!(
+        return Err(AlgebraError::InvalidSetup(format!(
             "ring degree {ring_d} exceeds profile max {max_d}"
         )));
     }
@@ -128,7 +126,7 @@ pub fn validate_profile_crt_ring_degree(
 mod tests {
     use super::*;
     use crate::ntt::crt::GarnerData;
-    use crate::ntt::prime::is_prime;
+    use crate::ntt::prime::{is_prime, PrimeWidth};
 
     #[test]
     fn six_product_i32_lazy_reduction_fits_signed_wide() {
@@ -148,7 +146,7 @@ mod tests {
         primes: &[NttPrime<W>; K],
         garner: GarnerData<K>,
     ) where
-        W: super::super::prime::PrimeWidth,
+        W: PrimeWidth,
     {
         for (i, prime_i) in primes.iter().enumerate().skip(1) {
             let pi = prime_i.p.to_i64();

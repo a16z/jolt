@@ -1,7 +1,7 @@
 //! CRT helpers: Garner reconstruction and limb-based modular arithmetic.
 
 use std::cmp::Ordering;
-use std::fmt;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::ops::{Add, Sub};
 
 use super::prime::{NttPrime, PrimeWidth};
@@ -491,8 +491,8 @@ impl<const L: usize> Sub for LimbQ<L> {
     }
 }
 
-impl<const L: usize> fmt::Display for LimbQ<L> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<const L: usize> Display for LimbQ<L> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         if let Ok(val) = u128::try_from(*self) {
             write!(f, "{val}")
         } else {
