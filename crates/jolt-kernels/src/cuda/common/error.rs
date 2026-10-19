@@ -9,6 +9,9 @@ pub enum CudaError {
     #[error("device buffer holds {got} field elements, expected {expected}")]
     LengthMismatch { expected: usize, got: usize },
 
+    #[error("CUDA kernel not implemented: {kernel}")]
+    NotImplemented { kernel: &'static str },
+
     #[error("CUDA kernel invariant violated: {reason}")]
     InvariantViolation { reason: &'static str },
 }

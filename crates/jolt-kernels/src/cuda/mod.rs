@@ -18,6 +18,8 @@
 //! inputs use two's-complement limbs.
 //! `u32` prefix scans combine per-block scans with recursively scanned block
 //! sums; the host-input API transfers those sums and offsets between levels.
+//! [`DeviceLtPolynomial`] keeps its shift and split factors separate throughout
+//! binding; optimized stores the shift in its high table and later combines the factors.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -31,8 +33,9 @@ pub use common::context::{
     context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,
     CudaKernelContext, DEVICE_COUNT_VARIABLE,
 };
-pub use common::device::{DeviceFrVec, LIMBS};
+pub use common::device::{as_fr_slice, DeviceFrVec, LIMBS};
 pub use common::error::CudaError;
+pub use common::lt_poly::DeviceLtPolynomial;
 pub use common::xfer_stats;
 pub use dory::CudaDoryScheme;
 

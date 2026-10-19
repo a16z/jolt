@@ -1,7 +1,13 @@
-//! Device field storage for BN254 `Fr` in Montgomery form: four consecutive
-//! `u64` limbs per element, matching the host field's internal representation.
+//! Device field storage and the checked boundary to generic host kernels.
+//!
+//! Arithmetic uses BN254 `Fr` in Montgomery form: four consecutive `u64` limbs
+//! per element. The conversion helpers check the host field's `TypeId` before
+//! reinterpreting it; supporting another `JoltField` requires a matching device
+//! arithmetic implementation, not just a limb-compatible host type.
 
 use ark_bn254::Fr as ArkFr;
+use jolt_field::JoltField;
+use std::any::TypeId;
 use std::sync::Arc;
 
 use ark_ff::BigInt;
@@ -108,4 +114,29 @@ pub(crate) fn fill_staging(staging: &mut [u64], values: &[Fr]) {
 #[inline]
 pub(crate) fn fr_limbs(value: Fr) -> [u64; LIMBS] {
     fr_to_limbs(value)
+}
+
+pub(crate) fn require_fr_slice<F: JoltField>(values: &[F]) -> Result<&[Fr], CudaError> {
+    as_fr_slice(values).ok_or(CudaError::NotImplemented {
+        kernel: "CUDA kernels support only the BN254 scalar field",
+    })
+}
+
+pub(crate) fn require_fr<F: JoltField>(value: F) -> Result<Fr, CudaError> {
+    require_fr_slice(std::slice::from_ref(&value))?
+        .first()
+        .copied()
+        .ok_or(CudaError::LengthMismatch {
+            expected: 1,
+            got: 0,
+        })
+}
+
+pub fn as_fr_slice<F: JoltField>(values: &[F]) -> Option<&[Fr]> {
+    if TypeId::of::<F>() != TypeId::of::<Fr>() {
+        return None;
+    }
+    // SAFETY: the TypeId check above proves `F == Fr`, so the two slices have
+    // identical layout, length, and validity. The lifetime is preserved.
+    Some(unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<Fr>(), values.len()) })
 }

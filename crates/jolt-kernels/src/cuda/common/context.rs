@@ -36,6 +36,7 @@ pub struct CudaKernelContext {
     pub(super) lt_double: CudaFunction,
     pub(super) scan_u32_block: CudaFunction,
     pub(super) scan_u32_add_offsets: CudaFunction,
+    lt_reconstruct: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -65,6 +66,7 @@ impl CudaKernelContext {
             lt_double: module.load_function("lt_double_kernel")?,
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
+            lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
         })
     }
 
@@ -145,6 +147,10 @@ impl CudaKernelContext {
             expected: u32::MAX as usize,
             got: len,
         })
+    }
+
+    pub(crate) const fn lt_reconstruct(&self) -> &CudaFunction {
+        &self.lt_reconstruct
     }
 
     pub fn fr_identity(&self, input: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
