@@ -19,7 +19,6 @@ jolt-akita::native_batching.rs::bind_verifier_opening::receive_selection#1
 jolt-akita::native_batching.rs::prove_on_transcript::batched_prove::<Cfg,_,_>#0
 jolt-akita::scheme.rs::AkitaScheme::absorb_commitment::.absorb#0
 jolt-akita::scheme.rs::AkitaScheme::open::<AkitaNativeBatchingasBatchOpeningScheme>::prove_batch#0
-jolt-akita::scheme.rs::AkitaScheme::open_zk::Self::open#0
 jolt-akita::scheme.rs::AkitaScheme::prove_batch::AkitaNativeBatching::prove_trace_batch#0
 jolt-akita::scheme.rs::AkitaScheme::receive_commitment::AkitaCommitment::receive#0
 jolt-akita::scheme.rs::AkitaScheme::send_commitment::.send#0
