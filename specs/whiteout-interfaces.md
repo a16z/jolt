@@ -315,6 +315,12 @@ pub trait ZkBackend<F> {
     fn commit_pads<H: Sponge, R: RngCore + CryptoRng>(
         setup: &Self::Setup, layout: &PadLayout, transcript: &mut ProverTranscript<H>, rng: &mut R,
     ) -> Result<CommittedPads<F, Self::Blind>, ZkError>;
+    /// Reads the pad commitment at the same transcript position, before the
+    /// first challenge. The verifier-side `PrivateChannel` can only be built
+    /// from the returned view.
+    fn receive_pad_commitment<H: Sponge>(
+        setup: &Self::Setup, layout: &PadLayout, transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<CommittedPadsView<Self::Blind>, ZkError>;
     fn prove<H: Sponge, R: RngCore + CryptoRng>(
         setup: &Self::Setup, relation: &ResidualRelation<F>, pads: CommittedPads<F, Self::Blind>,
         witness: &Self::Witness, transcript: &mut ProverTranscript<H>, rng: &mut R,
@@ -334,8 +340,12 @@ pub enum ZkError {
 ```
 
 Σ-protocol rejection is not an error. `whiteout::prove` retries internally
-with a fresh mask y and an attempt nonce in its own oracle domain, as the paper
-requires (Σ-protocol, §4.2, step 4), and absorbs only the accepted attempt.
+with a fresh mask y and a fresh attempt nonce, as the paper requires
+(Σ-protocol, §4.2, step 4). Each nonce n_i is a uniform ν-bit value from the
+prover's RNG, never a counter, and the challenge oracle's input is
+(transcript state, commitment to V, n_i). Only the accepted attempt's nonce and
+commitment enter the transcript; a rejected attempt's nonce is never revealed.
+This is what the zero-knowledge proof's hybrid H2 relies on.
 `blindfold` implements `ZkBackend` in M6c, and `whiteout` implements it in W4.
 
 ### Response proof (W4, W5)
@@ -343,8 +353,9 @@ requires (Σ-protocol, §4.2, step 4), and absorbs only the accepted attempt.
 ```rust
 /// Whiteout §4.3: digit ranges for every coordinate of e; the compression
 /// equations of the three commitments with their binary decompositions ξ, and
-/// t_D = A_D G⁻¹(V); N z = f + c t and z = c s on public coordinates; the
-/// ring-quadratic identity; ct(h) = 0.
+/// t_D = A_D G⁻¹(V); N z = f + c t; the ring-quadratic identity; ct(h) = 0.
+/// Public coordinates of s get smaller digit bounds but no z = c s equations
+/// (§4.2, "Public coordinates").
 pub struct ResponseStatement<F> { /* … */ }
 pub struct ResponseWitness<F> { /* z, V, θ, ξ_a, ξ_p, ξ_D digits */ }
 
