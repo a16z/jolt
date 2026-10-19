@@ -26,7 +26,6 @@ bn254 = [
   "dep:ark-ff",
   "dep:ark-serialize",
   "dep:ark-std",
-  "dep:num-bigint",
   "dep:num-integer",
   "dep:num-traits",
   "jolt-field/bn254",
@@ -39,6 +38,8 @@ jolt-field = { path = "../jolt-field", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
+subtle = { workspace = true }
+num-bigint = { workspace = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -46,7 +47,6 @@ ark-ec = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }
 ark-std = { workspace = true, optional = true }
-num-bigint = { workspace = true, optional = true }
 num-integer = { workspace = true, optional = true }
 num-traits = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
@@ -57,6 +57,7 @@ rand_chacha = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
+libm = { workspace = true }
 
 [[test]]
 name = "coverage"
