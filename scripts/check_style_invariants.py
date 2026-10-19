@@ -52,7 +52,7 @@ from pathlib import Path
 # that introduced this rule ("predate this PR and are left alone", #1732).
 # Remove entries as the sites get folded.
 FOLDED_CFG_ATTR_EXEMPT = {
-    "crates/jolt-field/src/solinas/ext.rs",
+    "crates/jolt-algebra/src/solinas/ext.rs",
 }
 
 PRIMITIVE = r"(?:u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize|bool|char|f32|f64)"

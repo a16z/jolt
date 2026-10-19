@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/fp128-formal-verification.yml"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "proofs/hol-light/**"
       - "scripts/check_fp128_proof_artifacts.py"
       - "scripts/tests/test_check_fp128_proof_artifacts.py"
@@ -16,7 +16,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/fp128-formal-verification.yml"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "proofs/hol-light/**"
       - "scripts/check_fp128_proof_artifacts.py"
       - "scripts/tests/test_check_fp128_proof_artifacts.py"
@@ -49,7 +49,7 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: Compare assembly with portable arithmetic
-        working-directory: crates/jolt-field
+        working-directory: crates/jolt-algebra
         run: cargo +"${FUZZ_TOOLCHAIN}" fuzz run --target aarch64-unknown-linux-gnu fp128_asm_differential -- -max_total_time=120
 
   fp128-asm-fuzz-x86-64-bmi2-adx:
@@ -70,7 +70,7 @@ jobs:
           grep -Eq '(^|[[:space:]])bmi2([[:space:]]|$)' /proc/cpuinfo
           grep -Eq '(^|[[:space:]])adx([[:space:]]|$)' /proc/cpuinfo
       - name: Compare assembly with portable arithmetic
-        working-directory: crates/jolt-field
+        working-directory: crates/jolt-algebra
         env:
           RUSTFLAGS: -C target-feature=+bmi2,+adx
         run: cargo +"${FUZZ_TOOLCHAIN}" fuzz run --target x86_64-unknown-linux-gnu fp128_asm_differential -- -max_total_time=120

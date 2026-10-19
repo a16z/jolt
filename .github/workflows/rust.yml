@@ -76,15 +76,15 @@ jobs:
       - name: Keep spongefish's sponge state private (no yolocrypto)
         run: scripts/check-no-yolocrypto.sh
       - name: Check no backend
-        run: cargo check -p jolt-field --no-default-features
+        run: cargo check -p jolt-algebra --no-default-features
       - name: Check BN254 backend
-        run: cargo check -p jolt-field --no-default-features --features bn254
+        run: cargo check -p jolt-algebra --no-default-features --features bn254
       - name: Test Solinas backend
-        run: cargo nextest run -p jolt-field --no-default-features --features solinas --cargo-quiet
+        run: cargo nextest run -p jolt-algebra --no-default-features --features solinas --cargo-quiet
       - name: Test parallel Solinas backend and device byte views
-        run: cargo nextest run -p jolt-field --no-default-features --features solinas,parallel,bytemuck --cargo-quiet
+        run: cargo nextest run -p jolt-algebra --no-default-features --features solinas,parallel,bytemuck --cargo-quiet
       - name: Check combined backends
-        run: cargo check -p jolt-field --no-default-features --features bn254,solinas
+        run: cargo check -p jolt-algebra --no-default-features --features bn254,solinas
 
   clippy:
     runs-on: ubuntu-latest

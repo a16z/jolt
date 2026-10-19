@@ -7,7 +7,7 @@ on:
     # their sole in-repo dependency (jolt-utils), and the build/toolchain inputs.
     paths:
       - "crates/jolt-crypto/**"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "crates/jolt-poly/**"
       - "crates/jolt-transcript/**"
       - "crates/jolt-utils/**"
@@ -72,15 +72,15 @@ jobs:
             read -r sha baseline <<< "$leg"
             echo "::group::$baseline @ $sha"
             git checkout --quiet "$sha"
-            features=jolt-field/solinas,jolt-field/asm
+            features=jolt-algebra/solinas,jolt-algebra/asm
             # `--bench '*'` rejects a bench whose required feature is off, and a
             # base that predates a feature cannot enable it.
-            if grep -q '^binary = ' crates/jolt-field/Cargo.toml; then
-              features+=,jolt-field/binary
+            if grep -q '^binary = ' crates/jolt-algebra/Cargo.toml; then
+              features+=,jolt-algebra/binary
             fi
             cargo bench \
               -p jolt-crypto \
-              -p jolt-field \
+              -p jolt-algebra \
               -p jolt-poly \
               -p jolt-transcript \
               --features "$features" \

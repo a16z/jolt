@@ -3188,6 +3188,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-algebra"
+version = "0.1.0"
+dependencies = [
+ "allocative",
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "bincode 2.0.1",
+ "bytemuck",
+ "cc",
+ "criterion",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "rand 0.8.7",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "spongefish",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
@@ -3349,23 +3372,7 @@ dependencies = [
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [
- "allocative",
- "ark-bn254",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "bincode 2.0.1",
- "bytemuck",
- "cc",
- "criterion",
- "num-bigint 0.4.6",
- "num-traits",
- "rand 0.8.7",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "spongefish",
- "thiserror 2.0.20",
+ "jolt-algebra",
 ]
 
 [[package]]
