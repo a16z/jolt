@@ -4,7 +4,7 @@
 | --------- | ---------------------------------------- |
 | Author(s) | @markosg04                               |
 | Created   | 2026-10-19                               |
-| Status    | draft                                    |
+| Status    | draft, revised after design review       |
 | Parent    | `specs/shared-primitive-layer.md`        |
 
 This appendix fixes the interfaces that later tickets build on, before any of
@@ -13,58 +13,48 @@ helper types, and module layout are the implementer's choice; the signatures and
 the stated contracts are not. A ticket that needs to change a signature here
 changes this file in the same PR.
 
-## 1. Sumcheck rounds (M2a)
+## 1. Single-instance sumcheck (M2a)
 
-### Round formats
+Akita runs unbatched sumchecks with grinding and sites; Jolt runs batched ones
+with `challenge_small`. The batched engine (`prove_batch`, the generated
+`begin_batch`/`verify_*` drivers, the uni-skip provers) keeps its current API
+and its current bytes. M2a adds a single-instance driver that reproduces Akita's
+bytes, and moves Akita onto it in M2b.
 
-One type owns the rule for how a round polynomial travels and how the verifier
-checks it. The verifier, the clear recorder, and the masking recorder (§5) all
-consume it.
+### Round checks have one owner
+
+`SumcheckDomain::round_sum_coefficients` (`domain.rs`) already owns the weights
+of a round check: `[2, 1, 1, …]` for `BooleanHypercube` and power sums for
+`CenteredIntegerDomain`. The verifier and BlindFold's R1CS lowering consume it.
+M2a adds the third format there instead of a new enum:
 
 ```rust
-/// How one sumcheck instance's rounds travel.
-pub enum SumcheckFormat<E> {
-    /// Boolean hypercube. Check: s(0) + s(1) = claim. Sends [c0, c2, ..., cd].
-    Compressed,
-    /// s(X) = eq(τ_i, X) · q(X), where τ_i = equality_point[i] in binding order.
-    /// Check: (1 − τ_i) q(0) + τ_i q(1) = claim. The kernel returns q.
-    /// Sends [q1, ..., qd].
-    EqFactored { equality_point: Vec<E> },
-    /// Uni-skip round over a centered integer domain D. Check: Σ_{x∈D} s(x) = claim.
-    /// Sends every coefficient.
-    Full { domain: CenteredIntegerDomain },
-}
-
-/// The format of one round, derived from the instance format and the round index.
-pub enum RoundFormat<E> {
-    Compressed,
-    EqFactored { tau: E },
-    Full { domain: CenteredIntegerDomain },
-}
-
-impl<E: Field> RoundFormat<E> {
-    /// The round check as weights on the full coefficient vector: Σ_j w_j c_j = claim.
-    pub fn check_weights(&self, degree: usize) -> Result<Vec<E>, SumcheckError<E>>;
-    /// The coefficient the wire omits, recovered from the check. `None` for `Full`.
-    pub fn omitted(&self) -> Option<usize>;
-    /// The coefficients sent on the wire, padded to `degree`.
-    pub fn wire(&self, poly: &UnivariatePoly<E>, degree: usize) -> Result<Vec<E>, SumcheckError<E>>;
-    /// Rebuilds the full polynomial from the wire coefficients and the claim.
-    pub fn recover(&self, wire: &[E], claim: E) -> Result<UnivariatePoly<E>, SumcheckError<E>>;
-    /// The next running claim: s(r), or eq(τ, r) · q(r) for `EqFactored`.
-    pub fn next_claim(&self, poly: &UnivariatePoly<E>, r: E) -> E;
-}
+/// One round of an equality-factored sumcheck: s(X) = eq(τ, X) · q(X).
+/// Check (1 − τ) q(0) + τ q(1) = claim, i.e. weights [1, τ, τ, …] on q.
+pub struct EqFactoredRound<E> { pub tau: E }
+impl<E: Field> SumcheckDomain<E> for EqFactoredRound<E> { /* weights [1, τ, τ, …] */ }
 ```
 
-`check_weights` is the affine form Λ_i of the Whiteout paper, §4.1: masking
-sends every coefficient except `omitted()` as m + p, and the residual relation
-gets the row Σ_j w_j (ĉ_j − p_j) = v_{i−1}.
+`SumcheckDomainSpec` gains the matching variant. Recovery of the omitted
+coefficient stays with jolt-poly (`CompressedPoly`, `OmittedConstantPoly`).
 
-### Challenges and sites
+Two facts the drivers and masking rely on:
 
-Akita draws round challenges from its grinding schedule and tags every message
-with a site; Jolt draws `challenge_small` and tags nothing. Both go behind one
-trait, which the caller supplies per instance.
+- **Eq-factored claims are normalized.** The running claim after round i is
+  q_i(r_i), not eq(τ_i, r_i) · q_i(r_i), exactly as Akita's
+  `advance_eq_factored_claim` computes it. The product of eq factors is applied
+  by the caller at the terminal check (Akita's `claim_scales`). The degree bound
+  of an eq-factored instance is the degree of q.
+- **Which rows masking needs.** For `Compressed` and `EqFactored` rounds the
+  omitted coefficient is defined by the check, so the check row is tautological
+  and masking adds none. For uni-skip rounds every coefficient is sent and
+  masked, so the check is an explicit affine row.
+
+### Context owns the transcript
+
+Akita's grinding context (`ProverGrinding`) owns the `&mut ProverTranscript` and
+is threaded through its whole prover. The driver therefore takes one context
+that owns the transcript, matching Akita's existing `SumcheckProverChannel`:
 
 ```rust
 #[repr(u32)]
@@ -72,238 +62,262 @@ pub enum SumcheckRole { Claim = 1, RoundBody = 3, Challenge = 4 } // Akita's dis
 
 pub struct SumcheckSite { pub invocation: u32, pub round: u32, pub role: SumcheckRole }
 
-pub trait RoundContext<E> {
+pub trait ProverRoundContext<E> {
+    type Sponge: Sponge;
     type Error;
+    fn transcript_mut(&mut self) -> &mut ProverTranscript<Self::Sponge>;
     /// The transcript site for `site`, or `None` to emit no site.
     fn site(&self, site: SumcheckSite) -> Option<SiteId>;
-    fn prover_challenge<H: Sponge>(
-        &mut self, site: SumcheckSite, transcript: &mut ProverTranscript<H>,
-    ) -> Result<E, Self::Error>;
-    fn verifier_challenge<H: Sponge>(
-        &mut self, site: SumcheckSite, transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<E, Self::Error>;
+    /// Grinding and the round challenge.
+    fn challenge(&mut self, site: SumcheckSite) -> Result<E, Self::Error>;
 }
-
-/// Jolt's default: no sites, `challenge_small`.
-pub struct SmallChallenges;
+pub trait VerifierRoundContext<'proof, E> { /* mirror, over VerifierTranscript<'proof, _> */ }
 ```
 
-Akita implements `RoundContext` with its grinding plan, which stays in Akita
-(`transcript_grinding`, `fold_draw.rs`). Its implementation must reproduce
-`grinded_ext_challenge`'s bytes exactly (I3).
+Akita implements both on its existing grinding wrappers; its grinding plan stays
+in Akita. A Jolt context wrapping a bare transcript is added only when a Jolt
+caller needs `prove_single`.
 
-### Prover trait and errors
-
-`ProveRounds` keeps its fused shape and gains a kernel error type:
+### Kernels and errors
 
 ```rust
 pub trait ProveRounds<E: Field, K = Infallible> {
     fn num_rounds(&self) -> usize;
-    /// For `EqFactored` instances, returns q, not s.
+    /// For eq-factored instances, returns the full q. Kernels that produce
+    /// [q1..qd] rebuild q0 with the jolt-poly recovery, not a local formula.
     fn prove_round(&mut self, bind: Option<E>, round: usize, previous_claim: E)
         -> Result<UnivariatePoly<E>, SumcheckError<E, K>>;
     fn finish_rounds(&mut self, bind: E) -> Result<(), SumcheckError<E, K>>;
 }
 
-pub enum SumcheckError<E, K = Infallible> {
-    // existing variants unchanged
-    Kernel(K),
+pub enum SumcheckError<E, K = Infallible> { /* existing variants */ Kernel(K) }
+impl<E> SumcheckError<E, Infallible> {
+    pub fn widen<K>(self) -> SumcheckError<E, K>;
 }
 ```
 
-`SumcheckError` carries invariant violations and kernel failures only. Retryable
-aborts (W2's fold overflow, W4's Σ-protocol rejection) are not sumcheck
-failures. They belong to the prove-level errors of `jolt-zk` and Akita (§5).
+`K` appears only on `prove_single`/`verify_single` and the kernels they drive.
+The batched engine keeps `K = Infallible`, so `MemberRound`, `MemberFinish`, and
+`RoundScheduler` do not change. A blanket `From` impl is impossible
+(conflicts with `impl<T> From<T> for T`), so internal helpers return
+`SumcheckError<E>` and the single driver calls `widen`. Akita uses
+`K = AkitaError`. Akita's fused-API adapter runs `bind_challenge(round − 1, b)`
+then `round_polynomial` inside `prove_round`, and `bind_challenge` then
+`finish` inside `finish_rounds`.
 
-### Drivers
+A sumcheck error is an invariant violation or a kernel failure. Retryable
+aborts are not sumcheck errors (§5).
+
+### Driver
 
 ```rust
-/// One unbatched instance. Matches Akita's `prove_sumcheck` and
-/// `prove_eq_factored_sumcheck` byte for byte: claim made public at the Claim
-/// site; per round, the wire coefficients at the RoundBody site, then the
-/// challenge from `context`.
-pub fn prove_single<F, E, K, C, R, H>(
+pub struct SingleInstance<E> {
+    pub input_claim: E,
+    pub rounds: usize,
+    pub degree: usize,
+    pub format: SingleFormat<E>,   // Compressed | EqFactored { equality_point: Point<LOW_TO_HIGH, E> }
+    pub invocation: u32,
+}
+
+/// Byte-for-byte Akita's `prove_sumcheck` / `prove_eq_factored_sumcheck` in clear
+/// mode: input claim bound through the recorder at the Claim site; per round,
+/// wire coefficients at the RoundBody site, then `context.challenge`. Sends no
+/// output claims.
+pub fn prove_single<F, E, K, C, R>(
     member: &mut dyn ProveRounds<E, K>,
-    instance: &SingleInstance<E>,   // input claim, rounds, degree, format, invocation
+    instance: &SingleInstance<E>,
     context: &mut C,
     recorder: &mut R,
-    transcript: &mut ProverTranscript<H>,
 ) -> Result<ProvedSingle<E>, SumcheckError<E, K>>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
-    C: RoundContext<E, Error = K>,   // or map; implementer's choice
-    R: SumcheckRecorder<E>,
-    H: Sponge;
+    C: ProverRoundContext<E, Error = K>,
+    R: SumcheckRecorder<E, Error = K>;
 
-pub fn verify_single<F, E, C, H>(/* mirror */);
+/// Replays the rounds and returns (output claim, challenges) before any oracle
+/// check, as Akita's `verify_*_rounds` do; Akita exchanges late claims first.
+pub fn verify_single<F, E, K, C>(/* mirror */) -> Result<SingleReplay<E>, SumcheckError<E, K>>;
 ```
 
-`prove_batch` takes a `RoundContext` too; Jolt passes `SmallChallenges` and
-`SumcheckFormat::Compressed`, so Jolt proofs are unchanged. The uni-skip
-provers become `Full`-format calls.
+`τ_i = equality_point[i]` matches `GruenSplitEq::current_tau` (checked against
+Akita); M2b pins it with a byte-identity test.
 
-Jolt's Dory path uses `Fr`, which has no `ExtField<Fr>` impl today (only
-`PseudoMersenne` fields have the reflexive impl). M2a either generalizes the
-reflexive impl or gives `prove_batch` a single-field path.
+## 2. Private messages (M3a)
 
-## 2. Recorders (M2a, M3a)
-
-The recorder stops drawing challenges; `RoundContext` does that.
+Masking must cover every witness-dependent field message, and the verifier must
+assign the same pad indices the prover used. One role-generic seam does both,
+following Akita's existing pattern of writing each exchange once over both roles
+(`GrindingReplay::exchange`).
 
 ```rust
-pub trait SumcheckRecorder<E> {
-    type Witness;
-    fn absorb_input_claims<C: Channel>(&mut self, input_claims: &[E], channel: &mut C);
-    /// Sends one round in `format`. Draws nothing.
-    fn record_round<H: Sponge>(
-        &mut self, poly: &UnivariatePoly<E>, format: &RoundFormat<E>, degree: usize,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), SumcheckError<E>>;
-    fn finish<H: Sponge>(self, output_claims: &[E], transcript: &mut ProverTranscript<H>)
-        -> Result<Self::Witness, SumcheckError<E>>;
+/// Where a private message's pads sit in the pad schedule. Empty in clear mode.
+pub struct PadSlots { /* start, len */ }
+
+/// Witness-dependent field messages. Prover: sends values (clear) or
+/// value + next pads (masked). Verifier: receives them and, in masked mode,
+/// returns the pad slots the prover used.
+pub trait PrivateChannel {
+    type Error;
+    /// Exchanges `values` in place (filled from the proof on the verifier).
+    fn exchange_private<F, E>(&mut self, values: &mut [E]) -> Result<PadSlots, Self::Error>
+    where F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode;
+    /// Binds a claim the verifier can already derive. Clear: absorbed as a
+    /// public value. Masked: nothing, since earlier masked slots bind it.
+    fn bind_derived<F, E>(&mut self, claim: &E) -> Result<(), Self::Error>
+    where F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode;
 }
 ```
 
-The committed (per-round Pedersen) recorder moves to `jolt-zk` with BlindFold
-(M6a) and is deleted by M6c.
+Pads cover base-field coordinates, so an extension element takes `E::DEGREE`
+pads. `SumcheckRecorder` is built on this seam: input claims go through
+`bind_derived`, round coefficients and output claims through `exchange_private`.
+`SumcheckRecorder` and `PrivateChannel` carry an associated `Error`, so pad
+exhaustion has a channel in both.
 
-## 3. Private-message seam (M3a)
+Messages that go through the seam:
 
-Witness-dependent field messages that are not sumcheck rounds go through one
-seam: Jolt's claimed evaluations and Akita's partial-evaluation messages.
+- **Jolt:** every sumcheck round, claimed evaluations, uni-skip output claims.
+- **Akita, folds 1..k:** stage-1 child claims and range image, L2 subclaims and
+  virtual evaluations, EOR partials and final claims, stage-2/3 evaluations,
+  `opening_payload`, and the `NextWitness` payload.
+
+Messages that stay public: commitments, grinding nonces, setup-offloading
+claims. Akita's fold-selection retry nonce is witness-dependent; W2 removes it,
+and until then ZK mode cannot be selected.
+
+Messages after the cut point are not masked: they are replaced by the response
+proof. That covers the terminal `e_folded`, the Golomb-Rice `z` payload, and
+`response_l2_sq` if it falls after fold k. W3 confirms on which side of the cut
+each of these falls.
+
+## 3. Commitments (M4, W4, W6)
+
+M4 is cleanup only: delete `jolt-akita`'s `ZkOpeningScheme` impl (a transparent
+`open_zk` and an always-erroring `verify_zk`) and its all-erroring
+`ZkBatchOpeningScheme` impl. Nothing requires them, because the `akita` and `zk`
+features are mutually exclusive today.
+
+The PCS trait split lands in W6, when Akita first commits with randomness, so
+both halves have a caller:
 
 ```rust
-/// Sends witness-dependent field messages. Clear: unchanged. Masked: m + p,
-/// with the next unused pads in schedule order.
-pub trait PrivateMessages<F, H: Sponge> {
-    fn send_private<E: ExtField<F> + CanonicalEncoding>(
-        &mut self, values: &[E], transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), TranscriptError>;
-}
-
-pub struct ClearMessages; // sends values unchanged
-```
-
-Pads cover base-field coordinates, so an extension element consumes
-`E::DEGREE` pads. Public messages (commitments, nonces, setup-offloading claims)
-keep using the channel directly. The verifier has no counterpart: it receives
-masked and clear values alike, and in ZK mode it never checks them directly.
-
-## 4. Commitments (M4)
-
-### PCS traits
-
-`ZkOpeningScheme` splits into two capabilities. Its associated type
-`HidingCommitment`, which commits to an evaluation, is renamed `EvalCommitment`
-so the trait name is free.
-
-```rust
+/// Commit with randomness. The blind lives in `OpeningHint`, where Dory keeps
+/// it today; it is not returned separately.
 pub trait HidingCommitment: CommitmentScheme {
-    type Blind: Clone + Send + Sync;
-    fn commit_hiding<P: MultilinearPoly<Self::Field> + ?Sized, R: RngCore + CryptoRng>(
-        poly: &P, setup: &Self::ProverSetup, rng: &mut R,
-    ) -> Result<(Self::Output, Self::OpeningHint, Self::Blind), OpeningsError>;
+    fn commit_hiding<P: MultilinearPoly<Self::Field> + ?Sized>(
+        poly: &P, setup: &Self::ProverSetup,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 }
 
+/// Opening that reveals nothing beyond a commitment to the evaluation.
 pub trait ZkOpening: HidingCommitment {
     type EvalCommitment: /* today's HidingCommitment bounds */;
-    fn open_zk</* as today */>(/* … */) -> Result<(Self::EvalCommitment, Self::Blind), OpeningsError>;
+    type EvalBlind: Clone + Send + Sync;
+    fn open_zk</* as today */>(/* … */) -> Result<(Self::EvalCommitment, Self::EvalBlind), OpeningsError>;
     fn verify_zk</* as today */>(/* … */) -> Result<Self::EvalCommitment, OpeningsError>;
 }
 ```
 
-`ZkStreamingCommitment` becomes `HidingStreamingCommitment:
-StreamingCommitment + HidingCommitment`. `ZkBatchOpeningScheme` keeps its shape
-and requires `ZkOpening`. Dory implements both traits. `jolt-akita` deletes its
-current `ZkOpeningScheme` impl, whose `open_zk` runs a transparent opening and
-whose `verify_zk` always errors. It implements `HidingCommitment` in W6, once
-Akita commits with randomness (W1).
+`ZkStreamingCommitment` becomes `HidingStreamingCommitment`.
+`ZkBatchOpeningScheme` keeps its shape. It cannot take `ZkOpening` as a
+supertrait, because its implementors are batching markers, so it bounds its
+`PCS` parameter instead.
 
-### Vector commitments
+The vector-commitment change lands in W4 with the lattice pad commitment, its
+first non-scalar implementor:
+
+- `VectorCommitment` gains `type Blind` and `sample_blind`. Its `Output: Copy`
+  bound relaxes to `Clone`, because an Ajtai commitment is heap-allocated.
+- `commit` takes field values and documents that any gadget decomposition
+  happens inside it.
+- Row openings move to `RowOpening: VectorCommitment<Blind = Self::Field>`,
+  which only Pedersen implements. An Ajtai blind's norm grows under
+  combination, and the lattice pad commitment is opened by the Σ-protocol
+  instead.
+
+## 4. Pads (M6b)
 
 ```rust
-pub trait VectorCommitment: Commitment<…> {
-    type Field: JoltField;
-    type Setup: Clone + Send + Sync;
-    /// Scalar for Pedersen; a vector of randomness digits for Ajtai.
-    type Blind: Clone + Send + Sync;
-    fn capacity(setup: &Self::Setup) -> usize;
-    fn sample_blind<R: RngCore + CryptoRng>(setup: &Self::Setup, rng: &mut R) -> Self::Blind;
-    fn commit(setup: &Self::Setup, values: &[Self::Field], blind: &Self::Blind) -> Self::Output;
-    fn verify(setup: &Self::Setup, c: &Self::Output, values: &[Self::Field], blind: &Self::Blind) -> bool;
+/// Public pad layout, derived from the protocol's public shape by one function
+/// that prover and verifier both call.
+pub struct PadLayout {
+    pub num_pads: usize,
+    /// Pads of product operands (§5), stored as constant digit polynomials in
+    /// the pad commitment.
+    pub operand_pads: Vec<PadIndex>,
+    /// Auxiliary slots for masked intermediate products of checks of degree > 2.
+    pub auxiliary_slots: Vec<AuxSlot>,
 }
 
-/// Row openings by homomorphic combination. Pedersen only: an Ajtai blind's
-/// norm grows under combination, and the lattice pad commitment is opened by
-/// the Σ-protocol instead.
-pub trait RowOpening: VectorCommitment<Blind = <Self as VectorCommitment>::Field> {
-    fn open_committed_rows(/* as today */);
-    fn verify_committed_rows(/* as today */);
-}
+/// Pads committed before the first challenge. Masking recorders and
+/// `PrivateChannel`s can only be built from this, so they cannot run before the
+/// commitment exists.
+pub struct CommittedPads<F, B> { /* pads, cursor, blind */ }
 ```
+
+The back end creates `CommittedPads` (§5); the prover sends the commitment
+before any challenge. At the end the cursor must equal `layout.num_pads`.
+Masked intermediate products are sent through `exchange_private` at their
+auxiliary slots, during the transcript, before the challenge that uses them.
 
 ## 5. ZK layer (M6b, W4)
 
 ### Residual relation
 
 ```rust
-/// A variable of the residual relation: a pad, the mask g's coefficient slot,
-/// or a coordinate of the residual witness (the PCS's cut-point witness and its
-/// commitment openings).
-pub enum ResidualVar { Pad(usize), Mask(usize), Witness(usize) }
+pub enum ResidualVar { Pad(PadIndex), Witness(usize) }
 
-/// Σ_k a_k · x_k + b = 0.
+/// Σ_k a_k · x_k + b = 0, over the base field.
 pub struct AffineRow<F> { pub terms: Vec<(ResidualVar, F)>, pub constant: F }
 
-/// x · y = z. `x` is a single masked value (Whiteout §3.2: one constant operand
-/// per product). `y` and `z` are arbitrary affine forms.
-pub struct ProductRow<F> { pub x: AffineRow<F>, pub y: AffineRow<F>, pub z: AffineRow<F> }
+/// x · y = z, with x a single masked value: one constant operand per product
+/// (Whiteout §3.2), so the back end can add its scalarity rows for x's pad.
+pub struct MaskedOperand<F> { pub masked: F, pub pad: PadIndex }
+pub struct ProductRow<F> { pub x: MaskedOperand<F>, pub y: AffineRow<F>, pub z: AffineRow<F> }
 
 pub struct ResidualRelation<F> {
     pub affine: Vec<AffineRow<F>>,
     pub products: Vec<ProductRow<F>>,
-    pub num_pads: usize,
+    pub layout: PadLayout,
     pub num_witness: usize,
 }
 
-/// A verifier that contributes rows: Jolt's stages (through the existing
-/// replay of the verifier) and Akita's folds up to the cut point (W3).
+/// A verifier that contributes rows after replaying its part of the
+/// transcript: Jolt's stages (through the existing verifier replay) and
+/// Akita's folds up to the cut point (W3).
 pub trait ResidualRows<F> {
     type Error;
     fn append_rows(&self, relation: &mut ResidualRelation<F>) -> Result<(), Self::Error>;
 }
 ```
 
-Rows are field-level for both back ends; the lattice back end applies the
-constant-term lift itself.
-
-### Pads
-
-```rust
-/// Pads in schedule order, committed before the first challenge.
-pub struct PadSchedule<F> { /* pads, cursor */ }
-impl<F: Field> PadSchedule<F> {
-    pub fn sample<R: RngCore + CryptoRng>(count: usize, rng: &mut R) -> Self;
-    /// The next `n` unused pads. Errors if the schedule is exhausted.
-    pub fn take(&mut self, n: usize) -> Result<&[F], ZkError>;
-}
-```
-
-The masking `PrivateMessages` and `SumcheckRecorder` implementations draw from
-one `PadSchedule`. The schedule length is fixed by public parameters, so the
-prover commits to it before the first challenge.
+- **Field level.** Rows are over the base field. The masking layer owns
+  expanding an extension-field affine check into `E::DEGREE` base-field rows.
+- **What the back end adds.** It never sees the mask g as a row variable. g,
+  the constant-term lift, the scalarity rows of operand pads, and the
+  ring-linear rows N·s = t (residual and pad commitment openings) are the
+  lattice back end's. N and t come from its `Setup`, and `ResidualRows` hands
+  it the residual commitment.
+- **Replacing BlindFold's lowering.** M6c lowers `ResidualRelation` to
+  BlindFold's relaxed R1CS. That replaces the per-round lowering in
+  `jolt-sumcheck/src/r1cs.rs`, which is deleted with the committed recorder.
 
 ### Back ends
 
 ```rust
 pub trait ZkBackend<F> {
     type Setup;
-    /// Pads, their blind, and the residual witness with its openings.
+    type Blind;
     type Witness;
+    /// Samples pads, commits to them (and, for Whiteout, to g and r_p) and
+    /// sends the commitment. Called before the first challenge.
+    fn commit_pads<H: Sponge, R: RngCore + CryptoRng>(
+        setup: &Self::Setup, layout: &PadLayout, transcript: &mut ProverTranscript<H>, rng: &mut R,
+    ) -> Result<CommittedPads<F, Self::Blind>, ZkError>;
     fn prove<H: Sponge, R: RngCore + CryptoRng>(
-        setup: &Self::Setup, relation: &ResidualRelation<F>, witness: &Self::Witness,
-        transcript: &mut ProverTranscript<H>, rng: &mut R,
+        setup: &Self::Setup, relation: &ResidualRelation<F>, pads: CommittedPads<F, Self::Blind>,
+        witness: &Self::Witness, transcript: &mut ProverTranscript<H>, rng: &mut R,
     ) -> Result<(), ZkError>;
     fn verify<H: Sponge>(
         setup: &Self::Setup, relation: &ResidualRelation<F>,
@@ -312,26 +326,32 @@ pub trait ZkBackend<F> {
 }
 
 pub enum ZkError {
-    /// A randomized step failed; retry the whole proof with fresh randomness.
-    Aborted(AbortReason),
+    /// W2: a one-shot fold response overflowed its digit range. Retry the whole
+    /// proof, resampling every pad and all randomness.
+    FoldOverflow,
     // invariant violations, transcript errors, …
 }
 ```
 
+Σ-protocol rejection is not an error. `whiteout::prove` retries internally
+with a fresh mask y and an attempt nonce in its own oracle domain, as the paper
+requires (Σ-protocol, §4.2, step 4), and absorbs only the accepted attempt.
 `blindfold` implements `ZkBackend` in M6c, and `whiteout` implements it in W4.
 
 ### Response proof (W4, W5)
 
 ```rust
-/// The statement of Whiteout §4.3: digit ranges, linear rows N z = f + c t,
-/// the ring-quadratic identity, and ct(h) = 0. Defined in `jolt-zk::whiteout`.
+/// Whiteout §4.3: digit ranges for every coordinate of e; the compression
+/// equations of the three commitments with their binary decompositions ξ, and
+/// t_D = A_D G⁻¹(V); N z = f + c t and z = c s on public coordinates; the
+/// ring-quadratic identity; ct(h) = 0.
 pub struct ResponseStatement<F> { /* … */ }
+pub struct ResponseWitness<F> { /* z, V, θ, ξ_a, ξ_p, ξ_D digits */ }
 
 /// Proves the response statement. Akita implements it (W5).
 pub trait ResponseProver<F> {
-    type Proof;
     fn prove_response<H: Sponge>(
-        &self, statement: &ResponseStatement<F>, response: &ResponseWitness<F>,
+        &self, statement: &ResponseStatement<F>, witness: &ResponseWitness<F>,
         transcript: &mut ProverTranscript<H>,
     ) -> Result<(), ZkError>;
     fn verify_response<H: Sponge>(
@@ -342,10 +362,10 @@ pub trait ResponseProver<F> {
 
 ## Open questions
 
-- **Equality-point order.** `EqFactored`'s τ_i follows Akita's binding order
-  (`GruenSplitEq::current_tau`). M2a must pin that order with a test against
-  Akita's verifier.
-- **Kernel error mapping.** Whether `RoundContext::Error` must equal the kernel
-  error `K`, or the driver maps both into `SumcheckError<E, K>`.
-- **Product-row operand.** Whether `ProductRow.x` should be a dedicated
-  single-variable type instead of an `AffineRow` with one term.
+- **Extension-field products.** Whether Akita's fold-k final checks contain
+  products of extension-field values. A single-operand product row cannot
+  express those directly; they would need `E::DEGREE` auxiliary slots or a
+  sum-of-products row. W3 answers this first.
+- **Cut point of `response_l2_sq`.** Whether the 16-byte L2 message falls before
+  or after fold k. Before the cut, it needs a field encoding so it can be
+  masked.
