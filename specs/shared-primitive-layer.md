@@ -532,6 +532,12 @@ RP4 (post-RP3 jolt, for `jolt-zk`). The RP2 pin is the first to name
 both to jolt's `[patch]` redirect list; otherwise Cargo resolves two copies and
 the ring and field types stop matching. Jolt pins Akita `dev` at the start of RP5.
 
+The add-first rule also runs the other way. Jolt's `jolt-akita` names Akita
+paths (`akita_algebra::ring`, `akita_challenges`), and Akita's recursion
+profile workspace compiles it against local Akita. M1c and M5c therefore keep
+thin public re-exports at those paths. RP3 ports `jolt-akita` to the jolt
+paths, and RP4 deletes the re-exports.
+
 ```mermaid
 graph LR
   RP0 --> RP1 --> RP2 --> RP3 --> RP4 --> RP5
