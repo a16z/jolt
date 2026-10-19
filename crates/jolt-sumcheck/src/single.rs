@@ -12,11 +12,14 @@
 
 use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly, Point, UnivariatePoly, LOW_TO_HIGH};
-use jolt_transcript::{Channel, ProverTranscript, SiteId, Sponge, VerifierTranscript};
+use jolt_transcript::{
+    Channel, PadSlots, PrivateChannel, ProverTranscript, SiteId, Sponge, VerifierTranscript,
+};
 
 use crate::domain::{BooleanHypercube, EqFactoredRound, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::prover::ProveRounds;
+use crate::recorder::SingleRecorder;
 use crate::round_proof::padded_coefficients;
 
 /// Which atom of a sumcheck a transcript site tags. The discriminants are
@@ -191,24 +194,26 @@ fn mark<C: Channel>(channel: &mut C, site: Option<SiteId>) {
     }
 }
 
-/// Proves one instance: the input claim absorbed publicly at the claim site;
-/// per round, the self-checked round polynomial's `degree` wire coefficients
-/// sent at the round-body site, then the context's challenge. Sends no output
-/// claims.
+/// Proves one instance: the input claim bound through the recorder at the
+/// claim site; per round, the self-checked round polynomial's `degree` wire
+/// coefficients recorded at the round-body site, then the context's
+/// challenge. Sends no output claims.
 ///
 /// The kernel's round API is fused, as for the batched engine: round `i > 0`
 /// receives challenge `i − 1`, and [`ProveRounds::finish_rounds`] the last.
 /// For eq-factored instances the kernel returns the full `q`.
 #[tracing::instrument(skip_all, name = "prove_single", fields(rounds = instance.rounds))]
-pub fn prove_single<F, E, K, C>(
+pub fn prove_single<F, E, K, C, R>(
     member: &mut dyn ProveRounds<E, K>,
     instance: &SingleInstance<E>,
     context: &mut C,
+    recorder: &mut R,
 ) -> Result<ProvedSingle<E>, SumcheckError<E, K>>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
     C: ProverRoundContext<E, Error = K>,
+    R: SingleRecorder<F, E, Error = K>,
 {
     instance.validate().map_err(SumcheckError::widen)?;
     if member.num_rounds() != instance.rounds {
@@ -226,12 +231,12 @@ where
     );
     let transcript = context.transcript_mut();
     mark(transcript, claim_site);
-    transcript.public(&claim);
+    recorder.bind_input_claim(&claim, transcript)?;
 
     let mut challenges: Vec<E> = Vec::with_capacity(instance.rounds);
     for round in 0..instance.rounds {
         let poly = member.prove_round(challenges.last().copied(), round, claim)?;
-        let wire = instance
+        let mut wire = instance
             .wire_coefficients(round, claim, &poly)
             .map_err(SumcheckError::widen)?;
         let body_site = context.site(
@@ -241,7 +246,7 @@ where
         );
         let transcript = context.transcript_mut();
         mark(transcript, body_site);
-        transcript.send_all(&wire);
+        recorder.record_round(&mut wire, transcript)?;
         let challenge = context
             .challenge(
                 instance
@@ -289,7 +294,7 @@ where
     );
     let transcript = context.transcript_mut();
     mark(transcript, claim_site);
-    transcript.public(&claim);
+    transcript.bind_derived::<F, E>(&claim)?;
 
     let mut challenges = Vec::with_capacity(instance.rounds);
     for round in 0..instance.rounds {
@@ -300,7 +305,8 @@ where
         );
         let transcript = context.transcript_mut();
         mark(transcript, body_site);
-        let wire = transcript.receive_n::<E>(instance.degree)?;
+        let mut wire = vec![E::zero(); instance.degree];
+        let _: PadSlots = transcript.exchange_private::<F, E>(&mut wire)?;
         let challenge = context
             .challenge(
                 instance

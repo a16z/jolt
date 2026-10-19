@@ -138,7 +138,7 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
     C: ProverRoundContext<E, Error = K>,
-    R: SumcheckRecorder<E, Error = K>;
+    R: SingleRecorder<F, E, Error = K>;
 
 /// Replays the rounds and returns (output claim, challenges) before any oracle
 /// check, as Akita's `verify_*_rounds` do; Akita exchanges late claims first.
@@ -154,9 +154,12 @@ blanket reflexive impl over all fields is not possible: a type with a second
 `ExtField` impl (`F192: ExtField<F64>`, `FpExt2<F, _>: ExtField<F>`) would
 make `T::DEGREE` ambiguous wherever it is named concretely.
 
-M2a lands `prove_single` without the `recorder` parameter, writing the input
-claim and round coefficients to the context's transcript directly; M3a adds
-the parameter once `SumcheckRecorder` has its `Error`, with the same bytes.
+The recorder is a `SingleRecorder<F, E>` (`bind_input_claim`, `record_round`),
+not a `SumcheckRecorder<E>`: `SumcheckRecorder::absorb_round` draws the
+batched engine's `challenge_small`, which needs `E: CanonicalEncoding`, and
+extension fields implement only `CanonicalDecode`. `ClearSumcheckRecorder`
+implements both traits. M2a landed `prove_single` without the recorder; M3a
+added it, with the same bytes.
 
 ## 2. Private messages (M3a)
 
@@ -181,14 +184,28 @@ pub trait PrivateChannel {
     /// public value. Masked: nothing, since earlier masked slots bind it.
     fn bind_derived<F, E>(&mut self, claim: &E) -> Result<(), Self::Error>
     where F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode;
+    /// The same for elements of the pad field itself, one pad each.
+    fn exchange_private_base<F>(&mut self, values: &mut [F]) -> Result<PadSlots, Self::Error>
+    where F: Field + CanonicalEncoding;
+    fn bind_derived_base<F>(&mut self, claim: &F) -> Result<(), Self::Error>
+    where F: Field + CanonicalEncoding;
 }
 ```
+
+The base forms exist because Jolt is generic over `F: JoltField` and
+`F: ExtField<F>` is not available generically: there is no blanket reflexive
+impl (see §1), and adding `ExtField<Self>` to `JoltField` would make
+`F192`'s `ExtField<F64>` API ambiguous at every concrete call. Jolt's
+batched recorder, uni-skip round and claimed evaluations use the base forms;
+`verify_single` and `SingleRecorder` use the extension forms.
 
 Pads cover base-field coordinates, so an extension element takes `E::DEGREE`
 pads. `SumcheckRecorder` is built on this seam: input claims go through
 `bind_derived`, round coefficients and output claims through `exchange_private`.
 `SumcheckRecorder` and `PrivateChannel` carry an associated `Error`, so pad
-exhaustion has a channel in both.
+exhaustion has a channel in both. `absorb_input_claims` is fallible and takes
+any `PrivateChannel<Error = TranscriptError>`; the batched engine and the
+generated drivers require `Error = Infallible`.
 
 Messages that go through the seam:
 

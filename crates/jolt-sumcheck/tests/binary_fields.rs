@@ -1,5 +1,6 @@
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
+use core::convert::Infallible;
 use std::vec::IntoIter;
 
 use jolt_field::{Field, Fr, JoltField, One, Ring, F128, F64};
@@ -11,7 +12,8 @@ use jolt_sumcheck::{
     SumcheckError, SumcheckRecorder, SumcheckVerifier,
 };
 use jolt_transcript::{
-    Blake2b512, Channel, ProtocolId, ProverTranscript, Sponge, VerifierTranscript,
+    Blake2b512, Channel, PrivateChannel, ProtocolId, ProverTranscript, Sponge, TranscriptError,
+    VerifierTranscript,
 };
 
 const LABEL: &[u8] = b"binary-sumcheck";
@@ -167,9 +169,20 @@ struct ScriptedRecorder<F> {
 
 impl<F: BinaryField> SumcheckRecorder<F> for ScriptedRecorder<F> {
     type Witness = ();
+    type Error = Infallible;
 
-    fn absorb_input_claims<C: Channel>(&mut self, input_claims: &[F], channel: &mut C) {
-        channel.public_all(input_claims);
+    fn absorb_input_claims<C>(
+        &mut self,
+        input_claims: &[F],
+        channel: &mut C,
+    ) -> Result<(), SumcheckError<F>>
+    where
+        C: PrivateChannel<Error = TranscriptError>,
+    {
+        for claim in input_claims {
+            channel.bind_derived_base(claim)?;
+        }
+        Ok(())
     }
 
     fn absorb_round<H: Sponge>(

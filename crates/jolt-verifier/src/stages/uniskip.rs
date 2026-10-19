@@ -26,7 +26,7 @@ use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckStatement,
     SumcheckVerifier,
 };
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, PadSlots, PrivateChannel, Sponge, VerifierTranscript};
 
 use crate::stages::relations::CommittedClaimLayout;
 use crate::stages::zk::outputs::{CommittedOutputClaimOutput, CommittedOutputClaimShape};
@@ -158,7 +158,9 @@ where
         transcript,
     )
     .map_err(|error| params.sumcheck_failed(error))?;
-    let output_claim: F = transcript.receive()?;
+    let mut output_claim = [F::zero()];
+    let _: PadSlots = transcript.exchange_private_base(&mut output_claim)?;
+    let [output_claim] = output_claim;
     if reduction.value != output_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: params.stage_number,

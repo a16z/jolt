@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use jolt_claims::{MapCells, OutputClaims, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
-use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{PadSlots, PrivateChannel, ProverTranscript, Sponge, VerifierTranscript};
 
 use crate::stages::relations::{ClaimRoute, ClaimRoutes, ComposedOpeningId, ConcreteSumcheck};
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
@@ -444,8 +444,12 @@ pub struct RamValCheckStagedOpenings<C> {
 
 impl<F: JoltField> RamValCheckStagedOpenings<F> {
     /// Sends the present openings, in canonical order.
-    pub fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
-        transcript.send_all(&self.opening_values());
+    pub fn send<H: Sponge>(
+        &self,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), VerifierError> {
+        let _: PadSlots = transcript.exchange_private_base(&mut self.opening_values())?;
+        Ok(())
     }
 
     /// Receives the openings in the shape of their staged `points`.
@@ -453,7 +457,12 @@ impl<F: JoltField> RamValCheckStagedOpenings<F> {
         points: &RamValCheckStagedOpenings<Vec<F>>,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Self, VerifierError> {
-        points.try_map_cells(&mut |_, _point| transcript.receive().map_err(Into::into))
+        points.try_map_cells(&mut |_, _point| {
+            let mut value = [F::zero()];
+            let _: PadSlots = transcript.exchange_private_base(&mut value)?;
+            let [value] = value;
+            Ok(value)
+        })
     }
 
     /// The received openings by id, the pre-filled `Staged` cells of the

@@ -7,9 +7,9 @@ use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Ext2, ExtFi
 use jolt_field::{One, Prime64Offset59, Zero};
 use jolt_poly::{OmittedConstantPoly, Point, UnivariatePoly};
 use jolt_sumcheck::{
-    prove_single, verify_single, EqFactoredRound, ProveRounds, ProverRoundContext, SingleFormat,
-    SingleInstance, SingleReplay, SumcheckDomain, SumcheckError, SumcheckSite,
-    VerifierRoundContext,
+    prove_single, verify_single, ClearSumcheckRecorder, EqFactoredRound, ProveRounds,
+    ProverRoundContext, SingleFormat, SingleInstance, SingleReplay, SumcheckDomain, SumcheckError,
+    SumcheckSite, VerifierRoundContext,
 };
 use jolt_transcript::{
     Blake2b512, Channel, ProtocolId, ProverTranscript, SiteId, VerifierTranscript,
@@ -214,7 +214,13 @@ where
         transcript: ProverTranscript::new(&PROTOCOL, SESSION),
         _field: PhantomData,
     };
-    let proved = prove_single::<F, E, _, _>(kernel, instance, &mut context).unwrap();
+    let proved = prove_single::<F, E, _, _, _>(
+        kernel,
+        instance,
+        &mut context,
+        &mut ClearSumcheckRecorder::new(),
+    )
+    .unwrap();
     (proved.challenges, context.transcript.finish())
 }
 
@@ -360,7 +366,12 @@ fn tampered_coefficient_or_claim_is_rejected() {
             _field: PhantomData,
         };
         assert!(matches!(
-            prove_single::<F, E, _, _>(&mut kernel, &wrong, &mut context),
+            prove_single::<F, E, _, _, _>(
+                &mut kernel,
+                &wrong,
+                &mut context,
+                &mut ClearSumcheckRecorder::new()
+            ),
             Err(SumcheckError::RoundCheckFailed { round: 0, .. })
         ));
     }

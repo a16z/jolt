@@ -53,6 +53,10 @@ required-features = [
 ]
 
 [[test]]
+name = "private"
+required-features = ["bn254", "transcript-blake2b"]
+
+[[test]]
 name = "narg"
 required-features = [
   "transcript-blake2b",

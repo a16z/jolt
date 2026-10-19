@@ -39,6 +39,7 @@ mod grinding;
 mod nonce;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
+mod private;
 mod protocol;
 mod prover;
 mod site;
@@ -54,6 +55,7 @@ pub use grinding::{
     MAX_GRINDING_BITS,
 };
 pub use nonce::Nonce;
+pub use private::{PadSlots, PrivateChannel};
 pub use protocol::ProtocolId;
 pub use prover::ProverTranscript;
 #[cfg(feature = "logging")]

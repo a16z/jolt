@@ -25,7 +25,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{Channel, ProverTranscript, Sponge};
+use jolt_transcript::{Channel, PadSlots, PrivateChannel, ProverTranscript, Sponge};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -197,7 +197,7 @@ pub fn prove_batch<F, R, H>(
 ) -> Result<ProvedBatch<F>, SumcheckError<F>>
 where
     F: Field,
-    R: SumcheckRecorder<F>,
+    R: SumcheckRecorder<F, Error = Infallible>,
     H: Sponge,
 {
     if members.len() != prelude.members.len() {
@@ -421,7 +421,7 @@ where
     send_full_round(&round_poly, degree, transcript)?;
     let challenge = transcript.challenge_small();
     let output_claim = round_poly.evaluate(challenge);
-    transcript.send(&output_claim);
+    let _: PadSlots = transcript.exchange_private_base(&mut [output_claim])?;
 
     Ok(ProvedUniskip {
         challenge,
