@@ -9,9 +9,12 @@ use super::{
 };
 use crate::CanonicalEncoding;
 
+/// # Safety
+///
+/// Requires AVX2; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn cmpgt_epu32_avx2(lhs: __m256i, rhs: __m256i) -> __m256i {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables AVX2.
     unsafe {
         let sign = _mm256_set1_epi32(i32::MIN);
         _mm256_cmpgt_epi32(_mm256_xor_si256(lhs, sign), _mm256_xor_si256(rhs, sign))
@@ -31,9 +34,13 @@ struct U32BiasConstants {
 }
 
 /// Low and high 32-bit words of `x + H mod 2^64` for eight canonical residues.
+///
+/// # Safety
+///
+/// Requires AVX2; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn biased_words_avx2(values: __m256i, constants: &U32BiasConstants) -> [__m256i; 2] {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let negative = cmpgt_epu32_avx2(values, constants.threshold);
         let low = _mm256_add_epi32(
@@ -60,6 +67,11 @@ unsafe fn biased_words_avx2(values: __m256i, constants: &U32BiasConstants) -> [_
 /// Every digit plane is a shift of the biased words, so the planes carry no
 /// dependency on each other. Groups of four vectors pack into one 32-byte
 /// store per plane.
+///
+/// # Safety
+///
+/// `base + 8 * N <= canonical.len()`, `out.len() == canonical.len() * params.levels`,
+/// `params.log_basis` in `1..=8`, and AVX2.
 #[inline(always)]
 unsafe fn balanced_decompose_u32_block_avx2<const N: usize, const WORDS: usize>(
     canonical: &[u32],
@@ -68,7 +80,7 @@ unsafe fn balanced_decompose_u32_block_avx2<const N: usize, const WORDS: usize>(
     base: usize,
     constants: &U32BiasConstants,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         // Plain loops, not closures: a closure does not inherit this function's
         // target features, so the intrinsics inside it would not inline.
@@ -128,13 +140,18 @@ unsafe fn balanced_decompose_u32_block_avx2<const N: usize, const WORDS: usize>(
 ///
 /// Requires `levels * log_basis <= 64`, so the digits read only the low
 /// 64 bits of `x + H`.
+///
+/// # Safety
+///
+/// `canonical.len()` must be a multiple of 8, `out.len() == canonical.len() * params.levels`,
+/// `params.log_basis` in `1..=8`, and `params.digit_bits() <= 64`. Requires AVX2.
 #[target_feature(enable = "avx2")]
 pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_avx2(
     canonical: &[u32],
     out: &mut [i8],
     params: &BalancedDecomposePow2Params<impl crate::Field + CanonicalEncoding>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         debug_assert!(canonical.len().is_multiple_of(8));
         debug_assert_eq!(out.len(), canonical.len() * params.levels);
@@ -161,6 +178,9 @@ pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_avx2(
     }
 }
 
+/// # Safety
+///
+/// As for `balanced_decompose_canonical_u32_pow2_i8_avx2`.
 #[inline(always)]
 unsafe fn balanced_decompose_u32_blocks_avx2<const WORDS: usize>(
     canonical: &[u32],
@@ -168,7 +188,7 @@ unsafe fn balanced_decompose_u32_blocks_avx2<const WORDS: usize>(
     params: &BalancedDecomposePow2Params<impl crate::Field + CanonicalEncoding>,
     constants: &U32BiasConstants,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let width = canonical.len();
         let mut base = 0usize;

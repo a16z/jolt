@@ -79,6 +79,13 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
         }
     }
 
+    #[cfg_attr(
+        not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
+        expect(
+            clippy::unused_self,
+            reason = "no lazy i32 dot kernel exists off SIMD targets"
+        )
+    )]
     pub(crate) const fn uses_lazy_i32_dot(&self) -> bool {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {

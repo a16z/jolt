@@ -332,6 +332,13 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Panics if the parameter set does not select the lazy i32 dot kernel, or
     /// if `digits` is empty or exceeds the selected batch size.
     #[inline]
+    #[cfg_attr(
+        not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
+        expect(
+            unused_variables,
+            reason = "only SIMD targets have a lazy i32 dot kernel; elsewhere the assert above rejects every call"
+        )
+    )]
     pub fn add_assign_col_pointwise_dot_i8_multi_with_lut_scratch(
         accs: &mut [Self],
         ntt_mat: &[&[Self]],

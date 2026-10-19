@@ -192,6 +192,10 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
 /// Transforms `D` coefficients in-place from coefficient form to NTT
 /// evaluation form. Both outputs of each butterfly are range-reduced
 /// to prevent overflow.
+#[cfg_attr(
+    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
+    expect(unused_variables, reason = "the kernel plan selects only SIMD kernels")
+)]
 pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     a: &mut [MontCoeff<W>; D],
     prime: NttPrime<W>,
@@ -281,6 +285,10 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
 ///
 /// Transforms `D` evaluations in-place back to coefficient form.
 /// Includes the final `D^{-1}` scaling.
+#[cfg_attr(
+    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
+    expect(unused_variables, reason = "the kernel plan selects only SIMD kernels")
+)]
 pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     a: &mut [MontCoeff<W>; D],
     prime: NttPrime<W>,
@@ -369,6 +377,10 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
 /// Evaluates a polynomial at the D-th roots of *unity* (roots of X^D - 1)
 /// rather than X^D + 1. Used with `inverse_ntt_cyclic` to compute unreduced
 /// polynomial products via CRT over (X^D - 1)(X^D + 1).
+#[cfg_attr(
+    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
+    expect(unused_variables, reason = "the kernel plan selects only SIMD kernels")
+)]
 pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     a: &mut [MontCoeff<W>; D],
     prime: NttPrime<W>,
@@ -453,6 +465,10 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
 ///
 /// Recovers coefficients of a polynomial from evaluations at D-th roots of unity.
 /// Includes the `D^{-1}` scaling factor.
+#[cfg_attr(
+    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
+    expect(unused_variables, reason = "the kernel plan selects only SIMD kernels")
+)]
 pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     a: &mut [MontCoeff<W>; D],
     prime: NttPrime<W>,
@@ -539,7 +555,7 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
 /// Find a primitive `2D`-th root of unity mod `p`.
 #[expect(
     clippy::panic,
-    reason = "unreachable: the asserted `2D | p - 1` guarantees a quadratic non-residue below p, whose power is the root"
+    reason = "callers must pass primes validated by `NttPrime::new`; for a prime `p`, a non-residue below `p` exists"
 )]
 fn find_primitive_root_2d(p: i64, d: usize) -> i64 {
     let half = (p - 1) / 2;

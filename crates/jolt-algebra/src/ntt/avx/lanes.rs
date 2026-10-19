@@ -22,6 +22,12 @@ use std::arch::x86_64::*;
 use crate::ntt::prime::PrimeWidth;
 
 /// A vector of lanes with the operations the transforms need.
+///
+/// # Safety
+///
+/// Every method requires the implementing type's target features: AVX2 for
+/// `__m256i` and [`I16x16`], AVX-512F/DQ/BW for `__m512i`. The pointer
+/// methods also require `ptr` to be valid for `LANES` elements.
 pub(super) trait Lanes: Copy {
     /// Lane element.
     type Elem: PrimeWidth;
@@ -49,6 +55,10 @@ pub(super) trait Lanes: Copy {
 }
 
 /// Constant multipliers `w` with their Montgomery quotients `w * p^{-1} mod R`.
+///
+/// # Safety
+///
+/// Every method requires the target features of the lane type `V`.
 pub(super) trait Multiply<V: Lanes>: Copy {
     /// Prepare `LANES` multipliers from their values and quotients.
     unsafe fn new(value: V, quotient: V) -> Self;
@@ -171,25 +181,25 @@ impl Lanes for __m256i {
 
     #[inline(always)]
     unsafe fn splat(value: i32) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm256_set1_epi32(value) }
     }
 
     #[inline(always)]
     unsafe fn add(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm256_add_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn sub(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm256_sub_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn min_unsigned(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm256_min_epu32(self, rhs) }
     }
 }
@@ -197,25 +207,25 @@ impl Lanes for __m256i {
 impl I32Lanes for __m256i {
     #[inline(always)]
     unsafe fn mul_even_i64(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm256_mul_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn mul_even_u64(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm256_mul_epu32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn odd_to_even(self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm256_shuffle_epi32::<0xF5>(self) }
     }
 
     #[inline(always)]
     unsafe fn merge_high_halves(even: Self, odd: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm256_blend_epi32::<0xAA>(_mm256_shuffle_epi32::<0xF5>(even), odd) }
     }
 }
@@ -251,25 +261,25 @@ impl Lanes for __m512i {
 
     #[inline(always)]
     unsafe fn splat(value: i32) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm512_set1_epi32(value) }
     }
 
     #[inline(always)]
     unsafe fn add(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm512_add_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn sub(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm512_sub_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn min_unsigned(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm512_min_epu32(self, rhs) }
     }
 }
@@ -277,25 +287,25 @@ impl Lanes for __m512i {
 impl I32Lanes for __m512i {
     #[inline(always)]
     unsafe fn mul_even_i64(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm512_mul_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn mul_even_u64(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm512_mul_epu32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn odd_to_even(self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { _mm512_shuffle_epi32::<0xF5>(self) }
     }
 
     #[inline(always)]
     unsafe fn merge_high_halves(even: Self, odd: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe {
             // Even lanes take the shuffled `even` high halves; odd lanes keep `odd`.
             _mm512_mask_shuffle_epi32::<0xF5>(odd, 0x5555, even)
@@ -394,25 +404,25 @@ impl Lanes for I16x16 {
 
     #[inline(always)]
     unsafe fn splat(value: i16) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { Self(_mm256_set1_epi16(value)) }
     }
 
     #[inline(always)]
     unsafe fn add(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { Self(_mm256_add_epi16(self.0, rhs.0)) }
     }
 
     #[inline(always)]
     unsafe fn sub(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { Self(_mm256_sub_epi16(self.0, rhs.0)) }
     }
 
     #[inline(always)]
     unsafe fn min_unsigned(self, rhs: Self) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe { Self(_mm256_min_epu16(self.0, rhs.0)) }
     }
 }
@@ -435,7 +445,7 @@ impl Multiply<I16x16> for I16Multiplier {
 
     #[inline(always)]
     unsafe fn mul(self, x: I16x16, m: Modulus<I16x16>) -> I16x16 {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller enables this lane type's target features (see `Lanes`).
         unsafe {
             // `x*w - t*p` is 0 mod 2^16 for `t = lo(x*q)`, so its high half is
             // `hi(x*w) - hi(t*p)` with no borrow from the low halves.

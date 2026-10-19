@@ -23,6 +23,10 @@ const MIN_VECTOR_DEGREE: usize = 32;
 /// halving subtract instead of two 2-lane `vmull_s32` widening chains.
 /// Every NTT prime here is `< 2^30`, so neither `2·a·b` nor `2·m·p` saturates
 /// an `int32x4_t` after the `>> 32`.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn mont_mul_4x_i32(
     a: int32x4_t,
@@ -30,7 +34,7 @@ unsafe fn mont_mul_4x_i32(
     p_q: int32x4_t,
     pinv_q: int32x4_t,
 ) -> int32x4_t {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe {
         // top = (2·a·b) >> 32, the doubled high word of the full product.
         let top = vqdmulhq_s32(a, b);
@@ -57,9 +61,12 @@ struct Modulus {
 }
 
 impl Modulus {
+    /// # Safety
+    ///
+    /// Requires NEON; the body uses only register intrinsics.
     #[inline(always)]
     unsafe fn new(p: i32) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: register-only intrinsics, and the caller enables NEON.
         unsafe {
             let reciprocal = ((1i64 << 31) + i64::from(p) / 2) / i64::from(p);
             Self {
@@ -79,9 +86,13 @@ impl Modulus {
 /// `[0, 2p)` and `min(y, y - p)` then picks the one in `[0, p)`: since
 /// `4p < 2^32`, the rejected candidate always wraps above both. Four
 /// instructions, with no compare masks.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn reduce_range_4x_i32(x: int32x4_t, p: int32x4_t, two_p: int32x4_t) -> int32x4_t {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe {
         let x = vreinterpretq_u32_s32(x);
         let y = vminq_u32(x, vaddq_u32(x, vreinterpretq_u32_s32(two_p)));
@@ -95,9 +106,13 @@ unsafe fn reduce_range_4x_i32(x: int32x4_t, p: int32x4_t, two_p: int32x4_t) -> i
 /// `c = 2p` it accepts `t` in `(-2p, 2p)`, and with `c = -p` it maps `[0, 2p)`
 /// to `[0, p)`. Since `4p < 2^32`, the rejected candidate always wraps above
 /// the kept one. Two ALU instructions, with no multiply.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn fold_4x_i32(t: int32x4_t, c: int32x4_t) -> int32x4_t {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe {
         let t = vreinterpretq_u32_s32(t);
         vreinterpretq_s32_u32(vminq_u32(t, vaddq_u32(t, vreinterpretq_u32_s32(c))))
@@ -111,13 +126,17 @@ unsafe fn fold_4x_i32(t: int32x4_t, c: int32x4_t) -> int32x4_t {
 /// to `x` and lies strictly in `(-p, p)`. Also `|qhat| <= 2`, hence the
 /// product and result fit i32. `sqrdmulh` cannot reach its saturation case.
 /// The same bound keeps the result in `(-p, p)` for every `|x| < 2^31`.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 pub(super) unsafe fn centered_reduce_4x_i32(
     x: int32x4_t,
     p: int32x4_t,
     reciprocal: int32x4_t,
 ) -> int32x4_t {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe { vmlsq_s32(x, vqrdmulhq_s32(x, reciprocal), p) }
 }
 
@@ -133,9 +152,13 @@ struct Multiplier {
 
 impl Multiplier {
     /// Load entries `index..index + 4` of `table`.
+    ///
+    /// # Safety
+    ///
+    /// `index + 4` must not exceed `D`.
     #[inline(always)]
     unsafe fn load<const D: usize>(table: &BarrettTable<i32, D>, index: usize) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller upholds the `# Safety` contract above.
         unsafe {
             Self {
                 value: vld1q_s32(table.values.as_ptr().add(index)),
@@ -145,9 +168,13 @@ impl Multiplier {
     }
 
     /// Broadcast entry `index` of `table`.
+    ///
+    /// # Safety
+    ///
+    /// `index` must be below `D`.
     #[inline(always)]
     unsafe fn broadcast<const D: usize>(table: &BarrettTable<i32, D>, index: usize) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: the caller upholds the `# Safety` contract above.
         unsafe {
             Self {
                 value: vld1q_dup_s32(table.values.as_ptr().add(index)),
@@ -156,9 +183,12 @@ impl Multiplier {
         }
     }
 
+    /// # Safety
+    ///
+    /// Requires NEON; the body uses only register intrinsics.
     #[inline(always)]
     unsafe fn splat(constant: BarrettConstant<i32>) -> Self {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: register-only intrinsics, and the caller enables NEON.
         unsafe {
             Self {
                 value: vdupq_n_s32(constant.value),
@@ -173,17 +203,25 @@ impl Multiplier {
     /// because `|w' - w*2^31/p| <= 1/2`. The exact result `x*w - q*p` fits
     /// i32, so computing it with wrapping `mul` and `mls` is exact. A plain
     /// `w` preserves whatever Montgomery scaling `x` carries.
+    ///
+    /// # Safety
+    ///
+    /// Requires NEON; the body uses only register intrinsics.
     #[inline(always)]
     unsafe fn mul(self, x: int32x4_t, p: int32x4_t) -> int32x4_t {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: register-only intrinsics, and the caller enables NEON.
         unsafe { vmlsq_s32(vmulq_s32(x, self.value), vqrdmulhq_s32(x, self.quotient), p) }
     }
 
     /// `x * w mod p` in `(0, 2p)` for any `|x| < 2^31`: [`Self::mul`] plus
     /// `p`, with the addition folded into a multiply-accumulate.
+    ///
+    /// # Safety
+    ///
+    /// Requires NEON; the body uses only register intrinsics.
     #[inline(always)]
     unsafe fn mul_biased(self, x: int32x4_t, p: int32x4_t) -> int32x4_t {
-        // SAFETY: the caller upholds this unsafe fn's contract.
+        // SAFETY: register-only intrinsics, and the caller enables NEON.
         unsafe {
             vmlsq_s32(
                 vmlaq_s32(p, x, self.value),
@@ -199,6 +237,10 @@ impl Multiplier {
 /// Inputs lie in `[0, 2p)` with `fold = -2p`, or in `(-p, p)` with
 /// `fold = 2p`. Only the difference is multiplied; the sum is folded with ALU
 /// instructions, which keeps the multiply pipes for the twiddle product.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn dif_butterfly(
     u: int32x4_t,
@@ -207,7 +249,7 @@ unsafe fn dif_butterfly(
     m: Modulus,
     fold: int32x4_t,
 ) -> (int32x4_t, int32x4_t) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe {
         (
             fold_4x_i32(vaddq_s32(u, v), fold),
@@ -219,6 +261,10 @@ unsafe fn dif_butterfly(
 /// Cooley–Tukey butterfly `(u + w v, u - w v)` for `u` in `[0, 2p)` and any
 /// `v`. Both outputs lie in `[0, 2p)`, and only the twiddle product uses the
 /// multiply pipes.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn dit_butterfly(
     u: int32x4_t,
@@ -226,7 +272,7 @@ unsafe fn dit_butterfly(
     w: Multiplier,
     m: Modulus,
 ) -> (int32x4_t, int32x4_t) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe {
         let v = w.mul_biased(v, m.p);
         (
@@ -253,6 +299,11 @@ unsafe fn dit_butterfly(
 /// so any `|x| < 2^31` input is accepted; otherwise inputs must lie in
 /// `(-p, p)`; without `NEGACYCLIC` the pair sums must as well. Outputs lie
 /// in `[0, 2p)`.
+///
+/// # Safety
+///
+/// `a` must be valid for `D` reads and writes, `D >= 32`, and `load(i)` must read only valid input
+/// lanes `i..i + 8`.
 #[inline(always)]
 unsafe fn forward_head<const D: usize, const CENTER: bool, const NEGACYCLIC: bool>(
     a: *mut i32,
@@ -261,7 +312,7 @@ unsafe fn forward_head<const D: usize, const CENTER: bool, const NEGACYCLIC: boo
     m: Modulus,
     load: impl Fn(usize) -> [int32x4_t; 2],
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let quarter = D / 4;
         let half = D / 2;
@@ -313,6 +364,10 @@ unsafe fn forward_head<const D: usize, const CENTER: bool, const NEGACYCLIC: boo
 /// pass loads and stores the array once for two stages; the last two stages
 /// run deinterleaved in [`forward_dif_tail`]. Requires `D >= 32` and
 /// `4 <= len <= D/2`.
+///
+/// # Safety
+///
+/// `a` must be valid for `D` reads and writes, and `D >= 32`.
 #[inline(always)]
 unsafe fn forward_dif_stages<const D: usize>(
     a: *mut i32,
@@ -321,7 +376,7 @@ unsafe fn forward_dif_stages<const D: usize>(
     mut len: usize,
     centered: bool,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let mut fold = if centered { m.two_p } else { m.neg_two_p };
         while len >= 8 {
@@ -386,9 +441,13 @@ unsafe fn forward_dif_stages<const D: usize>(
 /// size-4 sub-transforms in the lanes of `r_e`, so both stages run 4-wide
 /// with broadcast twiddles, and `vst4q` re-interleaves. Stage `len = 1` and
 /// the first `len = 2` butterfly have twiddle 1, leaving one multiply.
+///
+/// # Safety
+///
+/// `a` must be valid for `D` reads and writes, and `D >= 32`.
 #[inline(always)]
 unsafe fn forward_dif_tail<const D: usize>(a: *mut i32, fwd: &BarrettTable<i32, D>, m: Modulus) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let w = Multiplier::broadcast(fwd, 2);
         let mut base = 0usize;
@@ -420,6 +479,10 @@ unsafe fn forward_dif_tail<const D: usize>(a: *mut i32, fwd: &BarrettTable<i32, 
 /// radix-4 passes (with one radix-8 pass when their count is odd and
 /// `D >= 512`), and the last two stages form one pass together with the
 /// scaling. Requires `D >= 32`.
+///
+/// # Safety
+///
+/// `a` must be valid for `D` reads and writes, and `D >= 32`.
 #[inline(always)]
 unsafe fn inverse_dit_stages<const D: usize>(
     a: *mut i32,
@@ -427,7 +490,7 @@ unsafe fn inverse_dit_stages<const D: usize>(
     m: Modulus,
     scale: impl Fn(usize) -> Multiplier,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         // Stages 1 and 2. Stage 1 and the first stage-2 butterfly have twiddle 1.
         // Every stage output lies in `[0, 2p)`.
@@ -559,12 +622,17 @@ unsafe fn inverse_dit_stages<const D: usize>(
 /// NEON-accelerated forward negacyclic NTT for i32 primes.
 ///
 /// Accepts any representative `|x| < 2^31`; outputs are canonical `[0, p)`.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         if D < MIN_VECTOR_DEGREE {
             butterfly::forward_ntt(a, prime, tw, NttKernelPlan::SCALAR);
@@ -588,6 +656,12 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
 /// two stages share one pass. `load(ptr)` widens the eight inputs at `ptr`,
 /// and every input must have magnitude below `p / 2`, so the cyclic head's
 /// unmultiplied pair sums stay in `(-p, p)`.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64. `load(ptr)`
+/// must read only the eight inputs at `ptr`.
 #[inline(always)]
 unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize, const NEGACYCLIC: bool>(
     a: &mut [MontCoeff<i32>; D],
@@ -596,7 +670,7 @@ unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize, const NEGAC
     tw: &NttTwiddles<i32, D>,
     load: impl Fn(*const T) -> [int32x4_t; 2],
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         if D < MIN_VECTOR_DEGREE {
             for ((coefficient, &input), &psi_r2) in a.iter_mut().zip(inputs).zip(&tw.psi_pows_r2) {
@@ -621,9 +695,13 @@ unsafe fn forward_ntt_small_i32<T: Copy + Into<i32>, const D: usize, const NEGAC
 }
 
 /// Widen eight signed digits to two i32 vectors.
+///
+/// # Safety
+///
+/// `ptr` must be valid for eight reads.
 #[inline(always)]
 unsafe fn load_i8x8(ptr: *const i8) -> [int32x4_t; 2] {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let wide = vmovl_s8(vld1_s8(ptr));
         [vmovl_s16(vget_low_s16(wide)), vmovl_high_s16(wide)]
@@ -634,6 +712,11 @@ unsafe fn load_i8x8(ptr: *const i8) -> [int32x4_t; 2] {
 ///
 /// Kept out of line, like the centered-i16 entry: inlined into the digit
 /// fill loop, it slows the i8 matvec by about 8%.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 #[inline(never)]
 pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
@@ -641,7 +724,7 @@ pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         forward_ntt_small_i32::<_, D, true>(a, digits, prime, tw, |ptr| load_i8x8(ptr));
     }
@@ -650,6 +733,11 @@ pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
 /// NEON-accelerated signed-i8 conversion and forward cyclic NTT.
 ///
 /// Kept out of line for the same reason as the negacyclic entry.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 #[inline(never)]
 pub(crate) unsafe fn forward_ntt_cyclic_i8_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
@@ -657,7 +745,7 @@ pub(crate) unsafe fn forward_ntt_cyclic_i8_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         forward_ntt_small_i32::<_, D, false>(a, digits, prime, tw, |ptr| load_i8x8(ptr));
     }
@@ -667,6 +755,11 @@ pub(crate) unsafe fn forward_ntt_cyclic_i8_i32<const D: usize>(
 ///
 /// The protocol's i32 CRT primes all exceed the complete i16 range, so sign
 /// extension already gives a representative in `(-p, p)`.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 #[inline(never)]
 pub(crate) unsafe fn forward_ntt_centered_i16_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
@@ -674,7 +767,7 @@ pub(crate) unsafe fn forward_ntt_centered_i16_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         forward_ntt_small_i32::<_, D, true>(a, coefficients, prime, tw, |ptr| {
             let x = vld1q_s16(ptr);
@@ -686,12 +779,17 @@ pub(crate) unsafe fn forward_ntt_centered_i16_i32<const D: usize>(
 /// NEON-accelerated inverse negacyclic NTT for i32 primes.
 ///
 /// Inputs must lie in `(-p, p)`; outputs lie in `(-p, p)`.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         if D < MIN_VECTOR_DEGREE {
             butterfly::inverse_ntt(a, prime, tw, NttKernelPlan::SCALAR);
@@ -710,13 +808,18 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
 /// NEON-accelerated forward cyclic NTT for i32 (no negacyclic twist).
 ///
 /// Inputs must lie in `(-p, p)`; outputs are canonical `[0, p)`.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 #[inline]
 pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         if D < MIN_VECTOR_DEGREE {
             butterfly::forward_ntt_cyclic(a, prime, tw, NttKernelPlan::SCALAR);
@@ -735,12 +838,17 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
 /// NEON-accelerated inverse cyclic NTT for i32 (no negacyclic untwist).
 ///
 /// Inputs must lie in `(-p, p)`; outputs lie in `(-p, p)`.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         if D < MIN_VECTOR_DEGREE {
             butterfly::inverse_ntt_cyclic(a, prime, tw, NttKernelPlan::SCALAR);
@@ -759,6 +867,11 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
 /// 4-wide pointwise multiply-accumulate for a single CRT limb (i32).
 ///
 /// `acc[i] = reduce_range(acc[i] + mont_mul(lhs[i], rhs[i]))` for `i in 0..d`.
+///
+/// # Safety
+///
+/// `acc`, `lhs`, and `rhs` must be valid for `d` elements, `acc` writable, and the ranges must obey
+/// Rust's aliasing rules with `acc`.
 pub(crate) unsafe fn pointwise_mul_acc_i32(
     acc: *mut i32,
     lhs: *const i32,
@@ -767,7 +880,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
     p: i32,
     pinv: i32,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_q = vdupq_n_s32(p);
         let two_p_q = vdupq_n_s32(2 * p);
@@ -816,7 +929,7 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
     p: i32,
     pinv: i32,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         debug_assert!(count <= I32_LAZY_DOT_BATCH);
         macro_rules! dispatch_count {
@@ -837,6 +950,9 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
     }
 }
 
+/// # Safety
+///
+/// As for `pointwise_dot_acc_i32` with `count == COUNT`.
 #[inline(always)]
 unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
     acc: *mut i32,
@@ -846,7 +962,7 @@ unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
     p: i32,
     pinv: i32,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let lhs: [*const i32; COUNT] = core::array::from_fn(|product| *lhs.add(product));
         let rhs: [*const i32; COUNT] = core::array::from_fn(|product| *rhs.add(product));
@@ -930,7 +1046,7 @@ pub(crate) unsafe fn centered_i8_to_mont_i32(
     pinv: i32,
     montsq: i32,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_q = vdupq_n_s32(p);
         let pinv_q = vdupq_n_s32(pinv);
@@ -976,7 +1092,7 @@ pub(crate) unsafe fn centered_i8_to_mont_i32(
 /// mutable-reference rules.
 #[cfg(feature = "parallel")]
 pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_q = vdupq_n_s32(p);
         let two_p_q = vdupq_n_s32(2 * p);

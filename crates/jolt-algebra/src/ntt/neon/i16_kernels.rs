@@ -18,7 +18,7 @@ pub(crate) unsafe fn centered_i16_to_mont_i16(
     pinv: i16,
     montsq: i16,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_q = vdupq_n_s16(p);
         let pinv_q = vdupq_n_s16(pinv);
@@ -44,9 +44,13 @@ pub(crate) unsafe fn centered_i16_to_mont_i16(
 /// 4-wide Montgomery multiply for i16 primes.
 ///
 /// Natural 4-wide: `vmull_s16` produces `int32x4_t`.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn mont_mul_4x_i16(a: int16x4_t, b: int16x4_t, p: int16x4_t, pinv: int16x4_t) -> int16x4_t {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe {
         let c = vmull_s16(a, b);
         let t = vmul_s16(vmovn_s32(c), pinv);
@@ -61,9 +65,13 @@ unsafe fn mont_mul_4x_i16(a: int16x4_t, b: int16x4_t, p: int16x4_t, pinv: int16x
 /// these primes: saturation is impossible because one factor is always
 /// strictly smaller than `2^14`. This is the NEON analogue of AVX2
 /// `mulhi_epi16` and lets one vector carry eight independent residues.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn mont_mul_8x_i16(a: int16x8_t, b: int16x8_t, p: int16x8_t, pinv: int16x8_t) -> int16x8_t {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe {
         let c_low = vmulq_s16(a, b);
         let c_high = vshrq_n_s16::<1>(vqdmulhq_s16(a, b));
@@ -76,9 +84,13 @@ unsafe fn mont_mul_8x_i16(a: int16x8_t, b: int16x8_t, p: int16x8_t, pinv: int16x
 /// 8-wide range reduction for i16: `(-2p, 2p)` → `(-p, p)`.
 ///
 /// Same comparison-first approach as i32 but on `int16x8_t`.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn reduce_range_8x_i16(a: int16x8_t, p: int16x8_t) -> int16x8_t {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: register-only intrinsics, and the caller enables NEON.
     unsafe {
         let zero = vdupq_n_s16(0);
         let ge_mask = vcgeq_s16(a, p);
@@ -95,6 +107,11 @@ unsafe fn reduce_range_8x_i16(a: int16x8_t, p: int16x8_t) -> int16x8_t {
 }
 
 /// Vectorized final two DIF stages for eight independent size-four i16 transforms.
+///
+/// # Safety
+///
+/// `a_ptr` must be valid for `D` reads and writes and `fwd_twiddles` for three reads, with `D` a
+/// multiple of 32.
 #[inline(always)]
 unsafe fn forward_dif_tail_i16<const D: usize>(
     a_ptr: *mut i16,
@@ -102,7 +119,7 @@ unsafe fn forward_dif_tail_i16<const D: usize>(
     p_q: int16x8_t,
     pinv_q: int16x8_t,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let tw0 = vdupq_n_s16(*fwd_twiddles);
         let tw1 = vdupq_n_s16(*fwd_twiddles.add(1));
@@ -128,6 +145,11 @@ unsafe fn forward_dif_tail_i16<const D: usize>(
 }
 
 /// Vectorized first two DIT stages for eight independent size-four i16 transforms.
+///
+/// # Safety
+///
+/// `a_ptr` must be valid for `D` reads and writes and `inv_twiddles` for three reads, with `D` a
+/// multiple of 32.
 #[inline(always)]
 unsafe fn inverse_dit_head_i16<const D: usize>(
     a_ptr: *mut i16,
@@ -135,7 +157,7 @@ unsafe fn inverse_dit_head_i16<const D: usize>(
     p_q: int16x8_t,
     pinv_q: int16x8_t,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let tw0 = vdupq_n_s16(*inv_twiddles);
         let tw1 = vdupq_n_s16(*inv_twiddles.add(1));
@@ -168,12 +190,17 @@ unsafe fn inverse_dit_head_i16<const D: usize>(
 ///
 /// Processes eight butterflies per iteration in the main stages and packs the
 /// final two stages across eight independent size-four transforms.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 pub(crate) unsafe fn forward_ntt_i16<const D: usize>(
     a: &mut [MontCoeff<i16>; D],
     prime: NttPrime<i16>,
     tw: &NttTwiddles<i16, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_d = vdup_n_s16(prime.p);
         let pinv_d = vdup_n_s16(prime.pinv);
@@ -268,12 +295,17 @@ pub(crate) unsafe fn forward_ntt_i16<const D: usize>(
 }
 
 /// NEON-accelerated inverse negacyclic NTT for i16 primes.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 pub(crate) unsafe fn inverse_ntt_i16<const D: usize>(
     a: &mut [MontCoeff<i16>; D],
     prime: NttPrime<i16>,
     tw: &NttTwiddles<i16, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_d = vdup_n_s16(prime.p);
         let pinv_d = vdup_n_s16(prime.pinv);
@@ -354,12 +386,17 @@ pub(crate) unsafe fn inverse_ntt_i16<const D: usize>(
 }
 
 /// NEON-accelerated forward cyclic NTT for i16.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 pub(crate) unsafe fn forward_ntt_cyclic_i16<const D: usize>(
     a: &mut [MontCoeff<i16>; D],
     prime: NttPrime<i16>,
     tw: &NttTwiddles<i16, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_d = vdup_n_s16(prime.p);
         let pinv_d = vdup_n_s16(prime.pinv);
@@ -411,12 +448,17 @@ pub(crate) unsafe fn forward_ntt_cyclic_i16<const D: usize>(
 }
 
 /// NEON-accelerated inverse cyclic NTT for i16.
+///
+/// # Safety
+///
+/// `tw` must be the twiddle table `NttTwiddles::compute` built for `prime`, so `D` is a power of
+/// two; every access stays inside the `D`-element arrays. NEON is baseline on aarch64.
 pub(crate) unsafe fn inverse_ntt_cyclic_i16<const D: usize>(
     a: &mut [MontCoeff<i16>; D],
     prime: NttPrime<i16>,
     tw: &NttTwiddles<i16, D>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_d = vdup_n_s16(prime.p);
         let pinv_d = vdup_n_s16(prime.pinv);
@@ -474,6 +516,11 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i16<const D: usize>(
 }
 
 /// 8-wide pointwise multiply-accumulate for a single CRT limb (i16).
+///
+/// # Safety
+///
+/// `acc`, `lhs`, and `rhs` must be valid for `d` elements, `acc` writable, and the ranges must obey
+/// Rust's aliasing rules with `acc`.
 pub(crate) unsafe fn pointwise_mul_acc_i16(
     acc: *mut i16,
     lhs: *const i16,
@@ -482,7 +529,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
     p: i16,
     pinv: i16,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_d = vdup_n_s16(p);
         let pinv_d = vdup_n_s16(pinv);
@@ -518,7 +565,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
 /// `values` must be valid for `len` readable elements and `bound` must be
 /// positive.
 pub(crate) unsafe fn all_i16_in_balanced_range(values: *const i16, len: usize, bound: i16) -> bool {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let lower_q = vdupq_n_s16(-bound);
         let upper_q = vdupq_n_s16(bound);
@@ -552,7 +599,7 @@ pub(crate) unsafe fn all_i16_in_balanced_range(values: *const i16, len: usize, b
 /// mutable-reference rules.
 #[cfg(feature = "parallel")]
 pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_q = vdupq_n_s16(p);
         let mut i = 0;
@@ -573,8 +620,12 @@ pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16)
 }
 
 /// In-place reduce_range over a full i16 array.
+///
+/// # Safety
+///
+/// Requires NEON, which is baseline on aarch64; every access stays inside `a`.
 unsafe fn reduce_range_in_place_i16<const D: usize>(a: &mut [MontCoeff<i16>; D], p_q: int16x8_t) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let ptr = a.as_mut_ptr().cast::<i16>();
         let mut i = 0;

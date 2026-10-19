@@ -240,7 +240,7 @@ impl<const K: usize> GarnerData<K> {
     /// Compute Garner constants from a set of NTT primes.
     #[expect(
         clippy::expect_used,
-        reason = "NTT prime tables are pairwise coprime by construction; `try_from_moduli` is the fallible entry"
+        reason = "callers must pass distinct primes validated by `NttPrime::new`; `try_from_moduli` is the fallible entry"
     )]
     pub fn compute<W: PrimeWidth>(primes: &[NttPrime<W>; K]) -> Self {
         Self::try_from_moduli(primes.map(|prime| prime.p.to_i64() as u64))

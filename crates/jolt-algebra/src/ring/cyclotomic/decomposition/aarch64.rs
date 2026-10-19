@@ -16,9 +16,13 @@ struct U32BiasConstants {
 }
 
 /// Low and high 32-bit words of `x + H mod 2^64` for four canonical residues.
+///
+/// # Safety
+///
+/// Requires NEON; the body uses only register intrinsics.
 #[inline(always)]
 unsafe fn biased_words_neon(values: uint32x4_t, constants: &U32BiasConstants) -> [uint32x4_t; 2] {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let negative = vcgtq_u32(values, constants.threshold);
         let low = vaddq_u32(
@@ -45,6 +49,11 @@ unsafe fn biased_words_neon(values: uint32x4_t, constants: &U32BiasConstants) ->
 /// Every digit plane is a shift of the biased words, so the planes carry no
 /// dependency on each other. Groups of four vectors narrow into one 16-byte
 /// store per plane.
+///
+/// # Safety
+///
+/// `base + 4 * N <= canonical.len()`, `out.len() == canonical.len() * params.levels`, and
+/// `params.log_basis` in `1..=8`.
 #[inline(always)]
 unsafe fn balanced_decompose_u32_block_neon<const N: usize, const WORDS: usize>(
     canonical: &[u32],
@@ -53,7 +62,7 @@ unsafe fn balanced_decompose_u32_block_neon<const N: usize, const WORDS: usize>(
     base: usize,
     constants: &U32BiasConstants,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let width = canonical.len();
         let zero = vdupq_n_u32(0);
@@ -119,13 +128,18 @@ unsafe fn balanced_decompose_u32_block_neon<const N: usize, const WORDS: usize>(
 ///
 /// Requires `levels * log_basis <= 64`, so the digits read only the low
 /// 64 bits of `x + H`.
+///
+/// # Safety
+///
+/// `canonical.len()` must be a multiple of 4, `out.len() == canonical.len() * params.levels`,
+/// `params.log_basis` in `1..=8`, and `params.digit_bits() <= 64`. Requires NEON.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_neon(
     canonical: &[u32],
     out: &mut [i8],
     params: &BalancedDecomposePow2Params<impl crate::Field + CanonicalEncoding>,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         debug_assert!(canonical.len().is_multiple_of(4));
         debug_assert_eq!(out.len(), canonical.len() * params.levels);
@@ -152,6 +166,9 @@ pub(super) unsafe fn balanced_decompose_canonical_u32_pow2_i8_neon(
     }
 }
 
+/// # Safety
+///
+/// As for `balanced_decompose_canonical_u32_pow2_i8_neon`.
 #[inline(always)]
 unsafe fn balanced_decompose_u32_blocks_neon<const WORDS: usize>(
     canonical: &[u32],
@@ -159,7 +176,7 @@ unsafe fn balanced_decompose_u32_blocks_neon<const WORDS: usize>(
     params: &BalancedDecomposePow2Params<impl crate::Field + CanonicalEncoding>,
     constants: &U32BiasConstants,
 ) {
-    // SAFETY: the caller upholds this unsafe fn's contract.
+    // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let width = canonical.len();
         let mut base = 0usize;

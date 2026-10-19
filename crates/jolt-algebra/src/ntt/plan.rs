@@ -10,16 +10,27 @@ use super::prime::PrimeWidth;
 pub struct NttKernelPlan(NttKernelKind);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(dead_code)] // Variants are selected on different target architectures.
 enum NttKernelKind {
     /// Portable scalar kernels.
     Scalar,
     /// AArch64 NEON transforms and pointwise arithmetic.
+    #[cfg_attr(
+        not(target_arch = "aarch64"),
+        expect(dead_code, reason = "selected only on aarch64")
+    )]
     Neon,
     /// AVX2 transforms and pointwise arithmetic.
+    #[cfg_attr(
+        not(any(target_arch = "x86", target_arch = "x86_64")),
+        expect(dead_code, reason = "selected only on x86")
+    )]
     Avx2,
     /// AVX-512 transforms and pointwise arithmetic, with the AVX2 `i16`
     /// kernels and `i32` dot product.
+    #[cfg_attr(
+        not(any(target_arch = "x86", target_arch = "x86_64")),
+        expect(dead_code, reason = "selected only on x86")
+    )]
     Avx512,
 }
 
