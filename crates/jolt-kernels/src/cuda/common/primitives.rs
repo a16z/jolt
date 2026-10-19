@@ -1,6 +1,6 @@
 use cudarc::driver::CudaFunction;
 use cudarc::driver::{LaunchConfig, PushKernelArg};
-use jolt_field::Fr;
+use jolt_field::{Fr, Ring};
 use jolt_poly::BindingOrder;
 
 use super::context::{CudaKernelContext, BLOCK as BLOCK_SIZE};
@@ -197,6 +197,93 @@ impl CudaKernelContext {
             current = partials;
         }
     }
+
+    pub fn eq_evals(&self, point: &[Fr]) -> Result<DeviceFrVec, CudaError> {
+        let mut table = self.upload(&[Fr::from_u64(1)])?;
+        for &coordinate in point {
+            let prev_len = table.len();
+            let mut doubled = self.alloc(prev_len * 2)?;
+            let coordinate = crate::cuda::common::device::fr_limbs(coordinate);
+            let count = Self::count_of(prev_len)?;
+            let mut builder = self.stream().launch_builder(&self.eq_double);
+            let _ = builder.arg(table.limbs());
+            for limb in &coordinate {
+                let _ = builder.arg(limb);
+            }
+            let _ = builder.arg(doubled.limbs_mut());
+            let _ = builder.arg(&count);
+            // SAFETY: thread `j < prev_len` reads only `table[j]`, the
+            // coordinate arriving as four by-value limbs, and writes exactly
+            // `doubled[2j]` and `doubled[2j+1]` — disjoint across threads.
+            // `table` holds `prev_len * LIMBS` u64s and `doubled` holds
+            // `2 * prev_len * LIMBS`, a fresh allocation distinct from `table`
+            // (the ping-pong is what makes this race-free, unlike the in-place
+            // CPU form). Threads with `j >= prev_len` return first.
+            let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+            table = doubled;
+        }
+        Ok(table)
+    }
+
+    pub fn eq_evals_shard(
+        &self,
+        point: &[Fr],
+        shard: usize,
+        shards: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        if shards <= 1 {
+            return self.eq_evals(point);
+        }
+        if !shards.is_power_of_two() || shard >= shards {
+            return Err(CudaError::InvariantViolation {
+                reason: "an eq shard needs a power-of-two shard count and an in-range index",
+            });
+        }
+        let leading = shards.trailing_zeros() as usize;
+        if point.len() < leading {
+            return Err(CudaError::InvariantViolation {
+                reason: "an eq shard split more variables than the point has",
+            });
+        }
+        let (high, low) = point.split_at(leading);
+        let mut scale = Fr::from_u64(1);
+        for (index, &coordinate) in high.iter().enumerate() {
+            let bit = (shard >> (leading - 1 - index)) & 1;
+            scale *= if bit == 1 {
+                coordinate
+            } else {
+                Fr::from_u64(1) - coordinate
+            };
+        }
+        let table = self.eq_evals(low)?;
+        self.mul_scalar(&table, scale)
+    }
+
+    pub fn lt_evals(&self, point: &[Fr]) -> Result<DeviceFrVec, CudaError> {
+        let mut table = self.alloc(1usize << point.len())?;
+        for (level, &coordinate) in point.iter().rev().enumerate() {
+            let half = 1usize << level;
+            let coordinate = crate::cuda::common::device::fr_limbs(coordinate);
+            let count = Self::count_of(half)?;
+            let mut builder = self.stream().launch_builder(&self.lt_double);
+            let _ = builder.arg(table.limbs_mut());
+            for limb in &coordinate {
+                let _ = builder.arg(limb);
+            }
+            let _ = builder.arg(&count);
+            // SAFETY: this kernel is deliberately in-place, mirroring the CPU
+            // `lt_evals`. Thread `j < half` reads `table[j]` once and then writes
+            // exactly `table[j]` and `table[j + half]`; across threads those
+            // index sets are pairwise disjoint (`j` ranges over `[0, half)` and
+            // `j + half` over `[half, 2*half)`), so no thread reads a location
+            // another writes. `table` holds `2^point.len() * LIMBS` u64s and
+            // `2 * half` never exceeds that. Threads with `j >= half` return
+            // first. The launches are sequential on one stream (one per level),
+            // which is what orders the levels.
+            let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        }
+        Ok(table)
+    }
 }
 
 #[cfg(test)]
@@ -206,7 +293,7 @@ impl CudaKernelContext {
 )]
 mod tests {
     use jolt_field::{Fr, Ring};
-    use jolt_poly::{BindingOrder, Polynomial};
+    use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial};
     use proptest::collection::vec;
     use proptest::prelude::*;
 
@@ -368,6 +455,56 @@ mod tests {
             let Some(context) = device() else { return Ok(()); };
             let expected: Fr = values.iter().copied().sum();
             let got = context.sum(&upload(context, &values)).expect("device sum");
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn eq_evals_shard_matches_the_whole_table_window(point in arb_frs(4, 10)) {
+            let Some(context) = device() else { return Ok(()); };
+            let whole = context.eq_evals(&point).expect("device eq_evals")
+                .to_host().expect("download");
+            for shards in [2usize, 4, 8] {
+                let len = whole.len() / shards;
+                for shard in 0..shards {
+                    let got = context
+                        .eq_evals_shard(&point, shard, shards)
+                        .expect("device eq_evals_shard")
+                        .to_host()
+                        .expect("download");
+                    prop_assert_eq!(
+                        got,
+                        whole[shard * len..(shard + 1) * len].to_vec(),
+                        "eq shard {} of {} must equal the whole table's window: point[0] drives \
+                         the index MSB, so a shard is the sub-table over the trailing coordinates \
+                         scaled by the leading ones",
+                        shard,
+                        shards,
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn eq_evals_matches_cpu(point in arb_frs(1, 10)) {
+            let Some(context) = device() else { return Ok(()); };
+            let expected = EqPolynomial::new(point.clone()).evaluations();
+            let got = context
+                .eq_evals(&point)
+                .expect("device eq_evals")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn lt_evals_matches_cpu(point in arb_frs(1, 10)) {
+            let Some(context) = device() else { return Ok(()); };
+            let expected = LtPolynomial::evaluations(&point);
+            let got = context
+                .lt_evals(&point)
+                .expect("device lt_evals")
+                .to_host()
+                .expect("download");
             prop_assert_eq!(got, expected);
         }
     }

@@ -29,6 +29,8 @@ pub struct CudaKernelContext {
     pub(super) bind_low_to_high: CudaFunction,
     pub(super) bind_high_to_low: CudaFunction,
     pub(super) sum_reduce: CudaFunction,
+    pub(super) eq_double: CudaFunction,
+    pub(super) lt_double: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -51,6 +53,8 @@ impl CudaKernelContext {
             bind_low_to_high: module.load_function("bind_low_to_high_kernel")?,
             bind_high_to_low: module.load_function("bind_high_to_low_kernel")?,
             sum_reduce: module.load_function("sum_reduce_kernel")?,
+            eq_double: module.load_function("eq_double_kernel")?,
+            lt_double: module.load_function("lt_double_kernel")?,
         })
     }
 

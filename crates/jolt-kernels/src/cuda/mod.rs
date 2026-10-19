@@ -11,6 +11,8 @@
 //! and synchronizes the stream before returning each output buffer.
 //! Polynomial binding writes a fresh device buffer for either variable order;
 //! summation reduces on the device and downloads only the final field element.
+//! Equality tables use separate input/output buffers at each level to avoid races;
+//! less-than tables expand in place. Levels run in order on the owning stream.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
