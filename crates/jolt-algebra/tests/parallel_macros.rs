@@ -10,6 +10,7 @@
 #![cfg(feature = "solinas")]
 
 use jolt_algebra::{Prime64Offset59, Ring, Zero};
+use std::cell::Cell;
 
 #[cfg(feature = "parallel")]
 use jolt_algebra::parallel::*;
@@ -116,7 +117,7 @@ fn try_fold_reduce_matches_serial_and_propagates_errors() {
 /// needs the factory twice (fold and reduce).
 #[test]
 fn try_fold_reduce_evaluates_identity_factory_once() {
-    let evaluations = std::cell::Cell::new(0);
+    let evaluations = Cell::new(0);
     let sum = cfg_try_fold_reduce!(
         0usize..100,
         {
