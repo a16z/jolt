@@ -7,12 +7,11 @@
 use jolt_field::{Field, Fr, JoltField, One, Ring, F128, F64};
 use jolt_poly::{CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{
-    prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
-    CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, EvaluationClaim, LabeledRoundPoly,
-    ProveRounds, ProvedBatch, RoundMessage, SequentialRounds, SumcheckClaim, SumcheckDomain,
-    SumcheckDomainSpec, SumcheckError, SumcheckProof, SumcheckRecorder, SumcheckVerifier,
-    OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    append_opening_claims, prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude,
+    BooleanHypercube, CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, EvaluationClaim,
+    LabeledRoundPoly, ProveRounds, ProvedBatch, RoundMessage, SequentialRounds, SumcheckClaim,
+    SumcheckDomain, SumcheckDomainSpec, SumcheckError, SumcheckProof, SumcheckRecorder,
+    SumcheckVerifier, SUMCHECK_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
@@ -225,9 +224,7 @@ impl<F: JoltField + AppendToTranscript> BatchFixture<F> {
                 &mut transcript,
             )
             .unwrap();
-        for claim in &self.proved.member_claims {
-            transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, claim);
-        }
+        append_opening_claims(&mut transcript, &self.proved.member_claims);
         assert_eq!(reduced.point.as_slice(), self.proved.challenges);
         assert_eq!(reduced.value, self.proved.final_claim);
         assert_eq!(transcript.state(), self.transcript_state);

@@ -419,7 +419,6 @@ dependencies = [
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-utils",
- "rayon",
  "serde",
  "thiserror",
 ]

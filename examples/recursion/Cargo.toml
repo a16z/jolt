@@ -7,7 +7,30 @@ edition = "2021"
 name = "recursion"
 path = "src/main.rs"
 
+[features]
+ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
+# Non-default: default workspace builds must not unify field-inline into the
+# verifier stack. The recursion flow needs it.
+field-inline = ["jolt-sdk/field-inline"]
+akita = [
+  "jolt-sdk/akita",
+  "dep:jolt-akita",
+  "dep:jolt-program",
+  "dep:jolt-witness",
+  "dep:tracer",
+]
+
 [dependencies]
+jolt-akita = { path = "../../crates/jolt-akita", optional = true }
+jolt-program = { path = "../../crates/jolt-program", optional = true }
+jolt-witness = { path = "../../crates/jolt-witness", optional = true }
+tracer = { path = "../../tracer", optional = true }
+jolt-riscv = { path = "../../crates/jolt-riscv" }
+jolt-inlines-ntt = { workspace = true, features = ["host"], optional = true }
+# Registers the Blake2b inline with the tracer for the guest transcripts.
+jolt-inlines-blake2 = { workspace = true, features = ["host"] }
+# Registers the Keccak inline the Akita SHAKE samplers use.
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-sdk = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true

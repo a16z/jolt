@@ -1,9 +1,11 @@
-use jolt_field::Field;
+use jolt_field::{CanonicalBytes, Field};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::error::SumcheckError;
-use crate::{SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL};
+use crate::{
+    append_round_coefficients, SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+};
 
 pub trait RoundMessage {
     fn degree(&self) -> usize;
@@ -22,7 +24,7 @@ pub trait ClearRound<F: Field>: RoundMessage {
     }
 }
 
-impl<F: Field + AppendToTranscript> RoundMessage for UnivariatePoly<F> {
+impl<F: Field + CanonicalBytes> RoundMessage for UnivariatePoly<F> {
     fn degree(&self) -> usize {
         UnivariatePolynomial::degree(self)
     }
@@ -34,7 +36,7 @@ impl<F: Field + AppendToTranscript> RoundMessage for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field + AppendToTranscript> ClearRound<F> for UnivariatePoly<F> {
+impl<F: Field + CanonicalBytes> ClearRound<F> for UnivariatePoly<F> {
     fn evaluate(&self, challenge: F) -> F {
         UnivariatePoly::evaluate(self, challenge)
     }
@@ -68,21 +70,17 @@ impl<'a, F: Field> LabeledRoundPoly<'a, F> {
     }
 }
 
-impl<F: Field + AppendToTranscript> RoundMessage for LabeledRoundPoly<'_, F> {
+impl<F: Field + CanonicalBytes> RoundMessage for LabeledRoundPoly<'_, F> {
     fn degree(&self) -> usize {
         <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
     }
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let coeffs = self.poly.coefficients();
-        transcript.append(&LabelWithCount(self.label, coeffs.len() as u64));
-        for coeff in coeffs {
-            coeff.append_to_transcript(transcript);
-        }
+        append_round_coefficients(transcript, self.label, self.poly.coefficients());
     }
 }
 
-impl<F: Field + AppendToTranscript> ClearRound<F> for LabeledRoundPoly<'_, F> {
+impl<F: Field + CanonicalBytes> ClearRound<F> for LabeledRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
     }
@@ -117,7 +115,7 @@ impl<'a, F: Field> CompressedLabeledRoundPoly<'a, F> {
     }
 }
 
-impl<F: Field + AppendToTranscript> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
+impl<F: Field + CanonicalBytes> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
     fn degree(&self) -> usize {
         <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
     }
@@ -131,15 +129,14 @@ impl<F: Field + AppendToTranscript> RoundMessage for CompressedLabeledRoundPoly<
         let Some((constant, rest)) = coeffs.split_first() else {
             return;
         };
-        transcript.append(&LabelWithCount(self.label, (coeffs.len() - 1) as u64));
-        constant.append_to_transcript(transcript);
-        for c in rest.iter().skip(1) {
-            c.append_to_transcript(transcript);
-        }
+        let transmitted: Vec<F> = std::iter::once(*constant)
+            .chain(rest.iter().skip(1).copied())
+            .collect();
+        append_round_coefficients(transcript, self.label, &transmitted);
     }
 }
 
-impl<F: Field + AppendToTranscript> ClearRound<F> for CompressedLabeledRoundPoly<'_, F> {
+impl<F: Field + CanonicalBytes> ClearRound<F> for CompressedLabeledRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
     }

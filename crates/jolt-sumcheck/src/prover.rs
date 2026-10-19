@@ -19,11 +19,11 @@
 
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
 #[cfg(feature = "committed")]
 use jolt_field::JoltField;
+use jolt_field::{CanonicalBytes, Field};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::Transcript;
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -399,7 +399,7 @@ pub struct ProvedUniskipCommitted<F: Field, C> {
 /// Self-check the uni-skip round polynomial against the verifier's round
 /// checks before anything reaches the transcript: degree bound and
 /// centered-integer-domain round sum.
-fn check_uniskip_round<F: Field + AppendToTranscript>(
+fn check_uniskip_round<F: Field + CanonicalBytes>(
     round_poly: &UnivariatePoly<F>,
     input_claim: F,
     degree: usize,
@@ -434,7 +434,7 @@ pub fn prove_uniskip_clear<F, T>(
     transcript: &mut T,
 ) -> Result<ProvedUniskip<F>, SumcheckError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: Field + CanonicalBytes,
     T: Transcript<Challenge = F>,
 {
     check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
