@@ -1,3 +1,5 @@
+#define MSM_COLD 0xFFFFFFFFu
+
 __device__ __constant__ u64 FQ_MODULUS[4] = {
     0x3c208c16d87cfd47ULL, 0x97816a916871ca8dULL,
     0xb85045b68181585dULL, 0x30644e72e131a029ULL
@@ -488,6 +490,114 @@ extern "C" __global__ void msm_bucket_scatter_kernel(const unsigned int *__restr
     unsigned int column = i % row_len;
     unsigned int position = atomicAdd(&cursor[row * buckets + digit], 1u);
     indices[position] = column | ((unsigned int)signs[i] << 31);
+}
+
+extern "C" __global__ void msm_one_hot_count_kernel(const unsigned int *__restrict__ hot,
+                                                   unsigned int cycles, unsigned int chunk_len,
+                                                   unsigned int chunk_count,
+                                                   unsigned int one_hot_k,
+                                                   unsigned int *__restrict__ counts) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= cycles) return;
+    unsigned int address = hot[i];
+    if (address == MSM_COLD) return;
+    if (address >= one_hot_k) {
+        atomicAdd(&counts[one_hot_k * chunk_count], 1u);
+        return;
+    }
+    atomicAdd(&counts[address * chunk_count + i / chunk_len], 1u);
+}
+
+extern "C" __global__ void msm_one_hot_scatter_kernel(const unsigned int *__restrict__ hot,
+                                                     unsigned int cycles, unsigned int chunk_len,
+                                                     unsigned int chunk_count,
+                                                     unsigned int one_hot_k,
+                                                     unsigned int *__restrict__ cursor,
+                                                     unsigned int *__restrict__ indices) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= cycles) return;
+    unsigned int address = hot[i];
+    if (address == MSM_COLD || address >= one_hot_k) return;
+    unsigned int segment = address * chunk_count + i / chunk_len;
+    unsigned int position = atomicAdd(&cursor[segment], 1u);
+    indices[position] = i % chunk_len;
+}
+
+extern "C" __global__ void msm_one_hot_count_shared_kernel(const unsigned int *__restrict__ hot,
+                                                           unsigned int cycles,
+                                                           unsigned int chunk_len,
+                                                           unsigned int chunk_count,
+                                                           unsigned int one_hot_k,
+                                                           unsigned int slots,
+                                                           unsigned int *__restrict__ counts) {
+    extern __shared__ unsigned int one_hot_tally[];
+    unsigned int *tally = one_hot_tally;
+    unsigned int origin = blockIdx.x * blockDim.x;
+    unsigned int first = origin / chunk_len;
+    for (unsigned int s = threadIdx.x; s < slots; s += blockDim.x) tally[s] = 0u;
+    __syncthreads();
+
+    unsigned int i = origin + threadIdx.x;
+    if (i < cycles) {
+        unsigned int address = hot[i];
+        if (address == MSM_COLD) {
+            // a cold cycle selects no address
+        } else if (address >= one_hot_k) {
+            atomicAdd(&counts[one_hot_k * chunk_count], 1u);
+        } else {
+            atomicAdd(&tally[(i / chunk_len - first) * one_hot_k + address], 1u);
+        }
+    }
+    __syncthreads();
+
+    for (unsigned int s = threadIdx.x; s < slots; s += blockDim.x) {
+        unsigned int n = tally[s];
+        unsigned int chunk = first + s / one_hot_k;
+        if (n == 0u || chunk >= chunk_count) continue;
+        atomicAdd(&counts[(s % one_hot_k) * chunk_count + chunk], n);
+    }
+}
+
+extern "C" __global__ void msm_one_hot_scatter_shared_kernel(const unsigned int *__restrict__ hot,
+                                                             unsigned int cycles,
+                                                             unsigned int chunk_len,
+                                                             unsigned int chunk_count,
+                                                             unsigned int one_hot_k,
+                                                             unsigned int slots,
+                                                             unsigned int *__restrict__ cursor,
+                                                             unsigned int *__restrict__ indices) {
+    extern __shared__ unsigned int one_hot_slots[];
+    unsigned int *tally = one_hot_slots;
+    unsigned int *reserved = one_hot_slots + slots;
+    unsigned int origin = blockIdx.x * blockDim.x;
+    unsigned int first = origin / chunk_len;
+    for (unsigned int s = threadIdx.x; s < slots; s += blockDim.x) tally[s] = 0u;
+    __syncthreads();
+
+    unsigned int i = origin + threadIdx.x;
+    unsigned int slot = slots;
+    if (i < cycles) {
+        unsigned int address = hot[i];
+        if (address != MSM_COLD && address < one_hot_k) {
+            slot = (i / chunk_len - first) * one_hot_k + address;
+            atomicAdd(&tally[slot], 1u);
+        }
+    }
+    __syncthreads();
+
+    for (unsigned int s = threadIdx.x; s < slots; s += blockDim.x) {
+        unsigned int n = tally[s];
+        unsigned int chunk = first + s / one_hot_k;
+        reserved[s] = (n != 0u && chunk < chunk_count)
+                          ? atomicAdd(&cursor[(s % one_hot_k) * chunk_count + chunk], n)
+                          : 0u;
+        tally[s] = 0u;
+    }
+    __syncthreads();
+
+    if (slot < slots) {
+        indices[reserved[slot] + atomicAdd(&tally[slot], 1u)] = i % chunk_len;
+    }
 }
 
 extern "C" __global__ void msm_segment_sum_kernel(const u64 *__restrict__ bases,

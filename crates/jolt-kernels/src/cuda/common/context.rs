@@ -101,6 +101,14 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_window_accumulate: CudaFunction,
     #[cfg(test)]
+    msm_one_hot_count: CudaFunction,
+    #[cfg(test)]
+    msm_one_hot_count_shared: CudaFunction,
+    #[cfg(test)]
+    msm_one_hot_scatter: CudaFunction,
+    #[cfg(test)]
+    msm_one_hot_scatter_shared: CudaFunction,
+    #[cfg(test)]
     msm_segment_sum: CudaFunction,
     #[cfg(test)]
     msm_segment_sum_warp: CudaFunction,
@@ -202,6 +210,15 @@ impl CudaKernelContext {
             msm_bucket_scatter: module.load_function("msm_bucket_scatter_kernel")?,
             #[cfg(test)]
             msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
+            #[cfg(test)]
+            msm_one_hot_count: module.load_function("msm_one_hot_count_kernel")?,
+            #[cfg(test)]
+            msm_one_hot_count_shared: module.load_function("msm_one_hot_count_shared_kernel")?,
+            #[cfg(test)]
+            msm_one_hot_scatter: module.load_function("msm_one_hot_scatter_kernel")?,
+            #[cfg(test)]
+            msm_one_hot_scatter_shared: module
+                .load_function("msm_one_hot_scatter_shared_kernel")?,
             #[cfg(test)]
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             #[cfg(test)]
@@ -528,6 +545,26 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {
         &self.msm_window_accumulate
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_one_hot_count(&self) -> &CudaFunction {
+        &self.msm_one_hot_count
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_one_hot_count_shared(&self) -> &CudaFunction {
+        &self.msm_one_hot_count_shared
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_one_hot_scatter(&self) -> &CudaFunction {
+        &self.msm_one_hot_scatter
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_one_hot_scatter_shared(&self) -> &CudaFunction {
+        &self.msm_one_hot_scatter_shared
     }
 
     #[cfg(test)]

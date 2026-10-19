@@ -52,6 +52,8 @@
 //! batch within a memory budget and otherwise accumulate sequentially.
 //! Signed row MSMs reuse those buckets with 64-bit magnitudes and separate signs;
 //! host staging rejects inputs outside `[-u64::MAX, u64::MAX]`.
+//! One-hot row MSMs count and scatter indices on device, using shared-memory
+//! tallies when they fit. The host scans counts before the segmented G1 sums.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
