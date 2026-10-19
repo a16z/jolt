@@ -7,12 +7,12 @@
 #[cfg(feature = "solinas")]
 mod harness {
     use criterion::Criterion;
-    use jolt_algebra::{Ext2, Field, Packed, WithPacking};
+    use jolt_algebra::{Ext2, Field, Fp64, Packed, WithPacking};
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::hint::black_box;
 
-    type F63 = jolt_algebra::Fp64<{ (1u64 << 63) - 259 }>;
+    type F63 = Fp64<{ (1u64 << 63) - 259 }>;
     type PF63 = <F63 as WithPacking>::Packing;
     type E63 = Ext2<F63>;
     type PE63 = <E63 as WithPacking>::Packing;
