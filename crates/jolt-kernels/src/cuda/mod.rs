@@ -45,6 +45,8 @@
 //! affine base table on the device.
 //! Segmented G1 sums select thread, warp, or block reductions according to segment
 //! sizes. One-hot chunks build their segment plan on the host and sum on device.
+//! Weighted G1 bucket sums split across blocks and merge their partials per row;
+//! window folding combines those results from the most significant window down.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

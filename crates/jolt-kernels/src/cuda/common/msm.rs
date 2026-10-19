@@ -18,6 +18,10 @@
 //! checks index ranges and selects thread, warp, block, or size-class reductions.
 //! One-hot chunks use Jacobian accumulators on CUDA; CPU streaming commitments
 //! use batched affine addition.
+//!
+//! Weighted bucket sums split across blocks and merge their partials per row.
+//! Window folding combines each row's results from the most significant window
+//! down, with repeated doubling between windows.
 
 use std::sync::Arc;
 
@@ -605,6 +609,93 @@ impl CudaKernelContext {
         self.segment_sums(bases, &plan, SegmentMode::Auto)
     }
 
+    fn launch_bucket_reduce_chunked(
+        &self,
+        bucket_points: &CudaSlice<u64>,
+        rows: usize,
+        buckets: usize,
+        chunks: usize,
+        out: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        if rows == 0 {
+            return Ok(());
+        }
+        if buckets == 0 || chunks == 0 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: buckets.min(chunks),
+            });
+        }
+        let rows_arg = Self::count_of(rows)?;
+        let buckets_arg = Self::count_of(buckets)?;
+        let chunks_arg = Self::count_of(chunks)?;
+        let blocks = Self::count_of(rows * chunks)?;
+        let shared = POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32;
+        let config = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (POINT_BLOCK, 1, 1),
+            shared_mem_bytes: shared,
+        };
+
+        if chunks == 1 {
+            let mut builder = self
+                .stream()
+                .launch_builder(self.msm_bucket_reduce_chunked());
+            let _ = builder.arg(bucket_points);
+            let _ = builder.arg(&rows_arg);
+            let _ = builder.arg(&buckets_arg);
+            let _ = builder.arg(&chunks_arg);
+            let _ = builder.arg(out);
+            // SAFETY: block `b < rows * chunks` derives `row = b / chunks` and
+            // returns when `row >= rows`. It reads only the `buckets` points of
+            // its own row (`bucket_points[row * buckets ..]`, inside a
+            // `rows * buckets` point buffer), each thread walking a disjoint
+            // bucket sub-range of that block's chunk. The block reduces through
+            // `POINT_BLOCK * 3 * LIMBS` u64s of dynamic shared memory, declared
+            // here and matching the kernel's `extern __shared__`, with
+            // `__syncthreads()` on both sides of every tree level. Only thread 0
+            // writes, to `out[row * chunks + chunk]` (12 limbs) of a
+            // `rows * chunks * 12` u64 buffer distinct from the input, so writes
+            // are one per block.
+            let _ = unsafe { builder.launch(config) }?;
+            return Ok(());
+        }
+
+        let mut partials = self.alloc_u64(rows * chunks * 3 * FQ_LIMBS)?;
+        let mut builder = self
+            .stream()
+            .launch_builder(self.msm_bucket_reduce_chunked());
+        let _ = builder.arg(bucket_points);
+        let _ = builder.arg(&rows_arg);
+        let _ = builder.arg(&buckets_arg);
+        let _ = builder.arg(&chunks_arg);
+        let _ = builder.arg(&mut partials);
+        // SAFETY: identical to the `chunks == 1` launch above, differing only in
+        // that the output is the `rows * chunks * 12` u64 `partials` scratch
+        // buffer rather than the caller's `rows * 12` output.
+        let _ = unsafe { builder.launch(config) }?;
+
+        let mut builder = self.stream().launch_builder(self.msm_point_rows_sum());
+        let _ = builder.arg(&partials);
+        let _ = builder.arg(&rows_arg);
+        let _ = builder.arg(&chunks_arg);
+        let _ = builder.arg(out);
+        // SAFETY: block `row < rows` reads only `partials[row * chunks ..]`
+        // (`chunks` points of a `rows * chunks` point buffer), striding by
+        // `blockDim.x`, and reduces through the same `POINT_BLOCK * 3 * LIMBS`
+        // u64 shared-memory tree with `__syncthreads()` on both sides of every
+        // level. Only thread 0 writes, to `out[row]` (12 limbs) of a `rows * 12`
+        // u64 buffer distinct from `partials`.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (rows_arg, 1, 1),
+                block_dim: (POINT_BLOCK, 1, 1),
+                shared_mem_bytes: shared,
+            })
+        }?;
+        Ok(())
+    }
+
     pub fn upload_segments(
         &self,
         bases: &DeviceG1Bases,
@@ -687,6 +778,36 @@ impl CudaKernelContext {
             &mut output,
         )?;
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
+    }
+
+    fn launch_window_fold(
+        &self,
+        window_points: &CudaSlice<u64>,
+        rows: usize,
+        windows: usize,
+        window_bits: usize,
+        out: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        if rows == 0 || windows == 0 {
+            return Ok(());
+        }
+        let rows_arg = Self::count_of(rows)?;
+        let windows_arg = Self::count_of(windows)?;
+        let window_bits_arg = Self::count_of(window_bits)?;
+        let mut builder = self.stream().launch_builder(self.msm_window_fold());
+        let _ = builder.arg(window_points);
+        let _ = builder.arg(&rows_arg);
+        let _ = builder.arg(&windows_arg);
+        let _ = builder.arg(&window_bits_arg);
+        let _ = builder.arg(out);
+        // SAFETY: thread `row < rows` reads only `window_points[window * rows +
+        // row]` for each `window < windows` (12 limbs each of a
+        // `windows * rows * 12` u64 buffer) and writes only `out[row]` (12
+        // limbs) of a `rows * 12` u64 buffer distinct from the input, so reads
+        // stay in bounds and writes are one per thread. Threads with
+        // `row >= rows` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(rows_arg)) }?;
+        Ok(())
     }
 
     const fn segment_mode(segments: usize, widest: usize, classed: bool) -> SegmentMode {
@@ -973,7 +1094,7 @@ pub(crate) mod testing {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use ark_bn254::{Fq, G1Affine, G1Projective};
+    use ark_bn254::{Fq, Fr as ArkFr, G1Affine, G1Projective};
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup};
     use ark_ff::{PrimeField, Zero};
     use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
@@ -985,7 +1106,8 @@ mod tests {
         projectives,
     };
     use super::{
-        AffineLimbs, JacobianLimbs, SegmentMode, CLASS_FLOOR, FQ_LIMBS, SMALL_SEGMENT_LIMIT,
+        unflatten_jacobian, AffineLimbs, JacobianLimbs, SegmentMode, CLASS_FLOOR, FQ_LIMBS,
+        SMALL_SEGMENT_LIMIT,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
 
@@ -1618,6 +1740,128 @@ mod tests {
                     "normalised span diverged at count {count}, offset {offset}"
                 );
             }
+        }
+    }
+
+    const FOLD_SHAPES: [(usize, usize, usize); 5] =
+        [(1, 26, 10), (1, 32, 8), (3, 22, 12), (5, 1, 16), (2, 85, 3)];
+
+    #[test]
+    fn window_fold_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        for (rows, windows, window_bits) in FOLD_SHAPES {
+            let mut points = Vec::with_capacity(rows * windows);
+            for window in 0..windows {
+                for row in 0..rows {
+                    if (window + row) % 11 == 0 {
+                        points.push(G1Projective::zero());
+                    } else {
+                        points.push(point((window * rows + row) as u64 + 5));
+                    }
+                }
+            }
+            let expected: Vec<G1Projective> = (0..rows)
+                .map(|row| {
+                    (0..windows)
+                        .map(|window| {
+                            let mut shift = ArkFr::from(1u64);
+                            for _ in 0..window * window_bits {
+                                shift = shift.double();
+                            }
+                            points[window * rows + row] * shift
+                        })
+                        .sum()
+                })
+                .collect();
+
+            let mut flat = Vec::with_capacity(points.len() * 3 * FQ_LIMBS);
+            for value in &points {
+                let limbs = jacobian_limbs(*value);
+                flat.extend_from_slice(&limbs.x);
+                flat.extend_from_slice(&limbs.y);
+                flat.extend_from_slice(&limbs.z);
+            }
+            let device_points = context.upload_raw_u64(&flat).expect("upload window points");
+            let mut device_out = context
+                .alloc_u64(rows * 3 * FQ_LIMBS)
+                .expect("allocate fold output");
+            context
+                .launch_window_fold(&device_points, rows, windows, window_bits, &mut device_out)
+                .expect("window fold");
+            let got = projectives(&unflatten_jacobian(
+                &context.download_u64(&device_out).expect("download fold"),
+            ));
+
+            assert_eq!(
+                got, expected,
+                "window fold diverged at rows {rows}, windows {windows}, window_bits {window_bits}"
+            );
+        }
+    }
+
+    const REDUCE_SHAPES: [(usize, usize, usize); 6] = [
+        (1, 1024, 8),
+        (1, 4096, 32),
+        (3, 256, 4),
+        (1, 128, 1),
+        (2, 100, 7),
+        (1, 1, 1),
+    ];
+
+    #[test]
+    fn bucket_reduce_chunked_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        for (rows, buckets, chunks) in REDUCE_SHAPES {
+            let mut points = Vec::with_capacity(rows * buckets);
+            for row in 0..rows {
+                for bucket in 0..buckets {
+                    if (row + bucket) % 23 == 0 {
+                        points.push(G1Projective::zero());
+                    } else {
+                        points.push(point((row * buckets + bucket) as u64 + 7));
+                    }
+                }
+            }
+            let expected: Vec<G1Projective> = (0..rows)
+                .map(|row| {
+                    (1..buckets)
+                        .map(|bucket| points[row * buckets + bucket] * ArkFr::from(bucket as u64))
+                        .sum()
+                })
+                .collect();
+
+            let mut flat = Vec::with_capacity(points.len() * 3 * FQ_LIMBS);
+            for value in &points {
+                let limbs = jacobian_limbs(*value);
+                flat.extend_from_slice(&limbs.x);
+                flat.extend_from_slice(&limbs.y);
+                flat.extend_from_slice(&limbs.z);
+            }
+            let device_points = context.upload_raw_u64(&flat).expect("upload buckets");
+            let mut device_out = context
+                .alloc_u64(rows * 3 * FQ_LIMBS)
+                .expect("allocate reduce output");
+            context
+                .launch_bucket_reduce_chunked(
+                    &device_points,
+                    rows,
+                    buckets,
+                    chunks,
+                    &mut device_out,
+                )
+                .expect("chunked bucket reduce");
+            let got = projectives(&unflatten_jacobian(
+                &context.download_u64(&device_out).expect("download reduce"),
+            ));
+
+            assert_eq!(
+                got, expected,
+                "chunked bucket reduce diverged at rows {rows}, buckets {buckets}, chunks {chunks}"
+            );
         }
     }
 }
