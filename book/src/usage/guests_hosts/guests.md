@@ -104,7 +104,7 @@ let verifier_preprocessing =
 let (output, proof, io_device) = prove_fib(PrivateInput::new(50));
 
 // Verifier does not — it only sees the output and proof
-let is_valid = verify_fib(output, io_device.panic, proof);
+verify_fib(output, io_device.panic, proof).expect("proof verification failed");
 ```
 
 The generated verifier closure omits private and advice parameters — only public inputs appear in the verifier's signature.

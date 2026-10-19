@@ -19,8 +19,7 @@ pub fn main() {
     let input = 41;
     let (output, proof, program_io) = prove_alloc(input);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_alloc(input, output, program_io.panic, proof);
+    verify_alloc(input, output, program_io.panic, proof).expect("proof verification failed");
 
     info!("output: {output:?}");
-    info!("valid: {is_valid}");
 }

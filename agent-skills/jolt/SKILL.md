@@ -155,10 +155,8 @@ pub fn main() {
     info!("Prover runtime: {} s", t.elapsed().as_secs_f64());
 
     // io.panic is true if the guest panicked; the verifier checks it matches the proof
-    let is_valid = verify(<inputs>, output, io.panic, proof);
+    verify(<inputs>, output, io.panic, proof).expect("proof verification failed");
     info!("output: {:?}", output);
-    info!("valid: {is_valid}");
-    assert!(is_valid);
 }
 ```
 

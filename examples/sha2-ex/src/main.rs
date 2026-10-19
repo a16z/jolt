@@ -19,8 +19,7 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove_sha2(input);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_sha2(input, output, program_io.panic, proof);
+    verify_sha2(input, output, program_io.panic, proof).expect("proof verification failed");
 
     info!("output: {}", hex::encode(output));
-    info!("valid: {is_valid}");
 }
