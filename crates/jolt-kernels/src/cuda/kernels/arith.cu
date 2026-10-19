@@ -74,3 +74,71 @@ extern "C" __global__ void fma_kernel(const u64 *__restrict__ acc,
     fr_add(c, p, r);
     store4(out + i * LIMBS, r);
 }
+
+extern "C" __global__ void bind_low_to_high_kernel(const u64 *__restrict__ in,
+                                                  u64 c0, u64 c1, u64 c2, u64 c3,
+                                                  u64 *__restrict__ out,
+                                                  unsigned int half) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= half) return;
+    u64 lo[LIMBS], hi[LIMBS], c[LIMBS], d[LIMBS], t[LIMBS], r[LIMBS];
+    load4(in + (2 * i) * LIMBS, lo);
+    load4(in + (2 * i + 1) * LIMBS, hi);
+    c[0] = c0;
+    c[1] = c1;
+    c[2] = c2;
+    c[3] = c3;
+    fr_sub(hi, lo, d);
+    fr_mul(c, d, t);
+    fr_add(lo, t, r);
+    store4(out + i * LIMBS, r);
+}
+
+extern "C" __global__ void bind_high_to_low_kernel(const u64 *__restrict__ in,
+                                                  u64 c0, u64 c1, u64 c2, u64 c3,
+                                                  u64 *__restrict__ out,
+                                                  unsigned int half) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= half) return;
+    u64 lo[LIMBS], hi[LIMBS], c[LIMBS], d[LIMBS], t[LIMBS], r[LIMBS];
+    load4(in + i * LIMBS, lo);
+    load4(in + (i + half) * LIMBS, hi);
+    c[0] = c0;
+    c[1] = c1;
+    c[2] = c2;
+    c[3] = c3;
+    fr_sub(hi, lo, d);
+    fr_mul(c, d, t);
+    fr_add(lo, t, r);
+    store4(out + i * LIMBS, r);
+}
+
+extern "C" __global__ void sum_reduce_kernel(const u64 *__restrict__ in,
+                                             u64 *__restrict__ partials,
+                                             unsigned int n) {
+    __shared__ u64 scratch[BLOCK * LIMBS];
+    unsigned int tid = threadIdx.x;
+    unsigned int i = blockIdx.x * blockDim.x + tid;
+
+    u64 acc[LIMBS] = {0, 0, 0, 0};
+    if (i < n) load4(in + i * LIMBS, acc);
+    store4(scratch + tid * LIMBS, acc);
+    __syncthreads();
+
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            u64 x[LIMBS], y[LIMBS], r[LIMBS];
+            load4(scratch + tid * LIMBS, x);
+            load4(scratch + (tid + stride) * LIMBS, y);
+            fr_add(x, y, r);
+            store4(scratch + tid * LIMBS, r);
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        u64 total[LIMBS];
+        load4(scratch, total);
+        store4(partials + blockIdx.x * LIMBS, total);
+    }
+}

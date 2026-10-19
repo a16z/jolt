@@ -104,3 +104,8 @@ pub(crate) fn fill_staging(staging: &mut [u64], values: &[Fr]) {
         slot.copy_from_slice(&fr_to_limbs(value));
     }
 }
+
+#[inline]
+pub(crate) fn fr_limbs(value: Fr) -> [u64; LIMBS] {
+    fr_to_limbs(value)
+}

@@ -9,6 +9,8 @@
 //! [`CudaKernelContext::fr_identity`] copies those elements on the device.
 //! Elementwise field arithmetic uses CUDA kernels over that representation
 //! and synchronizes the stream before returning each output buffer.
+//! Polynomial binding writes a fresh device buffer for either variable order;
+//! summation reduces on the device and downloads only the final field element.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

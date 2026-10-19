@@ -26,6 +26,9 @@ pub struct CudaKernelContext {
     pub(super) mul_scalar: CudaFunction,
     pub(super) add_scalar: CudaFunction,
     pub(super) fma: CudaFunction,
+    pub(super) bind_low_to_high: CudaFunction,
+    pub(super) bind_high_to_low: CudaFunction,
+    pub(super) sum_reduce: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -45,6 +48,9 @@ impl CudaKernelContext {
             mul_scalar: module.load_function("mul_scalar_kernel")?,
             add_scalar: module.load_function("add_scalar_kernel")?,
             fma: module.load_function("fma_kernel")?,
+            bind_low_to_high: module.load_function("bind_low_to_high_kernel")?,
+            bind_high_to_low: module.load_function("bind_high_to_low_kernel")?,
+            sum_reduce: module.load_function("sum_reduce_kernel")?,
         })
     }
 

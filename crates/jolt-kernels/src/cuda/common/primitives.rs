@@ -1,8 +1,9 @@
 use cudarc::driver::CudaFunction;
-use cudarc::driver::PushKernelArg;
+use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_field::Fr;
+use jolt_poly::BindingOrder;
 
-use super::context::CudaKernelContext;
+use super::context::{CudaKernelContext, BLOCK as BLOCK_SIZE};
 use super::device::DeviceFrVec;
 use super::error::CudaError;
 
@@ -120,6 +121,82 @@ impl CudaKernelContext {
         self.stream().synchronize()?;
         Ok(output)
     }
+
+    pub fn bind(
+        &self,
+        values: &DeviceFrVec,
+        challenge: Fr,
+        order: BindingOrder,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let len = values.len();
+        if len < 2 || !len.is_power_of_two() {
+            return Err(CudaError::LengthMismatch {
+                expected: len.next_power_of_two().max(2),
+                got: len,
+            });
+        }
+        let half = len / 2;
+        let mut output = self.alloc(half)?;
+        let limbs = crate::cuda::common::device::fr_limbs(challenge);
+        let count = Self::count_of(half)?;
+        let kernel = match order {
+            BindingOrder::LowToHigh => &self.bind_low_to_high,
+            BindingOrder::HighToLow => &self.bind_high_to_low,
+        };
+        let mut builder = self.stream().launch_builder(kernel);
+        let _ = builder.arg(values.limbs());
+        let _ = builder.arg(&limbs[0]);
+        let _ = builder.arg(&limbs[1]);
+        let _ = builder.arg(&limbs[2]);
+        let _ = builder.arg(&limbs[3]);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < half` writes only `out[i]` and reads the pair
+        // (`in[2i]`,`in[2i+1]`) for LowToHigh or (`in[i]`,`in[i+half]`) for
+        // HighToLow — both within `in`'s `2 * half * LIMBS` u64s. The challenge
+        // arrives as four by-value limbs, so no device buffer backs it. `out`
+        // holds `half * LIMBS` u64s and is a fresh allocation distinct from `in`,
+        // so the reads cannot observe a partially written `out`. Threads with
+        // `i >= half` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub fn sum(&self, values: &DeviceFrVec) -> Result<Fr, CudaError> {
+        if values.is_empty() {
+            return Ok(Fr::default());
+        }
+        let mut current = values.try_clone()?;
+        loop {
+            let count = Self::count_of(current.len())?;
+            let blocks = count.div_ceil(BLOCK_SIZE);
+            let mut partials = self.alloc(blocks as usize)?;
+            let mut builder = self.stream().launch_builder(&self.sum_reduce);
+            let _ = builder.arg(current.limbs());
+            let _ = builder.arg(partials.limbs_mut());
+            let _ = builder.arg(&count);
+            // SAFETY: each block reduces its own `BLOCK_SIZE`-element window of
+            // `current` (holding `count * LIMBS` u64s; out-of-range lanes seed
+            // the shared-memory tree with field zero) into shared memory sized
+            // `BLOCK_SIZE * LIMBS` u64s by the kernel's own declaration, with
+            // `__syncthreads()` between every tree level. Only thread 0 writes,
+            // to `partials[blockIdx.x]`, and `partials` holds exactly `blocks`
+            // elements, so writes are one-per-block and non-aliasing.
+            let _ = unsafe {
+                builder.launch(LaunchConfig {
+                    grid_dim: (blocks, 1, 1),
+                    block_dim: (BLOCK_SIZE, 1, 1),
+                    shared_mem_bytes: 0,
+                })
+            }?;
+            self.stream().synchronize()?;
+            if blocks == 1 {
+                return partials.first();
+            }
+            current = partials;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -129,6 +206,7 @@ impl CudaKernelContext {
 )]
 mod tests {
     use jolt_field::{Fr, Ring};
+    use jolt_poly::{BindingOrder, Polynomial};
     use proptest::collection::vec;
     use proptest::prelude::*;
 
@@ -151,6 +229,10 @@ mod tests {
 
     fn arb_frs(min: usize, max: usize) -> impl Strategy<Value = Vec<Fr>> {
         vec(arb_fr(), min..=max)
+    }
+
+    fn arb_frs_pow2(max_log: usize) -> impl Strategy<Value = Vec<Fr>> {
+        (1usize..=max_log).prop_flat_map(|log| vec(arb_fr(), 1usize << log))
     }
 
     fn upload(context: &CudaKernelContext, values: &[Fr]) -> DeviceFrVec {
@@ -254,6 +336,40 @@ mod tests {
                 .expect("download");
             prop_assert_eq!(got, expected);
         }
+
+        #[test]
+        fn bind_low_to_high_matches_cpu(values in arb_frs_pow2(9), challenge in arb_fr()) {
+            let Some(context) = device() else { return Ok(()); };
+            let mut expected = Polynomial::new(values.clone());
+            expected.bind_with_order(challenge, BindingOrder::LowToHigh);
+            let got = context
+                .bind(&upload(context, &values), challenge, BindingOrder::LowToHigh)
+                .expect("device bind")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected.evals().to_vec());
+        }
+
+        #[test]
+        fn bind_high_to_low_matches_cpu(values in arb_frs_pow2(9), challenge in arb_fr()) {
+            let Some(context) = device() else { return Ok(()); };
+            let mut expected = Polynomial::new(values.clone());
+            expected.bind_with_order(challenge, BindingOrder::HighToLow);
+            let got = context
+                .bind(&upload(context, &values), challenge, BindingOrder::HighToLow)
+                .expect("device bind")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected.evals().to_vec());
+        }
+
+        #[test]
+        fn sum_matches_cpu(values in arb_frs(1, 2000)) {
+            let Some(context) = device() else { return Ok(()); };
+            let expected: Fr = values.iter().copied().sum();
+            let got = context.sum(&upload(context, &values)).expect("device sum");
+            prop_assert_eq!(got, expected);
+        }
     }
 
     fn boundary_values() -> Vec<Fr> {
@@ -311,5 +427,47 @@ mod tests {
                 .expect("download"),
             expected_mul,
         );
+    }
+
+    #[test]
+    fn reduction_matches_cpu_across_block_boundaries() {
+        let Some(context) = device() else {
+            return;
+        };
+        for len in [
+            1usize, 2, 255, 256, 257, 511, 512, 513, 65_535, 65_536, 65_537,
+        ] {
+            let values: Vec<Fr> = (0..len as u64).map(|i| Fr::from_u64(i * 31 + 7)).collect();
+            let expected: Fr = values.iter().copied().sum();
+            assert_eq!(
+                context.sum(&upload(context, &values)).expect("sum"),
+                expected,
+                "sum diverged at len {len}",
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_binding_matches_cpu_to_a_single_element() {
+        let Some(context) = device() else {
+            return;
+        };
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let values: Vec<Fr> = (0..64u64).map(|i| Fr::from_u64(i * 17 + 5)).collect();
+            let challenges: Vec<Fr> = (0..6u64).map(|i| Fr::from_u64(101 + 7 * i)).collect();
+
+            let mut expected = Polynomial::new(values.clone());
+            let mut device_table = upload(context, &values);
+            for &challenge in &challenges {
+                expected.bind_with_order(challenge, order);
+                device_table = context.bind(&device_table, challenge, order).expect("bind");
+                assert_eq!(
+                    device_table.to_host().expect("download"),
+                    expected.evals().to_vec(),
+                    "bind diverged mid-loop for {order:?}",
+                );
+            }
+            assert_eq!(device_table.len(), 1);
+        }
     }
 }
