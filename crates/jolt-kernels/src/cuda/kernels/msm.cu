@@ -323,6 +323,115 @@ extern "C" __global__ void msm_g1_add_kernel(const u64 *__restrict__ left,
     }
 }
 
+__device__ __forceinline__ void glv_mul_acc(const u64 *a, int alen, const u64 *b, int blen,
+                                           u64 *acc, int acclen) {
+    for (int j = 0; j < blen; j++) {
+        u64 carry = 0;
+        for (int l = 0; l < alen; l++) {
+            acc[j + l] = mac(acc[j + l], a[l], b[j], &carry);
+        }
+        int index = j + alen;
+        while (carry != 0 && index < acclen) {
+            u64 next = 0;
+            acc[index] = adc(acc[index], carry, &next);
+            carry = next;
+            index++;
+        }
+    }
+}
+
+__device__ __forceinline__ int glv_sub_abs(const u64 *x, const u64 *y, int len, u64 *out) {
+    int order = 0;
+    for (int i = len - 1; i >= 0; i--) {
+        if (x[i] != y[i]) {
+            order = (x[i] > y[i]) ? 1 : -1;
+            break;
+        }
+    }
+    u64 borrow = 0;
+    if (order >= 0) {
+        for (int i = 0; i < len; i++) out[i] = sbb(x[i], y[i], &borrow);
+        return 0;
+    }
+    for (int i = 0; i < len; i++) out[i] = sbb(y[i], x[i], &borrow);
+    return 1;
+}
+
+extern "C" __global__ void msm_glv_decompose_2d_kernel(const u64 *__restrict__ scalars,
+                                                     const u64 *__restrict__ constants,
+                                                     unsigned int count,
+                                                     u64 *__restrict__ out_scalars,
+                                                     unsigned char *__restrict__ out_signs) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    const u64 *recip_c = constants;
+    const u64 *recip_b = constants + 5;
+    const u64 *coeff_a = constants + 9;
+    const u64 *coeff_b = constants + 11;
+    const u64 *coeff_c = constants + 12;
+
+    u64 k[LIMBS];
+    load4(scalars + (unsigned long long)i * LIMBS, k);
+
+    u64 wide[9];
+    for (int j = 0; j < 9; j++) wide[j] = 0;
+    glv_mul_acc(k, LIMBS, recip_c, 5, wide, 9);
+    u64 p[3] = {wide[6], wide[7], wide[8]};
+
+    for (int j = 0; j < 9; j++) wide[j] = 0;
+    glv_mul_acc(k, LIMBS, recip_b, 4, wide, 9);
+    u64 q[3] = {wide[6], wide[7], wide[8]};
+
+    u64 left[6], right[6];
+    for (int j = 0; j < 6; j++) {
+        left[j] = 0;
+        right[j] = 0;
+    }
+    glv_mul_acc(p, 3, coeff_a, 2, left, 6);
+    glv_mul_acc(q, 3, coeff_b, 1, left, 6);
+    u64 padded[6] = {k[0], k[1], k[2], k[3], 0, 0};
+    u64 first[6];
+    int first_negative = glv_sub_abs(padded, left, 6, first);
+
+    for (int j = 0; j < 6; j++) {
+        right[j] = 0;
+        left[j] = 0;
+    }
+    glv_mul_acc(p, 3, coeff_b, 1, left, 6);
+    glv_mul_acc(q, 3, coeff_c, 2, right, 6);
+    u64 second[6];
+    int second_negative = glv_sub_abs(left, right, 6, second);
+
+    unsigned long long mapped = (unsigned long long)count + i;
+    store4(out_scalars + (unsigned long long)i * LIMBS, first);
+    store4(out_scalars + mapped * LIMBS, second);
+    out_signs[i] = (unsigned char)first_negative;
+    out_signs[mapped] = (unsigned char)second_negative;
+}
+
+extern "C" __global__ void msm_g1_endomorphism_kernel(const u64 *__restrict__ jacobian,
+                                                     const u64 *__restrict__ beta,
+                                                     unsigned int count, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 x[LIMBS], y[LIMBS], z[LIMBS], scaled[LIMBS], factor[LIMBS];
+    load4(jacobian + ((unsigned long long)i * 3) * LIMBS, x);
+    load4(jacobian + ((unsigned long long)i * 3 + 1) * LIMBS, y);
+    load4(jacobian + ((unsigned long long)i * 3 + 2) * LIMBS, z);
+    load4(beta, factor);
+
+    store4(out + ((unsigned long long)i * 3) * LIMBS, x);
+    store4(out + ((unsigned long long)i * 3 + 1) * LIMBS, y);
+    store4(out + ((unsigned long long)i * 3 + 2) * LIMBS, z);
+
+    unsigned long long mapped = (unsigned long long)count + i;
+    fq_mul(x, factor, scaled);
+    store4(out + (mapped * 3) * LIMBS, scaled);
+    store4(out + (mapped * 3 + 1) * LIMBS, y);
+    store4(out + (mapped * 3 + 2) * LIMBS, z);
+}
+
 extern "C" __global__ void msm_jacobian_z_kernel(const u64 *__restrict__ jacobian,
                                                 unsigned int count, u64 *__restrict__ out) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;

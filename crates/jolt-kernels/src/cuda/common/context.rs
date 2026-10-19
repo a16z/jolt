@@ -111,6 +111,10 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_one_hot_complement: CudaFunction,
     #[cfg(test)]
+    msm_glv_decompose_2d: CudaFunction,
+    #[cfg(test)]
+    msm_g1_endomorphism: CudaFunction,
+    #[cfg(test)]
     msm_segment_sum: CudaFunction,
     #[cfg(test)]
     msm_segment_sum_warp: CudaFunction,
@@ -223,6 +227,10 @@ impl CudaKernelContext {
                 .load_function("msm_one_hot_scatter_shared_kernel")?,
             #[cfg(test)]
             msm_one_hot_complement: module.load_function("msm_one_hot_complement_kernel")?,
+            #[cfg(test)]
+            msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
+            #[cfg(test)]
+            msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
             #[cfg(test)]
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             #[cfg(test)]
@@ -357,6 +365,13 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn download_u8(&self, buffer: &CudaSlice<u8>) -> Result<Vec<u8>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
         })
     }
@@ -574,6 +589,16 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_one_hot_complement(&self) -> &CudaFunction {
         &self.msm_one_hot_complement
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_glv_decompose_2d(&self) -> &CudaFunction {
+        &self.msm_glv_decompose_2d
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_g1_endomorphism(&self) -> &CudaFunction {
+        &self.msm_g1_endomorphism
     }
 
     #[cfg(test)]

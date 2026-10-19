@@ -18,6 +18,9 @@
 //! Affine base tables remain on their owning stream. Normalization extracts
 //! Jacobian z-coordinates, batch-inverts them on the device, and converts the
 //! selected span without downloading its coordinates.
+//! Two-dimensional GLV decomposition produces signed scalar magnitudes on device.
+//! G1 endomorphism spans retain the original Jacobian points followed by their
+//! mapped points, matching the two component arrays.
 //!
 //! Segmented sums encode negation in the high bit of each base index. The host
 //! checks index ranges and selects thread, warp, block, or size-class reductions.
@@ -213,6 +216,29 @@ const TARGET_REDUCE_BLOCKS: usize = 1024;
 const BATCHED_WINDOW_BYTES: usize = 64 << 20;
 
 const MAX_G1_BATCHED_WINDOW_BYTES: usize = 4 << 30;
+
+const GLV_CONSTANTS: [u64; 14] = [
+    0x163b_4843_cb4b_9a5e,
+    0x149d_540f_d5e4_95cc,
+    0x5398_fd03_00ff_6565,
+    0x4cce_f014_a773_d2d2,
+    0x0000_0000_0000_0002,
+    0x8fa7_d32d_2faf_ba64,
+    0x6eb9_c714_773a_6ef2,
+    0xd91d_232e_c7e0_b3d7,
+    0x0000_0000_0000_0002,
+    0x8211_bbeb_7d4f_1128,
+    0x6f4d_8248_eeb8_59fc,
+    0x89d3_2568_94d2_13e3,
+    0x0be4_e154_1221_250b,
+    0x6f4d_8248_eeb8_59fd,
+];
+
+fn glv_endomorphism_coefficient() -> [u64; FQ_LIMBS] {
+    <ark_bn254::g1::Config as ark_ec::scalar_mul::glv::GLVConfig>::ENDO_COEFFS[0]
+        .0
+         .0
+}
 
 struct DeviceScalars<'a> {
     values: &'a CudaSlice<u64>,
@@ -647,6 +673,82 @@ impl CudaKernelContext {
 
     pub fn upload_raw_u64(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
         self.upload_u64_slice(values)
+    }
+
+    fn glv_decompose_2d(
+        &self,
+        scalars: &CudaSlice<u64>,
+        count: usize,
+    ) -> Result<(CudaSlice<u64>, Vec<u8>), CudaError> {
+        let mut out = self.alloc_u64(2 * count.max(1) * FQ_LIMBS)?;
+        if count == 0 {
+            return Ok((out, Vec::new()));
+        }
+        if scalars.len() < count * FQ_LIMBS {
+            return Err(CudaError::LengthMismatch {
+                expected: count * FQ_LIMBS,
+                got: scalars.len(),
+            });
+        }
+        let constants = self.upload_u64_slice(&GLV_CONSTANTS)?;
+        let mut signs = self.upload_u8_slice(&vec![0u8; 2 * count])?;
+        let count_arg = Self::count_of(count)?;
+        let mut builder = self.stream().launch_builder(self.msm_glv_decompose_2d());
+        let _ = builder.arg(scalars);
+        let _ = builder.arg(&constants);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut out);
+        let _ = builder.arg(&mut signs);
+        // SAFETY: thread `i < count` reads only `scalars[i]` (4 limbs of a buffer
+        // holding at least `count * FQ_LIMBS`, checked above) and the 14 constant
+        // limbs, and writes elements `i` and `count + i` of both a
+        // `2 * count * FQ_LIMBS` u64 output and a `2 * count` u8 sign array, so
+        // writes are two disjoint slots per thread in each and in bounds. All
+        // wide arithmetic is in thread-local arrays. Threads with `i >= count`
+        // return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+        let hosted = self.download_u8(&signs)?;
+        Ok((out, hosted))
+    }
+
+    fn g1_endomorphism_span(
+        &self,
+        jacobian: &CudaSlice<u64>,
+        offset: usize,
+        count: usize,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let words = 3 * FQ_LIMBS;
+        let end = offset
+            .checked_add(count)
+            .and_then(|last| last.checked_mul(words))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a G1 endomorphism span overflowed the buffer index space",
+            })?;
+        if end > jacobian.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: end,
+                got: jacobian.len(),
+            });
+        }
+        let mut out = self.alloc_u64(2 * count * words)?;
+        if count == 0 {
+            return Ok(out);
+        }
+        let span = jacobian.slice(offset * words..end);
+        let beta = self.upload_u64_slice(&glv_endomorphism_coefficient())?;
+        let count_arg = Self::count_of(count)?;
+        let mut builder = self.stream().launch_builder(self.msm_g1_endomorphism());
+        let _ = builder.arg(&span);
+        let _ = builder.arg(&beta);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut out);
+        // SAFETY: thread `i < count` reads the 12 limbs of point `i` of the
+        // `count`-point view bounds-checked above plus the 4 limbs of `beta`, and
+        // writes points `i` and `count + i` (12 limbs each) of a `2 * count`
+        // point fresh allocation, so writes are two disjoint slots per thread and
+        // in bounds. Threads with `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+        Ok(out)
     }
 
     pub fn normalise_g1_span(
@@ -2068,9 +2170,11 @@ pub(crate) mod testing {
 )]
 mod tests {
     use ark_bn254::{Fq, Fr as ArkFr, G1Affine, G1Projective};
+    use ark_ec::scalar_mul::glv::GLVConfig;
     use ark_ec::scalar_mul::variable_base::msm_i128;
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup, VariableBaseMSM};
-    use ark_ff::{PrimeField, Zero};
+    use ark_ff::BigInt;
+    use ark_ff::{Field, PrimeField, Zero};
     use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
     use jolt_field::{Fr, Ring};
     use proptest::collection::vec;
@@ -2081,8 +2185,8 @@ mod tests {
         point, projective, projectives,
     };
     use super::{
-        unflatten_jacobian, AffineLimbs, JacobianLimbs, OneHotMode, SegmentMode, CLASS_FLOOR, COLD,
-        FQ_LIMBS, ONE_HOT_SHARED_SLOTS, SMALL_SEGMENT_LIMIT,
+        take_limbs, unflatten_jacobian, AffineLimbs, JacobianLimbs, OneHotMode, SegmentMode,
+        CLASS_FLOOR, COLD, FQ_LIMBS, ONE_HOT_SHARED_SLOTS, SMALL_SEGMENT_LIMIT,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
 
@@ -2098,6 +2202,8 @@ mod tests {
     const SEGMENT_BASES: usize = 64;
 
     const RESIDENT_MSM_LENS: [usize; 6] = [1, 2, 255, 256, 1024, 4096];
+
+    const GLV_LENS: [usize; 5] = [1, 2, 257, 1024, 4096];
 
     fn device() -> Option<&'static CudaKernelContext> {
         shared_context()
@@ -3197,6 +3303,98 @@ mod tests {
                 assert_eq!(
                     divergence, None,
                     "normalised span diverged at count {count}, offset {offset}"
+                );
+            }
+        }
+    }
+
+    fn glv_lambda() -> ArkFr {
+        <ark_bn254::g1::Config as GLVConfig>::LAMBDA
+    }
+
+    fn glv_bound() -> ArkFr {
+        ArkFr::from(u128::MAX) + ArkFr::ONE
+    }
+
+    fn limbs_to_ark(limbs: &[u64]) -> ArkFr {
+        ArkFr::from_bigint(BigInt(take_limbs(limbs))).expect("canonical limbs below Fr")
+    }
+
+    #[test]
+    fn g1_endomorphism_span_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        let lambda = glv_lambda();
+        for count in GLV_LENS {
+            for offset in [0usize, 3] {
+                let lead = jacobian_span(offset, 7);
+                let points = jacobian_span(count, 13);
+                let mut flat = flat_jacobian(&lead);
+                flat.extend_from_slice(&flat_jacobian(&points));
+                let device_points = context.upload_raw_u64(&flat).expect("upload span");
+
+                let raw = context
+                    .g1_endomorphism_span(&device_points, offset, count)
+                    .expect("endomorphism");
+                let got = projectives(&unflatten_jacobian(
+                    &context.download_u64(&raw).expect("download endomorphism"),
+                ));
+
+                assert_eq!(
+                    got.len(),
+                    2 * count,
+                    "endomorphism should emit the original span then the mapped span"
+                );
+                let divergence = (0..count).position(|index| {
+                    got[index].into_affine() != points[index].into_affine()
+                        || got[count + index].into_affine()
+                            != (points[index] * lambda).into_affine()
+                });
+                assert_eq!(
+                    divergence, None,
+                    "endomorphism diverged at count {count}, offset {offset}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn glv_decompose_2d_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        let lambda = glv_lambda();
+        let bound = glv_bound();
+        for count in GLV_LENS {
+            let scalars: Vec<Fr> = (0..count)
+                .map(|index| Fr::from_u64(index as u64 * 1_000_003 + 7))
+                .collect();
+            let uploaded = context.upload(&scalars).expect("upload scalars");
+            let canonical = context
+                .canonical_scalars(&uploaded)
+                .expect("canonical scalars");
+            let (split, signs) = context
+                .glv_decompose_2d(&canonical, count)
+                .expect("glv decompose");
+            let raw = context.download_u64(&split).expect("download split");
+
+            assert_eq!(signs.len(), 2 * count, "sign count at {count}");
+            for index in 0..count {
+                let first = limbs_to_ark(&raw[index * FQ_LIMBS..(index + 1) * FQ_LIMBS]);
+                let second =
+                    limbs_to_ark(&raw[(count + index) * FQ_LIMBS..(count + index + 1) * FQ_LIMBS]);
+                let signed = |value: ArkFr, sign: u8| if sign == 0 { value } else { -value };
+                let rebuilt =
+                    signed(first, signs[index]) + signed(second, signs[count + index]) * lambda;
+                assert_eq!(
+                    rebuilt,
+                    ark_fr(scalars[index]),
+                    "glv split failed to rebuild scalar {index} at count {count}"
+                );
+                assert!(
+                    first < bound && second < bound,
+                    "glv component exceeded 2^128 at scalar {index}, count {count}"
                 );
             }
         }

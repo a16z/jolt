@@ -56,6 +56,9 @@
 //! tallies when they fit. The host scans counts before the segmented G1 sums.
 //! For fully covered chunks, dominant buckets can use the total base sum minus
 //! the other buckets; cold cycles disable this complement shortcut.
+//! G1 GLV kernels split scalars into two signed components and emit matching
+//! original/endomorphism point spans. Magnitudes stay on device; signs return
+//! to the host for scheduling.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
