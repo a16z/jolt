@@ -416,7 +416,8 @@ The plan avoids that with three rules:
   they join the redirect list and fall under the same rule.
 - **One repo per review point.** Every review point after RP0 touches only jolt
   or only Akita, so its gate needs one team. The next review point starts only
-  after every PR in the current one has merged.
+  after every PR in the current one has merged. Development does not wait on
+  review points; see Development workflow.
 - **Shallow stacks.** No PR depends on an unmerged PR in the other repo. Within
   one repo, PRs stack at most one level deep.
 
