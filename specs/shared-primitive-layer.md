@@ -527,7 +527,13 @@ PRs by cherry-picking.
 | Repo | Integration branch | Started from | Extraction targets |
 |---|---|---|---|
 | jolt (a16z/jolt) | `whiteout/dev` | the transcript-unification branch (#2000) | `main` |
-| Akita (LayerZero-Labs/akita) | `whiteout/dev` | Akita `dev`, plus #185 merged in | `main` for seams (M1c, M2b, M3b, M5c); `dev` for the rest |
+| Akita (LayerZero-Labs/akita) | `whiteout/dev` | the transcript-unification branch (#185) | `main` for seams (M1c, M2b, M3b, M5c); `dev` for the rest |
+
+The integration branches stay local; only extracted PRs are pushed. Until M0
+lands, both build on the transcript-unification branches and merge them as they
+move. Akita's `dev`-only code, including the `akita-zk-*` building blocks, enters
+the Akita integration branch through a merge of Akita `dev` before RP4, when the
+first `dev`-targeted tickets are extracted.
 
 The integration branches never merge into upstream `main` or `dev`; only
 extracted PRs do. They are never force-pushed, because several agents share
@@ -569,10 +575,9 @@ resolve to the upstream version, because landed code is canonical. Then run the
 combined suites. Merge upstream into the integration branches at every
 review-point gate and whenever upstream moves under unlanded work.
 
-**Testing the integration branches.** Agents run the full jolt suites, the Akita
-suites, and the combined `akita` + `zk` build locally before pushing. To get CI
-on them, each repo keeps a draft PR from `whiteout/dev` titled
-"DO NOT MERGE: Whiteout integration".
+**Testing the integration branches.** The integration branches have no CI, so
+nothing is committed to them unless the full jolt suites, the Akita suites, and
+the combined `akita` + `zk` build pass locally.
 
 **Cost.** The further the integration branch runs ahead of what has landed, the
 more convergence work each review produces. When review changes a ticket
