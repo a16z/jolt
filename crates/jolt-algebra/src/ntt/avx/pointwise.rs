@@ -128,6 +128,10 @@ unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
 /// The caller must ensure AVX2 is available. `acc`, `lhs`, and `rhs` must be
 /// valid for `d` `i32` elements. `acc` must be writable and must not alias in
 /// a way that violates Rust's mutable-reference rules.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "the cast pointers only feed unaligned `loadu`/`storeu` intrinsics"
+)]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn pointwise_mul_acc_i32(
     acc: *mut i32,
@@ -144,12 +148,12 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
             let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
-            let l = _mm256_loadu_si256(lhs.add(i) as *const __m256i);
-            let r = _mm256_loadu_si256(rhs.add(i) as *const __m256i);
+            let l = _mm256_loadu_si256(lhs.add(i).cast::<__m256i>());
+            let r = _mm256_loadu_si256(rhs.add(i).cast::<__m256i>());
             let prod = mont_mul(l, r, p_v, pinv_v);
             let sum = _mm256_add_epi32(a, prod);
             _mm256_storeu_si256(
-                acc.add(i) as *mut __m256i,
+                acc.add(i).cast::<__m256i>(),
                 reduce_range_8x_i32_avx2(sum, p_v),
             );
         }
@@ -181,6 +185,10 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
 /// The caller must ensure AVX-512F/DQ/BW are available. `acc`, `lhs`, and
 /// `rhs` must be valid for `d` `i32` elements. `acc` must be writable and must
 /// not alias in a way that violates Rust's mutable-reference rules.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "the cast pointers only feed unaligned `loadu`/`storeu` intrinsics"
+)]
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
 pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
     acc: *mut i32,
@@ -197,12 +205,12 @@ pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
             let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
-            let l = _mm512_loadu_si512(lhs.add(i) as *const __m512i);
-            let r = _mm512_loadu_si512(rhs.add(i) as *const __m512i);
+            let l = _mm512_loadu_si512(lhs.add(i).cast::<__m512i>());
+            let r = _mm512_loadu_si512(rhs.add(i).cast::<__m512i>());
             let prod = mont_mul(l, r, p_v, pinv_v);
             let sum = _mm512_add_epi32(a, prod);
             _mm512_storeu_si512(
-                acc.add(i) as *mut __m512i,
+                acc.add(i).cast::<__m512i>(),
                 reduce_range_16x_i32_avx512(sum, p_v),
             );
         }
@@ -233,6 +241,10 @@ pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
 ///
 /// The caller must ensure AVX2 is available. All pointers must be valid for
 /// `d` `i32` elements and `out` must be writable. `out` may equal `lhs`.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "the cast pointers only feed unaligned `loadu`/`storeu` intrinsics"
+)]
 #[target_feature(enable = "avx2")]
 pub unsafe fn add_reduce_i32(out: *mut i32, lhs: *const i32, rhs: *const i32, d: usize, p: i32) {
     let p_v = _mm256_set1_epi32(p);
@@ -240,10 +252,10 @@ pub unsafe fn add_reduce_i32(out: *mut i32, lhs: *const i32, rhs: *const i32, d:
     while i + 8 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
-            let a = _mm256_loadu_si256(lhs.add(i) as *const __m256i);
-            let b = _mm256_loadu_si256(rhs.add(i) as *const __m256i);
+            let a = _mm256_loadu_si256(lhs.add(i).cast::<__m256i>());
+            let b = _mm256_loadu_si256(rhs.add(i).cast::<__m256i>());
             _mm256_storeu_si256(
-                out.add(i) as *mut __m256i,
+                out.add(i).cast::<__m256i>(),
                 reduce_range_8x_i32_avx2(_mm256_add_epi32(a, b), p_v),
             );
         }
@@ -271,6 +283,10 @@ pub unsafe fn add_reduce_i32(out: *mut i32, lhs: *const i32, rhs: *const i32, d:
 /// The caller must ensure AVX-512F/DQ/BW are available. All pointers must be
 /// valid for `d` `i32` elements and `out` must be writable. `out` may equal
 /// `lhs`.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "the cast pointers only feed unaligned `loadu`/`storeu` intrinsics"
+)]
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
 pub unsafe fn add_reduce_i32_avx512(
     out: *mut i32,
@@ -284,10 +300,10 @@ pub unsafe fn add_reduce_i32_avx512(
     while i + 16 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
-            let a = _mm512_loadu_si512(lhs.add(i) as *const __m512i);
-            let b = _mm512_loadu_si512(rhs.add(i) as *const __m512i);
+            let a = _mm512_loadu_si512(lhs.add(i).cast::<__m512i>());
+            let b = _mm512_loadu_si512(rhs.add(i).cast::<__m512i>());
             _mm512_storeu_si512(
-                out.add(i) as *mut __m512i,
+                out.add(i).cast::<__m512i>(),
                 reduce_range_16x_i32_avx512(_mm512_add_epi32(a, b), p_v),
             );
         }
@@ -315,6 +331,10 @@ pub unsafe fn add_reduce_i32_avx512(
 /// The caller must ensure AVX2 is available. `acc`, `lhs`, and `rhs` must be
 /// valid for `d` `i16` elements. `acc` must be writable and must not alias in
 /// a way that violates Rust's mutable-reference rules.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "the cast pointers only feed unaligned `loadu`/`storeu` intrinsics"
+)]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn pointwise_mul_acc_i16(
     acc: *mut i16,
@@ -331,12 +351,12 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
             let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
-            let l = _mm256_loadu_si256(lhs.add(i) as *const __m256i);
-            let r = _mm256_loadu_si256(rhs.add(i) as *const __m256i);
+            let l = _mm256_loadu_si256(lhs.add(i).cast::<__m256i>());
+            let r = _mm256_loadu_si256(rhs.add(i).cast::<__m256i>());
             let prod = mont_mul_16x_i16_avx2(l, r, p_v, pinv_v);
             let sum = _mm256_add_epi16(a, prod);
             _mm256_storeu_si256(
-                acc.add(i) as *mut __m256i,
+                acc.add(i).cast::<__m256i>(),
                 reduce_range_16x_i16_avx2(sum, p_v),
             );
         }
@@ -368,6 +388,10 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
 /// The caller must ensure AVX2 is available. `acc` and `other` must be valid
 /// for `d` `i16` elements. `acc` must be writable and must not alias in a way
 /// that violates Rust's mutable-reference rules.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "the cast pointers only feed unaligned `loadu`/`storeu` intrinsics"
+)]
 #[target_feature(enable = "avx2")]
 pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16) {
     let p_v = _mm256_set1_epi16(p);
@@ -376,9 +400,9 @@ pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16)
         // SAFETY: guaranteed by this function's safety contract and loop bound.
         unsafe {
             let a = _mm256_loadu_si256(acc.add(i) as *const __m256i);
-            let b = _mm256_loadu_si256(other.add(i) as *const __m256i);
+            let b = _mm256_loadu_si256(other.add(i).cast::<__m256i>());
             _mm256_storeu_si256(
-                acc.add(i) as *mut __m256i,
+                acc.add(i).cast::<__m256i>(),
                 reduce_range_16x_i16_avx2(_mm256_add_epi16(a, b), p_v),
             );
         }

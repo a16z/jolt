@@ -1,10 +1,11 @@
+#![expect(clippy::expect_used, reason = "test code")]
 use super::*;
-use jolt_field::{Fp128x8i32, Fp32x2i32, Fp64x4i32, WithCommitAccumulator};
-use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+use crate::{Fp128x8i32, Fp32x2i32, Fp64x4i32, WithCommitAccumulator};
+use crate::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
-type F64 = Fp64<4294967197>;
+type F64 = Fp64<4_294_967_197>;
 type F128 = Prime128Offset275;
 type F32 = Prime32Offset99;
 /// Production 64-bit prime: unlike `F64`, its canonical values fill all four
@@ -65,7 +66,7 @@ fn shift_scale_accumulate_into_matches_scaled_negacyclic_shift() {
         F64::one(),
         -F64::one(),
         F64::from_u64(7),
-        F64::from_u64(4294967196),
+        F64::from_u64(4_294_967_196),
     ];
 
     for k in 0..D {

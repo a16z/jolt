@@ -2,17 +2,17 @@
 
 use super::CyclotomicRing;
 use crate::fft::field_pow;
-use akita_error::{narrowing::usize_to_u64, AkitaError};
 #[cfg(test)]
-use jolt_field::ExtField;
-use jolt_field::Unreduced;
-use jolt_field::{Field, MulBaseUnreduced, Zero};
+use crate::ExtField;
+use crate::Unreduced;
+use crate::{narrowing::usize_to_u64, AlgebraError};
+use crate::{Field, MulBaseUnreduced, Zero};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: Field>(alpha: F, len: usize) -> Vec<F> {
     let mut out = vec![F::zero(); len];
     let mut power = F::one();
-    for val in out.iter_mut() {
+    for val in &mut out {
         *val = power;
         power *= alpha;
     }
@@ -33,7 +33,7 @@ pub fn scalar_powers_with_stride<F: Field>(
     alpha: F,
     stride: usize,
     len: usize,
-) -> Result<Vec<F>, AkitaError> {
+) -> Result<Vec<F>, AlgebraError> {
     if len <= 1 {
         return Ok(scalar_powers(alpha, len));
     }
@@ -172,10 +172,10 @@ where
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test code")]
 mod tests {
     use super::*;
-    use crate::poly::multilinear_eval;
-    use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7};
+    use crate::{CanonicalEncoding, One, Prime128OffsetA7F7};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 64;
@@ -202,7 +202,7 @@ mod tests {
             .unwrap();
             let mut pows = [F::zero(); D];
             let mut p = F::one();
-            for slot in pows.iter_mut() {
+            for slot in &mut pows {
                 *slot = p;
                 p *= alpha;
             }
@@ -219,6 +219,24 @@ mod tests {
         }
     }
 
+    /// Naive multilinear extension, `point[0]` bound to the least significant
+    /// table-index bit.
+    fn multilinear_eval(table: &[F], point: &[F]) -> F {
+        table
+            .iter()
+            .enumerate()
+            .fold(F::zero(), |sum, (index, &value)| {
+                let weight = point.iter().enumerate().fold(F::one(), |acc, (bit, &r)| {
+                    if (index >> bit) & 1 == 1 {
+                        acc * r
+                    } else {
+                        acc * (F::one() - r)
+                    }
+                });
+                sum + weight * value
+            })
+    }
+
     #[test]
     fn power_sequence_mle_matches_materialized_table() {
         let base = F::from_u128_checked(7).unwrap();
@@ -229,7 +247,7 @@ mod tests {
             let table = scalar_powers(base, 1usize << num_vars);
             assert_eq!(
                 evaluate_power_sequence_mle(base, &point),
-                multilinear_eval(&table, &point).unwrap()
+                multilinear_eval(&table, &point)
             );
         }
     }

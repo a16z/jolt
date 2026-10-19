@@ -5,11 +5,11 @@ use crate::ntt::ifma52::{
     forward, forward_i16, ifma52_enabled, inverse, Ifma52Accumulator, Ifma52Prime, Ifma52Residues,
     Ifma52Twiddles, IFMA52_ACCUMULATOR_TERMS,
 };
+use crate::AlgebraError;
 use crate::{
     cfg_into_iter, CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt,
     CyclotomicRing, Field, NttPrime, PrimeWidth,
 };
-use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -38,9 +38,9 @@ pub struct Ifma52Params<const K: usize, const D: usize> {
 
 impl<const K: usize, const D: usize> Ifma52Params<K, D> {
     /// Validate prime moduli and compute transform and Garner tables.
-    pub fn new(moduli: [u64; K]) -> Result<Self, AkitaError> {
+    pub fn new(moduli: [u64; K]) -> Result<Self, AlgebraError> {
         if K == 0 {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "IFMA52 CRT profile must contain a prime".into(),
             ));
         }
@@ -49,7 +49,7 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
-            .map_err(|_| AkitaError::InvalidSetup("IFMA52 prime count mismatch".into()))?;
+            .map_err(|_| AlgebraError::InvalidSetup("IFMA52 prime count mismatch".into()))?;
         let twiddles: Box<[Ifma52Twiddles<D>; K]> = primes
             .iter()
             .copied()
@@ -57,7 +57,7 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
             .collect::<Result<Vec<_>, _>>()?
             .into_boxed_slice()
             .try_into()
-            .map_err(|_| AkitaError::InvalidSetup("IFMA52 twiddle count mismatch".into()))?;
+            .map_err(|_| AlgebraError::InvalidSetup("IFMA52 twiddle count mismatch".into()))?;
         let garner = GarnerData::try_from_moduli(moduli)?;
         Ok(Self {
             primes,
@@ -70,10 +70,10 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
 
     /// Extend this profile with the exactness-only prime `tail`, whose
     /// transforms run over width `W`.
-    pub fn with_tail<W: PrimeWidth>(mut self, tail: NttPrime<W>) -> Result<Self, AkitaError> {
+    pub fn with_tail<W: PrimeWidth>(mut self, tail: NttPrime<W>) -> Result<Self, AlgebraError> {
         let modulus = tail.p.to_i64();
         if modulus <= 2 {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "IFMA52 tail modulus must exceed 2".into(),
             ));
         }
@@ -118,16 +118,16 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
         &self,
         canonical: &[Ifma52Residues<D>; K],
         tail_canonical: Option<&[W; D]>,
-    ) -> Result<CyclotomicRing<F, D>, AkitaError> {
+    ) -> Result<CyclotomicRing<F, D>, AlgebraError> {
         if K == 0 {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "IFMA52 CRT profile must contain a prime".into(),
             ));
         }
         if self.tail.as_ref().map(|tail| tail.width)
             != tail_canonical.map(|_| core::mem::size_of::<W>())
         {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "IFMA52 reconstruction tail does not match its parameters".into(),
             ));
         }
@@ -272,9 +272,9 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         &self,
         num_rows: usize,
         rhs: &[[i16; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AlgebraError> {
         if self.params.tail.is_some() {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "prepared IFMA52 tail does not match its parameters".into(),
             ));
         }
@@ -295,18 +295,18 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         num_rows: usize,
         rhs: &[[i16; D]],
         tail_params: &CrtNttParamSet<W, 1, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AlgebraError> {
         let num_cols = rhs.len();
         let required = num_rows.checked_mul(num_cols).ok_or_else(|| {
-            AkitaError::InvalidInput("prepared IFMA52 tail matrix extent overflow".into())
+            AlgebraError::InvalidInput("prepared IFMA52 tail matrix extent overflow".into())
         })?;
         if !self.params.has_tail(tail_params.primes[0]) {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "prepared IFMA52 tail does not match its parameters".into(),
             ));
         }
         if tail_matrix.len() < required {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "prepared IFMA52 tail matrix prefix is undersized".into(),
             ));
         }
@@ -333,13 +333,13 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
         &self,
         num_rows: usize,
         rhs: &[[i16; D]],
-    ) -> Result<Vec<[Ifma52Residues<D>; K]>, AkitaError> {
+    ) -> Result<Vec<[Ifma52Residues<D>; K]>, AlgebraError> {
         let num_cols = rhs.len();
         let required = num_rows.checked_mul(num_cols).ok_or_else(|| {
-            AkitaError::InvalidInput("prepared IFMA52 matrix extent overflow".into())
+            AlgebraError::InvalidInput("prepared IFMA52 matrix extent overflow".into())
         })?;
         if self.limbs.iter().any(|limb| limb.len() < required) {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "prepared IFMA52 matrix prefix is undersized".into(),
             ));
         }
@@ -352,7 +352,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
             entry_modulus,
             rhs_abs_bound.map_or(0, u64::from),
         ) {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "IFMA52 CRT capacity does not cover this mat-vec".into(),
             ));
         }
@@ -410,11 +410,12 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test code")]
 mod tests {
     use super::*;
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::{q128_primes, I16_TAIL_PRIME};
-    use jolt_field::{One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
+    use crate::{One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 
     fn assert_limb_major_i16_matvec<const D: usize>() {
         type F = Prime64Offset59;
@@ -542,7 +543,7 @@ mod tests {
             &[[0; D]],
             &tail_params,
         );
-        assert!(matches!(result, Err(AkitaError::InvalidSetup(_))));
+        assert!(matches!(result, Err(AlgebraError::InvalidSetup(_))));
     }
 
     #[test]

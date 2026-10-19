@@ -483,6 +483,7 @@ pub(crate) fn pow_mod(base: i64, exp: i64, modulus: i64) -> i64 {
 }
 
 #[cfg(test)]
+#[expect(clippy::maybe_infinite_iter, reason = "test code")]
 mod tests {
     use std::panic::catch_unwind;
 
@@ -519,15 +520,15 @@ mod tests {
     fn new_accepts_only_odd_primes_below_a_quarter_radix() {
         assert_eq!(NttPrime::new(12289_i16), NttPrime::compute(12289_i16));
         assert_eq!(
-            NttPrime::new(1073707009_i32),
-            NttPrime::compute(1073707009_i32)
+            NttPrime::new(1_073_707_009_i32),
+            NttPrime::compute(1_073_707_009_i32)
         );
         // 1537 = 29 * 53 and 94391809 = 7681 * 12289 pass the `2D | p - 1`
         // twiddle check for D = 256; 18433 and 2013265921 are primes above R/4.
         for p in [2_i16, 1537, 18433] {
             assert!(catch_unwind(|| NttPrime::new(p)).is_err(), "p={p}");
         }
-        for p in [2_i32, 1073707008, 94391809, 2013265921] {
+        for p in [2_i32, 1_073_707_008, 94_391_809, 2_013_265_921] {
             assert!(catch_unwind(|| NttPrime::new(p)).is_err(), "p={p}");
         }
     }

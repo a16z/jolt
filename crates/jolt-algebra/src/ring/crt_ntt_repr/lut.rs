@@ -243,18 +243,18 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
             // elements, do not overlap, and the prepared plan proves AVX2.
             unsafe {
                 if size_of::<W>() == size_of::<i16>() {
-                    let dst = &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]);
-                    let prime = *(&prime as *const _ as *const NttPrime<i16>);
-                    let tw = &*(tw as *const _ as *const NttTwiddles<i16, D>);
+                    let dst = &mut *std::ptr::from_mut(dst).cast::<[MontCoeff<i16>; D]>();
+                    let prime = *(&raw const prime).cast::<NttPrime<i16>>();
+                    let tw = &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>();
                     if CYCLIC {
                         avx::forward_ntt_cyclic_i8_i16(dst, digits, prime, tw);
                     } else {
                         avx::forward_ntt_i8_i16(dst, digits, prime, tw);
                     }
                 } else {
-                    let dst = &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]);
-                    let prime = *(&prime as *const _ as *const NttPrime<i32>);
-                    let tw = &*(tw as *const _ as *const NttTwiddles<i32, D>);
+                    let dst = &mut *std::ptr::from_mut(dst).cast::<[MontCoeff<i32>; D]>();
+                    let prime = *(&raw const prime).cast::<NttPrime<i32>>();
+                    let tw = &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>();
                     if CYCLIC {
                         avx::forward_ntt_cyclic_i8_i32(dst, digits, prime, tw, use_avx512);
                     } else {
@@ -274,9 +274,9 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
             // and NttTwiddles have stable C layouts. Both input arrays have D
             // elements and do not overlap.
             unsafe {
-                let dst = &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]);
-                let prime = *(&prime as *const _ as *const NttPrime<i32>);
-                let tw = &*(tw as *const _ as *const NttTwiddles<i32, D>);
+                let dst = &mut *std::ptr::from_mut(dst).cast::<[MontCoeff<i32>; D]>();
+                let prime = *(&raw const prime).cast::<NttPrime<i32>>();
+                let tw = &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>();
                 if CYCLIC {
                     neon::forward_ntt_cyclic_i8_i32(dst, digits, prime, tw);
                 } else {
@@ -330,6 +330,7 @@ impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
         let idx = coeff + self.offset;
         debug_assert!(idx >= 0);
         debug_assert!((idx as usize) < self.vals[k].len());
+        // SAFETY: the caller guarantees `k < K` and that `idx` lies in the table.
         unsafe { *self.vals.get_unchecked(k).get_unchecked(idx as usize) }
     }
 }

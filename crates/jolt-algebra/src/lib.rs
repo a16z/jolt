@@ -99,22 +99,47 @@
 )]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod accum;
 mod algebra;
 #[cfg(feature = "binary")]
 mod binary;
 #[cfg(feature = "bn254")]
 mod bn254;
+pub mod checked;
 mod extension;
+#[cfg(feature = "solinas")]
+pub mod fft;
 #[cfg(feature = "solinas")]
 mod fp128_accumulators;
 mod limbs;
+pub mod narrowing;
+#[cfg(feature = "solinas")]
+pub mod ntt;
 mod ops;
 mod packed;
+#[cfg(feature = "solinas")]
+pub mod ring;
 mod schedules;
 pub mod signed;
 #[cfg(feature = "solinas")]
 pub mod solinas;
 mod unreduced;
+
+pub use accum::reduce_signed_accum;
+#[cfg(feature = "solinas")]
+pub use fft::SmoothFftField;
+#[cfg(feature = "solinas")]
+pub use ntt::{
+    tables, CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth,
+    RADIX_BITS,
+};
+#[cfg(feature = "solinas")]
+pub use ring::{
+    balanced_decompose_coefficients_pow2_i8_into, cyclic_ntt_with_i16_tail_to_ring,
+    mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring, residue_kernel, terminal_residue_kernel,
+    CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
+    DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
+};
 
 pub use algebra::narg;
 pub use algebra::{
@@ -146,10 +171,18 @@ pub use solinas::{
 };
 pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
-#[derive(Debug, thiserror::Error)]
-pub enum FieldError {
+/// Errors from fallible field, ring, NTT, and FFT operations.
+///
+/// Every variant reports a rejected argument; none signals a failed internal
+/// invariant. `InvalidSetup` marks a parameter that only setup or
+/// preprocessing supplies (an NTT prime, a CRT basis, a prepared matrix),
+/// `InvalidInput` and `InvalidSize` a per-call operand.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AlgebraError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
     #[error("invalid size: expected {expected}, actual {actual}")]
     InvalidSize { expected: usize, actual: usize },
+    #[error("invalid setup: {0}")]
+    InvalidSetup(String),
 }

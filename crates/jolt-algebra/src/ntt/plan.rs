@@ -10,7 +10,7 @@ use super::prime::PrimeWidth;
 pub struct NttKernelPlan(NttKernelKind);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // Variants are selected on different target architectures.
+#[expect(dead_code)] // Variants are selected on different target architectures.
 enum NttKernelKind {
     /// Portable scalar kernels.
     Scalar,

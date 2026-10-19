@@ -109,17 +109,17 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
             unsafe {
                 if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
                     avx::forward_ntt_centered_i16_i16(
-                        &mut *(limb as *mut _ as *mut [MontCoeff<i16>; D]),
+                        &mut *std::ptr::from_mut(limb).cast::<[MontCoeff<i16>; D]>(),
                         coefficients,
-                        *(prime as *const _ as *const NttPrime<i16>),
-                        &*(twiddles as *const _ as *const NttTwiddles<i16, D>),
+                        *std::ptr::from_ref(prime).cast::<NttPrime<i16>>(),
+                        &*std::ptr::from_ref(twiddles).cast::<NttTwiddles<i16, D>>(),
                     );
                 } else {
                     avx::forward_ntt_centered_i16_i32(
-                        &mut *(limb as *mut _ as *mut [MontCoeff<i32>; D]),
+                        &mut *std::ptr::from_mut(limb).cast::<[MontCoeff<i32>; D]>(),
                         coefficients,
-                        *(prime as *const _ as *const NttPrime<i32>),
-                        &*(twiddles as *const _ as *const NttTwiddles<i32, D>),
+                        *std::ptr::from_ref(prime).cast::<NttPrime<i32>>(),
+                        &*std::ptr::from_ref(twiddles).cast::<NttTwiddles<i32, D>>(),
                         self.params.kernel_plan.uses_avx512_transform(),
                     );
                 }
@@ -167,10 +167,10 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
             // arrays are disjoint.
             unsafe {
                 neon::forward_ntt_centered_i16_i32(
-                    &mut *(limb as *mut _ as *mut [MontCoeff<i32>; D]),
+                    &mut *std::ptr::from_mut(limb).cast::<[MontCoeff<i32>; D]>(),
                     coefficients,
-                    *(prime as *const _ as *const NttPrime<i32>),
-                    &*(twiddles as *const _ as *const NttTwiddles<i32, D>),
+                    *std::ptr::from_ref(prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(twiddles).cast::<NttTwiddles<i32, D>>(),
                 );
             }
         }
@@ -180,6 +180,10 @@ impl<'a, W: PrimeWidth, const K: usize, const D: usize> CenteredI16NttConverter<
 impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     /// Write the Montgomery residues of the centered coefficients of `ring`
     /// modulo every CRT prime into `out`, in `(-p, p)` and coefficient order.
+    #[expect(
+        clippy::expect_used,
+        reason = "the field modulus fits in u128 for every field this ring code is instantiated with; a wider field is a programming error"
+    )]
     pub(super) fn field_residues<F: CrtNttConvertibleField>(
         &self,
         ring: &CyclotomicRing<F, D>,
@@ -202,6 +206,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
 
     /// [`Self::field_residues`] with `L` limbs, one chunk of coefficients at a
     /// time.
+    #[expect(
+        clippy::expect_used,
+        reason = "the field modulus fits in u128 for every field this ring code is instantiated with; a wider field is a programming error"
+    )]
     fn field_residues_with<F: CrtNttConvertibleField, const L: usize>(
         &self,
         ring: &CyclotomicRing<F, D>,
@@ -231,7 +239,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
                 // coefficient is canonical.
                 unsafe {
                     avx::field_residues_i32::<L, K, D>(
-                        &mut *(out as *mut _ as *mut [[MontCoeff<i32>; D]; K]),
+                        &mut *std::ptr::from_mut(out).cast::<[[MontCoeff<i32>; D]; K]>(),
                         start,
                         canonical,
                         modulus,
@@ -251,7 +259,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
                 // covers the modulus, and every coefficient is canonical.
                 unsafe {
                     neon::field_residues_i32::<L, K, D>(
-                        &mut *(out as *mut _ as *mut [[MontCoeff<i32>; D]; K]),
+                        &mut *std::ptr::from_mut(out).cast::<[[MontCoeff<i32>; D]; K]>(),
                         start,
                         canonical,
                         modulus,

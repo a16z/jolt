@@ -5,8 +5,8 @@ use std::fmt;
 use std::ops::{Add, Sub};
 
 use super::prime::{NttPrime, PrimeWidth};
+use crate::AlgebraError;
 use crate::Field;
-use akita_error::AkitaError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SmallNat {
@@ -50,7 +50,7 @@ impl SmallNat {
             }
         }
         while out.len() > 1 && out.last() == Some(&0) {
-            out.pop();
+            let _ = out.pop();
         }
         self.limbs = out;
     }
@@ -60,7 +60,7 @@ impl Ord for SmallNat {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.limbs.len().cmp(&other.limbs.len()) {
             Ordering::Equal => self.limbs.iter().rev().cmp(other.limbs.iter().rev()),
-            ordering => ordering,
+            ordering @ (Ordering::Less | Ordering::Greater) => ordering,
         }
     }
 }
@@ -102,6 +102,10 @@ impl CrtCapacity {
     ///
     /// The strict exactness condition is
     /// `2 * width * D * floor(q / 2) * rhs_abs_bound < product(primes)`.
+    #[expect(
+        clippy::expect_used,
+        reason = "the field modulus fits in u128 for every field this ring code is instantiated with; a wider field is a programming error"
+    )]
     pub fn supports<F: crate::Field + crate::CanonicalEncoding, const D: usize>(
         &self,
         width: usize,
@@ -137,6 +141,10 @@ impl CrtCapacity {
     }
 
     /// Conservative maximum matrix width supported at one coefficient bound.
+    #[expect(
+        clippy::expect_used,
+        reason = "the field modulus fits in u128 for every field this ring code is instantiated with; a wider field is a programming error"
+    )]
     pub fn max_safe_width<F: crate::Field + crate::CanonicalEncoding, const D: usize>(
         &self,
         rhs_abs_bound: u64,
@@ -230,17 +238,21 @@ impl<const K: usize> GarnerData<K> {
     }
 
     /// Compute Garner constants from a set of NTT primes.
+    #[expect(
+        clippy::expect_used,
+        reason = "NTT prime tables are pairwise coprime by construction; `try_from_moduli` is the fallible entry"
+    )]
     pub fn compute<W: PrimeWidth>(primes: &[NttPrime<W>; K]) -> Self {
         Self::try_from_moduli(primes.map(|prime| prime.p.to_i64() as u64))
             .expect("CRT primes must be pairwise coprime")
     }
 
-    pub(crate) fn try_from_moduli(moduli: [u64; K]) -> Result<Self, AkitaError> {
+    pub(crate) fn try_from_moduli(moduli: [u64; K]) -> Result<Self, AlgebraError> {
         if moduli
             .iter()
             .any(|&modulus| !(2..1 << 62).contains(&modulus))
         {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "CRT moduli must lie in [2, 2^62)".into(),
             ));
         }
@@ -249,7 +261,6 @@ impl<const K: usize> GarnerData<K> {
         let mut lift = [[0; K]; K];
         for i in 1..K {
             let pi = moduli[i];
-            #[allow(clippy::needless_range_loop)]
             for j in 0..i {
                 gamma[i][j] = modular_inverse(moduli[j] % pi, pi)?;
                 gamma_shoup[i][j] = ((u128::from(gamma[i][j]) << 64) / u128::from(pi)) as u64;
@@ -352,7 +363,7 @@ impl<const K: usize> GarnerData<K> {
     }
 }
 
-pub(crate) fn modular_inverse(value: u64, modulus: u64) -> Result<u64, AkitaError> {
+pub(crate) fn modular_inverse(value: u64, modulus: u64) -> Result<u64, AlgebraError> {
     let (mut old_remainder, mut remainder) = (i128::from(modulus), i128::from(value));
     let (mut old_coefficient, mut coefficient) = (0i128, 1i128);
     while remainder != 0 {
@@ -361,7 +372,7 @@ pub(crate) fn modular_inverse(value: u64, modulus: u64) -> Result<u64, AkitaErro
         (old_coefficient, coefficient) = (coefficient, old_coefficient - quotient * coefficient);
     }
     if old_remainder != 1 {
-        return Err(AkitaError::InvalidSetup(
+        return Err(AlgebraError::InvalidSetup(
             "CRT primes are not pairwise coprime".into(),
         ));
     }
@@ -434,8 +445,8 @@ impl<const L: usize> Ord for LimbQ<L> {
     fn cmp(&self, other: &Self) -> Ordering {
         for i in (0..L).rev() {
             match self.limbs[i].cmp(&other.limbs[i]) {
-                Ordering::Equal => continue,
-                ord => return ord,
+                Ordering::Equal => {}
+                ord @ (Ordering::Less | Ordering::Greater) => return ord,
             }
         }
         Ordering::Equal
@@ -494,8 +505,8 @@ impl<const L: usize> fmt::Display for LimbQ<L> {
 mod capacity_tests {
     use super::CrtCapacity;
     use crate::ntt::tables::{I16_TAIL_PRIME, Q32_PRIMES};
+    use crate::Prime32Offset99;
     use crate::PrimeWidth;
-    use jolt_field::Prime32Offset99;
 
     #[test]
     fn q32_capacity_matches_existing_exact_widths() {
@@ -526,12 +537,13 @@ mod capacity_tests {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test code")]
 mod garner_tests {
     use super::GarnerData;
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::{I16_TAIL_PRIME, I32_RAW_PRIMES};
     use crate::Field;
-    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99};
+    use crate::{Prime128OffsetA7F7, Prime32Offset99};
 
     /// Checks range and `sum_k d_k prod_{j<k} p_j == r_i (mod p_i)` for all i.
     fn mixed_radix<const K: usize>(garner: &GarnerData<K>, residues: [i64; K]) -> [i64; K] {

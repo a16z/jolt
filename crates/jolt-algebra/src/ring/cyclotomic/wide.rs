@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::Unreduced;
+use crate::Unreduced;
 
 /// Wide (unreduced) cyclotomic ring element for carry-free accumulation.
 ///

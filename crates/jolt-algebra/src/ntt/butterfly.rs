@@ -170,17 +170,17 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
         Self {
             fwd_wlen,
             inv_wlen,
-            num_stages,
             psi_pows,
             #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
             psi_pows_r2,
             psi_inv_pows,
-            d_inv,
             d_inv_psi_inv,
             fwd_twiddles,
             inv_twiddles,
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             quotients,
+            d_inv,
+            num_stages,
             #[cfg(target_arch = "aarch64")]
             barrett,
         }
@@ -207,15 +207,15 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
         unsafe {
             if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
                 super::avx::forward_ntt_i16(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i16>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i16>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>(),
                 );
             } else {
                 super::avx::forward_ntt_i32(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i32>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>(),
                     plan.uses_avx512_transform(),
                 );
             }
@@ -226,21 +226,25 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     #[cfg(target_arch = "aarch64")]
     if plan.uses_neon() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
+            // SAFETY: the plan selected NEON and the width check identifies W. MontCoeff
+            // is transparent, while NttPrime and NttTwiddles have stable C layouts.
             unsafe {
                 super::neon::forward_ntt_i32(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i32>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>(),
                 );
             }
             return;
         }
         if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+            // SAFETY: the plan selected NEON and the width check identifies W. MontCoeff
+            // is transparent, while NttPrime and NttTwiddles have stable C layouts.
             unsafe {
                 super::neon::forward_ntt_i16(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i16>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i16>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>(),
                 );
             }
             return;
@@ -292,15 +296,15 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
         unsafe {
             if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
                 super::avx::inverse_ntt_i16(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i16>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i16>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>(),
                 );
             } else {
                 super::avx::inverse_ntt_i32(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i32>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>(),
                     plan.uses_avx512_transform(),
                 );
             }
@@ -311,21 +315,25 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     #[cfg(target_arch = "aarch64")]
     if plan.uses_neon() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
+            // SAFETY: the plan selected NEON and the width check identifies W. MontCoeff
+            // is transparent, while NttPrime and NttTwiddles have stable C layouts.
             unsafe {
                 super::neon::inverse_ntt_i32(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i32>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>(),
                 );
             }
             return;
         }
         if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+            // SAFETY: the plan selected NEON and the width check identifies W. MontCoeff
+            // is transparent, while NttPrime and NttTwiddles have stable C layouts.
             unsafe {
                 super::neon::inverse_ntt_i16(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i16>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i16>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>(),
                 );
             }
             return;
@@ -376,15 +384,15 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
         unsafe {
             if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
                 super::avx::forward_ntt_cyclic_i16(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i16>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i16>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>(),
                 );
             } else {
                 super::avx::forward_ntt_cyclic_i32(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i32>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>(),
                     plan.uses_avx512_transform(),
                 );
             }
@@ -395,21 +403,25 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     #[cfg(target_arch = "aarch64")]
     if plan.uses_neon() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
+            // SAFETY: the plan selected NEON and the width check identifies W. MontCoeff
+            // is transparent, while NttPrime and NttTwiddles have stable C layouts.
             unsafe {
                 super::neon::forward_ntt_cyclic_i32(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i32>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>(),
                 );
             }
             return;
         }
         if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+            // SAFETY: the plan selected NEON and the width check identifies W. MontCoeff
+            // is transparent, while NttPrime and NttTwiddles have stable C layouts.
             unsafe {
                 super::neon::forward_ntt_cyclic_i16(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i16>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i16>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>(),
                 );
             }
             return;
@@ -456,15 +468,15 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
         unsafe {
             if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
                 super::avx::inverse_ntt_cyclic_i16(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i16>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i16>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>(),
                 );
             } else {
                 super::avx::inverse_ntt_cyclic_i32(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i32>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>(),
                     plan.uses_avx512_transform(),
                 );
             }
@@ -475,21 +487,25 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     #[cfg(target_arch = "aarch64")]
     if plan.uses_neon() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
+            // SAFETY: the plan selected NEON and the width check identifies W. MontCoeff
+            // is transparent, while NttPrime and NttTwiddles have stable C layouts.
             unsafe {
                 super::neon::inverse_ntt_cyclic_i32(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
-                    *(&prime as *const _ as *const NttPrime<i32>),
-                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i32>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i32>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i32, D>>(),
                 );
             }
             return;
         }
         if std::mem::size_of::<W>() == std::mem::size_of::<i16>() {
+            // SAFETY: the plan selected NEON and the width check identifies W. MontCoeff
+            // is transparent, while NttPrime and NttTwiddles have stable C layouts.
             unsafe {
                 super::neon::inverse_ntt_cyclic_i16(
-                    &mut *(a as *mut _ as *mut [MontCoeff<i16>; D]),
-                    *(&prime as *const _ as *const NttPrime<i16>),
-                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                    &mut *std::ptr::from_mut(a).cast::<[MontCoeff<i16>; D]>(),
+                    *(&raw const prime).cast::<NttPrime<i16>>(),
+                    &*std::ptr::from_ref(tw).cast::<NttTwiddles<i16, D>>(),
                 );
             }
             return;
@@ -521,6 +537,10 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
 }
 
 /// Find a primitive `2D`-th root of unity mod `p`.
+#[expect(
+    clippy::panic,
+    reason = "unreachable: the asserted `2D | p - 1` guarantees a quadratic non-residue below p, whose power is the root"
+)]
 fn find_primitive_root_2d(p: i64, d: usize) -> i64 {
     let half = (p - 1) / 2;
     let exp = (p - 1) / (2 * d as i64);

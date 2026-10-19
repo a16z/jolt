@@ -87,7 +87,7 @@ trait Width: PrimeWidth {
 ///
 /// `SIGNED` inputs lie in `(-p, p)`; otherwise inputs lie in `[0, 2p)`.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 unsafe fn forward_radix4<V: Lanes, const SIGNED: bool>(
     a: *mut V::Elem,
     start: usize,
@@ -669,7 +669,7 @@ unsafe fn forward_negacyclic<V: Lanes, const D: usize>(
             tw,
             #[inline(always)]
             |i| psi.load::<V>(i).mul(V::load(a.add(i)), m),
-        )
+        );
     }
 }
 
@@ -693,7 +693,7 @@ unsafe fn forward_digits<V: Lanes, const D: usize>(
             tw,
             #[inline(always)]
             |i| psi_r2.load::<V>(i).mul(V::load_i8(digits.add(i)), m),
-        )
+        );
     }
 }
 
@@ -720,7 +720,7 @@ unsafe fn forward_cyclic_digits<V: Lanes, const D: usize>(
             tw,
             #[inline(always)]
             |i| r2.mul(V::load_i8(digits.add(i)), m),
-        )
+        );
     }
 }
 
@@ -745,7 +745,7 @@ unsafe fn forward_centered_i16<V: Lanes, const D: usize>(
             tw,
             #[inline(always)]
             |i| psi_r2.load::<V>(i).mul(V::load_i16(coefficients.add(i)), m),
-        )
+        );
     }
 }
 
@@ -766,7 +766,7 @@ unsafe fn forward_cyclic<V: Lanes, const D: usize>(
             tw,
             #[inline(always)]
             |i| V::load(a.add(i)),
-        )
+        );
     }
 }
 
@@ -788,7 +788,7 @@ unsafe fn inverse_negacyclic<V: Lanes, const D: usize>(
             tw,
             #[inline(always)]
             |i, x| untwist.load::<V>(i).mul(x, m),
-        )
+        );
     }
 }
 
@@ -810,7 +810,7 @@ unsafe fn inverse_cyclic<V: Lanes, const D: usize>(
             tw,
             #[inline(always)]
             |_, x| d_inv.mul(x, m),
-        )
+        );
     }
 }
 

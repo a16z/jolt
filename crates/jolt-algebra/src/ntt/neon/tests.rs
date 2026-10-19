@@ -1,3 +1,7 @@
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "tests call the kernels on buffers sized for them, after the same ISA checks production dispatch uses"
+)]
 use super::super::butterfly::{
     forward_ntt as scalar_forward_ntt, forward_ntt_cyclic as scalar_forward_ntt_cyclic,
     inverse_ntt as scalar_inverse_ntt, inverse_ntt_cyclic as scalar_inverse_ntt_cyclic,
@@ -12,8 +16,8 @@ fn random_mont_array_i32<const D: usize>(prime: NttPrime<i32>, seed: u64) -> [Mo
     let mut state = seed;
     std::array::from_fn(|_| {
         state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         let val = ((state >> 33) as i64 % prime.p as i64) as i32;
         prime.from_canonical(val)
     })
@@ -27,8 +31,8 @@ fn random_raw_mont_array_i32<const D: usize>(
     let width = i64::from(prime.p) * 2 - 1;
     std::array::from_fn(|_| {
         state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         let raw = (state as i64).rem_euclid(width) - (i64::from(prime.p) - 1);
         MontCoeff::from_raw(raw as i32)
     })
@@ -38,14 +42,14 @@ fn random_mont_array_i16<const D: usize>(prime: NttPrime<i16>, seed: u64) -> [Mo
     let mut state = seed;
     std::array::from_fn(|_| {
         state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         let val = ((state >> 33) as i64 % prime.p as i64) as i16;
         prime.from_canonical(val)
     })
 }
 
-const TEST_PRIME_I32: i32 = 1073692673;
+const TEST_PRIME_I32: i32 = 1_073_692_673;
 const TEST_PRIME_I16: i16 = crate::ntt::tables::I16_TAIL_PRIME.p;
 
 fn assert_neon_ntt_i32_matches_scalar<const D: usize>() {
@@ -180,9 +184,9 @@ fn neon_pointwise_mul_acc_i32_matches_scalar() {
     let mut neon_acc = acc_init;
     unsafe {
         pointwise_mul_acc_i32(
-            neon_acc.as_mut_ptr() as *mut i32,
-            lhs.as_ptr() as *const i32,
-            rhs.as_ptr() as *const i32,
+            neon_acc.as_mut_ptr().cast::<i32>(),
+            lhs.as_ptr().cast::<i32>(),
+            rhs.as_ptr().cast::<i32>(),
             D,
             prime.p,
             prime.pinv,
@@ -214,9 +218,9 @@ fn neon_pointwise_mul_acc_i32_handles_scalar_tail() {
     let mut neon_acc = acc_init;
     unsafe {
         pointwise_mul_acc_i32(
-            neon_acc.as_mut_ptr() as *mut i32,
-            lhs.as_ptr() as *const i32,
-            rhs.as_ptr() as *const i32,
+            neon_acc.as_mut_ptr().cast::<i32>(),
+            lhs.as_ptr().cast::<i32>(),
+            rhs.as_ptr().cast::<i32>(),
             D,
             prime.p,
             prime.pinv,
@@ -370,8 +374,8 @@ fn neon_add_reduce_i32_handles_scalar_tail() {
     let mut neon_acc = acc_init;
     unsafe {
         add_reduce_i32(
-            neon_acc.as_mut_ptr() as *mut i32,
-            other.as_ptr() as *const i32,
+            neon_acc.as_mut_ptr().cast::<i32>(),
+            other.as_ptr().cast::<i32>(),
             D,
             prime.p,
         );
@@ -494,9 +498,9 @@ fn neon_pointwise_mul_acc_i16_matches_scalar() {
     let mut neon_acc = acc_init;
     unsafe {
         pointwise_mul_acc_i16(
-            neon_acc.as_mut_ptr() as *mut i16,
-            lhs.as_ptr() as *const i16,
-            rhs.as_ptr() as *const i16,
+            neon_acc.as_mut_ptr().cast::<i16>(),
+            lhs.as_ptr().cast::<i16>(),
+            rhs.as_ptr().cast::<i16>(),
             D,
             prime.p,
             prime.pinv,

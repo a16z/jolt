@@ -432,7 +432,7 @@ pub(super) unsafe fn forward<const D: usize>(
             #[inline(always)]
             |i| _mm512_load_si512(values.add(i).cast()),
             false,
-        )
+        );
     }
 }
 
@@ -461,7 +461,7 @@ pub(super) unsafe fn forward_i16<const D: usize>(
                 )
             },
             true,
-        )
+        );
     }
 }
 

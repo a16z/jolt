@@ -1,8 +1,8 @@
 use std::array::from_fn;
 
 use crate::ntt::crt::modular_inverse;
+use crate::AlgebraError;
 use crate::{CanonicalEncoding, CyclotomicRing, Field};
-use akita_error::AkitaError;
 
 use super::{CrtNttParamSet, CyclotomicCrtNtt};
 
@@ -19,6 +19,10 @@ pub struct I16TailParams<const K: usize, const D: usize> {
 
 impl<const K: usize, const D: usize> I16TailParams<K, D> {
     /// Extend an existing i32 profile by one coprime i16 prime.
+    #[expect(
+        clippy::expect_used,
+        reason = "tail profiles are fixed tables whose i16 prime is coprime to the i32 base primes"
+    )]
     #[must_use]
     pub fn new(wide: CrtNttParamSet<i32, K, D>, tail: CrtNttParamSet<i16, 1, D>) -> Self {
         let tail_modulus = i64::from(tail.primes[0].p);
@@ -60,7 +64,7 @@ pub fn mat_vec_i16_with_tail<F: Field + CanonicalEncoding, const K: usize, const
     num_cols: usize,
     rhs: &[[i16; D]],
     params: &I16TailParams<K, D>,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+) -> Result<Vec<CyclotomicRing<F, D>>, AlgebraError> {
     let wide_accumulators =
         CyclotomicCrtNtt::mat_vec_i16_ntt(wide_matrix, num_rows, num_cols, rhs, &params.wide)?;
     let tail_accumulators =
@@ -135,6 +139,7 @@ fn mixed_coefficients_to_ring<F: Field + CanonicalEncoding, const K: usize, cons
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test code")]
 mod tests {
     use super::*;
     use crate::ntt::prime::I32_LAZY_DOT_BATCH;
@@ -142,7 +147,7 @@ mod tests {
         q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES,
         Q64_PRIMES,
     };
-    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use crate::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     fn assert_split_i16_matvec<F, const K: usize, const D: usize>(
         wide_params: CrtNttParamSet<i32, K, D>,
@@ -235,13 +240,13 @@ mod tests {
             mat_vec_i16_with_tail::<Prime64Offset59, Q64_NUM_PRIMES, D>(
                 &wide, &tail, 2, 2, &rhs, &params
             ),
-            Err(AkitaError::InvalidSetup(_))
+            Err(AlgebraError::InvalidSetup(_))
         ));
         assert!(matches!(
             mat_vec_i16_with_tail::<Prime64Offset59, Q64_NUM_PRIMES, D>(
                 &wide, &tail, 1, 1, &rhs, &params
             ),
-            Err(AkitaError::InvalidSize {
+            Err(AlgebraError::InvalidSize {
                 expected: 1,
                 actual: 2
             })

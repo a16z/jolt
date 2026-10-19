@@ -1,6 +1,6 @@
 //! Canonical 50-bit NTT arithmetic for AVX-512IFMA hosts.
 
-use akita_error::AkitaError;
+use crate::AlgebraError;
 
 use super::prime::is_prime;
 
@@ -32,10 +32,10 @@ pub struct Ifma52Prime {
 
 impl Ifma52Prime {
     /// Validate and prepare one IFMA52 prime.
-    pub fn new(modulus: u64) -> Result<Self, AkitaError> {
+    pub fn new(modulus: u64) -> Result<Self, AlgebraError> {
         // The range check runs first, so the cast is lossless.
         if modulus <= (1 << 49) || modulus >= (1 << 50) || !is_prime(modulus as i64) {
-            return Err(AkitaError::InvalidSetup(
+            return Err(AlgebraError::InvalidSetup(
                 "IFMA52 modulus must be a prime between 2^49 and 2^50".into(),
             ));
         }
@@ -177,9 +177,9 @@ pub struct Ifma52Twiddles<const D: usize> {
 
 impl<const D: usize> Ifma52Twiddles<D> {
     /// Compute tables for a supported power-of-two ring degree.
-    pub fn compute(prime: Ifma52Prime) -> Result<Self, AkitaError> {
+    pub fn compute(prime: Ifma52Prime) -> Result<Self, AlgebraError> {
         if D < 64 || !D.is_power_of_two() || !(prime.modulus - 1).is_multiple_of(2 * D as u64) {
-            return Err(AkitaError::InvalidSetup(format!(
+            return Err(AlgebraError::InvalidSetup(format!(
                 "IFMA52 prime does not support ring degree {D}"
             )));
         }
@@ -190,7 +190,7 @@ impl<const D: usize> Ifma52Twiddles<D> {
         let psi = (2..1 << 16)
             .map(|candidate| prime.pow(candidate, exponent))
             .find(|&candidate| prime.pow(candidate, D as u64) == prime.modulus - 1)
-            .ok_or_else(|| AkitaError::InvalidSetup("IFMA52 root search failed".into()))?;
+            .ok_or_else(|| AlgebraError::InvalidSetup("IFMA52 root search failed".into()))?;
         let psi_inverse = prime.inverse(psi);
         let bits = D.trailing_zeros();
         let bit_reversed = |index: usize| (index.reverse_bits() >> (usize::BITS - bits)) as u64;
@@ -453,6 +453,7 @@ fn scalar_inverse<const D: usize>(
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test code")]
 mod tests {
     use super::*;
 

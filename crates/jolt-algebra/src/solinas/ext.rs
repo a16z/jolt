@@ -27,7 +27,8 @@
 
 use crate::solinas::pseudo_mersenne_modulus;
 use crate::{
-    CanonicalBytes, CanonicalDecode, Ext2Config, ExtField, Field, FieldError, PseudoMersenne, Ring,
+    AlgebraError, CanonicalBytes, CanonicalDecode, Ext2Config, ExtField, Field, PseudoMersenne,
+    Ring,
 };
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Pod, Zeroable};
@@ -832,13 +833,13 @@ impl<F: PseudoMersenne> ExtField<F> for FpExt8<F> {
 /// # Errors
 ///
 /// Returns an error if `width > E::DEGREE`.
-pub fn canonical_extension_basis<F, E>(width: usize) -> Result<Vec<E>, FieldError>
+pub fn canonical_extension_basis<F, E>(width: usize) -> Result<Vec<E>, AlgebraError>
 where
     F: Field,
     E: ExtField<F>,
 {
     if width > E::DEGREE {
-        return Err(FieldError::InvalidInput(format!(
+        return Err(AlgebraError::InvalidInput(format!(
             "Frobenius theta width {width} exceeds extension degree {}",
             E::DEGREE
         )));
@@ -860,14 +861,14 @@ where
 /// # Errors
 ///
 /// Returns an error on a dimension mismatch or a singular Moore-type matrix.
-pub fn solve_frobenius_moore<F, E>(thetas: &[E], rhs: &[E]) -> Result<Vec<E>, FieldError>
+pub fn solve_frobenius_moore<F, E>(thetas: &[E], rhs: &[E]) -> Result<Vec<E>, AlgebraError>
 where
     F: PseudoMersenne,
     E: ExtField<F>,
 {
     let n = thetas.len();
     if rhs.len() != n {
-        return Err(FieldError::InvalidSize {
+        return Err(AlgebraError::InvalidSize {
             expected: n,
             actual: rhs.len(),
         });
@@ -886,14 +887,14 @@ where
         let pivot = (col..n)
             .find(|&row| !matrix[row][col].is_zero())
             .ok_or_else(|| {
-                FieldError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
+                AlgebraError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
             })?;
         if pivot != col {
             matrix.swap(col, pivot);
             values.swap(col, pivot);
         }
         let inv = matrix[col][col].inverse().ok_or_else(|| {
-            FieldError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
+            AlgebraError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
         })?;
         for entry in &mut matrix[col][col..] {
             *entry *= inv;
@@ -925,7 +926,7 @@ where
 /// # Errors
 ///
 /// Returns an error if theta construction fails or the Moore solve rejects.
-pub fn validate_canonical_frobenius_thetas<F, E>(width: usize) -> Result<(), FieldError>
+pub fn validate_canonical_frobenius_thetas<F, E>(width: usize) -> Result<(), AlgebraError>
 where
     F: PseudoMersenne,
     E: ExtField<F>,

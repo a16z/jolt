@@ -1,3 +1,7 @@
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "tests call the kernels on buffers sized for them, after the same ISA checks production dispatch uses"
+)]
 use std::arch::aarch64::*;
 
 use super::i32_kernels::centered_reduce_4x_i32;
@@ -44,7 +48,7 @@ fn centered_reduction_range_residue_and_rounding_boundaries() {
         if p <= 257 {
             inputs.extend(-2 * p64 + 1..2 * p64);
         }
-        let mut state = 0x483aef827u64;
+        let mut state = 0x0004_83ae_f827_u64;
         for _ in 0..8192 {
             state ^= state << 13;
             state ^= state >> 7;
@@ -77,7 +81,7 @@ fn centered_reduction_range_residue_and_rounding_boundaries() {
 fn check_transform<const D: usize>(prime: NttPrime<i32>) {
     let tw = NttTwiddles::<i32, D>::compute(prime);
     let p = i64::from(prime.p);
-    let mut state = 0xfa09c8e41u64;
+    let mut state = 0x000f_a09c_8e41_u64;
     for case in 0..5 {
         let input = std::array::from_fn(|i| {
             let x = match case {

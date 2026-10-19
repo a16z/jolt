@@ -177,58 +177,6 @@ impl<F: Field, const D: usize> Ring for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: Field + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
-    fn check(&self) -> Result<(), SerializationError> {
-        for x in self.coeffs.iter() {
-            x.check()?;
-        }
-        Ok(())
-    }
-}
-
-impl<F: Field + AkitaSerialize, const D: usize> AkitaSerialize for CyclotomicRing<F, D> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        for x in self.coeffs.iter() {
-            x.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.coeffs
-            .iter()
-            .map(|x| x.serialized_size(compress))
-            .sum()
-    }
-}
-
-impl<F: Field + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
-    for CyclotomicRing<F, D>
-{
-    type Context = ();
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let mut coeffs = [F::zero(); D];
-        for c in &mut coeffs {
-            *c = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        }
-        let out = Self { coeffs };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
 impl<F: Field, const D: usize> Default for CyclotomicRing<F, D> {
     fn default() -> Self {
         Self::zero()

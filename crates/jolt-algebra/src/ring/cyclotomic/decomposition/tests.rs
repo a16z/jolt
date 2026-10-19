@@ -1,5 +1,6 @@
+#![expect(clippy::expect_used, reason = "test code")]
 use super::*;
-use jolt_field::{
+use crate::{
     Fp64, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime40Offset195, Prime64Offset59,
 };
 use rand::rngs::StdRng;
@@ -142,17 +143,17 @@ fn check_signed_kernels<F, T>(
         }
     };
     check("portable", &|out| {
-        balanced_decompose_coefficients_pow2_signed_kernel(coefficients, out, params)
+        balanced_decompose_coefficients_pow2_signed_kernel(coefficients, out, params);
     });
     check("dispatch", &|out| {
-        balanced_decompose_coefficients_pow2_signed_into(coefficients, out, params)
+        balanced_decompose_coefficients_pow2_signed_into(coefficients, out, params);
     });
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         if std::is_x86_feature_detected!("avx2") {
             // SAFETY: runtime feature detection guarantees AVX2.
             check("avx2", &|out| unsafe {
-                x86::balanced_decompose_coefficients_pow2_signed_avx2(coefficients, out, params)
+                x86::balanced_decompose_coefficients_pow2_signed_avx2(coefficients, out, params);
             });
         }
         if std::is_x86_feature_detected!("avx512f")
@@ -162,7 +163,7 @@ fn check_signed_kernels<F, T>(
         {
             // SAFETY: runtime feature detection guarantees every enabled feature.
             check("avx512", &|out| unsafe {
-                x86::balanced_decompose_coefficients_pow2_signed_avx512(coefficients, out, params)
+                x86::balanced_decompose_coefficients_pow2_signed_avx512(coefficients, out, params);
             });
         }
     }
@@ -372,7 +373,7 @@ fn add_bias_decomposition_matches_exact_recurrence_fp128() {
 #[test]
 fn add_bias_decomposition_matches_exact_recurrence_narrow_fields() {
     check_field_against_exact_recurrence::<Prime64Offset59>(0x59);
-    check_field_against_exact_recurrence::<Fp64<4294967197>>(0x4294967197);
+    check_field_against_exact_recurrence::<Fp64<4_294_967_197>>(0x0042_9496_7197);
     check_field_against_exact_recurrence::<Prime40Offset195>(0x195);
     check_field_against_exact_recurrence::<Prime32Offset99>(0x99);
 }
@@ -421,7 +422,7 @@ fn log_basis_one_accepts_levels_up_to_the_field_width() {
 #[test]
 #[should_panic(expected = "log_basis 1 needs levels <= the field width")]
 fn log_basis_one_rejects_levels_past_the_field_width() {
-    BalancedDecomposePow2Params::<Prime32Offset99>::new(33, 1);
+    let _ = BalancedDecomposePow2Params::<Prime32Offset99>::new(33, 1);
 }
 
 /// `2^32 + 1` levels used to truncate to 1 in the digit-budget guard.
@@ -429,5 +430,5 @@ fn log_basis_one_rejects_levels_past_the_field_width() {
 #[test]
 #[should_panic(expected = "levels must fit in u32")]
 fn levels_beyond_u32_are_rejected() {
-    BalancedDecomposePow2Params::<Prime32Offset99>::new((1 << 32) + 1, 16);
+    let _ = BalancedDecomposePow2Params::<Prime32Offset99>::new((1 << 32) + 1, 16);
 }

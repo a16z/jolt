@@ -8,13 +8,9 @@ mod traits;
 mod wide;
 
 use crate::{AdditiveGroup, CanonicalEncoding, Field, One, Ring, Zero};
-use akita_serialization::{
-    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
-};
 use rand_core::RngCore;
 use std::array::from_fn;
 use std::fmt;
-use std::io::{Read, Write};
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -340,6 +336,10 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
 
 impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     /// Coefficients as centered integers in `(-q/2, q/2]`.
+    #[expect(
+        clippy::expect_used,
+        reason = "the field modulus fits in u128 for every field this ring code is instantiated with; a wider field is a programming error"
+    )]
     pub fn centered_coefficients_i128(&self) -> [i128; D] {
         let modulus = (-F::one())
             .to_u128_checked()

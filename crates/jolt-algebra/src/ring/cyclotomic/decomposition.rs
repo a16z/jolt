@@ -128,6 +128,10 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
     /// Panics if `log_basis` is outside `1..=16`, if the requested digit
     /// budget exceeds the supported field-width guard, or if `log_basis` is 1
     /// and `levels` exceeds the bit width of `q`.
+    #[expect(
+        clippy::expect_used,
+        reason = "documented panics: invalid decomposition parameters or output shapes are caller bugs"
+    )]
     pub fn new(levels: usize, log_basis: u32) -> Self {
         let q = (-F::one())
             .to_u128_checked()
@@ -194,7 +198,7 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
     /// Panics if the plane count differs from `levels()` or a digit does not fit
     /// the output carrier (`i8` or `i16`).
     #[doc(hidden)]
-    #[allow(private_bounds)]
+    #[expect(private_bounds)]
     #[inline]
     pub fn decompose_small_signed_into<T, O, const D: usize>(
         &self,
@@ -221,13 +225,17 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
         let bias = self.bias_nonnegative[0];
         match self.digit_bits() {
             bits if centered && bits <= 16 => {
-                self.small_signed_lanes(ring, out, |value| (value as u16).wrapping_add(bias as u16))
+                self.small_signed_lanes(ring, out, |value| {
+                    (value as u16).wrapping_add(bias as u16)
+                });
             }
             bits if centered && bits <= 32 => {
-                self.small_signed_lanes(ring, out, |value| (value as u32).wrapping_add(bias as u32))
+                self.small_signed_lanes(ring, out, |value| {
+                    (value as u32).wrapping_add(bias as u32)
+                });
             }
             bits if centered && bits <= 64 => {
-                self.small_signed_lanes(ring, out, |value| (value as u64).wrapping_add(bias))
+                self.small_signed_lanes(ring, out, |value| (value as u64).wrapping_add(bias));
             }
             _ => self.small_signed_residues(ring, out),
         }
@@ -301,7 +309,7 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
         let high = (canonical >> 64) as u64;
         let threshold_low = self.threshold as u64;
         let threshold_high = (self.threshold >> 64) as u64;
-        let negative = (high > threshold_high) | ((high == threshold_high) & (low > threshold_low));
+        let negative = (high > threshold_high) || (high == threshold_high) && (low > threshold_low);
         let select = u64::from(negative).wrapping_neg();
         let [nonnegative0, nonnegative1, nonnegative2] = self.bias_nonnegative;
         let [negative0, negative1, negative2] = self.bias_negative;
@@ -329,6 +337,10 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
 ///
 /// Panics if `out.len() != coefficients.len() * params.levels`, or if the
 /// precomputed parameters use a basis wider than signed `i8` digits.
+#[expect(
+    clippy::expect_used,
+    reason = "documented panics: invalid decomposition parameters or output shapes are caller bugs"
+)]
 #[inline]
 pub fn balanced_decompose_coefficients_pow2_i8_into<F: Field + CanonicalEncoding>(
     coefficients: &[F],
@@ -359,7 +371,7 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: Field + CanonicalEncoding
                 // SAFETY: runtime feature detection guarantees NEON, and the
                 // length check guarantees every load/store covers four lanes.
                 unsafe {
-                    aarch64::balanced_decompose_canonical_u32_pow2_i8_neon(canonical, out, params)
+                    aarch64::balanced_decompose_canonical_u32_pow2_i8_neon(canonical, out, params);
                 };
                 return;
             }
@@ -373,7 +385,7 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: Field + CanonicalEncoding
                 // SAFETY: runtime feature detection guarantees AVX2, and the
                 // length check guarantees every load/store covers eight lanes.
                 unsafe {
-                    x86::balanced_decompose_canonical_u32_pow2_i8_avx2(canonical, out, params)
+                    x86::balanced_decompose_canonical_u32_pow2_i8_avx2(canonical, out, params);
                 };
                 return;
             }
@@ -394,6 +406,10 @@ const BIASED_CHUNK: usize = 64;
 /// # Panics
 ///
 /// Panics if `out.len() != coefficients.len() * params.levels`.
+#[expect(
+    clippy::expect_used,
+    reason = "documented panics: invalid decomposition parameters or output shapes are caller bugs"
+)]
 #[inline]
 fn balanced_decompose_coefficients_pow2_signed_into<
     F: Field + CanonicalEncoding,
@@ -426,14 +442,14 @@ fn balanced_decompose_coefficients_pow2_signed_into<
         {
             // SAFETY: runtime feature detection guarantees every enabled feature.
             unsafe {
-                x86::balanced_decompose_coefficients_pow2_signed_avx512(coefficients, out, params)
+                x86::balanced_decompose_coefficients_pow2_signed_avx512(coefficients, out, params);
             };
             return;
         }
         if std::is_x86_feature_detected!("avx2") {
             // SAFETY: runtime feature detection guarantees AVX2.
             unsafe {
-                x86::balanced_decompose_coefficients_pow2_signed_avx2(coefficients, out, params)
+                x86::balanced_decompose_coefficients_pow2_signed_avx2(coefficients, out, params);
             };
             return;
         }
@@ -465,6 +481,10 @@ fn balanced_decompose_coefficients_pow2_signed_kernel<
 /// digit plane is one shift, mask, and subtract per coefficient. Both loops
 /// are independent across coefficients, so they vectorize for the target
 /// features of the instantiating function.
+#[expect(
+    clippy::expect_used,
+    reason = "documented panics: invalid decomposition parameters or output shapes are caller bugs"
+)]
 #[inline(always)]
 fn balanced_decompose_biased_words<
     F: Field + CanonicalEncoding,
@@ -485,7 +505,6 @@ fn balanced_decompose_biased_words<
         // LLVM cannot see that. Without the explicit bound, the row stores
         // keep a bounds check that forces a scalar, branchy tail.
         let len = chunk.len().min(BIASED_CHUNK);
-        #[allow(clippy::needless_range_loop)]
         for lane in 0..len {
             let biased = params.biased(
                 chunk[lane]

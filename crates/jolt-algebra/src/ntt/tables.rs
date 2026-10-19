@@ -48,22 +48,27 @@ pub const I16_TAIL_PRIME: NttPrime<i16> = NttPrime {
 /// independently selected for the Q128 `D <= 1024` profile. Q32 and Q64 use
 /// separate tables below.
 pub const I32_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = [
-    1073707009, 1073698817, 1073692673, 1073682433, 1073668097, 1073655809,
+    1_073_707_009,
+    1_073_698_817,
+    1_073_692_673,
+    1_073_682_433,
+    1_073_668_097,
+    1_073_655_809,
 ];
 
 /// CRT primes and per-prime Montgomery constants for Q32 measured `2xi32` profile.
 pub const Q32_PRIMES: [NttPrime<i32>; Q32_NUM_PRIMES] = [
     NttPrime {
-        p: 1073692673,
-        pinv: 1342226433,
-        mont: 196604,
-        montsq: 196588,
+        p: 1_073_692_673,
+        pinv: 1_342_226_433,
+        mont: 196_604,
+        montsq: 196_588,
     },
     NttPrime {
-        p: 1073668097,
-        pinv: 67182593,
-        mont: 294908,
-        montsq: 3612607,
+        p: 1_073_668_097,
+        pinv: 67_182_593,
+        mont: 294_908,
+        montsq: 3_612_607,
     },
 ];
 
@@ -74,22 +79,22 @@ pub const Q128_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = I32_RAW_PRIMES;
 /// with per-prime Montgomery constants for the Q64 `D <= 2048` profile.
 pub const Q64_PRIMES: [NttPrime<i32>; Q64_NUM_PRIMES] = [
     NttPrime {
-        p: 1073692673,
-        pinv: 1342226433,
-        mont: 196604,
-        montsq: 196588,
+        p: 1_073_692_673,
+        pinv: 1_342_226_433,
+        mont: 196_604,
+        montsq: 196_588,
     },
     NttPrime {
-        p: 1073668097,
-        pinv: 67182593,
-        mont: 294908,
-        montsq: 3612607,
+        p: 1_073_668_097,
+        pinv: 67_182_593,
+        mont: 294_908,
+        montsq: 3_612_607,
     },
     NttPrime {
-        p: 1073655809,
-        pinv: 2030129153,
-        mont: 344060,
-        montsq: 275144610,
+        p: 1_073_655_809,
+        pinv: 2_030_129_153,
+        mont: 344_060,
+        montsq: 275_144_610,
     },
 ];
 
@@ -104,14 +109,14 @@ pub fn q128_primes() -> [NttPrime<i32>; Q128_NUM_PRIMES] {
 pub fn validate_profile_crt_ring_degree(
     ring_d: usize,
     max_d: usize,
-) -> Result<(), akita_error::AkitaError> {
+) -> Result<(), crate::AlgebraError> {
     if ring_d == 0 || !ring_d.is_power_of_two() {
-        return Err(akita_error::AkitaError::InvalidSetup(format!(
+        return Err(crate::AlgebraError::InvalidSetup(format!(
             "CRT ring degree must be a non-zero power of two, got {ring_d}"
         )));
     }
     if ring_d > max_d {
-        return Err(akita_error::AkitaError::InvalidSetup(format!(
+        return Err(crate::AlgebraError::InvalidSetup(format!(
             "ring degree {ring_d} exceeds profile max {max_d}"
         )));
     }
@@ -119,6 +124,7 @@ pub fn validate_profile_crt_ring_degree(
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test code")]
 mod tests {
     use super::*;
     use crate::ntt::crt::GarnerData;

@@ -116,6 +116,10 @@ impl<V: Lanes> Modulus<V> {
 
     /// Reduce a butterfly sum to `[0, 2p)` with the per-lane offsets from
     /// [`Self::sum_offsets`].
+    #[expect(
+        clippy::unused_self,
+        reason = "kept as a lane-set method so butterfly code calls every lane operation the same way"
+    )]
     #[inline(always)]
     pub(super) unsafe fn reduce_sum(self, x: V, offset: V) -> V {
         // SAFETY: the caller's target features cover `V`.
@@ -167,44 +171,52 @@ impl Lanes for __m256i {
 
     #[inline(always)]
     unsafe fn splat(value: i32) -> Self {
-        _mm256_set1_epi32(value)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm256_set1_epi32(value) }
     }
 
     #[inline(always)]
     unsafe fn add(self, rhs: Self) -> Self {
-        _mm256_add_epi32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm256_add_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn sub(self, rhs: Self) -> Self {
-        _mm256_sub_epi32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm256_sub_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn min_unsigned(self, rhs: Self) -> Self {
-        _mm256_min_epu32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm256_min_epu32(self, rhs) }
     }
 }
 
 impl I32Lanes for __m256i {
     #[inline(always)]
     unsafe fn mul_even_i64(self, rhs: Self) -> Self {
-        _mm256_mul_epi32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm256_mul_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn mul_even_u64(self, rhs: Self) -> Self {
-        _mm256_mul_epu32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm256_mul_epu32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn odd_to_even(self) -> Self {
-        _mm256_shuffle_epi32::<0xF5>(self)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm256_shuffle_epi32::<0xF5>(self) }
     }
 
     #[inline(always)]
     unsafe fn merge_high_halves(even: Self, odd: Self) -> Self {
-        _mm256_blend_epi32::<0xAA>(_mm256_shuffle_epi32::<0xF5>(even), odd)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm256_blend_epi32::<0xAA>(_mm256_shuffle_epi32::<0xF5>(even), odd) }
     }
 }
 
@@ -239,45 +251,55 @@ impl Lanes for __m512i {
 
     #[inline(always)]
     unsafe fn splat(value: i32) -> Self {
-        _mm512_set1_epi32(value)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm512_set1_epi32(value) }
     }
 
     #[inline(always)]
     unsafe fn add(self, rhs: Self) -> Self {
-        _mm512_add_epi32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm512_add_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn sub(self, rhs: Self) -> Self {
-        _mm512_sub_epi32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm512_sub_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn min_unsigned(self, rhs: Self) -> Self {
-        _mm512_min_epu32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm512_min_epu32(self, rhs) }
     }
 }
 
 impl I32Lanes for __m512i {
     #[inline(always)]
     unsafe fn mul_even_i64(self, rhs: Self) -> Self {
-        _mm512_mul_epi32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm512_mul_epi32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn mul_even_u64(self, rhs: Self) -> Self {
-        _mm512_mul_epu32(self, rhs)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm512_mul_epu32(self, rhs) }
     }
 
     #[inline(always)]
     unsafe fn odd_to_even(self) -> Self {
-        _mm512_shuffle_epi32::<0xF5>(self)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { _mm512_shuffle_epi32::<0xF5>(self) }
     }
 
     #[inline(always)]
     unsafe fn merge_high_halves(even: Self, odd: Self) -> Self {
-        // Even lanes take the shuffled `even` high halves; odd lanes keep `odd`.
-        _mm512_mask_shuffle_epi32::<0xF5>(odd, 0x5555, even)
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe {
+            // Even lanes take the shuffled `even` high halves; odd lanes keep `odd`.
+            _mm512_mask_shuffle_epi32::<0xF5>(odd, 0x5555, even)
+        }
     }
 }
 
@@ -372,22 +394,26 @@ impl Lanes for I16x16 {
 
     #[inline(always)]
     unsafe fn splat(value: i16) -> Self {
-        Self(_mm256_set1_epi16(value))
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { Self(_mm256_set1_epi16(value)) }
     }
 
     #[inline(always)]
     unsafe fn add(self, rhs: Self) -> Self {
-        Self(_mm256_add_epi16(self.0, rhs.0))
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { Self(_mm256_add_epi16(self.0, rhs.0)) }
     }
 
     #[inline(always)]
     unsafe fn sub(self, rhs: Self) -> Self {
-        Self(_mm256_sub_epi16(self.0, rhs.0))
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { Self(_mm256_sub_epi16(self.0, rhs.0)) }
     }
 
     #[inline(always)]
     unsafe fn min_unsigned(self, rhs: Self) -> Self {
-        Self(_mm256_min_epu16(self.0, rhs.0))
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe { Self(_mm256_min_epu16(self.0, rhs.0)) }
     }
 }
 
@@ -409,11 +435,14 @@ impl Multiply<I16x16> for I16Multiplier {
 
     #[inline(always)]
     unsafe fn mul(self, x: I16x16, m: Modulus<I16x16>) -> I16x16 {
-        // `x*w - t*p` is 0 mod 2^16 for `t = lo(x*q)`, so its high half is
-        // `hi(x*w) - hi(t*p)` with no borrow from the low halves.
-        I16x16(_mm256_sub_epi16(
-            _mm256_mulhi_epi16(x.0, self.value),
-            _mm256_mulhi_epi16(_mm256_mullo_epi16(x.0, self.quotient), m.p.0),
-        ))
+        // SAFETY: the caller upholds this unsafe fn's contract.
+        unsafe {
+            // `x*w - t*p` is 0 mod 2^16 for `t = lo(x*q)`, so its high half is
+            // `hi(x*w) - hi(t*p)` with no borrow from the low halves.
+            I16x16(_mm256_sub_epi16(
+                _mm256_mulhi_epi16(x.0, self.value),
+                _mm256_mulhi_epi16(_mm256_mullo_epi16(x.0, self.quotient), m.p.0),
+            ))
+        }
     }
 }

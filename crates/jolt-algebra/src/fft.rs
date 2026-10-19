@@ -5,7 +5,7 @@
 //!
 //! # Setting
 //!
-//! The protocol prime [`jolt_field::Prime128OffsetA7F7`] is pseudo-Mersenne, so
+//! The protocol prime [`crate::Prime128OffsetA7F7`] is pseudo-Mersenne, so
 //! `p − 1` is not a power of two; each is instead chosen so it carries
 //! a large **smooth factor** — a product of small primes:
 //!
@@ -60,7 +60,7 @@
 //! FFT — see [`SmoothDomain::coset_forward`]
 //! and [`SmoothDomain::rs_extend_batch`].
 
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use crate::{AlgebraError, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
 
 /// Field with a precomputed primitive root of a supported smooth subgroup.
 ///
@@ -221,12 +221,23 @@ struct StageData<F> {
 ///
 /// Called twice per domain — once with `omega = ω_n` for the forward
 /// transform and once with `omega = ω_n^{−1}` for the inverse.
-fn precompute_stages<F: Field>(omega: F, n: usize, factors: &[usize]) -> Vec<StageData<F>> {
+///
+/// Returns an error if a radix exceeds the eight-lane butterfly capacity or
+/// two is not invertible.
+fn precompute_stages<F: Field>(
+    omega: F,
+    n: usize,
+    factors: &[usize],
+) -> Result<Vec<StageData<F>>, AlgebraError> {
     let mut stages = Vec::with_capacity(factors.len());
     let mut block = 1usize;
 
     for &r in factors.iter().rev() {
-        debug_assert!(r <= 8, "radix {r} exceeds omega_r_pow capacity (max 8)");
+        if r > MAX_RADIX {
+            return Err(AlgebraError::InvalidInput(format!(
+                "FFT radix {r} exceeds the maximum radix {MAX_RADIX}"
+            )));
+        }
         let new_block = block * r;
         let omega_new_block = field_pow(omega, (n / new_block) as u64);
         let omega_r = field_pow(omega_new_block, block as u64);
@@ -243,7 +254,7 @@ fn precompute_stages<F: Field>(omega: F, n: usize, factors: &[usize]) -> Vec<Sta
             tw *= omega_new_block;
         }
 
-        let winograd = winograd_consts_for_radix::<F>(r, &omega_r_pow);
+        let winograd = winograd_consts_for_radix::<F>(r, &omega_r_pow)?;
 
         stages.push(StageData {
             r,
@@ -255,22 +266,32 @@ fn precompute_stages<F: Field>(omega: F, n: usize, factors: &[usize]) -> Vec<Sta
 
         block = new_block;
     }
-    stages
+    Ok(stages)
+}
+
+/// Lanes of the stack array one butterfly gathers into.
+const MAX_RADIX: usize = 8;
+
+fn inverse_of_two<F: Field>() -> Result<F, AlgebraError> {
+    F::from_u64(2)
+        .inverse()
+        .ok_or_else(|| AlgebraError::InvalidInput("2 is not invertible in the FFT field".into()))
 }
 
 /// Precompute the Winograd constants consumed by the radix-5 / 7
 /// kernels. Returns an empty vector for other radices. See the
 /// doc-comment on `StageData::winograd` for the exact layout.
-fn winograd_consts_for_radix<F: Field>(r: usize, omega_r_pow: &[F; 8]) -> Vec<F> {
-    match r {
+fn winograd_consts_for_radix<F: Field>(
+    r: usize,
+    omega_r_pow: &[F; 8],
+) -> Result<Vec<F>, AlgebraError> {
+    Ok(match r {
         5 => {
             let w1 = omega_r_pow[1];
             let w2 = omega_r_pow[2];
             let w3 = omega_r_pow[3];
             let w4 = omega_r_pow[4];
-            let half = F::from_u64(2)
-                .inverse()
-                .expect("2 is invertible in a non-binary field");
+            let half = inverse_of_two::<F>()?;
             // α = ω+ω⁴, β = ω²+ω³, γ = ω−ω⁴, δ = ω²−ω³.
             let alpha_half = (w1 + w4) * half;
             let beta_half = (w2 + w3) * half;
@@ -292,9 +313,7 @@ fn winograd_consts_for_radix<F: Field>(r: usize, omega_r_pow: &[F; 8]) -> Vec<F>
                 let qq = q.rem_euclid(7) as usize;
                 w[qq]
             };
-            let half = F::from_u64(2)
-                .inverse()
-                .expect("2 is invertible in a non-binary field");
+            let half = inverse_of_two::<F>()?;
             let mut out = Vec::with_capacity(18);
             // α_{jk} = (ω^{jk} + ω^{−jk})/2, row-major in (j, k).
             for j in 1..=3 {
@@ -313,7 +332,7 @@ fn winograd_consts_for_radix<F: Field>(r: usize, omega_r_pow: &[F; 8]) -> Vec<F>
             out
         }
         _ => Vec::new(),
-    }
+    })
 }
 
 /// Extension seam: reusable transform scratch for extensions tracked in #45.
@@ -592,45 +611,65 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     /// unity. Precomputes the digit-reversal permutation and per-stage
     /// tables for both forward and inverse transforms.
     ///
-    /// # Panics
-    /// If `omega` is zero or `n` is not invertible in the field.
-    pub fn new(omega: F, n: usize) -> Self {
-        debug_assert_primitive_nth_root(omega, n);
-        let omega_inv = omega.inverse().expect("omega must be nonzero");
-        let n_inv = F::from_u64(n as u64)
+    /// Returns an error if `n` is zero or not invertible in the field, if
+    /// `omega` is not a primitive `n`-th root of unity, or if a prime factor
+    /// of `n` exceeds the maximum radix.
+    pub fn new(omega: F, n: usize) -> Result<Self, AlgebraError> {
+        if n == 0 {
+            return Err(AlgebraError::InvalidInput("FFT domain size is zero".into()));
+        }
+        if !is_primitive_nth_root(omega, n, &distinct_prime_factors(n)) {
+            return Err(AlgebraError::InvalidInput(format!(
+                "omega is not a primitive {n}-th root of unity"
+            )));
+        }
+        let omega_inv = omega
             .inverse()
-            .expect("n must be invertible in field");
+            .ok_or_else(|| AlgebraError::InvalidInput("omega is zero".into()))?;
+        let n_inv = F::from_u64(n as u64).inverse().ok_or_else(|| {
+            AlgebraError::InvalidInput(format!("FFT domain size {n} is not invertible"))
+        })?;
         let factors = factorize(n);
         let digit_rev = digit_reversal_permutation(n, &factors);
-        let fwd_stages = precompute_stages(omega, n, &factors);
-        let inv_stages = precompute_stages(omega_inv, n, &factors);
-        Self {
+        let fwd_stages = precompute_stages(omega, n, &factors)?;
+        let inv_stages = precompute_stages(omega_inv, n, &factors)?;
+        Ok(Self {
             n,
             omega,
             n_inv,
             digit_rev,
             fwd_stages,
             inv_stages,
+        })
+    }
+
+    fn check_len(&self, len: usize) -> Result<(), AlgebraError> {
+        if len == self.n {
+            Ok(())
+        } else {
+            Err(AlgebraError::InvalidSize {
+                expected: self.n,
+                actual: len,
+            })
         }
     }
 
     /// Forward DFT: `Y[k] = Σ_{j=0}^{n-1} x[j] · ω^{jk}`.
     ///
-    /// # Panics
-    /// If `input.len() != n`.
-    pub fn forward(&self, input: &[F]) -> Vec<F> {
-        assert_eq!(input.len(), self.n);
+    /// Returns an error if `input.len() != n`.
+    pub fn forward(&self, input: &[F]) -> Result<Vec<F>, AlgebraError> {
+        self.check_len(input.len())?;
         let mut ws = FftWorkspace::new(self.n);
-        ws.execute(input, &self.fwd_stages, &self.digit_rev)
-            .to_vec()
+        Ok(ws
+            .execute(input, &self.fwd_stages, &self.digit_rev)
+            .to_vec())
     }
 
     /// Inverse DFT: `x[j] = (1/n) · Σ_{k=0}^{n-1} Y[k] · ω^{-jk}`.
     ///
-    /// # Panics
-    /// If `input.len() != n`.
-    pub fn inverse(&self, input: &[F]) -> Vec<F> {
-        assert_eq!(input.len(), self.n);
+    /// Returns an error if `input.len() != n`.
+    pub fn inverse(&self, input: &[F]) -> Result<Vec<F>, AlgebraError> {
+        self.check_len(input.len())?;
         let mut ws: FftWorkspace<F> = FftWorkspace::new(self.n);
         let mut result = ws
             .execute(input, &self.inv_stages, &self.digit_rev)
@@ -638,32 +677,44 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
         for v in &mut result {
             *v *= self.n_inv;
         }
-        result
+        Ok(result)
     }
 
     /// Forward transform into caller-owned output using reusable scratch.
     ///
-    /// # Panics
-    /// If either slice or the workspace has a length different from this domain.
-    pub fn forward_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
-        assert_eq!(input.len(), self.n);
-        assert_eq!(output.len(), self.n);
-        assert_eq!(workspace.n, self.n);
+    /// Returns an error if either slice or the workspace has a length
+    /// different from this domain.
+    pub fn forward_into(
+        &self,
+        input: &[F],
+        output: &mut [F],
+        workspace: &mut FftWorkspace<F>,
+    ) -> Result<(), AlgebraError> {
+        self.check_len(input.len())?;
+        self.check_len(output.len())?;
+        self.check_len(workspace.n)?;
         output.copy_from_slice(workspace.execute(input, &self.fwd_stages, &self.digit_rev));
+        Ok(())
     }
 
     /// Inverse transform into caller-owned output using reusable scratch.
     ///
-    /// # Panics
-    /// If either slice or the workspace has a length different from this domain.
-    pub fn inverse_into(&self, input: &[F], output: &mut [F], workspace: &mut FftWorkspace<F>) {
-        assert_eq!(input.len(), self.n);
-        assert_eq!(output.len(), self.n);
-        assert_eq!(workspace.n, self.n);
+    /// Returns an error if either slice or the workspace has a length
+    /// different from this domain.
+    pub fn inverse_into(
+        &self,
+        input: &[F],
+        output: &mut [F],
+        workspace: &mut FftWorkspace<F>,
+    ) -> Result<(), AlgebraError> {
+        self.check_len(input.len())?;
+        self.check_len(output.len())?;
+        self.check_len(workspace.n)?;
         output.copy_from_slice(workspace.execute(input, &self.inv_stages, &self.digit_rev));
         for value in output {
             *value *= self.n_inv;
         }
+        Ok(())
     }
 
     /// Evaluate a polynomial at the shifted coset
@@ -676,10 +727,14 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     /// so we pre-twist `c_j ← c_j · shift^j` into `buf_b`
     /// (zero-padding any unused tail) and forward-FFT from there.
     ///
-    /// # Panics
-    /// If `coeffs.len() > n`.
-    pub fn coset_forward(&self, coeffs: &[F], shift: F) -> Vec<F> {
-        assert!(coeffs.len() <= self.n);
+    /// Returns an error if `coeffs.len() > n`.
+    pub fn coset_forward(&self, coeffs: &[F], shift: F) -> Result<Vec<F>, AlgebraError> {
+        if coeffs.len() > self.n {
+            return Err(AlgebraError::InvalidSize {
+                expected: self.n,
+                actual: coeffs.len(),
+            });
+        }
         let mut ws: FftWorkspace<F> = FftWorkspace::new(self.n);
         let buf = &mut ws.buf_b[..self.n];
         let mut tw = F::one();
@@ -690,8 +745,9 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
         for v in &mut buf[coeffs.len()..] {
             *v = F::zero();
         }
-        ws.execute_from_b(&self.fwd_stages, &self.digit_rev)
-            .to_vec()
+        Ok(ws
+            .execute_from_b(&self.fwd_stages, &self.digit_rev)
+            .to_vec())
     }
 
     /// Reed-Solomon-extend `evals` from the base subgroup
@@ -706,11 +762,21 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     /// evaluations on `K` are not re-emitted. All transforms share a
     /// single workspace.
     ///
-    /// # Panics
-    /// If `evals.len() != n`.
-    pub fn rs_extend_batch(&self, evals: &[F], omega_n: F, blowup: usize) -> Vec<F> {
+    /// Returns an error if `evals.len() != n` or `blowup` is zero.
+    pub fn rs_extend_batch(
+        &self,
+        evals: &[F],
+        omega_n: F,
+        blowup: usize,
+    ) -> Result<Vec<F>, AlgebraError> {
         let k = self.n;
-        assert_eq!(evals.len(), k);
+        self.check_len(evals.len())?;
+        let extension_len = blowup
+            .checked_sub(1)
+            .and_then(|cosets| k.checked_mul(cosets))
+            .ok_or_else(|| {
+                AlgebraError::InvalidInput(format!("invalid RS blowup {blowup} for k = {k}"))
+            })?;
 
         let mut ws: FftWorkspace<F> = FftWorkspace::new(self.n);
 
@@ -721,7 +787,7 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
             *v *= self.n_inv;
         }
 
-        let mut extension = Vec::with_capacity(k * (blowup - 1));
+        let mut extension = Vec::with_capacity(extension_len);
         for j in 1..blowup {
             let shift = field_pow(omega_n, j as u64);
             let buf = &mut ws.buf_b[..k];
@@ -733,7 +799,7 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
             let result = ws.execute_from_b(&self.fwd_stages, &self.digit_rev);
             extension.extend_from_slice(result);
         }
-        extension
+        Ok(extension)
     }
 }
 
@@ -742,22 +808,22 @@ impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
 /// `omega_n = SMOOTH_OMEGA ^ (SMOOTH_SUBGROUP_ORDER / n)`. Requires
 /// `n | SMOOTH_SUBGROUP_ORDER`.
 ///
-/// # Panics
-/// If `n` does not divide [`SmoothFftField::SMOOTH_SUBGROUP_ORDER`], or
-/// if `SMOOTH_OMEGA` is not in canonical form.
-pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
-    assert!(n > 0, "n must be positive");
-    assert_eq!(
-        F::SMOOTH_SUBGROUP_ORDER % n,
-        0,
-        "n={n} must divide SMOOTH_SUBGROUP_ORDER={}",
-        F::SMOOTH_SUBGROUP_ORDER
-    );
-    // Checked construction so a literal `≥ p` panics rather than
+/// Returns an error if `n` is zero or does not divide
+/// [`SmoothFftField::SMOOTH_SUBGROUP_ORDER`], or if `SMOOTH_OMEGA` is not in
+/// canonical form.
+pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> Result<F, AlgebraError> {
+    if n == 0 || !F::SMOOTH_SUBGROUP_ORDER.is_multiple_of(n) {
+        return Err(AlgebraError::InvalidInput(format!(
+            "n={n} must be a positive divisor of SMOOTH_SUBGROUP_ORDER={}",
+            F::SMOOTH_SUBGROUP_ORDER
+        )));
+    }
+    // Checked construction so a literal `≥ p` is rejected rather than
     // being silently reduced.
-    let omega =
-        F::from_u128_checked(F::SMOOTH_OMEGA).expect("SMOOTH_OMEGA must be < p (canonical form)");
-    field_pow(omega, (F::SMOOTH_SUBGROUP_ORDER / n) as u64)
+    let omega = F::from_u128_checked(F::SMOOTH_OMEGA).ok_or_else(|| {
+        AlgebraError::InvalidInput("SMOOTH_OMEGA must be < p (canonical form)".into())
+    })?;
+    Ok(field_pow(omega, (F::SMOOTH_SUBGROUP_ORDER / n) as u64))
 }
 
 /// Find a primitive `n`-th root of unity in `F` by scanning small
@@ -776,6 +842,10 @@ pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
 /// If `n` does not divide `p − 1`, or if no base in `{2, 3, …, 47}`
 /// yields a primitive `n`-th root.
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    reason = "test-only scanner; every caller passes a divisor of p - 1"
+)]
 pub(crate) fn find_primitive_nth_root<F: Field>(p_minus_1: u128, n: usize) -> F {
     assert_eq!(
         p_minus_1 % (n as u128),
@@ -814,29 +884,18 @@ fn is_primitive_nth_root<F: Field>(omega: F, n: usize, distinct_factors: &[usize
         .all(|&q| field_pow(omega, (n / q) as u64) != F::one())
 }
 
-/// Debug-only check that `omega` is a primitive `n`-th root of unity.
-fn debug_assert_primitive_nth_root<F: Field>(omega: F, n: usize) {
-    if !cfg!(debug_assertions) {
-        return;
-    }
-    let factors = distinct_prime_factors(n);
-    assert!(
-        is_primitive_nth_root(omega, n, &factors),
-        "omega is not a primitive {n}-th root of unity (n's prime factors: {factors:?})"
-    );
-}
-
 /// Free-function wrapper around [`SmoothDomain::rs_extend_batch`].
 pub fn rs_extend_fft<F: Field + std::fmt::Debug>(
     evals: &[F],
     domain_k: &SmoothDomain<F>,
     omega_n: F,
     blowup: usize,
-) -> Vec<F> {
+) -> Result<Vec<F>, AlgebraError> {
     domain_k.rs_extend_batch(evals, omega_n, blowup)
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test code")]
 mod test_support {
     //! Prime-agnostic helpers shared by per-prime FFT parity tests.
     //!
@@ -878,13 +937,13 @@ mod test_support {
             if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
                 continue;
             }
-            let omega = primitive_nth_root::<F>(n);
+            let omega = primitive_nth_root::<F>(n).unwrap();
             let input: Vec<F> = (0..n).map(|i| F::from_u64((i + 1) as u64)).collect();
             let expected = naive_dft(&input, omega);
 
             let factors = factorize(n);
             let digit_rev = digit_reversal_permutation(n, &factors);
-            let stages = precompute_stages(omega, n, &factors);
+            let stages = precompute_stages(omega, n, &factors).unwrap();
             let mut ws: FftWorkspace<F> = FftWorkspace::new(n);
             let got = ws.execute(&input, &stages, &digit_rev).to_vec();
             assert_eq!(got, expected, "FFT mismatch for n={n}");
@@ -896,11 +955,11 @@ mod test_support {
     where
         F: SmoothFftField + Debug,
     {
-        let omega = primitive_nth_root::<F>(n);
-        let domain = SmoothDomain::new(omega, n);
+        let omega = primitive_nth_root::<F>(n).unwrap();
+        let domain = SmoothDomain::new(omega, n).unwrap();
         let input: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
-        let transformed = domain.forward(&input);
-        let recovered = domain.inverse(&transformed);
+        let transformed = domain.forward(&input).unwrap();
+        let recovered = domain.inverse(&transformed).unwrap();
         assert_eq!(input, recovered);
     }
 
@@ -911,13 +970,13 @@ mod test_support {
         F: SmoothFftField + Debug + AddAssign + MulAssign,
     {
         let n = k * blowup;
-        let omega_n = primitive_nth_root::<F>(n);
+        let omega_n = primitive_nth_root::<F>(n).unwrap();
         let omega_k = field_pow(omega_n, blowup as u64);
-        let domain_k = SmoothDomain::new(omega_k, k);
+        let domain_k = SmoothDomain::new(omega_k, k).unwrap();
 
         let evals: Vec<F> = (0..k).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
-        let coeffs = domain_k.inverse(&evals);
-        let extension = rs_extend_fft(&evals, &domain_k, omega_n, blowup);
+        let coeffs = domain_k.inverse(&evals).unwrap();
+        let extension = rs_extend_fft(&evals, &domain_k, omega_n, blowup).unwrap();
         assert_eq!(extension.len(), k * (blowup - 1));
 
         for j in 1..blowup {
@@ -940,6 +999,7 @@ mod test_support {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, clippy::unwrap_used, reason = "test code")]
 mod prime_a7f7_tests {
     //! `Prime128OffsetA7F7` (`p = 2^128 - 2^32 + 22537`) has smooth
     //! multiplicative subgroup of order `2^3 * 3^7 = 17_496`, with a pure
@@ -1010,7 +1070,7 @@ mod prime_a7f7_tests {
             if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
                 continue;
             }
-            let omega = primitive_nth_root::<F>(n);
+            let omega = primitive_nth_root::<F>(n).unwrap();
             let factors = distinct_prime_factors(n);
             assert!(
                 is_primitive_nth_root(omega, n, &factors),
@@ -1027,19 +1087,25 @@ mod prime_a7f7_tests {
     #[test]
     fn reusable_workspace_matches_allocating_transforms() {
         for n in [2, 3, 6, 9, 18, 27, 54, 162, 243] {
-            let domain = SmoothDomain::new(primitive_nth_root::<F>(n), n);
+            let domain = SmoothDomain::new(primitive_nth_root::<F>(n).unwrap(), n).unwrap();
             let input = (0..n)
                 .map(|i| F::from_u128_checked((i * i + 1) as u128).unwrap())
                 .collect::<Vec<_>>();
             let mut workspace = domain.workspace();
             let mut output = vec![F::from_u128_checked(0).unwrap(); n];
-            domain.forward_into(&input, &mut output, &mut workspace);
-            assert_eq!(output, domain.forward(&input));
+            domain
+                .forward_into(&input, &mut output, &mut workspace)
+                .unwrap();
+            assert_eq!(output, domain.forward(&input).unwrap());
             let transformed = output.clone();
-            domain.inverse_into(&transformed, &mut output, &mut workspace);
-            assert_eq!(output, domain.inverse(&transformed));
+            domain
+                .inverse_into(&transformed, &mut output, &mut workspace)
+                .unwrap();
+            assert_eq!(output, domain.inverse(&transformed).unwrap());
             assert_eq!(output, input);
-            domain.forward_into(&input, &mut output, &mut workspace);
+            domain
+                .forward_into(&input, &mut output, &mut workspace)
+                .unwrap();
             assert_eq!(output, transformed);
         }
     }

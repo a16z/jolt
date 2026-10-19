@@ -20,6 +20,10 @@ use crate::ntt::prime::MontCoeff;
 /// The caller must ensure AVX2 is available, `canonical.len()` is a multiple
 /// of eight, `start + canonical.len() <= D`, `L` covers `modulus`, and every
 /// coefficient is below that modulus.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "the cast pointers only feed unaligned `loadu`/`storeu` intrinsics"
+)]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn field_residues_i32<const L: usize, const K: usize, const D: usize>(
     out: &mut [[MontCoeff<i32>; D]; K],

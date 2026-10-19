@@ -1,4 +1,5 @@
-use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+#![expect(clippy::expect_used, clippy::unwrap_used, reason = "test code")]
+use crate::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::*;
@@ -254,7 +255,7 @@ fn i16_twiddles_hold_only_montgomery_tables() {
 /// the workspace `RUST_MIN_STACK` does not raise for an explicit size.
 #[test]
 fn q128_parameters_build_on_a_2_mib_stack() {
-    std::thread::Builder::new()
+    let _ = std::thread::Builder::new()
         .stack_size(2 << 20)
         .spawn(|| CrtNttParamSet::<i32, Q128_NUM_PRIMES, 1024>::new(q128_primes()))
         .expect("spawn")

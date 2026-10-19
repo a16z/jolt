@@ -2,6 +2,10 @@
 //! so a pass on such a host covers only the scalar code.
 //! [`avx512_hardware_tests_do_not_skip`] fails instead; the portability
 //! workflow runs it under Intel SDE.
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "tests call the kernels on buffers sized for them, after the same ISA checks production dispatch uses"
+)]
 
 use super::*;
 use crate::ntt::butterfly::NttTwiddles;
@@ -70,8 +74,8 @@ fn random_mont_array<W: PrimeWidth, const D: usize>(
     let mut state = seed;
     std::array::from_fn(|_| {
         state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         prime.from_canonical(W::from_i64((state >> 33) as i64 % prime.p.to_i64()))
     })
 }
@@ -491,10 +495,10 @@ fn assert_fused_ntt_i32_matches_scalar<const D: usize>(use_avx512: bool) {
             NttPrime::compute(raw_prime),
             &|a, digits, prime, tw| unsafe { forward_ntt_i8_i32(a, digits, prime, tw, use_avx512) },
             &|a, digits, prime, tw| unsafe {
-                forward_ntt_cyclic_i8_i32(a, digits, prime, tw, use_avx512)
+                forward_ntt_cyclic_i8_i32(a, digits, prime, tw, use_avx512);
             },
             &|a, coefficients, prime, tw| unsafe {
-                forward_ntt_centered_i16_i32(a, coefficients, prime, tw, use_avx512)
+                forward_ntt_centered_i16_i32(a, coefficients, prime, tw, use_avx512);
             },
             &format!("prime={raw_prime}, D={D}, avx512={use_avx512}"),
         );
@@ -548,7 +552,7 @@ fn assert_ntt_i16_transforms_match_scalar<const D: usize>() {
             &|a, digits, prime, tw| unsafe { forward_ntt_i8_i16(a, digits, prime, tw) },
             &|a, digits, prime, tw| unsafe { forward_ntt_cyclic_i8_i16(a, digits, prime, tw) },
             &|a, coefficients, prime, tw| unsafe {
-                forward_ntt_centered_i16_i16(a, coefficients, prime, tw)
+                forward_ntt_centered_i16_i16(a, coefficients, prime, tw);
             },
             &context,
         );
@@ -573,7 +577,7 @@ fn avx2_pointwise_mul_acc_i32_matches_scalar_with_tail() {
     if !std::is_x86_feature_detected!("avx2") {
         return;
     }
-    let prime = NttPrime::compute(1073707009_i32);
+    let prime = NttPrime::compute(1_073_707_009_i32);
     const D: usize = 19;
     let acc_init = random_mont_array::<_, D>(prime, 0x1111);
     let lhs = edge_mont_array_i32::<D>(prime);
@@ -583,9 +587,9 @@ fn avx2_pointwise_mul_acc_i32_matches_scalar_with_tail() {
     // SAFETY: guarded by the runtime AVX2 detection above.
     unsafe {
         pointwise_mul_acc_i32(
-            avx_acc.as_mut_ptr() as *mut i32,
-            lhs.as_ptr() as *const i32,
-            rhs.as_ptr() as *const i32,
+            avx_acc.as_mut_ptr().cast::<i32>(),
+            lhs.as_ptr().cast::<i32>(),
+            rhs.as_ptr().cast::<i32>(),
             D,
             prime.p,
             prime.pinv,
@@ -653,7 +657,7 @@ fn avx2_add_reduce_i32_matches_scalar_with_tail() {
     if !std::is_x86_feature_detected!("avx2") {
         return;
     }
-    let prime = NttPrime::compute(1073707009_i32);
+    let prime = NttPrime::compute(1_073_707_009_i32);
     const D: usize = 19;
     let acc_init = random_mont_array::<_, D>(prime, 0x4444);
     let other = edge_mont_array_i32::<D>(prime);
@@ -662,9 +666,9 @@ fn avx2_add_reduce_i32_matches_scalar_with_tail() {
     // SAFETY: guarded by the runtime AVX2 detection above.
     unsafe {
         add_reduce_i32(
-            avx_acc.as_mut_ptr() as *mut i32,
-            avx_acc.as_ptr() as *const i32,
-            other.as_ptr() as *const i32,
+            avx_acc.as_mut_ptr().cast::<i32>(),
+            avx_acc.as_ptr().cast::<i32>(),
+            other.as_ptr().cast::<i32>(),
             D,
             prime.p,
         );
@@ -683,7 +687,7 @@ fn avx512_pointwise_mul_acc_i32_matches_scalar_with_tail() {
     {
         return;
     }
-    let prime = NttPrime::compute(1073707009_i32);
+    let prime = NttPrime::compute(1_073_707_009_i32);
     const D: usize = 29;
     let acc_init = random_mont_array::<_, D>(prime, 0x5151);
     let lhs = edge_mont_array_i32::<D>(prime);
@@ -693,9 +697,9 @@ fn avx512_pointwise_mul_acc_i32_matches_scalar_with_tail() {
     // SAFETY: guarded by runtime AVX-512 feature detection above.
     unsafe {
         pointwise_mul_acc_i32_avx512(
-            avx_acc.as_mut_ptr() as *mut i32,
-            lhs.as_ptr() as *const i32,
-            rhs.as_ptr() as *const i32,
+            avx_acc.as_mut_ptr().cast::<i32>(),
+            lhs.as_ptr().cast::<i32>(),
+            rhs.as_ptr().cast::<i32>(),
             D,
             prime.p,
             prime.pinv,
@@ -715,7 +719,7 @@ fn avx512_add_reduce_i32_matches_scalar_with_tail() {
     {
         return;
     }
-    let prime = NttPrime::compute(1073707009_i32);
+    let prime = NttPrime::compute(1_073_707_009_i32);
     const D: usize = 29;
     let acc_init = random_mont_array::<_, D>(prime, 0x8181);
     let other = edge_mont_array_i32::<D>(prime);
@@ -724,9 +728,9 @@ fn avx512_add_reduce_i32_matches_scalar_with_tail() {
     // SAFETY: guarded by runtime AVX-512 feature detection above.
     unsafe {
         add_reduce_i32_avx512(
-            avx_acc.as_mut_ptr() as *mut i32,
-            avx_acc.as_ptr() as *const i32,
-            other.as_ptr() as *const i32,
+            avx_acc.as_mut_ptr().cast::<i32>(),
+            avx_acc.as_ptr().cast::<i32>(),
+            other.as_ptr().cast::<i32>(),
             D,
             prime.p,
         );
@@ -752,9 +756,9 @@ fn avx2_pointwise_mul_acc_i16_matches_scalar_with_tail() {
     // SAFETY: guarded by the runtime AVX2 detection above.
     unsafe {
         pointwise_mul_acc_i16(
-            avx_acc.as_mut_ptr() as *mut i16,
-            lhs.as_ptr() as *const i16,
-            rhs.as_ptr() as *const i16,
+            avx_acc.as_mut_ptr().cast::<i16>(),
+            lhs.as_ptr().cast::<i16>(),
+            rhs.as_ptr().cast::<i16>(),
             D,
             prime.p,
             prime.pinv,
@@ -780,8 +784,8 @@ fn avx2_add_reduce_i16_matches_scalar_with_tail() {
     // SAFETY: guarded by the runtime AVX2 detection above.
     unsafe {
         add_reduce_i16(
-            avx_acc.as_mut_ptr() as *mut i16,
-            other.as_ptr() as *const i16,
+            avx_acc.as_mut_ptr().cast::<i16>(),
+            other.as_ptr().cast::<i16>(),
             D,
             prime.p,
         );

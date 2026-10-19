@@ -98,6 +98,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     /// Build a full parameter set from CRT primes.
     ///
     /// Computes per-prime twiddles and Garner reconstruction constants.
+    #[expect(
+        clippy::expect_used,
+        reason = "the boxed slice is collected from a `[_; K]` array, so it has exactly K entries"
+    )]
     pub fn new(primes: [NttPrime<W>; K]) -> Self {
         // Collect on the heap: a `[NttTwiddles; K]` value would take hundreds
         // of kilobytes of stack before boxing.

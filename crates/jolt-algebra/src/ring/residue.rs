@@ -1,7 +1,7 @@
 //! Linear-time coefficient functionals for reduced negacyclic relations.
 
-use akita_error::AkitaError;
-use jolt_field::{ExtField, Field};
+use crate::AlgebraError;
+use crate::{ExtField, Field};
 
 /// Reusable evaluation data for reduced negacyclic residue kernels at one
 /// point and dimension.
@@ -18,16 +18,16 @@ pub struct ResidueKernelPoint<E: Field> {
 
 impl<E: Field> ResidueKernelPoint<E> {
     /// Prepare `1, alpha, ..., alpha^(d-1)` and `alpha^d + 1`.
-    pub fn new(alpha: E, dimension: usize) -> Result<Self, AkitaError> {
+    pub fn new(alpha: E, dimension: usize) -> Result<Self, AlgebraError> {
         if dimension == 0 || !dimension.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AlgebraError::InvalidInput(
                 "residue-kernel dimension must be a nonzero power of two".into(),
             ));
         }
         let mut powers = Vec::new();
         powers
             .try_reserve_exact(dimension)
-            .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
+            .map_err(|_| AlgebraError::InvalidInput("residue-kernel allocation failed".into()))?;
         let mut power = E::one();
         for _ in 0..dimension {
             powers.push(power);
@@ -53,7 +53,7 @@ impl<E: Field> ResidueKernelPoint<E> {
     }
 
     /// Evaluate every reduced shift of one base-field multiplier.
-    pub fn kernel<F>(&self, coefficients: &[F]) -> Result<Vec<E>, AkitaError>
+    pub fn kernel<F>(&self, coefficients: &[F]) -> Result<Vec<E>, AlgebraError>
     where
         F: Field,
         E: ExtField<F>,
@@ -62,13 +62,13 @@ impl<E: Field> ResidueKernelPoint<E> {
     }
 
     /// Evaluate every reduced shift of extension-field coefficient weights.
-    pub fn field_kernel(&self, weights: &[E]) -> Result<Vec<E>, AkitaError> {
+    pub fn field_kernel(&self, weights: &[E]) -> Result<Vec<E>, AlgebraError> {
         self.kernel_with(weights, |value, weight| value * weight)
     }
 
     /// Write the extension-field residue kernel into an existing exact-size
     /// destination.
-    pub fn field_kernel_into(&self, weights: &[E], output: &mut [E]) -> Result<(), AkitaError> {
+    pub fn field_kernel_into(&self, weights: &[E], output: &mut [E]) -> Result<(), AlgebraError> {
         self.kernel_with_into(weights, output, |value, weight| value * weight)
     }
 
@@ -77,11 +77,11 @@ impl<E: Field> ResidueKernelPoint<E> {
         &self,
         weights: &[W],
         multiply: impl Fn(E, W) -> E,
-    ) -> Result<Vec<E>, AkitaError> {
+    ) -> Result<Vec<E>, AlgebraError> {
         let mut kernel = Vec::new();
         kernel
             .try_reserve_exact(self.dimension())
-            .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
+            .map_err(|_| AlgebraError::InvalidInput("residue-kernel allocation failed".into()))?;
         kernel.resize(self.dimension(), E::zero());
         self.kernel_with_into(weights, &mut kernel, multiply)?;
         Ok(kernel)
@@ -93,9 +93,9 @@ impl<E: Field> ResidueKernelPoint<E> {
         weights: &[W],
         output: &mut [E],
         multiply: impl Fn(E, W) -> E,
-    ) -> Result<(), AkitaError> {
+    ) -> Result<(), AlgebraError> {
         if weights.len() != self.dimension() || output.len() != self.dimension() {
-            return Err(AkitaError::InvalidInput(
+            return Err(AlgebraError::InvalidInput(
                 "residue-kernel buffers do not match the prepared dimension".into(),
             ));
         }
@@ -108,7 +108,7 @@ impl<E: Field> ResidueKernelPoint<E> {
             });
         let (first, tail) = output
             .split_first_mut()
-            .ok_or_else(|| AkitaError::InvalidInput("residue-kernel output is empty".into()))?;
+            .ok_or_else(|| AlgebraError::InvalidInput("residue-kernel output is empty".into()))?;
         *first = current;
         for (slot, wrap_weight) in tail
             .iter_mut()
@@ -124,22 +124,22 @@ impl<E: Field> ResidueKernelPoint<E> {
     pub fn sparse_kernel(
         &self,
         terms: impl IntoIterator<Item = (usize, E)>,
-    ) -> Result<Vec<E>, AkitaError> {
+    ) -> Result<Vec<E>, AlgebraError> {
         let mut terms = terms.into_iter().collect::<Vec<_>>();
         terms.sort_unstable_by_key(|(position, _)| *position);
         for (index, &(position, weight)) in terms.iter().enumerate() {
             if position >= self.dimension() {
-                return Err(AkitaError::InvalidInput(
+                return Err(AlgebraError::InvalidInput(
                     "sparse residue-kernel position is out of range".into(),
                 ));
             }
             if weight.is_zero() {
-                return Err(AkitaError::InvalidInput(
+                return Err(AlgebraError::InvalidInput(
                     "sparse residue-kernel weights must be nonzero".into(),
                 ));
             }
             if index != 0 && terms[index - 1].0 == position {
-                return Err(AkitaError::InvalidInput(
+                return Err(AlgebraError::InvalidInput(
                     "sparse residue-kernel positions must be unique".into(),
                 ));
             }
@@ -151,7 +151,7 @@ impl<E: Field> ResidueKernelPoint<E> {
         let mut kernel = Vec::new();
         kernel
             .try_reserve_exact(self.dimension())
-            .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
+            .map_err(|_| AlgebraError::InvalidInput("residue-kernel allocation failed".into()))?;
         kernel.push(current);
         let mut reverse_term_index = terms.len();
         for wrap_position in (1..self.dimension()).rev() {
@@ -184,7 +184,7 @@ impl<E: Field> ResidueKernelPoint<E> {
 ///
 /// Returns an error unless the coefficient count is a nonzero power of two,
 /// or if the output allocation cannot be reserved.
-pub fn residue_kernel<F, E>(coefficients: &[F], alpha: E) -> Result<Vec<E>, AkitaError>
+pub fn residue_kernel<F, E>(coefficients: &[F], alpha: E) -> Result<Vec<E>, AlgebraError>
 where
     F: Field,
     E: Field + ExtField<F>,
@@ -207,7 +207,7 @@ where
 ///
 /// Returns an error unless the equality-window length is a nonzero power of
 /// two, or if the output allocation cannot be reserved.
-pub fn terminal_residue_kernel<E>(equality_weights: &[E], alpha: E) -> Result<Vec<E>, AkitaError>
+pub fn terminal_residue_kernel<E>(equality_weights: &[E], alpha: E) -> Result<Vec<E>, AlgebraError>
 where
     E: Field,
 {
@@ -215,17 +215,38 @@ where
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, clippy::unwrap_used, reason = "test code")]
 mod tests {
     use super::*;
-    use crate::offset_eq::OffsetEqWindow;
     use crate::ring::eval::eval_ring_at_pows;
     use crate::ring::{scalar_powers, CyclotomicRing};
-    use jolt_field::{
+    use crate::{
         Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring,
         Zero,
     };
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    /// `eq(point, index)` with `point[0]` bound to the least significant
+    /// index bit; zero outside the hypercube.
+    fn eq_eval_at_index<F: Field>(point: &[F], index: usize) -> F {
+        if index >> point.len() != 0 {
+            return F::zero();
+        }
+        point.iter().enumerate().fold(F::one(), |acc, (bit, &r)| {
+            if (index >> bit) & 1 == 1 {
+                acc * r
+            } else {
+                acc * (F::one() - r)
+            }
+        })
+    }
+
+    fn eq_interval<F: Field>(point: &[F], start: usize, output: &mut [F]) {
+        for (offset, weight) in output.iter_mut().enumerate() {
+            *weight = eq_eval_at_index(point, start + offset);
+        }
+    }
 
     fn quadratic_kernel<E: Field>(coefficients: &[E], alpha: E) -> Vec<E> {
         let dimension = coefficients.len();
@@ -331,13 +352,10 @@ mod tests {
         for seed in 1..=8 {
             let mut rng = StdRng::seed_from_u64(seed);
             let point = (0..8).map(|_| E::random(&mut rng)).collect::<Vec<_>>();
-            let equality = OffsetEqWindow::new(&point).expect("equality window");
             let alpha = E::random(&mut rng);
             for (start, dimension) in [(0, 8), (3, 8), (64, 16), (127, 16)] {
                 let mut weights = vec![E::zero(); dimension];
-                equality
-                    .fill_interval(start, &mut weights)
-                    .expect("checked physical equality interval");
+                eq_interval(&point, start, &mut weights);
                 assert_eq!(
                     terminal_residue_kernel(&weights, alpha).expect("terminal kernel"),
                     quadratic_kernel(&weights, alpha),
@@ -347,8 +365,8 @@ mod tests {
 
             let mut first = vec![E::zero(); 8];
             let mut second = vec![E::zero(); 8];
-            equality.fill_interval(0, &mut first).unwrap();
-            equality.fill_interval(3, &mut second).unwrap();
+            eq_interval(&point, 0, &mut first);
+            eq_interval(&point, 3, &mut second);
             assert_ne!(
                 terminal_residue_kernel(&first, alpha).unwrap(),
                 terminal_residue_kernel(&second, alpha).unwrap(),
@@ -359,9 +377,8 @@ mod tests {
 
     #[test]
     fn base_multiplier_matches_literal_oracle_at_genuine_extension_point() {
-        use crate::offset_eq::eq_eval_at_index;
         use crate::ring::eval_flat_ring_at_pows_fast;
-        use jolt_field::{Fp32, FpExt2, NegOneNr};
+        use crate::{Fp32, FpExt2, NegOneNr};
         type B = Fp32<251>;
         type X = FpExt2<B, NegOneNr>;
 
@@ -377,10 +394,7 @@ mod tests {
             .map(|index| B::from_u64(37 + index as u64))
             .collect::<Vec<_>>();
         let mut equality = vec![X::zero(); 8];
-        OffsetEqWindow::new(&point)
-            .unwrap()
-            .fill_interval(5, &mut equality)
-            .unwrap();
+        eq_interval(&point, 5, &mut equality);
         let functional = terminal_residue_kernel(&equality, alpha).unwrap();
         let powers = scalar_powers(alpha, 8);
         let expected = (0..8).fold(X::zero(), |evaluation, witness_coefficient| {
@@ -407,7 +421,7 @@ mod tests {
     #[test]
     fn modulus_roots_do_not_require_division() {
         type F = Prime128OffsetA7F7;
-        let alpha = crate::fft::primitive_nth_root::<F>(4);
+        let alpha = crate::fft::primitive_nth_root::<F>(4).unwrap();
         let coefficients = [F::from_u64(37), F::from_u64(13)];
         let weights = [F::from_u64(41), F::from_u64(19)];
 

@@ -7,8 +7,8 @@ use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
+use crate::AlgebraError;
 use crate::{CanonicalEncoding, CyclotomicRing, Field};
-use akita_error::AkitaError;
 
 use super::convert::CenteredI16NttConverter;
 use super::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
@@ -33,7 +33,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         num_cols: usize,
         rhs: &[[i16; D]],
         params: &CrtNttParamSet<W, K, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AlgebraError> {
         let accumulators = Self::mat_vec_i16_ntt(matrix, num_rows, num_cols, rhs, params)?;
         Ok(accumulators
             .iter()
@@ -49,18 +49,18 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         num_cols: usize,
         rhs: &[[i16; D]],
         params: &CrtNttParamSet<W, K, D>,
-    ) -> Result<Vec<Self>, AkitaError> {
+    ) -> Result<Vec<Self>, AlgebraError> {
         if rhs.len() != num_cols {
-            return Err(AkitaError::InvalidSize {
+            return Err(AlgebraError::InvalidSize {
                 expected: num_cols,
                 actual: rhs.len(),
             });
         }
         let required = num_rows.checked_mul(num_cols).ok_or_else(|| {
-            AkitaError::InvalidInput("prepared NTT matrix extent overflow".into())
+            AlgebraError::InvalidInput("prepared NTT matrix extent overflow".into())
         })?;
         let matrix = matrix.get(..required).ok_or_else(|| {
-            AkitaError::InvalidSetup("prepared NTT matrix prefix is undersized".into())
+            AlgebraError::InvalidSetup("prepared NTT matrix prefix is undersized".into())
         })?;
         if num_rows == 0 || num_cols == 0 {
             return Ok(vec![Self::zero(); num_rows]);
@@ -78,7 +78,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     let matrix_entry = row.get(column).ok_or_else(|| {
-                        AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
+                        AlgebraError::InvalidSetup("prepared NTT matrix row is undersized".into())
                     })?;
                     accumulator.add_assign_pointwise_mul(matrix_entry, &transformed, params);
                 }
@@ -122,7 +122,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols))
                 {
                     let matrix_entry = row.get(column).ok_or_else(|| {
-                        AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
+                        AlgebraError::InvalidSetup("prepared NTT matrix row is undersized".into())
                     })?;
                     accumulator.add_assign_pointwise_mul(matrix_entry, scratch, params);
                 }
@@ -205,7 +205,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                         D,
                         prime.p.to_i64() as i32,
                         prime.pinv.to_i64() as i32,
-                    )
+                    );
                 }
             }
             return;
@@ -237,7 +237,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                         D,
                         prime.p.to_i64() as i32,
                         prime.pinv.to_i64() as i32,
-                    )
+                    );
                 }
             }
             return;
@@ -289,9 +289,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         unsafe {
             if size_of::<W>() == size_of::<i16>() {
                 avx::pointwise_mul_acc_i16(
-                    acc_limb.as_mut_ptr() as *mut i16,
-                    lhs_limb.as_ptr() as *const i16,
-                    rhs_limb.as_ptr() as *const i16,
+                    acc_limb.as_mut_ptr().cast::<i16>(),
+                    lhs_limb.as_ptr().cast::<i16>(),
+                    rhs_limb.as_ptr().cast::<i16>(),
                     D,
                     prime.p.to_i64() as i16,
                     prime.pinv.to_i64() as i16,
@@ -299,17 +299,17 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             } else if size_of::<W>() == size_of::<i32>() {
                 match mode {
                     AvxNttMode::Avx2 => avx::pointwise_mul_acc_i32(
-                        acc_limb.as_mut_ptr() as *mut i32,
-                        lhs_limb.as_ptr() as *const i32,
-                        rhs_limb.as_ptr() as *const i32,
+                        acc_limb.as_mut_ptr().cast::<i32>(),
+                        lhs_limb.as_ptr().cast::<i32>(),
+                        rhs_limb.as_ptr().cast::<i32>(),
                         D,
                         prime.p.to_i64() as i32,
                         prime.pinv.to_i64() as i32,
                     ),
                     AvxNttMode::Avx512 => avx::pointwise_mul_acc_i32_avx512(
-                        acc_limb.as_mut_ptr() as *mut i32,
-                        lhs_limb.as_ptr() as *const i32,
-                        rhs_limb.as_ptr() as *const i32,
+                        acc_limb.as_mut_ptr().cast::<i32>(),
+                        lhs_limb.as_ptr().cast::<i32>(),
+                        rhs_limb.as_ptr().cast::<i32>(),
                         D,
                         prime.p.to_i64() as i32,
                         prime.pinv.to_i64() as i32,
@@ -372,6 +372,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 });
 
                 #[cfg(target_arch = "aarch64")]
+                // SAFETY: `acc.limbs[k]` holds `D` writable coefficients, and each of the
+                // first `digits.len()` pointers addresses a distinct `D`-coefficient limb.
                 unsafe {
                     neon::pointwise_dot_acc_i32(
                         acc.limbs[k].as_mut_ptr().cast::<i32>(),
@@ -385,6 +387,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 }
 
                 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                // SAFETY: `uses_lazy_i32_dot` (asserted above) implies AVX2. `acc.limbs[k]`
+                // holds `D` writable coefficients, and each of the first `digits.len()`
+                // pointers addresses a distinct `D`-coefficient limb.
                 unsafe {
                     avx::pointwise_dot_acc_i32(
                         acc.limbs[k].as_mut_ptr().cast::<i32>(),
@@ -431,21 +436,23 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 let prime = params.primes[k];
                 for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
                     let lhs = &mat_row[col];
+                    // SAFETY: the plan selected NEON and the width check identifies W. Every
+                    // limb holds `D` coefficients, and `acc` is distinct from `lhs` and `rhs_limb`.
                     unsafe {
                         if size_of::<W>() == size_of::<i32>() {
                             neon::pointwise_mul_acc_i32(
-                                acc.limbs[k].as_mut_ptr() as *mut i32,
-                                lhs.limbs[k].as_ptr() as *const i32,
-                                rhs_limb.as_ptr() as *const i32,
+                                acc.limbs[k].as_mut_ptr().cast::<i32>(),
+                                lhs.limbs[k].as_ptr().cast::<i32>(),
+                                rhs_limb.as_ptr().cast::<i32>(),
                                 D,
                                 prime.p.to_i64() as i32,
                                 prime.pinv.to_i64() as i32,
                             );
                         } else {
                             neon::pointwise_mul_acc_i16(
-                                acc.limbs[k].as_mut_ptr() as *mut i16,
-                                lhs.limbs[k].as_ptr() as *const i16,
-                                rhs_limb.as_ptr() as *const i16,
+                                acc.limbs[k].as_mut_ptr().cast::<i16>(),
+                                lhs.limbs[k].as_ptr().cast::<i16>(),
+                                rhs_limb.as_ptr().cast::<i16>(),
                                 D,
                                 prime.p.to_i64() as i16,
                                 prime.pinv.to_i64() as i16,
@@ -495,18 +502,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         if params.kernel_plan.uses_neon() {
             for k in 0..K {
                 let prime = params.primes[k];
+                // SAFETY: the plan selected NEON and the width check identifies W. Both
+                // limbs hold `D` coefficients, and `self` and `rhs` are distinct borrows.
                 unsafe {
                     if size_of::<W>() == size_of::<i32>() {
                         neon::add_reduce_i32(
-                            self.limbs[k].as_mut_ptr() as *mut i32,
-                            rhs.limbs[k].as_ptr() as *const i32,
+                            self.limbs[k].as_mut_ptr().cast::<i32>(),
+                            rhs.limbs[k].as_ptr().cast::<i32>(),
                             D,
                             prime.p.to_i64() as i32,
                         );
                     } else {
                         neon::add_reduce_i16(
-                            self.limbs[k].as_mut_ptr() as *mut i16,
-                            rhs.limbs[k].as_ptr() as *const i16,
+                            self.limbs[k].as_mut_ptr().cast::<i16>(),
+                            rhs.limbs[k].as_ptr().cast::<i16>(),
                             D,
                             prime.p.to_i64() as i16,
                         );
@@ -521,10 +530,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             if size_of::<W>() == size_of::<i16>() {
                 for k in 0..K {
                     let prime = params.primes[k];
+                    // SAFETY: the plan selected an x86 pointwise mode, which implies AVX2. Both
+                    // limbs hold `D` coefficients, and `self` and `rhs` are distinct borrows.
                     unsafe {
                         avx::add_reduce_i16(
-                            self.limbs[k].as_mut_ptr() as *mut i16,
-                            rhs.limbs[k].as_ptr() as *const i16,
+                            self.limbs[k].as_mut_ptr().cast::<i16>(),
+                            rhs.limbs[k].as_ptr().cast::<i16>(),
                             D,
                             prime.p.to_i64() as i16,
                         );
@@ -535,19 +546,21 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             if size_of::<W>() == size_of::<i32>() {
                 for k in 0..K {
                     let prime = params.primes[k];
+                    // SAFETY: the plan selected `mode`, whose ISA the host supports. Both limbs
+                    // hold `D` coefficients, and `self` and `rhs` are distinct borrows.
                     unsafe {
                         match mode {
                             AvxNttMode::Avx2 => avx::add_reduce_i32(
-                                self.limbs[k].as_mut_ptr() as *mut i32,
-                                self.limbs[k].as_ptr() as *const i32,
-                                rhs.limbs[k].as_ptr() as *const i32,
+                                self.limbs[k].as_mut_ptr().cast::<i32>(),
+                                self.limbs[k].as_ptr().cast::<i32>(),
+                                rhs.limbs[k].as_ptr().cast::<i32>(),
                                 D,
                                 prime.p.to_i64() as i32,
                             ),
                             AvxNttMode::Avx512 => avx::add_reduce_i32_avx512(
-                                self.limbs[k].as_mut_ptr() as *mut i32,
-                                self.limbs[k].as_ptr() as *const i32,
-                                rhs.limbs[k].as_ptr() as *const i32,
+                                self.limbs[k].as_mut_ptr().cast::<i32>(),
+                                self.limbs[k].as_ptr().cast::<i32>(),
+                                rhs.limbs[k].as_ptr().cast::<i32>(),
                                 D,
                                 prime.p.to_i64() as i32,
                             ),
@@ -582,21 +595,23 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         if params.kernel_plan.uses_neon() {
             for k in 0..K {
                 let prime = params.primes[k];
+                // SAFETY: the plan selected NEON and the width check identifies W. Every
+                // limb holds `D` coefficients, and `self` is distinct from `lhs` and `rhs`.
                 unsafe {
                     if size_of::<W>() == size_of::<i32>() {
                         neon::pointwise_mul_acc_i32(
-                            self.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs.limbs[k].as_ptr() as *const i32,
-                            rhs.limbs[k].as_ptr() as *const i32,
+                            self.limbs[k].as_mut_ptr().cast::<i32>(),
+                            lhs.limbs[k].as_ptr().cast::<i32>(),
+                            rhs.limbs[k].as_ptr().cast::<i32>(),
                             D,
                             prime.p.to_i64() as i32,
                             prime.pinv.to_i64() as i32,
                         );
                     } else {
                         neon::pointwise_mul_acc_i16(
-                            self.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs.limbs[k].as_ptr() as *const i16,
-                            rhs.limbs[k].as_ptr() as *const i16,
+                            self.limbs[k].as_mut_ptr().cast::<i16>(),
+                            lhs.limbs[k].as_ptr().cast::<i16>(),
+                            rhs.limbs[k].as_ptr().cast::<i16>(),
                             D,
                             prime.p.to_i64() as i16,
                             prime.pinv.to_i64() as i16,
