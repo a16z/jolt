@@ -72,6 +72,16 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_fq_batch_inverse: CudaFunction,
     #[cfg(test)]
+    msm_g1_double: CudaFunction,
+    #[cfg(test)]
+    msm_g1_add: CudaFunction,
+    #[cfg(test)]
+    msm_g1_add_affine: CudaFunction,
+    #[cfg(test)]
+    msm_affine_denominators: CudaFunction,
+    #[cfg(test)]
+    msm_affine_combine: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -135,6 +145,16 @@ impl CudaKernelContext {
             msm_fq_mul: module.load_function("msm_fq_mul_kernel")?,
             #[cfg(test)]
             msm_fq_batch_inverse: module.load_function("msm_fq_batch_inverse_kernel")?,
+            #[cfg(test)]
+            msm_g1_double: module.load_function("msm_g1_double_kernel")?,
+            #[cfg(test)]
+            msm_g1_add: module.load_function("msm_g1_add_kernel")?,
+            #[cfg(test)]
+            msm_g1_add_affine: module.load_function("msm_g1_add_affine_kernel")?,
+            #[cfg(test)]
+            msm_affine_denominators: module.load_function("msm_affine_denominators_kernel")?,
+            #[cfg(test)]
+            msm_affine_combine: module.load_function("msm_affine_combine_kernel")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]
@@ -330,6 +350,31 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_fq_batch_inverse(&self) -> &CudaFunction {
         &self.msm_fq_batch_inverse
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_g1_double(&self) -> &CudaFunction {
+        &self.msm_g1_double
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_g1_add(&self) -> &CudaFunction {
+        &self.msm_g1_add
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_g1_add_affine(&self) -> &CudaFunction {
+        &self.msm_g1_add_affine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_affine_denominators(&self) -> &CudaFunction {
+        &self.msm_affine_denominators
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_affine_combine(&self) -> &CudaFunction {
+        &self.msm_affine_combine
     }
 
     #[cfg(test)]

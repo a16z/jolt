@@ -39,6 +39,8 @@
 //! and otherwise accumulate into global slots before field reduction.
 //! BN254 base-field arithmetic supports curve coordinates. Batch inversion
 //! assigns independent chunks to GPU threads and preserves zero entries.
+//! G1 kernels double and add Jacobian points, including mixed affine addends.
+//! Batched affine-pair addition uses those inversions for finite, distinct-x pairs.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
