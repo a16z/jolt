@@ -7,7 +7,10 @@ use std::{
 use jolt_field::{AdditiveGroup, CanonicalBytes, Field, Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    append_opening_claims, prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof, ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder, SumcheckVerifier, SUMCHECK_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL, OPENING_CLAIM_TRANSCRIPT_LABEL,
+    append_opening_claims, prove_batch, BatchMember, BatchPrelude, BooleanHypercube,
+    ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError,
+    SumcheckRecorder, SumcheckVerifier, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::Transcript;
 use num_traits::{One, Zero};
