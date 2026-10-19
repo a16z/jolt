@@ -61,7 +61,7 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-The workspace pins Akita in its root `Cargo.toml`.
+The workspace pins Akita to `d0c375ec2d76c9c548cc074d63599dc5432eb891`.
 Jolt delegates to Akita's adaptive ring-dimension schedule configuration
 and uses the CPU backend for every fold.
 The checked-in schedule catalogs match this revision.
