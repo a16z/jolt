@@ -20,6 +20,12 @@ pub struct CudaKernelContext {
     ordinal: usize,
     stream: Arc<CudaStream>,
     fr_identity_probe: CudaFunction,
+    pub(super) add: CudaFunction,
+    pub(super) sub: CudaFunction,
+    pub(super) mul: CudaFunction,
+    pub(super) mul_scalar: CudaFunction,
+    pub(super) add_scalar: CudaFunction,
+    pub(super) fma: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -33,6 +39,12 @@ impl CudaKernelContext {
             ordinal,
             stream,
             fr_identity_probe: module.load_function("fr_identity_probe")?,
+            add: module.load_function("add_kernel")?,
+            sub: module.load_function("sub_kernel")?,
+            mul: module.load_function("mul_kernel")?,
+            mul_scalar: module.load_function("mul_scalar_kernel")?,
+            add_scalar: module.load_function("add_scalar_kernel")?,
+            fma: module.load_function("fma_kernel")?,
         })
     }
 
@@ -59,6 +71,10 @@ impl CudaKernelContext {
         Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, len))
     }
 
+    pub(crate) const fn stream(&self) -> &Arc<CudaStream> {
+        &self.stream
+    }
+
     pub const fn ordinal(&self) -> usize {
         self.ordinal
     }
@@ -66,6 +82,21 @@ impl CudaKernelContext {
     pub fn memory_used(&self) -> Result<(usize, usize), CudaError> {
         let (free, total) = self.stream.context().mem_get_info()?;
         Ok((total.saturating_sub(free), total))
+    }
+
+    pub(crate) fn launch_config(count: u32) -> LaunchConfig {
+        LaunchConfig {
+            grid_dim: (count.div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        }
+    }
+
+    pub(crate) fn count_of(len: usize) -> Result<u32, CudaError> {
+        u32::try_from(len).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: len,
+        })
     }
 
     pub fn fr_identity(&self, input: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {

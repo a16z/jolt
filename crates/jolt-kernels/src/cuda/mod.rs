@@ -7,6 +7,8 @@
 //! The shared CUDA runtime owns process-wide device contexts and compiled
 //! modules. [`DeviceFrVec`] stores BN254 Montgomery limbs on its owning stream;
 //! [`CudaKernelContext::fr_identity`] copies those elements on the device.
+//! Elementwise field arithmetic uses CUDA kernels over that representation
+//! and synchronizes the stream before returning each output buffer.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

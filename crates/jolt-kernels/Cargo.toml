@@ -89,6 +89,7 @@ bincode.workspace = true
 jolt-host.workspace = true
 jolt-prover.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
+proptest.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 tracer = { workspace = true, features = ["test-utils", "std"] }
 common = { workspace = true, features = ["std"] }
