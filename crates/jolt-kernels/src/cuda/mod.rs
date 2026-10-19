@@ -27,6 +27,9 @@
 //! Gruen-weighted rounds cache the host's split-equality levels on device and
 //! return both endpoints and the leading coefficient to the shared host
 //! interpolation routines.
+//! Lazy one-hot selectors gather from hot indices and challenge-scaled address
+//! tables for both binding orders. CUDA materializes a dense table at the third
+//! bind (`T/8` entries); optimized's shared lazy-RA path normally waits until `T/16`.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

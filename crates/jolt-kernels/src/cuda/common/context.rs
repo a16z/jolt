@@ -48,6 +48,10 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     sopg_round: CudaFunction,
     #[cfg(test)]
+    ra_split_tables: CudaFunction,
+    #[cfg(test)]
+    ra_gather: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -87,6 +91,10 @@ impl CudaKernelContext {
             sop_round: module.load_function("sop_round_kernel")?,
             #[cfg(test)]
             sopg_round: module.load_function("sopg_round_kernel")?,
+            #[cfg(test)]
+            ra_split_tables: module.load_function("ra_split_tables_kernel")?,
+            #[cfg(test)]
+            ra_gather: module.load_function("ra_gather_kernel")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]
@@ -210,6 +218,16 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn sopg_round(&self) -> &CudaFunction {
         &self.sopg_round
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn ra_split_tables(&self) -> &CudaFunction {
+        &self.ra_split_tables
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn ra_gather(&self) -> &CudaFunction {
+        &self.ra_gather
     }
 
     #[cfg(test)]
