@@ -130,7 +130,10 @@ argument (the prover's coins are pseudorandom, not uniform).
   factors `2^{−2^i/Q}`. `n` is clamped to `[−256, 2]` in constant time.
   For `n + 1 ≤ 0`, `G` is shifted right by a barrel shifter of
   constant-time selects; for `n + 1 > 0` the result saturates at 1 when the
-  top `n + 1` bits of `G` are nonzero, so nothing wraps.
+  top `n + 1` bits of `G` are nonzero, so nothing wraps. The upper clamp is
+  exact only if `G ≥ 1/8` (so `n + 1 = 3` always saturates), that is,
+  `M ≤ 4`; `new` rejects larger `M`, and bounds `α, ε_bits ≤ 2^{16}` so
+  computing `M` cannot overflow.
 - `M` is computed in `new` from `(α, ε bits)`: `t = √(2·ε_bits·ln 2)`,
   `M = exp(t/α + 1/(2α²))`. `M^{−1}` is floored to 192 bits, which is exact
   for some `M' ≥ M`; Thm `wo:thm:joint-rejection` holds for any larger `M`.
@@ -147,8 +150,6 @@ branches on it. Its law depends on the state only within `ε/M` (H3 of Thm
 pub struct GaussianWidth { k: u64 }               // σ = k·σ_2, 1 ≤ k ≤ 2^31
 impl GaussianWidth {
     pub fn from_multiplier(k: u64) -> Result<Self, SampleError>;
-    pub fn at_least(sigma: f64) -> Result<Self, SampleError>;    // public parameter path only
-    pub fn multiplier(&self) -> u64;
     pub fn sigma(&self) -> f64;
 }
 pub struct GaussianSampler { /* k, CDT, exp table */ }
@@ -162,7 +163,8 @@ impl GaussianSampler {
 pub struct BlockParams { pub width: GaussianWidth, pub box_bound: u64, pub shift_bound: u64, pub len: usize }
 pub struct JointRejection { /* blocks, Q, exp table, M^{-1} */ }
 impl JointRejection {
-    /// Computes M = exp(t/α + 1/(2α²)), t = √(2·epsilon_bits·ln 2).
+    /// Computes M = exp(t/α + 1/(2α²)), t = √(2·epsilon_bits·ln 2);
+    /// rejects M > 4, where the saturation clamp of §3 would under-accept.
     pub fn new(blocks: Vec<BlockParams>, alpha: u32, epsilon_bits: u32) -> Result<Self, SampleError>;
     /// `z = y + v` and `v = cs` (exact centred-integer negacyclic product),
     /// block-major, lengths fixed by `blocks`.
@@ -174,14 +176,22 @@ pub enum SampleError { WidthOutOfRange, NoBlocks, BadRejectionParameters,
 ```
 
 Errors cover public shape, plus `ShiftOutOfRange` (the release check on
-`v`).
+`v`). `ShiftOutOfRange` can only fire on a malformed witness; the caller
+must treat it as fatal and abort the proof, never retry or record it in the
+transcript.
+
+**Feature gate.** The sampler and the rejection rule (`gaussian`,
+`rejection`, and their fixed-point helpers) are prover-only and sit behind
+jolt-crypto's `lattice` feature, which enables `subtle` and `num-bigint`.
+They stay out of the default Dory verifier closure; the rest of `sample`
+(the uniform mod-q sampler, a separate ticket) is not gated.
 
 **Dependencies.** `subtle` (2.6.1, already in `Cargo.lock` through the
 arkworks and sha3 stacks) for `Choice` and constant-time selects. The
 192-bit arithmetic is a three-limb hand-written type, so `crypto-bigint`
 (0.5.5, also already locked) is not needed. `num-bigint` (already an
-optional dependency of jolt-crypto) becomes unconditional for the public
-constant computation. `jolt-zk::whiteout` owns attempts,
+optional dependency of jolt-crypto under `bn254`) is also enabled by
+`lattice`, for the public constant computation. `jolt-zk::whiteout` owns attempts,
 nonces, and `T_att` (`whiteout-interfaces.md` §5).
 
 ## 5. Verification
@@ -191,27 +201,44 @@ nonces, and `T_att` (`whiteout-interfaces.md` §5).
   width `σ = s/√(2π) ≈ 2.2` in this note's convention), the discrete Gaussian's
   binned mass equals the normal CDF to within f64 precision, by the Poisson
   summation formula. That gives the test oracle.
-- **Chi-square tests.** Point-wise at small `k ∈ {1, 2, 3, 10}` against the
-  exact pmf. At the production `k_b`, 10⁸ samples in 200 equiprobable bins.
+- **Chi-square tests.** Point-wise at small `k ∈ {1, 2, 3, 10}` (10⁶
+  samples each) against the exact pmf. At the production `k_b`, 2·10⁶
+  samples in 42 bins (edges at multiples of `σ/4` over `±5σ`, plus tails),
+  sized to keep nextest under a few seconds.
 - **KS test.** Against the normal CDF.
 - **Moments.** Mean 0, variance `σ²`, kurtosis 3, each within 5 standard
   errors.
 - **Binary Gaussian.** The CDT against the exact `2^{−x²}/Σ`.
-- **Fixed-point kernels.** Frozen vectors from mpmath at 250 bits for
-  `2^{−N/k²}` and `2^{r/Q}`.
-- **Rejection rule.** On small instances (n ≤ 4, small σ), enumerate the
-  exact acceptance rate and `π_0(·|𝓑)`. Check the Monte-Carlo rate within
-  the theorem's bounds and chi-square the accepted `z`.
+- **Fixed-point kernels.** Frozen vectors `⌊2^{192}·x⌋` from mpmath at
+  400 bits for `2^{−2^i/k²}`, `2^{−2^i/Q}`, the CDT, and `M^{−1}`, compared
+  for exact equality.
+- **Rejection rule.** On a small two-block instance, the computed
+  acceptance probability matches the definition in f64 to `10^{−12}`
+  relative, including saturation, at `α = 16` and at `α = 10` (`M ≈ 3.99`,
+  just inside the clamp's `M ≤ 4`). Enumeration over the box gives the exact
+  acceptance rate and accepted law `min{π_v, π_0/M}`; 10⁶ Monte-Carlo trials
+  are compared with both (binomial score and chi-square).
 - **Timing tool.** An intentional diagnostic in
   `crates/jolt-crypto/examples/sample_dudect.rs`, with its command
   documented and not in CI (spec acceptance M5a). It runs Welch's t-test
-  (dudect) on two targets: one sampler trial, with a fixed RNG stream
-  against random streams, and `JointRejection::accept`, with fixed `(z,v)`
-  against random `(z,v)`. It passes if `|t| < 4.5` after 10⁷ measurements.
+  (dudect) on raw timings, 10⁷ measurements per test by default, repeated
+  over three seeds. Sampler: one `sample` call per measurement, split by
+  the secret output (`|z| < σ` vs `≥ σ`, CDT index `x = 0` vs `≥ 1`, sign,
+  and `z = 0` vs `≠ 0` at `k = 1`), which tests that the whole call,
+  retries included, is independent of the output. Rejection: `accept` on 64
+  coordinates, fixed vs random `(z, v)` interleaved at random, with every
+  input generated before its chunk is timed. It passes if `|t| < 4.5`.
 - **Code review must check:** no `if`, `match`, `?`, early return, or slice
   index on secret data; no `/`, `%`, or `f64` on secrets; masks behind
-  `subtle` or `black_box`; and the disassembly of `trial` and `accept`
-  (`cargo asm`) has no secret-dependent branches.
+  `subtle` or `black_box`; and the disassembly of `trial` and
+  `acceptance` (`cargo asm`) has no secret-dependent branches. Both are
+  `#[inline(never)]` so that review covers the code that runs; W4 must
+  re-run the assembly review on the production monomorphization.
+- **Platform assumption.** The argument assumes data-independent timing of
+  the integer multiply, add, and compare instructions. Neither arm64 DIT
+  nor Intel DOITM is enabled, and Apple guarantees data-independent timing
+  only under DIT. W4 must either enable DIT/DOITM around the sampler and
+  the rejection step or record this as an accepted platform assumption.
 
 ## 6. Performance
 
@@ -226,8 +253,10 @@ sampler's cost is therefore a thread-count assumption the paper should
 state.
 
 Measured (M5a implementation, `examples/sample_dudect.rs`, Apple M4 Max,
-one thread): 0.51 µs per sample at `k = 16,080,468`, including timer
-overhead.
+one thread, including timer overhead): 0.51 µs per sample at
+`k = 16,080,468` before `#[inline(never)]`, 0.53 µs after (best of three
+seeds; the machine was heavily loaded, and the other seeds read 0.69 and
+1.47 µs).
 
 ## 7. Open questions
 

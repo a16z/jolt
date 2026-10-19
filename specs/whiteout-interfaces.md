@@ -345,7 +345,11 @@ with a fresh mask y and a fresh attempt nonce, as the paper requires
 prover's RNG, never a counter, and the challenge oracle's input is
 (transcript state, commitment to V, n_i). Only the accepted attempt's nonce and
 commitment enter the transcript; a rejected attempt's nonce is never revealed.
-This is what the zero-knowledge proof's hybrid H2 relies on.
+This is what the zero-knowledge proof's hybrid H2 relies on. A
+`jolt_crypto::sample::SampleError::ShiftOutOfRange` from the rejection
+step can only come from a malformed witness: `whiteout::prove` treats it as
+fatal and aborts the proof, never retrying or recording it in the
+transcript.
 `blindfold` implements `ZkBackend` in M6c, and `whiteout` implements it in W4.
 
 ### Response proof (W4, W5)
