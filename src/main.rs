@@ -556,10 +556,9 @@ pub fn main() {
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
     let (output, proof, io_device) = prove_fib(50);
-    let is_valid = verify_fib(50, output, io_device.panic, proof);
+    verify_fib(50, output, io_device.panic, proof).expect("proof verification failed");
 
     info!("output: {output}");
-    info!("valid: {is_valid}");
 }
 "#;
 
@@ -614,10 +613,9 @@ pub fn main() {
 
     // n is private — verifier doesn't receive it
     let (output, proof, io_device) = prove_fib(PrivateInput::new(50));
-    let is_valid = verify_fib(output, io_device.panic, proof);
+    verify_fib(output, io_device.panic, proof).expect("proof verification failed");
 
     info!("output: {output}");
-    info!("valid: {is_valid}");
 }
 "#;
 

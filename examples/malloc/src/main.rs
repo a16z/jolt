@@ -15,8 +15,7 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove(12345);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify(12345, output, program_io.panic, proof);
+    verify(12345, output, program_io.panic, proof).expect("proof verification failed");
 
     println!("output: {output}");
-    println!("valid: {is_valid}");
 }

@@ -68,5 +68,4 @@ Wrap inputs *or* outputs that must stay observable during the span. In the above
 Trace length: 533
 Prover runtime: 0.487551667 s
 output: 2223173
-valid: true
 ~~~

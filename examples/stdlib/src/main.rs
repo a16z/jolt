@@ -19,9 +19,7 @@ pub fn main() {
     let (output, proof, program_io) = prove(81);
     info!("int to string output: {output:?}");
 
-    let is_valid = verify(81, output, program_io.panic, proof);
-    info!("int to string valid: {is_valid}");
-    assert!(is_valid, "int_to_string proof verification failed!");
+    verify(81, output, program_io.panic, proof).expect("int_to_string proof verification failed!");
 
     info!("=== String Concat ===");
     let mut program = guest::compile_string_concat(target_dir);
@@ -39,9 +37,7 @@ pub fn main() {
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     info!("string concat output: {output:?}");
 
-    let is_valid = verify(20, output, program_io.panic, proof);
-    info!("string concat valid: {is_valid}");
-    assert!(is_valid, "string_concat proof verification failed!");
+    verify(20, output, program_io.panic, proof).expect("string_concat proof verification failed!");
 
     info!("=== Parallel Sum of Squares (rayon) ===");
     let mut program = guest::compile_parallel_sum_of_squares(target_dir);
@@ -65,14 +61,10 @@ pub fn main() {
         n, output
     );
 
-    let is_valid = verify(n, output, program_io.panic, proof);
-    info!("parallel_sum_of_squares valid: {is_valid}");
+    verify(n, output, program_io.panic, proof)
+        .expect("parallel_sum_of_squares proof verification failed!");
 
     assert_eq!(output, 348551, "parallel sum of squares mismatch!");
-    assert!(
-        is_valid,
-        "parallel_sum_of_squares proof verification failed!"
-    );
 
     info!("=== All stdlib tests PASSED! ===");
 }
