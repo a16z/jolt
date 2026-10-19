@@ -1,6 +1,5 @@
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
-use core::convert::Infallible;
 use std::vec::IntoIter;
 
 use jolt_field::{Field, Fr, JoltField, One, Ring, F128, F64};
@@ -169,7 +168,7 @@ struct ScriptedRecorder<F> {
 
 impl<F: BinaryField> SumcheckRecorder<F> for ScriptedRecorder<F> {
     type Witness = ();
-    type Error = Infallible;
+    type Error = SumcheckError<F>;
 
     fn absorb_input_claims<C>(
         &mut self,

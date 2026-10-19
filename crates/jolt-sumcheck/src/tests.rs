@@ -8,11 +8,9 @@
     reason = "tests may panic on assertion failures and index fixture data"
 )]
 
-use core::convert::Infallible;
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
-
 use jolt_transcript::{
     Blake2b512, Channel, PrivateChannel, ProtocolId, ProverTranscript, TranscriptError,
     VerifierTranscript,
@@ -573,7 +571,7 @@ impl ProveRounds<F> for FusedDenseMember {
 /// recorder (publicly for the clear one), then one coefficient per member.
 fn batch_head<R, C>(recorder: &mut R, input_claims: &[F], channel: &mut C) -> Vec<F>
 where
-    R: SumcheckRecorder<F, Error = Infallible>,
+    R: SumcheckRecorder<F, Error = SumcheckError<F>>,
     C: Channel + PrivateChannel<Error = TranscriptError>,
 {
     recorder.absorb_input_claims(input_claims, channel).unwrap();

@@ -139,10 +139,10 @@ pub use r1cs::{
 };
 #[cfg(feature = "committed")]
 pub use recorder::CommittedSumcheckRecorder;
-pub use recorder::{ClearSumcheckRecorder, SingleRecorder, SumcheckRecorder};
+pub use recorder::{ClearSumcheckRecorder, SumcheckRecorder};
 pub use round_proof::{
-    padded_coefficients, receive_compressed_round, receive_full_round, send_compressed_round,
-    send_full_round,
+    padded_coefficients, receive_compressed_round, receive_full_round, receive_private_value,
+    send_compressed_round, send_full_round, send_private_value,
 };
 pub use single::{
     prove_single, verify_single, ProvedSingle, ProverRoundContext, SingleFormat, SingleInstance,

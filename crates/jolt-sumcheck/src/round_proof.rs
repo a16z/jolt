@@ -9,7 +9,9 @@
 
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_poly::{CompressedPoly, UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{PadSlots, PrivateChannel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{
+    PadSlots, PrivateChannel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript,
+};
 
 use crate::error::SumcheckError;
 
@@ -133,4 +135,38 @@ where
     let mut values = vec![F::zero(); count];
     let _: PadSlots = transcript.exchange_private_base(&mut values)?;
     Ok(values)
+}
+
+/// Sends one private field message, such as a claimed evaluation.
+///
+/// # Errors
+///
+/// As [`PrivateChannel::exchange_private_base`]; clear mode never fails.
+pub fn send_private_value<F, H>(
+    value: F,
+    transcript: &mut ProverTranscript<H>,
+) -> Result<PadSlots, TranscriptError>
+where
+    F: Field + CanonicalEncoding,
+    H: Sponge,
+{
+    transcript.exchange_private_base(&mut [value])
+}
+
+/// Receives one private field message and the pad slots it used.
+///
+/// # Errors
+///
+/// [`TranscriptError`] if the proof does not hold a canonical value.
+pub fn receive_private_value<F, H>(
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<(F, PadSlots), TranscriptError>
+where
+    F: Field + CanonicalEncoding,
+    H: Sponge,
+{
+    let mut value = [F::zero()];
+    let pads = transcript.exchange_private_base(&mut value)?;
+    let [value] = value;
+    Ok((value, pads))
 }

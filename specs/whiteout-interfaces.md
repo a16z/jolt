@@ -125,20 +125,18 @@ pub struct SingleInstance<E> {
 }
 
 /// Byte-for-byte Akita's `prove_sumcheck` / `prove_eq_factored_sumcheck` in clear
-/// mode: input claim bound through the recorder at the Claim site; per round,
-/// wire coefficients at the RoundBody site, then `context.challenge`. Sends no
-/// output claims.
-pub fn prove_single<F, E, K, C, R>(
+/// mode: input claim through `bind_derived` at the Claim site; per round,
+/// wire coefficients through `exchange_private` at the RoundBody site, then
+/// `context.challenge`. Sends no output claims.
+pub fn prove_single<F, E, K, C>(
     member: &mut dyn ProveRounds<E, K>,
     instance: &SingleInstance<E>,
     context: &mut C,
-    recorder: &mut R,
 ) -> Result<ProvedSingle<E>, SumcheckError<E, K>>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
-    C: ProverRoundContext<E, Error = K>,
-    R: SingleRecorder<F, E, Error = K>;
+    C: ProverRoundContext<E, Error = K>;
 
 /// Replays the rounds and returns (output claim, challenges) before any oracle
 /// check, as Akita's `verify_*_rounds` do; Akita exchanges late claims first.
@@ -154,12 +152,13 @@ blanket reflexive impl over all fields is not possible: a type with a second
 `ExtField` impl (`F192: ExtField<F64>`, `FpExt2<F, _>: ExtField<F>`) would
 make `T::DEGREE` ambiguous wherever it is named concretely.
 
-The recorder is a `SingleRecorder<F, E>` (`bind_input_claim`, `record_round`),
-not a `SumcheckRecorder<E>`: `SumcheckRecorder::absorb_round` draws the
-batched engine's `challenge_small`, which needs `E: CanonicalEncoding`, and
-extension fields implement only `CanonicalDecode`. `ClearSumcheckRecorder`
-implements both traits. M2a landed `prove_single` without the recorder; M3a
-added it, with the same bytes.
+`prove_single` takes no recorder. Like `verify_single`, it calls
+`bind_derived` and `exchange_private` on `context.transcript_mut()`, so the
+two roles are symmetric. Masked mode is supplied through the context's
+channel, which also assigns the verifier's pad slots (designed in M6b). A
+`SumcheckRecorder<E>` cannot serve here anyway: its `absorb_round` draws
+`challenge_small`, which needs `E: CanonicalEncoding`, and extension fields
+implement only `CanonicalDecode`.
 
 ## 2. Private messages (M3a)
 
@@ -177,7 +176,8 @@ pub struct PadSlots { /* start, len */ }
 /// returns the pad slots the prover used.
 pub trait PrivateChannel {
     type Error;
-    /// Exchanges `values` in place (filled from the proof on the verifier).
+    /// Exchanges `values` in place: the prover leaves them unchanged, the
+    /// verifier fills them from the proof.
     fn exchange_private<F, E>(&mut self, values: &mut [E]) -> Result<PadSlots, Self::Error>
     where F: Field + CanonicalEncoding, E: ExtField<F> + CanonicalDecode;
     /// Binds a claim the verifier can already derive. Clear: absorbed as a
@@ -196,16 +196,19 @@ The base forms exist because Jolt is generic over `F: JoltField` and
 `F: ExtField<F>` is not available generically: there is no blanket reflexive
 impl (see §1), and adding `ExtField<Self>` to `JoltField` would make
 `F192`'s `ExtField<F64>` API ambiguous at every concrete call. Jolt's
-batched recorder, uni-skip round and claimed evaluations use the base forms;
-`verify_single` and `SingleRecorder` use the extension forms.
+batched recorder, uni-skip round and claimed evaluations use the base forms,
+single claimed values through `jolt-sumcheck`'s `send_private_value` /
+`receive_private_value`, which return the `PadSlots`; `prove_single` and
+`verify_single` use the extension forms.
 
 Pads cover base-field coordinates, so an extension element takes `E::DEGREE`
 pads. `SumcheckRecorder` is built on this seam: input claims go through
 `bind_derived`, round coefficients and output claims through `exchange_private`.
 `SumcheckRecorder` and `PrivateChannel` carry an associated `Error`, so pad
 exhaustion has a channel in both. `absorb_input_claims` is fallible and takes
-any `PrivateChannel<Error = TranscriptError>`; the batched engine and the
-generated drivers require `Error = Infallible`.
+any `PrivateChannel<Error = TranscriptError>`. The clear and committed
+recorders use `Error = SumcheckError<F>`, which the batched engine and the
+generated drivers require.
 
 Messages that go through the seam:
 

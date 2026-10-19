@@ -21,8 +21,6 @@
 //!
 //! See `specs/prover-stage-drivers.md`.
 
-use core::convert::Infallible;
-
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use jolt_claims::SymbolicSumcheck;
@@ -79,7 +77,7 @@ pub trait StageProver<F: JoltField>: Sized {
     where
         B: ?Sized,
         for<'a> KernelContext<'a, F, B>: KernelSource<F, Self>,
-        Rec: SumcheckRecorder<F, Error = Infallible> + ClaimRecorder,
+        Rec: SumcheckRecorder<F, Error = SumcheckError<F>> + ClaimRecorder,
         H: Sponge;
 }
 
@@ -441,7 +439,7 @@ macro_rules! impl_stage_prover {
             where
                 B: ?Sized,
                 for<'a> ::jolt_kernels::KernelContext<'a, F, B>: $crate::driver::KernelSource<F, Self>,
-                Rec: ::jolt_sumcheck::SumcheckRecorder<F, Error = ::core::convert::Infallible>
+                Rec: ::jolt_sumcheck::SumcheckRecorder<F, Error = ::jolt_sumcheck::SumcheckError<F>>
                     + $crate::recorder::ClaimRecorder,
                 H: ::jolt_transcript::Sponge,
             {

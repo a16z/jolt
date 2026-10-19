@@ -32,6 +32,7 @@ use std::collections::BTreeMap;
 use jolt_claims::{MapCells, OutputClaims, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
+use jolt_sumcheck::receive_private_value;
 use jolt_transcript::{PadSlots, PrivateChannel, ProverTranscript, Sponge, VerifierTranscript};
 
 use crate::stages::relations::{ClaimRoute, ClaimRoutes, ComposedOpeningId, ConcreteSumcheck};
@@ -458,9 +459,7 @@ impl<F: JoltField> RamValCheckStagedOpenings<F> {
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Self, VerifierError> {
         points.try_map_cells(&mut |_, _point| {
-            let mut value = [F::zero()];
-            let _: PadSlots = transcript.exchange_private_base(&mut value)?;
-            let [value] = value;
+            let (value, _pads) = receive_private_value(transcript)?;
             Ok(value)
         })
     }

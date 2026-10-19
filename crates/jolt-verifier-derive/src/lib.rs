@@ -542,7 +542,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #krate::VerifierError,
             >
             where
-                __R: ::jolt_sumcheck::SumcheckRecorder<#f, Error = ::core::convert::Infallible>,
+                __R: ::jolt_sumcheck::SumcheckRecorder<#f, Error = ::jolt_sumcheck::SumcheckError<#f>>,
                 __C: ::jolt_transcript::Channel
                     + ::jolt_transcript::PrivateChannel<Error = ::jolt_transcript::TranscriptError>,
             {

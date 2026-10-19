@@ -24,8 +24,8 @@ pub trait PrivateChannel {
     /// Why an exchange failed: a rejected proof, or an exhausted pad schedule.
     type Error;
 
-    /// Exchanges `values` in place: the prover sends them, the verifier fills
-    /// them from the proof.
+    /// Exchanges `values` in place: the prover sends them and leaves `values`
+    /// unchanged; the verifier fills them from the proof.
     ///
     /// # Errors
     ///
