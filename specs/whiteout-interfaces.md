@@ -380,3 +380,12 @@ pub trait ResponseProver<F> {
 - **Cut point of `response_l2_sq`.** Whether the 16-byte L2 message falls before
   or after fold k. Before the cut, it needs a field encoding so it can be
   masked.
+- **Stage-3 setup-offloading claims.** M3b routes the stage-3 setup-product
+  claim and prefix evaluation through `exchange_private`. If they are derivable
+  from public setup data they belong on the public path, and masking them
+  wastes pad slots (I7). W3 settles this together with the cut point.
+- **Remaining unrouted fold messages.** The `NextWitnessInnerState` terminal
+  payload is still sent as is, and the intermediate-fold scalar openings
+  (levels ≥ 1) look derivable but are sent with `public_all`. Routing the latter
+  through `bind_derived` needs a slice form that keeps the transcript event log
+  unchanged. Both are decided in W3.
