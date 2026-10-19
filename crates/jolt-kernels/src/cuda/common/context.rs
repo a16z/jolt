@@ -37,6 +37,10 @@ pub struct CudaKernelContext {
     pub(super) scan_u32_block: CudaFunction,
     pub(super) scan_u32_add_offsets: CudaFunction,
     lt_reconstruct: CudaFunction,
+    #[cfg(test)]
+    hf_half_fold: CudaFunction,
+    #[cfg(test)]
+    hf_row_fold: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -67,6 +71,10 @@ impl CudaKernelContext {
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
             lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
+            #[cfg(test)]
+            hf_half_fold: module.load_function("hf_half_fold_kernel")?,
+            #[cfg(test)]
+            hf_row_fold: module.load_function("hf_row_fold_kernel")?,
         })
     }
 
@@ -151,6 +159,16 @@ impl CudaKernelContext {
 
     pub(crate) const fn lt_reconstruct(&self) -> &CudaFunction {
         &self.lt_reconstruct
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn hf_half_fold(&self) -> &CudaFunction {
+        &self.hf_half_fold
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn hf_row_fold(&self) -> &CudaFunction {
+        &self.hf_row_fold
     }
 
     pub fn fr_identity(&self, input: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {

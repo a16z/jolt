@@ -1,6 +1,8 @@
 pub mod context;
 pub mod device;
 pub mod error;
+#[cfg(test)]
+pub(crate) mod half_fold;
 pub(crate) mod lt_poly;
 pub mod primitives;
 #[cfg(test)]

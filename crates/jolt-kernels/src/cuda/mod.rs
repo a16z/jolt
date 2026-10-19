@@ -20,6 +20,8 @@
 //! sums; the host-input API transfers those sums and offsets between levels.
 //! [`DeviceLtPolynomial`] keeps its shift and split factors separate throughout
 //! binding; optimized stores the shift in its high table and later combines the factors.
+//! Weighted half-fold kernels promote packed integers when loading them.
+//! Contiguous rows use a block reduction; strided columns use one thread per output.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
