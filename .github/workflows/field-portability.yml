@@ -144,6 +144,10 @@ jobs:
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
         run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
+      - name: Run NEON NTT, ring and decomposition tests
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=native
+        run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas --cargo-quiet --lib -E 'test(/^ntt::/) | test(/^ring::/)'
 
   avx512:
     name: AVX-512 field kernels (emulated)
@@ -172,3 +176,9 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
           RUSTFLAGS: -D warnings -C target-feature=+avx2,+avx512f,+avx512dq
         run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-algebra --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
+      # The ignored tests assert that the AVX-512 and IFMA kernels are selected
+      # rather than skipped, so they run only where the emulator provides them.
+      - name: Run AVX-512 and IFMA NTT, ring and decomposition tests under emulation
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
+        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-algebra --no-default-features --features solinas --cargo-quiet --lib --run-ignored all -E 'test(/^ntt::avx::/) | test(/^ntt::ifma52::/) | test(/^ring::ifma52::/) | test(/^ring::cyclotomic::decomposition::/)'
