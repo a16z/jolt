@@ -1,5 +1,11 @@
 #define UNR_SLOTS 7
 
+__device__ __constant__ u64 UNR_MONT_2_64[4] = {
+    13026360628005025158ULL, 8110012406944207806ULL,
+    11528403486311440623ULL, 2403517766477359206ULL
+};
+
+
 __device__ __forceinline__ void unr_finalize(const u64 *folded, u64 *out) {
     u64 limbs[UNR_SLOTS + 1];
     u64 carry = 0;

@@ -15,6 +15,7 @@ const KERNEL_FILES: &[&str] = &[
     "dense_product.cu",
     "ra_poly.cu",
     "unreduced.cu",
+    "one_hot_fold.cu",
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {

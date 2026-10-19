@@ -3,11 +3,15 @@ pub mod context;
 pub(crate) mod dense_product;
 pub mod device;
 #[cfg(test)]
+pub(crate) mod device_columns;
+#[cfg(test)]
 pub(crate) mod devices;
 pub mod error;
 #[cfg(test)]
 pub(crate) mod half_fold;
 pub(crate) mod lt_poly;
+#[cfg(test)]
+pub(crate) mod one_hot_fold;
 #[cfg(test)]
 pub(crate) mod pack;
 pub mod primitives;

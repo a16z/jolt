@@ -35,6 +35,8 @@
 //! gather their final scalars onto one device to bind the remaining shard bits.
 //! Integer-weighted scatters accumulate unreduced products in split 32-bit
 //! lanes using atomic additions, then perform one field reduction per bucket.
+//! One-hot cycle folds use shared-memory buckets when the address domain fits
+//! and otherwise accumulate into global slots before field reduction.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
