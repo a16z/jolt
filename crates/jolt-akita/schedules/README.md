@@ -40,6 +40,13 @@ the application's proving backend. The catalog digest is bound into the transcri
 its chunk count and leading chunked fold count, including `w1r0`. Verification only admits selections from
 its installed trusted setup; a proof cannot install a catalog.
 
+Schedule catalogs are part of the verifier's trusted preprocessing. Before use,
+catalogs pass through Akita's validated constructor, including when reconstructed
+from serialized verifier preprocessing. Admission checks the expected configuration
+and chunk geometry and applies Akita's schedule audit. The proof carries a
+schedule-row digest, which the verifier resolves within its own validated catalog.
+Unknown rows and rows incompatible with the opening or verifier setup are rejected.
+
 `AkitaChunkProfile { chunks, levels }` selects runtime geometry, validated by
 Akita at admission. The packaged multi-chunk fixtures use `w8r2`: the root and first recursive fold are chunked. Applications may supply
 catalogs with other admitted chunk counts and leading chunked fold counts.

@@ -7,15 +7,17 @@
 use akita_config::{policy_of, CommitmentConfig};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout,
-    ScheduleLookupKey,
+    ScheduleLookupKey, SisTableKey,
 };
 use akita_schedules::ValidatedScheduleCatalog;
 use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK16Direct};
 use jolt_akita::{
-    AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
+    AkitaChunkProfile, AkitaOneHotScheduleArtifact, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaSetupParams, AkitaVerifierSetup,
 };
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Blake2bTranscript, Transcript};
+use serde_json::Value;
 use std::{fs, sync::Arc};
 
 #[expect(
@@ -69,6 +71,104 @@ fn plan_catalog(chunks: usize, levels: usize) -> Vec<u8> {
     .unwrap()
     .to_artifact_bytes()
     .unwrap()
+}
+
+fn one_hot_bundle(bytes: Vec<u8>, profile: AkitaChunkProfile) -> AkitaScheduleArtifacts {
+    AkitaScheduleArtifacts::new(
+        AkitaChunkProfile::default(),
+        Vec::new(),
+        Vec::new(),
+        vec![AkitaOneHotScheduleArtifact {
+            k: 16,
+            profile,
+            bytes,
+        }],
+    )
+    .unwrap()
+}
+
+#[test]
+fn catalog_admission_rejects_malformed_and_noncanonical_rows() {
+    let profile = AkitaChunkProfile::new(2, 3);
+    let bytes = plan_catalog(profile.chunks, profile.levels);
+    let _catalog = one_hot_bundle(bytes.clone(), profile)
+        .one_hot_catalog_for_profile(16, profile)
+        .unwrap();
+
+    let mut malformed: Value = serde_json::from_slice(&bytes).unwrap();
+    *malformed
+        .pointer_mut(
+            "/rows/0/schedule/root/params/groups/entries/0/profile/inner/digits/num_digits",
+        )
+        .unwrap() = serde_json::json!("invalid digit count");
+    let malformed = serde_json::to_vec(&malformed).unwrap();
+    let mut noncanonical = bytes;
+    noncanonical.push(b' ');
+    for (bytes, expected) in [
+        (malformed, "invalid schedule artifact row 0"),
+        (noncanonical, "not in canonical JSON form"),
+    ] {
+        let error = one_hot_bundle(bytes, profile)
+            .one_hot_catalog_for_profile(16, profile)
+            .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn catalog_admission_rejects_wrong_chunk_count_and_depth() {
+    let profile = AkitaChunkProfile::new(2, 3);
+    let bytes = plan_catalog(profile.chunks, profile.levels);
+    let _catalog = one_hot_bundle(bytes.clone(), profile)
+        .one_hot_catalog_for_profile(16, profile)
+        .unwrap();
+    for wrong in [AkitaChunkProfile::new(4, 3), AkitaChunkProfile::new(2, 4)] {
+        let error = one_hot_bundle(bytes.clone(), wrong)
+            .one_hot_catalog_for_profile(16, wrong)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("policy does not match the runtime config"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn catalog_admission_audits_declared_a_bound() {
+    let profile = AkitaChunkProfile::new(2, 3);
+    let bytes = plan_catalog(profile.chunks, profile.levels);
+    let _catalog = one_hot_bundle(bytes.clone(), profile)
+        .one_hot_catalog_for_profile(16, profile)
+        .unwrap();
+    let mut artifact: Value = serde_json::from_slice(&bytes).unwrap();
+    let key = artifact
+        .pointer_mut("/rows/0/schedule/root/params/groups/entries/0/profile/inner/matrix/security_route/Linf")
+        .unwrap();
+    let original: SisTableKey = serde_json::from_value(key.clone()).unwrap();
+    // Keep a canonical table key so rejection must reach the layout's norm audit.
+    let smaller = akita_params::sis::sis_table_key_for_linf_bound(
+        original.policy,
+        original.table_digest,
+        original.modulus_profile,
+        original.role,
+        original.ring_dimension,
+        1,
+    )
+    .unwrap();
+    assert!(smaller.coeff_linf_bound < original.coeff_linf_bound);
+    *key = serde_json::to_value(smaller).unwrap();
+    let error = one_hot_bundle(serde_json::to_vec(&artifact).unwrap(), profile)
+        .one_hot_catalog_for_profile(16, profile)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains(&format!(
+            "declared coefficient bound {} is below required bound",
+            smaller.coeff_linf_bound
+        )),
+        "{error}"
+    );
 }
 
 #[test]
@@ -200,6 +300,28 @@ fn dense_geometry_survives_verifier_transport() {
         &mut Blake2bTranscript::new(DOMAIN),
     )
     .unwrap();
+    let mut tampered = encoded.clone();
+    let catalog = tampered
+        .pointer_mut("/schedule_artifacts/dense/dense")
+        .unwrap()
+        .as_array_mut()
+        .unwrap();
+    // Keep transport valid while making the embedded catalog noncanonical.
+    catalog.push(serde_json::json!(b' '));
+    let tampered: AkitaVerifierSetup = serde_json::from_value(tampered).unwrap();
+    let error = AkitaScheme::verify(
+        &commitment,
+        &point,
+        evaluation,
+        &proof,
+        &tampered,
+        &mut Blake2bTranscript::new(DOMAIN),
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("not in canonical JSON form"),
+        "{error}"
+    );
     encoded["schedule_artifacts"]["dense"]["dense_profile"]["chunks"] = serde_json::json!(8);
     encoded["schedule_artifacts"]["dense"]["dense_profile"]["levels"] = serde_json::json!(2);
     let wrong: AkitaVerifierSetup = serde_json::from_value(encoded).unwrap();
