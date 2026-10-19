@@ -409,6 +409,63 @@ impl CudaKernelContext {
         self.stream().synchronize()?;
         Ok(output)
     }
+
+    pub fn exclusive_scan_u32(&self, values: &[u32]) -> Result<Vec<u32>, CudaError> {
+        if values.is_empty() {
+            return Ok(Vec::new());
+        }
+        let count = Self::count_of(values.len())?;
+        let blocks = count.div_ceil(BLOCK_SIZE);
+        let input = self.upload_u32_slice(values)?;
+        let mut output = self.alloc_u32(values.len())?;
+        let mut block_sums = self.alloc_u32(blocks as usize)?;
+        let mut builder = self.stream().launch_builder(&self.scan_u32_block);
+        let _ = builder.arg(&input);
+        let _ = builder.arg(&mut output);
+        let _ = builder.arg(&mut block_sums);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads only `input[i]` and writes only
+        // `out[i]`; both buffers hold `count` u32s. The block scan works in
+        // shared memory sized `BLOCK` u32s by the kernel's declaration, with
+        // `__syncthreads()` on both sides of every update, so the read of
+        // `scratch[tid - stride]` is separated from the write to `scratch[tid]`.
+        // Only the last thread of each block writes `block_sums[blockIdx.x]`,
+        // and `block_sums` holds exactly `blocks` u32s.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (BLOCK_SIZE, 1, 1),
+                shared_mem_bytes: 0,
+            })
+        }?;
+        self.stream().synchronize()?;
+
+        if blocks == 1 {
+            return self.download_u32(&output);
+        }
+
+        let sums = self.download_u32(&block_sums)?;
+        let offsets = self.exclusive_scan_u32(&sums)?;
+        let offsets = self.upload_u32_slice(&offsets)?;
+        let mut builder = self.stream().launch_builder(&self.scan_u32_add_offsets);
+        let _ = builder.arg(&mut output);
+        let _ = builder.arg(&offsets);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads `block_offsets[blockIdx.x]` (a
+        // `blocks`-element buffer, indexed by its own block id) and
+        // read-modify-writes only `out[i]` of `count` u32s — one thread per
+        // element, so the update is unsynchronized but never contended. Threads
+        // with `i >= count` return first.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (BLOCK_SIZE, 1, 1),
+                shared_mem_bytes: 0,
+            })
+        }?;
+        self.stream().synchronize()?;
+        self.download_u32(&output)
+    }
 }
 
 #[cfg(test)]
@@ -693,6 +750,21 @@ mod tests {
                 .expect("download");
             prop_assert_eq!(got, expected);
         }
+
+        #[test]
+        fn exclusive_scan_u32_matches_cpu(values in vec(0u32..1_000_000, 1..5000)) {
+            let Some(context) = device() else { return Ok(()); };
+            let mut expected = Vec::with_capacity(values.len());
+            let mut running = 0u32;
+            for &value in &values {
+                expected.push(running);
+                running += value;
+            }
+            let got = context
+                .exclusive_scan_u32(&values)
+                .expect("device exclusive_scan_u32");
+            prop_assert_eq!(got, expected);
+        }
     }
 
     fn boundary_values() -> Vec<Fr> {
@@ -787,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn reduction_matches_cpu_across_block_boundaries() {
+    fn reduction_and_scan_match_cpu_across_block_boundaries() {
         let Some(context) = device() else {
             return;
         };
@@ -800,6 +872,21 @@ mod tests {
                 context.sum(&upload(context, &values)).expect("sum"),
                 expected,
                 "sum diverged at len {len}",
+            );
+
+            let counts: Vec<u32> = (0..len as u32).map(|i| i % 7).collect();
+            let mut expected_scan = Vec::with_capacity(len);
+            let mut running = 0u32;
+            for &count in &counts {
+                expected_scan.push(running);
+                running += count;
+            }
+            assert_eq!(
+                context
+                    .exclusive_scan_u32(&counts)
+                    .expect("exclusive_scan_u32"),
+                expected_scan,
+                "scan diverged at len {len}",
             );
         }
     }

@@ -34,6 +34,8 @@ pub struct CudaKernelContext {
     pub(super) twos_i128_to_mont: CudaFunction,
     pub(super) eq_double: CudaFunction,
     pub(super) lt_double: CudaFunction,
+    pub(super) scan_u32_block: CudaFunction,
+    pub(super) scan_u32_add_offsets: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -61,6 +63,8 @@ impl CudaKernelContext {
             twos_i128_to_mont: module.load_function("twos_i128_to_mont_kernel")?,
             eq_double: module.load_function("eq_double_kernel")?,
             lt_double: module.load_function("lt_double_kernel")?,
+            scan_u32_block: module.load_function("scan_u32_block_kernel")?,
+            scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
         })
     }
 
@@ -88,6 +92,12 @@ impl CudaKernelContext {
         })
     }
 
+    pub(crate) fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
     pub(crate) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
@@ -97,6 +107,16 @@ impl CudaKernelContext {
     pub fn alloc(&self, len: usize) -> Result<DeviceFrVec, CudaError> {
         let buffer = self.stream.alloc_zeros::<u64>(len * LIMBS)?;
         Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, len))
+    }
+
+    pub(crate) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u32>(len)?)
+    }
+
+    pub(crate) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
     }
 
     pub(crate) const fn stream(&self) -> &Arc<CudaStream> {

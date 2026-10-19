@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const KERNEL_FILES: &[&str] = &["prelude.cu", "probe.cu", "arith.cu", "tables.cu"];
+const KERNEL_FILES: &[&str] = &["prelude.cu", "probe.cu", "arith.cu", "tables.cu", "scan.cu"];
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");

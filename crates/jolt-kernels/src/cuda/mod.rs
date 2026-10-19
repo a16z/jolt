@@ -16,6 +16,8 @@
 //! Integer inputs upload as compact limbs and convert to Montgomery form on the
 //! device. Host `i128` inputs use separate signs and magnitudes; device `i128`
 //! inputs use two's-complement limbs.
+//! `u32` prefix scans combine per-block scans with recursively scanned block
+//! sums; the host-input API transfers those sums and offsets between levels.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
