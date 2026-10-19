@@ -202,30 +202,32 @@ implementer's choice, as long as every row holds.
 | Requirement | Jolt today | Akita today |
 |---|---|---|
 | Base field / extension split | single `F` | `F: CanonicalEncoding`, `E: ExtField<F>` |
-| Round format (which coefficient is omitted) | standard (omit c1); uni-skip (omit c0, weighted by domain size) | standard; eq-factored (omit q0, `OmittedConstantPoly`) |
+| Round format (which coefficient is omitted) | standard (omit c1); uni-skip (all coefficients sent, check weighted by domain power sums) | standard; eq-factored (omit q0, `OmittedConstantPoly`, normalized running claim) |
 | Challenge policy per round | `challenge_small` | full extension challenge, optional grind (`grinded_ext_challenge`) |
 | Site tagging | none | `sumcheck_site(invocation, round, role)` |
 | Fallible prover | `ProveRounds::prove_round` / `finish_rounds` return `Result<_, SumcheckError<F>>` | two traits: fallible `SumcheckKernel` (`AkitaError`), and infallible `SumcheckInstanceProver` / `EqFactoredSumcheckInstanceProver` adapted by wrappers |
-| Prover self-check `s(0)+s(1) = claim` before send | no | yes |
+| Prover self-check `s(0)+s(1) = claim` before send | yes (`prove_batch`, uni-skip) | yes |
 
 Design decisions:
 
-- A `RoundFormat` enum owns the rule for which coefficient is omitted and how the
-  verifier recovers it: `Standard`, `EqFactored { tau }`, `UniSkip { domain }`.
-  The verifier and the masking recorder (§7) both consume this one definition,
-  because masking must send exactly the coefficients the clear proof sends.
-- A `ChallengePolicy` is supplied per sumcheck instance and receives the site and
-  round index. Policies: `Small` (Jolt's default), `Extension`, and
-  `GrindedExtension { bits }`. A grind is computed from the public transcript
-  only, so masking does not interact with it. Each policy reproduces the
-  challenge bytes of the driver it replaces exactly: `GrindedExtension` matches
-  Akita's `grinded_ext_challenge`. This is required for I3.
-- Every round message and challenge carries a typed `SumcheckSite`
-  (`invocation`, `round`, `role`) through `Channel::site`.
+- The batched engine keeps its API and bytes. A single-instance driver
+  (`prove_single` / `verify_single`) reproduces Akita's unbatched drivers byte
+  for byte, and Akita moves onto it.
+- `SumcheckDomain` stays the one owner of round-check weights. The eq-factored
+  round becomes a third implementation next to `BooleanHypercube` and
+  `CenteredIntegerDomain`, consumed by the verifier and the masking layer (§7).
+  Eq-factored running claims are normalized (q(r), not eq(τ, r) · q(r)), as in
+  Akita today.
+- Challenges and sites come from a round context that owns the transcript,
+  matching Akita's grinding context. Akita's grinding plan stays in Akita, and
+  its context must reproduce `grinded_ext_challenge`'s bytes exactly (I3).
+- Exact signatures are in `specs/whiteout-interfaces.md` §1.
 - **The prover is fallible end to end.** There is one prover trait, and every
   method that does work returns `Result`: computing the round polynomial,
   binding a challenge, and finishing. Akita's infallible traits and their
-  wrappers are deleted, and no infallible variant exists. The shape (round
+  wrappers are deleted, and no infallible variant exists. The kernel error type
+  appears only on the single-instance driver; the batched engine keeps
+  `K = Infallible`. The shape (round
   count, degree bound, input claim) is a value fixed when the instance is
   built, so its getters cannot fail. The motivation is liveness: a prover
   serving requests must report a bad input or a kernel bug as an error, not
@@ -258,18 +260,29 @@ tests that use it switch to the reference tier.
 ### 4. Private-message seam
 
 Masking covers more than sumcheck rounds: Jolt's claimed evaluations and Akita's
-partial-evaluation messages are witness-dependent too. `jolt-transcript` gains a
-seam that separates *private* field messages, which depend on the witness, from
-public ones. A public message (a commitment, a nonce, a setup-offloading claim)
-goes straight to the channel. A private message goes to a `MessageRecorder`,
-which in clear mode sends it unchanged. `SumcheckRecorder` is built on the same
-seam. The seam must sit in a crate Akita already depends on, which is why it goes
-in `jolt-transcript` and not `jolt-zk`. Jolt's `jolt-prover/src/recorder.rs`
-`ClaimRecorder` becomes one implementation.
+partial-evaluation messages are witness-dependent too. `jolt-transcript` gains
+one role-generic seam, `PrivateChannel`, for private field messages, which
+depend on the witness:
+
+- **Prover:** sends values, or value + pad in masked mode.
+- **Verifier:** receives them and returns the pad slots the prover used, so both
+  sides index pads identically.
+- **Derived claims:** a claim the verifier can recompute is bound publicly in
+  clear mode and not at all in masked mode, since earlier masked slots already
+  bind it.
+
+Public messages (commitments, nonces, setup-offloading claims) go straight to
+the channel. `SumcheckRecorder` is built on the seam. The seam must sit in a
+crate Akita already depends on, which is why it goes in `jolt-transcript` and not
+`jolt-zk`. `specs/whiteout-interfaces.md` §2 lists which Jolt and Akita messages
+go through it.
 
 ### 5. Commitment traits
 
-`jolt-openings` splits the current `ZkOpeningScheme` into two capabilities:
+`jolt-openings` splits the current `ZkOpeningScheme` into two capabilities. The
+split lands in W6, when Akita first commits with randomness, so both halves have
+a caller. M4 only deletes `jolt-akita`'s placeholder `ZkOpeningScheme` and
+`ZkBatchOpeningScheme` impls, which return a transparent opening or an error.
 
 - `HidingCommitment`: commit with a blind. The opening proof need not be zero
   knowledge.
@@ -309,7 +322,8 @@ natively. This deletes `jolt-akita/src/{scheme.rs (adapter parts), adapters.rs
   accepts an external permutation, the transcript may use `jolt-crypto`'s
   instead, and both are supported. The single-state permutation inside
   spongefish is a third-party dependency, so I2 does not count it as a copy.
-- `commitment`: `VectorCommitment` takes an associated `Blind` type, replacing
+- `commitment` (lands in W4 with the lattice pad commitment, its first
+  non-scalar implementor): `VectorCommitment` takes an associated `Blind` type, replacing
   today's scalar `blinding: &F`, so one trait covers Pedersen (a scalar blind)
   and Ajtai (a vector of randomness digits drawn as in `lattice`). `jolt-zk`'s
   pad commitment is a `VectorCommitment` with a hiding blind, so the masking
@@ -320,8 +334,8 @@ natively. This deletes `jolt-akita/src/{scheme.rs (adapter parts), adapters.rs
 `jolt-blindfold` is renamed to `jolt-zk` and split into three modules.
 
 - `masking` (shared front end): the pad schedule (pads indexed in schedule order,
-  committed before the first challenge), the masking `MessageRecorder` and
-  `SumcheckRecorder` (send `m + p` for every coefficient the `RoundFormat`
+  committed before the first challenge), the masking `PrivateChannel` and
+  `SumcheckRecorder` (send `m + p` for every coefficient the clear proof
   sends), and the residual relation: field-level affine rows and product rows
   over the pads and the residual witness, plus the back-end trait that
   `blindfold` and `whiteout` implement. The PCS supplies a cut point and its
@@ -457,9 +471,9 @@ are Whiteout work.
 | M2a | `jolt-sumcheck`: fallible prover with a kernel error type, release self-check, shape checks; round formats, challenge policies, sites, base/extension split. Additive. | jolt | P0 |
 | M2b | Port Akita's driver onto `jolt-sumcheck`; Akita's kernels implement the prover trait; delete `akita-sumcheck`'s driver and test-only proof types | Akita `main` | P0 |
 | M2c | Delete Jolt's superseded sumcheck call paths | jolt | P0 |
-| M3a | `jolt-transcript`: private-message seam; `ClaimRecorder` and `SumcheckRecorder` built on it | jolt | P0 |
+| M3a | `jolt-transcript`: role-generic private-message seam (`PrivateChannel`); `SumcheckRecorder` built on it; Jolt's claimed evaluations routed through it | jolt | P0 |
 | M3b | Route Akita's partial-evaluation messages through the seam | Akita `main` | P0 |
-| M4 | `jolt-openings`: split `HidingCommitment` / `ZkOpening`; `jolt-crypto`: `VectorCommitment::Blind` | jolt | P0 |
+| M4 | Delete `jolt-akita`'s placeholder `ZkOpeningScheme` / `ZkBatchOpeningScheme` impls | jolt | P0 |
 | M5a | `jolt-crypto::sample`: constant-time discrete Gaussian and rejection rule | jolt | P0 |
 | M5b | Copy Akita's sparse challenges, operator-norm rejection, Ajtai commitment, and matrix derivation into `jolt-crypto`, unchanged | jolt | P0 |
 | M5c | Akita switches to `jolt-crypto`; delete `akita-challenges` and the generic Ajtai code | Akita `main` | P0 |
@@ -471,9 +485,9 @@ are Whiteout work.
 | W1 | Akita: outer hiding randomness per slice, carried into the next fold's witness | Akita `dev` | P0 |
 | W2 | Akita: one-shot fold responses in ZK mode; overflow is an abort, not a retry | Akita `dev` | P0 |
 | W3 | Akita fold verifier implements `ResidualRows`; masked cut point at fold k | Akita `dev` | P0 |
-| W4 | `jolt-zk::whiteout`: Σ-protocol with Gaussian mask and joint rejection, response statement, `ResponseProver` trait | jolt | P0 |
+| W4 | `jolt-zk::whiteout`: Σ-protocol with Gaussian mask and joint rejection, response statement, `ResponseProver` trait; `VectorCommitment::Blind` and the lattice pad commitment | jolt | P0 |
 | W5 | Akita implements `ResponseProver` (digit ranges, ring-quadratic reduction, setup offloading); the last PR turns ZK mode on and adds hidden-vs-transparent tests | Akita `dev` | P0 |
-| W6 | Jolt + Akita ZK integration: pin Akita `dev`; `jolt-akita` implements `HidingCommitment`; the `akita` and `zk` features become compatible; end-to-end prover and verifier | jolt | P0 |
+| W6 | Jolt + Akita ZK integration: pin Akita `dev`; split `HidingCommitment` / `ZkOpening`, and `jolt-akita` implements `HidingCommitment`; the `akita` and `zk` features become compatible; end-to-end prover and verifier | jolt | P0 |
 | M7 | eq / multilinear evaluation into `jolt-poly` with typed bit order | both | P1 |
 | M8 | `akita-pcs` implements `jolt-openings` natively; delete the `jolt-akita` adapter; `jolt-akita`'s configs become an `akita-config` preset | both | P1 |
 | M9 | Delete `akita-serialization` and `ark-serialize` | both | P2 |
@@ -543,7 +557,7 @@ pointing at sibling checkouts replaces the pins without committing them.
 PRs:
 
 - Every commit belongs to exactly one ticket and one repo, and its subject
-  starts with the ticket ID: `[M2a] jolt-sumcheck: add RoundFormat`. Pin bumps
+  starts with the ticket ID: `[M2a] jolt-sumcheck: add the eq-factored round domain`. Pin bumps
   are tagged `[pin]` and upstream syncs are merge commits; neither is ever
   extracted.
 - A change to a ticket that already has commits is a new commit tagged with that
