@@ -71,6 +71,9 @@
 //! to the host, with `1` meaning negative rather than the CPU's positive flag.
 //! G2 Frobenius expansion retains Jacobian coordinates and emits four point
 //! spans matching those components, using coefficients derived from Arkworks.
+//! Resident G2 MSMs build signed buckets, merge weighted partial sums and fold
+//! windows on device. They decline shapes beyond the batch budget or segment
+//! estimate; their output stays in the device buffer.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
