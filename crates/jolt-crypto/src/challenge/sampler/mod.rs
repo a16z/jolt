@@ -14,7 +14,7 @@ mod signed_sparse;
 mod xof;
 
 #[cfg(feature = "sample")]
-pub use constant_time::sample_challenge_ct;
+pub use constant_time::{sample_challenge_ct, sample_challenge_ct_counted};
 use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::{IndexedXofPrefix, XofCursor};

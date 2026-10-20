@@ -43,11 +43,13 @@ const WEIGHT: usize = D64_L2_OP_NORM_PM1_COUNT + D64_L2_OP_NORM_PM2_COUNT;
 /// candidates fails the norm filter; that happens with probability below
 /// `2^{−1500}`.
 pub fn sample_challenge_ct(seed: &[u8]) -> Result<SparseChallenge, CryptoError> {
-    sample_counted(seed).map(|(challenge, _)| challenge)
+    sample_challenge_ct_counted(seed).map(|(challenge, _)| challenge)
 }
 
-/// [`sample_challenge_ct`] and the number of candidates it drew.
-pub(super) fn sample_counted(seed: &[u8]) -> Result<(SparseChallenge, usize), CryptoError> {
+/// [`sample_challenge_ct`] and the number of candidates it drew. The count
+/// is independent of the challenge returned; timing diagnostics condition on
+/// it.
+pub fn sample_challenge_ct_counted(seed: &[u8]) -> Result<(SparseChallenge, usize), CryptoError> {
     let config = D64_SELECTIVE_L2_CHALLENGE_CONFIG;
     let threshold = OperatorNormRejection::D64_SELECTIVE_L2.threshold;
     let table = D64_SELECTIVE_L2_OP_NORM_TABLE
@@ -136,7 +138,7 @@ mod tests {
                 Some(OperatorNormRejection::D64_SELECTIVE_L2),
             )
             .unwrap();
-            let (actual, attempts) = sample_counted(&seed).unwrap();
+            let (actual, attempts) = sample_challenge_ct_counted(&seed).unwrap();
             assert_eq!([actual], expected.as_slice(), "seed {index}");
             rejected += usize::from(attempts > 1);
         }
