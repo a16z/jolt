@@ -96,6 +96,9 @@
 //! then fold the original field columns on device to build the suffix phase.
 //! Equality and shifted-equality weights share this engine; final column claims
 //! are read from the fully bound suffix tables.
+//! Windowed prefix/suffix rounds fold each resident window on its owning GPU.
+//! Prefix accumulators are summed on the host; suffix folds are concatenated
+//! in window order and uploaded to the device running the round loop.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
