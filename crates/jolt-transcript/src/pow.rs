@@ -22,9 +22,7 @@
 #[cfg(feature = "prover-grinding")]
 use spongefish::DuplexSpongeInterface;
 
-/// The largest supported difficulty. The nonce space, all of `u32` at this
-/// difficulty, still holds `2^7` times the expected number of trials.
-pub const MAX_POW_BITS: u32 = 25;
+use crate::MAX_POW_BITS;
 
 /// Evaluates the transcript on a candidate prover message without sending it.
 ///

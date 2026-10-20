@@ -53,6 +53,7 @@ getrandom_v04 = { workspace = true, features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+num-bigint = { workspace = true }
 
 [[bench]]
 name = "transcript_ops"

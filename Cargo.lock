@@ -3899,6 +3899,7 @@ dependencies = [
  "getrandom 0.4.3",
  "jolt-field",
  "light-poseidon",
+ "num-bigint 0.4.6",
  "rayon",
  "spongefish 0.8.0",
 ]
