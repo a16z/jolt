@@ -22,15 +22,16 @@ use crate::{config::JoltProtocolConfig, jolt_protocol_id, num, VerifierError, JO
 /// [`sites`](crate::sites) label:
 ///
 /// 1. [`ProofHeader`], then [`ProofCommitments`].
-/// 2. Stages 1–7: per batch, any uni-skip round, the rounds, then the output
+/// 2. ZK proofs only: the pad commitment ([`PADS`](crate::sites::PADS)).
+/// 3. Stages 1–7: per batch, any uni-skip round, the rounds, then the output
 ///    claims in the shape of the verifier-derived output points. A clear proof
-///    sends the generated `wire_claim_values`; a committed proof sends row
-///    commitments over the generated `committed_claim_layout`. A clear stage 4
-///    sends its
+///    sends the generated `wire_claim_values`; a ZK proof sends every round
+///    coefficient and output claim masked by the next pads. Stage 4 sends its
 ///    [`RamValCheckStagedOpenings`](crate::stages::stage4::ram_val_check::RamValCheckStagedOpenings)
-///    before its batch.
-/// 3. Stage 8: the joint opening.
-/// 4. BlindFold, in committed proofs only.
+///    before its batch, clear or masked.
+/// 4. Stage 8: the joint opening (hiding in a ZK proof).
+/// 5. ZK proofs only ([`BLINDFOLD`](crate::sites::BLINDFOLD)): the masked
+///    auxiliary block, then BlindFold's proof of the residual relation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltProof {
     pub protocol: JoltProtocolConfig,

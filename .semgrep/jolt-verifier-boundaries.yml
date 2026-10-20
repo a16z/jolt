@@ -127,7 +127,7 @@ rules:
         - crates/jolt-sumcheck/**
         - crates/jolt-zk/**
         - crates/jolt-verifier/**
-    pattern-regex: '\b(CommittedSumcheckCheck|BatchedCommittedSumcheckCheck|verify_committed\s*\()'
+    pattern-regex: '\b(CommittedSumcheckCheck|BatchedCommittedSumcheckCheck)\b'
 
   - id: jolt-claims-no-vm-public-io-computation
     languages: [rust]
