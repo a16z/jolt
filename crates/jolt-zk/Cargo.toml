@@ -9,12 +9,14 @@ description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 workspace = true
 
 [features]
-# Whiteout's verifier-side building blocks (the constant-term lift). Off by
+# Whiteout's verifier-side building blocks (the constant-term lift, the
+# Σ-protocol's segment table and parameters). Off by
 # default so the Dory verifier never compiles the lattice ring (I6).
-whiteout = ["jolt-field/solinas"]
-# Whiteout's prover-only pieces (the zero-constant-term mask sampler), kept out
+whiteout = ["jolt-crypto/lattice", "jolt-field/solinas"]
+# Whiteout's prover-only pieces (the zero-constant-term mask sampler, the
+# witness alphabet check, the rejection rule), kept out
 # of every verifier build.
-whiteout-prover = ["whiteout"]
+whiteout-prover = ["jolt-crypto/sample", "whiteout"]
 
 [dependencies]
 jolt-claims.workspace = true
@@ -45,4 +47,8 @@ required-features = ["whiteout"]
 
 [[test]]
 name = "whiteout_sample"
+required-features = ["whiteout-prover"]
+
+[[test]]
+name = "whiteout_params"
 required-features = ["whiteout-prover"]
