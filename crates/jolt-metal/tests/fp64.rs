@@ -1,4 +1,4 @@
-//! Conformance of `jolt::Fp64<C>` with `jolt_field::solinas::Fp64<P>`.
+//! Conformance of `jolt::Fp64<C>` with `jolt_algebra::solinas::Fp64<P>`.
 //!
 //! Every MSL operation runs through a generic test kernel and must match the
 //! CPU result byte for byte, on fixed edge vectors, on inputs constructed to
@@ -23,7 +23,7 @@ mod ops;
 mod support;
 
 mod gpu {
-    use jolt_field::solinas::{Fp64, Prime64Offset59};
+    use jolt_algebra::solinas::{Fp64, Prime64Offset59};
     use jolt_metal::ErrorClass;
 
     use super::field::{edges, element, modulus, random_elements, TestField};
@@ -127,13 +127,13 @@ mod gpu {
     }
 
     #[test]
-    fn fp64_59_matches_jolt_field() {
-        conformance::<Prime64Offset59>("fp64_59_matches_jolt_field", 0xf064_003b);
+    fn fp64_59_matches_jolt_algebra() {
+        conformance::<Prime64Offset59>("fp64_59_matches_jolt_algebra", 0xf064_003b);
     }
 
     #[test]
-    fn fp64_max_offset_matches_jolt_field() {
-        conformance::<MaxOffset>("fp64_max_offset_matches_jolt_field", 0xf064_ffff);
+    fn fp64_max_offset_matches_jolt_algebra() {
+        conformance::<MaxOffset>("fp64_max_offset_matches_jolt_algebra", 0xf064_ffff);
     }
 
     #[test]

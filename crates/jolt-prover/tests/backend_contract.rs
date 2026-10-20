@@ -20,12 +20,12 @@ mod support;
 mod tests {
     use crate::support::{self, GuestCase};
     use common::jolt_device::JoltDevice;
+    use jolt_algebra::Fr;
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial,
     };
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_kernels::{
         CommitWitness, CommitmentGrid, KernelContext, KernelError, ProofSession, WitnessCommitment,
     };

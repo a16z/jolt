@@ -14,7 +14,7 @@ use akita_params::{
 };
 use akita_pcs::AkitaError;
 use akita_schedules::ResolvedScheduleRow;
-use jolt_field::Zero;
+use jolt_algebra::Zero;
 use jolt_openings::OpeningsError;
 
 use crate::adapters::{
@@ -159,7 +159,7 @@ mod tests {
     use crate::configs::CatalogChunking;
     use akita_config::TrustedScheduleCatalog;
     use akita_params::ScheduleLookupKey;
-    use jolt_field::Ring;
+    use jolt_algebra::Ring;
 
     use crate::{
         adapters::{AkitaBackendFlavor, AkitaConfig},

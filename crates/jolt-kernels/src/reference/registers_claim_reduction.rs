@@ -10,11 +10,11 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::registers::{
     rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersClaimReductionPublic};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
 use jolt_witness::JoltWitnessPlane;

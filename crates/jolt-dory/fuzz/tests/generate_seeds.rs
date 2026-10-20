@@ -14,7 +14,7 @@ use std::fs;
 use std::path::Path;
 
 use jolt_dory::{DoryCommitment, DoryScheme};
-use jolt_field::{CanonicalBytes, Fr, Ring};
+use jolt_algebra::{CanonicalBytes, Fr, Ring};
 use jolt_openings::{CommitmentScheme, ZkOpeningScheme};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript};

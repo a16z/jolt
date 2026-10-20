@@ -8,7 +8,7 @@ use crate::protocols::field_inline::FieldInlineOpeningId;
 use crate::protocols::jolt::relations::spartan as base;
 use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
 use crate::{Expr, InputClaims, MapCells, MissingOpeningValue, OutputClaims};
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
 

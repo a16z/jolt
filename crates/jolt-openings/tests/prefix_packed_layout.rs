@@ -1,6 +1,6 @@
 #![expect(clippy::unwrap_used, reason = "tests exercise successful layouts")]
 
-use jolt_field::{Fr, Ring};
+use jolt_algebra::{Fr, Ring};
 use jolt_openings::{OpeningsError, PrefixPackedClaims, PrefixPackedLayout};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript};

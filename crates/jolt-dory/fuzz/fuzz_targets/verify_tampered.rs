@@ -20,7 +20,7 @@ use dory::backends::arkworks::{ArkG1, ArkG2, ArkGT};
 use dory::primitives::arithmetic::Group;
 use dory::primitives::{DoryDeserialize, DorySerialize};
 use jolt_dory::{DoryCommitment, DoryScheme, DoryVerifierSetup};
-use jolt_field::{Field, Fr};
+use jolt_algebra::{Field, Fr};
 use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, VerifierTranscript};

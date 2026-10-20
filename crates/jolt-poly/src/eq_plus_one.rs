@@ -9,7 +9,7 @@
 //!
 //! Both `x` and `y` are in **big-endian** bit ordering (`point[0]` = MSB).
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 use crate::EqPolynomial;
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -168,7 +168,7 @@ impl<F: JoltField> EqPlusOnePrefixSuffix<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Field, Fr, Ring};
+    use jolt_algebra::{Field, Fr, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

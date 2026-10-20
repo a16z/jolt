@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::{JoltField, Ring};
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -164,7 +164,7 @@ pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     pub stage5_gamma: F,
 }
 
-impl<F: jolt_field::JoltField> BytecodeReadRafAddressPhaseChallenges<F> {
+impl<F: JoltField> BytecodeReadRafAddressPhaseChallenges<F> {
     /// Expand the five drawn per-stage scalars into the gamma-power vectors the
     /// bytecode folds consume (`[1, γ, γ², …]`, the powers of each stage's
     /// single drawn scalar), sized
@@ -232,7 +232,7 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
     use jolt_riscv::CIRCUIT_FLAGS;
 
     /// Pins the circuit-flag coverage of the input claims struct: every

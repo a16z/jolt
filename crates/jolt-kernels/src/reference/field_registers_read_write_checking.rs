@@ -3,12 +3,12 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, ReferenceBackend,
     SumcheckKernel,
 };
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::geometry::registers::read_write_checking_output_openings;
 use jolt_claims::protocols::field_inline::{FieldInlineDerivedId, FieldInlineOpeningId};
 use jolt_claims::protocols::field_inline::{
     FieldInlinePolynomialId, FieldRegistersReadWritePublic,
 };
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
 use jolt_witness::{JoltWitnessPlane, WitnessError};

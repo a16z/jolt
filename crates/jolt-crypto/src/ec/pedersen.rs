@@ -1,4 +1,4 @@
-use jolt_field::Fr;
+use jolt_algebra::Fr;
 use serde::{Deserialize, Serialize};
 
 use super::group::JoltGroup;

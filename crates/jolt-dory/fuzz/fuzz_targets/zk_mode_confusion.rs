@@ -13,7 +13,7 @@
 use std::sync::OnceLock;
 
 use jolt_dory::{DoryCommitment, DoryProverSetup, DoryScheme, DoryVerifierSetup};
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_algebra::{CanonicalEncoding, Fr};
 use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, VerifierTranscript};

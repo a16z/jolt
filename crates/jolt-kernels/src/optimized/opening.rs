@@ -37,9 +37,9 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
-use jolt_field::JoltField;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 #[cfg(feature = "parallel")]
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -479,8 +479,8 @@ impl<F: JoltField> MultilinearPoly<F> for BlockOpeningPoly<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module: fail loudly")]
 mod tests {
+    use jolt_algebra::Fr;
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
-    use jolt_field::Fr;
 
     use super::*;
     use crate::optimized::testing::{random_scalars, with_ram_fixture, FixtureShape, RamOp};

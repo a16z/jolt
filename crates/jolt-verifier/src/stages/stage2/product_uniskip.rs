@@ -18,6 +18,7 @@ use jolt_claims::protocols::composed::ComposedClaims;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::FieldProductUniskipInputs;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::{
@@ -37,7 +38,6 @@ use jolt_claims::protocols::jolt::{
     SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::lagrange::centered_lagrange_evals;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -148,7 +148,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     /// The composed uni-skip input claim over the feature-aware 5-lane domain equals the
     /// ordinary symbolic fold (lanes 0..3, weights over the SAME composed domain) plus the

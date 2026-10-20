@@ -2,7 +2,7 @@
 //! the Spartan point) and the increment reduction (per-source pairs folded by
 //! a drawn challenge under Eq-pair publics).
 
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 use crate::{challenge, derived, opening, Expr};
 
@@ -178,12 +178,12 @@ macro_rules! instantiate_value_reduction {
             fn degree(&self) -> usize {
                 $crate::twist::claim_reductions::VALUE_REDUCTION_DEGREE
             }
-            fn input_expression<F: ::jolt_field::Ring>(
+            fn input_expression<F: ::jolt_algebra::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::claim_reductions::value_reduction_input::<F, Self>()
             }
-            fn output_expression<F: ::jolt_field::Ring>(
+            fn output_expression<F: ::jolt_algebra::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::claim_reductions::value_reduction_output::<F, Self>()
@@ -247,12 +247,12 @@ macro_rules! instantiate_increment_reduction {
             fn degree(&self) -> usize {
                 $crate::twist::claim_reductions::INCREMENT_REDUCTION_DEGREE
             }
-            fn input_expression<F: ::jolt_field::Ring>(
+            fn input_expression<F: ::jolt_algebra::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::claim_reductions::increment_reduction_input::<F, Self>()
             }
-            fn output_expression<F: ::jolt_field::Ring>(
+            fn output_expression<F: ::jolt_algebra::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::claim_reductions::increment_reduction_output::<F, Self>()

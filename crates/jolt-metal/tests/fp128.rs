@@ -1,4 +1,4 @@
-//! Conformance of `jolt::Fp128<C>` with `jolt_field::solinas::Fp128<P>`.
+//! Conformance of `jolt::Fp128<C>` with `jolt_algebra::solinas::Fp128<P>`.
 //!
 //! Every MSL operation runs through a generic test kernel and must match the
 //! CPU result byte for byte, on fixed edge vectors, on inputs constructed to
@@ -17,7 +17,7 @@ mod ops;
 mod support;
 
 mod gpu {
-    use jolt_field::solinas::{Prime128Offset275, Prime128OffsetA7F7};
+    use jolt_algebra::solinas::{Prime128Offset275, Prime128OffsetA7F7};
     use jolt_metal::ErrorClass;
 
     use super::field::{edges, element, modulus, random_elements, TestField};
@@ -198,13 +198,13 @@ mod gpu {
     }
 
     #[test]
-    fn fp128_a7f7_matches_jolt_field() {
-        conformance::<Prime128OffsetA7F7>("fp128_a7f7_matches_jolt_field", 0xf128_a7f7);
+    fn fp128_a7f7_matches_jolt_algebra() {
+        conformance::<Prime128OffsetA7F7>("fp128_a7f7_matches_jolt_algebra", 0xf128_a7f7);
     }
 
     #[test]
-    fn fp128_275_matches_jolt_field() {
-        conformance::<Prime128Offset275>("fp128_275_matches_jolt_field", 0xf128_0113);
+    fn fp128_275_matches_jolt_algebra() {
+        conformance::<Prime128Offset275>("fp128_275_matches_jolt_algebra", 0xf128_0113);
     }
 
     #[test]

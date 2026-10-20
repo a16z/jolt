@@ -7,7 +7,7 @@
 //! Since challenges are now just field elements (`C = F`), these traits are trivially
 //! satisfied by any `F: JoltField`. They remain as named bounds for readability at use sites.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use std::ops::{Add, Mul, Sub};
 
 /// A challenge value that can do arithmetic with field elements and other challenges.

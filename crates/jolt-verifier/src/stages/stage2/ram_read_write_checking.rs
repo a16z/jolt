@@ -4,6 +4,7 @@
 //! computation, in lockstep with the BlindFold constraint's
 //! `ram::read_write_checking` formula.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamReadWriteChallenges, RamReadWriteInputClaims, RamReadWriteOutputClaims,
@@ -12,7 +13,6 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;

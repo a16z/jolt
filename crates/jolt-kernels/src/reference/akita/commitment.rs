@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use jolt_akita::{TraceOneHotCommitment, TraceOneHotRows};
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_witness::JoltWitnessPlane;
 

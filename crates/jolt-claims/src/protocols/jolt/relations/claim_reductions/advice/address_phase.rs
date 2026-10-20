@@ -8,7 +8,7 @@
 //! trusted-advice opening, so no runtime `kind → slot` match (with off-kind `None`
 //! filling) is needed. `FinalScale` is keyed by the now type-fixed kind.
 
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::advice::{

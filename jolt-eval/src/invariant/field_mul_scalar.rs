@@ -1,6 +1,6 @@
 use arbitrary::{Arbitrary, Unstructured};
-use jolt_field::Ring;
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_algebra::Ring;
+use jolt_algebra::{CanonicalEncoding, Fr};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 

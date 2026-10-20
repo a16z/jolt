@@ -7,6 +7,8 @@ use std::{
 
 #[cfg(feature = "host")]
 use common::constants::RAM_START_ADDRESS;
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
+use jolt_algebra::Fr;
 #[cfg(feature = "host")]
 use jolt_crypto::PedersenSetup;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
@@ -42,9 +44,9 @@ pub use tracer::TracerBackend;
 
 pub use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 #[cfg(feature = "host")]
-pub use jolt_dory::DoryScheme as PCS;
+pub use jolt_algebra::{Fr as F, JoltField};
 #[cfg(feature = "host")]
-pub use jolt_field::{Fr as F, JoltField};
+pub use jolt_dory::DoryScheme as PCS;
 #[cfg(feature = "host")]
 pub use jolt_openings::CommitmentScheme;
 #[cfg(feature = "host")]
@@ -63,7 +65,7 @@ pub type VerifierPCS = DoryScheme;
 #[cfg(feature = "host")]
 pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(feature = "host")]
-pub type VerifierField = jolt_field::Fr;
+pub type VerifierField = Fr;
 #[cfg(feature = "host")]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
@@ -146,7 +148,7 @@ pub type VerifierPCS = DoryScheme;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierField = jolt_field::Fr;
+pub type VerifierField = Fr;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;

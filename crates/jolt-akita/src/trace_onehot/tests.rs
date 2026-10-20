@@ -18,7 +18,7 @@ use akita_pcs::custom_source::{
 use akita_pcs::AkitaError;
 use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
 use akita_types::PreparedSubringCoefficientPackingPoint;
-use jolt_field::{Fp128x8i32, One, Ring};
+use jolt_algebra::{Fp128x8i32, One, Ring};
 
 use super::commit::commit_columns;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};

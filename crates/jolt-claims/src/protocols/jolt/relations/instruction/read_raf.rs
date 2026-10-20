@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use serde::{Deserialize, Serialize};
 
@@ -118,7 +118,7 @@ mod tests {
     use crate::protocols::jolt::{
         JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltVirtualPolynomial,
     };
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
         InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))

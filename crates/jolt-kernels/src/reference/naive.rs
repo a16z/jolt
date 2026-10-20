@@ -32,8 +32,8 @@
 
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 use jolt_claims::{InputClaims, OutputClaims, Source, SumcheckChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -439,6 +439,7 @@ mod tests {
     use jolt_verifier::stages::ids::VerifierDerivedId;
     use std::collections::BTreeMap;
 
+    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::{
         InstructionReadRafChallenge, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
         JoltVirtualPolynomial,
@@ -446,7 +447,6 @@ mod tests {
     use jolt_claims::{
         challenge, derived, opening, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
     };
-    use jolt_field::{Fr, JoltField, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds,

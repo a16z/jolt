@@ -38,12 +38,12 @@
 use core::{mem::MaybeUninit, ops::Range};
 
 use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldRegistersReadWriteChallenge,
     FieldRegistersReadWritePublic,
 };
 use jolt_claims::SumcheckChallenges as _;
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -826,10 +826,10 @@ impl<F: JoltField> SumcheckKernel<F> for FieldReadWriteKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::relations::registers::{
         FieldRegistersReadWriteChallenges, FieldRegistersReadWriteInputClaims,
     };
-    use jolt_field::{Fr, Ring};
     use jolt_riscv::JoltInstructionKind;
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;

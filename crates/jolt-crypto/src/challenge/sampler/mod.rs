@@ -17,7 +17,7 @@ pub(crate) use xof::{IndexedXofPrefix, XofCursor};
 
 use crate::CryptoError;
 #[cfg(feature = "parallel")]
-use jolt_field::parallel::*;
+use jolt_algebra::parallel::*;
 use std::sync::{Arc, LazyLock};
 
 use crate::challenge::{

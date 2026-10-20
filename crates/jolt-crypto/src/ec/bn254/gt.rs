@@ -4,7 +4,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
-use jolt_field::{CanonicalBytes, CanonicalDecode, JoltField};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, JoltField};
 
 use crate::JoltGroup;
 
@@ -262,7 +262,7 @@ impl CanonicalBytes for Bn254GT {
 
 impl Encoding<[u8]> for Bn254GT {
     fn encode(&self) -> impl AsRef<[u8]> {
-        ::jolt_field::narg::encode(self)
+        ::jolt_algebra::narg::encode(self)
     }
 }
 
@@ -274,7 +274,7 @@ impl CanonicalDecode for Bn254GT {
 
 impl NargDeserialize for Bn254GT {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        ::jolt_field::narg::deserialize(buf)
+        ::jolt_algebra::narg::deserialize(buf)
     }
 }
 

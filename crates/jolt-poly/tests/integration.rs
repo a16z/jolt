@@ -1,4 +1,4 @@
-use jolt_field::{Ext2, Field, Fr, One, Prime64Offset59, Ring, Zero};
+use jolt_algebra::{Ext2, Field, Fr, One, Prime64Offset59, Ring, Zero};
 use jolt_poly::{
     IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, OmittedConstantPoly, Polynomial,
     RlcSource, UnivariatePoly, UnivariatePolynomial,

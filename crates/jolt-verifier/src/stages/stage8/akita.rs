@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, committed_program_packing_plan, OneHotTraceShape, PrefixPackedObjectPlan,
@@ -15,7 +16,6 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig};
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };

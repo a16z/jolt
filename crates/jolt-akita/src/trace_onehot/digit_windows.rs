@@ -6,7 +6,7 @@
 //! registers and touch memory once, instead of once per shift.
 
 use akita_algebra::CyclotomicRing;
-use jolt_field::{Fp128x8i32, Unreduced};
+use jolt_algebra::{Fp128x8i32, Unreduced};
 
 use crate::AkitaField;
 

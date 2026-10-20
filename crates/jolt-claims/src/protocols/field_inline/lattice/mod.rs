@@ -1,7 +1,7 @@
 //! Direct Akita commitment layout for the field-register increment polynomial.
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::Field;
+use jolt_algebra::Field;
 #[cfg(feature = "akita")]
 use jolt_openings::CommitmentGroupRole;
 use jolt_openings::OpeningsError;
@@ -57,7 +57,7 @@ pub const fn field_inc_group_role() -> CommitmentGroupRole {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_field::{Fr, Ring, Zero};
+    use jolt_algebra::{Fr, Ring, Zero};
     use jolt_poly::Polynomial;
 
     use super::*;

@@ -8,7 +8,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::{DoryCommitment, DoryScheme};
-use jolt_field::Fr;
+use jolt_algebra::Fr;
 use jolt_transcript::VerifierTranscript;
 use jolt_verifier::{
     jolt_protocol_id, verify, JoltProof, JoltSponge, JoltVerifierPreprocessing, ProofHeader,

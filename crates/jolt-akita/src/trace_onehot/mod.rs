@@ -6,7 +6,7 @@
 )]
 
 use crate::AkitaField;
-use jolt_field::WithCommitAccumulator;
+use jolt_algebra::WithCommitAccumulator;
 
 const NO_SELECTED_ROW: u8 = 0;
 const MAX_WIDE_ACCUMULATIONS: usize = AkitaField::MAX_COMMIT_ACCUMULATIONS;

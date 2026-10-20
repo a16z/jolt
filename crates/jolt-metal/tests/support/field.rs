@@ -3,7 +3,7 @@
 
 use std::fmt::Debug;
 
-use jolt_field::{CanonicalEncoding, PseudoMersenne};
+use jolt_algebra::{CanonicalEncoding, PseudoMersenne};
 use jolt_metal::MetalField;
 
 use super::support::SplitMix64;

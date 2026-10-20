@@ -11,6 +11,7 @@
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedClaims;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::{
@@ -32,7 +33,6 @@ use jolt_claims::protocols::jolt::{
     SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
     try_eq_mle,
@@ -190,7 +190,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
 mod tests {
     use super::super::outputs::FieldRegistersProductOutputClaims;
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

@@ -36,6 +36,7 @@ use jolt_claims::protocols::jolt::relations::spartan::{
 };
 use std::sync::OnceLock;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::r1cs::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
 };
@@ -45,7 +46,6 @@ pub use jolt_claims::protocols::jolt::relations::spartan::{
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltRelationId, SpartanOuterPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
@@ -341,9 +341,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::OutputClaims;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::jolt::JoltOpeningId;
-    use jolt_field::{Fr, Ring};
 
     /// The produced `OuterRemainderOutputClaims` field (declaration) order is the
     /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so the generated opening

@@ -1,4 +1,4 @@
-use jolt_field::{Field, Fr};
+use jolt_algebra::{Field, Fr};
 use rand_core::RngCore;
 
 use crate::{

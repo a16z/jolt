@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use jolt_riscv::FieldInlineOp;
 use serde::{Deserialize, Serialize};
 

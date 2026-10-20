@@ -9,7 +9,7 @@
 
 use jolt_claims::r1cs::{assert_claim_expr_eq, ClaimSourceTable, SourceValue};
 use jolt_claims::{Expr, Source, Term};
-use jolt_field::{Fr, Ring};
+use jolt_algebra::{Fr, Ring};
 use jolt_r1cs::R1csBuilder;
 use libfuzzer_sys::fuzz_target;
 

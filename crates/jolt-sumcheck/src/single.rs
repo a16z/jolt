@@ -10,7 +10,7 @@
 //! is normalized to `q(r_i)`, and the caller applies `Π eq(τ_i, r_i)` at the
 //! terminal check. Both formats send `degree` coefficients per round.
 
-use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly, Point, UnivariatePoly, LOW_TO_HIGH};
 use jolt_transcript::{
     Channel, PadSlots, PrivateChannel, ProverTranscript, SiteId, Sponge, VerifierTranscript,

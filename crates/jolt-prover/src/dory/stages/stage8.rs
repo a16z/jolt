@@ -16,6 +16,7 @@
 //! final-opening order, and the ragged advice hints pad with identity rows in
 //! `combine_hints`).
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
 #[cfg(feature = "field-inline")]
@@ -26,7 +27,6 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::{
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::JoltField;
 use std::collections::BTreeMap;
 
 use jolt_kernels::committed_program::{

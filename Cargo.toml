@@ -50,7 +50,6 @@ members = [
   "crates/jolt-utils",
   "crates/jolt-profiling",
   "crates/jolt-algebra",
-  "crates/jolt-field",
   "crates/jolt-host",
   "crates/jolt-kernels",
   "crates/jolt-kernels-derive",
@@ -196,19 +195,18 @@ codegen-units = 1
 
 ## Exact-version arkworks overrides. This is a patch table rather than the
 ## deprecated `replace` form because the Akita cutover also needs a Git-source
-## patch for the shared `jolt-field` package identity below.
+## patch for the shared `jolt-algebra` package identity below.
 [patch.crates-io]
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
-# Akita consumes jolt-field, jolt-poly, and jolt-transcript from this exact
-# Git source. Redirect those packages to the workspace members so Cargo
-# resolves one shared identity for each rather than separate path and Git
-# copies.
+# Akita consumes jolt-algebra, jolt-crypto, jolt-poly, jolt-sumcheck, and
+# jolt-transcript from this exact Git source. Redirect those packages to the
+# workspace members so Cargo resolves one shared identity for each rather than
+# separate path and Git copies.
 [patch."https://github.com/a16z/jolt"]
-jolt-field = { path = "crates/jolt-field" }
 jolt-poly = { path = "crates/jolt-poly" }
 jolt-transcript = { path = "crates/jolt-transcript" }
 jolt-algebra = { path = "crates/jolt-algebra" }
@@ -473,7 +471,6 @@ jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-spartan-verifier = { path = "./crates/jolt-spartan-verifier" }
 jolt-spartan-prover = { path = "./crates/jolt-spartan-prover" }
 jolt-algebra = { path = "./crates/jolt-algebra" }
-jolt-field = { path = "./crates/jolt-field" }
 jolt-host = { path = "./crates/jolt-host" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }

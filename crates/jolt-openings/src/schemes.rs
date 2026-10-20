@@ -8,8 +8,8 @@
 
 use std::{fmt::Debug, marker::PhantomData};
 
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, JoltField, Ring};
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::{CanonicalBytes, CanonicalDecode, JoltField, Ring};
 use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use serde::{de::DeserializeOwned, Serialize};

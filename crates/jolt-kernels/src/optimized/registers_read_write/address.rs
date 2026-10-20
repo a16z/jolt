@@ -1,5 +1,5 @@
 use crate::optimized::support::bind_pairs;
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckError;
 

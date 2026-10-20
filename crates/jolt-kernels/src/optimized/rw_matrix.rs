@@ -16,7 +16,7 @@
 //! prover; summation order differs from legacy where convenient (field
 //! addition is exact, so the values are identical).
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

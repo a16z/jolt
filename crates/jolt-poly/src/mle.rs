@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use thiserror::Error;
 
 use crate::eq_index_msb;
@@ -142,7 +142,7 @@ mod tests {
 
     use super::*;
     use crate::{eq_index_msb, try_eq_mle};
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use num_traits::{One, Zero};
 
     #[test]

@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 use super::monolith::{BooleanityInputClaims, BooleanityOutputClaims};
 use crate::opening;

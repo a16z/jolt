@@ -1,5 +1,5 @@
 // jolt::WithAccumulator<F>: the deferred-reduction accumulators of a field,
-// mirroring jolt_field::WithAccumulator.
+// mirroring jolt_algebra::WithAccumulator.
 //
 // Each field header specializes WithAccumulator with two member types:
 // - Accumulator: sums of field elements and of products of two field
@@ -17,7 +17,7 @@
 // - F reduce(): the canonical field element equal to the sum;
 // - a hidden friend Acc simd_shuffle_xor(Acc, ushort), used by reduce.h.
 //
-// The representation is not jolt_field's: only reduce() must agree, and it
+// The representation is not jolt_algebra's: only reduce() must agree, and it
 // is canonical, so results are bit-exact whatever the layout.
 //
 // Capacity is a kernel-author obligation. Every term counts, including the

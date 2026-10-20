@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -539,7 +539,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     reason = "test module asserts successful reconstruction and forbidden lazy endpoint evaluation"
 )]
 mod tests {
-    use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
+    use jolt_algebra::{Field, Fr, Prime128OffsetA7F7, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

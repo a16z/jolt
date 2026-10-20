@@ -1,3 +1,4 @@
+use jolt_algebra::{CanonicalDecode, JoltField};
 use jolt_claims::protocols::jolt::{
     geometry::{
         claim_reductions::{
@@ -8,7 +9,6 @@ use jolt_claims::protocols::jolt::{
     },
     JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
-use jolt_field::{CanonicalDecode, JoltField};
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use crate::sites::STAGE7;

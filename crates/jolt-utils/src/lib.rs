@@ -1,7 +1,7 @@
 //! Dependency-light utilities shared across the Jolt workspace.
 //!
 //! This crate sits at the very bottom of the workspace dependency graph: it
-//! must not depend on any other jolt crate, so every crate — jolt-field
+//! must not depend on any other jolt crate, so every crate — jolt-algebra
 //! included — can use it without cycles. Anything that needs a `Field` bound
 //! belongs elsewhere.
 //!

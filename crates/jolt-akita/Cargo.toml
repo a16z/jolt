@@ -32,7 +32,7 @@ jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
   "lattice",
   "parallel",
 ] }
-jolt-field = { path = "../jolt-field", default-features = false, features = [
+jolt-algebra = { path = "../jolt-algebra", default-features = false, features = [
   "solinas",
 ] }
 jolt-openings = { path = "../jolt-openings", default-features = false, features = [

@@ -1,9 +1,9 @@
+use jolt_algebra::Field;
 use jolt_claims::protocols::field_inline::geometry::bytecode::{
     FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT, FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS,
 };
 use jolt_claims::protocols::field_inline::FieldInlineRelationId;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
-use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
 use crate::VerifierError;

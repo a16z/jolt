@@ -1,5 +1,5 @@
 use common::jolt_device::MemoryLayoutError;
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_kernels::{KernelError, SumcheckKernelError};
 use jolt_openings::OpeningsError;
 use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;

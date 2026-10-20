@@ -21,10 +21,10 @@ use std::process::Command;
 use common::jolt_device::JoltDevice;
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaField as Field;
-use jolt_field::CanonicalBytes;
+use jolt_algebra::CanonicalBytes;
 #[cfg(not(feature = "akita"))]
-use jolt_field::Fr as Field;
-use jolt_field::Ring;
+use jolt_algebra::Fr as Field;
+use jolt_algebra::Ring;
 use jolt_host::field_inline::canonical_limbs;
 use jolt_host::{default_target_dir, Program};
 use jolt_platform::{FieldInlineModulus, FIELD_INLINE_MODULUS_ENV};

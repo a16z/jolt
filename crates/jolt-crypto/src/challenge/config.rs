@@ -325,7 +325,7 @@ impl SparseChallengeConfig {
 #[cfg(test)]
 mod entropy_tests {
     use super::*;
-    use jolt_field::{
+    use jolt_algebra::{
         pseudo_mersenne_modulus, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
         PseudoMersenne,
     };

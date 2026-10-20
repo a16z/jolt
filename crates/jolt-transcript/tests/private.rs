@@ -3,7 +3,7 @@
 
 #![expect(clippy::unwrap_used, reason = "tests")]
 
-use jolt_field::{CanonicalBytes, Prime128Offset275 as Fp, Ring};
+use jolt_algebra::{CanonicalBytes, Prime128Offset275 as Fp, Ring};
 use jolt_transcript::{
     Blake2b512, Channel, PadSlots, PrivateChannel, ProtocolId, ProverTranscript, TranscriptError,
     VerifierTranscript,

@@ -17,10 +17,10 @@
 //! stage recipes prove over.
 
 use common::jolt_device::JoltDevice;
+use jolt_algebra::{Accumulator, CanonicalDecode, JoltField, WithAccumulator};
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::{Accumulator, CanonicalDecode, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};

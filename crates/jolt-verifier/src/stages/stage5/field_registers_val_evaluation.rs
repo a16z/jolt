@@ -9,6 +9,7 @@
 
 use core::marker::PhantomData;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::relations::registers::ValEvaluation;
 pub use jolt_claims::protocols::field_inline::relations::registers::{
     FieldRegistersValEvaluationInputClaims, FieldRegistersValEvaluationOutputClaims,
@@ -18,7 +19,6 @@ use jolt_claims::protocols::field_inline::{
     FIELD_REGISTERS_LOG_K,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
@@ -130,7 +130,7 @@ mod tests {
     use super::*;
     use jolt_poly::LtPolynomial;
 
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

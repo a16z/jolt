@@ -5,6 +5,7 @@
 //! `log_k_chunk` address variables and stages the `BooleanityAddrClaim`
 //! intermediate consumed by the stage-6b cycle phase.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::booleanity::{
@@ -12,7 +13,6 @@ pub use jolt_claims::protocols::jolt::relations::booleanity::{
     BooleanityAddressPhaseOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_transcript::Channel;
 
 use crate::stages::relations::ConcreteSumcheck;

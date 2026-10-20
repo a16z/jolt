@@ -11,8 +11,8 @@
 #[cfg(not(feature = "zk"))]
 use core::marker::PhantomData;
 
+use jolt_algebra::JoltField;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 #[cfg(not(feature = "zk"))]
 use jolt_sumcheck::prove_uniskip_clear;

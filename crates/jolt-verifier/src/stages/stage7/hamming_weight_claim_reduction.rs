@@ -23,6 +23,7 @@
 //! `HammingWeightClaimReduction*` names and reaches the live relation through the
 //! aliases re-exported from it, so no consumer needs a `cfg` of its own.
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
@@ -31,7 +32,6 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;

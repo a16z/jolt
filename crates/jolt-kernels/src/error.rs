@@ -1,8 +1,8 @@
 use crate::SumcheckKernelError;
+use jolt_algebra::Field;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::MissingOpeningValue;
-use jolt_field::Field;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use jolt_verifier::VerifierError;

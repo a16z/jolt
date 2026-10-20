@@ -10,6 +10,7 @@
 //! slots.
 
 use common::jolt_device::JoltDevice;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -20,7 +21,6 @@ use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
@@ -188,9 +188,9 @@ where
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
+    use jolt_algebra::Fr;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_verifier::JoltSponge;
 
     use super::*;
@@ -254,9 +254,9 @@ mod field_inline_round_trip {
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
+    use jolt_algebra::Fr;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_verifier::JoltSponge;
 
     use super::*;

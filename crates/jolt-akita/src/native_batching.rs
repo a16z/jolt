@@ -720,7 +720,7 @@ mod tests {
     )]
 
     use super::*;
-    use jolt_field::Zero;
+    use jolt_algebra::Zero;
     use jolt_openings::{CommitmentGroupRole, EvaluationClaim};
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;

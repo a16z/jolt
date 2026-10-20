@@ -42,7 +42,7 @@ pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn zero_vec_field_elements() {

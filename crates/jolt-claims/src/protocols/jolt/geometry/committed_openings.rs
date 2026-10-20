@@ -1,6 +1,6 @@
 //! Jolt committed-polynomial proof and final-opening orders.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
@@ -221,7 +221,7 @@ mod tests {
     )]
 
     use super::*;
-    use jolt_field::{Fr, Ring, Zero};
+    use jolt_algebra::{Fr, Ring, Zero};
 
     #[test]
     fn embedding_scale_checks_positions_and_repeated_coordinates() {

@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::dimensions::{
@@ -92,7 +92,7 @@ impl SymbolicSumcheck for ProductUniskip {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn input_claims_resolve_by_spartan_outer_ids_in_declaration_order() {

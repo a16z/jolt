@@ -13,7 +13,7 @@
 //!   per `(cycle, stream, node)` (two for the split second stream). Active
 //!   field-inline cycles extend the B values in the field.
 //! - **Unreduced accumulation**: field × wide-integer products accumulate
-//!   through `jolt-field`'s specialized accumulators and reduce once per block
+//!   through `jolt-algebra`'s specialized accumulators and reduce once per block
 //!   (`FullAccumS`/`SmallAccumU`/`WideAccumS` + `barrett_reduce`).
 //! - **Split-eq (Gruen/Dao-Thaler) factoring**: `eq(τ_low, ·)` is held as an
 //!   `E_out ⊗ E_in` tensor and a per-round linear factor
@@ -47,6 +47,8 @@ use jolt_verifier::stages::relations::OpeningIdOf;
 use std::collections::BTreeMap;
 use std::ops::{Add, Sub};
 
+use jolt_algebra::signed::{S128, S256, S64};
+use jolt_algebra::{Accumulator as _, JoltField, WithAccumulator};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::r1cs::field_constraints::limb_radix;
 #[cfg(feature = "field-inline")]
@@ -68,8 +70,6 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltPolynomialId, SpartanOuterPublic,
 };
 use jolt_claims::{InputClaims as _, OutputClaims as _};
-use jolt_field::signed::{S128, S256, S64};
-use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
@@ -1534,6 +1534,8 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use crate::optimized::parity::ExceptionalEq;
+    use jolt_algebra::signed::S128;
+    use jolt_algebra::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::{
         geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, FieldInlinePolynomialId,
@@ -1541,8 +1543,6 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::jolt::JoltPolynomialId;
     use jolt_claims::NoChallenges;
-    use jolt_field::signed::S128;
-    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;

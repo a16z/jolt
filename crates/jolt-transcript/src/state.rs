@@ -1,6 +1,6 @@
 //! Operations shared by both roles' spongefish states.
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use rand_core::RngCore;
 use spongefish::{Encoding, ProverState, VerifierState};
 
@@ -149,7 +149,7 @@ impl<S: Squeeze> RngCore for SqueezeRng<'_, S> {
 )]
 mod tests {
     use super::Squeeze;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     /// A squeeze stream that replays fixed bytes.
     struct Replayed {

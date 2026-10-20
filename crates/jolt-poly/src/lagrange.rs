@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Evaluates all Lagrange basis polynomials $L_0(r), \ldots, L_{N-1}(r)$ over
 /// the domain $\{s, s+1, \ldots, s+N-1\}$ where $s$ = `domain_start`.
@@ -246,7 +246,7 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
 #[expect(clippy::unwrap_used, reason = "tests should fail loudly")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use num_traits::{One, Zero};
 
     #[test]

@@ -1,3 +1,4 @@
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::advice, AdviceClaimReductionLayout, JoltAdviceKind,
@@ -10,7 +11,6 @@ use jolt_claims::protocols::jolt::{
     ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 

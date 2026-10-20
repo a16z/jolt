@@ -3,9 +3,9 @@
 //! performance path — an optimized backend returns lazy/sparse or
 //! device-backed implementations).
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::JoltField;
 use jolt_poly::MultilinearPoly;
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::JoltWitnessPlane;

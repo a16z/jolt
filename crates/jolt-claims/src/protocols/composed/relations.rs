@@ -25,7 +25,7 @@ use crate::protocols::jolt::{
     SpartanOuterPublic, SpartanProductVirtualizationPublic,
 };
 use crate::{derived, opening, Expr, NoChallenges, Source, SumcheckDomain, SymbolicSumcheck, Term};
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
 fn lift<F>(expr: Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>) -> ComposedExpr<F> {
@@ -292,7 +292,7 @@ mod tests {
     use super::super::claims::FieldProductUniskipInputs;
     use super::*;
     use crate::{InputClaims, OutputClaims};
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
     use std::collections::BTreeSet;
 
     #[test]

@@ -16,9 +16,9 @@ mod support;
 ))]
 #[expect(clippy::expect_used, reason = "end-to-end fixtures fail loudly")]
 mod keccak {
+    use jolt_algebra::Fr;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_transcript::{Blake2b512, Keccak};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};

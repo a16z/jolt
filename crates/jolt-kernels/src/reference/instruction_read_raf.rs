@@ -34,11 +34,11 @@
 //! exactness, so this kernel always uses 8-variable phases.)
 
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
-use jolt_field::JoltField;
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::SuffixEval;
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};

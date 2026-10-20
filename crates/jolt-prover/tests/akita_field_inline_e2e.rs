@@ -27,11 +27,11 @@ mod support;
 )]
 mod clear {
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaProverSetup, AkitaScheme};
+    use jolt_algebra::Ring;
     use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
     };
-    use jolt_field::Ring;
     use jolt_openings::{CommitmentScheme, GroupCommitmentMetadata};
     use jolt_prover::JoltBackend;
     use jolt_prover::ProverConfig;

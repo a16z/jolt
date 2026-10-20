@@ -39,7 +39,7 @@
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
 
-use jolt_field::{Accumulator, JoltField};
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

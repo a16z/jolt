@@ -14,6 +14,7 @@
 
 use core::marker::PhantomData;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::relations::registers::ReadWriteChecking;
 pub use jolt_claims::protocols::field_inline::relations::registers::{
     FieldRegistersReadWriteChallenges, FieldRegistersReadWriteInputClaims,
@@ -23,7 +24,6 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineDerivedId, FieldRegistersReadWriteDimensions, FieldRegistersReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
@@ -134,8 +134,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
 mod tests {
     use super::*;
 
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
-    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

@@ -6,6 +6,7 @@
 //! anchors and batch members of the final PCS opening, so the resolution happens
 //! here, next to that consumer, before any stage-8 transcript operation.
 
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::{
@@ -17,7 +18,6 @@ use jolt_claims::protocols::jolt::{AdviceClaimReductionLayout, JoltAdviceKind};
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
-use jolt_field::JoltField;
 
 use crate::stages::stage6b::outputs::{Stage6bOutputClaims, Stage6bOutputPoints};
 use crate::stages::stage7::outputs::{Stage7OutputClaims, Stage7OutputPoints};

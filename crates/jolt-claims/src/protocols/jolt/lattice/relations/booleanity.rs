@@ -4,7 +4,7 @@
 //! sharing a relation id across mode variants: the full/committed bytecode
 //! read-raf pair.
 
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::opening;

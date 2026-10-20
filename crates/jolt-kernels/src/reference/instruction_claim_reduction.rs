@@ -11,12 +11,12 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::{
     left_instruction_input_reduced, left_lookup_operand_reduced, lookup_output_reduced,
     right_instruction_input_reduced, right_lookup_operand_reduced,
 };
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_witness::JoltWitnessPlane;

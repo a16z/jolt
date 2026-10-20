@@ -4,9 +4,9 @@
 //! Gruen factoring avoids a dense eq table. One split-eq row walk recovers
 //! the five output claims at the bound point.
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -352,6 +352,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKerne
 mod tests {
     use std::collections::BTreeMap;
 
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::{
         left_instruction_input_reduced, left_lookup_operand_reduced, lookup_output_reduced,
         right_instruction_input_reduced, right_lookup_operand_reduced,
@@ -362,7 +363,6 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         InstructionClaimReductionPublic, JoltDerivedId, TraceDimensions,
     };
-    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;

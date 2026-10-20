@@ -1,6 +1,6 @@
 use std::ops::{Mul, SubAssign};
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -453,8 +453,8 @@ impl<F: JoltField> crate::MultilinearEvaluation<F> for EqPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
-    use jolt_field::{Field, Ring};
+    use jolt_algebra::Fr;
+    use jolt_algebra::{Field, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

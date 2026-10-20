@@ -3,7 +3,7 @@
 
 #![expect(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
 
-use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr, Ring};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, Fr, Ring};
 use jolt_transcript::{
     Blake2b512, Channel, Keccak, Nonce, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
     TranscriptError, VerifierTranscript, GRINDING_NONCE_SLACK_BITS,

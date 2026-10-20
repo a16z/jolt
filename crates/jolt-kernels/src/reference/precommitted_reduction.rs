@@ -7,9 +7,9 @@
 
 use std::marker::PhantomData;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::JoltField;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };

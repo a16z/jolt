@@ -175,7 +175,7 @@ pub const fn input_column(input_index: usize) -> Option<usize> {
 
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_r1cs::{ConstraintMatrices, SparseRow};
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
@@ -442,7 +442,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use jolt_riscv::CIRCUIT_FLAGS;
     use num_traits::Zero;
 
@@ -534,7 +534,7 @@ mod tests {
 #[expect(clippy::indexing_slicing, reason = "tests index fixed witness vectors")]
 mod execution_witness_tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use num_traits::Zero;
 
     // Constraint row indices, matching the push order in

@@ -1,7 +1,7 @@
 use std::ops::Range;
 
+use jolt_algebra::JoltField;
 use jolt_crypto::HomomorphicCommitment;
-use jolt_field::JoltField;
 use jolt_r1cs::{ConstraintMatrices, R1csBuilder, Variable};
 use jolt_sumcheck::{CommittedOutputClaims, CommittedSumcheckConsistency};
 
@@ -610,9 +610,9 @@ fn checked_sum(
 mod tests {
     use super::*;
     use crate::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::{constant, opening, Expr};
     use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-    use jolt_field::{Fr, Ring};
     use jolt_sumcheck::{
         CommittedOutputClaims, CommittedSumcheckConsistency, SumcheckDomainSpec, SumcheckStatement,
         VerifiedCommittedRound,

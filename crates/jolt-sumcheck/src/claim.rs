@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 pub use jolt_poly::EvaluationClaim;
 

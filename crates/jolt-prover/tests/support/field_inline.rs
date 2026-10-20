@@ -3,7 +3,7 @@
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaField as Field;
 #[cfg(not(feature = "akita"))]
-use jolt_field::Fr as Field;
+use jolt_algebra::Fr as Field;
 
 use super::GuestCase;
 

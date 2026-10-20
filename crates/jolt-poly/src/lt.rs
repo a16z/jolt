@@ -24,7 +24,7 @@
 //! (shrinking `lt_hi` and `eq_hi`), then all lo vars (shrinking `lt_lo`).
 //! Total memory stays at 3 · √N throughout.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 use crate::EqPolynomial;
 
@@ -168,7 +168,7 @@ fn bind_in_place<F: JoltField>(v: &mut Vec<F>, challenge: F) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Field, Fr};
+    use jolt_algebra::{Field, Fr};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

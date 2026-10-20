@@ -1,6 +1,6 @@
 //! Operations both transcript roles perform identically.
 
-use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
 
 use crate::{SiteId, Sponge, TranscriptError};
 

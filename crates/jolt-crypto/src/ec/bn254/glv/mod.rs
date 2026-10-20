@@ -18,7 +18,7 @@ pub mod dory_g1;
 pub mod dory_g2;
 
 use ark_bn254::G1Projective;
-use jolt_field::Fr;
+use jolt_algebra::Fr;
 
 use super::{field_to_fr, Bn254G1, Bn254G2};
 

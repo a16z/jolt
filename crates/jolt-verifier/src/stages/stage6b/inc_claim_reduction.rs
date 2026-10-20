@@ -6,6 +6,7 @@
 //! anchor the stage-8 final batched opening. Its publics are the per-source `Eq`
 //! coefficients comparing this sumcheck's cycle to each source's cycle.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::increments::{
     IncClaimReductionChallenges, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
@@ -14,7 +15,6 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, IncClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;

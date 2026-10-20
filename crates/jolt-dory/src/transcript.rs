@@ -22,7 +22,7 @@ use dory::messages::{
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::transcript::Transcript as DoryTranscript;
 use dory::primitives::{DoryDeserialize, DorySerialize};
-use jolt_field::Fr;
+use jolt_algebra::Fr;
 use jolt_openings::OpeningsError;
 use jolt_transcript::{Channel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 

@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 use crate::{challenge, derived, opening};
 

@@ -2,10 +2,10 @@
 
 use crate::optimized::support::map_indices;
 use crate::{KernelError, ProofSession};
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
 };
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_witness::field_inline::FieldInlineWitnessOracle;
 use std::sync::Arc;

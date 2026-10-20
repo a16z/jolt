@@ -9,9 +9,9 @@
 //! per-kernel tests.
 #![expect(clippy::expect_used, clippy::panic, reason = "test-only module")]
 
+use jolt_algebra::{Fr, JoltField, Ring};
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_field::{Fr, JoltField, Ring};
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 #[cfg(not(feature = "akita"))]

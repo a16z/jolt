@@ -10,7 +10,7 @@
 use std::sync::OnceLock;
 
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme, DoryVerifierSetup};
-use jolt_field::{Fr, Ring};
+use jolt_algebra::{Fr, Ring};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, HomomorphicBatch, VerifierOpeningClaim,
     ZkBatchOpeningScheme, ZkOpeningScheme,

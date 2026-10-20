@@ -15,6 +15,7 @@
 //! `aliased_output_openings` below; the generated drivers absorb it via the
 //! shift source and enforce the wire copy equals it.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionInputChallenges, InstructionInputInputClaims, InstructionInputOutputClaims,
@@ -24,7 +25,6 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;

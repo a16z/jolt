@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-use jolt_field::{CanonicalBytes, CanonicalDecode, JoltField};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, JoltField};
 use serde::{Deserialize, Serialize};
 
 /// Cryptographic group suitable for commitments.

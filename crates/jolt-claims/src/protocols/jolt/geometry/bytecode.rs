@@ -1,4 +1,4 @@
-use jolt_field::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring};
 use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind, XLEN};
 use jolt_poly::{EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
 use jolt_riscv::{

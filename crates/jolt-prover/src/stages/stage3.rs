@@ -8,9 +8,9 @@
 //! [`StageProver::prove`](crate::StageProver::prove) driver over the
 //! backend's slots.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]

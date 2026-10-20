@@ -1,6 +1,6 @@
 #![no_main]
 
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_algebra::{CanonicalEncoding, Fr};
 use jolt_poly::{eq_index_msb, EqPolynomial, TensorEqTable};
 use libfuzzer_sys::fuzz_target;
 

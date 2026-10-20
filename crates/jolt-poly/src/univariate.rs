@@ -2,7 +2,7 @@
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::CompressedPoly;
@@ -411,8 +411,8 @@ impl<F: Field> MulAssign<F> for UnivariatePoly<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
-    use jolt_field::Ring;
+    use jolt_algebra::Fr;
+    use jolt_algebra::Ring;
     use num_traits::{One, Zero};
 
     #[test]

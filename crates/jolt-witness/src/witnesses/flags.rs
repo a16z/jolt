@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
 use jolt_riscv::{
     CircuitFlags, InstructionFlags as InstructionFlagKind, InterleavedBitsMarker, JoltInstruction,

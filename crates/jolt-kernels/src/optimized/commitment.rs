@@ -19,10 +19,10 @@
 //! The materializing modes (address-major order, widened grids) and advice
 //! commits delegate to the reference kernel unchanged.
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "field-inline")]
 use jolt_witness::JoltWitnessPlane;
@@ -396,9 +396,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> S
 mod tests {
     #![expect(clippy::unwrap_used, reason = "test module")]
 
+    use jolt_algebra::Fr;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_witness::RowSource;
 
     use super::{commit_streamed, commit_streaming};

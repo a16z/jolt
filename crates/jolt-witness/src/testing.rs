@@ -1,5 +1,5 @@
+use jolt_algebra::Fr;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId};
-use jolt_field::Fr;
 use jolt_program::{
     execution::{JoltProgram, TraceData, TraceOutput},
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},

@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -89,7 +89,7 @@ mod tests {
     use crate::interleave::interleave_bits;
     use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
     use crate::XLEN;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     #[test]
     fn mle_random() {

@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
-jolt-field.workspace = true
+jolt-algebra.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
@@ -22,7 +22,7 @@ rayon.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-jolt-field = { workspace = true, features = ["bn254"] }
+jolt-algebra = { workspace = true, features = ["bn254"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",

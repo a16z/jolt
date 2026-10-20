@@ -4,7 +4,7 @@
 // (specs/verifier-closure-lints.md).
 #![deny(clippy::indexing_slicing, clippy::wildcard_enum_match_arm)]
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel, CenteredIntegerDomainError},
     EqPolynomial,
@@ -370,9 +370,9 @@ mod tests {
         },
         FieldInlineVirtualPolynomial,
     };
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
     #[cfg(feature = "field-inline")]
-    use jolt_field::Ring;
+    use jolt_algebra::Ring;
     #[cfg(feature = "field-inline")]
     use jolt_r1cs::SparseRow;
     #[cfg(feature = "field-inline")]

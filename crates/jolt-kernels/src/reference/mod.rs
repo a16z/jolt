@@ -14,7 +14,7 @@
 
 #[cfg(feature = "akita")]
 use jolt_akita::TraceOneHotCommitment;
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "akita")]
 use jolt_openings::{GroupSetupMetadata, TransparentObjectSetup};

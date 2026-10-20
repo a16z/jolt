@@ -3,7 +3,7 @@
 #![deny(clippy::indexing_slicing, clippy::wildcard_enum_match_arm)]
 
 use crate::{Expr, Source};
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use thiserror::Error;
 
 use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
@@ -248,7 +248,7 @@ fn lower_product<F: JoltField>(
 mod tests {
     use super::*;
     use crate::{challenge, constant, derived, opening, Expr};
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Opening {

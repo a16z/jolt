@@ -7,7 +7,7 @@
 //! scalar witnesses' `ToField`). The trace view supplies zero for cycles
 //! without a field-inline payload.
 
-use jolt_field::{CanonicalEncoding, JoltField};
+use jolt_algebra::{CanonicalEncoding, JoltField};
 use jolt_program::field_inline::{FieldEncodedValue, FieldInlineTraceData};
 
 use crate::witnesses::{Extract, WitnessEnv};
