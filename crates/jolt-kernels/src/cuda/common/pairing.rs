@@ -4,6 +4,8 @@ use super::context::CudaKernelContext;
 use super::error::CudaError;
 use super::msm::FQ_LIMBS;
 
+pub const FQ12_LIMBS: usize = 12 * FQ_LIMBS;
+
 pub const FQ2_LIMBS: usize = 2 * FQ_LIMBS;
 
 pub const FQ6_LIMBS: usize = 6 * FQ_LIMBS;
@@ -14,6 +16,9 @@ pub enum TowerProbe {
     Fq6MulBy01,
     Fq6MulByFq2,
     Fq6MulByNonresidue,
+    Fq12Mul,
+    Fq12Sqr,
+    Fq12MulBy034,
 }
 
 impl TowerProbe {
@@ -23,6 +28,9 @@ impl TowerProbe {
             Self::Fq6MulBy01 => (FQ6_LIMBS + 2 * FQ2_LIMBS, FQ6_LIMBS),
             Self::Fq6MulByFq2 => (FQ6_LIMBS + FQ2_LIMBS, FQ6_LIMBS),
             Self::Fq6MulByNonresidue => (FQ6_LIMBS, FQ6_LIMBS),
+            Self::Fq12Mul => (2 * FQ12_LIMBS, FQ12_LIMBS),
+            Self::Fq12Sqr => (FQ12_LIMBS, FQ12_LIMBS),
+            Self::Fq12MulBy034 => (FQ12_LIMBS + 3 * FQ2_LIMBS, FQ12_LIMBS),
         }
     }
 }
@@ -48,6 +56,9 @@ impl CudaKernelContext {
             TowerProbe::Fq6MulBy01 => &self.fq6_mul_by_01_probe,
             TowerProbe::Fq6MulByFq2 => &self.fq6_mul_by_fq2_probe,
             TowerProbe::Fq6MulByNonresidue => &self.fq6_mul_by_nonresidue_probe,
+            TowerProbe::Fq12Mul => &self.fq12_mul_probe,
+            TowerProbe::Fq12Sqr => &self.fq12_sqr_probe,
+            TowerProbe::Fq12MulBy034 => &self.fq12_mul_by_034_probe,
         };
         let mut builder = self.stream().launch_builder(function);
         let _ = builder.arg(&device_in);
@@ -70,7 +81,7 @@ impl CudaKernelContext {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use ark_bn254::{Fq, Fq2, Fq6};
+    use ark_bn254::{Fq, Fq12, Fq2, Fq6};
     use ark_ff::{AdditiveGroup, BigInt, Field, UniformRand};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -86,6 +97,17 @@ mod tests {
         Fq2::new(fq(&words[..FQ_LIMBS]), fq(&words[FQ_LIMBS..]))
     }
 
+    fn fq12(words: &[u64]) -> Fq12 {
+        let fq6 = |w: &[u64]| {
+            Fq6::new(
+                fq2(&w[..2 * FQ_LIMBS]),
+                fq2(&w[2 * FQ_LIMBS..4 * FQ_LIMBS]),
+                fq2(&w[4 * FQ_LIMBS..]),
+            )
+        };
+        Fq12::new(fq6(&words[..6 * FQ_LIMBS]), fq6(&words[6 * FQ_LIMBS..]))
+    }
+
     fn fq2_words(value: &Fq2) -> Vec<u64> {
         let mut out = Vec::with_capacity(FQ2_LIMBS);
         out.extend_from_slice(&value.c0.0 .0);
@@ -98,6 +120,13 @@ mod tests {
         for part in [&value.c0, &value.c1, &value.c2] {
             out.extend_from_slice(&fq2_words(part));
         }
+        out
+    }
+
+    fn fq12_words(value: &Fq12) -> Vec<u64> {
+        let mut out = Vec::with_capacity(FQ12_LIMBS);
+        out.extend_from_slice(&fq6_words(&value.c0));
+        out.extend_from_slice(&fq6_words(&value.c1));
         out
     }
 
@@ -135,10 +164,23 @@ mod tests {
             .collect()
     }
 
+    fn tower_fq12_samples(rng: &mut ChaCha20Rng) -> Vec<Fq12> {
+        let parts = tower_fq6_samples(rng);
+        (0..parts.len())
+            .map(|index| Fq12::new(parts[index], parts[(index + 1) % parts.len()]))
+            .collect()
+    }
+
     fn probe_fq6(op: TowerProbe, input: &[u64]) -> Vec<Fq6> {
         let context = shared_context().expect("a CUDA device");
         let got = context.tower_probe(op, input).expect("a tower probe");
         got.chunks_exact(FQ6_LIMBS).map(fq6_of).collect()
+    }
+
+    fn probe_fq12(op: TowerProbe, input: &[u64]) -> Vec<Fq12> {
+        let context = shared_context().expect("a CUDA device");
+        let got = context.tower_probe(op, input).expect("a tower probe");
+        got.chunks_exact(FQ12_LIMBS).map(fq12).collect()
     }
 
     #[test]
@@ -228,6 +270,79 @@ mod tests {
             probe_fq6(TowerProbe::Fq6MulByNonresidue, &input),
             expected,
             "fq6_mul_by_nonresidue diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq12_mul_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_500);
+        let samples = tower_fq12_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, left) in samples.iter().enumerate() {
+            let right = samples[(index + 5) % samples.len()];
+            input.extend_from_slice(&fq12_words(left));
+            input.extend_from_slice(&fq12_words(&right));
+            expected.push(*left * right);
+        }
+        assert_eq!(
+            probe_fq12(TowerProbe::Fq12Mul, &input),
+            expected,
+            "fq12_mul diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq12_sqr_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_600);
+        let samples = tower_fq12_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for value in &samples {
+            input.extend_from_slice(&fq12_words(value));
+            expected.push(value.square());
+        }
+        assert_eq!(
+            probe_fq12(TowerProbe::Fq12Sqr, &input),
+            expected,
+            "fq12_sqr diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq12_mul_by_034_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_700);
+        let samples = tower_fq12_samples(&mut rng);
+        let parts = tower_fq2_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, value) in samples.iter().enumerate() {
+            let c0 = parts[index % parts.len()];
+            let c3 = parts[(index + 3) % parts.len()];
+            let c4 = parts[(index + 5) % parts.len()];
+            input.extend_from_slice(&fq12_words(value));
+            input.extend_from_slice(&fq2_words(&c0));
+            input.extend_from_slice(&fq2_words(&c3));
+            input.extend_from_slice(&fq2_words(&c4));
+            let sparse = Fq12::new(
+                Fq6::new(c0, Fq2::ZERO, Fq2::ZERO),
+                Fq6::new(c3, c4, Fq2::ZERO),
+            );
+            expected.push(*value * sparse);
+        }
+        assert_eq!(
+            probe_fq12(TowerProbe::Fq12MulBy034, &input),
+            expected,
+            "fq12_mul_by_034 diverged from arkworks"
         );
     }
 }

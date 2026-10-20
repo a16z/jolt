@@ -157,6 +157,12 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     pub(super) fq6_mul_by_nonresidue_probe: CudaFunction,
     #[cfg(test)]
+    pub(super) fq12_mul_probe: CudaFunction,
+    #[cfg(test)]
+    pub(super) fq12_sqr_probe: CudaFunction,
+    #[cfg(test)]
+    pub(super) fq12_mul_by_034_probe: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -299,6 +305,12 @@ impl CudaKernelContext {
             fq6_mul_by_fq2_probe: module.load_function("fq6_mul_by_fq2_probe")?,
             #[cfg(test)]
             fq6_mul_by_nonresidue_probe: module.load_function("fq6_mul_by_nonresidue_probe")?,
+            #[cfg(test)]
+            fq12_mul_probe: module.load_function("fq12_mul_probe")?,
+            #[cfg(test)]
+            fq12_sqr_probe: module.load_function("fq12_sqr_probe")?,
+            #[cfg(test)]
+            fq12_mul_by_034_probe: module.load_function("fq12_mul_by_034_probe")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]

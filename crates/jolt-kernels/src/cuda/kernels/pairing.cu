@@ -1,4 +1,5 @@
 #define FQ6_LIMBS (3 * FQ2_LIMBS)
+#define FQ12_LIMBS (2 * FQ6_LIMBS)
 
 static_assert(FQ2_LIMBS == 8, "Fq2 is two Fq limbs wide");
 
@@ -15,6 +16,22 @@ __device__ void fq2_mul_by_nonresidue(const u64 *a, u64 *out) {
     fq_sub(nine_a0, a + LIMBS, c0);
     fq_add(nine_a1, a, out + LIMBS);
     fq_copy(c0, out);
+}
+
+__device__ __forceinline__ void fq6_copy(const u64 *a, u64 *out) {
+    for (int i = 0; i < FQ6_LIMBS; i++) out[i] = a[i];
+}
+
+__device__ __forceinline__ void fq6_add(const u64 *a, const u64 *b, u64 *out) {
+    for (int i = 0; i < 3; i++) {
+        fq2_add(a + i * FQ2_LIMBS, b + i * FQ2_LIMBS, out + i * FQ2_LIMBS);
+    }
+}
+
+__device__ __forceinline__ void fq6_sub(const u64 *a, const u64 *b, u64 *out) {
+    for (int i = 0; i < 3; i++) {
+        fq2_sub(a + i * FQ2_LIMBS, b + i * FQ2_LIMBS, out + i * FQ2_LIMBS);
+    }
 }
 
 __device__ void fq6_mul_by_nonresidue(const u64 *a, u64 *out) {
@@ -103,6 +120,71 @@ __device__ void fq6_mul_by_fq2(const u64 *a, const u64 *k, u64 *out) {
     }
 }
 
+__device__ __noinline__ void fq12_mul(const u64 *a, const u64 *b, u64 *out) {
+    const u64 *a0 = a;
+    const u64 *a1 = a + FQ6_LIMBS;
+    const u64 *b0 = b;
+    const u64 *b1 = b + FQ6_LIMBS;
+
+    u64 v0[FQ6_LIMBS], v1[FQ6_LIMBS], s[FQ6_LIMBS], t[FQ6_LIMBS], c1[FQ6_LIMBS];
+    fq6_mul(a0, b0, v0);
+    fq6_mul(a1, b1, v1);
+    fq6_add(a1, a0, s);
+    fq6_add(b0, b1, t);
+    fq6_mul(s, t, c1);
+    fq6_sub(c1, v0, c1);
+    fq6_sub(c1, v1, c1);
+    fq6_mul_by_nonresidue(v1, s);
+    fq6_add(s, v0, t);
+    fq6_copy(t, out);
+    fq6_copy(c1, out + FQ6_LIMBS);
+}
+
+__device__ __noinline__ void fq12_sqr(const u64 *a, u64 *out) {
+    const u64 *a0 = a;
+    const u64 *a1 = a + FQ6_LIMBS;
+
+    u64 v0[FQ6_LIMBS], v2[FQ6_LIMBS], v3[FQ6_LIMBS], s[FQ6_LIMBS], c0[FQ6_LIMBS];
+    fq6_sub(a0, a1, v0);
+    fq6_mul_by_nonresidue(a1, s);
+    fq6_sub(a0, s, v3);
+    fq6_mul(a0, a1, v2);
+    fq6_mul(v0, v3, v0);
+
+    fq6_mul_by_nonresidue(v2, s);
+    fq6_add(s, v2, c0);
+    fq6_add(c0, v0, c0);
+    fq6_add(v2, v2, s);
+
+    fq6_copy(c0, out);
+    fq6_copy(s, out + FQ6_LIMBS);
+}
+
+__device__ __noinline__ void fq12_mul_by_034(const u64 *f, const u64 *c0, const u64 *c3,
+                                             const u64 *c4, u64 *out) {
+    const u64 *f0 = f;
+    const u64 *f1 = f + FQ6_LIMBS;
+
+    u64 a[FQ6_LIMBS], b[FQ6_LIMBS], e[FQ6_LIMBS], s[FQ6_LIMBS];
+    u64 d0[FQ2_LIMBS];
+
+    fq6_mul_by_fq2(f0, c0, a);
+    fq6_mul_by_01(f1, c3, c4, b);
+
+    fq2_add(c0, c3, d0);
+    fq6_add(f0, f1, e);
+    fq6_mul_by_01(e, d0, c4, s);
+
+    fq6_add(a, b, e);
+    fq6_sub(s, e, e);
+
+    fq6_mul_by_nonresidue(b, s);
+    fq6_add(s, a, s);
+
+    fq6_copy(s, out);
+    fq6_copy(e, out + FQ6_LIMBS);
+}
+
 extern "C" __global__ void fq6_mul_probe(const u64 *__restrict__ in, u64 *__restrict__ out,
                                         unsigned int n) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -134,4 +216,28 @@ extern "C" __global__ void fq6_mul_by_nonresidue_probe(const u64 *__restrict__ i
     if (i >= n) return;
     fq6_mul_by_nonresidue(in + (unsigned long long)i * FQ6_LIMBS,
                           out + (unsigned long long)i * FQ6_LIMBS);
+}
+
+extern "C" __global__ void fq12_mul_probe(const u64 *__restrict__ in, u64 *__restrict__ out,
+                                         unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const u64 *a = in + (unsigned long long)i * 2 * FQ12_LIMBS;
+    fq12_mul(a, a + FQ12_LIMBS, out + (unsigned long long)i * FQ12_LIMBS);
+}
+
+extern "C" __global__ void fq12_sqr_probe(const u64 *__restrict__ in, u64 *__restrict__ out,
+                                         unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    fq12_sqr(in + (unsigned long long)i * FQ12_LIMBS, out + (unsigned long long)i * FQ12_LIMBS);
+}
+
+extern "C" __global__ void fq12_mul_by_034_probe(const u64 *__restrict__ in,
+                                                u64 *__restrict__ out, unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const u64 *a = in + (unsigned long long)i * (FQ12_LIMBS + 3 * FQ2_LIMBS);
+    fq12_mul_by_034(a, a + FQ12_LIMBS, a + FQ12_LIMBS + FQ2_LIMBS,
+                    a + FQ12_LIMBS + 2 * FQ2_LIMBS, out + (unsigned long long)i * FQ12_LIMBS);
 }
