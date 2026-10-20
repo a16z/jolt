@@ -7,34 +7,24 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
 [features]
 default = []
-parallel = [
-  "jolt-algebra/parallel",
-  "jolt-poly/parallel",
-  "jolt-crypto?/parallel",
-]
+parallel = ["jolt-algebra/parallel", "jolt-poly/parallel"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
-committed = ["dep:jolt-crypto", "dep:rand_core"]
-r1cs = ["dep:jolt-r1cs"]
 
 [lints]
 workspace = true
 
 [dependencies]
-jolt-crypto = { path = "../jolt-crypto", default-features = false, optional = true }
 jolt-algebra = { path = "../jolt-algebra", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
-jolt-r1cs = { path = "../jolt-r1cs", default-features = false, optional = true }
 jolt-transcript = { path = "../jolt-transcript", default-features = false }
-rand_core = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
-jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-algebra = { workspace = true, features = ["bn254", "solinas", "binary"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
@@ -43,10 +33,6 @@ jolt-transcript = { workspace = true, features = [
 ] }
 num-traits = { workspace = true }
 rand_core = { workspace = true }
-
-[[test]]
-name = "committed"
-required-features = ["committed"]
 
 [[example]]
 name = "clear_custom_transcript"

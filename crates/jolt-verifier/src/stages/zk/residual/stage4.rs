@@ -1,0 +1,147 @@
+use super::*;
+
+// Binding the scalar field to a bare `F` parameter (rather than spelling
+// `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
+// recognize the side-effect-free field arithmetic in the body.
+pub(super) fn add_stage4<F, PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
+    builder: ResidualBuilder<F>,
+    values: &mut SourceValues<F>,
+) -> Result<ResidualBuilder<F>, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+{
+    let log_t = crate::num::ilog2(input.checked.trace_length);
+    let log_k = crate::num::ilog2(input.checked.ram_K);
+    let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
+    let register_dimensions = input
+        .checked
+        .rw_config
+        .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
+    // Eager: the proof-supplied phase split feeds round-count subtractions
+    // (`phase3_cycle_rounds` etc.) before any lazy point-derivation check.
+    register_dimensions
+        .validate_phase_split()
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RegistersReadWriteChecking,
+            reason: error.to_string(),
+        })?;
+    let registers_claims = relations::registers::ReadWriteChecking::new(register_dimensions);
+    let ram_init = ram_val_check_init(input)?;
+    // Supply the `Val_init` decomposition scalars as `Public` values (formerly
+    // baked as `Term` constants in the expression); the advice / program-image
+    // openings they weight remain hidden witnesses.
+    values.public(
+        JoltDerivedId::from(RamValCheckPublic::InitEval),
+        ram_init.public_eval,
+    )?;
+    for contribution in &ram_init.contributions {
+        values.public(
+            JoltDerivedId::from(contribution.selector),
+            contribution.neg_selector,
+        )?;
+    }
+    let ram_val_claims = relations::ram::RamValCheck::new(relations::ram::RamValCheckShape {
+        dimensions: trace_dimensions,
+        contributions: ram_init
+            .contributions
+            .iter()
+            .map(|contribution| relations::ram::RamValContribution {
+                selector: contribution.selector,
+                opening: contribution.opening,
+            })
+            .collect(),
+    });
+
+    values.public(
+        VerifierPublicId::Challenge(JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)),
+        input.stage4.challenges.registers_read_write.gamma,
+    )?;
+    let registers_point = input
+        .stage4
+        .batch_rounds
+        .try_instance_point(registers_claims.rounds())
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error))?;
+    let registers_opening = register_dimensions
+        .read_write_opening_point(&registers_point)
+        .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?;
+    let registers_reduction_point = input
+        .stage3
+        .batch_rounds
+        .try_instance_point(log_t)
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
+    let registers_reduction_opening = registers_reduction_point
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
+    values.public(
+        JoltDerivedId::from(RegistersReadWritePublic::EqCycle),
+        try_eq_mle(&registers_reduction_opening, &registers_opening.r_cycle)
+            .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
+    )?;
+
+    // The field-register read/write member and its baked publics (relation + gamma + EqCycle),
+    // at the same source-values position as before. The upstream reduced point (`r_prod`) —
+    // the field-inline claim reduction's stage-2 opening point — is the fixed cycle.
+    #[cfg(feature = "field-inline")]
+    let field_registers_claims = super::field_inline::stage4_read_write(
+        values,
+        log_t,
+        input.stage4.challenges.field_registers_read_write.gamma,
+        input
+            .stage2
+            .output_points
+            .field_registers_claim_reduction
+            .rd_value(),
+        input
+            .stage4
+            .output_points
+            .field_registers_read_write_point(),
+    )?;
+
+    values.public(
+        VerifierPublicId::Challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma)),
+        input.stage4.challenges.ram_val_check.gamma,
+    )?;
+    let ram_val_point = input
+        .stage4
+        .batch_rounds
+        .try_instance_point(ram_val_claims.rounds())
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::RamValCheck, error))?;
+    let ram_val_cycle = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
+    let r_cycle = input
+        .stage2
+        .output_points
+        .ram_read_write_point()
+        .get(log_k..)
+        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamValCheck,
+            reason: "RAM read-write opening point is shorter than the RAM address".to_string(),
+        })?;
+    values.public(
+        JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
+        LtPolynomial::evaluate(&ram_val_cycle, r_cycle)
+            + input.stage4.challenges.ram_val_check.gamma,
+    )?;
+
+    // Member declaration order (= batching-coefficient draw order): the field-inline
+    // read/write member sits between the registers and the RAM value-check, exactly as in
+    // `Stage4Sumchecks`.
+    let mut batch_claims = vec![relation_claim(&registers_claims)];
+    #[cfg(feature = "field-inline")]
+    batch_claims.push(relation_claim(&field_registers_claims));
+    batch_claims.push(relation_claim(&ram_val_claims));
+
+    add_batched_stage(
+        builder,
+        "stage4.batch",
+        registers_claims.domain(),
+        &batch_claims,
+        &input.stage4.batch_rounds,
+        &input.stage4.batch_output_claims,
+        values,
+    )
+}

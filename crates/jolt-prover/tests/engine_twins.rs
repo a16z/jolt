@@ -1,6 +1,6 @@
 //! Twin-transcript engine locks: toy members driven through
 //! `jolt_sumcheck::prove_batch` (and `prove_uniskip_clear`) against the
-//! GENERATED `verify_clear` / `verify_zk` drivers and the shared uni-skip
+//! GENERATED `verify_clear` / `verify_masked` drivers and the shared uni-skip
 //! `verify_clear` core. Each verifier reads the prover's argument string to
 //! EOF and must land on the prover's sponge state. This pins
 //! the prove-side engine to the verifier independently of any real stage.
@@ -17,9 +17,9 @@ use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationIn
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
-    prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearSumcheckRecorder,
-    CommittedSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckDomain,
-    SumcheckError, SumcheckRecorder, SumcheckVerifier,
+    prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearSumcheckRecorder, ProveRounds,
+    SequentialRounds, SumcheckClaim, SumcheckDomain, SumcheckError, SumcheckRecorder,
+    SumcheckVerifier,
 };
 use jolt_transcript::{
     Blake2b512, Channel as _, ProtocolId, ProverTranscript, Sponge, VerifierTranscript,
@@ -27,6 +27,9 @@ use jolt_transcript::{
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
 use jolt_verifier::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
 use jolt_verifier::stages::uniskip::{self, UniskipParams};
+use jolt_zk::blindfold::BlindFold;
+use jolt_zk::masking::{CommittedPadsView, MaskingRecorder, PadLayout, ZkBackend};
+use rand_core::OsRng;
 
 #[derive(SumcheckBatch)]
 struct TwinFixtureSumchecks<F: JoltField> {
@@ -115,7 +118,7 @@ impl ProveRounds<Fr> for DenseMember {
     }
 }
 
-/// The ZK twin's vector-commitment capacity: one output-claim row.
+/// The masked twin's vector-commitment capacity: the pad-row length.
 const ROW_LEN: usize = 8;
 
 fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
@@ -236,18 +239,38 @@ fn clear_engine_twin_matches_generated_verify_clear() {
     assert_twins(&mut prover_transcript, verifier_transcript);
 }
 
+/// The masked twin: the prover commits pads on the layout the masked verifier
+/// counts (as `pad_layout` derives it), records the batch through
+/// `MaskingRecorder`, and the generated `verify_masked` must consume the
+/// argument string, use every pad, and record values that decode to the
+/// prover's.
 #[test]
-fn committed_engine_twin_matches_generated_verify_zk() {
+fn masked_engine_twin_matches_generated_verify_masked() {
     type VC = Pedersen<Bn254G1>;
     let setup = pedersen_setup(ROW_LEN as u64);
-
-    // Prover: draw → sums → begin_batch(committed; claim absorbs no-op) →
-    // prove_batch → finish (output-claim row commitments absorbed).
     let sumchecks = fixture();
     let inputs = inputs();
-    let mut prover_transcript = prover_transcript("engine-zk-twin");
-    let prover_challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
+    // The registers member reads its read-write point: the 7 register
+    // address bits then the 3 cycle bits.
+    let mut input_points = sumchecks.empty_input_points();
+    input_points.registers_val_evaluation.registers_val = (0..10).map(Fr::from_u64).collect();
 
+    let zeros = vec![0u8; 1 << 16];
+    let mut counting_transcript = verifier_transcript("engine-masked-twin", &zeros);
+    let mut counter = CommittedPadsView::counting();
+    let _ = sumchecks.draw_challenges(&mut counting_transcript).unwrap();
+    let shape = sumchecks
+        .verify_masked(
+            &input_points,
+            &mut counter.channel(&mut counting_transcript),
+        )
+        .unwrap();
+    let layout = PadLayout::new(counter.used(), 0).unwrap();
+
+    let mut prover_transcript = prover_transcript("engine-masked-twin");
+    let mut pads =
+        BlindFold::<VC>::commit_pads(&setup, &layout, &mut prover_transcript, &mut OsRng).unwrap();
+    let prover_challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
     let instruction_sum = sumchecks
         .instruction_read_raf
         .input_claim(
@@ -269,9 +292,7 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         registers_sum,
         57,
     );
-
-    let mut recorder =
-        CommittedSumcheckRecorder::<Fr, VC, _>::new(&setup, rand_core::OsRng).unwrap();
+    let mut recorder = MaskingRecorder::new(&mut pads);
     let (batch, prover_coefficients) = sumchecks
         .begin_batch(
             &inputs,
@@ -290,49 +311,45 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         &mut prover_transcript,
     )
     .unwrap();
-    // Synthetic values in the shape the verifier commits: one per committed
-    // cell of the points derived at the batch point.
-    // The registers member reads its read-write point: the 7 register
-    // address bits then the 3 cycle bits.
-    let mut input_points = sumchecks.empty_input_points();
-    input_points.registers_val_evaluation.registers_val = (0..10).map(Fr::from_u64).collect();
+    let output_values: Vec<Fr> = (0..shape.output_claims.received.len() as u64)
+        .map(|k| Fr::from_u64(40 + k))
+        .collect();
+    recorder
+        .finish(&output_values, &mut prover_transcript)
+        .unwrap();
+    pads.finish().unwrap();
+
+    let narg = prover_transcript.narg().to_vec();
+    let mut verifier_transcript = verifier_transcript("engine-masked-twin", &narg);
+    let mut view =
+        BlindFold::<VC>::receive_pad_commitment(&setup, &layout, &mut verifier_transcript).unwrap();
+    let _ = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
+    let verified = sumchecks
+        .verify_masked(&input_points, &mut view.channel(&mut verifier_transcript))
+        .unwrap();
+    view.finish().unwrap();
+
     let points = sumchecks
         .derive_opening_points(&proved.challenges, &input_points)
         .unwrap();
-    let layout = TwinFixtureSumchecks::committed_claim_layout(
-        &points,
-        &TwinFixtureSumchecks::claim_routes(&points).unwrap(),
-    );
-    let output_values: Vec<Fr> = (0..layout.ids.len() as u64).map(Fr::from_u64).collect();
-    let witness = recorder
-        .finish(&output_values, &mut prover_transcript)
-        .unwrap();
-
-    // rounds, derived points, output-claim row commitments).
-    let narg = prover_transcript.narg().to_vec();
-    let mut verifier_transcript = verifier_transcript("engine-zk-twin", &narg);
-    let _verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-    let verified = sumchecks
-        .verify_zk::<Bn254G1, _>(ROW_LEN, &input_points, &mut verifier_transcript)
-        .unwrap();
     assert_eq!(verified.output_points, points);
-    let (consistency, output_commitments) =
-        (verified.consistency, verified.output_claims.commitments);
-
-    assert_eq!(consistency.challenges(), proved.challenges);
+    assert_eq!(verified.rounds.challenges(), proved.challenges);
     assert_eq!(
-        consistency.batching_coefficients,
+        verified.rounds.batching_coefficients,
         vec![
             prover_coefficients.instruction_read_raf,
             prover_coefficients.registers_val_evaluation,
         ],
     );
-    assert_eq!(consistency.max_num_vars, batch.max_num_vars);
-    assert_eq!(consistency.max_degree, batch.max_degree);
-    assert_eq!(
-        output_commitments.commitments.len(),
-        witness.output_claim_rows.len()
-    );
+    assert_eq!(verified.rounds.max_num_vars, batch.max_num_vars);
+    assert_eq!(verified.rounds.max_degree, batch.max_degree);
+    let decoded: Vec<Fr> = verified
+        .output_claims
+        .received
+        .iter()
+        .map(|(_, operand)| pads.decode(operand.masked, operand.pad).unwrap())
+        .collect();
+    assert_eq!(decoded, output_values);
     assert_twins(&mut prover_transcript, verifier_transcript);
 }
 

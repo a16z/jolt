@@ -38,7 +38,7 @@ less declarative:
 ## Invariants
 
 1. A claims struct's field declaration order is the only definition of claim
-   order on the wire, in committed rows, and in the BlindFold lowering.
+   order on the wire, in masked messages, and in the residual lowering.
 2. The verifier receives claims in the shape of its own output points, derived
    from public dimensions and the batch point. The prover checks its values
    against the same points (`validate_output_shape`) before recording them.
@@ -67,12 +67,13 @@ else its member's static alias (`aliased_output_openings`), else `Sent`.
 - `receive_output_claims(points, routes, staged, t)`: `Sent` cells are
   received, `Alias` cells copy their source, `Staged` cells come from
   `staged`.
-- `wire_claim_values` (the clear send) and `committed_claim_values` (the ZK
-  rows) over claims and routes.
-- `committed_claim_layout(points, routes)`: the committed ids in row order plus
-  the `OpeningAlias` rows. `verify_zk` derives the points, builds this layout,
-  and returns it in the `CommittedOutputClaimShape`. BlindFold's `add_stage`
-  reads ids and aliases from the shape, so no lowering keeps its own list.
+- `wire_claim_values` (the clear send) over claims and routes.
+- `receive_masked_output_claims(points, routes, staged, channel)`: the masked
+  counterpart, recording each masked value with its pad slot. `verify_masked`
+  derives the points, reads the masked rounds and these claims on
+  `ClaimRoutes::masked()` (every cell sent, aliases become equality rows),
+  and returns them in a `MaskedBatch`. The residual lowering reads ids and
+  points from that batch, so no lowering keeps its own list.
 - `validate_output_shape(claims, points)`: the prover's self-check.
 
 `ConcreteSumcheck::wire_output_openings`, `output_claim_count`, the

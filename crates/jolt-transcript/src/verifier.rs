@@ -207,6 +207,12 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
         self.narg.split_at(self.consumed).1
     }
 
+    /// The proof bytes received so far.
+    #[must_use]
+    pub fn consumed(&self) -> &'a [u8] {
+        self.narg.split_at(self.consumed).0
+    }
+
     /// Bytes of the proof not yet received.
     #[must_use]
     pub fn remaining(&self) -> usize {

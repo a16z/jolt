@@ -1,6 +1,7 @@
-use jolt_algebra::{CanonicalDecode, JoltField};
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::masking::CommittedPadsView;
 
 use crate::sites::STAGE3;
 
@@ -18,6 +19,7 @@ use crate::{
     stages::{
         stage1::{Stage1BatchOutputClaims, Stage1Output},
         stage2::{Stage2BatchOutputClaims, Stage2Output},
+        zk::masked_channel,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -38,15 +40,15 @@ pub fn stage3_input_values_from_upstream<F: JoltField>(
     }
 }
 
-pub fn verify<F, C, H>(
+pub fn verify<F, H, P>(
     checked: &CheckedInputs,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage1: &Stage1Output<F, C>,
-    stage2: &Stage2Output<F, C>,
-) -> Result<Stage3Output<F, C>, VerifierError>
+    pads: Option<&mut CommittedPadsView<P>>,
+    stage1: &Stage1Output<F>,
+    stage2: &Stage2Output<F>,
+) -> Result<Stage3Output<F>, VerifierError>
 where
     F: JoltField,
-    C: CanonicalDecode,
     H: Sponge,
 {
     transcript.site(STAGE3);
@@ -92,15 +94,14 @@ where
     }
 
     {
-        let batch = sumchecks.verify_zk(
-            checked.committed_row_len()?,
+        let batch = sumchecks.verify_masked(
             &sumchecks.empty_input_points(),
-            transcript,
+            &mut masked_channel(pads, transcript)?,
         )?;
 
         Ok(Stage3Output::Zk(Stage3ZkOutput {
             challenges,
-            batch_consistency: batch.consistency,
+            batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             output_points: batch.output_points,
         }))

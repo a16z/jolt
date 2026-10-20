@@ -1,11 +1,10 @@
 use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 
-use crate::stages::relations::{ClaimRoute, ClaimRoutes, SumcheckBatch};
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{ClaimRoute, ClaimRoutes, MaskedClaims, SumcheckBatch};
 use crate::VerifierError;
 
 // The per-relation produced-claim structs live in their relation modules
@@ -352,10 +351,10 @@ pub struct Stage6bClearOutput<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6bZkOutput<F: JoltField, C> {
+pub struct Stage6bZkOutput<F: JoltField> {
     pub challenges: Stage6bCarriedChallenges<F>,
-    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    pub batch_rounds: BatchedMaskedRounds<F>,
+    pub batch_output_claims: MaskedClaims<F>,
     /// The produced opening *points*, the ZK counterpart of the clear path's
     /// `Stage6bClearOutput::output_points`. Stages 7/8 and BlindFold read each
     /// relation's opening point off these cells through the same
@@ -365,12 +364,12 @@ pub struct Stage6bZkOutput<F: JoltField, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage6bOutput<F: JoltField, C> {
+pub enum Stage6bOutput<F: JoltField> {
     Clear(Stage6bClearOutput<F>),
-    Zk(Stage6bZkOutput<F, C>),
+    Zk(Stage6bZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage6bOutput<F, C> {
+impl<F: JoltField> Stage6bOutput<F> {
     /// The produced opening *points*, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage6bOutputPoints<F> {
         match self {
@@ -379,19 +378,17 @@ impl<F: JoltField, C> Stage6bOutput<F, C> {
         }
     }
 
-    pub fn clear(&self) -> Result<&Stage6bClearOutput<F>, crate::VerifierError> {
+    pub fn clear(&self) -> Result<&Stage6bClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage6b" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage6b" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage6bZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage6bZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => {
-                Err(crate::VerifierError::ExpectedCommittedProof { field: "stage6b" })
-            }
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage6b" }),
         }
     }
 }

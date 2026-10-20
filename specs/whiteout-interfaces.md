@@ -210,9 +210,11 @@ pads. `SumcheckRecorder` is built on this seam: input claims go through
 `bind_derived`, round coefficients and output claims through `exchange_private`.
 `SumcheckRecorder` and `PrivateChannel` carry an associated `Error`, so pad
 exhaustion has a channel in both. `absorb_input_claims` is fallible and takes
-any `PrivateChannel<Error = TranscriptError>`. The clear and committed
-recorders use `Error = SumcheckError<F>`, which the batched engine and the
-generated drivers require.
+any `C: PrivateChannel` with `C::Error: From<TranscriptError>`, and the
+private-value readers carry the same bound, so pad exhaustion is its own error
+rather than a `TranscriptError`. The clear and masking recorders use
+`Error = SumcheckError<F>`, which the batched engine and the generated drivers
+require.
 
 Messages that go through the seam:
 
@@ -282,26 +284,42 @@ compression) and `ZkBackend::PadOpening` (pads, g and r_p). It is built on
 
 ```rust
 /// Public pad layout, derived from the protocol's public shape by one function
-/// that prover and verifier both call.
+/// that prover and verifier both call (`specs/whiteout-masking.md`).
 pub struct PadLayout {
     pub num_pads: usize,
-    /// Pads of product operands (§5), stored as constant digit polynomials in
-    /// the pad commitment.
-    pub operand_pads: Vec<PadIndex>,
-    /// Auxiliary slots for masked intermediate products of checks of degree > 2.
-    pub auxiliary_slots: Vec<AuxSlot>,
+    /// Auxiliary slots for masked intermediate products, counted by running
+    /// the residual lowering in shape mode.
+    pub auxiliary: Range<usize>,
 }
 
 /// Pads committed before the first challenge. Masking recorders and
 /// `PrivateChannel`s can only be built from this, so they cannot run before the
-/// commitment exists.
-pub struct CommittedPads<F, B> { /* pads, cursor, blind */ }
+/// commitment exists. `O` is the back end's pad-opening data: Pedersen row
+/// blinds for BlindFold; for Whiteout also g, r_p and the digit polynomials.
+pub struct CommittedPads<F, O> { /* pads, cursor, opening */ }
+
+/// The verifier's view: the pad commitment and a cursor, no opening data.
+pub struct CommittedPadsView<C> { /* commitment, cursor */ }
 ```
 
 The back end creates `CommittedPads` (§5); the prover sends the commitment
-before any challenge. At the end the cursor must equal `layout.num_pads`.
-Masked intermediate products are sent through `exchange_private` at their
-auxiliary slots, during the transcript, before the challenge that uses them.
+before any challenge. The prover masks through `CommittedPads::send` (and the
+masking `SumcheckRecorder` built on it) rather than a `PrivateChannel`, whose
+methods are generic over the message field; the verifier's masked
+`PrivateChannel` is built from `CommittedPadsView`. The layout is derived by
+replaying the masked verifier over the seeded prefix with a counting view
+(`CommittedPadsView::counting`). `CommittedPads::send` returns the masked
+values it sent, so m̂ = m + p has one owner. At the end the cursor must equal
+`layout.num_pads`, a release check in `ZkBackend::verify` that rejects a
+proof leaving scheduled pads unused (soundness rests on the lowering
+emitting a row for every clear check). Masked intermediate products are sent through
+`exchange_private` at their auxiliary slots in one block after the last
+masked base message. Auxiliary slots form an acyclic chain: each is defined
+by exactly one product row or defining affine row whose inputs are earlier
+slots, so no base-protocol challenge depends on them.
+
+`operand_pads` (Whiteout's scalarity rows) is added in W4 from the same shape
+routine, with a release check that every `ProductRow.x.pad` is in it.
 
 ## 5. ZK layer (M6b, W4)
 
@@ -335,7 +353,10 @@ pub trait ResidualRows<F> {
 ```
 
 - **Field level.** Rows are over the base field. The masking layer owns
-  expanding an extension-field affine check into `E::DEGREE` base-field rows.
+  expanding an extension-field affine check into `E::DEGREE` base-field rows;
+  that expansion lands in W3 with its first caller.
+- **Rows are never dropped.** A row whose variable coefficients cancel but
+  whose constant is nonzero is kept; it is unsatisfiable.
 - **What the back end adds.** It never sees the mask g as a row variable. g,
   the constant-term lift, the scalarity rows of operand pads, and the
   ring-linear rows N·s = t (residual and pad commitment openings) are the
@@ -350,36 +371,52 @@ pub trait ResidualRows<F> {
 ```rust
 pub trait ZkBackend<F> {
     type Setup;
-    type Blind;
+    /// What the verifier holds after the pad commitment is sent.
+    type PadCommitment;
+    /// Prover-side data that opens the pad commitment.
+    type PadOpening;
+    /// The commitment to the residual witness: Dory's hiding evaluation
+    /// commitment for BlindFold; a `jolt-crypto::lattice` type for Whiteout.
+    type ResidualCommitment;
     type Witness;
     /// Samples pads, commits to them (and, for Whiteout, to g and r_p) and
     /// sends the commitment. Called before the first challenge.
     fn commit_pads<H: Sponge, R: RngCore + CryptoRng>(
         setup: &Self::Setup, layout: &PadLayout, transcript: &mut ProverTranscript<H>, rng: &mut R,
-    ) -> Result<CommittedPads<F, Self::Blind>, ZkError>;
+    ) -> Result<CommittedPads<F, Self::PadOpening>, ZkError>;
     /// Reads the pad commitment at the same transcript position, before the
     /// first challenge. The verifier-side `PrivateChannel` can only be built
     /// from the returned view.
     fn receive_pad_commitment<H: Sponge>(
         setup: &Self::Setup, layout: &PadLayout, transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<CommittedPadsView<Self::Blind>, ZkError>;
+    ) -> Result<CommittedPadsView<Self::PadCommitment>, ZkError>;
     fn prove<H: Sponge, R: RngCore + CryptoRng>(
-        setup: &Self::Setup, relation: &ResidualRelation<F>, pads: CommittedPads<F, Self::Blind>,
+        setup: &Self::Setup, relation: &ResidualRelation<F>,
+        pads: CommittedPads<F, Self::PadOpening>, residual: &Self::ResidualCommitment,
         witness: &Self::Witness, transcript: &mut ProverTranscript<H>, rng: &mut R,
     ) -> Result<(), ZkError>;
     fn verify<H: Sponge>(
         setup: &Self::Setup, relation: &ResidualRelation<F>,
+        pads: &CommittedPadsView<Self::PadCommitment>, residual: &Self::ResidualCommitment,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), ZkError>;
 }
 
 pub enum ZkError {
-    /// W2: a one-shot fold response overflowed its digit range. Retry the whole
-    /// proof, resampling every pad and all randomness.
-    FoldOverflow,
-    // invariant violations, transcript errors, …
+    // invariant violations and transcript errors; back-end and sumcheck
+    // failures carry their typed source (field-generic sources are boxed,
+    // since `ZkError` and `VerifierError` are field-independent), …
+    // W2 adds `FoldOverflow`: a one-shot fold response overflowed its digit
+    // range; retry the whole proof, resampling every pad and all randomness.
 }
 ```
+
+Whiteout is `Whiteout<R: ResponseProver<F>>`, with R reached through
+`Setup`, because `ResponseProver` is not dyn-compatible.
+
+The stage-8 row tying the PCS evaluation to the masked claims belongs to the
+back end's PCS integration in `jolt-prover` / `jolt-verifier`, not to the
+stage-agnostic lowering: under Akita the joint claim flows into the folds.
 
 Σ-protocol rejection is not an error. `whiteout::prove` retries internally
 with a fresh mask y and a fresh attempt nonce, as the paper requires

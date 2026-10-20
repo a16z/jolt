@@ -53,8 +53,9 @@ use jolt_verifier::{jolt_protocol_id, CheckedInputs, JoltSponge, JOLT_SESSION};
 #[cfg(feature = "akita")]
 use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+use jolt_zk::masking::CommittedPadsView;
 
-use crate::{JoltProverPreprocessing, ProverConfig};
+use crate::{JoltProverPreprocessing, ProofMode, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
 // 3, not 2: the last physical cycle must be a noop (constraint 21's
@@ -477,16 +478,35 @@ pub(crate) fn test_public_io() -> JoltDevice {
     }
 }
 
-/// The BlindFold row-commitment setup for the committed stage recipes:
-/// `MAX_BLINDFOLD_GENERATORS` distinct generator multiples, matching
-/// [`test_checked_inputs`]'s `vc_capacity`.
-#[cfg(feature = "zk")]
-pub(crate) fn test_vc_setup() -> PedersenSetup<Bn254G1> {
-    let generator = Bn254::g1_generator();
-    let generators = (2..2 + MAX_BLINDFOLD_GENERATORS as u64)
-        .map(|k| generator.scalar_mul(&Fr::from_u64(k)))
-        .collect();
-    PedersenSetup::new(generators, generator.scalar_mul(&Fr::from_u64(1)))
+/// The compiled mode for the stage recipes. ZK builds mask with pads
+/// committed on a throwaway transcript: the fixture prover starts at stage 1,
+/// and [`verify_through`] counts pads rather than reading their commitment.
+pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
+    #[cfg(feature = "zk")]
+    {
+        use jolt_zk::{
+            blindfold::BlindFold,
+            masking::{PadLayout, ZkBackend},
+        };
+        use rand_core::OsRng;
+        let generator = Bn254::g1_generator();
+        let generators = (2..2 + MAX_BLINDFOLD_GENERATORS as u64)
+            .map(|k| generator.scalar_mul(&Fr::from_u64(k)))
+            .collect();
+        let setup = PedersenSetup::new(generators, generator.scalar_mul(&Fr::from_u64(1)));
+        let pads = BlindFold::<Pedersen<Bn254G1>>::commit_pads(
+            &setup,
+            &PadLayout::new(1 << 14, 0).unwrap(),
+            &mut fixture_transcript(),
+            &mut OsRng,
+        )
+        .unwrap();
+        ProofMode::masked(pads)
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        ProofMode::clear()
+    }
 }
 
 /// A fresh prover transcript under Jolt's protocol id and session. The
@@ -526,22 +546,33 @@ pub(crate) fn verify_through(
     let formula_dimensions =
         build_formula_dimensions(verifier, checked, LOG_T, JoltRelationId::InstructionReadRaf)
             .unwrap();
+    let mut counter = CommittedPadsView::counting();
+    let mut pads = checked.zk.then_some(&mut counter);
     'stages: {
         let t = &mut transcript;
-        let stage1 = stage1::verify::<Fr, Bn254G1, JoltSponge>(checked, t).unwrap();
+        let stage1 = stage1::verify::<Fr, JoltSponge, ()>(checked, t, pads.as_deref_mut()).unwrap();
         if last == Through::Stage1 {
             break 'stages;
         }
-        let stage2 = stage2::verify(checked, t, &stage1).unwrap();
+        let stage2 = stage2::verify(checked, t, pads.as_deref_mut(), &stage1).unwrap();
         if last == Through::Stage2 {
             break 'stages;
         }
-        let stage3 = stage3::verify(checked, t, &stage1, &stage2).unwrap();
-        let stage4 = stage4::verify(checked, verifier, t, &stage2, &stage3).unwrap();
+        let stage3 = stage3::verify(checked, t, pads.as_deref_mut(), &stage1, &stage2).unwrap();
+        let stage4 =
+            stage4::verify(checked, verifier, t, pads.as_deref_mut(), &stage2, &stage3).unwrap();
         if last == Through::Stage4 {
             break 'stages;
         }
-        let stage5 = stage5::verify(checked, &formula_dimensions, t, &stage2, &stage4).unwrap();
+        let stage5 = stage5::verify(
+            checked,
+            &formula_dimensions,
+            t,
+            pads.as_deref_mut(),
+            &stage2,
+            &stage4,
+        )
+        .unwrap();
         if last == Through::Stage5 {
             break 'stages;
         }
@@ -550,6 +581,7 @@ pub(crate) fn verify_through(
             verifier,
             &formula_dimensions,
             t,
+            pads.as_deref_mut(),
             &stage1,
             &stage2,
             &stage3,
@@ -565,6 +597,7 @@ pub(crate) fn verify_through(
             verifier,
             &formula_dimensions,
             t,
+            pads,
             &stage1,
             &stage2,
             &stage3,
@@ -604,7 +637,7 @@ pub(crate) mod proving {
 
     pub(crate) struct FixtureProver<'a, 'w> {
         pub(crate) backend: &'a mut KernelContext<'w, Fr, JoltBackend<Fr, DoryScheme>>,
-        pub(crate) mode: &'a ProofMode<'a, Pedersen<Bn254G1>>,
+        pub(crate) mode: &'a mut ProofMode<Pedersen<Bn254G1>>,
         pub(crate) config: &'a ProverConfig,
         pub(crate) public_io: &'a JoltDevice,
         pub(crate) checked: &'a CheckedInputs,
@@ -616,14 +649,14 @@ pub(crate) mod proving {
         pub(crate) fn through_stage3(&mut self) -> Stages3 {
             let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 LOG_T,
                 self.transcript,
             )
             .unwrap();
             let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.config,
                 self.public_io,
                 &stage1.clear_output,
@@ -632,7 +665,7 @@ pub(crate) mod proving {
             .unwrap();
             let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.config,
                 &stage1.clear_output,
                 &stage2.clear_output,
@@ -645,7 +678,7 @@ pub(crate) mod proving {
             let (stage1, stage2, stage3) = self.through_stage3();
             let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.checked,
                 self.config,
                 self.preprocessing,
@@ -660,7 +693,7 @@ pub(crate) mod proving {
             let ((stage1, stage2, stage3), stage4) = self.through_stage4();
             let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.checked,
                 self.config,
                 self.preprocessing,
@@ -675,7 +708,7 @@ pub(crate) mod proving {
             let (((stage1, stage2, stage3), stage4), stage5) = self.through_stage5();
             let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.checked,
                 self.config,
                 self.preprocessing,

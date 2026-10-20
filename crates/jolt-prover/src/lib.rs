@@ -54,6 +54,8 @@ pub mod stages;
 
 #[cfg(feature = "akita")]
 pub use akita::prove;
+#[cfg(all(feature = "zk", feature = "prover-fixtures"))]
+pub use blindfold::secrets as zk_secrets;
 pub use config::{CommittedProgramCandidates, ProverConfig};
 #[cfg(not(feature = "akita"))]
 pub use dory::prove;
@@ -63,4 +65,4 @@ pub use jolt_kernels::{JoltBackend, ProofSession};
 pub use preprocessing::{
     CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
 };
-pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};
+pub use recorder::{ModeRecorder, ProofMode};

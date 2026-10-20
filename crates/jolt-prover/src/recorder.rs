@@ -2,156 +2,177 @@
 //! object, with the mode carried entirely in `#[cfg(feature = "zk")]` types.
 //!
 //! Stage recipes stay mode-agnostic: they call [`ProofMode::recorder`] for
-//! the batch recorder and [`ProofMode::prove_uniskip`] for the uni-skip arm,
-//! and both return the clear or committed flavor depending on how the crate
-//! was compiled. There is no runtime flag to drift — the recorder type *is*
-//! the mode, exactly as the stage drivers were designed around
+//! the batch recorder, [`ProofMode::prove_uniskip`] for the uni-skip arm and
+//! [`ProofMode::send_private`] for private values sent outside a sumcheck,
+//! and each returns the clear or masked flavor depending on how the crate was
+//! compiled. There is no runtime flag to drift — the recorder type *is* the
+//! mode, exactly as the stage drivers were designed around
 //! (`specs/prover-stage-drivers.md`).
 
 #[cfg(not(feature = "zk"))]
 use core::marker::PhantomData;
 
-use jolt_algebra::JoltField;
+#[cfg(feature = "zk")]
+use jolt_algebra::CanonicalEncoding;
+#[cfg(feature = "zk")]
+use jolt_crypto::Commitment;
 use jolt_crypto::VectorCommitment;
 use jolt_poly::UnivariatePoly;
-#[cfg(not(feature = "zk"))]
-use jolt_sumcheck::prove_uniskip_clear;
 use jolt_sumcheck::ClearSumcheckRecorder;
 #[cfg(feature = "zk")]
-use jolt_sumcheck::{prove_uniskip_committed, CommittedSumcheckRecorder, CommittedSumcheckWitness};
+use jolt_sumcheck::{prove_uniskip, ProvedUniskip};
+#[cfg(not(feature = "zk"))]
+use jolt_sumcheck::{prove_uniskip_clear, ProvedUniskip};
+#[cfg(not(feature = "zk"))]
+use jolt_transcript::{PadSlots, PrivateChannel};
 use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_verifier::stages::relations::ClaimRoutes;
+#[cfg(not(feature = "zk"))]
+use jolt_verifier::VerifierError;
+#[cfg(feature = "zk")]
+use jolt_zk::{
+    blindfold::BlindFoldPadOpening,
+    masking::{CommittedPads, MaskingRecorder},
+};
 
 use crate::ProverError;
-#[cfg(all(test, not(feature = "zk")))]
-use jolt_sumcheck::CommittedSumcheckRecorder;
+
+/// The pads a ZK proof commits before its first challenge.
 #[cfg(feature = "zk")]
-use rand_core::OsRng;
-#[cfg(any(feature = "zk", test))]
-use rand_core::RngCore;
+pub type ModePads<VC> = CommittedPads<
+    <VC as VectorCommitment>::Field,
+    BlindFoldPadOpening<<VC as VectorCommitment>::Field, <VC as Commitment>::Output>,
+>;
 
 /// The compiled mode's batch recorder type.
 #[cfg(feature = "zk")]
-pub type ModeRecorder<'a, VC> =
-    CommittedSumcheckRecorder<'a, <VC as VectorCommitment>::Field, VC, OsRng>;
+pub type ModeRecorder<'a, VC> = MaskingRecorder<
+    'a,
+    <VC as VectorCommitment>::Field,
+    BlindFoldPadOpening<<VC as VectorCommitment>::Field, <VC as Commitment>::Output>,
+>;
 #[cfg(not(feature = "zk"))]
 pub type ModeRecorder<'a, VC> = ClearSumcheckRecorder<<VC as VectorCommitment>::Field>;
 
-/// Which output-claim cells a recorder records after a batch's rounds.
-/// A clear recorder sends the `Sent` cells; the `Staged` cells went on the
-/// wire before the batch. A committed recorder commits every non-alias cell,
-/// staged ones included, because nothing was revealed earlier.
+/// Which output-claim routes a recorder sends after a batch's rounds.
 pub trait ClaimRecorder {
-    const RECORDS_STAGED: bool;
+    /// The routes a proof in this recorder's mode sends on.
+    fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes;
 }
 
 impl<F> ClaimRecorder for ClearSumcheckRecorder<F> {
-    const RECORDS_STAGED: bool = false;
+    fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes {
+        routes
+    }
 }
 
-// The driver's twin tests run a committed recorder in clear builds too.
-#[cfg(any(feature = "zk", test))]
-impl<F, VC, R> ClaimRecorder for CommittedSumcheckRecorder<'_, F, VC, R>
-where
-    F: JoltField,
-    VC: VectorCommitment<Field = F>,
-    R: RngCore,
-{
-    const RECORDS_STAGED: bool = true;
-}
-
-/// A proved uni-skip round in the compiled mode: the reduction challenge and
-/// the output claim (sent by the clear arm, committed and retained by the ZK
-/// arm).
-pub struct ProvedUniskipMode<F: JoltField> {
-    pub challenge: F,
-    pub output_claim: F,
-    #[cfg(feature = "zk")]
-    pub witness: CommittedSumcheckWitness<F>,
+/// A masked proof sends every runtime-aliased cell: the pad schedule is fixed
+/// before the challenges that decide the alias ([`ClaimRoutes::masked`]).
+#[cfg(feature = "zk")]
+impl<F, O> ClaimRecorder for MaskingRecorder<'_, F, O> {
+    fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes {
+        routes.masked().0
+    }
 }
 
 /// The per-proof mode context. Clear builds carry nothing; ZK builds carry
-/// the vector-commitment setup every committed recorder and uni-skip commit
-/// against (the same setup the verifier validates in `CheckedInputs`).
-pub struct ProofMode<'a, VC: VectorCommitment> {
+/// the pads committed before the first challenge, which every recorder and
+/// private send masks with.
+pub struct ProofMode<VC: VectorCommitment> {
     #[cfg(feature = "zk")]
-    vc_setup: &'a VC::Setup,
+    pads: ModePads<VC>,
     #[cfg(not(feature = "zk"))]
-    _vc: PhantomData<&'a VC>,
+    _vc: PhantomData<VC>,
 }
 
-impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
-    /// `vc_setup` is the preprocessing's BlindFold vector-commitment setup;
-    /// required (and validated against) only in ZK builds.
-    pub fn new(vc_setup: Option<&'a VC::Setup>) -> Result<Self, ProverError<VC::Field>> {
-        #[cfg(feature = "zk")]
-        {
-            let vc_setup = vc_setup.ok_or(ProverError::Verifier(
-                jolt_verifier::VerifierError::MissingVectorCommitmentSetup,
-            ))?;
-            Ok(Self { vc_setup })
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            let _ = vc_setup;
-            Ok(Self { _vc: PhantomData })
-        }
+#[cfg(not(feature = "zk"))]
+impl<VC: VectorCommitment> ProofMode<VC> {
+    pub fn clear() -> Self {
+        Self { _vc: PhantomData }
+    }
+}
+
+#[cfg(feature = "zk")]
+impl<VC: VectorCommitment> ProofMode<VC>
+where
+    VC::Field: CanonicalEncoding,
+{
+    /// The masked mode over `pads`.
+    pub fn masked(pads: ModePads<VC>) -> Self {
+        Self { pads }
     }
 
+    /// The pads, for the residual proof once every masked message is sent.
+    pub fn into_pads(self) -> ModePads<VC> {
+        self.pads
+    }
+}
+
+impl<VC: VectorCommitment> ProofMode<VC> {
     /// A fresh batch recorder for one stage.
-    pub fn recorder(&self) -> Result<ModeRecorder<'a, VC>, ProverError<VC::Field>> {
+    pub fn recorder(&mut self) -> ModeRecorder<'_, VC> {
         #[cfg(feature = "zk")]
         {
-            Ok(CommittedSumcheckRecorder::new(self.vc_setup, OsRng)?)
+            MaskingRecorder::new(&mut self.pads)
         }
         #[cfg(not(feature = "zk"))]
         {
-            let _ = self;
-            Ok(ClearSumcheckRecorder::new())
+            ClearSumcheckRecorder::new()
         }
     }
 
-    /// Prove a uni-skip first round in the compiled mode. The clear arm sends
-    /// the full polynomial and the output claim; the ZK arm commits the
-    /// coefficients and the output claim and retains the witness.
+    /// Sends private values outside a sumcheck (stage 4's staged openings):
+    /// clear, or masked by the next pads.
+    pub fn send_private<H: Sponge>(
+        &mut self,
+        values: &[VC::Field],
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), ProverError<VC::Field>> {
+        #[cfg(feature = "zk")]
+        {
+            let _ = self.pads.send(values, transcript)?;
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let _: PadSlots = transcript
+                .exchange_private_base(&mut values.to_vec())
+                .map_err(VerifierError::from)?;
+        }
+        Ok(())
+    }
+
+    /// Prove a uni-skip first round in the compiled mode: the full round
+    /// polynomial and the output claim, sent clear or masked.
     pub fn prove_uniskip<H: Sponge>(
-        &self,
+        &mut self,
         round_poly: UnivariatePoly<VC::Field>,
         input_claim: VC::Field,
         degree: usize,
         domain_size: usize,
         transcript: &mut ProverTranscript<H>,
-    ) -> Result<ProvedUniskipMode<VC::Field>, ProverError<VC::Field>> {
+    ) -> Result<ProvedUniskip<VC::Field>, ProverError<VC::Field>> {
         #[cfg(feature = "zk")]
         {
-            let proved = prove_uniskip_committed::<VC::Field, VC, H, _>(
+            let _span = tracing::info_span!("prove_uniskip_masked").entered();
+            let (proved, ()) = prove_uniskip(
                 round_poly,
                 input_claim,
                 degree,
                 domain_size,
-                self.vc_setup,
-                OsRng,
+                MaskingRecorder::new(&mut self.pads),
                 transcript,
             )?;
-            Ok(ProvedUniskipMode {
-                challenge: proved.challenge,
-                output_claim: proved.output_claim,
-                witness: proved.witness,
-            })
+            Ok(proved)
         }
         #[cfg(not(feature = "zk"))]
         {
-            let _ = self;
-            let proved = prove_uniskip_clear::<VC::Field, H>(
+            Ok(prove_uniskip_clear::<VC::Field, H>(
                 round_poly,
                 input_claim,
                 degree,
                 domain_size,
                 transcript,
-            )?;
-            Ok(ProvedUniskipMode {
-                challenge: proved.challenge,
-                output_claim: proved.output_claim,
-            })
+            )?)
         }
     }
 }

@@ -1,13 +1,10 @@
 //! Sumcheck verifier: reads round polynomials from the proof and checks them
 //! against the running sum.
 
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
-use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
-use crate::committed::{
-    CommittedOutputClaims, CommittedSumcheckConsistency, VerifiedCommittedRound,
-};
+use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::domain::SumcheckDomain;
 use crate::error::SumcheckError;
 use crate::round_proof::{receive_compressed_round, receive_full_round};
@@ -75,41 +72,5 @@ impl SumcheckVerifier {
             challenges.push(r);
         }
         Ok(EvaluationClaim::new(challenges, running_sum))
-    }
-
-    /// Reads committed rounds of degree bound `statement.degree`, then the
-    /// `num_output_commitments` output-claim row commitments.
-    ///
-    /// Each round commitment is followed by its challenge. Committed proofs
-    /// reveal no claim scalars, so the round relations are left to BlindFold;
-    /// this returns the commitments, degrees, and challenges it binds.
-    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_committed")]
-    #[expect(
-        clippy::type_complexity,
-        reason = "the round consistency and the output-claim commitments are read together"
-    )]
-    pub fn verify_committed<F, H, C>(
-        statement: SumcheckStatement,
-        num_output_commitments: usize,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<(CommittedSumcheckConsistency<F, C>, CommittedOutputClaims<C>), SumcheckError<F>>
-    where
-        F: Field + CanonicalEncoding,
-        H: Sponge,
-        C: CanonicalDecode,
-    {
-        let mut rounds = Vec::with_capacity(statement.num_vars);
-        for _ in 0..statement.num_vars {
-            let commitment = transcript.receive()?;
-            rounds.push(VerifiedCommittedRound {
-                commitment,
-                degree: statement.degree,
-                challenge: transcript.challenge_small(),
-            });
-        }
-        let output_claims = CommittedOutputClaims {
-            commitments: transcript.receive_n(num_output_commitments)?,
-        };
-        Ok((CommittedSumcheckConsistency { rounds }, output_claims))
     }
 }

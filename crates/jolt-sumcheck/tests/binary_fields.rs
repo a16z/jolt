@@ -194,6 +194,16 @@ impl<F: BinaryField> SumcheckRecorder<F> for ScriptedRecorder<F> {
         Ok(self.script.next().unwrap())
     }
 
+    fn absorb_full_round<H: Sponge>(
+        &mut self,
+        round_poly: &UnivariatePoly<F>,
+        degree: usize,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<F, SumcheckError<F>> {
+        send_full_round(round_poly, degree, transcript)?;
+        Ok(self.script.next().unwrap())
+    }
+
     fn finish<H: Sponge>(
         self,
         output_claim_values: &[F],

@@ -386,15 +386,16 @@ where
     sum
 }
 
-pub(crate) fn instruction_ra_product<F>(dimensions: InstructionReadRafDimensions) -> JoltExpr<F>
+/// The virtual instruction-RA openings whose product is the read-RAF RA factor.
+pub(crate) fn instruction_ra_factors<F>(
+    dimensions: InstructionReadRafDimensions,
+) -> Vec<JoltExpr<F>>
 where
     F: Ring,
 {
-    let mut product = JoltExpr::one();
-    for i in 0..dimensions.num_virtual_ra_polys() {
-        product = product * opening(instruction_ra(i));
-    }
-    product
+    (0..dimensions.num_virtual_ra_polys())
+        .map(|i| opening(instruction_ra(i)))
+        .collect()
 }
 
 pub(crate) fn committed_instruction_ra_product<F>(

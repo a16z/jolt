@@ -1,4 +1,4 @@
-use jolt_algebra::{CanonicalDecode, JoltField};
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::{
@@ -11,6 +11,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::NoChallenges;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::masking::CommittedPadsView;
 
 use crate::sites::STAGE2;
 
@@ -36,7 +37,8 @@ use crate::{
     stages::{
         relations::ConcreteSumcheck,
         stage1::{Stage1ClearOutput, Stage1Output},
-        uniskip,
+        uniskip::{self, UniskipMasked},
+        zk::masked_channel,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -46,16 +48,16 @@ use crate::{
 /// reduction challenge are extracted mode-agnostically (clear: the single-entry
 /// reduction point; ZK: the committed round challenge) so the batch relations —
 /// `ProductRemainder::new` in particular — can be built before the mode branch.
-struct ProductUniskipStep<F: JoltField, C> {
+struct ProductUniskipStep<F: JoltField> {
     tau_low: Vec<F>,
     tau_high: F,
     challenge: F,
-    verified: ProductUniskipVerified<F, C>,
+    verified: ProductUniskipVerified<F>,
 }
 
-enum ProductUniskipVerified<F: JoltField, C> {
+enum ProductUniskipVerified<F: JoltField> {
     Clear { output_claim: F },
-    Zk(uniskip::UniskipZk<F, C>),
+    Zk(UniskipMasked<F>),
 }
 
 /// Assemble the stage-2 batch consumed opening *values* from the upstream clear outputs into
@@ -82,20 +84,20 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     }
 }
 
-pub fn verify<F, C, H>(
+pub fn verify<F, H, P>(
     checked: &CheckedInputs,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage1: &Stage1Output<F, C>,
-) -> Result<Stage2Output<F, C>, VerifierError>
+    mut pads: Option<&mut CommittedPadsView<P>>,
+    stage1: &Stage1Output<F>,
+) -> Result<Stage2Output<F>, VerifierError>
 where
     F: JoltField,
-    C: CanonicalDecode,
     H: Sponge,
 {
     transcript.site(STAGE2);
     match (checked.zk, stage1) {
         (true, Stage1Output::Clear(_)) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage1" });
+            return Err(VerifierError::ExpectedMaskedProof { field: "stage1" });
         }
         (false, Stage1Output::Zk(_)) => {
             return Err(VerifierError::ExpectedClearProof { field: "stage1" });
@@ -116,7 +118,7 @@ where
             }
         })?;
 
-    let uniskip = verify_product_uniskip(checked, transcript, stage1)?;
+    let uniskip = verify_product_uniskip(checked, transcript, pads.as_deref_mut(), stage1)?;
 
     // Build the batch relations once, pre-branch; each owns its input/output
     // claim algebra (single-sourced with its jolt-claims formula and the BlindFold
@@ -171,21 +173,21 @@ where
 
     if checked.zk {
         let ProductUniskipVerified::Zk(product_uniskip) = uniskip.verified else {
-            return Err(VerifierError::ExpectedCommittedProof {
+            return Err(VerifierError::ExpectedMaskedProof {
                 field: "stage2_uni_skip_first_round_proof",
             });
         };
-        // Both modes omit aliases from the canonical member output rows.
-        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
+        let batch =
+            sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
 
         return Ok(Stage2Output::Zk(Stage2ZkOutput {
             challenges,
             product_uniskip_challenge: uniskip.challenge,
             product_tau_low: uniskip.tau_low,
             product_tau_high: uniskip.tau_high,
-            product_uniskip_consistency: product_uniskip.consistency,
+            product_uniskip_rounds: product_uniskip.rounds,
             product_uniskip_output_claims: product_uniskip.output_claims,
-            batch_consistency: batch.consistency,
+            batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             output_points: batch.output_points,
         }));
@@ -241,14 +243,14 @@ pub fn product_tau_low<F: JoltField>(
     Ok(tau_low)
 }
 
-fn verify_product_uniskip<F, C, H>(
+fn verify_product_uniskip<F, H, P>(
     checked: &CheckedInputs,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage1: &Stage1Output<F, C>,
-) -> Result<ProductUniskipStep<F, C>, VerifierError>
+    pads: Option<&mut CommittedPadsView<P>>,
+    stage1: &Stage1Output<F>,
+) -> Result<ProductUniskipStep<F>, VerifierError>
 where
     F: JoltField,
-    C: CanonicalDecode,
     H: Sponge,
 {
     let log_t = crate::num::ilog2(checked.trace_length);
@@ -275,7 +277,8 @@ where
             })
         }
         Stage1Output::Zk(_) => {
-            let verified = uniskip::verify_zk(checked, &uniskip_params, transcript)?;
+            let verified =
+                uniskip::verify_masked(&uniskip_params, &mut masked_channel(pads, transcript)?)?;
             Ok(ProductUniskipStep {
                 tau_low,
                 tau_high,

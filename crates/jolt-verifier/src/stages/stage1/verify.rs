@@ -1,6 +1,7 @@
-use jolt_algebra::{CanonicalDecode, JoltField};
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::masking::CommittedPadsView;
 
 use crate::sites::STAGE1;
 
@@ -9,15 +10,19 @@ use super::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1Challenges, Stage1ClearOutput,
     Stage1Output, Stage1ZkOutput,
 };
-use crate::{stages::uniskip, verifier::CheckedInputs, VerifierError};
+use crate::{
+    stages::{uniskip, zk::masked_channel},
+    verifier::CheckedInputs,
+    VerifierError,
+};
 
-pub fn verify<F, C, H>(
+pub fn verify<F, H, P>(
     checked: &CheckedInputs,
     transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<Stage1Output<F, C>, VerifierError>
+    pads: Option<&mut CommittedPadsView<P>>,
+) -> Result<Stage1Output<F>, VerifierError>
 where
     F: JoltField,
-    C: CanonicalDecode,
     H: Sponge,
 {
     transcript.site(STAGE1);
@@ -65,7 +70,8 @@ where
     }
 
     {
-        let uniskip = uniskip::verify_zk(checked, &uniskip_params, transcript)?;
+        let mut channel = masked_channel(pads, transcript)?;
+        let uniskip = uniskip::verify_masked(&uniskip_params, &mut channel)?;
         let uniskip_challenge = uniskip.challenge;
 
         // Built after the uni-skip step so the relation carries `tau` and the
@@ -77,16 +83,16 @@ where
         };
         let input_points = sumchecks.empty_input_points();
 
-        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
+        let batch = sumchecks.verify_masked(&input_points, &mut channel)?;
 
         Ok(Stage1Output::Zk(Stage1ZkOutput {
             challenges: Stage1Challenges {
                 tau,
                 uniskip_challenge,
             },
-            uniskip_consistency: uniskip.consistency,
+            uniskip_rounds: uniskip.rounds,
             uniskip_output_claims: uniskip.output_claims,
-            remainder_consistency: batch.consistency,
+            remainder_rounds: batch.rounds,
             remainder_output_claims: batch.output_claims,
             output_points: batch.output_points,
         }))

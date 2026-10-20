@@ -16,8 +16,6 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use jolt_verifier::sites::STAGE7;
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
@@ -33,8 +31,6 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// Stage 7's outputs: the verifier-typed cross-stage carrier stage 8 consumes.
 pub struct Stage7ProverOutput<F: JoltField> {
     pub clear_output: Stage7ClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 7 on `transcript` (positioned at the stage-6b boundary).
@@ -42,7 +38,7 @@ pub struct Stage7ProverOutput<F: JoltField> {
 #[tracing::instrument(skip_all)]
 pub fn prove_stage7<F, PCS, VC, H>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -87,18 +83,14 @@ where
         &inputs,
         &input_points,
         &challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let committed_witness = proved.witness;
 
     Ok(Stage7ProverOutput {
         clear_output: Stage7ClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,
         },
-        #[cfg(feature = "zk")]
-        committed_witness,
     })
 }

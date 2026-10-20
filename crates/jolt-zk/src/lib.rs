@@ -1,4 +1,6 @@
-//! Generic BlindFold claim, protocol, layout, and verifier-equation types.
+//! Zero knowledge for Jolt: the shared masking front end ([`masking`]), the
+//! curve back end ([`blindfold`]), and, under `whiteout`, the lattice back
+//! end's building blocks (`whiteout`).
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
@@ -16,31 +18,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-mod assignment;
-mod builder;
-mod error;
-pub mod protocol;
-mod prove;
-pub mod r1cs;
-mod relaxed;
-mod statements;
-mod verify;
+pub mod blindfold;
+pub mod masking;
 #[cfg(feature = "whiteout")]
 pub mod whiteout;
-mod wire;
-
-pub use assignment::AssignedBlindFoldWitness;
-pub use builder::{BlindFoldProtocolBuilder, BlindFoldStageBuilder};
-pub use error::{Error, LayoutError, ProverError, RelaxedError, VerificationError};
-pub use protocol::{
-    BlindFoldDimensions, BlindFoldProtocol, FinalOpeningWitnessCoordinates, RowDimensions,
-    WitnessCoordinate, WitnessRowLayout,
-};
-pub use prove::{
-    prove, prove_with_row_committer, BlindFoldRowCommitter, BlindFoldWitness,
-    DirectBlindFoldRowCommitter,
-};
-pub use relaxed::{RelaxedInstance, RelaxedWitness};
-pub use statements::{
-    BlindFoldStage, BlindFoldStatement, CommittedClaimRows, FinalOpeningBinding, OpeningAlias,
-};

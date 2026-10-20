@@ -1,8 +1,8 @@
 use jolt_algebra::JoltField;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 
-use crate::stages::relations::SumcheckBatch;
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{MaskedClaims, SumcheckBatch};
+use crate::VerifierError;
 
 pub use super::instruction_input::{InstructionInput, InstructionInputOutputClaims};
 pub use super::registers_claim_reduction::{
@@ -53,22 +53,22 @@ pub struct Stage3ClearOutput<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3ZkOutput<F: JoltField, C> {
+pub struct Stage3ZkOutput<F: JoltField> {
     pub challenges: Stage3Challenges<F>,
-    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    pub batch_rounds: BatchedMaskedRounds<F>,
+    pub batch_output_claims: MaskedClaims<F>,
     /// The produced opening points, the ZK counterpart of the clear path's
     /// `output_points`. Read through the same `*_point()` accessors.
     pub output_points: Stage3OutputPoints<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage3Output<F: JoltField, C> {
+pub enum Stage3Output<F: JoltField> {
     Clear(Stage3ClearOutput<F>),
-    Zk(Stage3ZkOutput<F, C>),
+    Zk(Stage3ZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage3Output<F, C> {
+impl<F: JoltField> Stage3Output<F> {
     /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage3OutputPoints<F> {
         match self {
@@ -77,17 +77,17 @@ impl<F: JoltField, C> Stage3Output<F, C> {
         }
     }
 
-    pub fn clear(&self) -> Result<&Stage3ClearOutput<F>, crate::VerifierError> {
+    pub fn clear(&self) -> Result<&Stage3ClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage3" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage3" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage3ZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage3ZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage3" }),
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage3" }),
         }
     }
 }

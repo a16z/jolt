@@ -6,14 +6,15 @@ use crate::protocols::jolt::geometry::claim_reductions::instruction::{
     left_lookup_operand_reduced, lookup_output_reduced, right_lookup_operand_reduced,
 };
 use crate::protocols::jolt::geometry::instruction::{
-    eq_table_value, instruction_ra_product, instruction_raf_flag, lookup_table_flag,
+    eq_table_value, instruction_ra_factors, instruction_raf_flag, lookup_table_flag,
     InstructionReadRafDimensions, READ_RAF_BASE_DEGREE,
 };
 use crate::protocols::jolt::{
-    InstructionReadRafChallenge, InstructionReadRafPublic, JoltExpr, JoltRelationId,
+    InstructionReadRafChallenge, InstructionReadRafPublic, JoltExpr, JoltFactoredExpr,
+    JoltRelationId,
 };
-use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
+use crate::{FactoredExpr, SymbolicSumcheck};
 
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
@@ -90,23 +91,23 @@ impl SymbolicSumcheck for ReadRaf {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let ra_product = instruction_ra_product(self.shape);
-        let mut output = JoltExpr::zero();
+        self.output_factored().expand()
+    }
 
+    /// `∏_i ra_i · (Σ_t eq_t · flag_t + eq_raf_constant + eq_raf_flag · raf_flag)`.
+    fn output_factored<F: Ring>(&self) -> JoltFactoredExpr<F> {
+        let mut table_sum = JoltExpr::zero();
         for table in LookupTableKind::<XLEN>::iter() {
-            output = output
-                + derived(eq_table_value(table))
-                    * ra_product.clone()
-                    * opening(lookup_table_flag(table));
+            table_sum =
+                table_sum + derived(eq_table_value(table)) * opening(lookup_table_flag(table));
         }
+        table_sum = table_sum
+            + derived(InstructionReadRafPublic::EqRafConstant)
+            + derived(InstructionReadRafPublic::EqRafFlag) * opening(instruction_raf_flag());
 
-        output = output
-            + derived(InstructionReadRafPublic::EqRafConstant) * ra_product.clone()
-            + derived(InstructionReadRafPublic::EqRafFlag)
-                * ra_product
-                * opening(instruction_raf_flag());
-
-        output
+        let mut factors = instruction_ra_factors(self.shape);
+        factors.push(table_sum);
+        FactoredExpr::product(factors)
     }
 }
 

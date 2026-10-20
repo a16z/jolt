@@ -1,8 +1,7 @@
 use jolt_algebra::JoltField;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 
-use crate::stages::relations::{ClaimRoutes, SumcheckBatch};
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{ClaimRoutes, MaskedClaims, SumcheckBatch};
 use crate::VerifierError;
 
 #[cfg(feature = "field-inline")]
@@ -97,10 +96,10 @@ pub struct Stage4ClearOutput<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4ZkOutput<F: JoltField, C> {
+pub struct Stage4ZkOutput<F: JoltField> {
     pub challenges: Stage4Challenges<F>,
-    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    pub batch_rounds: BatchedMaskedRounds<F>,
+    pub batch_output_claims: MaskedClaims<F>,
     pub ram_val_check_public_eval: F,
     /// The produced opening points, the ZK counterpart of the clear path's
     /// `output_points`. Read through the same `*_point()` accessors.
@@ -108,12 +107,12 @@ pub struct Stage4ZkOutput<F: JoltField, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage4Output<F: JoltField, C> {
+pub enum Stage4Output<F: JoltField> {
     Clear(Stage4ClearOutput<F>),
-    Zk(Stage4ZkOutput<F, C>),
+    Zk(Stage4ZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage4Output<F, C> {
+impl<F: JoltField> Stage4Output<F> {
     /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage4OutputPoints<F> {
         match self {
@@ -122,17 +121,17 @@ impl<F: JoltField, C> Stage4Output<F, C> {
         }
     }
 
-    pub fn clear(&self) -> Result<&Stage4ClearOutput<F>, crate::VerifierError> {
+    pub fn clear(&self) -> Result<&Stage4ClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage4" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage4" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage4ZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage4ZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage4" }),
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage4" }),
         }
     }
 }
@@ -223,22 +222,6 @@ mod tests {
             .collect();
         assert_eq!(
             Stage4Sumchecks::wire_claim_values(&claims_with_advice(true), &staged_routes()),
-            expected
-        );
-    }
-
-    /// The committed rows are declaration order: the registers, under
-    /// `field-inline` the field registers, then the RAM value check's fields
-    /// (untrusted, trusted, program image, `ram_ra`, `ram_inc`).
-    #[test]
-    fn committed_claims_follow_declaration_order() {
-        let expected: Vec<Fr> = (3..=7)
-            .map(fr)
-            .chain(field_inline_splice())
-            .chain([fr(1), fr(2), fr(10), fr(8), fr(9)])
-            .collect();
-        assert_eq!(
-            Stage4Sumchecks::committed_claim_values(&claims_with_advice(true), &staged_routes()),
             expected
         );
     }

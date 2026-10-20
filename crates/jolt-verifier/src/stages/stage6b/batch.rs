@@ -144,12 +144,12 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         checked: &CheckedInputs,
         preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
         formula_dimensions: &JoltFormulaDimensions,
-        stage1: &Stage1Output<F, VC::Output>,
-        stage2: &Stage2Output<F, VC::Output>,
-        stage3: &Stage3Output<F, VC::Output>,
-        stage4: &Stage4Output<F, VC::Output>,
-        stage5: &Stage5Output<F, VC::Output>,
-        stage6a: &Stage6aOutput<F, VC::Output>,
+        stage1: &Stage1Output<F>,
+        stage2: &Stage2Output<F>,
+        stage3: &Stage3Output<F>,
+        stage4: &Stage4Output<F>,
+        stage5: &Stage5Output<F>,
+        stage6a: &Stage6aOutput<F>,
         eta: Option<F>,
     ) -> Result<Self, VerifierError>
     where

@@ -57,6 +57,23 @@ where
     Ok(())
 }
 
+/// The compressed Boolean-hypercube wire form of `poly` at degree bound
+/// `degree >= 1`: `[c0, c2, ..., cd]`, the linear coefficient omitted.
+///
+/// # Errors
+///
+/// [`SumcheckError::DegreeBoundExceeded`] if `poly` exceeds `degree`.
+pub fn compressed_wire<F: Field>(
+    poly: &UnivariatePoly<F>,
+    degree: usize,
+) -> Result<Vec<F>, SumcheckError<F>> {
+    let padded = padded_coefficients(poly, degree.max(1))?;
+    Ok(UnivariatePoly::new(padded)
+        .compress()
+        .coeffs_except_linear_term()
+        .to_vec())
+}
+
 /// Sends `poly` as a compressed Boolean-hypercube round message of degree
 /// bound `degree >= 1`, omitting the linear coefficient.
 ///
@@ -72,11 +89,7 @@ where
     F: Field + CanonicalEncoding,
     H: Sponge,
 {
-    let padded = padded_coefficients(poly, degree.max(1))?;
-    let mut wire = UnivariatePoly::new(padded)
-        .compress()
-        .coeffs_except_linear_term()
-        .to_vec();
+    let mut wire = compressed_wire(poly, degree)?;
     let _: PadSlots = transcript.exchange_private_base(&mut wire)?;
     Ok(())
 }

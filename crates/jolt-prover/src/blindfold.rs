@@ -1,87 +1,33 @@
-//! The ZK proof tail: BlindFold over the committed stage proofs.
+//! The ZK proof: pads committed before the first challenge, and the BlindFold
+//! proof of the residual relation over them after stage 8.
 //!
-//! The prover does not mirror the verifier's protocol lowering — it *runs*
-//! it, strictly through `jolt-verifier`'s public verification surface. After
-//! stage 8 it replays its own argument string through the verifier's
-//! `verify_stages` — the seeding messages, `stage1::verify` … `stage8::verify`,
-//! and the lowering with `stages::zk::blindfold::build` — on a verifier
-//! transcript that must land exactly on the prover's own. The `BlindFoldProtocol`
-//! the prover proves against is therefore the same code path the verifier
-//! executes — a claim-formula change that updates the verifier's lowering is
-//! picked up here automatically — and the replay doubles as a full
-//! self-check of the assembled proof.
-//!
-//! The witness rows come from the recorder-retained per-stage secrets via
-//! [`BlindFoldProtocol::assign_witness`], which needs only the protocol's
-//! public parts plus the stage domains — protocol constants this crate's own
-//! stage recipes prove over.
+//! The prover does not mirror the verifier's residual lowering — it *runs*
+//! it, strictly through `jolt-verifier`'s public verification surface. The
+//! pad layout comes from [`pad_layout`], the masked verifier's own replay of
+//! the seeded prefix. After stage 8 the prover replays its argument string
+//! through [`verify_stages`] on a verifier transcript that must land exactly
+//! on the prover's own, so the relation it proves is the one the verifier
+//! builds — and the replay doubles as a full self-check of the assembled
+//! proof. The auxiliary values come from the same residual lowering, over the
+//! values the prover's pads decode.
 
 use common::jolt_device::JoltDevice;
-use jolt_algebra::{Accumulator, CanonicalDecode, JoltField, WithAccumulator};
-use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
-use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
+use jolt_algebra::{CanonicalDecode, JoltField};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
-use jolt_verifier::sites::BLINDFOLD;
-use jolt_verifier::{jolt_protocol_id, verify_stages, VerifiedStages, VerifierError, JOLT_SESSION};
-use jolt_zk::BlindFoldWitness;
+use jolt_verifier::sites::{BLINDFOLD, PADS};
+use jolt_verifier::{
+    jolt_protocol_id, pad_layout, replay_stages, VerifiedStages, VerifierError, JOLT_SESSION,
+};
+use jolt_zk::blindfold::{BlindFold, BlindFoldResidualWitness};
+use jolt_zk::masking::ZkBackend;
+use rand_core::OsRng;
 
+#[cfg(feature = "prover-fixtures")]
+use self::secrets::ZkSecrets;
+use crate::recorder::{ModePads, ProofMode};
 use crate::{JoltProverPreprocessing, ProverError};
-
-/// The recorder-retained committed sumcheck witnesses, one per BlindFold
-/// stage, named to pin the protocol stage order (`blindfold::build` inserts
-/// each stage's uni-skip before its remainder batch).
-pub(crate) struct ZkStageWitnesses<F> {
-    pub stage1_uniskip: CommittedSumcheckWitness<F>,
-    pub stage1: CommittedSumcheckWitness<F>,
-    pub stage2_uniskip: CommittedSumcheckWitness<F>,
-    pub stage2: CommittedSumcheckWitness<F>,
-    pub stage3: CommittedSumcheckWitness<F>,
-    pub stage4: CommittedSumcheckWitness<F>,
-    pub stage5: CommittedSumcheckWitness<F>,
-    pub stage6a: CommittedSumcheckWitness<F>,
-    pub stage6b: CommittedSumcheckWitness<F>,
-    pub stage7: CommittedSumcheckWitness<F>,
-}
-
-impl<F> ZkStageWitnesses<F> {
-    fn in_protocol_order(&self) -> [&CommittedSumcheckWitness<F>; 10] {
-        [
-            &self.stage1_uniskip,
-            &self.stage1,
-            &self.stage2_uniskip,
-            &self.stage2,
-            &self.stage3,
-            &self.stage4,
-            &self.stage5,
-            &self.stage6a,
-            &self.stage6b,
-            &self.stage7,
-        ]
-    }
-}
-
-/// The BlindFold stage domains in the same order: the two uni-skips run over
-/// their centered integer domains, every batch over the Boolean hypercube —
-/// the constants the stage recipes themselves prove over. The uni-skip sizes
-/// are the COMPOSED jolt-claims R1CS constants (feature-aware): identical to the
-/// jolt-claims RV64-only constants without field-inline, and the field-inline-extended row/lane
-/// domains under `field-inline` — the domains the verifier's lowering
-/// (`stages::zk::blindfold`) builds its round constraints over.
-const STAGE_DOMAINS: [SumcheckDomainSpec; 10] = [
-    SumcheckDomainSpec::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE),
-    SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE),
-    SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::BooleanHypercube,
-];
 
 /// The stage-8 hiding-opening secrets: the joint evaluation committed inside
 /// the PCS's hiding evaluation commitment and its blind.
@@ -90,15 +36,54 @@ pub(crate) struct ZkFinalOpening<F> {
     pub evaluation_blind: F,
 }
 
-/// Prove the BlindFold tail onto `transcript`, which holds the argument string
-/// through stage 8. The verifier's stage spine is replayed over that prefix to
-/// obtain the BlindFold protocol, and the replay must land on the forward
+/// Samples and commits the pads at the end of stage 0, before the first
+/// challenge, on the layout the masked verifier derives from the seeded
+/// prefix.
+#[tracing::instrument(skip_all, name = "commit_pads")]
+pub(crate) fn commit_pads<F, PCS, VC, H>(
+    preprocessing: &JoltProverPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut ProverTranscript<H>,
+) -> Result<ProofMode<VC>, ProverError<F>>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
+    H: Sponge,
+{
+    let layout = tracing::info_span!("pad_layout").in_scope(|| {
+        pad_layout::<F, PCS, VC>(
+            &preprocessing.verifier,
+            public_io,
+            trusted_advice_commitment,
+            transcript.narg(),
+        )
+    })?;
+    let vc_setup = preprocessing
+        .verifier
+        .vc_setup
+        .as_ref()
+        .ok_or(ProverError::Verifier(
+            VerifierError::MissingVectorCommitmentSetup,
+        ))?;
+    transcript.site(PADS);
+    let pads = BlindFold::<VC>::commit_pads(vc_setup, &layout, transcript, &mut OsRng)?;
+    Ok(ProofMode::masked(pads))
+}
+
+/// Proves the ZK tail onto `transcript`, which holds the argument string
+/// through stage 8: the masked auxiliary block, then BlindFold over the
+/// residual relation. The verifier's stage spine is replayed over that prefix
+/// to obtain the relation, and the replay must land on the forward
 /// transcript's exact state.
+#[tracing::instrument(skip_all, name = "prove_blindfold")]
 pub(crate) fn prove_blindfold<F, PCS, VC, H>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     trusted_advice_commitment: Option<&PCS::Output>,
-    witnesses: &ZkStageWitnesses<F>,
+    mut pads: ModePads<VC>,
     final_opening: &ZkFinalOpening<F>,
     transcript: &mut ProverTranscript<H>,
 ) -> Result<(), ProverError<F>>
@@ -111,42 +96,45 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
     H: Sponge,
-    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mut replay =
         VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, transcript.narg());
-    let VerifiedStages::Zk {
-        protocol,
-        checkpoint,
-    } = verify_stages::<F, PCS, VC, H>(
-        &preprocessing.verifier,
-        public_io,
-        trusted_advice_commitment,
-        &mut replay,
-    )?
+    let VerifiedStages::Zk(masked) = tracing::info_span!("replay_stages").in_scope(|| {
+        replay_stages::<F, PCS, VC, H>(
+            &preprocessing.verifier,
+            public_io,
+            trusted_advice_commitment,
+            &mut replay,
+            pads.layout(),
+        )
+    })?
     else {
         return Err(ProverError::InvariantViolation {
-            reason: "the verifier replay of a ZK proof produced no BlindFold protocol",
+            reason: "the verifier replay of a ZK proof produced no residual relation",
         });
     };
     // The prover draws the same checkpoint the verifier draws after the stage
     // spine; equal checkpoints over the whole argument string mean the replay
     // reached the prover's sponge state. Hard error (not debug-only) so release
-    // provers diagnose drift here rather than as a downstream BlindFold
-    // verification failure.
-    if replay.remaining() != 0 || transcript.challenge_bytes::<32>() != checkpoint {
+    // provers diagnose drift here rather than as a downstream rejection.
+    if replay.remaining() != 0 || transcript.challenge_bytes::<32>() != masked.checkpoint {
         return Err(ProverError::InvariantViolation {
             reason: "the verifier replay diverged from the prover's forward transcript",
         });
     }
 
-    let assigned = protocol.assign_witness(
-        &STAGE_DOMAINS,
-        &witnesses.in_protocol_order(),
-        &[final_opening.joint_evaluation],
-        &[final_opening.evaluation_blind],
-        &mut rand_core::OsRng,
-    )?;
+    transcript.site(BLINDFOLD);
+    let auxiliary = masked
+        .residual
+        .auxiliary_values(|operand| pads.decode(operand.masked, operand.pad))?;
+    let masked_auxiliary = pads.send(&auxiliary, transcript)?;
+    let relation = masked.relation(&masked_auxiliary)?;
+
+    #[cfg(feature = "prover-fixtures")]
+    secrets::record(ZkSecrets {
+        pads: pads.pads().to_vec(),
+        joint_evaluation: final_opening.joint_evaluation,
+    });
 
     let vc_setup = preprocessing
         .verifier
@@ -155,18 +143,52 @@ where
         .ok_or(ProverError::Verifier(
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
-    transcript.site(BLINDFOLD);
-    jolt_zk::prove::<F, VC, H, _>(
-        vc_setup,
-        &protocol,
-        transcript,
-        BlindFoldWitness {
-            rows: &assigned.rows,
-            blindings: &assigned.blindings,
-            eval_outputs: &[final_opening.joint_evaluation],
-            eval_blindings: &[final_opening.evaluation_blind],
-        },
-        &mut rand_core::OsRng,
-    )?;
-    Ok(())
+    tracing::info_span!("BlindFold::prove")
+        .in_scope(|| {
+            BlindFold::<VC>::prove(
+                vc_setup,
+                &relation,
+                pads,
+                &masked.residual_commitment,
+                &BlindFoldResidualWitness {
+                    evaluation: final_opening.joint_evaluation,
+                    blind: final_opening.evaluation_blind,
+                },
+                transcript,
+                &mut OsRng,
+            )
+        })
+        .map_err(ProverError::from)
+}
+
+/// Test-only seam (`prover-fixtures`): the secrets of the last ZK proof
+/// proved on this thread, for soundness probes that rebuild the residual
+/// relation as a cheating prover would.
+#[cfg(feature = "prover-fixtures")]
+pub mod secrets {
+    use std::any::Any;
+    use std::cell::RefCell;
+
+    /// The pads and the stage-8 joint evaluation (the residual witness).
+    pub struct ZkSecrets<F> {
+        pub pads: Vec<F>,
+        pub joint_evaluation: F,
+    }
+
+    thread_local! {
+        static LAST: RefCell<Option<Box<dyn Any>>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn record<F: 'static>(secrets: ZkSecrets<F>) {
+        LAST.with(|last| *last.borrow_mut() = Some(Box::new(secrets)));
+    }
+
+    /// Takes the recorded secrets, if the last ZK proof on this thread was
+    /// over `F`.
+    pub fn take<F: 'static>() -> Option<ZkSecrets<F>> {
+        LAST.with(|last| last.borrow_mut().take())?
+            .downcast()
+            .ok()
+            .map(|secrets| *secrets)
+    }
 }

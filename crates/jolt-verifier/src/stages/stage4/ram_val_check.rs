@@ -33,9 +33,12 @@ use jolt_algebra::JoltField;
 use jolt_claims::{MapCells, OutputClaims, SymbolicSumcheck};
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
 use jolt_sumcheck::receive_private_value;
-use jolt_transcript::{PadSlots, PrivateChannel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{PrivateChannel, Sponge, VerifierTranscript};
+use jolt_zk::masking::MaskedOperand;
 
-use crate::stages::relations::{ClaimRoute, ClaimRoutes, ComposedOpeningId, ConcreteSumcheck};
+use crate::stages::relations::{
+    receive_masked_value, ClaimRoute, ClaimRoutes, ComposedOpeningId, ConcreteSumcheck,
+};
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
@@ -444,15 +447,6 @@ pub struct RamValCheckStagedOpenings<C> {
 }
 
 impl<F: JoltField> RamValCheckStagedOpenings<F> {
-    /// Sends the present openings, in canonical order.
-    pub fn send<H: Sponge>(
-        &self,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), VerifierError> {
-        let _: PadSlots = transcript.exchange_private_base(&mut self.opening_values())?;
-        Ok(())
-    }
-
     /// Receives the openings in the shape of their staged `points`.
     pub fn receive<H: Sponge>(
         points: &RamValCheckStagedOpenings<Vec<F>>,
@@ -462,6 +456,25 @@ impl<F: JoltField> RamValCheckStagedOpenings<F> {
             let (value, _pads) = receive_private_value(transcript)?;
             Ok(value)
         })
+    }
+
+    /// Receives the openings masked, in the shape of their staged `points`,
+    /// each with its pad.
+    pub fn receive_masked<C>(
+        points: &RamValCheckStagedOpenings<Vec<F>>,
+        channel: &mut C,
+    ) -> Result<Vec<(ComposedOpeningId, MaskedOperand<F>)>, VerifierError>
+    where
+        C: PrivateChannel,
+        VerifierError: From<C::Error>,
+    {
+        let mut received = Vec::new();
+        let _: RamValCheckStagedOpenings<F> = points.try_map_cells(&mut |id, _point| {
+            let value = receive_masked_value(channel)?;
+            received.push(((*id).into(), value));
+            Ok::<F, VerifierError>(value.masked)
+        })?;
+        Ok(received)
     }
 
     /// The received openings by id, the pre-filled `Staged` cells of the

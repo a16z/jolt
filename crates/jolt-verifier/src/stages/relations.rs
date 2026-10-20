@@ -29,8 +29,8 @@ use std::collections::BTreeMap;
 use jolt_algebra::JoltField;
 use jolt_claims::SymbolicSumcheck;
 use jolt_sumcheck::receive_private_value;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
-use jolt_zk::OpeningAlias;
+use jolt_transcript::{Channel, PrivateChannel, Sponge, VerifierTranscript};
+use jolt_zk::masking::{MaskedOperand, PadIndex};
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
@@ -153,14 +153,14 @@ where
     /// same stage batch. Aliased openings appear on the wire claims struct as
     /// plain (present) cells but are absorbed/committed once via their source, so
     /// the generated drivers use this set three ways: these cells default to
-    /// [`ClaimRoute::Alias`], so they are neither sent nor committed; BlindFold
-    /// binds them through the generated layout's `OpeningAlias` rows; and the generated
+    /// [`ClaimRoute::Alias`], so they are never sent; the residual relation of
+    /// a masked proof resolves them to their source's masked value; and the generated
     /// `validate_aliases` — run by every `expected_final_claim` — enforces the
     /// wire copies equal their sources. That equality check is load-bearing: the
     /// aliased cells are never Fiat-Shamir-absorbed and the batch fold pins only
     /// their random linear combination, so downstream consumers reading a copy
-    /// rely on it. BlindFold's `OpeningAlias` wiring is derived from these same
-    /// pairs, which is why this is an associated function (no instance state): the
+    /// rely on it. The masked alias wiring is derived from these same pairs,
+    /// which is why this is an associated function (no instance state): the
     /// alias structure is a constant of the relation, consumable without
     /// constructing one.
     ///
@@ -332,14 +332,13 @@ where
 /// How one produced claim cell reaches the verifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClaimRoute {
-    /// Sent after the stage's rounds (clear) or committed in the stage's
-    /// output-claim rows (ZK).
+    /// Sent after the stage's rounds (masked in ZK).
     Sent,
-    /// A copy of an earlier cell of the same batch: never sent or committed,
-    /// filled from that source.
+    /// A copy of an earlier cell of the same batch: never sent, filled from
+    /// that source.
     Alias(ComposedOpeningId),
-    /// Sent earlier in the stage as part of a typed staged message (clear),
-    /// committed in the output-claim rows (ZK).
+    /// Sent earlier in the stage as part of a typed staged message (masked in
+    /// ZK).
     Staged,
 }
 
@@ -355,6 +354,24 @@ impl ClaimRoutes {
     /// Routes cell `id` by `route`, overriding its member's static route.
     pub fn set(&mut self, id: impl Into<ComposedOpeningId>, route: ClaimRoute) {
         let _ = self.routes.insert(id.into(), route);
+    }
+
+    /// The routes of a masked proof, and the equalities they leave to the
+    /// residual relation. A runtime alias depends on a point equality that
+    /// the challenges decide, while the pad schedule is fixed before the
+    /// first challenge, so a masked proof sends every such cell and states
+    /// the alias as an equality row instead. Static aliases are structural
+    /// and stay.
+    pub fn masked(&self) -> (Self, Vec<(ComposedOpeningId, ComposedOpeningId)>) {
+        let mut routes = Self::default();
+        let mut equalities = Vec::new();
+        for (&id, &route) in &self.routes {
+            match route {
+                ClaimRoute::Alias(source) => equalities.push((id, source)),
+                ClaimRoute::Sent | ClaimRoute::Staged => routes.set(id, route),
+            }
+        }
+        (routes, equalities)
     }
 
     fn of(
@@ -422,14 +439,11 @@ where
     })
 }
 
-/// One member's claim values on the given routes, in canonical order:
-/// `Sent` cells, plus `Staged` cells when `with_staged`. Clear proofs send
-/// `with_staged = false` after the rounds; committed proofs commit
-/// `with_staged = true`.
+/// One member's `Sent` claim values on the given routes, in canonical order:
+/// what a proof sends after the rounds.
 pub fn member_claim_values<F, I>(
     claims: &SumcheckOutputClaims<F, I>,
     routes: &ClaimRoutes,
-    with_staged: bool,
 ) -> Vec<F>
 where
     F: JoltField,
@@ -442,44 +456,70 @@ where
         .canonical_order()
         .into_iter()
         .zip(claims.opening_values())
-        .filter(|(id, _)| match routes.of(&(*id).into(), &static_aliases) {
-            ClaimRoute::Sent => true,
-            ClaimRoute::Staged => with_staged,
-            ClaimRoute::Alias(_) => false,
-        })
+        .filter(|(id, _)| matches!(routes.of(&(*id).into(), &static_aliases), ClaimRoute::Sent))
         .map(|(_, value)| value)
         .collect()
 }
 
-/// A stage's committed claim layout over its derived output points: the
-/// committed (`Sent` and `Staged`) cells' ids in row order, and each `Alias`
-/// cell bound to its source row.
+/// A masked batch's produced claims: the masked value and pad of each cell
+/// it received, each `Alias` cell bound to its source, and the equalities a
+/// masked proof states in place of runtime aliases ([`ClaimRoutes::masked`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CommittedClaimLayout {
-    pub ids: Vec<ComposedOpeningId>,
-    pub aliases: Vec<OpeningAlias<ComposedOpeningId>>,
+pub struct MaskedClaims<F> {
+    pub received: Vec<(ComposedOpeningId, MaskedOperand<F>)>,
+    pub aliases: Vec<(ComposedOpeningId, ComposedOpeningId)>,
+    pub equalities: Vec<(ComposedOpeningId, ComposedOpeningId)>,
 }
 
-/// Appends one member's committed cells to `layout`, in canonical order over
-/// the member's derived output `points`.
-pub fn extend_committed_layout<F, I>(
-    layout: &mut CommittedClaimLayout,
+/// Receives one masked private value and its pad.
+///
+/// # Errors
+///
+/// The channel's error, as a [`VerifierError`].
+pub fn receive_masked_value<F, C>(channel: &mut C) -> Result<MaskedOperand<F>, VerifierError>
+where
+    F: JoltField,
+    C: PrivateChannel,
+    VerifierError: From<C::Error>,
+{
+    let mut value = [F::zero()];
+    let slots = channel.exchange_private_base(&mut value)?;
+    let [masked] = value;
+    Ok(MaskedOperand {
+        masked,
+        pad: PadIndex(slots.start),
+    })
+}
+
+/// Receives one member's masked output claims in the shape of its derived
+/// output `points`, in the canonical order [`receive_member_claims`] uses:
+/// each `Sent` cell is read from the channel, each `Alias` cell recorded
+/// against its source, and each `Staged` cell left to the stage that received
+/// it earlier. Called by the generated `verify_masked` per member.
+pub fn receive_member_masked_claims<F, I, C>(
     points: &SumcheckOutputPoints<F, I>,
     routes: &ClaimRoutes,
-) where
+    claims: &mut MaskedClaims<F>,
+    channel: &mut C,
+) -> Result<(), VerifierError>
+where
     F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputPoints<F, I>:
         MapCells<Vec<F>, F, OpeningIdOf<F, I>, Mapped = SumcheckOutputClaims<F, I>>,
     OpeningIdOf<F, I>: Copy + Into<ComposedOpeningId>,
+    C: PrivateChannel,
+    VerifierError: From<C::Error>,
 {
     let static_aliases = static_aliases::<F, I>();
     for id in point_cell_ids::<F, I>(points).into_iter().map(Into::into) {
         match routes.of(&id, &static_aliases) {
-            ClaimRoute::Alias(source) => layout.aliases.push(OpeningAlias::new(id, source)),
-            ClaimRoute::Sent | ClaimRoute::Staged => layout.ids.push(id),
+            ClaimRoute::Sent => claims.received.push((id, receive_masked_value(channel)?)),
+            ClaimRoute::Alias(source) => claims.aliases.push((id, source)),
+            ClaimRoute::Staged => {}
         }
     }
+    Ok(())
 }
 
 /// The ids of a member's output-point cells, in canonical order.

@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use jolt_algebra::Field;
 use jolt_transcript::TranscriptError;
 
@@ -7,6 +9,12 @@ pub enum SumcheckError<F: Field> {
     /// The proof's transcript rejected a round message.
     #[error("sumcheck transcript: {0}")]
     Transcript(#[from] TranscriptError),
+
+    /// A private-message channel failed outside the transcript, such as a
+    /// masked channel whose pad schedule is exhausted. The source is the
+    /// channel's own error type.
+    #[error("private message channel: {0}")]
+    PrivateChannel(#[source] Box<dyn Error + Send + Sync + 'static>),
 
     /// Round check failed: the domain sum did not match the expected value
     /// carried forward from the previous round.

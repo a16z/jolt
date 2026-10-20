@@ -113,7 +113,7 @@ For a complete example of advice inputs, see the [merkle-tree example](https://g
 
 ### Zero knowledge
 
-By default, the prover reveals polynomial evaluations in the clear. To produce **zero-knowledge** proofs where the verifier learns nothing beyond the validity of the output, enable the `zk` feature on `jolt-sdk` in the **host** crate. This activates the [BlindFold](../../how/blindfold.md) protocol, which commits all sumcheck round polynomials via Pedersen and proves correctness via Nova folding + Spartan.
+By default, the prover reveals polynomial evaluations in the clear. To produce **zero-knowledge** proofs where the verifier learns nothing beyond the validity of the output, enable the `zk` feature on `jolt-sdk` in the **host** crate. This activates the [BlindFold](../../how/blindfold.md) protocol, which masks every sumcheck message with a pad committed in advance and proves the masked checks via Nova folding + Spartan.
 
 `PrivateInput<T>` is always available in the guest. If you use `UntrustedAdvice<T>` without `zk`, the verifier won't receive the inputs, but the proof itself does not hide them cryptographically.
 

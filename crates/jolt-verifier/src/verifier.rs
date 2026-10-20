@@ -3,6 +3,8 @@
 use common::constants::MAX_BLINDFOLD_GENERATORS;
 use common::jolt_device::JoltDevice;
 use jolt_algebra::{CanonicalDecode, JoltField};
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{
     JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
@@ -16,10 +18,23 @@ use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_transcript::{Channel, ProtocolId, Sponge, VerifierTranscript};
 #[cfg(not(feature = "akita"))]
-use jolt_zk::BlindFoldProtocol;
+use jolt_transcript::{PrivateChannel, TranscriptError};
+#[cfg(not(feature = "akita"))]
+use jolt_zk::blindfold::BlindFold;
+use jolt_zk::masking::CommittedPadsView;
+#[cfg(not(feature = "akita"))]
+use jolt_zk::masking::{
+    AffineRow, PadLayout, ResidualRelation, ResidualRows, ResidualVar, ZkBackend, ZkError,
+};
 
 #[cfg(not(feature = "akita"))]
-use crate::sites::BLINDFOLD;
+use crate::sites::{BLINDFOLD, PADS};
+#[cfg(not(feature = "akita"))]
+use crate::stages::zk::residual::{JoltResidual, ResidualInputs};
+use crate::stages::{
+    stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
+    stage5::Stage5Output, stage6a::Stage6aOutput, stage6b::Stage6bOutput, stage7::Stage7Output,
+};
 use crate::{
     config::{
         validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE,
@@ -96,45 +111,340 @@ where
         &mut transcript,
     )? {
         VerifiedStages::Clear => {}
-        VerifiedStages::Zk {
-            protocol: blindfold,
-            checkpoint: _,
-        } => {
-            transcript.site(BLINDFOLD);
-            let vc_setup = preprocessing
-                .vc_setup
-                .as_ref()
-                .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-            blindfold
-                .verify::<VC, H>(vc_setup, &mut transcript)
-                .map_err(|error| VerifierError::BlindFoldVerificationFailed {
-                    reason: error.to_string(),
-                })?;
-        }
+        VerifiedStages::Zk(masked) => verify_residual(preprocessing, *masked, &mut transcript)?,
     }
     transcript.finish()?;
     Ok(())
 }
 
+/// The ZK tail after the stage spine: the masked auxiliary block, then the
+/// BlindFold proof of the residual relation over the committed pads.
+///
+/// # Errors
+///
+/// [`VerifierError`] if the block is malformed or BlindFold rejects.
+#[cfg(not(feature = "akita"))]
+pub fn verify_residual<F, PCS, VC, H>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    mut masked: MaskedStages<F, VC::Output>,
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<(), VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
+    H: Sponge,
+{
+    transcript.site(BLINDFOLD);
+    let masked_auxiliary = masked.receive_auxiliary(transcript)?;
+    let relation = masked.relation(&masked_auxiliary)?;
+    let vc_setup = preprocessing
+        .vc_setup
+        .as_ref()
+        .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
+    BlindFold::<VC>::verify(
+        vc_setup,
+        &relation,
+        &masked.pads,
+        &masked.residual_commitment,
+        transcript,
+    )?;
+    Ok(())
+}
+
 /// What remains to check after the stage spine: nothing for a clear proof,
-/// the BlindFold relation over the committed stage outputs for a ZK proof.
+/// the residual relation over the masked stage outputs for a ZK proof.
 #[cfg(not(feature = "akita"))]
 pub enum VerifiedStages<F: JoltField, C> {
     Clear,
-    Zk {
-        protocol: Box<BlindFoldProtocol<F, C>>,
-        /// The 32 bytes squeezed after the stage spine, before BlindFold.
-        /// Every ZK transcript draws it; the prover compares it against its
-        /// replay of this function, which checks the replay reached the
-        /// prover's sponge state without reading that state.
-        checkpoint: [u8; 32],
-    },
+    Zk(Box<MaskedStages<F, C>>),
 }
 
-/// Runs the stage spine on `transcript`: the seeding messages, stages 1–8,
-/// and, for a ZK proof, the lowering of the committed stage outputs into the
-/// BlindFold protocol. The ZK prover replays its own argument string through
-/// this function to obtain the protocol it proves.
+/// A masked proof after its stage spine: the pad commitment, the residual
+/// structure of stages 1–7, stage 8's evaluation binding, and the checkpoint.
+#[cfg(not(feature = "akita"))]
+pub struct MaskedStages<F: JoltField, C> {
+    pub pads: CommittedPadsView<Vec<C>>,
+    pub residual: JoltResidual<F>,
+    /// Stage 8's joint opening: the batched openings and their coefficients,
+    /// whose combination the hiding evaluation commitment holds.
+    pub final_opening_ids: Vec<ComposedOpeningId>,
+    pub final_opening_coefficients: Vec<F>,
+    /// The PCS's hiding evaluation commitment: the residual commitment.
+    pub residual_commitment: C,
+    /// The 32 bytes squeezed after the stage spine, before the auxiliary
+    /// block. Every ZK transcript draws it; the prover compares it against its
+    /// replay of [`verify_stages`], which checks the replay reached the
+    /// prover's sponge state without reading that state.
+    pub checkpoint: [u8; 32],
+}
+
+#[cfg(not(feature = "akita"))]
+impl<F: JoltField, C> MaskedStages<F, C> {
+    /// Reads the masked auxiliary block: one masked value per intermediate
+    /// product of the residual relation, at the layout's auxiliary slots.
+    ///
+    /// # Errors
+    ///
+    /// [`VerifierError`] if the block is truncated or does not fill the
+    /// layout's auxiliary range.
+    pub fn receive_auxiliary<H: Sponge>(
+        &mut self,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Vec<F>, VerifierError> {
+        let count = self.residual.auxiliary_count()?;
+        if count != self.pads.layout().auxiliary.len() {
+            return Err(VerifierError::Masking(ZkError::PadCountMismatch {
+                scheduled: self.pads.layout().auxiliary.len(),
+                used: count,
+            }));
+        }
+        let mut masked = vec![F::zero(); count];
+        let _ = self
+            .pads
+            .channel(transcript)
+            .exchange_private_base(&mut masked)?;
+        Ok(masked)
+    }
+
+    /// The residual relation: stages 1–7's rows over `masked_auxiliary`, and
+    /// stage 8's row tying the hiding evaluation y = `Witness(0)` to the
+    /// masked claims: y − Σ_i coefficient_i · opening_i = 0.
+    ///
+    /// # Errors
+    ///
+    /// [`VerifierError`] if a row cannot be built.
+    pub fn relation(&self, masked_auxiliary: &[F]) -> Result<ResidualRelation<F>, VerifierError> {
+        let mut relation = ResidualRelation::new(self.pads.layout().clone(), 1);
+        self.residual
+            .rows(masked_auxiliary)
+            .append_rows(&mut relation)?;
+        if self.final_opening_ids.len() != self.final_opening_coefficients.len() {
+            return Err(VerifierError::ResidualConstructionFailed {
+                reason: "final opening ids and coefficients differ in length".to_string(),
+            });
+        }
+        let mut row = AffineRow::variable(ResidualVar::Witness(0));
+        for (id, &coefficient) in self
+            .final_opening_ids
+            .iter()
+            .zip(&self.final_opening_coefficients)
+        {
+            row = row.add_scaled(&self.residual.opening_form(id)?, -coefficient);
+        }
+        relation.affine.push(row);
+        Ok(relation)
+    }
+}
+
+/// Stages 1–7's outputs.
+#[cfg_attr(
+    feature = "akita",
+    expect(
+        dead_code,
+        reason = "the Akita build has no residual relation, which alone reads every stage"
+    )
+)]
+struct StageOutputs<F: JoltField> {
+    stage1: Stage1Output<F>,
+    stage2: Stage2Output<F>,
+    stage3: Stage3Output<F>,
+    stage4: Stage4Output<F>,
+    stage5: Stage5Output<F>,
+    stage6a: Stage6aOutput<F>,
+    stage6b: Stage6bOutput<F>,
+    stage7: Stage7Output<F>,
+}
+
+/// Runs stages 1–7; `pads` is the pad view exactly when the proof is masked.
+fn verify_stages_1_to_7<F, PCS, VC, H, P>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    checked: &CheckedInputs,
+    formula_dimensions: &JoltFormulaDimensions,
+    transcript: &mut VerifierTranscript<'_, H>,
+    mut pads: Option<&mut CommittedPadsView<P>>,
+) -> Result<StageOutputs<F>, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+    H: Sponge,
+{
+    if checked.zk != pads.is_some() {
+        return Err(VerifierError::MissingProofPayload {
+            field: "pad commitment",
+        });
+    }
+    let stage1 = stage1::verify(checked, transcript, pads.as_deref_mut())?;
+    let stage2 = stage2::verify(checked, transcript, pads.as_deref_mut(), &stage1)?;
+    let stage3 = stage3::verify(checked, transcript, pads.as_deref_mut(), &stage1, &stage2)?;
+    let stage4 = stage4::verify(
+        checked,
+        preprocessing,
+        transcript,
+        pads.as_deref_mut(),
+        &stage2,
+        &stage3,
+    )?;
+    let stage5 = stage5::verify(
+        checked,
+        formula_dimensions,
+        transcript,
+        pads.as_deref_mut(),
+        &stage2,
+        &stage4,
+    )?;
+    let stage6a = stage6a::verify(
+        checked,
+        preprocessing,
+        formula_dimensions,
+        transcript,
+        pads.as_deref_mut(),
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+    )?;
+    let stage6b = stage6b::verify(
+        checked,
+        preprocessing,
+        formula_dimensions,
+        transcript,
+        pads.as_deref_mut(),
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+        &stage6a,
+    )?;
+    let stage7 = stage7::verify(
+        checked,
+        formula_dimensions,
+        transcript,
+        pads,
+        &stage4,
+        &stage6b,
+    )?;
+    Ok(StageOutputs {
+        stage1,
+        stage2,
+        stage3,
+        stage4,
+        stage5,
+        stage6a,
+        stage6b,
+        stage7,
+    })
+}
+
+#[cfg(not(feature = "akita"))]
+impl<F: JoltField> StageOutputs<F> {
+    fn residual<PCS, VC>(
+        &self,
+        checked: &CheckedInputs,
+        preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    ) -> Result<JoltResidual<F>, VerifierError>
+    where
+        PCS: CommitmentScheme<Field = F>,
+        VC: VectorCommitment<Field = F>,
+    {
+        JoltResidual::build(ResidualInputs {
+            checked,
+            preprocessing,
+            stage1: self.stage1.zk()?,
+            stage2: self.stage2.zk()?,
+            stage3: self.stage3.zk()?,
+            stage4: self.stage4.zk()?,
+            stage5: self.stage5.zk()?,
+            stage6a: self.stage6a.zk()?,
+            stage6b: self.stage6b.zk()?,
+            stage7: self.stage7.zk()?,
+        })
+    }
+}
+
+/// The pad layout of a masked proof, derived by running the masked stage
+/// verifiers over the transcript's seeded prefix followed by zero bytes:
+/// their receives count the base pads, and the residual lowering in shape
+/// mode counts the auxiliary slots. Prover and verifier both call it, so the
+/// schedule has one owner, the masked verifier itself; no value it reads
+/// affects either count. The replay runs on its own [`JoltSponge`]
+/// transcript, whatever the proof's sponge: its challenges are throwaway, and
+/// the proof's transcript never sees it.
+///
+/// # Errors
+///
+/// [`VerifierError`] if the seeded prefix is malformed or the replay fails.
+#[cfg(not(feature = "akita"))]
+pub fn pad_layout<F, PCS, VC>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    seeded_prefix: &[u8],
+) -> Result<PadLayout, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+{
+    // The stage 1-7 messages are polylogarithmic in T: muldiv's 2,073 masked
+    // values take 66 KB, so the first 1 MiB buffer covers every realistic
+    // trace. The
+    // doubling retry is a fallback, capped at 16 MiB so a malformed
+    // preprocessing cannot grow the buffer without bound.
+    let mut padding = 1usize << 20;
+    loop {
+        let mut bytes = Vec::with_capacity(seeded_prefix.len().saturating_add(padding));
+        bytes.extend_from_slice(seeded_prefix);
+        bytes.resize(seeded_prefix.len().saturating_add(padding), 0);
+        let mut transcript = VerifierTranscript::<JoltSponge>::new(
+            &jolt_protocol_id::<JoltSponge>(),
+            JOLT_SESSION,
+            &bytes,
+        );
+        let SeededTranscript {
+            checked,
+            formula_dimensions,
+            ..
+        } = seed_transcript(
+            preprocessing,
+            public_io,
+            trusted_advice_commitment,
+            &mut transcript,
+        )?;
+        let mut counter = CommittedPadsView::counting();
+        match verify_stages_1_to_7::<F, PCS, VC, JoltSponge, ()>(
+            preprocessing,
+            &checked,
+            &formula_dimensions,
+            &mut transcript,
+            Some(&mut counter),
+        ) {
+            Ok(stages) => {
+                let auxiliary = stages
+                    .residual(&checked, preprocessing)?
+                    .auxiliary_count()?;
+                return Ok(PadLayout::new(counter.used(), auxiliary)?);
+            }
+            Err(VerifierError::Transcript(TranscriptError::Truncated)) if padding < 1 << 24 => {
+                padding <<= 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Runs the stage spine on `transcript`: the seeding messages, (for a ZK
+/// proof) the pad commitment on the layout [`pad_layout`] derives, stages
+/// 1–8, and, for a ZK proof, the residual structure of the masked stage
+/// outputs.
+///
+/// # Errors
+///
+/// [`VerifierError`] if any stage rejects.
 #[cfg(not(feature = "akita"))]
 pub fn verify_stages<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -152,8 +462,72 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
     H: Sponge,
 {
-    use crate::stages::zk::{blindfold, inputs::BlindFoldInputs};
+    verify_stages_on(
+        preprocessing,
+        public_io,
+        trusted_advice_commitment,
+        transcript,
+        None,
+    )
+}
 
+/// [`verify_stages`] on a pad layout the caller already derived with
+/// [`pad_layout`] over this transcript's seeded prefix. The ZK prover
+/// replays its own argument string through this function to obtain the
+/// relation it proves, reusing the layout it committed the pads on rather
+/// than replaying stages 1–7 a second time to re-derive it. A clear proof
+/// ignores `layout`.
+///
+/// # Errors
+///
+/// As [`verify_stages`].
+#[cfg(not(feature = "akita"))]
+pub fn replay_stages<F, PCS, VC, H>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut VerifierTranscript<'_, H>,
+    layout: &PadLayout,
+) -> Result<VerifiedStages<F, VC::Output>, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>
+        + AdditivelyHomomorphic
+        + ZkOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
+    H: Sponge,
+{
+    verify_stages_on(
+        preprocessing,
+        public_io,
+        trusted_advice_commitment,
+        transcript,
+        Some(layout),
+    )
+}
+
+/// `layout` is the derived pad layout when the caller has it; `None` derives
+/// it here.
+#[cfg(not(feature = "akita"))]
+fn verify_stages_on<F, PCS, VC, H>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut VerifierTranscript<'_, H>,
+    layout: Option<&PadLayout>,
+) -> Result<VerifiedStages<F, VC::Output>, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>
+        + AdditivelyHomomorphic
+        + ZkOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
+    H: Sponge,
+{
     let SeededTranscript {
         checked,
         commitments,
@@ -165,35 +539,38 @@ where
         transcript,
     )?;
 
-    let stage1 = stage1::verify::<F, VC::Output, H>(&checked, transcript)?;
-    let stage2 = stage2::verify(&checked, transcript, &stage1)?;
-    let stage3 = stage3::verify(&checked, transcript, &stage1, &stage2)?;
-    let stage4 = stage4::verify(&checked, preprocessing, transcript, &stage2, &stage3)?;
-    let stage5 = stage5::verify(&checked, &formula_dimensions, transcript, &stage2, &stage4)?;
-    let stage6a = stage6a::verify(
-        &checked,
+    let mut pads = if checked.zk {
+        let derived;
+        let layout = if let Some(layout) = layout {
+            layout
+        } else {
+            derived = pad_layout::<F, PCS, VC>(
+                preprocessing,
+                public_io,
+                trusted_advice_commitment,
+                transcript.consumed(),
+            )?;
+            &derived
+        };
+        let vc_setup = preprocessing
+            .vc_setup
+            .as_ref()
+            .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
+        transcript.site(PADS);
+        Some(BlindFold::<VC>::receive_pad_commitment(
+            vc_setup, layout, transcript,
+        )?)
+    } else {
+        None
+    };
+
+    let stages = verify_stages_1_to_7::<F, PCS, VC, H, Vec<VC::Output>>(
         preprocessing,
+        &checked,
         &formula_dimensions,
         transcript,
-        &stage1,
-        &stage2,
-        &stage3,
-        &stage4,
-        &stage5,
+        pads.as_mut(),
     )?;
-    let stage6b = stage6b::verify(
-        &checked,
-        preprocessing,
-        &formula_dimensions,
-        transcript,
-        &stage1,
-        &stage2,
-        &stage3,
-        &stage4,
-        &stage5,
-        &stage6a,
-    )?;
-    let stage7 = stage7::verify(&checked, &formula_dimensions, transcript, &stage4, &stage6b)?;
     let stage8 = stage8::verify(
         &checked,
         preprocessing,
@@ -201,34 +578,27 @@ where
         &formula_dimensions,
         trusted_advice_commitment,
         transcript,
-        &stage6b,
-        &stage7,
+        &stages.stage6b,
+        &stages.stage7,
     )?;
 
-    if !checked.zk {
+    let Some(pads) = pads else {
         let Stage8Output::Clear(_) = stage8 else {
             return Err(VerifierError::ExpectedClearProof { field: "stage8" });
         };
         return Ok(VerifiedStages::Clear);
-    }
-    let protocol = Box::new(blindfold::build(BlindFoldInputs {
-        checked: &checked,
-        preprocessing,
-        stage1: stage1.zk()?,
-        stage2: stage2.zk()?,
-        stage3: stage3.zk()?,
-        stage4: stage4.zk()?,
-        stage5: stage5.zk()?,
-        stage6a: stage6a.zk()?,
-        stage6b: stage6b.zk()?,
-        stage7: stage7.zk()?,
-        stage8: stage8.zk()?,
-    })?);
+    };
+    let stage8 = stage8.zk()?;
+    let residual = stages.residual(&checked, preprocessing)?;
     let checkpoint = transcript.challenge_bytes();
-    Ok(VerifiedStages::Zk {
-        protocol,
+    Ok(VerifiedStages::Zk(Box::new(MaskedStages {
+        pads,
+        residual,
+        final_opening_ids: stage8.opening_ids.clone(),
+        final_opening_coefficients: stage8.constraint_coefficients.clone(),
+        residual_commitment: stage8.hiding_evaluation_commitment,
         checkpoint,
-    })
+    })))
 }
 
 /// The Akita verification path: the same stage spine, with ordered native
@@ -264,46 +634,12 @@ where
         &mut transcript,
     )?;
 
-    let stage1 = stage1::verify::<F, VC::Output, H>(&checked, &mut transcript)?;
-    let stage2 = stage2::verify(&checked, &mut transcript, &stage1)?;
-    let stage3 = stage3::verify(&checked, &mut transcript, &stage1, &stage2)?;
-    let stage4 = stage4::verify(&checked, preprocessing, &mut transcript, &stage2, &stage3)?;
-    let stage5 = stage5::verify(
-        &checked,
-        &formula_dimensions,
-        &mut transcript,
-        &stage2,
-        &stage4,
-    )?;
-    let stage6a = stage6a::verify(
-        &checked,
+    let stages = verify_stages_1_to_7::<F, PCS, VC, H, ()>(
         preprocessing,
-        &formula_dimensions,
-        &mut transcript,
-        &stage1,
-        &stage2,
-        &stage3,
-        &stage4,
-        &stage5,
-    )?;
-    let stage6b = stage6b::verify(
-        &checked,
-        preprocessing,
-        &formula_dimensions,
-        &mut transcript,
-        &stage1,
-        &stage2,
-        &stage3,
-        &stage4,
-        &stage5,
-        &stage6a,
-    )?;
-    let stage7 = stage7::verify(
         &checked,
         &formula_dimensions,
         &mut transcript,
-        &stage4,
-        &stage6b,
+        None,
     )?;
     let stage8 = stage8::verify(
         &checked,
@@ -312,9 +648,9 @@ where
         &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
-        &stage4,
-        &stage6b,
-        &stage7,
+        &stages.stage4,
+        &stages.stage6b,
+        &stages.stage7,
     )?;
 
     let stage8::Stage8Output::Clear = stage8 else {
@@ -397,16 +733,6 @@ pub struct CheckedInputs {
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
     pub precommitted: PrecommittedSchedule,
-}
-
-impl CheckedInputs {
-    /// The committed output-claim row length: the vector-commitment capacity.
-    /// `validate_zk_vector_commitment_setup` has already checked it is at
-    /// least `MAX_BLINDFOLD_GENERATORS`, so it is nonzero.
-    pub fn committed_row_len(&self) -> Result<usize, VerifierError> {
-        self.vc_capacity
-            .ok_or(VerifierError::MissingVectorCommitmentSetup)
-    }
 }
 
 /// Absorbs the public preamble: the verifier's protocol axes, the
