@@ -21,7 +21,7 @@ use jolt_prover::JoltBackend;
 use jolt_prover::ProverError;
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
 use jolt_prover::akita;
 use jolt_prover::akita::preprocessing::{AkitaProverPreprocessing, AkitaTranscript, AkitaVc};
 use jolt_prover::ProverConfig;
@@ -213,7 +213,7 @@ fn muldiv_fixture() -> Fixture {
     )
     .expect("derive config");
     let preprocessing = akita::preprocessing::preprocess_full_with_advice(
-        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         run.preprocessing,
         &config,
         false,

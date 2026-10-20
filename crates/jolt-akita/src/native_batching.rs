@@ -758,6 +758,7 @@ mod tests {
     use jolt_transcript::Blake2bTranscript;
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
+    use crate::configs::AkitaChunkProfile;
 
     fn commitment(
         backend_flavor: AkitaBackendFlavor,
@@ -793,6 +794,7 @@ mod tests {
             default_layout_digest: [9; 32],
             one_hot_k: AKITA_ONE_HOT_K16,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::OneHot {
+                profile: AkitaChunkProfile::default(),
                 one_hot: Vec::new(),
             },
             backend_cache: Default::default(),
@@ -829,6 +831,8 @@ mod tests {
             default_layout_digest: layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
+                dense_profile: AkitaChunkProfile::new(8, 2),
+                profile: AkitaChunkProfile::default(),
                 dense: Vec::new(),
                 one_hot: Vec::new(),
             },

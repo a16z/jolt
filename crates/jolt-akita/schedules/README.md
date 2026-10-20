@@ -1,22 +1,26 @@
 # Jolt Akita schedule artifacts
 
 These canonical `.aks` catalogs are public runtime data. The four base catalogs
-support Jolt's default single-chunk execution and its adapter fixtures. The six
-multi-chunk companion catalogs contain only the small guest, roundtrip, grouped
+support Jolt's default single-chunk execution and its adapter fixtures. The two
+W8R2 fixture catalogs contain only the small guest, roundtrip, grouped
 cutover, and field-inline boundary shapes exercised by this repository. They do
 not promise production coverage for downstream multi-chunk deployments.
 
 Applications own their supported shapes, generation policy, and deployment
 catalogs. Generate those catalogs with the pinned Akita planner and validate them
 against the corresponding `jolt_akita::configs` policy. Supply the complete bundle
-explicitly through `AkitaScheduleArtifacts::from_directory`, retain it in `Arc`,
+explicitly through `AkitaScheduleArtifacts::from_directory(path, dense_profile)`,
+retain it in `Arc`,
 and pass it to preprocessing. No source change or custom verifier is required
 when an application supplies additional admitted rows for a supported family.
 
 `shared_from_default_directory` is a host/dev convenience: it reads
-`JOLT_AKITA_SCHEDULE_DIR` or falls back to this directory. It requires dense-bounded,
-dense-full, onehot-k16, and onehot-k256; profile companions are optional until
-selected. A missing companion or exact row fails setup. The application's
+`JOLT_AKITA_SCHEDULE_DIR` or falls back to this directory. It requires the dense-bounded
+and dense-full files and discovers one-hot catalogs named
+`jolt-fp128-onehot-k<K>-w<chunks>r<levels>.aks`. Unsuffixed one-hot filenames denote
+`w1r0`. All geometries for a given K share the same catalog family identity;
+the policy binds the exact geometry. The bundle stores entries keyed by K and geometry; a missing selected
+catalog, duplicate key, or missing exact row fails loading or setup. The application's
 producer and consumer setups must use compatible frozen producer profiles.
 
 Committed programs use one whole-bytecode group and one image group. Their
@@ -32,14 +36,23 @@ relevant base catalog.
 Preprocessing validates and serializes the exact catalog in `AkitaVerifierSetup`.
 An independent upstream verifier reconstructs its verification tables from that
 public setup, without reading source catalogs, running the planner, or needing
-the application's proving backend. The catalog digest and nondefault chunk
-profile are bound into the transcript. Verification only admits selections from
+the application's proving backend. The catalog digest is bound into the transcript. Every one-hot setup also binds
+its chunk count and leading chunked fold count, including `w1r0`. Verification only admits selections from
 its installed trusted setup; a proof cannot install a catalog.
 
-Single, Two, Four, and Eight profiles remain supported. The chunked profiles
-split the root and first recursive fold; subsequent folds are single-chunk.
+Schedule catalogs are part of the verifier's trusted preprocessing. Before use,
+catalogs pass through Akita's validated constructor, including when reconstructed
+from serialized verifier preprocessing. Admission checks the expected configuration
+and chunk geometry and applies Akita's schedule audit. The proof carries a
+schedule-row digest, which the verifier resolves within its own validated catalog.
+Unknown rows and rows incompatible with the opening or verifier setup are rejected.
+
+`AkitaChunkProfile { chunks, levels }` selects runtime geometry, validated by
+Akita at admission. The packaged multi-chunk fixtures use `w8r2`: the root and first recursive fold are chunked. Applications may supply
+catalogs with other admitted chunk counts and leading chunked fold counts.
+Folds after the selected prefix are single-chunk.
 Recursive witness bodies inherit ownership and align to successor blocks.
-The two dense fixtures retain their fixed eight-chunk producer budget so the
+The two packaged dense fixtures use an eight-chunk producer budget so the
 cross-profile commitment-reuse tests exercise compatible producer profiles.
 Changing that policy requires regenerating compatible producer and consumer
 catalogs and their prepared setups.
@@ -56,8 +69,7 @@ Regenerate this repository's catalogs:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Selectors include `k16`, `k256`, `k16-single`, `k256-single`, `w2r2`, `w4r2`,
-`w8r2`, `dense-bounded`, and `dense-full`. Append `--check` to replan and compare
+Selectors include `k16`, `k256`, `k16-single`, `k256-single`, `w8r2`, `dense-bounded`, and `dense-full`. Append `--check` to replan and compare
 canonical bytes without replacing the files. The catalogs are generated with
 the Akita revision pinned in the workspace `Cargo.toml`.
 
@@ -69,3 +81,6 @@ coverage matrices and application catalog freshness belong downstream.
 
 The child verifier uses only the exported public inputs and deliberately points
 its catalog environment at a nonexistent directory.
+
+The dense profile is supplied by the caller and travels with the catalog in verifier
+preprocessing. The verifier does not impose the packaged fixtures' geometry.

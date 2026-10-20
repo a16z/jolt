@@ -6,7 +6,7 @@
 
 pub mod support;
 
-use jolt_akita::{AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
+use jolt_akita::{AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -128,7 +128,7 @@ fn akita_commit_group_rejects_shape_pathologies() {
         16,
         2,
         layout(7),
-        AkitaScheduleArtifacts::shared_from_default_directory(),
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
     ))
     .unwrap();
     assert!(matches!(

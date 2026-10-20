@@ -14,7 +14,7 @@ use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
-    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
+    AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
     GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
@@ -55,7 +55,8 @@ impl TraceOneHotRows for TraceRows {
 
 #[test]
 fn grouped_opening_proves_advice_larger_than_the_trace_group() {
-    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let artifacts =
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let (prover_setup, verifier_setup) =
         AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
             FINAL_NUM_VARS,

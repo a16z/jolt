@@ -1,6 +1,6 @@
 use jolt_akita::{
-    AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatchStatement,
-    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials,
+    AkitaNativeBatchStatement, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
 };
 use jolt_field::Ring;
 use jolt_openings::{CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
@@ -35,7 +35,7 @@ pub fn setup_for(
         num_vars,
         max_num_polys_per_commitment_group,
         layout_digest,
-        AkitaScheduleArtifacts::shared_from_default_directory(),
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
     ))
     .expect("Akita setup should succeed")
 }
