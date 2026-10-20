@@ -15,6 +15,8 @@ use jolt_crypto::challenge::{OperatorNormRejection, D64_SELECTIVE_L2_CHALLENGE_C
 #[cfg(feature = "whiteout-prover")]
 use jolt_crypto::sample::{BlockParams, GaussianWidth, JointRejection};
 
+use std::f64::consts::LN_2;
+
 use super::segments::{SegmentMask, SegmentTable};
 use super::WhiteoutError;
 
@@ -274,7 +276,7 @@ fn ceil_log2(x: u128) -> u128 {
 /// against rounding.
 fn max_attempts() -> usize {
     let alpha = f64::from(ALPHA);
-    let t = (2.0 * f64::from(EPSILON_BITS) * std::f64::consts::LN_2).sqrt();
+    let t = (2.0 * f64::from(EPSILON_BITS) * LN_2).sqrt();
     let repetition = (t / alpha + 1.0 / (2.0 * alpha * alpha)).exp();
     let p_box = 1.0 - 1.0 / BOX_FAILURE_INVERSE as f64;
     let acceptance =
