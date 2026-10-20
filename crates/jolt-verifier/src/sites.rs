@@ -8,6 +8,7 @@ use jolt_transcript::SiteId;
 
 pub const PREAMBLE: SiteId = SiteId::label("jolt/preamble");
 pub const COMMITMENTS: SiteId = SiteId::label("jolt/commitments");
+pub const PADS: SiteId = SiteId::label("jolt/pads");
 pub const STAGE1: SiteId = SiteId::label("jolt/stage1");
 pub const STAGE2: SiteId = SiteId::label("jolt/stage2");
 pub const STAGE3: SiteId = SiteId::label("jolt/stage3");

@@ -3,14 +3,13 @@ use super::*;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase as BytecodeAddressPhase;
 
 pub(super) fn add_stage7<PCS, VC>(
-    input: &BlindFoldInputs<'_, PCS, VC>,
-    builder: Builder<PCS::Field, VC::Output>,
+    input: &ResidualInputs<'_, PCS, VC>,
+    builder: ResidualBuilder<PCS::Field>,
     values: &mut SourceValues<PCS::Field>,
-) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: Clone,
 {
     let formula_dimensions = formula_dimensions(input)?;
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
@@ -54,7 +53,7 @@ where
     )?;
     let hamming_point = input
         .stage7
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(hamming_claims.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::HammingWeightClaimReduction, error)
@@ -93,7 +92,7 @@ where
     let address_phase_point = |rounds: usize, stage| {
         input
             .stage7
-            .batch_consistency
+            .batch_rounds
             .try_instance_point_at(0, rounds)
             .map_err(|error| stage_sumcheck_error(stage, error))
     };
@@ -139,7 +138,7 @@ where
         "stage7.batch",
         hamming_claims.domain(),
         &claims,
-        &input.stage7.batch_consistency,
+        &input.stage7.batch_rounds,
         &input.stage7.batch_output_claims,
         values,
     )

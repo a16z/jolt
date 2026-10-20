@@ -1,8 +1,8 @@
 use jolt_field::JoltField;
-use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
+use jolt_sumcheck::{BatchedMaskedRounds, MaskedRound};
 
-use crate::stages::relations::SumcheckBatch;
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{MaskedClaims, SumcheckBatch};
+use crate::VerifierError;
 
 #[cfg(feature = "field-inline")]
 pub use super::field_registers_claim_reduction::{
@@ -143,17 +143,17 @@ pub struct Stage2ClearOutput<F: JoltField> {
 /// `product_tau_low` is opening-derived (stage 1's remainder sumcheck point low half), stored
 /// so downstream stage-3 relation construction can read it mode-agnostically via
 /// [`Stage2Output::product_tau_low`]; BlindFold independently recomputes it from
-/// `stage1.remainder_consistency`.
+/// `stage1.remainder_rounds`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2ZkOutput<F: JoltField, C> {
+pub struct Stage2ZkOutput<F: JoltField> {
     pub challenges: Stage2BatchChallenges<F>,
     pub product_uniskip_challenge: F,
     pub product_tau_low: Vec<F>,
     pub product_tau_high: F,
-    pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
-    pub product_uniskip_output_claims: CommittedOutputClaimOutput<C>,
-    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    pub product_uniskip_rounds: Vec<MaskedRound<F>>,
+    pub product_uniskip_output_claims: MaskedClaims<F>,
+    pub batch_rounds: BatchedMaskedRounds<F>,
+    pub batch_output_claims: MaskedClaims<F>,
     /// The produced batch opening points, the ZK counterpart of the clear path's
     /// `output_points`. Later stages read them through the same `*_point()` accessors.
     pub output_points: Stage2BatchOutputPoints<F>,
@@ -164,12 +164,12 @@ pub struct Stage2ZkOutput<F: JoltField, C> {
     clippy::large_enum_variant,
     reason = "one stage output per proof, built once and never stored in bulk"
 )]
-pub enum Stage2Output<F: JoltField, C> {
+pub enum Stage2Output<F: JoltField> {
     Clear(Stage2ClearOutput<F>),
-    Zk(Stage2ZkOutput<F, C>),
+    Zk(Stage2ZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage2Output<F, C> {
+impl<F: JoltField> Stage2Output<F> {
     /// The product uni-skip `tau_low` (stage 1's remainder point low half,
     /// reversed), available regardless of proving mode. Stage 3's relation
     /// construction evaluates its `EqPlusOne`/`EqSpartan` publics against it.
@@ -188,17 +188,17 @@ impl<F: JoltField, C> Stage2Output<F, C> {
         }
     }
 
-    pub fn clear(&self) -> Result<&Stage2ClearOutput<F>, crate::VerifierError> {
+    pub fn clear(&self) -> Result<&Stage2ClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage2" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage2" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage2ZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage2ZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage2" }),
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage2" }),
         }
     }
 }

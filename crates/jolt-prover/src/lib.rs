@@ -63,4 +63,4 @@ pub use jolt_kernels::{JoltBackend, ProofSession};
 pub use preprocessing::{
     CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
 };
-pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};
+pub use recorder::{ModeRecorder, ProofMode};

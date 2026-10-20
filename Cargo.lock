@@ -3807,10 +3807,8 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
- "jolt-crypto",
  "jolt-field",
  "jolt-poly",
- "jolt-r1cs",
  "jolt-transcript",
  "num-traits",
  "rand_core 0.6.4",

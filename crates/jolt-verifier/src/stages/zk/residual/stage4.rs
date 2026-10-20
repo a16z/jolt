@@ -4,15 +4,14 @@ use super::*;
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
 pub(super) fn add_stage4<F, PCS, VC>(
-    input: &BlindFoldInputs<'_, PCS, VC>,
-    builder: Builder<F, VC::Output>,
+    input: &ResidualInputs<'_, PCS, VC>,
+    builder: ResidualBuilder<F>,
     values: &mut SourceValues<F>,
-) -> Result<Builder<F, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<F>, VerifierError>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Clone,
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let log_k = crate::num::ilog2(input.checked.ram_K);
@@ -62,7 +61,7 @@ where
     )?;
     let registers_point = input
         .stage4
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(registers_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error))?;
     let registers_opening = register_dimensions
@@ -70,7 +69,7 @@ where
         .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?;
     let registers_reduction_point = input
         .stage3
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_reduction_opening = registers_reduction_point
@@ -109,7 +108,7 @@ where
     )?;
     let ram_val_point = input
         .stage4
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(ram_val_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamValCheck, error))?;
     let ram_val_cycle = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
@@ -141,7 +140,7 @@ where
         "stage4.batch",
         registers_claims.domain(),
         &batch_claims,
-        &input.stage4.batch_consistency,
+        &input.stage4.batch_rounds,
         &input.stage4.batch_output_claims,
         values,
     )

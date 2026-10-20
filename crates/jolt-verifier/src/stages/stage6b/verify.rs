@@ -1,8 +1,9 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalDecode, JoltField};
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::masking::CommittedPadsView;
 
 use crate::sites::STAGE6B;
 
@@ -43,6 +44,8 @@ use super::{
         ram_ra_virtualization_input_values_from_upstream,
     },
 };
+#[cfg(not(feature = "akita"))]
+use crate::stages::zk::masked_channel;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     stages::{
@@ -61,22 +64,22 @@ use crate::{
     clippy::too_many_arguments,
     reason = "Stage 6b consumes the stage-6a output plus all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
-pub fn verify<PCS, VC, H>(
+pub fn verify<PCS, VC, H, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-    stage3: &Stage3Output<PCS::Field, VC::Output>,
-    stage4: &Stage4Output<PCS::Field, VC::Output>,
-    stage5: &Stage5Output<PCS::Field, VC::Output>,
-    stage6a: &Stage6aOutput<PCS::Field, VC::Output>,
-) -> Result<Stage6bOutput<PCS::Field, VC::Output>, VerifierError>
+    pads: Option<&mut CommittedPadsView<P>>,
+    stage1: &Stage1Output<PCS::Field>,
+    stage2: &Stage2Output<PCS::Field>,
+    stage3: &Stage3Output<PCS::Field>,
+    stage4: &Stage4Output<PCS::Field>,
+    stage5: &Stage5Output<PCS::Field>,
+    stage6a: &Stage6aOutput<PCS::Field>,
+) -> Result<Stage6bOutput<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: CanonicalDecode,
     H: Sponge,
 {
     transcript.site(STAGE6B);
@@ -108,11 +111,14 @@ where
         stage5.output_points(),
     );
 
-    // No zk protocol exists over the Akita axis, so the committed arm (and its
-    // runtime point-alias dedup arithmetic) is base-only.
+    // No zk protocol exists over the Akita axis, so the masked arm is
+    // base-only and an Akita build never holds pads.
+    #[cfg(feature = "akita")]
+    let _ = pads;
     #[cfg(not(feature = "akita"))]
     if checked.zk {
-        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
+        let batch =
+            sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
 
         return Ok(Stage6bOutput::Zk(Stage6bZkOutput {
             challenges: Stage6bCarriedChallenges {
@@ -122,7 +128,7 @@ where
                 field_registers_inc_gamma: draws.field_registers_inc_gamma,
                 bytecode_reduction_eta: draws.eta,
             },
-            batch_consistency: batch.consistency,
+            batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             output_points: batch.output_points,
         }));
@@ -368,7 +374,8 @@ mod tests {
     }
 
     /// A booleanity `bytecode_ra` cell routed as an alias of its bytecode
-    /// read-RAF source is neither sent nor committed.
+    /// read-RAF source is not sent in a clear proof; a masked proof sends it
+    /// and states the alias as an equality.
     #[test]
     fn aliased_bytecode_ra_is_not_sent() {
         let (claims, last) = sample_claims();
@@ -389,9 +396,17 @@ mod tests {
             Stage6bSumchecks::wire_claim_values(&claims, &routes),
             expected
         );
+        let (masked_routes, equalities) = routes.masked();
         assert_eq!(
-            Stage6bSumchecks::committed_claim_values(&claims, &routes),
-            expected
+            Stage6bSumchecks::wire_claim_values(&claims, &masked_routes),
+            (1..=last).map(fr).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            equalities,
+            vec![(
+                JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity).into(),
+                JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf).into(),
+            )]
         );
     }
 }

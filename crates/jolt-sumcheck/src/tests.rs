@@ -8,26 +8,20 @@
     reason = "tests may panic on assertion failures and index fixture data"
 )]
 
-use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{
-    Blake2b512, Channel, PrivateChannel, ProtocolId, ProverTranscript, TranscriptError,
+    Blake2b512, Channel, PadSlots, PrivateChannel, ProtocolId, ProverTranscript, TranscriptError,
     VerifierTranscript,
 };
 
 use crate::batch::{BatchMember, BatchPrelude};
 use crate::claim::{SumcheckClaim, SumcheckStatement};
-use crate::committed::{
-    BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, VerifiedCommittedRound,
-};
 use crate::domain::{CenteredIntegerDomain, SumcheckDomain};
 use crate::error::SumcheckError;
-use crate::prover::{
-    prove_batch, prove_uniskip_clear, prove_uniskip_committed, ProveRounds, ProvedBatch,
-    SequentialRounds,
-};
-use crate::recorder::{ClearSumcheckRecorder, CommittedSumcheckRecorder, SumcheckRecorder};
+use crate::masked::{BatchedMaskedRounds, MaskedRound};
+use crate::prover::{prove_batch, prove_uniskip_clear, ProveRounds, ProvedBatch, SequentialRounds};
+use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
 use crate::round_proof::{
     receive_compressed_round, receive_full_round, send_compressed_round, send_full_round,
 };
@@ -36,7 +30,6 @@ use jolt_poly::EvaluationClaim;
 
 type F = Fr;
 type H = Blake2b512;
-type VC = Pedersen<Bn254G1>;
 
 const PROTOCOL: ProtocolId = ProtocolId::new::<H>("jolt-sumcheck/unit-tests");
 
@@ -211,39 +204,31 @@ fn centered_integer_domain_exposes_power_sums() {
     );
 }
 
-#[test]
-fn batched_committed_consistency_accessors() {
-    // `BatchedCommittedSumcheckConsistency` is produced by the generated ZK
-    // verify driver (jolt-verifier-derive) and read back by BlindFold through
-    // these accessors. Exercise the front-loaded suffix arithmetic and its
-    // range errors directly on a hand-built instance.
-    let consistency = CommittedSumcheckConsistency {
-        rounds: vec![
-            VerifiedCommittedRound {
-                commitment: F::from_u64(11),
-                degree: 2,
-                challenge: F::from_u64(101),
-            },
-            VerifiedCommittedRound {
-                commitment: F::from_u64(12),
-                degree: 1,
-                challenge: F::from_u64(102),
-            },
-            VerifiedCommittedRound {
-                commitment: F::from_u64(13),
-                degree: 0,
-                challenge: F::from_u64(103),
-            },
-        ],
-    };
-    let batched = BatchedCommittedSumcheckConsistency {
-        consistency,
-        batching_coefficients: vec![F::from_u64(7), F::from_u64(9)],
-        max_num_vars: 3,
-        max_degree: 2,
-    };
+fn batched_rounds_with_challenges(challenges: &[F], max_num_vars: usize) -> BatchedMaskedRounds<F> {
+    BatchedMaskedRounds {
+        rounds: challenges
+            .iter()
+            .enumerate()
+            .map(|(index, &challenge)| MaskedRound {
+                wire: vec![F::from_u64(50 + index as u64)],
+                slots: PadSlots {
+                    start: index,
+                    len: 1,
+                },
+                challenge,
+            })
+            .collect(),
+        batching_coefficients: vec![F::from_u64(7)],
+        max_num_vars,
+        max_degree: 1,
+    }
+}
 
+#[test]
+fn batched_masked_round_accessors() {
     let challenges = vec![F::from_u64(101), F::from_u64(102), F::from_u64(103)];
+    let batched = batched_rounds_with_challenges(&challenges, 3);
+
     assert_eq!(batched.challenges(), challenges);
     assert_eq!(batched.try_round_offset(1).unwrap(), 2);
     assert_eq!(
@@ -268,32 +253,10 @@ fn batched_committed_consistency_accessors() {
     ));
 }
 
-fn batched_consistency_with_challenges(
-    challenges: &[F],
-    max_num_vars: usize,
-) -> BatchedCommittedSumcheckConsistency<F, F> {
-    BatchedCommittedSumcheckConsistency {
-        consistency: CommittedSumcheckConsistency {
-            rounds: challenges
-                .iter()
-                .enumerate()
-                .map(|(index, &challenge)| VerifiedCommittedRound {
-                    commitment: F::from_u64(50 + index as u64),
-                    degree: 1,
-                    challenge,
-                })
-                .collect(),
-        },
-        batching_coefficients: vec![F::from_u64(7)],
-        max_num_vars,
-        max_degree: 1,
-    }
-}
-
 #[test]
 fn batched_try_round_offset_rejects_instance_wider_than_batch() {
     let challenges: Vec<F> = (101..=103).map(F::from_u64).collect();
-    let batched = batched_consistency_with_challenges(&challenges, 3);
+    let batched = batched_rounds_with_challenges(&challenges, 3);
 
     assert!(matches!(
         batched.try_round_offset(4),
@@ -309,7 +272,7 @@ fn batched_try_round_offset_rejects_instance_wider_than_batch() {
 #[test]
 fn batched_instance_points_are_challenge_suffixes_for_mixed_arities() {
     let challenges: Vec<F> = (201..=204).map(F::from_u64).collect();
-    let batched = batched_consistency_with_challenges(&challenges, 4);
+    let batched = batched_rounds_with_challenges(&challenges, 4);
 
     // Tail-aligned members of a mixed-arity batch (4, 2, and 1 rounds) get
     // dummy rounds front-loaded, so each point is a challenge suffix.
@@ -338,7 +301,7 @@ fn batched_instance_points_are_challenge_suffixes_for_mixed_arities() {
 #[test]
 fn batched_instance_point_at_rejects_windows_past_recorded_challenges() {
     let challenges: Vec<F> = (301..=303).map(F::from_u64).collect();
-    let batched = batched_consistency_with_challenges(&challenges, 3);
+    let batched = batched_rounds_with_challenges(&challenges, 3);
 
     assert!(matches!(
         batched.try_instance_point_at(2, 2),
@@ -375,7 +338,7 @@ fn batched_instance_point_rejects_declared_width_exceeding_recorded_rounds() {
     // recorded three. The suffix offset is computed from the declared width,
     // so the lookup must fail against the recorded challenge count.
     let challenges: Vec<F> = (401..=403).map(F::from_u64).collect();
-    let batched = batched_consistency_with_challenges(&challenges, 5);
+    let batched = batched_rounds_with_challenges(&challenges, 5);
 
     assert_eq!(batched.try_round_offset(1).unwrap(), 4);
     assert!(matches!(
@@ -635,14 +598,6 @@ fn fused_bind_eval_member_byte_matches_separate_passes() {
     assert_eq!(separate_state, fused_state);
 }
 
-fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
-    let generator = Bn254::g1_generator();
-    let generators = (2..2 + capacity)
-        .map(|k| generator.scalar_mul(&F::from_u64(k)))
-        .collect();
-    PedersenSetup::new(generators, generator.scalar_mul(&F::from_u64(99)))
-}
-
 /// A batch that declares `max_degree == 0` while having rounds to prove must
 /// be rejected with `ZeroBatchDegree`, not proved (a degree-0 round polynomial
 /// cannot carry a sumcheck round) and not panic.
@@ -777,77 +732,6 @@ fn prove_batch_clear_twin_head_aligned_member() {
     );
 }
 
-/// The committed twin of the batched engine: no claim scalar reaches the
-/// transcript on either side, the verifier reads back the prover's
-/// challenges, and the retained witness opens every commitment it read.
-#[test]
-fn prove_batch_committed_twin_matches_committed_consistency() {
-    let setup = pedersen_setup(4);
-
-    let input_claims = [F::from_u64(4242), F::from_u64(1717)];
-    let mut long = DenseMember::with_sum(3, input_claims[0], 23);
-    let mut short = DenseMember::with_sum(1, input_claims[1], 57);
-
-    let mut prover_transcript = prover(b"prove-batch-zk-twin");
-    let mut recorder =
-        CommittedSumcheckRecorder::<F, VC, _>::new(&setup, rand_core::OsRng).unwrap();
-    let coefficients = batch_head(&mut recorder, &input_claims, &mut prover_transcript);
-    let prelude = prelude(
-        &[
-            (input_claims[0], coefficients[0], 3, 0),
-            (input_claims[1], coefficients[1], 1, 2),
-        ],
-        3,
-    );
-    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
-    let proved = prove_batch(
-        &prelude,
-        &mut members,
-        &mut SequentialRounds,
-        &mut recorder,
-        &mut prover_transcript,
-    )
-    .unwrap();
-    let witness = recorder
-        .finish(&proved.member_claims, &mut prover_transcript)
-        .unwrap();
-    let prover_state = fingerprint(&mut prover_transcript);
-    let narg = prover_transcript.finish();
-
-    let mut verifier_transcript = verifier(b"prove-batch-zk-twin", &narg);
-    let verifier_coefficients: Vec<F> = verifier_transcript.challenges_small(2);
-    assert_eq!(verifier_coefficients, coefficients);
-    let (consistency, output_claims) = SumcheckVerifier::verify_committed::<F, _, Bn254G1>(
-        SumcheckStatement::new(3, 1),
-        1,
-        &mut verifier_transcript,
-    )
-    .unwrap();
-
-    assert_eq!(consistency.challenges(), proved.challenges);
-    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
-    verifier_transcript.finish().unwrap();
-
-    assert_eq!(witness.round_coefficients.len(), 3);
-    for ((commitment, coefficients), blinding) in consistency
-        .round_commitments()
-        .iter()
-        .zip(&witness.round_coefficients)
-        .zip(&witness.round_blindings)
-    {
-        assert!(VC::verify(&setup, commitment, coefficients, blinding));
-    }
-    for ((commitment, row), blinding) in output_claims
-        .commitments
-        .iter()
-        .zip(&witness.output_claim_rows)
-        .zip(&witness.output_claim_blindings)
-    {
-        assert!(VC::verify(&setup, commitment, row, blinding));
-    }
-    assert_eq!(witness.output_claim_rows.concat(), proved.member_claims);
-}
-
 fn uniskip_round() -> (UnivariatePoly<F>, F, usize, usize) {
     let degree = 3;
     let domain_size = 4;
@@ -911,58 +795,4 @@ fn prove_uniskip_rejects_a_round_off_the_domain_sum_before_writing() {
         Err(SumcheckError::RoundCheckFailed { round: 0, .. })
     ));
     assert!(transcript.finish().is_empty());
-}
-
-/// The committed uni-skip twin: the verifier reads one round commitment and
-/// one output-claim commitment, and the witness opens both.
-#[test]
-fn prove_uniskip_committed_twin_matches_committed_consistency() {
-    let setup = pedersen_setup(4);
-    let (round_poly, input_claim, degree, domain_size) = uniskip_round();
-
-    let mut prover_transcript = prover(b"uniskip-zk-twin");
-    let proved = prove_uniskip_committed::<F, VC, _, _>(
-        round_poly.clone(),
-        input_claim,
-        degree,
-        domain_size,
-        &setup,
-        rand_core::OsRng,
-        &mut prover_transcript,
-    )
-    .unwrap();
-    let prover_state = fingerprint(&mut prover_transcript);
-    let narg = prover_transcript.finish();
-
-    let mut verifier_transcript = verifier(b"uniskip-zk-twin", &narg);
-    let (consistency, output_claims) = SumcheckVerifier::verify_committed::<F, _, Bn254G1>(
-        SumcheckStatement::new(1, degree),
-        1,
-        &mut verifier_transcript,
-    )
-    .unwrap();
-
-    assert_eq!(consistency.challenges(), vec![proved.challenge]);
-    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
-    verifier_transcript.finish().unwrap();
-
-    let witness = &proved.witness;
-    assert_eq!(
-        witness.round_coefficients,
-        vec![round_poly.coefficients().to_vec()]
-    );
-    assert!(VC::verify(
-        &setup,
-        &consistency.round_commitments()[0],
-        &witness.round_coefficients[0],
-        &witness.round_blindings[0],
-    ));
-    assert_eq!(witness.output_claim_rows, vec![vec![proved.output_claim]]);
-    assert_eq!(proved.output_claim, round_poly.evaluate(proved.challenge));
-    assert!(VC::verify(
-        &setup,
-        &output_claims.commitments[0],
-        &witness.output_claim_rows[0],
-        &witness.output_claim_blindings[0],
-    ));
 }

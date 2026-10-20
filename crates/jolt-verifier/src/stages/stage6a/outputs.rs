@@ -1,10 +1,9 @@
 use jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::JoltField;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 
-use crate::stages::relations::SumcheckBatch;
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{MaskedClaims, SumcheckBatch};
 
 // The per-relation produced-claim structs live in their relation modules
 // (cell-generic, `#[derive(OutputClaims)]`); re-export them so consumers and the
@@ -14,6 +13,7 @@ pub use super::bytecode_read_raf::BytecodeReadRafAddressPhaseOutputClaims;
 
 use super::booleanity::BooleanityAddressPhase;
 use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
+use crate::VerifierError;
 
 /// Source-of-truth for stage 6a's two-instance address-phase sumcheck batch
 /// (bytecode read-RAF, booleanity). `#[derive(SumcheckBatch)]` generates the
@@ -103,22 +103,22 @@ pub struct Stage6aClearOutput<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6aZkOutput<F: JoltField, C> {
+pub struct Stage6aZkOutput<F: JoltField> {
     pub challenges: Stage6aCarriedChallenges<F>,
-    pub consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub output_claims: CommittedOutputClaimOutput<C>,
+    pub rounds: BatchedMaskedRounds<F>,
+    pub output_claims: MaskedClaims<F>,
     /// The produced opening *points*, the ZK counterpart of the clear path's
     /// `output_points`. Read by stage 6b and BlindFold.
     pub output_points: Stage6aOutputPoints<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage6aOutput<F: JoltField, C> {
+pub enum Stage6aOutput<F: JoltField> {
     Clear(Stage6aClearOutput<F>),
-    Zk(Stage6aZkOutput<F, C>),
+    Zk(Stage6aZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage6aOutput<F, C> {
+impl<F: JoltField> Stage6aOutput<F> {
     /// The produced address-phase opening *points*, available regardless of mode.
     pub fn output_points(&self) -> &Stage6aOutputPoints<F> {
         match self {
@@ -135,19 +135,17 @@ impl<F: JoltField, C> Stage6aOutput<F, C> {
         }
     }
 
-    pub fn clear(&self) -> Result<&Stage6aClearOutput<F>, crate::VerifierError> {
+    pub fn clear(&self) -> Result<&Stage6aClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage6a" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage6a" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage6aZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage6aZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => {
-                Err(crate::VerifierError::ExpectedCommittedProof { field: "stage6a" })
-            }
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage6a" }),
         }
     }
 }

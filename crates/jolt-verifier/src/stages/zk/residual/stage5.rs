@@ -4,15 +4,14 @@ use super::*;
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
 pub(super) fn add_stage5<F, PCS, VC>(
-    input: &BlindFoldInputs<'_, PCS, VC>,
-    builder: Builder<F, VC::Output>,
+    input: &ResidualInputs<'_, PCS, VC>,
+    builder: ResidualBuilder<F>,
     values: &mut SourceValues<F>,
-) -> Result<Builder<F, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<F>, VerifierError>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Clone,
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let log_k = crate::num::ilog2(input.checked.ram_K);
@@ -29,7 +28,7 @@ where
     )?;
     let instruction_point = input
         .stage5
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(instruction_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionReadRaf, error))?;
     let instruction_opening = formula_dimensions
@@ -38,7 +37,7 @@ where
         .map_err(|error| public_error(JoltRelationId::InstructionReadRaf, error))?;
     let stage2_instruction_point = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionClaimReduction, error))?;
     let stage2_instruction_opening = stage2_instruction_point
@@ -83,7 +82,7 @@ where
     )?;
     let ram_point = input
         .stage5
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(ram_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaClaimReduction, error))?;
     let ram_cycle = trace_dimensions
@@ -122,7 +121,7 @@ where
 
     let registers_point = input
         .stage5
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(registers_claims.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersValEvaluation, error))?;
     let registers_cycle = trace_dimensions
@@ -168,7 +167,7 @@ where
         "stage5.batch",
         instruction_claims.domain(),
         &batch_claims,
-        &input.stage5.batch_consistency,
+        &input.stage5.batch_rounds,
         &input.stage5.batch_output_claims,
         values,
     )

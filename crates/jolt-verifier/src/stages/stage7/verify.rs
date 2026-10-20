@@ -8,8 +8,9 @@ use jolt_claims::protocols::jolt::{
     },
     JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
-use jolt_field::{CanonicalDecode, JoltField};
+use jolt_field::JoltField;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::masking::CommittedPadsView;
 
 use crate::sites::STAGE7;
 
@@ -32,6 +33,7 @@ use super::outputs::{
 };
 #[cfg(not(feature = "akita"))]
 use crate::stages::stage6b::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
+use crate::stages::zk::masked_channel;
 use crate::{
     stages::{
         stage4::{Stage4ClearOutput, Stage4Output},
@@ -46,16 +48,16 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 
-pub fn verify<F, C, H>(
+pub fn verify<F, H, P>(
     checked: &CheckedInputs,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage4: &Stage4Output<F, C>,
-    stage6: &Stage6bOutput<F, C>,
-) -> Result<Stage7Output<F, C>, VerifierError>
+    pads: Option<&mut CommittedPadsView<P>>,
+    stage4: &Stage4Output<F>,
+    stage6: &Stage6bOutput<F>,
+) -> Result<Stage7Output<F>, VerifierError>
 where
     F: JoltField,
-    C: CanonicalDecode,
     H: Sponge,
 {
     transcript.site(STAGE7);
@@ -98,13 +100,14 @@ where
         // The produced opening points, derived off the committed batch consistency;
         // stage 8 reads the hamming point and resolves the precommitted finals off
         // them. BlindFold recomputes each relation's sumcheck point and publics
-        // independently from `batch_consistency`.
+        // independently from `batch_rounds`.
         let input_points = sumchecks.empty_input_points();
-        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
+        let batch =
+            sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
             challenges,
-            batch_consistency: batch.consistency,
+            batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             output_points: batch.output_points,
         }));

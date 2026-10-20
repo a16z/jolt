@@ -22,8 +22,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use jolt_verifier::sites::STAGE6A;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
@@ -47,8 +45,6 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// Stage 6a's outputs: the verifier-typed cross-stage carrier stage 6b consumes.
 pub struct Stage6aProverOutput<F: JoltField> {
     pub clear_output: Stage6aClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 6a on `transcript` (positioned at the stage-5 boundary).
@@ -56,7 +52,7 @@ pub struct Stage6aProverOutput<F: JoltField> {
 #[tracing::instrument(skip_all)]
 pub fn prove_stage6a<F, PCS, VC, H>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -151,11 +147,9 @@ where
         &inputs,
         &input_points,
         &address_challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let committed_witness = proved.witness;
 
     Ok(Stage6aProverOutput {
         clear_output: Stage6aClearOutput {
@@ -163,8 +157,6 @@ where
             output_points: proved.output_points,
             challenges: carried,
         },
-        #[cfg(feature = "zk")]
-        committed_witness,
     })
 }
 
@@ -182,10 +174,10 @@ mod field_inline_round_trip {
     use jolt_verifier::JoltSponge;
 
     use super::*;
-    use crate::recorder::ProofMode;
     use crate::stages::field_inline_fixtures::{
         field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
-        test_checked_inputs, test_prover_config, test_public_io, verify_through, Through,
+        test_checked_inputs, test_mode, test_prover_config, test_public_io, verify_through,
+        Through,
     };
 
     #[test]
@@ -193,7 +185,7 @@ mod field_inline_round_trip {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut mode = test_mode();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
@@ -202,7 +194,7 @@ mod field_inline_round_trip {
         let mut prover_transcript = fixture_transcript();
         let (((stage1, stage2, stage3), stage4), stage5) = FixtureProver {
             backend: &mut context,
-            mode: &mode,
+            mode: &mut mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
@@ -212,7 +204,7 @@ mod field_inline_round_trip {
         .through_stage5();
         let _stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &mut context,
-            &mode,
+            &mut mode,
             &checked,
             &config,
             &preprocessing,

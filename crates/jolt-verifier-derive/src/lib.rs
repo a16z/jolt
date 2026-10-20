@@ -48,7 +48,7 @@
 //!   present member → the `2^(max − rounds)`-padded random linear combination.
 //!   Generic over `jolt_sumcheck::SumcheckRecorder`, the clear/ZK seam: whether
 //!   the claim absorb writes transcript bytes is decided by the recorder TYPE
-//!   (clear appends, committed no-ops), never by a runtime flag. Returns the
+//!   (clear appends, masking no-ops), never by a runtime flag. Returns the
 //!   engine-form `jolt_sumcheck::BatchPrelude` paired with the stage's named
 //!   `BatchingCoefficients`.
 //! - `<snake_case_struct>_members` — an inert, `#[macro_export]`ed callback
@@ -67,12 +67,11 @@
 //!   point, then the `expected_final_claim` equality check. The batching lives
 //!   in the generated head; `jolt-sumcheck` provides only the single-instance
 //!   verifier. Returns the stage's produced `OutputPoints` and `OutputClaims`.
-//! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
-//!   batching coefficients, and read the committed rounds and output-claim
-//!   commitments through `jolt_sumcheck::SumcheckVerifier::verify_committed`.
-//!   Committed proofs reveal no claim scalars, so the caller must have absorbed
-//!   claim COMMITMENTS beforehand (the coefficients are drawn before the
-//!   committed rounds).
+//! - `verify_masked` — the ZK-path driver: fold the members' dimensions, draw
+//!   the batching coefficients, read the masked rounds through
+//!   `jolt_sumcheck::receive_masked_rounds`, and read the masked output claims
+//!   on the masked routes. Nothing hidden is checked: every check becomes a
+//!   residual row, and the pads are committed before the first challenge.
 //! - `derive_opening_points` — slice each member's point from the batch challenge
 //!   vector (`ConcreteSumcheck::instance_point`, at the member's overridable
 //!   `instance_point_offset`) and map it through the member's
@@ -87,8 +86,8 @@
 //!   enforces it everywhere.
 //! - The claim wire plumbing, the stage's one definition of where each claim
 //!   cell travels: `receive_output_claims` (into the shape of the derived
-//!   output points), `wire_claim_values` (the clear sends),
-//!   `committed_claim_values` / `committed_claim_layout` (the ZK rows), all
+//!   output points), `wire_claim_values` (the sends after the rounds),
+//!   `receive_masked_output_claims` (the masked receive), all
 //!   walking each member's claims struct in its canonical order on the stage's
 //!   `relations::ClaimRoutes`; and `validate_output_shape`, the prover's
 //!   self-check that its values have the points' shape.
@@ -99,7 +98,7 @@
 //! challenges have stage-level provenance, so it cannot be miscalled.
 //! `#[sumcheck_batch(routes)]` declares that the stage's claim routes come from
 //! its output-points struct's inherent `claim_routes`, so every generated
-//! receive, send, and committed layout uses the same routes.
+//! receive and send uses the same routes.
 //!
 //! The one non-flag entry is the serde-style crate-path override
 //! `#[sumcheck_batch(crate = "...")]`: the path the generated code names
@@ -295,34 +294,32 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let claims_ident = format_ident!("__claims");
     let member_ident = format_ident!("__member");
     let points_ident = format_ident!("__points");
-    let claim_value_extends = |with_staged: bool| {
-        plans
-            .iter()
-            .map(|plan| {
-                let id = &plan.ident;
-                let instance = &plan.instance;
-                per_member(
-                    plan.is_option,
-                    &[(&claims_ident, quote!(claims.#id))],
-                    quote! {
-                        __values.extend(#relations::member_claim_values::<#f, #instance>(
-                            __claims, routes, #with_staged,
-                        ));
-                    },
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    let wire_value_extends = claim_value_extends(false);
-    let committed_value_extends = claim_value_extends(true);
-    let committed_id_extends = plans.iter().map(|plan| {
+    let wire_value_extends = plans
+        .iter()
+        .map(|plan| {
+            let id = &plan.ident;
+            let instance = &plan.instance;
+            per_member(
+                plan.is_option,
+                &[(&claims_ident, quote!(claims.#id))],
+                quote! {
+                    __values.extend(#relations::member_claim_values::<#f, #instance>(
+                        __claims, routes,
+                    ));
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let masked_receives = plans.iter().map(|plan| {
         let id = &plan.ident;
         let instance = &plan.instance;
         per_member(
             plan.is_option,
             &[(&points_ident, quote!(points.#id))],
             quote! {
-                #relations::extend_committed_layout::<#f, #instance>(&mut __layout, __points, routes);
+                #relations::receive_member_masked_claims::<#f, #instance, __C>(
+                    __points, routes, &mut __claims, channel,
+                )?;
             },
         )
     });
@@ -394,7 +391,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // The batched-sumcheck head, shared by the clear verify driver and the
     // prove-side stage recipes: compute each member's input claim, absorb the
     // claims through the recorder (the clear/ZK seam — a clear recorder appends
-    // them, a committed recorder no-ops), draw the batching coefficients, and
+    // them, a masking recorder no-ops), draw the batching coefficients, and
     // random-linear-combine the padded sums. Every Fiat-Shamir-ordered step of
     // the head lives here, so the two sides cannot drift on it.
     let begin_batch_method = {
@@ -527,7 +524,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             /// order) → `recorder.absorb_input_claims` → one batching-coefficient
             /// draw per present member → the `2^(max − rounds)`-padded random
             /// linear combination. Whether the claim absorb writes transcript
-            /// bytes is decided by the recorder type (clear appends, committed
+            /// bytes is decided by the recorder type (clear appends, masking
             /// no-ops), never by a runtime flag. Returns the engine-form
             /// `jolt_sumcheck::BatchPrelude` paired with the stage's named
             /// batching coefficients.
@@ -692,107 +689,78 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // The ZK-path batched-verify driver: draw the batching coefficients, read the
-    // committed rounds, derive the produced opening points at the batch point,
-    // then read one commitment per output-claim row; the rows hold the committed
-    // claim cells (`committed_claim_layout`) on the stage's routes. Committed proofs
-    // never reveal claim scalars, so no claimed sums are absorbed.
-    //
-    // Soundness ordering: because the batching coefficients are squeezed here
-    // (before the consistency rounds) and no claim scalars are absorbed, the
-    // caller MUST have already absorbed commitments to those claim scalars into
-    // the transcript before invoking this driver. Without that prior binding a
-    // malicious prover could choose its claim openings adaptively after seeing
-    // the batching challenge. One exception: stage 4's staged advice and
-    // program-image openings are committed only in stage 4's own output rows.
-    // They stay sound because each is the evaluation of a committed polynomial
-    // at a point fixed before stage 4, pinned later by the stage-6/7 reductions
-    // and the PCS opening rather than by transcript order.
-    let verify_zk_method = {
+    // The masked (ZK) batched-verify driver: draw the batching coefficients,
+    // read the masked rounds, derive the produced opening points at the batch
+    // point, then read the masked output claims on the masked routes. Masked
+    // proofs reveal no claim scalar, so nothing hidden is checked here and no
+    // input claim is absorbed (the masked messages it derives from bind it);
+    // the residual relation states every check. The coefficient draws match
+    // `begin_batch` under a masking recorder, whose input-claim absorb is empty.
+    let verify_masked_method = {
         let max_fold = max_fold();
 
-        // Draw one batching coefficient per present member (ZK path): no claimed sums
-        // are absorbed, so only the coefficients are recorded, in declaration order.
-        let coeff_draws_zk = plans.iter().map(|plan| {
+        let coeff_draws_masked = plans.iter().map(|plan| {
             let id = &plan.ident;
             if plan.is_option {
                 quote! {
                     if self.#id.is_some() {
-                        __batching_coefficients.push(transcript.challenge());
+                        __batching_coefficients.push(channel.challenge());
                     }
                 }
             } else {
-                quote!(__batching_coefficients.push(transcript.challenge());)
+                quote!(__batching_coefficients.push(channel.challenge());)
             }
         });
 
         quote! {
-            /// Run the ZK-path batched verification: draw the batching
-            /// coefficients, read the committed rounds, derive the output points
-            /// at the batch point, then read the output-claim row commitments
-            /// over those points' committed cells on [`Self::claim_routes`].
-            pub fn verify_zk<__C, __H>(
+            /// Run the masked batched verification: draw the batching
+            /// coefficients, read the masked rounds, derive the output points at
+            /// the batch point, then read the masked output claims on the masked
+            /// routes ([`ClaimRoutes::masked`](#relations::ClaimRoutes::masked)).
+            pub fn verify_masked<__C>(
                 &self,
-                row_len: usize,
                 input_points: &#input_points_name<#f>,
-                transcript: &mut ::jolt_transcript::VerifierTranscript<'_, __H>,
+                channel: &mut __C,
             ) -> ::core::result::Result<
-                #krate::stages::zk::outputs::VerifiedCommittedBatch<
-                    #f,
-                    __C,
-                    #output_points_name<#f>,
-                >,
+                #krate::stages::zk::MaskedBatch<#f, #output_points_name<#f>>,
                 #krate::VerifierError,
             >
             where
-                __C: ::jolt_field::CanonicalDecode,
-                __H: ::jolt_transcript::Sponge,
+                __C: ::jolt_transcript::Channel + ::jolt_transcript::PrivateChannel,
+                __C::Error: ::core::convert::From<::jolt_transcript::TranscriptError>
+                    + ::core::convert::From<::jolt_sumcheck::SumcheckError<#f>>,
+                #krate::VerifierError: ::core::convert::From<__C::Error>,
             {
                 use #relations::ConcreteSumcheck as _;
-                use ::jolt_transcript::Channel as _;
 
                 let mut __max_num_vars = 0usize;
                 let mut __max_degree = 0usize;
                 #(#max_fold)*
 
                 let mut __batching_coefficients = ::std::vec::Vec::new();
-                #(#coeff_draws_zk)*
+                #(#coeff_draws_masked)*
 
-                let (__rounds, _) =
-                    ::jolt_sumcheck::SumcheckVerifier::verify_committed::<#f, __H, __C>(
-                        ::jolt_sumcheck::SumcheckStatement::new(__max_num_vars, __max_degree),
-                        0,
-                        transcript,
-                    )
-                    .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
-                        stage: #base_lit.to_string(),
-                        reason: error.to_string(),
-                    })?;
-                let __consistency = ::jolt_sumcheck::BatchedCommittedSumcheckConsistency {
-                    consistency: __rounds,
+                let __rounds = ::jolt_sumcheck::receive_masked_rounds::<#f, __C>(
+                    ::jolt_sumcheck::SumcheckStatement::new(__max_num_vars, __max_degree),
+                    ::jolt_sumcheck::RoundWire::Compressed,
+                    channel,
+                )?;
+                let __rounds = ::jolt_sumcheck::BatchedMaskedRounds {
+                    rounds: __rounds,
                     batching_coefficients: __batching_coefficients,
                     max_num_vars: __max_num_vars,
                     max_degree: __max_degree,
                 };
                 let __output_points =
-                    self.derive_opening_points(&__consistency.challenges(), input_points)?;
-                let __shape = #krate::stages::zk::outputs::CommittedOutputClaimShape::new(
-                    row_len,
-                    Self::committed_claim_layout(
-                        &__output_points,
-                        &Self::claim_routes(&__output_points)?,
-                    ),
-                );
-                let __commitments = ::jolt_sumcheck::CommittedOutputClaims {
-                    commitments: transcript.receive_n(__shape.row_count())?,
-                };
-                ::core::result::Result::Ok(#krate::stages::zk::outputs::VerifiedCommittedBatch {
-                    consistency: __consistency,
+                    self.derive_opening_points(&__rounds.challenges(), input_points)?;
+                let (__routes, __equalities) = Self::claim_routes(&__output_points)?.masked();
+                let mut __claims =
+                    Self::receive_masked_output_claims(&__output_points, &__routes, channel)?;
+                __claims.equalities = __equalities;
+                ::core::result::Result::Ok(#krate::stages::zk::MaskedBatch {
+                    rounds: __rounds,
                     output_points: __output_points,
-                    output_claims: #krate::stages::zk::outputs::CommittedOutputClaimOutput {
-                        shape: __shape,
-                        commitments: __commitments,
-                    },
+                    output_claims: __claims,
                 })
             }
         }
@@ -1138,27 +1106,20 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             __values
         }
 
-        /// The output-claim values a committed proof commits: the `Sent` and
-        /// `Staged` cells, in row order (the ids of
-        /// [`Self::committed_claim_layout`]).
-        pub fn committed_claim_values(
-            claims: &#output_claims_name<#f>,
-            routes: &#relations::ClaimRoutes,
-        ) -> ::std::vec::Vec<#f> {
-            let mut __values = ::std::vec::Vec::new();
-            #(#committed_value_extends)*
-            __values
-        }
-
-        /// The ids of the committed output-claim cells, in row order, over the
-        /// derived output `points`.
-        pub fn committed_claim_layout(
+        /// Receive a masked proof's output claims over the derived output
+        /// `points`, in wire order, recording each masked value with its pad.
+        pub fn receive_masked_output_claims<__C>(
             points: &#output_points_name<#f>,
             routes: &#relations::ClaimRoutes,
-        ) -> #relations::CommittedClaimLayout {
-            let mut __layout = #relations::CommittedClaimLayout::default();
-            #(#committed_id_extends)*
-            __layout
+            channel: &mut __C,
+        ) -> ::core::result::Result<#relations::MaskedClaims<#f>, #krate::VerifierError>
+        where
+            __C: ::jolt_transcript::PrivateChannel,
+            #krate::VerifierError: ::core::convert::From<__C::Error>,
+        {
+            let mut __claims = #relations::MaskedClaims::default();
+            #(#masked_receives)*
+            ::core::result::Result::Ok(__claims)
         }
 
         /// Receive the output claims in the shape of the derived output
@@ -1243,7 +1204,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
             #begin_batch_method
             #verify_clear_method
-            #verify_zk_method
+            #verify_masked_method
             #derive_points_method
             #validate_aliases_method
             #expected_final_claim_method

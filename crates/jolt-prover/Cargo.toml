@@ -55,16 +55,10 @@ akita = [
   # same weak edge the field-inline feature uses).
   "tracer?/fp128-field-inline",
 ]
-# Compile-time ZK mode: committed sumcheck recorders, hiding witness
-# commitments and stage-8 opening, and the BlindFold tail. One compiled
+# Compile-time ZK mode: masking sumcheck recorders over committed pads, hiding
+# witness commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.
-zk = [
-  "jolt-verifier/zk",
-  "jolt-kernels/zk",
-  "dep:jolt-zk",
-  "dep:rand_core",
-  "jolt-sumcheck/committed",
-]
+zk = ["jolt-verifier/zk", "jolt-kernels/zk", "dep:rand_core"]
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
   "dep:bincode",
@@ -114,7 +108,7 @@ jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
-jolt-zk = { workspace = true, optional = true }
+jolt-zk.workspace = true
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true

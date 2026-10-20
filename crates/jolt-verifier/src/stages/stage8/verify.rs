@@ -78,8 +78,8 @@ pub fn verify<F, PCS, VC, H>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage6: &Stage6bOutput<F, VC::Output>,
-    stage7: &Stage7Output<F, VC::Output>,
+    stage6: &Stage6bOutput<F>,
+    stage7: &Stage7Output<F>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
     F: JoltField,
@@ -108,7 +108,7 @@ where
             return Err(VerifierError::ExpectedClearProof { field: "stage7" });
         }
         (Stage6bOutput::Zk(_), Stage7Output::Clear(_)) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
+            return Err(VerifierError::ExpectedMaskedProof { field: "stage7" });
         }
     };
     let stage6_points = stage6.output_points();
@@ -626,9 +626,9 @@ pub fn verify<F, PCS, VC, H>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage4: &Stage4Output<F, VC::Output>,
-    stage6: &Stage6bOutput<F, VC::Output>,
-    stage7: &Stage7Output<F, VC::Output>,
+    stage4: &Stage4Output<F>,
+    stage6: &Stage6bOutput<F>,
+    stage7: &Stage7Output<F>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
     F: JoltField,

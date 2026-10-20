@@ -14,7 +14,7 @@ use jolt_claims::SymbolicSumcheck as _;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::JoltInstructionRow;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 
 use super::SourceValues;
 use crate::config::JOLT_VERIFIER_CONFIG;
@@ -51,16 +51,16 @@ pub(super) fn point_suffix<F: JoltField>(
 /// the same `Eq(reduced point, tau_low)` derivation as the instruction reduction (same rounds,
 /// same batch suffix, same reversed opening point — pinned in stage2's clear tests); its gamma
 /// is the drawn batch challenge.
-pub(super) fn stage2_claim_reduction<F: JoltField, C>(
+pub(super) fn stage2_claim_reduction<F: JoltField>(
     values: &mut SourceValues<F>,
     log_t: usize,
-    batch_consistency: &BatchedCommittedSumcheckConsistency<F, C>,
+    batch_rounds: &BatchedMaskedRounds<F>,
     gamma: F,
     product_tau_low: &[F],
 ) -> Result<field_registers_reduction::ClaimReduction, VerifierError> {
     let reduction =
         field_registers_reduction::ClaimReduction::new(FieldRegistersTraceDimensions::new(log_t));
-    let reduction_point = batch_consistency
+    let reduction_point = batch_rounds
         .try_instance_point(reduction.rounds())
         .map_err(|error| {
             public_error(FieldInlineRelationId::FieldRegistersClaimReduction, error)

@@ -57,7 +57,7 @@ pub trait StageProver<F: JoltField>: Sized {
     type Kernels;
 
     /// Prove this stage's batch on `transcript`, recorder-generically: the
-    /// recorder type decides clear vs. committed recording, never a runtime
+    /// recorder type decides clear vs. masked recording, never a runtime
     /// flag. Returns the [`Proved`] carrier (recorder witness, typed output
     /// claims, derived points, hard-checked final claim).
     #[expect(
@@ -494,12 +494,10 @@ macro_rules! impl_stage_prover {
                 $($crate::driver::__stage_member!(park $presence $member, kernels);)+
 
                 self.validate_output_shape(&__output_claims, &__output_points)?;
-                let __routes = Self::claim_routes(&__output_points)?;
-                let __claim_values = if Rec::RECORDS_STAGED {
-                    Self::committed_claim_values(&__output_claims, &__routes)
-                } else {
-                    Self::wire_claim_values(&__output_claims, &__routes)
-                };
+                let __routes = <Rec as $crate::recorder::ClaimRecorder>::wire_routes(
+                    Self::claim_routes(&__output_points)?,
+                );
+                let __claim_values = Self::wire_claim_values(&__output_claims, &__routes);
 
                 let __expected = self.expected_final_claim(
                     &__coefficients,

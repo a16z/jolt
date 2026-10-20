@@ -5,14 +5,13 @@ use jolt_claims::protocols::composed::ComposedClaims;
 use super::*;
 
 pub(super) fn add_stage6a<PCS, VC>(
-    input: &BlindFoldInputs<'_, PCS, VC>,
-    builder: Builder<PCS::Field, VC::Output>,
+    input: &ResidualInputs<'_, PCS, VC>,
+    builder: ResidualBuilder<PCS::Field>,
     values: &mut SourceValues<PCS::Field>,
-) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: Clone,
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
@@ -108,7 +107,7 @@ where
         "stage6.address_phase",
         bytecode_address_claims.domain(),
         &[bytecode_claim, relation_claim(&booleanity_address_claims)],
-        &input.stage6a.consistency,
+        &input.stage6a.rounds,
         &input.stage6a.output_claims,
         values,
     )

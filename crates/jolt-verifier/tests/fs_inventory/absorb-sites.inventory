@@ -49,3 +49,6 @@ jolt-verifier::verifier.rs::absorb_public_preamble::public#6::channel.public(&ch
 jolt-verifier::verifier.rs::absorb_public_preamble::public_all#2::channel.public_all(&[public_io.memory_layout.max_input_size,public_io.memory_layout.max_output_size,public_io.memory_layout.heap_size,])
 jolt-verifier::verifier.rs::absorb_public_preamble::public_bytes#3::channel.public_bytes(&public_io.inputs)
 jolt-verifier::verifier.rs::absorb_public_preamble::public_bytes#4::channel.public_bytes(&public_io.outputs)
+jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::public::public#0::self.transcript.public(value)
+jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::public_all::public_all#0::self.transcript.public_all(values)
+jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::public_bytes::public_bytes#0::self.transcript.public_bytes(bytes)

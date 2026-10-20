@@ -1,33 +1,32 @@
-#[cfg(all(test, feature = "field-inline"))]
-use jolt_claims::protocols::composed::ComposedClaims;
-#[cfg(all(test, feature = "field-inline"))]
-use jolt_claims::protocols::composed::FieldProductUniskipInputs;
-#[cfg(all(test, feature = "field-inline"))]
-use jolt_claims::protocols::composed::ProductInputs;
+use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
+use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::ClaimReduction as InstructionClaimReduction;
+use jolt_claims::protocols::jolt::relations::ram::{OutputCheck, RafEvaluation, ReadWriteChecking};
+use jolt_claims::protocols::jolt::{SpartanProductVirtualizationPublic, TraceDimensions};
 
 use super::*;
+use crate::stages::relations::{ConcreteSumcheck, SymbolicOf};
+use crate::stages::stage2::{product_remainder::ProductRemainder, product_uniskip::ProductUniskip};
 
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
 pub(super) fn add_stage2<F, PCS, VC>(
-    input: &BlindFoldInputs<'_, PCS, VC>,
-    mut builder: Builder<F, VC::Output>,
+    input: &ResidualInputs<'_, PCS, VC>,
+    mut builder: ResidualBuilder<F>,
     values: &mut SourceValues<F>,
-) -> Result<Builder<F, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<F>, VerifierError>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Clone,
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let log_k = crate::num::ilog2(input.checked.ram_K);
-    let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
+    let trace_dimensions = TraceDimensions::new(log_t);
     let read_write_dimensions = input.checked.rw_config.ram_dimensions(log_t, log_k);
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let raf_dimensions =
-        ram::RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {
+        RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamRafEvaluation,
                 reason: error.to_string(),
@@ -38,10 +37,6 @@ where
     // by the stage-2 verifier and carried on the ZK output.
     let product_tau_low = input.stage2.product_tau_low.clone();
 
-    let product_uniskip_rounds = 1;
-    let product_uniskip_degree = SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
-    let product_uniskip_domain =
-        SumcheckDomain::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE);
     let product_weights = centered_lagrange_evals(
         SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
         input.stage2.product_tau_high,
@@ -50,30 +45,36 @@ where
         stage: JoltRelationId::SpartanProductVirtualization,
         reason: error.to_string(),
     })?;
-    let product_uniskip_input =
-        selected_product_uniskip_input_expr::<PCS::Field>(&product_weights)?;
-    builder = add_stage(
+    for (index, weight) in product_weights.into_iter().enumerate() {
+        values.public(
+            JoltDerivedId::from(SpartanProductVirtualizationPublic::UniskipLagrangeWeight(
+                index,
+            )),
+            weight,
+        )?;
+    }
+    builder = add_uniskip_stage(
         builder,
         "stage2.product_uniskip",
-        SumcheckStatement::new(product_uniskip_rounds, product_uniskip_degree),
-        domain_spec(product_uniskip_domain),
-        input.stage2.product_uniskip_consistency.clone(),
-        &input.stage2.product_uniskip_output_claims,
+        UniskipRound {
+            degree: SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+            domain: SumcheckDomain::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE),
+            rounds: &input.stage2.product_uniskip_rounds,
+            output_claims: &input.stage2.product_uniskip_output_claims,
+        },
         values,
-        product_uniskip_input,
-        opening(product_uniskip_opening()),
+        selected_product_claim::<F, ProductUniskip<F>>(product_dimensions),
     )?;
 
-    let ram_read_write = relations::ram::ReadWriteChecking::new(read_write_dimensions);
-    let product_remainder = relations::spartan::ProductRemainder::new(product_dimensions);
-    let instruction_reduction =
-        relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions);
-    let ram_raf = relations::ram::RafEvaluation::new(raf_dimensions);
-    let ram_output = relations::ram::OutputCheck::new(read_write_dimensions);
+    let ram_read_write = ReadWriteChecking::new(read_write_dimensions);
+    let product_remainder = SymbolicOf::<F, ProductRemainder<F>>::new(product_dimensions);
+    let instruction_reduction = InstructionClaimReduction::new(trace_dimensions);
+    let ram_raf = RafEvaluation::new(raf_dimensions);
+    let ram_output = OutputCheck::new(read_write_dimensions);
 
     let ram_read_write_point = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(ram_read_write.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamReadWriteChecking, error))?;
     let ram_read_write_opening = read_write_dimensions
@@ -89,7 +90,7 @@ where
 
     let product_point = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(product_remainder.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
@@ -108,15 +109,20 @@ where
         input.stage2.product_uniskip_challenge,
     )
     .map_err(|error| public_error(JoltRelationId::SpartanProductVirtualization, error))?;
-    let product_tau_kernel = product_tau_high_bound * product_tau_low_eq;
-    let product_remainder_output = selected_product_remainder_output_expr::<PCS::Field>(
-        &product_lagrange_weights,
-        product_tau_kernel,
+    for (index, weight) in product_lagrange_weights.into_iter().enumerate() {
+        values.public(
+            JoltDerivedId::from(SpartanProductVirtualizationPublic::LagrangeWeight(index)),
+            weight,
+        )?;
+    }
+    values.public(
+        JoltDerivedId::from(SpartanProductVirtualizationPublic::TauKernel),
+        product_tau_high_bound * product_tau_low_eq,
     )?;
 
     let instruction_point = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(instruction_reduction.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::InstructionClaimReduction, error))?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
@@ -137,7 +143,7 @@ where
     let field_registers_reduction = super::field_inline::stage2_claim_reduction(
         values,
         log_t,
-        &input.stage2.batch_consistency,
+        &input.stage2.batch_rounds,
         input
             .stage2
             .challenges
@@ -153,16 +159,16 @@ where
     let active_stage2_rounds = log_t + log_k;
     let phase1_offset = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_round_offset(active_stage2_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRafEvaluation, error))?
         .checked_add(read_write_dimensions.phase1_num_rounds())
-        .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
+        .ok_or_else(|| VerifierError::ResidualConstructionFailed {
             reason: "stage2: RAM RAF phase-1 round offset overflows usize".to_string(),
         })?;
     let ram_raf_point = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_instance_point_at(phase1_offset, ram_raf.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRafEvaluation, error))?;
     let ram_raf_address = read_write_dimensions
@@ -178,7 +184,7 @@ where
 
     let ram_output_point = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_instance_point_at(phase1_offset, ram_output.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamOutputCheck, error))?;
     let ram_output_address = read_write_dimensions
@@ -207,11 +213,7 @@ where
     // `Stage2BatchSumchecks`.
     let mut batch_claims = vec![
         relation_claim(&ram_read_write),
-        (
-            product_remainder.rounds(),
-            map_expr(product_remainder.input_expression::<PCS::Field>()),
-            product_remainder_output,
-        ),
+        selected_product_claim::<F, ProductRemainder<F>>(product_dimensions),
         relation_claim(&instruction_reduction),
     ];
     #[cfg(feature = "field-inline")]
@@ -224,237 +226,21 @@ where
         "stage2.batch",
         ram_read_write.domain(),
         &batch_claims,
-        &input.stage2.batch_consistency,
+        &input.stage2.batch_rounds,
         &input.stage2.batch_output_claims,
         values,
     )
 }
 
-fn selected_product_uniskip_input_expr<F: JoltField>(
-    weights: &[F],
-) -> Result<VerifierExpr<F>, VerifierError> {
-    use crate::stages::relations::SymbolicOf;
-    use crate::stages::stage2::product_uniskip::ProductUniskip;
-    let relation = SymbolicOf::<F, ProductUniskip<F>>::new(SpartanProductDimensions::new(0));
-    bake_product_weights(map_expr(relation.input_expression()), weights, None)
-}
-
-fn selected_product_remainder_output_expr<F: JoltField>(
-    weights: &[F],
-    tau_kernel: F,
-) -> Result<VerifierExpr<F>, VerifierError> {
-    use crate::stages::relations::SymbolicOf;
-    use crate::stages::stage2::product_remainder::ProductRemainder;
-    let relation = SymbolicOf::<F, ProductRemainder<F>>::new(SpartanProductDimensions::new(0));
-    bake_product_weights(
-        map_expr(relation.output_expression()),
-        weights,
-        Some(tau_kernel),
-    )
-}
-
-fn bake_product_weights<F: JoltField>(
-    mut expr: VerifierExpr<F>,
-    weights: &[F],
-    tau_kernel: Option<F>,
-) -> Result<VerifierExpr<F>, VerifierError> {
-    use jolt_claims::protocols::jolt::SpartanProductVirtualizationPublic;
-    if weights.len() != SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: "product weight count does not match the selected domain".to_string(),
-        });
-    }
-    for term in &mut expr.terms {
-        let mut factors = Vec::with_capacity(term.factors.len());
-        for factor in std::mem::take(&mut term.factors) {
-            if let Source::Derived(VerifierPublicId::Jolt(
-                JoltDerivedId::SpartanProductVirtualization(public),
-            )) = &factor
-            {
-                let value = match public {
-                    SpartanProductVirtualizationPublic::UniskipLagrangeWeight(i)
-                    | SpartanProductVirtualizationPublic::LagrangeWeight(i) => {
-                        weights.get(*i).copied()
-                    }
-                    SpartanProductVirtualizationPublic::TauKernel => tau_kernel,
-                }
-                .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
-                    reason: "missing product coefficient".to_string(),
-                })?;
-                term.coefficient *= value;
-            } else {
-                factors.push(factor);
-            }
-        }
-        term.factors = factors;
-    }
-    Ok(expr)
-}
-
-#[cfg(all(test, feature = "field-inline"))]
-#[expect(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-    use crate::stages::stage2::outputs::FieldRegistersProductOutputClaims;
-    use jolt_claims::protocols::jolt::geometry::spartan::{
-        product_outer_opening, product_should_branch_outer_opening,
-        product_should_jump_outer_opening,
-    };
-    use jolt_field::{Fr, Ring};
-
-    fn fr(value: u64) -> Fr {
-        Fr::from_u64(value)
-    }
-
-    /// The lowered composed uni-skip input expression evaluates identically to the clear
-    /// `ProductUniskip::input_claim` composition on synthetic values (with field-inline
-    /// enabled: all five lanes; the field-inline inputs read from the stage-1 field-inline
-    /// carrier rows).
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn lowered_uniskip_input_matches_the_clear_composed_claim() {
-        use crate::stages::relations::ConcreteSumcheck as _;
-        use crate::stages::stage2::product_uniskip::{ProductUniskip, ProductUniskipInputClaims};
-        use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
-        use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
-        use jolt_claims::NoChallenges;
-
-        let tau_high = fr(23);
-        let relation = ProductUniskip::new(SpartanProductDimensions::new(4), tau_high);
-        let inputs = ProductUniskipInputClaims::<Fr> {
-            product: fr(3),
-            should_branch: fr(5),
-            should_jump: fr(7),
-        };
-        let field_product = fr(11);
-        let field_inv_product = fr(13);
-        let inputs = ComposedClaims {
-            base: inputs,
-            field_inline: FieldProductUniskipInputs {
-                product: field_product,
-                inv_product: field_inv_product,
-            },
-        };
-        let clear = relation
-            .input_claim(&inputs, &NoChallenges::default())
-            .unwrap();
-
-        let weights =
-            centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high).unwrap();
-        let lowered_expr = selected_product_uniskip_input_expr::<Fr>(&weights).unwrap();
-        let lowered = lowered_expr.evaluate(
-            |id| match id {
-                ComposedOpeningId::Jolt(id) => {
-                    if *id == product_outer_opening() {
-                        inputs.product
-                    } else if *id == product_should_branch_outer_opening() {
-                        inputs.should_branch
-                    } else if *id == product_should_jump_outer_opening() {
-                        inputs.should_jump
-                    } else {
-                        fr(0)
-                    }
-                }
-                ComposedOpeningId::FieldInline(id) => {
-                    if *id == outer_opening(FieldInlineVirtualPolynomial::FieldProduct) {
-                        field_product
-                    } else if *id == outer_opening(FieldInlineVirtualPolynomial::FieldInvProduct) {
-                        field_inv_product
-                    } else {
-                        fr(0)
-                    }
-                }
-            },
-            |_| fr(0),
-            |_| fr(0),
-        );
-
-        assert_eq!(lowered, clear);
-    }
-
-    /// The lowered composed remainder output expression evaluates identically to the clear
-    /// `ProductRemainder::expected_output` composition on synthetic values (with field-inline
-    /// enabled: `tau_kernel · (ord_left + field_inline_left) · (ord_right +
-    /// field_inline_right)` with the field-inline factors read from the appendage rows).
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn lowered_remainder_output_matches_the_clear_composed_claim() {
-        use crate::stages::relations::ConcreteSumcheck as _;
-        use crate::stages::stage2::product_remainder::{
-            ProductRemainder, ProductRemainderOutputClaims,
-        };
-        use jolt_claims::{NoChallenges, OutputClaims as _};
-
-        let log_t = 4usize;
-        let uniskip_challenge = fr(37);
-        let tau_high = fr(41);
-        let tau_low: Vec<Fr> = (50..54).map(fr).collect();
-        let relation = ProductRemainder::new(
-            SpartanProductDimensions::new(log_t),
-            uniskip_challenge,
-            tau_high,
-            tau_low.clone(),
-        );
-        let outputs = ProductRemainderOutputClaims::<Fr> {
-            left_instruction_input: fr(2),
-            right_instruction_input: fr(3),
-            jump_flag: fr(5),
-            write_lookup_output_to_rd: fr(7),
-            lookup_output: fr(11),
-            branch_flag: fr(13),
-            next_is_noop: fr(17),
-            virtual_instruction: fr(19),
-        };
-        let appendage = FieldRegistersProductOutputClaims::<Fr> {
-            rs1_value: fr(23),
-            rs2_value: fr(29),
-            rd_value: fr(31),
-        };
-        let outputs = ComposedClaims {
-            base: outputs,
-            field_inline: appendage.clone(),
-        };
-
-        let sumcheck_point: Vec<Fr> = (60..64).map(fr).collect();
-        let input_points = ProductInputs::<Vec<Fr>>::default();
-        let output_points = relation
-            .derive_opening_points(&sumcheck_point, &input_points)
-            .unwrap();
-        let clear = relation
-            .expected_output(
-                &input_points,
-                &outputs,
-                &output_points,
-                &NoChallenges::default(),
-            )
-            .unwrap();
-
-        let weights =
-            centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)
-                .unwrap();
-        let opening_point = output_points.left_instruction_input();
-        let tau_kernel = centered_lagrange_kernel(
-            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-            tau_high,
-            uniskip_challenge,
-        )
-        .unwrap()
-            * try_eq_mle(&tau_low, opening_point).unwrap();
-        let lowered_expr =
-            selected_product_remainder_output_expr::<Fr>(&weights, tau_kernel).unwrap();
-        let lowered = lowered_expr.evaluate(
-            |id| match id {
-                ComposedOpeningId::Jolt(id) => outputs
-                    .resolve_output(&(*id).into())
-                    .unwrap_or_else(|| fr(0)),
-                ComposedOpeningId::FieldInline(id) => {
-                    appendage.resolve_output(id).unwrap_or_else(|| fr(0))
-                }
-            },
-            |_| fr(0),
-            |_| fr(0),
-        );
-
-        assert_eq!(lowered, clear);
-    }
+/// The verifier's selected (ordinary or composed) product relation's claim.
+fn selected_product_claim<F, I>(dimensions: SpartanProductDimensions) -> MemberClaim<F>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    SymbolicOf<F, I>: SymbolicSumcheck<Shape = SpartanProductDimensions>,
+    <SymbolicOf<F, I> as SymbolicSumcheck>::OpeningId: Into<ComposedOpeningId>,
+    <SymbolicOf<F, I> as SymbolicSumcheck>::DerivedId: Into<VerifierPublicId>,
+    <SymbolicOf<F, I> as SymbolicSumcheck>::ChallengeId: Into<VerifierPublicId>,
+{
+    relation_claim(&SymbolicOf::<F, I>::new(dimensions))
 }

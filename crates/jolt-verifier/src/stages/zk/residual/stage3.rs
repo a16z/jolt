@@ -1,14 +1,13 @@
 use super::*;
 
 pub(super) fn add_stage3<PCS, VC>(
-    input: &BlindFoldInputs<'_, PCS, VC>,
-    builder: Builder<PCS::Field, VC::Output>,
+    input: &ResidualInputs<'_, PCS, VC>,
+    builder: ResidualBuilder<PCS::Field>,
     values: &mut SourceValues<PCS::Field>,
-) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
+) -> Result<ResidualBuilder<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: Clone,
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
@@ -34,7 +33,7 @@ where
 
     let shift_point = input
         .stage3
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(shift.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
@@ -45,7 +44,7 @@ where
         EqPlusOnePolynomial::new(product_tau_low.clone()).evaluate(&shift_opening_point);
     let product_point = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(log_t)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
@@ -64,7 +63,7 @@ where
 
     let instruction_point = input
         .stage3
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(instruction_input.rounds())
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::InstructionInputVirtualization, error)
@@ -78,7 +77,7 @@ where
 
     let registers_point = input
         .stage3
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(registers_reduction.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
@@ -97,7 +96,7 @@ where
             relation_claim(&instruction_input),
             relation_claim(&registers_reduction),
         ],
-        &input.stage3.batch_consistency,
+        &input.stage3.batch_rounds,
         &input.stage3.batch_output_claims,
         values,
     )

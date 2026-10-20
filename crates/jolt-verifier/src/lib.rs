@@ -63,4 +63,4 @@ pub use verifier::{
     validate_inputs, verify, CheckedInputs, JoltSponge, JOLT_SESSION,
 };
 #[cfg(not(feature = "akita"))]
-pub use verifier::{verify_stages, VerifiedStages};
+pub use verifier::{pad_layout, verify_residual, verify_stages, MaskedStages, VerifiedStages};

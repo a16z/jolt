@@ -1,5 +1,5 @@
 //! The versioned span taxonomy for the modular prover — **the normative
-//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 5).
+//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 6).
 //!
 //! One instrumentation layer, two renderings: the same `tracing` span stream
 //! becomes both the Perfetto-viewable chrome trace and the machine-queryable
@@ -28,8 +28,8 @@
 //!
 //! # Prover modes
 //!
-//! The `zk` compile-time feature swaps two protocol seams for committed
-//! siblings: `prove_uniskip_clear` → `prove_uniskip_committed` and
+//! The `zk` compile-time feature swaps two protocol seams for masked
+//! siblings: `prove_uniskip_clear` → `prove_uniskip_masked` and
 //! `HomomorphicBatch::prove_batch` → `HomomorphicBatch::prove_batch_zk`.
 //! Exactly one of each pair fires per prove — [`always_present_spans`] takes
 //! the [`ProverMode`] and returns the matching presence set. The `akita`
@@ -77,7 +77,7 @@
 //!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
-pub const TAXONOMY_VERSION: u32 = 5;
+pub const TAXONOMY_VERSION: u32 = 6;
 
 /// Proof configuration derived by the SDK and profile harness before entering
 /// [`ROOT_SPAN`]. Callers may supply their own configuration, so this is outside
@@ -182,12 +182,9 @@ pub const WITNESS_AND_OPENING_SPANS: [&str; 3] = [
 /// stage-8 joint opening.
 pub const CLEAR_MODE_SPANS: [&str; 2] = ["prove_uniskip_clear", "HomomorphicBatch::prove_batch"];
 
-/// ZK-mode siblings of [`CLEAR_MODE_SPANS`]: the Pedersen-committed uni-skip
-/// first round and the hiding stage-8 joint opening.
-pub const ZK_MODE_SPANS: [&str; 2] = [
-    "prove_uniskip_committed",
-    "HomomorphicBatch::prove_batch_zk",
-];
+/// ZK-mode siblings of [`CLEAR_MODE_SPANS`]: the pad-masked uni-skip first
+/// round and the hiding stage-8 joint opening.
+pub const ZK_MODE_SPANS: [&str; 2] = ["prove_uniskip_masked", "HomomorphicBatch::prove_batch_zk"];
 
 /// Akita-mode (`akita` feature) seams: the `OneHotTrace` column assembly
 /// and native group commit at stage 0, plus the native grouped stage-8

@@ -2,28 +2,26 @@
 //! the verifier, and the tests all send and read them through these types;
 //! only the sumcheck rounds between them belong to `jolt-sumcheck`.
 //!
-//! Every count below is fixed by [`BlindFoldDimensions`] and the protocol's
-//! final-opening layout, so no length travels with a message. The committed
-//! relaxed instance needs no message of its own beyond its auxiliary rows: its
-//! round, output-claim, and evaluation commitments are already in the
-//! transcript from the stages that produced them, and its remaining rows are
-//! fixed padding.
+//! Every count below is fixed by [`BlindFoldDimensions`], so no length travels
+//! with a message. The committed relaxed instance needs no message of its own
+//! beyond its auxiliary rows: its pad rows are the pad commitment sent before
+//! the first challenge, its evaluation commitment comes from the PCS opening,
+//! and its remaining rows are fixed padding.
 
 use jolt_crypto::VectorCommitmentOpening;
 use jolt_field::{CanonicalDecode, JoltField};
 use jolt_transcript::{ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 
-use crate::BlindFoldDimensions;
+use super::BlindFoldDimensions;
 
 /// The commitments the prover sends before the folding challenge.
 pub(crate) struct FoldingCommitments<F, Com> {
     pub(crate) auxiliary_rows: Vec<Com>,
     pub(crate) random_u: F,
-    pub(crate) random_rounds: Vec<Com>,
-    pub(crate) random_output_claim_rows: Vec<Com>,
+    pub(crate) random_pad_rows: Vec<Com>,
     pub(crate) random_auxiliary_rows: Vec<Com>,
     pub(crate) random_error_rows: Vec<Com>,
-    pub(crate) random_evals: Vec<Com>,
+    pub(crate) random_eval: Com,
     pub(crate) cross_term_error_rows: Vec<Com>,
 }
 
@@ -31,27 +29,25 @@ impl<F: JoltField, Com: CanonicalDecode> FoldingCommitments<F, Com> {
     pub(crate) fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
         transcript.send_all(&self.auxiliary_rows);
         transcript.send(&self.random_u);
-        transcript.send_all(&self.random_rounds);
-        transcript.send_all(&self.random_output_claim_rows);
+        transcript.send_all(&self.random_pad_rows);
         transcript.send_all(&self.random_auxiliary_rows);
         transcript.send_all(&self.random_error_rows);
-        transcript.send_all(&self.random_evals);
+        transcript.send(&self.random_eval);
         transcript.send_all(&self.cross_term_error_rows);
     }
 
     pub(crate) fn receive<H: Sponge>(
         dimensions: &BlindFoldDimensions,
-        eval_count: usize,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Self, TranscriptError> {
+        let auxiliary_rows = dimensions.witness_rows.auxiliary.len();
         Ok(Self {
-            auxiliary_rows: transcript.receive_n(dimensions.auxiliary_rows)?,
+            auxiliary_rows: transcript.receive_n(auxiliary_rows)?,
             random_u: transcript.receive()?,
-            random_rounds: transcript.receive_n(dimensions.coefficient_rows)?,
-            random_output_claim_rows: transcript.receive_n(dimensions.output_claim_rows)?,
-            random_auxiliary_rows: transcript.receive_n(dimensions.auxiliary_rows)?,
+            random_pad_rows: transcript.receive_n(dimensions.witness_rows.pads.len())?,
+            random_auxiliary_rows: transcript.receive_n(auxiliary_rows)?,
             random_error_rows: transcript.receive_n(dimensions.error.row_count)?,
-            random_evals: transcript.receive_n(eval_count)?,
+            random_eval: transcript.receive()?,
             cross_term_error_rows: transcript.receive_n(dimensions.error.row_count)?,
         })
     }
@@ -77,26 +73,25 @@ pub(crate) fn receive_opening<F: JoltField, H: Sponge>(
     })
 }
 
-/// The folded evaluation outputs and their blindings, sent after the folding
-/// challenge: one of each per final-opening evaluation commitment.
-pub(crate) struct FoldedEvaluations<F> {
-    pub(crate) outputs: Vec<F>,
-    pub(crate) blindings: Vec<F>,
+/// The folded residual evaluation and its blind, sent after the folding
+/// challenge.
+pub(crate) struct FoldedEvaluation<F> {
+    pub(crate) output: F,
+    pub(crate) blinding: F,
 }
 
-impl<F: JoltField> FoldedEvaluations<F> {
+impl<F: JoltField> FoldedEvaluation<F> {
     pub(crate) fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
-        transcript.send_all(&self.outputs);
-        transcript.send_all(&self.blindings);
+        transcript.send(&self.output);
+        transcript.send(&self.blinding);
     }
 
     pub(crate) fn receive<H: Sponge>(
-        eval_count: usize,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Self, TranscriptError> {
         Ok(Self {
-            outputs: transcript.receive_n(eval_count)?,
-            blindings: transcript.receive_n(eval_count)?,
+            output: transcript.receive()?,
+            blinding: transcript.receive()?,
         })
     }
 }

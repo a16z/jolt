@@ -3,7 +3,7 @@ name = "jolt-zk"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
+description = "Masking front end and BlindFold back end for zero-knowledge Jolt"
 
 [lints]
 workspace = true
@@ -14,7 +14,7 @@ jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true
-jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
+jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-utils.workspace = true
 rand_core.workspace = true

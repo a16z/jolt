@@ -18,8 +18,6 @@ use jolt_field::JoltField;
 use jolt_kernels::opening::RamInitialOpening;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
 #[cfg(feature = "field-inline")]
 use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
@@ -38,14 +36,13 @@ use jolt_verifier::stages::stage4::{
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
 
-use crate::recorder::{ClaimRecorder, ModeRecorder, ProofMode};
+use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
+use jolt_claims::OutputClaims;
 
 /// Stage 4's outputs: the verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage4ProverOutput<F: JoltField> {
     pub clear_output: Stage4ClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 4 on `transcript` (positioned at the stage-3 boundary).
@@ -53,7 +50,7 @@ pub struct Stage4ProverOutput<F: JoltField> {
 #[tracing::instrument(skip_all)]
 pub fn prove_stage4<F, PCS, VC, H>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -183,12 +180,12 @@ where
     // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
     // separator (replayed by the relation's `draw_challenges` override).
     let challenges = sumchecks.draw_challenges(transcript)?;
-    // The RAM value-check input claim consumes the staged openings, so a clear
-    // proof sends them before the batch; a committed proof carries them in its
-    // output-claim rows instead.
-    if !<ModeRecorder<'_, VC> as ClaimRecorder>::RECORDS_STAGED {
-        ram_val_check_init.staged_openings().send(transcript)?;
-    }
+    // The RAM value-check input claim consumes the staged openings, so they
+    // are sent before the batch (masked in ZK).
+    mode.send_private(
+        &ram_val_check_init.staged_openings().opening_values(),
+        transcript,
+    )?;
 
     let inputs = stage4_input_values_from_upstream(
         &stage2.output_values,
@@ -211,11 +208,9 @@ where
         &inputs,
         &input_points,
         &challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let committed_witness = proved.witness;
 
     Ok(Stage4ProverOutput {
         clear_output: Stage4ClearOutput {
@@ -223,8 +218,6 @@ where
             output_points: proved.output_points,
             ram_val_check_init,
         },
-        #[cfg(feature = "zk")]
-        committed_witness,
     })
 }
 
@@ -256,7 +249,8 @@ mod field_inline_round_trip {
     use super::*;
     use crate::stages::field_inline_fixtures::{
         field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
-        test_checked_inputs, test_prover_config, test_public_io, verify_through, Through, LOG_T,
+        test_checked_inputs, test_mode, test_prover_config, test_public_io, verify_through,
+        Through, LOG_T,
     };
 
     #[test]
@@ -264,7 +258,7 @@ mod field_inline_round_trip {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut mode = test_mode();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
@@ -273,7 +267,7 @@ mod field_inline_round_trip {
         let mut prover_transcript = fixture_transcript();
         let (_stage1, stage2, stage3) = FixtureProver {
             backend: &mut context,
-            mode: &mode,
+            mode: &mut mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
@@ -283,7 +277,7 @@ mod field_inline_round_trip {
         .through_stage3();
         let _stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &mut context,
-            &mode,
+            &mut mode,
             &checked,
             &config,
             &preprocessing,
@@ -443,17 +437,16 @@ mod field_inline_zk {
     use super::*;
     use crate::stages::field_inline_fixtures::{
         field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
-        test_checked_inputs, test_prover_config, test_public_io, test_vc_setup, verify_through,
+        test_checked_inputs, test_mode, test_prover_config, test_public_io, verify_through,
         Through,
     };
 
     #[test]
-    fn committed_stage4_witness_carries_the_declared_rows_and_verifies() {
+    fn masked_stage4_round_trips_the_masked_verifier() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let setup = test_vc_setup();
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
+        let mut mode = test_mode();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
@@ -462,7 +455,7 @@ mod field_inline_zk {
         let mut transcript = fixture_transcript();
         let (_stage1, stage2, stage3) = FixtureProver {
             backend: &mut context,
-            mode: &mode,
+            mode: &mut mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
@@ -470,9 +463,9 @@ mod field_inline_zk {
             transcript: &mut transcript,
         }
         .through_stage3();
-        let out = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        let _ = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &mut context,
-            &mode,
+            &mut mode,
             &checked,
             &config,
             &preprocessing,
@@ -481,14 +474,6 @@ mod field_inline_zk {
             &mut transcript,
         )
         .unwrap();
-
-        let value_count: usize = out
-            .committed_witness
-            .output_claim_rows
-            .iter()
-            .map(Vec::len)
-            .sum();
-        assert_eq!(value_count, 12);
 
         verify_through(Through::Stage4, &checked, &preprocessing, &mut transcript);
     }

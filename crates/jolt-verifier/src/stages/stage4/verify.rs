@@ -6,11 +6,12 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalDecode, JoltField};
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::masking::CommittedPadsView;
 
 use crate::sites::STAGE4;
 
@@ -42,6 +43,7 @@ use crate::{
     stages::{
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
+        zk::masked_channel,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -83,17 +85,17 @@ pub fn stage4_input_points_from_upstream<F: JoltField>(
     }
 }
 
-pub fn verify<PCS, VC, H>(
+pub fn verify<PCS, VC, H, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-    stage3: &Stage3Output<PCS::Field, VC::Output>,
-) -> Result<Stage4Output<PCS::Field, VC::Output>, VerifierError>
+    pads: Option<&mut CommittedPadsView<P>>,
+    stage2: &Stage2Output<PCS::Field>,
+    stage3: &Stage3Output<PCS::Field>,
+) -> Result<Stage4Output<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: CanonicalDecode,
     H: Sponge,
 {
     transcript.site(STAGE4);
@@ -218,18 +220,21 @@ where
 
     {
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
-        // output points and init structure. The staged cells are committed rows
-        // like the rest of the stage's claims.
+        // output points and init structure. The staged cells arrive masked
+        // before the batch, at their clear position.
         let input_points = stage4_input_points_from_upstream(
             stage2.batch_output_points(),
             stage3.output_points(),
             &init_structure,
         );
-        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
+        let mut channel = masked_channel(pads, transcript)?;
+        let staged = RamValCheckStagedOpenings::receive_masked(&staged_points, &mut channel)?;
+        let mut batch = sumchecks.verify_masked(&input_points, &mut channel)?;
+        batch.output_claims.received.extend(staged);
 
         Ok(Stage4Output::Zk(Stage4ZkOutput {
             challenges,
-            batch_consistency: batch.consistency,
+            batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             ram_val_check_public_eval,
             output_points: batch.output_points,

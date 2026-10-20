@@ -267,7 +267,6 @@ mod dory {
 #[cfg(feature = "akita")]
 mod akita {
     use jolt_akita::{AkitaField, AkitaScheme};
-    use jolt_crypto::Commitment;
     use jolt_field::Ring;
     use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_verifier::{
@@ -318,11 +317,8 @@ mod akita {
                 case.trusted_advice_commitment.as_ref(),
                 transcript,
             )?;
-            stage1::verify::<AkitaField, <AkitaVc as Commitment>::Output, JoltSponge>(
-                &seeded.checked,
-                transcript,
-            )
-            .map(drop)
+            stage1::verify::<AkitaField, JoltSponge, ()>(&seeded.checked, transcript, None)
+                .map(drop)
         });
         let mut attacked = case.proof.clone();
         equivocate_stage1_clear(&mut attacked.narg, &events, &tape, AkitaField::from_u64(1));

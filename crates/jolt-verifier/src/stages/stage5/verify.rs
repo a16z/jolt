@@ -1,8 +1,9 @@
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
-use jolt_field::{CanonicalDecode, JoltField};
+use jolt_field::JoltField;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::masking::CommittedPadsView;
 
 use crate::sites::STAGE5;
 
@@ -29,6 +30,7 @@ use super::{
         registers_val_evaluation_input_values_from_upstream, RegistersValEvaluation,
     },
 };
+use crate::stages::zk::masked_channel;
 use crate::{
     stages::{
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
@@ -76,16 +78,16 @@ pub fn stage5_input_points_from_upstream<F: JoltField>(
     }
 }
 
-pub fn verify<F, C, H>(
+pub fn verify<F, H, P>(
     checked: &CheckedInputs,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage2: &Stage2Output<F, C>,
-    stage4: &Stage4Output<F, C>,
-) -> Result<Stage5Output<F, C>, VerifierError>
+    pads: Option<&mut CommittedPadsView<P>>,
+    stage2: &Stage2Output<F>,
+    stage4: &Stage4Output<F>,
+) -> Result<Stage5Output<F>, VerifierError>
 where
     F: JoltField,
-    C: CanonicalDecode,
     H: Sponge,
 {
     transcript.site(STAGE5);
@@ -141,12 +143,13 @@ where
         // input points, so carrying the real claim-reduction point here is harmless.
         let input_points =
             stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
-        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
+        let batch =
+            sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
         let instruction_r_address = batch.output_points.instruction_r_address();
 
         Ok(Stage5Output::Zk(Stage5ZkOutput {
             challenges,
-            batch_consistency: batch.consistency,
+            batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             output_points: batch.output_points,
             instruction_r_address,

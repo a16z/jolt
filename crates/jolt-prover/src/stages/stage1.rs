@@ -15,8 +15,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use jolt_verifier::sites::STAGE1;
 use jolt_verifier::stages::stage1::outer_remainder::{
@@ -33,17 +31,13 @@ use crate::{ProverError, StageProver as _};
 /// Stage 1's outputs: the verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage1ProverOutput<F: JoltField> {
     pub clear_output: Stage1ClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub uniskip_witness: CommittedSumcheckWitness<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage1<F, PCS, VC, H>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     log_t: usize,
     transcript: &mut ProverTranscript<H>,
 ) -> Result<Stage1ProverOutput<F>, ProverError<F>>
@@ -94,20 +88,12 @@ where
         &inputs,
         &input_points,
         &challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let committed_witness = proved.witness;
 
     let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
-    Ok(Stage1ProverOutput {
-        clear_output,
-        #[cfg(feature = "zk")]
-        uniskip_witness: proved_uniskip.witness,
-        #[cfg(feature = "zk")]
-        committed_witness,
-    })
+    Ok(Stage1ProverOutput { clear_output })
 }
 
 /// Clear round-trips with field-inline enabled of the stage-1 recipe through
@@ -129,18 +115,18 @@ mod field_inline_round_trip {
     use super::*;
     use crate::stages::field_inline_fixtures::{
         field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
-        test_checked_inputs, verify_through, FixturePreprocessing, Through, LOG_T,
+        test_checked_inputs, test_mode, verify_through, FixturePreprocessing, Through, LOG_T,
     };
 
     fn round_trip(trace_backend: TraceBackend, preprocessing: FixturePreprocessing) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut mode = test_mode();
         let mut prover_transcript = fixture_transcript();
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &mut context,
-            &mode,
+            &mut mode,
             LOG_T,
             &mut prover_transcript,
         )
@@ -183,7 +169,6 @@ mod field_inline_round_trip {
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
-    use common::constants::MAX_BLINDFOLD_GENERATORS;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
@@ -192,48 +177,23 @@ mod field_inline_zk {
     use super::*;
     use crate::stages::field_inline_fixtures::{
         field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
-        test_checked_inputs, test_vc_setup, verify_through, Through, LOG_T,
+        test_checked_inputs, test_mode, verify_through, Through, LOG_T,
     };
 
-    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
-
     #[test]
-    fn committed_stage1_witness_carries_the_composed_rows_and_verifies() {
+    fn masked_stage1_round_trips_the_masked_verifier() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let setup = test_vc_setup();
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
+        let mut mode = test_mode();
         let mut prover_transcript = fixture_transcript();
-        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        let _ = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &mut context,
-            &mode,
+            &mut mode,
             LOG_T,
             &mut prover_transcript,
         )
         .unwrap();
-
-        // The committed witness carries the composed 50 output-claim values
-        // (45 common openings + five field value/product openings), row-committed in
-        // capacity-sized chunks — the layout the verifier's generated
-        // `committed_claim_layout` derives.
-        let row_lens: Vec<usize> = out
-            .committed_witness
-            .output_claim_rows
-            .iter()
-            .map(Vec::len)
-            .collect();
-        let expected_row_lens: Vec<usize> = {
-            let mut remaining = 50usize;
-            let mut lens = Vec::new();
-            while remaining > 0 {
-                let take = remaining.min(CAPACITY);
-                lens.push(take);
-                remaining -= take;
-            }
-            lens
-        };
-        assert_eq!(row_lens, expected_row_lens);
 
         verify_through(
             Through::Stage1,

@@ -3,9 +3,9 @@ use jolt_claims::protocols::composed::ComposedClaims;
 
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::CanonicalDecode;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::masking::CommittedPadsView;
 
 use crate::sites::STAGE6A;
 
@@ -20,6 +20,7 @@ use super::{
         Stage6aSumchecks, Stage6aZkOutput,
     },
 };
+use crate::stages::zk::masked_channel;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     stages::{
@@ -34,21 +35,21 @@ use crate::{
     clippy::too_many_arguments,
     reason = "Stage 6a's address-phase input claim folds all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
-pub fn verify<PCS, VC, H>(
+pub fn verify<PCS, VC, H, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut VerifierTranscript<'_, H>,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-    stage3: &Stage3Output<PCS::Field, VC::Output>,
-    stage4: &Stage4Output<PCS::Field, VC::Output>,
-    stage5: &Stage5Output<PCS::Field, VC::Output>,
-) -> Result<Stage6aOutput<PCS::Field, VC::Output>, VerifierError>
+    pads: Option<&mut CommittedPadsView<P>>,
+    stage1: &Stage1Output<PCS::Field>,
+    stage2: &Stage2Output<PCS::Field>,
+    stage3: &Stage3Output<PCS::Field>,
+    stage4: &Stage4Output<PCS::Field>,
+    stage5: &Stage5Output<PCS::Field>,
+) -> Result<Stage6aOutput<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: CanonicalDecode,
     H: Sponge,
 {
     transcript.site(STAGE6A);
@@ -90,14 +91,13 @@ where
     let address_input_points = address_sumchecks.empty_input_points();
 
     if checked.zk {
-        let batch = address_sumchecks.verify_zk(
-            checked.committed_row_len()?,
+        let batch = address_sumchecks.verify_masked(
             &address_input_points,
-            transcript,
+            &mut masked_channel(pads, transcript)?,
         )?;
         return Ok(Stage6aOutput::Zk(Stage6aZkOutput {
             challenges: carried,
-            consistency: batch.consistency,
+            rounds: batch.rounds,
             output_claims: batch.output_claims,
             output_points: batch.output_points,
         }));

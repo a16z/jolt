@@ -24,13 +24,14 @@ use jolt_transcript::{
     VerifierTranscript,
 };
 use jolt_verifier::sites::{
-    BLINDFOLD, COMMITMENTS, PREAMBLE, STAGE1, STAGE2, STAGE3, STAGE4, STAGE5, STAGE6A, STAGE6B,
-    STAGE7, STAGE8,
+    BLINDFOLD, COMMITMENTS, PADS, PREAMBLE, STAGE1, STAGE2, STAGE3, STAGE4, STAGE5, STAGE6A,
+    STAGE6B, STAGE7, STAGE8,
 };
 use jolt_verifier::{
     jolt_protocol_id, JoltProof, JoltSponge, JoltVerifierPreprocessing, ProofHeader, VerifierError,
     JOLT_SESSION,
 };
+use jolt_zk::masking::ZkError;
 
 /// A Jolt protocol region, in transcript order. Each is entered by the
 /// verifier setting the matching [`jolt_verifier::sites`] site.
@@ -38,6 +39,7 @@ use jolt_verifier::{
 pub enum Region {
     Preamble,
     Commitments,
+    Pads,
     Stage1,
     Stage2,
     Stage3,
@@ -51,9 +53,10 @@ pub enum Region {
 }
 
 impl Region {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Preamble,
         Self::Commitments,
+        Self::Pads,
         Self::Stage1,
         Self::Stage2,
         Self::Stage3,
@@ -70,7 +73,9 @@ impl Region {
     pub fn expected() -> Vec<Self> {
         Self::ALL
             .into_iter()
-            .filter(|region| cfg!(feature = "zk") || *region != Self::BlindFold)
+            .filter(|region| {
+                cfg!(feature = "zk") || !matches!(region, Self::Pads | Self::BlindFold)
+            })
             .collect()
     }
 
@@ -78,6 +83,7 @@ impl Region {
         [
             (PREAMBLE, Self::Preamble),
             (COMMITMENTS, Self::Commitments),
+            (PADS, Self::Pads),
             (STAGE1, Self::Stage1),
             (STAGE2, Self::Stage2),
             (STAGE3, Self::Stage3),
@@ -319,11 +325,9 @@ mod dory {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{CanonicalBytes, Fr};
-    use jolt_transcript::Channel;
-    use jolt_verifier::sites::BLINDFOLD;
     use jolt_verifier::{
-        verify, verify_stages, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifiedStages,
-        VerifierError,
+        verify, verify_residual, verify_stages, JoltProof, JoltSponge, JoltVerifierPreprocessing,
+        VerifiedStages, VerifierError,
     };
 
     use super::{finish_trace, new_transcript, Trace, TracedCase};
@@ -349,18 +353,11 @@ mod dory {
         )
         .and_then(|stages| match stages {
             VerifiedStages::Clear => Ok(()),
-            VerifiedStages::Zk { protocol, .. } => {
-                transcript.site(BLINDFOLD);
-                let vc_setup = preprocessing
-                    .vc_setup
-                    .as_ref()
-                    .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-                protocol
-                    .verify::<Pedersen<Bn254G1>, _>(vc_setup, &mut transcript)
-                    .map_err(|error| VerifierError::BlindFoldVerificationFailed {
-                        reason: error.to_string(),
-                    })
-            }
+            VerifiedStages::Zk(masked) => verify_residual::<Fr, DoryScheme, Pedersen<Bn254G1>, _>(
+                preprocessing,
+                *masked,
+                &mut transcript,
+            ),
         });
         finish_trace(transcript, result)
     }
@@ -424,7 +421,6 @@ mod dory {
 mod akita {
     use common::jolt_device::JoltDevice;
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
-    use jolt_crypto::Commitment;
     use jolt_field::CanonicalBytes;
     use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_verifier::stages::{
@@ -434,6 +430,7 @@ mod akita {
     use jolt_verifier::{
         seed_transcript, verify, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError,
     };
+    use jolt_zk::masking::CommittedPadsView;
 
     use super::{finish_trace, new_transcript, Trace, TracedCase};
     use crate::support::akita_fixtures::AkitaFixtureCase;
@@ -462,17 +459,19 @@ mod akita {
             transcript,
         )?;
         let dims = &formula_dimensions;
-        let s1 =
-            stage1::verify::<AkitaField, <AkitaVc as Commitment>::Output, _>(&checked, transcript)?;
-        let s2 = stage2::verify(&checked, transcript, &s1)?;
-        let s3 = stage3::verify(&checked, transcript, &s1, &s2)?;
-        let s4 = stage4::verify(&checked, preprocessing, transcript, &s2, &s3)?;
-        let s5 = stage5::verify(&checked, dims, transcript, &s2, &s4)?;
+        // An Akita proof is never masked.
+        let no_pads = || None::<&mut CommittedPadsView<()>>;
+        let s1 = stage1::verify::<AkitaField, _, ()>(&checked, transcript, no_pads())?;
+        let s2 = stage2::verify(&checked, transcript, no_pads(), &s1)?;
+        let s3 = stage3::verify(&checked, transcript, no_pads(), &s1, &s2)?;
+        let s4 = stage4::verify(&checked, preprocessing, transcript, no_pads(), &s2, &s3)?;
+        let s5 = stage5::verify(&checked, dims, transcript, no_pads(), &s2, &s4)?;
         let s6a = stage6a::verify(
             &checked,
             preprocessing,
             dims,
             transcript,
+            no_pads(),
             &s1,
             &s2,
             &s3,
@@ -484,6 +483,7 @@ mod akita {
             preprocessing,
             dims,
             transcript,
+            no_pads(),
             &s1,
             &s2,
             &s3,
@@ -491,7 +491,7 @@ mod akita {
             &s5,
             &s6a,
         )?;
-        let s7 = stage7::verify(&checked, dims, transcript, &s4, &s6b)?;
+        let s7 = stage7::verify(&checked, dims, transcript, no_pads(), &s4, &s6b)?;
         let s8 = stage8::verify::<AkitaField, AkitaScheme, AkitaVc, _>(
             &checked,
             preprocessing,
@@ -800,8 +800,8 @@ fn is_truncation(result: &Result<(), VerifierError>) -> bool {
             VerifierError::MalformedCommitment { reason }
             | VerifierError::FinalOpeningVerificationFailed { reason }
             | VerifierError::FinalOpeningBatchFailed { reason }
-            | VerifierError::BlindFoldVerificationFailed { reason }
-            | VerifierError::StageClaimSumcheckFailed { reason, .. },
+            | VerifierError::StageClaimSumcheckFailed { reason, .. }
+            | VerifierError::Masking(ZkError::Backend { reason, .. } | ZkError::Sumcheck { reason }),
         ) => reason.contains(&truncated),
         _ => false,
     }

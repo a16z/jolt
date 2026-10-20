@@ -18,19 +18,15 @@ use jolt_claims::protocols::composed::r1cs::{
 use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_uniskip_opening, product_uniskip_opening,
 };
-use jolt_claims::protocols::jolt::JoltOpeningId;
-use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::CanonicalDecode;
+use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_field::JoltField;
 use jolt_sumcheck::{
-    receive_private_value, CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim,
-    SumcheckStatement, SumcheckVerifier,
+    receive_masked_rounds, receive_private_value, CenteredIntegerDomain, MaskedRound, RoundWire,
+    SumcheckClaim, SumcheckError, SumcheckStatement, SumcheckVerifier,
 };
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, PrivateChannel, Sponge, TranscriptError, VerifierTranscript};
 
-use crate::stages::relations::CommittedClaimLayout;
-use crate::stages::zk::outputs::{CommittedOutputClaimOutput, CommittedOutputClaimShape};
-use crate::verifier::CheckedInputs;
+use crate::stages::relations::{receive_masked_value, MaskedClaims};
 use crate::VerifierError;
 
 const UNISKIP_ROUNDS: usize = 1;
@@ -119,12 +115,13 @@ where
     transcript.challenge_small()
 }
 
-/// The ZK uni-skip step's outputs: the committed round consistency and output
-/// claim commitments (carried downstream for BlindFold), plus the reduction
+/// The masked uni-skip step's outputs: the masked round and output claim
+/// (carried downstream for the residual relation), plus the reduction
 /// challenge.
-pub struct UniskipZk<F: JoltField, C> {
-    pub consistency: CommittedSumcheckConsistency<F, C>,
-    pub output_claims: CommittedOutputClaimOutput<C>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UniskipMasked<F> {
+    pub rounds: Vec<MaskedRound<F>>,
+    pub output_claims: MaskedClaims<F>,
     pub challenge: F,
 }
 
@@ -174,41 +171,35 @@ where
     })
 }
 
-/// Verify a ZK-mode uni-skip round: the committed round and the single
-/// output-claim commitment. The claims themselves stay committed (BlindFold
-/// verifies them at stage 8).
-pub fn verify_zk<F, C, H>(
-    checked: &CheckedInputs,
+/// Verify a masked uni-skip round: read the masked round at full width, its
+/// challenge, then the masked output claim. Nothing hidden is checked; the
+/// residual relation states the round-sum check and the output equality.
+pub fn verify_masked<F, C>(
     params: &UniskipParams,
-    transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<UniskipZk<F, C>, VerifierError>
+    channel: &mut C,
+) -> Result<UniskipMasked<F>, VerifierError>
 where
     F: JoltField,
-    C: CanonicalDecode,
-    H: Sponge,
+    C: Channel + PrivateChannel,
+    C::Error: From<TranscriptError> + From<SumcheckError<F>>,
+    VerifierError: From<C::Error>,
 {
-    let shape = CommittedOutputClaimShape::new(
-        checked.committed_row_len()?,
-        CommittedClaimLayout {
-            ids: vec![params.output_opening.into()],
-            aliases: Vec::new(),
-        },
-    );
-    let (consistency, commitments) = SumcheckVerifier::verify_committed(
+    let rounds = receive_masked_rounds::<F, C>(
         SumcheckStatement::new(UNISKIP_ROUNDS, params.degree),
-        shape.row_count(),
-        transcript,
-    )
-    .map_err(|error| params.sumcheck_failed(error))?;
-    let [round] = consistency.rounds.as_slice() else {
-        return Err(
-            params.sumcheck_failed("uni-skip committed consistency did not produce one challenge")
-        );
+        RoundWire::Full,
+        channel,
+    )?;
+    let [round] = rounds.as_slice() else {
+        return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));
     };
     let challenge = round.challenge;
-    Ok(UniskipZk {
-        consistency,
-        output_claims: CommittedOutputClaimOutput { shape, commitments },
+    let output_claims = MaskedClaims {
+        received: vec![(params.output_opening.into(), receive_masked_value(channel)?)],
+        ..MaskedClaims::default()
+    };
+    Ok(UniskipMasked {
+        rounds,
+        output_claims,
         challenge,
     })
 }

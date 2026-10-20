@@ -1,10 +1,9 @@
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
-use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
+use jolt_sumcheck::{BatchedMaskedRounds, MaskedRound};
 
 use super::outer_remainder::{OuterRemainder, OuterRemainderOutputClaims};
-use crate::stages::relations::SumcheckBatch;
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{MaskedClaims, SumcheckBatch};
 use crate::VerifierError;
 
 /// Source-of-truth for stage 1's singleton sumcheck batch: the Spartan outer
@@ -49,9 +48,9 @@ impl<F: JoltField> Stage1BatchOutputClaims<F> {
 /// the `input.stageN.challenges.<field>` idiom used by the sibling stages). The
 /// remainder sumcheck point is opening-derived, so it lives on the produced
 /// reduction (clear: `output_points.outer_remainder`; ZK:
-/// `remainder_consistency`) rather than here; the singleton remainder batching
+/// `remainder_rounds`) rather than here; the singleton remainder batching
 /// coefficient is likewise
-/// read from `remainder_consistency` on the ZK path.
+/// read from `remainder_rounds` on the ZK path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1Challenges<F: JoltField> {
     pub tau: Vec<F>,
@@ -126,12 +125,12 @@ fn empty_remainder_point(stage: JoltRelationId) -> VerifierError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage1ZkOutput<F: JoltField, C> {
+pub struct Stage1ZkOutput<F: JoltField> {
     pub challenges: Stage1Challenges<F>,
-    pub uniskip_consistency: CommittedSumcheckConsistency<F, C>,
-    pub uniskip_output_claims: CommittedOutputClaimOutput<C>,
-    pub remainder_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub remainder_output_claims: CommittedOutputClaimOutput<C>,
+    pub uniskip_rounds: Vec<MaskedRound<F>>,
+    pub uniskip_output_claims: MaskedClaims<F>,
+    pub remainder_rounds: BatchedMaskedRounds<F>,
+    pub remainder_output_claims: MaskedClaims<F>,
     /// The produced opening points (the *reversed* bound point on every cell), the
     /// ZK counterpart of the clear path's `output_points`. The raw un-reversed
     /// reduction point stays exposed by [`Stage1Output::remainder_point`].
@@ -143,12 +142,12 @@ pub struct Stage1ZkOutput<F: JoltField, C> {
     clippy::large_enum_variant,
     reason = "one stage output per proof, built once and never stored in bulk"
 )]
-pub enum Stage1Output<F: JoltField, C> {
+pub enum Stage1Output<F: JoltField> {
     Clear(Stage1ClearOutput<F>),
-    Zk(Stage1ZkOutput<F, C>),
+    Zk(Stage1ZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage1Output<F, C> {
+impl<F: JoltField> Stage1Output<F> {
     /// The raw (un-reversed) Spartan outer remainder sumcheck reduction point,
     /// available regardless of proving mode. The remainder is a singleton batch, so
     /// the clear-path bound point and the ZK committed round challenges are the same
@@ -162,14 +161,14 @@ impl<F: JoltField, C> Stage1Output<F, C> {
     pub fn remainder_point(&self) -> Vec<F> {
         match self {
             Self::Clear(output) => output.remainder_point(),
-            Self::Zk(output) => output.remainder_consistency.challenges(),
+            Self::Zk(output) => output.remainder_rounds.challenges(),
         }
     }
 
     /// The stage-1 Spartan-outer cycle binding: the tail (`[1..]`) of the raw
     /// (un-reversed) [`remainder_point`](Self::remainder_point), or `None` when
     /// that point is empty. This matches the ZK/BlindFold path, which slices
-    /// `remainder_consistency.challenges()[1..]` off the same raw point.
+    /// `remainder_rounds.challenges()[1..]` off the same raw point.
     pub fn cycle_binding(&self) -> Option<Vec<F>> {
         let raw_point = self.remainder_point();
         let (_, cycle) = raw_point.split_first()?;
@@ -190,10 +189,10 @@ impl<F: JoltField, C> Stage1Output<F, C> {
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage1ZkOutput<F, C>, VerifierError> {
+    pub fn zk(&self) -> Result<&Stage1ZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => Err(VerifierError::ExpectedCommittedProof { field: "stage1" }),
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage1" }),
         }
     }
 }
