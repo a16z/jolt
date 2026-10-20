@@ -149,6 +149,14 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
     #[cfg(test)]
+    pub(super) fq6_mul_probe: CudaFunction,
+    #[cfg(test)]
+    pub(super) fq6_mul_by_01_probe: CudaFunction,
+    #[cfg(test)]
+    pub(super) fq6_mul_by_fq2_probe: CudaFunction,
+    #[cfg(test)]
+    pub(super) fq6_mul_by_nonresidue_probe: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -283,6 +291,14 @@ impl CudaKernelContext {
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             #[cfg(test)]
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
+            #[cfg(test)]
+            fq6_mul_probe: module.load_function("fq6_mul_probe")?,
+            #[cfg(test)]
+            fq6_mul_by_01_probe: module.load_function("fq6_mul_by_01_probe")?,
+            #[cfg(test)]
+            fq6_mul_by_fq2_probe: module.load_function("fq6_mul_by_fq2_probe")?,
+            #[cfg(test)]
+            fq6_mul_by_nonresidue_probe: module.load_function("fq6_mul_by_nonresidue_probe")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]

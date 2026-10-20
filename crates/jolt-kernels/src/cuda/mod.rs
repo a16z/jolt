@@ -74,6 +74,8 @@
 //! Resident G2 MSMs build signed buckets, merge weighted partial sums and fold
 //! windows on device. They decline shapes beyond the batch budget or segment
 //! estimate; their output stays in the device buffer.
+//! Fq6 multiplication and sparse products use three Fq2 coefficients in the
+//! same Montgomery representation as the curve kernels.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

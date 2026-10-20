@@ -16,6 +16,8 @@ pub(crate) mod msm;
 pub(crate) mod one_hot_fold;
 #[cfg(test)]
 pub(crate) mod pack;
+#[cfg(test)]
+pub(crate) mod pairing;
 pub mod primitives;
 #[cfg(test)]
 pub(crate) mod ra_poly;
