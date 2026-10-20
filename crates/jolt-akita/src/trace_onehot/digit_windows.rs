@@ -5,8 +5,7 @@
 //! negacyclic windows lets each destination tile sum all of its shifts in
 //! registers and touch memory once, instead of once per shift.
 
-use akita_algebra::CyclotomicRing;
-use jolt_algebra::{Fp128x8i32, Unreduced};
+use jolt_algebra::{CyclotomicRing, Fp128x8i32, Unreduced};
 
 use crate::AkitaField;
 

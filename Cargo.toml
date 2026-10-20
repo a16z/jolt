@@ -325,14 +325,12 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "zk",
 ] }
 # Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
 akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
 akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
 akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
 akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
 akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
 akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
 akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
 
 # Core Utilities

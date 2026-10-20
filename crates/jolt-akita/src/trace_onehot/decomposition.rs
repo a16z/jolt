@@ -1,9 +1,9 @@
 use std::env::VarError;
 use std::ops::Range;
 
-use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use akita_pcs::custom_source::{fill_rotated_challenge, DecomposeFoldWitness};
+use jolt_crypto::challenge::SparseChallenge;
 use rayon::prelude::*;
 use tracing::field::Empty;
 

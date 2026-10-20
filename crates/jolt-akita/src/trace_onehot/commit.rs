@@ -1,8 +1,8 @@
-use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
 use akita_error::AkitaError;
 use akita_pcs::custom_source::CommitInnerPlan;
 use akita_types::{AkitaExpandedSetup, RingVec};
-use jolt_algebra::{Fp128x8i32, Zero};
+use jolt_algebra::ring::WideCyclotomicRing;
+use jolt_algebra::{CyclotomicRing, Fp128x8i32, Zero};
 use rayon::prelude::*;
 
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};

@@ -103,13 +103,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-challenges"
-version = "0.1.0"
-dependencies = [
- "jolt-crypto",
-]
-
-[[package]]
 name = "akita-config"
 version = "0.1.0"
 dependencies = [
@@ -3145,8 +3138,6 @@ dependencies = [
 name = "jolt-akita"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
- "akita-challenges",
  "akita-config",
  "akita-error",
  "akita-params",
@@ -8054,3 +8045,7 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "akita-challenges"
+version = "0.1.0"
