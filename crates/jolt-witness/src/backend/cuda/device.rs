@@ -19,7 +19,7 @@ use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::packed::{PackedTrace, EXTRA_WORDS as PACKED_EXTRA_WORDS};
 use super::tables::kind_tables;
-use super::DeviceTraceColumn;
+use super::{DeviceAtomColumns, DeviceTraceColumn};
 use crate::{RowSource, WitnessError, JOLT_VM_LABEL};
 
 pub const COLD: u32 = u32::MAX;
@@ -37,6 +37,7 @@ struct ExtractFunctions {
     mapped_pc: CudaFunction,
     remapped_ram: CudaFunction,
     lookup_index: CudaFunction,
+    atom_columns: CudaFunction,
 }
 
 fn extract_ptx() -> Result<&'static Ptx, &'static String> {
@@ -81,6 +82,7 @@ fn load_extract_functions(stream: &CudaStream) -> Result<ExtractFunctions, Strin
         mapped_pc: function("mapped_pc_words_kernel")?,
         remapped_ram: function("remapped_ram_words_kernel")?,
         lookup_index: function("lookup_index_limbs_kernel")?,
+        atom_columns: function("atom_columns_kernel")?,
     })
 }
 
@@ -360,6 +362,76 @@ impl DeviceTrace {
 
         self.check_mapped(&unmapped, "lookup index limbs")?;
         Ok(out)
+    }
+
+    #[tracing::instrument(skip_all, name = "cuda_witness_atom_columns", fields(cycles = self.cycles))]
+    pub fn atom_columns(&self) -> Result<DeviceAtomColumns, WitnessError> {
+        let count = self.count()?;
+
+        let alloc32 = |len: usize| self.stream.alloc_zeros::<u32>(len).map_err(device_error);
+        let alloc64 = |len: usize| self.stream.alloc_zeros::<u64>(len).map_err(device_error);
+        let mut columns = DeviceAtomColumns {
+            flags: alloc32(self.cycles)?,
+            table_index: alloc32(self.cycles)?,
+            bytecode_pc: alloc64(self.cycles)?,
+            rd_pre_value: alloc64(self.cycles)?,
+            rs1_address: alloc32(self.cycles)?,
+            rs2_address: alloc32(self.cycles)?,
+            rd_address: alloc32(self.cycles)?,
+            rd_inc: alloc64(self.cycles * 2)?,
+            ram_inc: alloc64(self.cycles * 2)?,
+            left_instruction_input: alloc64(self.cycles)?,
+            right_instruction_input: alloc64(self.cycles * 2)?,
+            left_lookup_operand: alloc64(self.cycles)?,
+            right_lookup_operand: alloc64(self.cycles * 2)?,
+            lookup_output: alloc64(self.cycles)?,
+            product_magnitude: alloc64(self.cycles * 2)?,
+        };
+        let mut unmapped = self.unmapped_flag()?;
+
+        let mut builder = self.stream.launch_builder(&self.functions.atom_columns);
+        let _ = builder.arg(&self.rows.is_noop);
+        let _ = builder.arg(&self.rows.address);
+        let _ = builder.arg(&self.rows.extras);
+        let _ = builder.arg(&self.rows.virtual_sequence);
+        let _ = builder.arg(&self.rows.ram_address);
+        let _ = builder.arg(&self.kinds.flags);
+        let _ = builder.arg(&self.kinds.table_index);
+        let _ = builder.arg(&self.kinds.input);
+        let _ = builder.arg(&self.kinds.operand);
+        let _ = builder.arg(&self.kinds.output);
+        let _ = builder.arg(&self.kinds.index);
+        let _ = builder.arg(&self.kinds.count);
+        let _ = builder.arg(&mut columns.flags);
+        let _ = builder.arg(&mut columns.table_index);
+        let _ = builder.arg(&mut columns.bytecode_pc);
+        let _ = builder.arg(&mut columns.rd_pre_value);
+        let _ = builder.arg(&mut columns.rs1_address);
+        let _ = builder.arg(&mut columns.rs2_address);
+        let _ = builder.arg(&mut columns.rd_address);
+        let _ = builder.arg(&mut columns.rd_inc);
+        let _ = builder.arg(&mut columns.ram_inc);
+        let _ = builder.arg(&mut columns.left_instruction_input);
+        let _ = builder.arg(&mut columns.right_instruction_input);
+        let _ = builder.arg(&mut columns.left_lookup_operand);
+        let _ = builder.arg(&mut columns.right_lookup_operand);
+        let _ = builder.arg(&mut columns.lookup_output);
+        let _ = builder.arg(&mut columns.product_magnitude);
+        let _ = builder.arg(&mut unmapped);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` writes exactly index `i` of each
+        // single-word output (all allocated at `cycles`) and `2*i`, `2*i + 1`
+        // of the four two-limb outputs (allocated at `cycles * 2`). It reads
+        // index `i` of the row arrays and the `EXTRA_WORDS` consecutive words
+        // at `i * EXTRA_WORDS`, plus `is_noop[i + 1]` guarded by
+        // `i + 1 < cycles`. The kind tables, including the four mode
+        // tables, are bounds-checked against `count` and each holds `count`
+        // entries. `unmapped` is written only by `atomicExch`. Every buffer is
+        // a distinct allocation.
+        let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
+
+        self.check_mapped(&unmapped, "atom columns")?;
+        Ok(columns)
     }
 
     pub fn u32_column(&self, column: DeviceTraceColumn) -> Result<CudaSlice<u32>, WitnessError> {
