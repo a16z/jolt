@@ -6,9 +6,11 @@ use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
+use jolt_program::execution::{TraceAllocationError, TraceAllocationPhase};
 use tracing::{info, warn};
 
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
+use crate::trace_allocation::{growth_target, reserve_exact, TraceAllocationAllowance};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::mmu::Mmu;
@@ -204,6 +206,18 @@ pub enum HostIo {
     Replay,
 }
 
+/// Host advice writes ([`Cpu::handle_advice_write`]) under an explicit
+/// allocation limit.
+#[derive(Clone, Copy, Debug)]
+enum AdviceWriteLimit {
+    /// What a write may request beside its guest-copy scratch and the
+    /// advice tape's old and new backings.
+    Admitting(TraceAllocationAllowance),
+    /// No later write appends. Registered inlines stop at this, and the
+    /// limited run returns it.
+    Refused(TraceAllocationError),
+}
+
 /// Architectural CPU state captured at a tick boundary — everything a
 /// bit-exact trace-mode chunk replay needs, and nothing run-scoped: cycle
 /// markers and the call stack stay with pass-1 (host-side logging), and the
@@ -338,6 +352,8 @@ pub struct Cpu {
     pub advice_tape: AdviceTape,
     /// Live in pass-1/serial runs; Replay in parallel-trace workers.
     host_io: HostIo,
+    /// Set only by a limited serial run: a limited trace or a tape-only run.
+    advice_write_limit: Option<AdviceWriteLimit>,
     #[cfg(feature = "field-inline")]
     pub field_registers: FieldRegisterFile,
 }
@@ -464,6 +480,7 @@ impl Cpu {
                 .unwrap_or(false),
             advice_tape: AdviceTape::new(),
             host_io: HostIo::Live,
+            advice_write_limit: None,
             #[cfg(feature = "field-inline")]
             field_registers: FieldRegisterFile::default(),
         };
@@ -1108,19 +1125,84 @@ impl Cpu {
         Ok(())
     }
 
+    /// Under an advice-write allowance, a write whose scratch or tape growth
+    /// the allowance or the allocator refuses copies and appends nothing. The
+    /// refusal stays on this CPU for the limited run to return, because
+    /// `VirtualHostIO` discards this result.
     pub fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
         // Pass-1 already appended these bytes; a replay append would corrupt
         // the worker's suffix-relative read offsets.
         if self.host_io == HostIo::Replay {
             return Ok(());
         }
-        let mut bytes = Vec::with_capacity(len as usize);
+        let (mut bytes, tape_target) = match self.advice_write_limit {
+            None => (Vec::with_capacity(len as usize), None),
+            Some(AdviceWriteLimit::Refused(_)) => return Ok(()),
+            Some(AdviceWriteLimit::Admitting(allowance)) => {
+                match self.admit_advice_write(allowance, len) {
+                    Ok(admitted) => admitted,
+                    Err(refusal) => {
+                        self.advice_write_limit = Some(AdviceWriteLimit::Refused(refusal));
+                        return Ok(());
+                    }
+                }
+            }
+        };
         for i in 0..len {
             let (b, _) = self.mmu.load(ptr + i)?;
             bytes.push(b);
         }
+        if let Some(target) = tape_target {
+            let additional = target - self.advice_tape.len();
+            let phase = TraceAllocationPhase::AdviceWrite;
+            if let Err(refusal) = reserve_exact(&mut self.advice_tape.data, additional, phase) {
+                self.advice_write_limit = Some(AdviceWriteLimit::Refused(refusal));
+                return Ok(());
+            }
+        }
         advice_tape_write(self, &bytes);
         Ok(())
+    }
+
+    /// Checks a `len`-byte write's guest-copy scratch, and the tape growth it
+    /// needs, beside the tape's current backing, then reserves the scratch.
+    /// Returns it with the capacity the tape must grow to, if it must.
+    fn admit_advice_write(
+        &self,
+        allowance: TraceAllocationAllowance,
+        len: u64,
+    ) -> Result<(Vec<u8>, Option<usize>), TraceAllocationError> {
+        let phase = TraceAllocationPhase::AdviceWrite;
+        let overflow = TraceAllocationError::SizeOverflow { phase };
+        let len = usize::try_from(len).map_err(|_| overflow)?;
+        let capacity = self.advice_tape.capacity();
+        let required = self.advice_tape.len().checked_add(len).ok_or(overflow)?;
+        let target = (required > capacity).then(|| growth_target(capacity, required));
+        let request = len.checked_add(target.unwrap_or(0)).ok_or(overflow)?;
+        allowance.check_request(phase, capacity, request)?;
+        let mut scratch = Vec::new();
+        reserve_exact(&mut scratch, len, phase)?;
+        Ok((scratch, target))
+    }
+
+    /// Checks every later advice write against `allowance`, which counts the
+    /// run's other live buffers, replacing the previous allowance or refusal.
+    pub(crate) fn set_advice_write_allowance(&mut self, allowance: TraceAllocationAllowance) {
+        self.advice_write_limit = Some(AdviceWriteLimit::Admitting(allowance));
+    }
+
+    #[inline]
+    pub(crate) fn checks_advice_writes(&self) -> bool {
+        self.advice_write_limit.is_some()
+    }
+
+    /// The request a checked advice write was refused for, if one was.
+    #[inline]
+    pub(crate) fn advice_write_refusal(&self) -> Option<TraceAllocationError> {
+        match self.advice_write_limit {
+            Some(AdviceWriteLimit::Refused(refusal)) => Some(refusal),
+            Some(AdviceWriteLimit::Admitting(_)) | None => None,
+        }
     }
 
     fn read_string(&mut self, mut addr: u32, len: u32) -> Result<String, Trap> {
@@ -1182,6 +1264,7 @@ impl Cpu {
             capture_backtrace_registers: self.capture_backtrace_registers,
             advice_tape: self.advice_tape.clone(),
             host_io: self.host_io,
+            advice_write_limit: self.advice_write_limit,
             #[cfg(feature = "field-inline")]
             field_registers: self.field_registers.clone(),
         }
@@ -1222,6 +1305,9 @@ impl Cpu {
             advice_tape,
             // Worker-owned mode flag.
             host_io: _,
+            // Explicit allocation limits reject parallel and chunked tracing,
+            // so a chunk never carries one.
+            advice_write_limit: _,
             #[cfg(feature = "field-inline")]
             field_registers,
         } = self;
@@ -1596,6 +1682,55 @@ mod test_cpu {
         cpu.handle_advice_write(DRAM_BASE, 4).unwrap();
         assert_eq!(cpu.advice_tape.len(), 4);
         assert_eq!(advice_tape_read(&mut cpu, 4), Some(0xefbe_adde));
+    }
+
+    /// A checked write is charged its guest-copy scratch beside the tape's
+    /// current backing and, when the tape must grow, the new backing too,
+    /// before it copies anything. A refused write leaves the tape as it was.
+    #[test]
+    fn advice_write_allowance_charges_scratch_and_both_tape_backings() {
+        let phase = TraceAllocationPhase::AdviceWrite;
+        let refused = |limit_bytes, required_bytes| {
+            Some(TraceAllocationError::LimitExceeded {
+                phase,
+                limit_bytes,
+                required_bytes,
+            })
+        };
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+        for (i, byte) in [0xde_u8, 0xad, 0xbe, 0xef].iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        let unmapped = DRAM_BASE + (1 << 20);
+        let tape = |cpu: &Cpu| (cpu.advice_tape.len(), cpu.advice_tape.capacity());
+
+        // 4 scratch bytes and a new 4-byte tape beside 2 other live bytes. The
+        // copy from unmapped memory would panic: the refusal precedes it.
+        cpu.set_advice_write_allowance(TraceAllocationAllowance::new(9, 2));
+        cpu.handle_advice_write(unmapped, 4).unwrap();
+        assert_eq!(cpu.advice_write_refusal(), refused(9, 10));
+        assert_eq!(tape(&cpu), (0, 0));
+        cpu.set_advice_write_allowance(TraceAllocationAllowance::new(10, 2));
+        cpu.handle_advice_write(DRAM_BASE, 4).unwrap();
+        assert_eq!((cpu.advice_write_refusal(), tape(&cpu)), (None, (4, 4)));
+
+        // Growing to 8 holds the old 4, the new 8 and 4 scratch bytes at once.
+        cpu.set_advice_write_allowance(TraceAllocationAllowance::new(17, 2));
+        cpu.handle_advice_write(unmapped, 4).unwrap();
+        assert_eq!(cpu.advice_write_refusal(), refused(17, 18));
+        assert_eq!(tape(&cpu), (4, 4));
+        cpu.set_advice_write_allowance(TraceAllocationAllowance::new(18, 2));
+        cpu.handle_advice_write(DRAM_BASE, 4).unwrap();
+        assert_eq!((cpu.advice_write_refusal(), tape(&cpu)), (None, (8, 8)));
+        assert_eq!(advice_tape_read(&mut cpu, 8), Some(0xefbe_adde_efbe_adde));
+
+        cpu.handle_advice_write(DRAM_BASE, u64::MAX).unwrap();
+        assert_eq!(
+            cpu.advice_write_refusal(),
+            Some(TraceAllocationError::SizeOverflow { phase })
+        );
+        assert_eq!(tape(&cpu), (8, 8));
     }
 
     #[test]

@@ -77,17 +77,16 @@ impl TracerBackend {
     /// made during emulator setup, the caller's input and advice buffers and
     /// the device's copies, the output reserve, the `R0`-row reserve and its
     /// growth, a pending window of one full tick past the batch, converted-chunk
-    /// metadata and field events and their merge, the advice tape at its
-    /// capacity when each check runs, and the final memory image. Not covered:
-    /// advice-tape growth and advice-write scratch between checks, ELF headers
-    /// and symbols, decode and expansion caches, inline advice and provider
-    /// temporaries, cycle markers, prints and backtraces, the caller's program
-    /// and preprocessing, and allocator and runtime overhead. The limit bounds
-    /// requested payload, not process memory or whether a proof of the trace
-    /// fits, and a rejected trace's guest effects are discarded, not rolled
-    /// back. A limit below the setup requests, which exceed 1 GiB with the
-    /// default `R0`, fails before setup, and the output keeps the reserved row
-    /// capacity.
+    /// metadata and field events and their merge, the advice tape and each host
+    /// advice write's guest-copy scratch and tape growth, and the final memory
+    /// image. Not covered: ELF headers and symbols, decode and expansion
+    /// caches, inline advice and provider temporaries, cycle markers, prints
+    /// and backtraces, the caller's program and preprocessing, and allocator
+    /// and runtime overhead. The limit bounds requested payload, not process
+    /// memory or whether a proof of the trace fits, and a rejected trace's
+    /// guest effects are discarded, not rolled back. A limit below the setup
+    /// requests, which exceed 1 GiB with the default `R0`, fails before setup,
+    /// and the output keeps the reserved row capacity.
     ///
     /// Under the limit, `TRACER_PARALLEL` of 2 or more and
     /// [`ChunkedExecutionBackend::execute`] fail with
@@ -150,7 +149,19 @@ impl TracerBackend {
         if crate::parallel_config_from_env().is_some() {
             return Err(TraceError::UnsupportedTraceAllocationMode);
         }
-        let setup = LimitedSetup::admit(limit, program, &inputs, batch_rows)?;
+        let phase = TraceAllocationPhase::Initial;
+        let rows = crate::trace_capacity_reserve();
+        let window =
+            pending_window(batch_rows).ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let storage = sum_bytes(
+            [
+                BytecodePCMapper::required_allocation_bytes(&program.expanded_bytecode)?,
+                bytes_of::<JoltTraceRow>(rows, phase)?,
+                bytes_of::<Cycle>(window, phase)?,
+            ],
+            phase,
+        )?;
+        let setup = LimitedSetup::admit(limit, program, &inputs, storage)?;
         let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
@@ -164,11 +175,19 @@ impl TracerBackend {
             &inputs.memory_config,
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
-        let mut trace = setup.reserve(&mut emulator, &bytecode)?;
+        let resident = setup
+            .reserve_device(&mut emulator)?
+            .saturating_add(bytecode.heap_bytes());
+        let mut trace = LimitedTrace::reserve(limit, resident, rows, window)?;
+        let cpu = emulator.get_mut_cpu();
+        cpu.set_advice_write_allowance(trace.advice_write_allowance());
         let mut prev_pc = 0;
         loop {
             let pending = trace.cycles.len();
             crate::step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace.cycles));
+            if let Some(refusal) = emulator.get_cpu().advice_write_refusal() {
+                return Err(refusal.into());
+            }
             // As in `crate::trace`, the first step that emits no row ends the run.
             if trace.cycles.len() == pending {
                 break;
@@ -176,6 +195,8 @@ impl TracerBackend {
             if trace.cycles.len() >= batch_rows {
                 let tape = emulator.get_cpu().advice_tape.capacity();
                 trace.convert_pending(&bytecode, tape)?;
+                let cpu = emulator.get_mut_cpu();
+                cpu.set_advice_write_allowance(trace.advice_write_allowance());
             }
         }
         let (advice_tape, final_memory, device) = crate::finish_emulator(emulator);
@@ -188,6 +209,58 @@ impl TracerBackend {
             Some(image),
             Some(advice_tape.into_bytes()),
         ))
+    }
+
+    /// The advice tape `program` writes in one serial run without a trace,
+    /// with its requests checked against `limit_bytes`: the compute-advice run
+    /// the SDK makes under a memory budget.
+    ///
+    /// The run allocates no cycles, rows, PC map or final memory image. Before
+    /// setup, the device's input copies and output reserve, flat guest memory
+    /// and the ELF copy setup makes are checked beside the caller's buffers
+    /// and advice tape, as for [`Self::limited_for_row_domain`]'s trace, and
+    /// each host advice write's guest-copy scratch and tape growth beside the
+    /// tape and those buffers. A refused request returns
+    /// [`TraceError::TraceAllocation`] and no tape; the guest effects before
+    /// it are discarded, not rolled back. The run ends as a trace does, at a
+    /// PC stall or at the first step that emits no row, and does not read
+    /// `TRACER_PARALLEL`. Not covered: decode and expansion caches, inline
+    /// advice and provider temporaries, cycle markers, prints and backtraces,
+    /// the caller's program, and allocator and runtime overhead; the limit
+    /// bounds requested payload, not process memory.
+    pub fn execute_advice_tape(
+        program: &JoltProgram,
+        inputs: TraceInputs,
+        limit_bytes: usize,
+    ) -> Result<Vec<u8>, TraceError> {
+        let setup = LimitedSetup::admit(limit_bytes, program, &inputs, 0)?;
+        if program.elf_bytes().is_empty() {
+            return Err(TraceError::MissingElfBytes);
+        }
+        let mut emulator = crate::create_emulator(
+            program.elf_bytes(),
+            None,
+            &inputs.inputs,
+            &inputs.untrusted_advice,
+            &inputs.trusted_advice,
+            &inputs.memory_config,
+            inputs.advice_tape.map(AdviceTape::from_bytes),
+        );
+        let resident = setup.reserve_device(&mut emulator)?;
+        let cpu = emulator.get_mut_cpu();
+        cpu.set_advice_write_allowance(TraceAllocationAllowance::new(limit_bytes, resident));
+        let mut pass = PassOne::new(emulator);
+        loop {
+            let running = pass.step();
+            if let Some(refusal) = pass.emulator().get_cpu().advice_write_refusal() {
+                return Err(refusal.into());
+            }
+            if !running {
+                break;
+            }
+        }
+        let (advice_tape, _, _) = crate::finish_emulator(pass.into_emulator());
+        Ok(advice_tape.into_bytes())
     }
 }
 
@@ -364,26 +437,23 @@ fn finish_rows(
     Ok((data, dimensions))
 }
 
-/// Setup requests of a limited trace, admitted together before any of them
-/// is made.
+/// Setup requests of a limited run, admitted together with the run's own
+/// setup storage before any of them is made.
 struct LimitedSetup {
-    limit: usize,
-    rows: usize,
-    window: usize,
     output_bytes: usize,
-    /// The caller's input and advice buffers, which outlive the trace.
+    /// The caller's input and advice buffers, which outlive the run.
     caller_bytes: usize,
 }
 
 impl LimitedSetup {
-    /// Checks the device's input copies and output reserve, the PC map, flat
-    /// guest memory, the ELF copy setup makes, the initial row reserve and the
-    /// pending window beside the caller's buffers and advice tape.
+    /// Checks the device's input copies and output reserve, flat guest
+    /// memory, the ELF copy setup makes and `storage` bytes of the run's own
+    /// setup requests beside the caller's buffers and advice tape.
     fn admit(
         limit: usize,
         program: &JoltProgram,
         inputs: &TraceInputs,
-        batch_rows: usize,
+        storage: usize,
     ) -> Result<Self, TraceError> {
         let phase = TraceAllocationPhase::Initial;
         let overflow = TraceAllocationError::SizeOverflow { phase };
@@ -393,8 +463,6 @@ impl LimitedSetup {
         // test capacity instead of the layout.
         let memory_words =
             flat_doublewords(layout.get_total_memory_size().max(TEST_MEMORY_CAPACITY));
-        let rows = crate::trace_capacity_reserve();
-        let window = pending_window(batch_rows).ok_or(overflow)?;
         let caller_bytes = [
             &inputs.inputs,
             &inputs.untrusted_advice,
@@ -410,34 +478,26 @@ impl LimitedSetup {
                 inputs.untrusted_advice.len(),
                 inputs.trusted_advice.len(),
                 output_bytes,
-                BytecodePCMapper::required_allocation_bytes(&program.expanded_bytecode)?,
                 bytes_of::<u64>(usize::try_from(memory_words).map_err(|_| overflow)?, phase)?,
                 // `ElfAnalyzer` copies the ELF for the length of setup.
                 program.elf_bytes().len(),
-                bytes_of::<JoltTraceRow>(rows, phase)?,
-                bytes_of::<Cycle>(window, phase)?,
+                storage,
             ],
             phase,
         )?;
         let held = caller_bytes.saturating_add(tape_bytes);
         TraceAllocationAllowance::new(limit, 0).check_request(phase, held, requests)?;
         Ok(Self {
-            limit,
-            rows,
-            window,
             output_bytes,
             caller_bytes,
         })
     }
 
-    /// Makes the admitted output, row and pending-window reservations and
-    /// counts the setup buffers at their observed capacity.
+    /// Makes the admitted output reservation and returns the bytes the
+    /// caller's buffers, the device's input copies and outputs and flat guest
+    /// memory hold at their observed capacity.
     #[expect(clippy::expect_used, reason = "create_emulator installs the device")]
-    fn reserve(
-        self,
-        emulator: &mut Emulator,
-        bytecode: &BytecodePCMapper,
-    ) -> Result<LimitedTrace, TraceAllocationError> {
+    fn reserve_device(&self, emulator: &mut Emulator) -> Result<usize, TraceAllocationError> {
         let phase = TraceAllocationPhase::Initial;
         let cpu = emulator.get_mut_cpu();
         let device = cpu
@@ -446,12 +506,7 @@ impl LimitedSetup {
             .as_mut()
             .expect("JoltDevice was not initialized");
         reserve_exact(&mut device.outputs, self.output_bytes, phase)?;
-        let mut rows = Vec::new();
-        reserve_exact(&mut rows, self.rows, phase)?;
-        let mut cycles = Vec::new();
-        reserve_exact(&mut cycles, self.window, phase)?;
-        let resident = [
-            bytecode.heap_bytes(),
+        Ok([
             self.caller_bytes,
             heap_bytes(&device.inputs),
             heap_bytes(&device.untrusted_advice),
@@ -460,15 +515,7 @@ impl LimitedSetup {
             cpu.mmu.memory.memory.flat_heap_bytes(),
         ]
         .into_iter()
-        .fold(0, usize::saturating_add);
-        Ok(LimitedTrace {
-            limit: self.limit,
-            resident,
-            cycles,
-            rows,
-            chunks: Vec::new(),
-            fields: 0,
-        })
+        .fold(0, usize::saturating_add))
     }
 }
 
@@ -488,6 +535,44 @@ struct LimitedTrace {
 }
 
 impl LimitedTrace {
+    /// Makes the admitted reservations of `rows` rows and a `window`-cycle
+    /// pending window beside `resident` bytes.
+    fn reserve(
+        limit: usize,
+        resident: usize,
+        rows: usize,
+        window: usize,
+    ) -> Result<Self, TraceAllocationError> {
+        let phase = TraceAllocationPhase::Initial;
+        let mut row_buffer = Vec::new();
+        reserve_exact(&mut row_buffer, rows, phase)?;
+        let mut cycles = Vec::new();
+        reserve_exact(&mut cycles, window, phase)?;
+        Ok(Self {
+            limit,
+            resident,
+            cycles,
+            rows: row_buffer,
+            chunks: Vec::new(),
+            fields: 0,
+        })
+    }
+
+    /// What an advice write may request beside every buffer of this trace;
+    /// the write's own check counts the advice tape.
+    fn advice_write_allowance(&self) -> TraceAllocationAllowance {
+        let live = [
+            self.resident,
+            heap_bytes(&self.cycles),
+            heap_bytes(&self.rows),
+            heap_bytes(&self.chunks),
+            self.fields,
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add);
+        TraceAllocationAllowance::new(self.limit, live)
+    }
+
     /// What a request may take beside the resident buffers, the pending
     /// window, the chunks' field events and `tape` bytes of advice tape.
     fn others(&self, tape: usize) -> TraceAllocationAllowance {

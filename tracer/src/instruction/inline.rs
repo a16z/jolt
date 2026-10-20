@@ -317,7 +317,11 @@ impl INLINE {
         .collect()
     }
 
-    fn trace_sequence(
+    /// With `STOP_AT_REFUSAL`, the walk ends after a row whose advice write the
+    /// CPU's allocation limit refused. Only a registered inline has rows after
+    /// a host I/O row: no built-in expansion emits host I/O, and a host I/O
+    /// instruction in guest code traces as one row, `rd = x0` or not.
+    fn trace_sequence<const STOP_AT_REFUSAL: bool>(
         &self,
         cpu: &mut Cpu,
         trace: Option<&mut Vec<Cycle>>,
@@ -350,6 +354,9 @@ impl INLINE {
                     };
                 }
                 instr.trace_raw(cpu, trace.as_deref_mut());
+                if STOP_AT_REFUSAL && cpu.advice_write_refusal().is_some() {
+                    return;
+                }
             }
             assert!(
                 advice.is_empty(),
@@ -363,6 +370,9 @@ impl INLINE {
             let mut trace = trace;
             for instr in sequence {
                 instr.trace_raw(cpu, trace.as_deref_mut());
+                if STOP_AT_REFUSAL && cpu.advice_write_refusal().is_some() {
+                    return;
+                }
             }
         }
     }
@@ -376,8 +386,14 @@ impl RISCVTrace for INLINE {
     /// occur; this method writes the concrete advice values into those rows
     /// immediately before executing them.
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        // Chosen once per invocation: unchecked walks test nothing per row.
+        let checked = cpu.checks_advice_writes();
         cpu.with_cached_inline_sequence(&Instruction::from(*self), |cpu, rows| {
-            self.trace_sequence(cpu, trace, rows);
+            if checked {
+                self.trace_sequence::<true>(cpu, trace, rows);
+            } else {
+                self.trace_sequence::<false>(cpu, trace, rows);
+            }
         });
     }
 }

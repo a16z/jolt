@@ -154,7 +154,10 @@ impl MacroBuilder {
     fn make_build_prover_fn(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let build_prover_fn_name = Ident::new(&format!("build_prover_{fn_name}"), fn_name.span());
+        let build_budgeted_prover_fn_name =
+            Ident::new(&format!("build_budgeted_prover_{fn_name}"), fn_name.span());
         let prove_output_ty = self.get_prove_output_type();
+        let budgeted_prove_output_ty = self.get_budgeted_prove_output_type();
 
         let ordered_func_args = self.get_all_func_args_in_order();
         let all_names: Vec<_> = ordered_func_args.iter().map(|(name, _)| name).collect();
@@ -163,6 +166,8 @@ impl MacroBuilder {
         let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
         let inputs = quote! { #(#inputs_vec),* };
         let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
+        let prove_budgeted_fn_name =
+            Ident::new(&format!("prove_budgeted_{fn_name}"), fn_name.span());
 
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
@@ -179,14 +184,12 @@ impl MacroBuilder {
             quote! {}
         };
 
-        let return_type = if has_trusted_advice {
+        let closure_arg_types = if has_trusted_advice {
             quote! {
-                impl ::core::ops::Fn(#(#all_types),*, ::core::option::Option<jolt::VerifierTrustedAdviceCommitment>, ::core::option::Option<jolt::TrustedAdviceOpeningHint>) -> #prove_output_ty + ::core::marker::Sync + ::core::marker::Send
+                #(#all_types),*, ::core::option::Option<jolt::VerifierTrustedAdviceCommitment>, ::core::option::Option<jolt::TrustedAdviceOpeningHint>
             }
         } else {
-            quote! {
-                impl ::core::ops::Fn(#(#all_types),*) -> #prove_output_ty + ::core::marker::Sync + ::core::marker::Send
-            }
+            quote! { #(#all_types),* }
         };
 
         quote! {
@@ -194,7 +197,7 @@ impl MacroBuilder {
             pub fn #build_prover_fn_name<__S: jolt::host::JoltProgramSource + ::core::marker::Send + ::core::marker::Sync + 'static>(
                 program: __S,
                 preprocessing: jolt::JoltProverPreprocessing,
-            ) -> #return_type
+            ) -> impl ::core::ops::Fn(#closure_arg_types) -> #prove_output_ty + ::core::marker::Sync + ::core::marker::Send
             {
                 let __jolt_program = ::std::sync::Arc::new(program);
                 let __jolt_preprocessing = ::std::sync::Arc::new(preprocessing);
@@ -205,6 +208,25 @@ impl MacroBuilder {
                 };
 
                 __jolt_prove_closure
+            }
+
+            /// The prover of the unbudgeted builder under `memory_budget`, returning
+            /// errors instead of panicking.
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #build_budgeted_prover_fn_name<__S: jolt::host::JoltProgramSource + ::core::marker::Send + ::core::marker::Sync + 'static>(
+                program: __S,
+                preprocessing: jolt::JoltProverPreprocessing,
+                memory_budget: ::core::option::Option<jolt::MemoryBudget>,
+            ) -> impl ::core::ops::Fn(#closure_arg_types) -> #budgeted_prove_output_ty + ::core::marker::Sync + ::core::marker::Send
+            {
+                let __jolt_program = ::std::sync::Arc::new(program);
+                let __jolt_preprocessing = ::std::sync::Arc::new(preprocessing);
+                let __jolt_memory_budget = memory_budget;
+
+                move |#inputs #commitment_param_in_closure| {
+                    let __jolt_preprocessing = (*__jolt_preprocessing).clone();
+                    #prove_budgeted_fn_name(__jolt_program.as_ref(), __jolt_preprocessing, __jolt_memory_budget, #(#all_names),* #commitment_arg_in_call)
+                }
             }
         }
     }
@@ -719,6 +741,18 @@ impl MacroBuilder {
             quote! { ::core::option::Option::None, ::core::option::Option::None }
         };
 
+        let prove_budgeted_fn_name =
+            Ident::new(&format!("prove_budgeted_{fn_name}"), fn_name.span());
+        let budgeted_prove_output_ty = self.get_budgeted_prove_output_type();
+        let serialize_args = quote! {
+            let mut __jolt_input_bytes = ::std::vec::Vec::new();
+            #(#set_program_args;)*
+            let mut __jolt_untrusted_advice_bytes = ::std::vec::Vec::new();
+            #(#set_program_untrusted_advice_args;)*
+            let mut __jolt_trusted_advice_bytes = ::std::vec::Vec::new();
+            #(#set_program_trusted_advice_args;)*
+        };
+
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             #[allow(clippy::too_many_arguments)]
@@ -728,12 +762,7 @@ impl MacroBuilder {
                 #inputs
                 #commitment_param
             ) -> #prove_output_ty {
-                let mut __jolt_input_bytes = ::std::vec::Vec::new();
-                #(#set_program_args;)*
-                let mut __jolt_untrusted_advice_bytes = ::std::vec::Vec::new();
-                #(#set_program_untrusted_advice_args;)*
-                let mut __jolt_trusted_advice_bytes = ::std::vec::Vec::new();
-                #(#set_program_trusted_advice_args;)*
+                #serialize_args
 
                 let __jolt_advice_tape = jolt::compute_advice_tape(
                     __jolt_program,
@@ -741,6 +770,7 @@ impl MacroBuilder {
                     &__jolt_untrusted_advice_bytes,
                     &__jolt_trusted_advice_bytes,
                     __jolt_preprocessing.verifier.program.memory_layout(),
+                    ::core::option::Option::None,
                 ).expect("compute-advice execution should succeed");
                 let (__jolt_proof, __jolt_io_device) = jolt::prove_program(
                     __jolt_program,
@@ -756,6 +786,48 @@ impl MacroBuilder {
                 #handle_return
 
                 (__jolt_ret_val, __jolt_proof, __jolt_io_device)
+            }
+
+            /// The unbudgeted prover's proof under `__jolt_memory_budget`, or the
+            /// first error. The budget bounds the compute-advice run's named
+            /// requests and routes and checks the proof's trace
+            /// (`jolt::prove_program`). It does not cap process memory: argument
+            /// serialization, program builds, caches, allocator overhead and
+            /// prover buffers beyond `jolt::prove_program`'s checks are outside
+            /// it.
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            #[allow(clippy::too_many_arguments)]
+            pub fn #prove_budgeted_fn_name(
+                __jolt_program: &dyn jolt::host::JoltProgramSource,
+                __jolt_preprocessing: jolt::JoltProverPreprocessing,
+                __jolt_memory_budget: ::core::option::Option<jolt::MemoryBudget>,
+                #inputs
+                #commitment_param
+            ) -> #budgeted_prove_output_ty {
+                #serialize_args
+
+                let __jolt_advice_tape = jolt::compute_advice_tape(
+                    __jolt_program,
+                    &__jolt_input_bytes,
+                    &__jolt_untrusted_advice_bytes,
+                    &__jolt_trusted_advice_bytes,
+                    __jolt_preprocessing.verifier.program.memory_layout(),
+                    __jolt_memory_budget,
+                )?;
+                let (__jolt_proof, __jolt_io_device) = jolt::prove_program(
+                    __jolt_program,
+                    &__jolt_preprocessing,
+                    &__jolt_input_bytes,
+                    &__jolt_untrusted_advice_bytes,
+                    &__jolt_trusted_advice_bytes,
+                    #commitment_arg,
+                    __jolt_advice_tape,
+                    __jolt_memory_budget,
+                )?;
+
+                #handle_return
+
+                ::core::result::Result::Ok((__jolt_ret_val, __jolt_proof, __jolt_io_device))
             }
         }
     }
@@ -1015,6 +1087,16 @@ impl MacroBuilder {
             ReturnType::Type(_, ty) => quote! {
                 (#ty, jolt::RV64IMACProof, jolt::JoltDevice)
             },
+        }
+    }
+
+    fn get_budgeted_prove_output_type(&self) -> TokenStream2 {
+        let prove_output_ty = self.get_prove_output_type();
+        quote! {
+            ::core::result::Result<
+                #prove_output_ty,
+                ::std::boxed::Box<dyn ::std::error::Error + ::core::marker::Send + ::core::marker::Sync>,
+            >
         }
     }
 

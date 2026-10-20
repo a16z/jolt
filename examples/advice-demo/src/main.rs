@@ -1,8 +1,20 @@
+use jolt_sdk::MemoryBudget;
+use std::error::Error;
 use std::time::Instant;
 use tracing::info;
 
-pub fn main() {
+pub fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tracing_subscriber::fmt::init();
+
+    // `--memory-budget-bytes N` proves through the budgeted prover.
+    let args: Vec<String> = std::env::args().collect();
+    let memory_budget = args
+        .iter()
+        .position(|arg| arg == "--memory-budget-bytes")
+        .map(|flag| {
+            let bytes = args.get(flag + 1).and_then(|bytes| bytes.parse().ok());
+            MemoryBudget::from_bytes(bytes.expect("--memory-budget-bytes takes a byte count"))
+        });
 
     let target_dir = "/tmp/jolt-guest-targets";
 
@@ -15,11 +27,23 @@ pub fn main() {
     let prover_preprocessing = guest::preprocess_prover_advice_demo(shared_preprocessing.clone());
     let verifier_preprocessing =
         guest::verifier_preprocessing_from_prover_advice_demo(&prover_preprocessing);
-    let prove_advice_demo = guest::build_prover_advice_demo(program, prover_preprocessing);
     let verify_advice_demo = guest::build_verifier_advice_demo(verifier_preprocessing);
 
     let now = Instant::now();
-    let (output, proof, program_io) = prove_advice_demo(n, a.clone(), b.clone());
+    let (output, proof, program_io) = match memory_budget {
+        None => {
+            let prove_advice_demo = guest::build_prover_advice_demo(program, prover_preprocessing);
+            prove_advice_demo(n, a.clone(), b.clone())
+        }
+        Some(budget) => {
+            let prove_advice_demo = guest::build_budgeted_prover_advice_demo(
+                program,
+                prover_preprocessing,
+                Some(budget),
+            );
+            prove_advice_demo(n, a.clone(), b.clone())?
+        }
+    };
     let prove_time = now.elapsed();
     info!("Prover runtime: {} s", prove_time.as_secs_f64());
 
@@ -31,4 +55,5 @@ pub fn main() {
     info!("Trace length: {} cycles", trace_length_advice);
 
     assert!(is_valid_advice, "Proof verification failed");
+    Ok(())
 }
