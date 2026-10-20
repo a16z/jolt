@@ -1,8 +1,8 @@
-//! CUDA advice and bytecode reduction alongside optimized kernels and host witnesses.
+//! CUDA precommitted claim reduction alongside optimized kernels and host witnesses.
 //!
-//! [`JoltBackend::cuda`] replaces the advice and committed-bytecode cycle/address
-//! slots in the optimized registry. [`CudaDoryScheme`] selects the PCS separately
-//! and currently forwards to CPU Dory with shared proof and setup types.
+//! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
+//! cycle/address slots in the optimized registry. [`CudaDoryScheme`] selects the
+//! PCS separately and currently forwards to CPU Dory with shared proof and setup types.
 //!
 //! The shared CUDA runtime owns process-wide device contexts and compiled
 //! modules. [`DeviceFrVec`] stores BN254 Montgomery limbs on its owning stream;
@@ -125,6 +125,9 @@
 //! Committed bytecode uses the canonical host coefficient builder. CUDA forms
 //! the lane-weighted equality grid on device in the requested polynomial order,
 //! then permutes both rows for the shared cycle/address reduction engine.
+//! Program-image reductions upload padded words as field elements and compute
+//! shifted RAM equality weights per entry on device. Optimized builds those
+//! weights in aligned blocks and permutes words before field conversion.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -137,6 +140,7 @@ mod common;
 mod dory;
 #[cfg(test)]
 mod instruction_read_raf;
+mod program_image_claim_reduction;
 #[cfg(test)]
 mod registers_read_write;
 
@@ -172,7 +176,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Replace advice and committed-bytecode slots with CUDA implementations.
+    /// Replace precommitted cycle/address slots with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -183,9 +187,11 @@ where
         backend.trusted_advice_cycle = Box::new(CudaBackend);
         backend.untrusted_advice_cycle = Box::new(CudaBackend);
         backend.bytecode_reduction_cycle = Box::new(CudaBackend);
+        backend.program_image_reduction_cycle = Box::new(CudaBackend);
         backend.trusted_advice_address = Box::new(CudaBackend);
         backend.untrusted_advice_address = Box::new(CudaBackend);
         backend.bytecode_reduction_address = Box::new(CudaBackend);
+        backend.program_image_reduction_address = Box::new(CudaBackend);
         backend
     }
 }

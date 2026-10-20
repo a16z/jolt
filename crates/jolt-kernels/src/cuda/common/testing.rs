@@ -334,6 +334,7 @@ fn committed_bytecode(rows: usize) -> Vec<JoltInstructionRow> {
 pub struct CommittedProgramFixture {
     pub plane: FixedPlane,
     pub bytecode_len: usize,
+    pub image_words: Vec<u64>,
 }
 
 pub fn committed_program_plane(
@@ -361,7 +362,7 @@ pub fn committed_program_plane(
         bytecode,
         ram: RAMPreprocessing {
             min_bytecode_address,
-            bytecode_words: words,
+            bytecode_words: words.clone(),
         },
         memory_layout: MemoryLayout::default(),
         max_padded_trace_length: 1,
@@ -374,5 +375,6 @@ pub fn committed_program_plane(
             program,
         ),
         bytecode_len,
+        image_words: words,
     }
 }

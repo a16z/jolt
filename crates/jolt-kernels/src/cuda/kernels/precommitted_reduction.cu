@@ -45,6 +45,32 @@ extern "C" __global__ void pcr_lane_eq_kernel(const u64 *__restrict__ lane_weigh
     store4(out + (unsigned long long)i * LIMBS, product);
 }
 
+extern "C" __global__ void pcr_shift_eq_kernel(const u64 *__restrict__ challenges_be,
+                                               unsigned int num_vars, unsigned int start_index,
+                                               unsigned int domain_mask, unsigned int table_len,
+                                               u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= table_len) return;
+    unsigned int index = (start_index + i) & domain_mask;
+    u64 acc[LIMBS];
+    load4(FR_ONE, acc);
+    for (unsigned int bit = 0; bit < num_vars; bit++) {
+        u64 challenge[LIMBS], factor[LIMBS], product[LIMBS];
+        load4(challenges_be + (unsigned long long)bit * LIMBS, challenge);
+        unsigned int shift = num_vars - 1 - bit;
+        if ((index >> shift) & 1u) {
+            for (int l = 0; l < LIMBS; l++) factor[l] = challenge[l];
+        } else {
+            u64 one[LIMBS];
+            load4(FR_ONE, one);
+            fr_sub(one, challenge, factor);
+        }
+        fr_mul(acc, factor, product);
+        for (int l = 0; l < LIMBS; l++) acc[l] = product[l];
+    }
+    store4(out + (unsigned long long)i * LIMBS, acc);
+}
+
 extern "C" __global__ void pcr_place_row_kernel(const u64 *__restrict__ src,
                                                 const unsigned int *__restrict__ new_lsb_to_old_lsb,
                                                 unsigned int num_vars, unsigned int permute,

@@ -489,6 +489,34 @@ pub fn lane_cycle_eq(
     Ok(out)
 }
 
+pub fn shifted_block_eq(
+    context: &'static CudaKernelContext,
+    challenges_be: &[Fr],
+    start_index: usize,
+    domain_mask: usize,
+    table_len: usize,
+) -> Result<DeviceFrVec, CudaError> {
+    let challenges = context.upload(challenges_be)?;
+    let mut out = context.alloc(table_len)?;
+    let count = CudaKernelContext::count_of(table_len)?;
+    let num_vars = CudaKernelContext::count_of(challenges_be.len())?;
+    let start = CudaKernelContext::count_of(start_index)?;
+    let mask = CudaKernelContext::count_of(domain_mask)?;
+    let mut builder = context.stream().launch_builder(context.pcr_shift_eq());
+    let _ = builder.arg(challenges.limbs());
+    let _ = builder.arg(&num_vars);
+    let _ = builder.arg(&start);
+    let _ = builder.arg(&mask);
+    let _ = builder.arg(&count);
+    let _ = builder.arg(out.limbs_mut());
+    // SAFETY: thread `i < table_len` reads `challenges_be[bit]` for
+    // `bit < num_vars`, inside the uploaded `num_vars` elements, and writes only
+    // `out[i]` of the `table_len` just allocated. `index` is masked to the RAM
+    // domain, so the per-bit product visits exactly `num_vars` factors.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+    Ok(out)
+}
+
 pub fn reclaim_carry<F: JoltField, R: 'static>(
     session: &mut ProofSession,
     missing: &'static str,

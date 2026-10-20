@@ -52,6 +52,7 @@ pub struct CudaKernelContext {
     lt_reconstruct: CudaFunction,
     pcr_round: CudaFunction,
     pcr_lane_eq: CudaFunction,
+    pcr_shift_eq: CudaFunction,
     pcr_place_row: CudaFunction,
     #[cfg(test)]
     dense_product_round: CudaFunction,
@@ -256,6 +257,7 @@ impl CudaKernelContext {
             lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
             pcr_round: module.load_function("pcr_round_kernel")?,
             pcr_lane_eq: module.load_function("pcr_lane_eq_kernel")?,
+            pcr_shift_eq: module.load_function("pcr_shift_eq_kernel")?,
             pcr_place_row: module.load_function("pcr_place_row_kernel")?,
             #[cfg(test)]
             dense_product_round: module.load_function("dense_product_round_kernel")?,
@@ -662,6 +664,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn pcr_lane_eq(&self) -> &CudaFunction {
         &self.pcr_lane_eq
+    }
+
+    pub(crate) const fn pcr_shift_eq(&self) -> &CudaFunction {
+        &self.pcr_shift_eq
     }
 
     pub(crate) const fn pcr_place_row(&self) -> &CudaFunction {
