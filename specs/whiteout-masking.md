@@ -4,7 +4,7 @@
 | --------- | ----------------------------------------------------------------- |
 | Author(s) | @markosg04                                                        |
 | Created   | 2026-10-19                                                        |
-| Status    | design note, awaiting review                                      |
+| Status    | reviewed; implementation in progress                              |
 | Parent    | `specs/shared-primitive-layer.md`, `specs/whiteout-interfaces.md` |
 
 ## Summary
@@ -14,30 +14,37 @@ and BlindFold proves an R1CS with one variable block per round. M6b adds
 `jolt-zk::masking`: every private field message is sent as m̂ = m + p with p
 committed before the first challenge (Whiteout §3.2, §4.1). M6c makes
 BlindFold the first `ZkBackend`, proving the residual relation over (pads,
-residual witness) with the existing Nova fold. Clear proofs are unchanged.
+residual witness) with the existing Nova fold. M6b and M6c land as one stack.
+Clear proofs, clear fixtures and Akita fixtures are byte-identical.
 
 ## Pad accounting
 
 Masked messages are exactly the `PrivateChannel` messages clear mode sends
-(interfaces §2), so the masked transcript has the clear shape plus one
-auxiliary block:
+(interfaces §2), at their clear positions, plus one auxiliary block:
 
 - every wire coefficient of compressed rounds (degree d: d values) and all
   coefficients of the two uni-skip rounds;
-- every `Sent` and `Staged` output-claim cell and the uni-skip output claims
-  (aliases take no slot);
-- the auxiliary block: one slot per intermediate product (below).
+- every `Sent` output-claim cell, the uni-skip output claims, and the stage-4
+  `Staged` cells at their clear position before the stage-4 batch;
+- the auxiliary block: one slot per symbolic intermediate product.
 
-Derived claims (batch input claims, stage 8's scaled values) go through
-`bind_derived` and are not sent. Stage 8's joint evaluation stays in Dory's
-hiding evaluation commitment: Dory's cut point (parent §7).
+Static aliases take no slot. The stage-6b booleanity `bytecode_ra` route is
+decided by a runtime point equality (`Stage6bOutputPoints::claim_routes`), so
+ZK mode never aliases those cells: each gets its own slot, and when the
+runtime route says `Alias` the residual adds the equality row
+(cell − source = 0). Clear routing is untouched.
 
-`jolt_verifier::pad_layout(&CheckedInputs, &JoltFormulaDimensions)` is the one
-derivation, built from the per-stage shape tables (relation objects from
-`new(dimensions)`, batch statements, `CommittedClaimLayout`) that the stage
-verifiers and the residual lowering also consume. Both roles call it and
-check `cursor == num_pads` at the end with a typed error, so a derivation
-bug costs completeness, never soundness.
+Derived claims (batch input claims) go through `bind_derived` and are not
+sent. Stage 8 follows today's ZK path (`verify_zk`, `ZkEvaluationClaim`):
+the joint evaluation stays in Dory's hiding evaluation commitment, Dory's
+cut point (parent §7).
+
+`pad_layout` in `jolt-verifier` is the one derivation. It counts base slots
+from the per-stage shape tables (relation objects from `new(dimensions)`,
+batch statements, claim layouts) and auxiliary slots by running the residual
+lowering in shape mode (below). Both roles call it. The final
+`cursor == num_pads` check is diagnostic only; soundness rests on the
+lowering emitting a row for every clear check.
 
 Pads are base-field coordinates: an extension element at slot `s` takes
 `s..s+E::DEGREE` in `ExtField` coefficient order. Jolt/Dory has `E = F`.
@@ -46,111 +53,124 @@ Pads are base-field coordinates: an extension element at slot `s` takes
 
 Preamble and trace commitments are unchanged. A new `PADS` site follows
 `absorb_public_commitments`, before stage 1's first challenge: ⌈P/L⌉
-Pedersen row commitments, L the BlindFold witness row length (a power of two
-≤ the VC capacity). Stages 1–7 carry m̂ in place of each private value, with
-the clear challenges. Stage 8 (Dory ZK opening), the checkpoint, the masked
-auxiliary block, then the BlindFold tail.
+Pedersen row commitments, each with its own independent blind (a shared
+blind would make C_i − C_j an unblinded commitment to p_i − p_j), sent and so
+absorbed. L is `VC::capacity(setup)`, lower-bounded by
+`MAX_BLINDFOLD_GENERATORS`. Stages 1–7 carry m̂ in place of each private
+value, with the clear challenges. Then stage 8, the checkpoint, the masked
+auxiliary block, and the BlindFold tail.
 
-Only `ZkBackend::commit_pads` builds `CommittedPads`, and only
-`receive_pad_commitment` builds `CommittedPadsView`. The masking channels
-borrow a transcript and one of these: the prover sends m̂ and advances the
-cursor; the verifier fills m̂ and returns `PadSlots`. ZK stage verifiers
-record `(m̂, slots)` and check nothing hidden.
+Only `ZkBackend::commit_pads` builds `CommittedPads` (pads, cursor, pad
+opening data), and only `receive_pad_commitment` builds
+`CommittedPadsView<PadCommitment>` (no blind). The prover's masking
+`SumcheckRecorder` owns `&mut CommittedPads`; the verifier threads
+`&mut CommittedPadsView` through the ZK drivers only. The recorder type, not
+a flag, decides which hidden-value checks are skipped. Clear `verify`
+signatures stay concrete; only leaf readers (`round_proof`, sumcheck
+verifier, `receive_member_claims`, `uniskip`, `ram_val_check`) are generic
+over `C: PrivateChannel` with `C::Error: From<TranscriptError>`.
 
 ## Residual rows for Jolt's stages
 
-`jolt-verifier/src/stages/zk/` implements `ResidualRows`, replacing the
-`BlindFoldStatement` construction. Checks are evaluated over affine forms in
-the pads; only zero outputs become rows.
+`jolt-verifier/src/stages/zk/` implements `ResidualRows`. Checks are
+evaluated over affine forms in the pads; zero outputs become rows. A row
+whose pad coefficients cancel but whose constant is nonzero is kept (it is
+unsatisfiable), never dropped.
 
 - **Compressed rounds:** weights from `SumcheckDomain::round_sum_coefficients`;
-  c₁ is solved from the running claim, and v_i = Σ c_j r_iʲ stays affine. No
-  rows.
-- **Uni-skip:** one explicit row each (power sums · coefficients = input claim).
-- **Claims** (`jolt-claims` expressions): the batched input claim is affine;
-  v_n = Σ_k β_k · output_k is one row per stage.
-- **Products:** a monomial with d ≥ 2 hidden factors becomes d−1 `ProductRow`s
-  whose x is a masked slot (an opening or the previous auxiliary slot) and
-  whose z is a new auxiliary slot. Sources: RA virtualization (∏ of chunk
-  evaluations), booleanity, read-write terms, Spartan's τ·Az·Bz.
-- **Stage 8:** y − Σ γ_i scale_i (m̂_i − p_i) = 0, y = `ResidualVar::Witness(0)`.
+  c₁ is solved from the running claim; v_i = Σ c_j r_iʲ stays affine. No rows.
+- **Uni-skip:** two rows each: Σ_D f = input claim, and
+  (v̂ − p_v) − Σ_j (ĉ_j − p_j) r₀ʲ = 0 (the clear check of `uniskip.rs`).
+- **Claims:** the batched input claim is affine; v_n = Σ_k β_k · output_k is
+  one row per stage.
+- **Products:** `jolt-claims` expressions become factored: Σ coeff · ∏ affine
+  factors. `output_expression` is derived from it by expansion, so each
+  relation has one formula and clear bytes are unchanged. Spartan outer,
+  instruction read-RAF and the Spartan product remainder are ported; monomial
+  relations factor trivially. A term with factors f₁…f_d becomes a chain:
+  a factor that is not a single masked slot gets an auxiliary slot and a
+  defining affine row; then d−1 `ProductRow`s with x a masked slot and z a new
+  auxiliary slot. Slots are allocated per symbolic factor and term, never
+  skipped because a coefficient happens to be zero.
+- **Stage 8** belongs to the back end's PCS integration in `jolt-prover` /
+  `jolt-verifier`, not to the stage-agnostic lowering: for Dory,
+  y − Σ γ_i scale_i (m̂_i − p_i) = 0 with y = `ResidualVar::Witness(0)`.
 
-The prover computes auxiliary values after its verifier replay through stage
-8, with the same lowering over decoded m = m̂ − p, and sends them masked.
+The lowering is generic over its value domain: symbolic shape (layout),
+affine forms (verifier rows), decoded values (prover auxiliary values). The
+prover never restates it. **A1:** the auxiliary block comes after stage 8.
+This is sound because auxiliary slots form an acyclic chain, each defined by
+exactly one product row or defining affine row whose inputs are earlier
+slots, and no base-protocol challenge depends on them.
 
 ## BlindFold lowering
 
 `AffineRow` → A = Σa_k x_k + b·u, B = u, C = 0. `ProductRow` →
-A = u·m̂_x − p_x, B = y, C = z; m̂ and challenges are matrix constants.
-W = [pad rows | dedicated y and ρ rows | padding]. The relaxed instance's
-pad-row commitments are the transcript's `PADS` commitments, never
-recommitted (this replaces reusing round commitments). Fold, outer/inner
-sumchecks, and the eval-commitment check are unchanged.
-`BlindFold::Witness = (y, ρ)`.
+A = u·m̂_x − p_x, B = y, C = z, where the constants of y and z also multiply
+u (homogenized for the folded u ≠ 1 instance). W = [pad rows | dedicated y
+and ρ rows | padding]. The relaxed instance's pad-row commitments are the
+transcript's `PADS` commitments, never recommitted. The random instance is
+regenerated for this layout: fresh uniform rows and blinds for every pad row
+and for the y/ρ rows. `BlindFold::Witness = (y, ρ)`;
+`ResidualCommitment` is Dory's hiding evaluation commitment.
+
+Whiteout will be `Whiteout<R: ResponseProver<F>>` with R reached through
+`Setup`, since `ResponseProver` is not dyn-compatible.
 
 ## Deleted
 
 - `jolt-sumcheck`: `committed.rs`, `r1cs.rs`, the `committed`/`r1cs`
-  features, `CommittedSumcheckRecorder`, `prove_uniskip_committed`,
-  `verify_committed`, the committed consistency/claim types, `tests/committed.rs`,
-  and the optional `jolt-crypto`/`jolt-r1cs`/`rand_core` dependencies.
-- `jolt-claims::r1cs` (only `jolt-zk` used it) and its fuzz target.
-- `jolt-zk`: `statements.rs`, `builder.rs`, `assignment.rs`, the stage layout
-  in `r1cs.rs`.
+  features and optional deps, `CommittedSumcheckRecorder`,
+  `prove_uniskip_committed`, `verify_committed`'s commitment path, the
+  committed consistency/claim types, committed cases in `tests.rs`,
+  `tests/committed.rs`.
+- `jolt-claims::r1cs` and the `claim_lowering_equivalence` fuzz target.
+- `jolt-zk`: `statements.rs`, `builder.rs`, `assignment.rs`, the stage
+  layout in `r1cs.rs`, the old `BlindFoldDimensions` rows and
+  `FoldingCommitments` fields, and the pipeline/real-prover tests with their
+  support module.
+- `jolt-verifier`: `stages/zk/{inputs,outputs}.rs`, the commitment ZK
+  branches of `stage{1..7}`, `CommittedClaimLayout` and its helpers,
+  `CheckedInputs::committed_row_len`, derive's `committed_claim_layout`.
 - `jolt-prover`: `ZkStageWitnesses`, `STAGE_DOMAINS`, `ClaimRecorder`, the ZK
-  fields of `ProvedUniskipMode`. Commitments in `Stage*ZkOutput` and
-  `jolt-verifier-derive`'s ZK drivers become masked records.
+  fields of `ProvedUniskipMode`, `tests/engine_twins.rs`.
+- `specs/jolt-prover-blindfold.md`'s per-round design and the book page.
 
-Regenerated: ZK fixtures, the golden-shape test, the FS inventory, and the
-committed-recorder profiling spans (a taxonomy change).
+Regenerated: ZK fixtures (renamed, since fixtures are cached by name), the
+golden-shape test, the FS inventory, profiling spans.
 
 ## Security sketch
 
-**Soundness.** Pedersen binding fixes p before the first challenge, so every
-decoded m = m̂ − p precedes the challenge after it (§4.1). BlindFold's
-extractor gives W satisfying the R1CS whose pad segment opens `PADS`, so it
-equals p. The curve analogue of Lemma `wo:lem:residual-correct` (products are
-native gates: no constant-term lift, no scalarity rows) decodes an accepting
-clear transcript with the same challenges, prefix-preserving. The y row and
-Dory's ZK opening bind the final evaluation; clear Jolt soundness finishes.
+**Soundness.** PADS binding is computational (DLog): it fixes p before the
+first challenge, so each decoded m = m̂ − p precedes the next challenge
+(§4.1). BlindFold's extractor gives W satisfying the R1CS whose pad segment
+opens `PADS`, so it equals p. The curve analogue of Lemma
+`wo:lem:residual-correct` (products are native gates: no constant-term lift,
+no scalarity rows) decodes an accepting clear transcript with the same
+challenges, prefix-preserving. The y row and Dory's ZK opening bind the
+final evaluation; clear Jolt soundness finishes. A structural test perturbs
+each m̂_i with challenges fixed and asserts some row breaks.
 
 **Zero knowledge** (Theorem `wo:thm:zk`, fewer hybrids, no retries):
-perfectly hiding Pedersen makes `PADS` and the folded commitments
-independent of p; one-time uniform pads make m̂ uniform; Dory's opening and
-the NovaBlindFold tail are simulated by their own simulators.
+per-row-blinded Pedersen hides p; one-time uniform pads make m̂ uniform; the
+folded witness W″ = W + rW′ is uniform; the folded opening reveals
+y + r·y′ and ρ + r·ρ′ only; Dory's and BlindFold's simulators share y_com.
+Pre-existing leakage is unchanged: the `ProofHeader` fields, and preprocessing
+commitments are ZK only relative to themselves.
 
-## Cost (muldiv, T = 2¹⁰, estimated from today's golden shape)
+## Cost (muldiv, T = 2¹⁰, estimates)
 
-Today's per-stage ZK messages are 243 G1 (227 rounds + 16 claim rows), about
-7.8 KB. Masking sends ~600 coefficients and ≤512 claims (~35 KB of field
-elements, about the clear proof's message bytes) plus ~35 pad rows (1.1 KB):
-**ZK proofs grow by about 25–30 KB**, scaling with rounds (log T). Monomial
-lowering of τ·Az·Bz gives ~n² products (n ≈ 30–40): today's 37 auxiliary rows
-(~1.1k values) would become ~35 KB of slots; factored lowering cuts that to a
-handful (A2). The tail shrinks: the witness drops from 280 mostly padding
-rows to ~35–70 dense rows, with far fewer constraints and error rows. Prover
-commitment work stays ~P scalar multiplications; masking adds P additions.
-M6c records exact numbers from the regenerated fixture.
+Masked field messages (~600 coefficients, ≤512 claims) replace 243 G1;
+today's `FoldingCommitments` tail (~14 KB) becomes ~2 KB; factored lowering
+leaves ~100 auxiliary slots (~3 KB). Net ZK proof growth ≈ +15 KB. The
+BlindFold prover should get faster (dense witness, far fewer constraints).
+M6c measures and reports the real numbers.
 
-## Ambiguity register
+## Open questions
 
-- **A1 Auxiliary timing.** The paper sends a product "before any challenge
-  that uses it"; here all go in one block after stage 8. No base challenge
-  uses them and product rows determine them from earlier slots, so decoding
-  stays prefix-preserving, and the prover can compute them from its replay.
-- **A2 Factored lowering.** `Expr` is monomial. Proposed: a `jolt-claims`
-  sum-of-products-of-affine-factors form, starting from the existing
-  `output_factor_expressions`; an affine x factor gets an auxiliary slot and a
-  defining row (§3.2). Fallback, auxiliary values as BlindFold-only witness,
-  forks the lowering per back end (I7).
-- **A3 Interface fixes.** `CommittedPadsView` is parameterized by the pad
-  commitment, not `Blind`; `verify` takes the view and the residual
-  commitment (Dory's hiding evaluation commitment). M6c updates interfaces §5.
-- **A4** `ZkError::FoldOverflow` has no producer before W2; add it there.
-- **A5** Extension row expansion and `PadLayout::operand_pads` have no M6c
-  caller (`E = F`, no scalarity rows). Defer to W3/W4, or derive
-  `operand_pads` from `products[].x`. Needs an owner ruling against M6b's
-  acceptance criteria.
-- **A6** Uni-skip output claims are derivable, but clear bytes send them, so
-  masked mode does too (two slots, two rows).
-- **A7** L depends on the VC capacity (32 or 64 by feature).
+- Pinning L independently of the setup: `MAX_BLINDFOLD_GENERATORS`' uni-skip
+  rationale disappears, since rounds no longer occupy witness rows.
+- Deferred: `ZkError::FoldOverflow` (W2); extension-to-base row expansion
+  (W3; the masking channel already implements extension methods with
+  per-coefficient pads); `operand_pads` (W4, from the same shape routine, with
+  a release check that every `ProductRow.x.pad ∈ operand_pads`).
