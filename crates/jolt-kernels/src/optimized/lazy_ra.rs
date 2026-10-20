@@ -45,7 +45,7 @@ use jolt_poly::{BindingOrder, Polynomial};
 use rayon::prelude::*;
 
 /// The default widest lazy branch set: the fourth bind materializes `T/16`.
-const DEFAULT_MAX_WIDTH: usize = 8;
+pub(super) const DEFAULT_MAX_WIDTH: usize = 8;
 
 /// Per-cycle hot indices of `N` point-mass columns (one per committed
 /// one-hot selector, or `factors` per factored polynomial) over a shared

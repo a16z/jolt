@@ -3,7 +3,6 @@
 //! one generation of values, collected in stage 2 and again in stage 4.
 
 use core::marker::PhantomData;
-use core::mem::MaybeUninit;
 use std::sync::Arc;
 
 use jolt_field::JoltField;
@@ -21,15 +20,8 @@ use crate::{KernelError, ProofSession};
 
 const SPLIT_CHUNK: usize = 1 << 16;
 
+#[cfg(feature = "parallel")]
 const PAR_CHUNK: usize = 1 << 14;
-
-/// One parallel chunk's slots in each of the `N` columns being collected.
-type ChunkViews<'a, T, const N: usize> = [&'a mut [MaybeUninit<T>]; N];
-
-/// Chunks the parallel collector splits `cycles` rows into.
-fn par_chunk_count(cycles: usize) -> usize {
-    cycles.div_ceil(PAR_CHUNK).max(1)
-}
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
@@ -189,17 +181,19 @@ where
     B: WitnessBundle + Copy + Send + Sync,
     T: Copy + Send + Sync,
 {
+    use core::mem::MaybeUninit;
     let mut columns: [Vec<T>; N] = core::array::from_fn(|_| Vec::with_capacity(cycles));
-    let chunk_count = par_chunk_count(cycles);
+    let chunk_count = cycles.div_ceil(PAR_CHUNK).max(1);
     let error = FirstErrorLatch::new();
     {
-        let mut chunk_views: Vec<ChunkViews<'_, T, N>> = Vec::with_capacity(chunk_count);
-        let mut rests: ChunkViews<'_, T, N> = columns
+        let mut chunk_views: Vec<[&mut [MaybeUninit<T>]; N]> = Vec::with_capacity(chunk_count);
+        let mut rests: [&mut [MaybeUninit<T>]; N] = columns
             .each_mut()
             .map(|column| &mut column.spare_capacity_mut()[..cycles]);
         for chunk_index in 0..chunk_count {
             let take = PAR_CHUNK.min(cycles - chunk_index * PAR_CHUNK);
-            let mut views: ChunkViews<'_, T, N> = core::array::from_fn(|_| Default::default());
+            let mut views: [&mut [MaybeUninit<T>]; N] =
+                core::array::from_fn(|_| Default::default());
             for (view, rest) in views.iter_mut().zip(rests.iter_mut()) {
                 let (head, tail) = core::mem::take(rest).split_at_mut(take);
                 *view = head;
@@ -277,19 +271,6 @@ impl RamAccessColumns {
             pre_values,
             post_values,
         })
-    }
-
-    /// Bytes of the chunk views the parallel collector requests beside the
-    /// value columns while [`Self::collect_full`] collects them over
-    /// `2^log_t` cycles, released before it returns. Without `parallel`
-    /// there is no parallel collector and no views.
-    pub(crate) fn chunk_view_bytes(log_t: usize) -> usize {
-        if cfg!(feature = "parallel") {
-            par_chunk_count(access_column_rows(log_t))
-                .saturating_mul(size_of::<ChunkViews<'static, u64, 2>>())
-        } else {
-            0
-        }
     }
 
     /// Recover initial values from each address's first access; untouched

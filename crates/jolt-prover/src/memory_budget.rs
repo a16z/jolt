@@ -57,8 +57,8 @@ macro_rules! member_peak_bytes {
     ($F:ty, $log_t:ident, $registers:ident, instruction_claim_reduction) => {
         OptimizedInstructionClaimReduction::post_prepare_peak_bytes::<$F>($log_t)
     };
-    // Priced beside the stage-4 fold with stage 4's RAM access columns, from
-    // preparation through the first bind (`ram_val_check::first_bind_bytes`).
+    // Priced beside the stage-4 fold at its largest scalar windows, stage 4's
+    // RAM access columns included (`ram_val_check::scalar_window_bytes`).
     ($F:ty, $log_t:ident, $registers:ident, ram_val_check) => {
         0
     };
@@ -142,12 +142,12 @@ impl MemoryBudget {
     /// one RAM term in each of stages 2–5: the RAM read-write kernel through
     /// its first bind in stage 2, the RAM access columns that may still be
     /// held in stages 3 and 5 ([`ram_access_columns_bytes`]), and the value
-    /// check through its first bind in stage 4. Stage 4 prices the register
-    /// read/write kernel of the configured phase order with the `rd` indices
-    /// it parks, stage 5 the value evaluation that takes them over. Summing
-    /// peaks exceeds the batch's true simultaneous maximum by at most the
-    /// members' transients that do not coincide: `O(√T)` in stage 3, while in
-    /// stage 4 the register peak and the value check's first-bind window need
+    /// check's scalar tables at their largest in stage 4. Stage 4 prices the
+    /// register read/write kernel of the configured phase order with the `rd`
+    /// indices it parks, stage 5 the value evaluation that takes them over.
+    /// Summing peaks exceeds the batch's true simultaneous maximum by at most
+    /// the members' transients that do not coincide: `O(√T)` in stage 3, while
+    /// in stage 4 the register peak and the value check's largest window need
     /// not be live at once.
     ///
     /// Stage 2 instead pairs the instruction claim reduction with RAM by
@@ -178,13 +178,18 @@ impl MemoryBudget {
     /// prepare returns (address-first) or queues them for a background drop
     /// at its first bind (cycle-first); no stage boundary waits for that drop.
     /// Stages 3 and 5 therefore still reserve that generation. Stage 4
-    /// reserves the value check from its preparation through its first bind
-    /// ([`ram_val_check::first_bind_bytes`]): that generation, the second pair
-    /// of value columns the check collects and drops at its second bind,
-    /// before stage 5, and the larger of its collector's chunk views and its
-    /// address and split-LT tables. These allowances cover storage a queued
-    /// drop may still hold, not observed co-liveness, so they can reject a
-    /// request even when the drop has already run.
+    /// reserves the value check's scalar tables at the larger of their two
+    /// largest windows ([`ram_val_check::scalar_window_bytes`]), each with that
+    /// generation: the second bind, beside the second pair of value columns
+    /// the check collects and drops right after, and the fourth bind. Under
+    /// `parallel` the check queues its last address table for a background
+    /// drop at the fourth bind, and its remaining tables with the kernel at
+    /// the stage's end. Stage 5 does not add them: by source derivation, not
+    /// by any check, stage 4's reservation exceeds stage 5's with them
+    /// throughout the value check's canonical domain, and a change to either
+    /// stage reopens that. Stages 6–8 are not priced. These allowances cover
+    /// storage a queued drop may still hold, not observed co-liveness, so they
+    /// can reject a request even when the drop has already run.
     ///
     /// Passing does not mean the proof fits: this checks a partial set of
     /// named requests, not whole-memory admission, and the reservation is
@@ -193,22 +198,22 @@ impl MemoryBudget {
     /// them the output-check and RA claim-reduction kernels', the instruction
     /// read-RAF, and the field-register kernels, stage 2's field-inline claim
     /// reduction included); the RAM read-write and RAF kernels' later binds
-    /// and the matrices, conversions and copies they create; the value check's
-    /// allocations after its first bind and its `Vec` and `Arc` headers, and
-    /// stages 6–8; storage queued for a background drop other than the RAM
-    /// value columns above, such as each kernel released at its stage's end,
-    /// the eq and split-eq tables the RAM read-write kernel retires and the
-    /// register seed entries after the second cycle bind; the other kernels'
-    /// split-eq tables (the product remainder's among them) and round
-    /// challenges, round messages, streamed-collect extraction buffers and the
-    /// row collects that kernels fall back to without random-access rows or
-    /// parked `rd` indices; kernel control state such as boxes, maps and
-    /// shared handles; uni-skip and field-inline carries, the driver's output
-    /// points, stage outputs and the recorder; the caller's program,
-    /// preprocessing and PCS setup, commitment and opening state, and
-    /// BlindFold; allocator state, retention and the macOS purge's cache-pump
-    /// requests; the trace output's final memory image, I/O device and advice
-    /// tape; and the tracer, which has already run.
+    /// and the matrices, conversions and copies they create, and stages 6–8;
+    /// storage queued for a background drop other than the RAM value columns
+    /// and the value check's tables above, such as each other kernel released
+    /// at its stage's end, the eq and split-eq tables the RAM read-write
+    /// kernel retires and the register seed entries after the second cycle
+    /// bind; the other kernels' split-eq tables (the product remainder's among
+    /// them) and round challenges, round messages, streamed-collect extraction
+    /// buffers and the row collects that kernels fall back to without
+    /// random-access rows or parked `rd` indices; kernel control state such as
+    /// boxes, maps, `Vec` and `Arc` headers, Rayon jobs and shared handles;
+    /// uni-skip and field-inline carries, the driver's output points, stage
+    /// outputs and the recorder; the caller's program, preprocessing and PCS
+    /// setup, commitment and opening state, and BlindFold; allocator state,
+    /// retention and the macOS purge's cache-pump requests; the trace output's
+    /// final memory image, I/O device and advice tape; and the tracer, which
+    /// has already run.
     pub fn check_known_eager<F: JoltField>(
         self,
         config: &ProverConfig,
@@ -232,7 +237,7 @@ impl MemoryBudget {
                 .saturating_add(ram_columns);
         let stage4 =
             jolt_verifier::stage4_sumchecks_members!(batch_peak_bytes F, log_t, registers;)
-                .saturating_add(ram_val_check::first_bind_bytes::<F>(log_t, config.ram_K));
+                .saturating_add(ram_val_check::scalar_window_bytes::<F>(log_t, config.ram_K));
         let stage5 =
             jolt_verifier::stage5_sumchecks_members!(batch_peak_bytes F, log_t, registers;)
                 .saturating_add(ram_columns);
@@ -259,6 +264,9 @@ mod tests {
     use jolt_akita::AkitaField;
     use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
     use jolt_field::{Fr, JoltField};
+    #[cfg(feature = "akita")]
+    use jolt_kernels::optimized::ram_read_write;
+    use jolt_kernels::optimized::ram_val_check;
     use jolt_poly::{BindingOrder, Polynomial};
     #[cfg(feature = "field-inline")]
     use jolt_program::execution::{FieldEvent, FieldInlineTraceData};
@@ -281,10 +289,11 @@ mod tests {
     /// requests below the trace's actual allocation.
     const RESERVED_ROWS: usize = 1 << 24;
     const TRACE_BYTES: usize = RESERVED_ROWS * size_of::<JoltTraceRow>();
+    const RAM_K: usize = 64;
 
     fn config<F: JoltField>(log_t: usize) -> ProverConfig {
         let cycles = 1 << log_t;
-        ProverConfig::from_padded_dimensions::<F>(cycles, 64, cycles).unwrap()
+        ProverConfig::from_padded_dimensions::<F>(cycles, RAM_K, cycles).unwrap()
     }
 
     /// `2^log_t` default rows in a buffer reserved at `RESERVED_ROWS`.
@@ -404,11 +413,12 @@ mod tests {
         increments.into_evals().capacity()
     }
 
-    /// The RAM access columns stage 4 may hold over `cycles` cycles: the
-    /// session's `u32` address column and two pairs of `u64` value columns,
-    /// the value check's own and stage 2's awaiting its background drop.
-    fn stage_four_ram_columns(cycles: usize) -> usize {
-        cycles * (size_of::<u32>() + 2 * 2 * size_of::<u64>())
+    /// Stage 4's RAM term beside the register state, as the check prices it
+    /// over `2^log_t` cycles and the fixture's addresses. With the value
+    /// check's input columns alone instead, the floors below would leave its
+    /// scalar tables, more than the register increments' storage, as slack.
+    fn stage_four_ram<F: JoltField>(log_t: usize) -> usize {
+        ram_val_check::scalar_window_bytes::<F>(log_t, RAM_K)
     }
 
     /// The cycle-first stage-4 state over `2^log_t` cycles while the fourth
@@ -418,14 +428,14 @@ mod tests {
     /// register index columns (`rs1`, `rs2`, and `rd` parked for stage 5),
     /// the indexed generation's values and 25-byte packed metadata, the
     /// direct entries, the read LUT at 2^16 values and the write LUT at 2^8,
-    /// and the increments' storage; plus the RAM access columns and the trace.
+    /// and the increments' storage; plus stage 4's RAM term and the trace.
     fn cycle_first_transition_floor<F: JoltField>(
         log_t: usize,
         direct_entry_bytes: usize,
     ) -> usize {
         let (f, cycles) = (size_of::<F>(), 1usize << log_t);
         TRACE_BYTES
-            + stage_four_ram_columns(cycles)
+            + stage_four_ram::<F>(log_t)
             + 3 * 2 * cycles
             + 3 * cycles * (f + 25 + direct_entry_bytes)
             + ((1 << 16) + (1 << 8)) * f
@@ -435,11 +445,11 @@ mod tests {
     /// The address-first stage-4 handoff to the cycle rounds: 32-byte access
     /// rows, a 2048-byte increment checkpoint per 4096 cycles, the 2-byte `rd`
     /// indices parked for stage 5, 128 bound address weights and five
-    /// `T`-entry cycle tables; plus the RAM access columns and the trace.
+    /// `T`-entry cycle tables; plus stage 4's RAM term and the trace.
     fn address_first_handoff_floor<F: JoltField>() -> usize {
         let f = size_of::<F>();
         TRACE_BYTES
-            + stage_four_ram_columns(CYCLES)
+            + stage_four_ram::<F>(LOG_T)
             + 32 * CYCLES
             + CYCLES.div_ceil(4096) * 2048
             + 2 * CYCLES
@@ -581,56 +591,16 @@ mod tests {
         ));
     }
 
-    /// Stage 4 reserves the RAM value check's tables through its first bind
-    /// beside the register read/write peak, and its RAM access columns once.
-    /// Over `2^13` cycles, `2^12` addresses and exactly `2^13` reserved rows,
-    /// `interior` lies midway between the requirement without those tables
-    /// and the one with them, and `above` midway between that and a
-    /// requirement charging the access columns twice. These requirements
-    /// hold below the few hundred Rayon threads at which the register
-    /// round-1 scratch overtakes its fourth bind.
-    fn reserves_the_value_check_first_bind<F: JoltField>(interior: usize, above: usize) {
-        let config = ProverConfig::from_padded_dimensions::<F>(CYCLES, 1 << 12, CYCLES).unwrap();
-        let trace = TraceData::new(vec![JoltTraceRow::default(); CYCLES]);
-        assert_eq!(trace.heap_bytes(), CYCLES * 64);
-        assert!(
-            matches!(
-                check::<F>(interior, &config, &trace),
-                Err(ProverError::MemoryBudgetExceeded { .. })
-            ),
-            "budget {interior} without the value check's first-bind tables was admitted"
-        );
-        assert!(
-            check::<F>(above, &config, &trace).is_ok(),
-            "budget {above} above the reservation was rejected"
-        );
-    }
-
-    /// 7,585,936 bytes without the tables, 7,989,392 with them and 8,284,304
-    /// with the access columns twice.
-    #[test]
-    fn value_check_first_bind_fr() {
-        reserves_the_value_check_first_bind::<Fr>(7_787_664, 8_136_848);
-    }
-
-    /// 4,927,632, 5,129,360 and 5,424,272 bytes.
-    #[cfg(feature = "akita")]
-    #[test]
-    fn value_check_first_bind_akita_field() {
-        reserves_the_value_check_first_bind::<AkitaField>(5_028_496, 5_276_816);
-    }
-
-    /// Stage 2 prices the instruction claim reduction after its preparation
-    /// beside the RAM read-write kernel's preparation and first bind, never
-    /// the reduction's construction collector beside that bind: every member
-    /// prepares before any member binds. Over default rows at exact capacity
-    /// and a fixed 16-thread pool, `below` must be rejected and `above`
-    /// admitted.
+    /// Over default rows at exact capacity, so no field-event capacity, and a
+    /// fixed 16-thread pool, the check rejects `below` and admits `above`.
     #[cfg(feature = "parallel")]
-    fn pairs_stage_two_phases<F: JoltField>(config: &ProverConfig, below: usize, above: usize) {
+    fn rejects_below_and_admits_above<F: JoltField>(
+        config: &ProverConfig,
+        below: usize,
+        above: usize,
+    ) {
         let cycles = config.trace_length;
         let trace = TraceData::new(vec![JoltTraceRow::default(); cycles]);
-        // The rows at exact capacity and no field-event capacity.
         assert_eq!(trace.heap_bytes(), 64 * cycles);
         ThreadPoolBuilder::new()
             .num_threads(16)
@@ -642,41 +612,96 @@ mod tests {
                         check::<F>(below, config, &trace),
                         Err(ProverError::MemoryBudgetExceeded { .. })
                     ),
-                    "budget {below} below the stage-2 reservation was admitted"
+                    "budget {below} below the reservation was admitted"
                 );
                 assert!(
                     check::<F>(above, config, &trace).is_ok(),
-                    "budget {above} above the stage-2 reservation was rejected"
+                    "budget {above} above the reservation was rejected"
                 );
             });
     }
 
-    /// Cycle-first RAM over 2^17 cycles and 2^16 addresses: the check
-    /// requires 98,110,024 bytes, stage 2 its largest envelope. 92 MiB lies
-    /// below that and above the 96,126,128 bytes required without the
-    /// reduction's post-preparation storage; 94 MiB lies above it and below
-    /// the 119,571,608 bytes required with the reduction's construction
-    /// collector beside the first bind instead.
+    /// Stage 4 reserves the RAM value check's scalar tables at their largest
+    /// beside the register read/write peak: over 2^13 cycles and 2^12
+    /// addresses, the fourth bind's address tables of 8 and 16 entries per
+    /// address. The check requires 10,676,368 bytes. 10 MiB lies below that
+    /// and above the 7,989,392 bytes required with the first bind's tables
+    /// alone and the 9,627,792 bytes required without the 8-entry table;
+    /// 11 MiB lies above it and below the 12,773,520 bytes required with the
+    /// retired 16-entry table charged twice.
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn value_check_scalar_windows_fr() {
+        let config = ProverConfig::from_padded_dimensions::<Fr>(CYCLES, 1 << 12, CYCLES).unwrap();
+        rejects_below_and_admits_above::<Fr>(&config, 10 << 20, 11 << 20);
+    }
+
+    /// The same geometry requires 6,407,312 bytes: 5,129,360 with the first
+    /// bind's tables alone, 5,883,024 without the 8-entry table and 7,455,888
+    /// with the 16-entry table twice.
+    #[cfg(all(feature = "parallel", feature = "akita"))]
+    #[test]
+    fn value_check_scalar_windows_akita_field() {
+        let config =
+            ProverConfig::from_padded_dimensions::<AkitaField>(CYCLES, 1 << 12, CYCLES).unwrap();
+        rejects_below_and_admits_above::<AkitaField>(&config, 6 << 20, 7 << 20);
+    }
+
+    /// Stage 2 prices the instruction claim reduction after its preparation
+    /// beside the RAM read-write kernel's first bind, never the reduction's
+    /// construction collector beside that bind: every member prepares before
+    /// any member binds. Cycle-first RAM over 2^18 cycles and 2^12 addresses,
+    /// few enough that the value check keeps stage 4 below stage 2: the check
+    /// requires 183,995,096 bytes. 174 MiB lies below that and above the
+    /// 179,890,480 bytes required without the reduction's post-preparation
+    /// storage; 177 MiB lies above it and below the 226,936,016 bytes
+    /// required with the reduction's construction collector beside the first
+    /// bind instead.
     #[cfg(feature = "parallel")]
     #[test]
     fn stage_two_phase_pairing_cycle_first_fr() {
-        let config = ProverConfig::from_padded_dimensions::<Fr>(1 << 17, 1 << 16, 1 << 17).unwrap();
-        pairs_stage_two_phases::<Fr>(&config, 92 << 20, 94 << 20);
+        let config = ProverConfig::from_padded_dimensions::<Fr>(1 << 18, 1 << 12, 1 << 18).unwrap();
+        rejects_below_and_admits_above::<Fr>(&config, 174 << 20, 177 << 20);
     }
 
-    /// Address-first RAM over 2^13 cycles and 2^20 addresses, registers
-    /// still cycle-first: the check requires 60,564,688 bytes. 56 MiB lies
-    /// below that and above the 56,042,704 bytes required without the first
-    /// bind's half-length `K`-entry table copy; 58 MiB lies above it and below
-    /// the 61,395,456 bytes required with the reduction's construction
-    /// collector beside the first bind.
+    /// Address-first RAM over 2^14 cycles and 2^10 addresses, registers
+    /// still cycle-first: the check requires 11,466,032 bytes. 10 MiB lies
+    /// below that and above the 9,005,248 bytes required with the order
+    /// priced cycle-first; 12 MiB lies above it and below the 13,130,280
+    /// bytes required with the reduction's construction collector beside the
+    /// first bind.
     #[cfg(all(feature = "parallel", feature = "akita"))]
     #[test]
     fn stage_two_phase_pairing_address_first_akita_field() {
         let mut config =
+            ProverConfig::from_padded_dimensions::<AkitaField>(1 << 14, 1 << 10, 1 << 14).unwrap();
+        config.rw_config.ram_rw_phase1_num_rounds = 0;
+        config.rw_config.ram_rw_phase2_num_rounds = 10;
+        rejects_below_and_admits_above::<AkitaField>(&config, 10 << 20, 12 << 20);
+    }
+
+    /// Address-first RAM's first bind holds one half-length copy of a
+    /// `K`-entry table beside its bound entries. The copy outweighs the
+    /// bind's collect only from 64 addresses per cycle, where the value
+    /// check's stage 4 exceeds stage 2 in every canonical geometry, so a
+    /// missing copy never changes the check's requirement; this pins the
+    /// stage-2 RAM term the check consumes instead. Over 2^13 cycles and 2^20
+    /// addresses the term is 59,609,600 bytes. 56 MiB lies below it and above
+    /// the 55,087,616 bytes without the copy and the 53,252,776 bytes priced
+    /// cycle-first; 58 MiB lies above it and below the 67,998,208 bytes with
+    /// two copies at once.
+    #[cfg(feature = "akita")]
+    #[test]
+    fn address_first_half_copy_akita_field() {
+        let mut config =
             ProverConfig::from_padded_dimensions::<AkitaField>(1 << 13, 1 << 20, 1 << 13).unwrap();
         config.rw_config.ram_rw_phase1_num_rounds = 0;
         config.rw_config.ram_rw_phase2_num_rounds = 20;
-        pairs_stage_two_phases::<AkitaField>(&config, 56 << 20, 58 << 20);
+        let bytes =
+            ram_read_write::first_bind_bytes::<AkitaField>(config.rw_config.ram_dimensions(13, 20));
+        assert!(
+            (56 << 20..58 << 20).contains(&bytes),
+            "address-first stage-2 RAM term {bytes} outside 56..58 MiB"
+        );
     }
 }
