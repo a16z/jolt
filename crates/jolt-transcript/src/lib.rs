@@ -32,6 +32,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
+mod challenge;
 #[cfg(feature = "spongefish")]
 mod codec;
 #[cfg(feature = "digest")]
@@ -46,6 +47,7 @@ mod setup;
 #[cfg(feature = "spongefish")]
 mod verifier;
 
+pub use challenge::ChallengeCodec;
 #[cfg(feature = "spongefish")]
 pub use codec::BytesMsg;
 #[cfg(feature = "digest")]

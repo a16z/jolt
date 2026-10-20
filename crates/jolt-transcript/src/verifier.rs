@@ -2,6 +2,7 @@
 
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 use crate::Blake2b512;
+use crate::{challenge::decode_message, ChallengeCodec};
 #[cfg(all(
     feature = "bn254",
     any(feature = "transcript-blake2b", feature = "transcript-keccak")
@@ -29,6 +30,19 @@ pub trait VerifierTranscript<H: DuplexSpongeInterface> {
 
     /// Squeezes a verifier challenge.
     fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T;
+
+    /// Draws one message with conventional TV ≤ 2^-161 across all `len` elements.
+    /// The protocol session/version must bind the codec, field, and length.
+    ///
+    /// # Errors
+    /// Returns `VerificationError` on length overflow, an unsupported length,
+    /// or rejection-pool exhaustion (probability at most 2^-161).
+    fn field_challenges<F: ChallengeCodec>(
+        &mut self,
+        len: usize,
+    ) -> Result<Vec<F>, VerificationError>
+    where
+        H: DuplexSpongeInterface<U = u8>;
 
     /// Asserts the NARG was fully consumed.
     ///
@@ -61,6 +75,17 @@ where
 
     fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T {
         VerifierState::verifier_message::<T>(self)
+    }
+
+    fn field_challenges<F: ChallengeCodec>(
+        &mut self,
+        len: usize,
+    ) -> Result<Vec<F>, VerificationError>
+    where
+        H: DuplexSpongeInterface<U = u8>,
+    {
+        let n = F::challenge_bytes(len).ok_or(VerificationError)?;
+        VerifierState::verifier_message_as(self, n, |bytes| decode_message::<F>(bytes, len))
     }
 
     fn check_eof(self) -> Result<(), VerificationError> {

@@ -24,6 +24,8 @@ spongefish = [
   "spongefish/turboshake128",
 ]
 digest = ["dep:digest"]
+solinas = ["jolt-field/solinas"]
+binary = ["jolt-field/binary"]
 bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
 transcript-blake2b = ["spongefish", "digest", "dep:blake2"]
 transcript-keccak = ["spongefish", "spongefish/keccak"]

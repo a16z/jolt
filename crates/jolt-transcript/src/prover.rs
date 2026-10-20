@@ -6,11 +6,14 @@
 
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 use crate::Blake2b512;
+use crate::{challenge::decode_message, ChallengeCodec};
 #[cfg(feature = "bn254")]
 use jolt_field::Fr;
 #[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
 use spongefish::instantiations::Keccak;
-use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromUniform, ProverState};
+use spongefish::{
+    DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromUniform, ProverState, VerificationError,
+};
 
 /// Prover-side spongefish transcript.
 ///
@@ -24,6 +27,19 @@ pub trait ProverTranscript<H: DuplexSpongeInterface> {
 
     /// Squeezes a verifier challenge.
     fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T;
+
+    /// Draws one message with conventional TV ≤ 2^-161 across all `len` elements.
+    /// The protocol session/version must bind the codec, field, and length.
+    ///
+    /// # Errors
+    /// Returns `VerificationError` on length overflow, an unsupported length,
+    /// or rejection-pool exhaustion (probability at most 2^-161).
+    fn field_challenges<F: ChallengeCodec>(
+        &mut self,
+        len: usize,
+    ) -> Result<Vec<F>, VerificationError>
+    where
+        H: DuplexSpongeInterface<U = u8>;
 
     /// Bytes accumulated in the NARG so far.
     fn narg_string(&self) -> &[u8];
@@ -44,6 +60,17 @@ where
 
     fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T {
         ProverState::verifier_message::<T>(self)
+    }
+
+    fn field_challenges<F: ChallengeCodec>(
+        &mut self,
+        len: usize,
+    ) -> Result<Vec<F>, VerificationError>
+    where
+        H: DuplexSpongeInterface<U = u8>,
+    {
+        let n = F::challenge_bytes(len).ok_or(VerificationError)?;
+        ProverState::verifier_message_as(self, n, |bytes| decode_message::<F>(bytes, len))
     }
 
     fn narg_string(&self) -> &[u8] {
