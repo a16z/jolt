@@ -378,7 +378,7 @@ pulls in BN254.
 1. Pin spongefish `ef97413` in Jolt. Add the new `jolt-transcript`, and add
    `CanonicalEncoding` for extension fields.
 2. Port the crates bottom-up: `jolt-crypto`, `jolt-poly`, `jolt-sumcheck`,
-   `jolt-openings`, `jolt-dory`, `jolt-blindfold`.
+   `jolt-openings`, `jolt-dory`, `jolt-zk`.
 3. Port `jolt-verifier` (stages read from `Verifier`, `JoltProof` becomes the
    NARG) and `jolt-prover` (stages write to `Prover`, BlindFold replays the
    NARG).

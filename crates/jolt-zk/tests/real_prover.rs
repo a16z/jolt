@@ -1,4 +1,4 @@
-//! Drives the shipped prover (`jolt_blindfold::prove`) end-to-end against the
+//! Drives the shipped prover (`jolt_zk::prove`) end-to-end against the
 //! real verifier, over the committed-stage messages that precede BlindFold in
 //! the same proof.
 
@@ -10,8 +10,8 @@
 
 mod support;
 
-use jolt_blindfold::{ProverError, VerificationError};
 use jolt_transcript::TranscriptError;
+use jolt_zk::{ProverError, VerificationError};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;

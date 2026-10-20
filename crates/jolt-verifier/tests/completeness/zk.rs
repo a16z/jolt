@@ -10,8 +10,6 @@
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use crate::support::{self, verifier_fixtures::ZkVerifierFixtureCase};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_blindfold::BlindFoldProtocol;
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_dory::DoryScheme;
@@ -23,6 +21,8 @@ use jolt_transcript::VerifierTranscript;
 use jolt_verifier::{
     jolt_protocol_id, verify_stages, JoltSponge, ProofHeader, VerifiedStages, JOLT_SESSION,
 };
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_zk::BlindFoldProtocol;
 
 #[test]
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]

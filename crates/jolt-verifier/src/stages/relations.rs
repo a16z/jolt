@@ -26,11 +26,11 @@ use core::convert::Infallible;
 use core::fmt::Debug;
 use std::collections::BTreeMap;
 
-use jolt_blindfold::OpeningAlias;
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_sumcheck::receive_private_value;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_zk::OpeningAlias;
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;

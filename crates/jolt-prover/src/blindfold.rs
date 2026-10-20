@@ -17,7 +17,6 @@
 //! stage recipes prove over.
 
 use common::jolt_device::JoltDevice;
-use jolt_blindfold::BlindFoldWitness;
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
@@ -27,6 +26,7 @@ use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use jolt_verifier::sites::BLINDFOLD;
 use jolt_verifier::{jolt_protocol_id, verify_stages, VerifiedStages, VerifierError, JOLT_SESSION};
+use jolt_zk::BlindFoldWitness;
 
 use crate::{JoltProverPreprocessing, ProverError};
 
@@ -156,7 +156,7 @@ where
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
     transcript.site(BLINDFOLD);
-    jolt_blindfold::prove::<F, VC, H, _>(
+    jolt_zk::prove::<F, VC, H, _>(
         vc_setup,
         &protocol,
         transcript,

@@ -6,9 +6,9 @@
 
 mod support;
 
-use jolt_blindfold::{AssignedBlindFoldWitness, ProverError};
 use jolt_crypto::JoltGroup;
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
+use jolt_zk::{AssignedBlindFoldWitness, ProverError};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;

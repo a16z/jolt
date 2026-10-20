@@ -12,7 +12,7 @@
 The modular prover (`crates/jolt-prover` + `crates/jolt-kernels`) proves only transparent
 proofs today, while the branch already carries every other piece of the ZK story: the
 verifier's compile-time BlindFold path (`crates/jolt-verifier/src/stages/zk/`), a complete
-generic BlindFold prover with **zero callers** (`crates/jolt-blindfold/src/prove.rs`), a
+generic BlindFold prover with **zero callers** (`crates/jolt-zk/src/prove.rs`), a
 fully implemented `CommittedSumcheckRecorder` behind the recorder seam the stage drivers
 were designed around, committed uni-skip proving (`prove_uniskip_committed`), and hiding
 PCS opening machinery (`ZkOpeningScheme` / `ZkBatchOpeningScheme`, implemented by Dory
@@ -36,7 +36,7 @@ zero clear-mode changes and zero runtime mode flags in prover code.
 Key abstractions introduced or modified:
 
 - **`zk` feature on `jolt-prover`** (`zk = ["jolt-verifier/zk", "jolt-kernels/zk",
-  "dep:jolt-blindfold", "dep:rand_core"]`): the compile-time mode axis, mirroring the
+  "dep:jolt-zk", "dep:rand_core"]`): the compile-time mode axis, mirroring the
   verifier's `SELECTED_ZK_CONFIG`. One compiled prover produces exactly one protocol; the
   proof self-describes it via `JoltProtocolConfig::for_zk(cfg!(feature = "zk"))`, and the
   co-compiled verifier's `validate_proof_config` rejects the other kind fail-closed. No
@@ -86,11 +86,11 @@ Key abstractions introduced or modified:
   proves against is still literally the verifier's own lowering. A `debug_assert`
   compares the replay transcript state against the prover's forward transcript at the
   stage-8 boundary.
-- **Witness assembly** (`jolt-blindfold`, new prover-side API):
+- **Witness assembly** (`jolt-zk`, new prover-side API):
   `BlindFoldProtocol::assign_witness(&self, stage_domains: &[SumcheckDomainSpec],
   stage_witnesses: &[&CommittedSumcheckWitness<F>], eval_outputs: &[F], eval_blindings:
   &[F], rng) -> Result<AssignedBlindFoldWitness<F>, ProverError<F>>` produces the full
-  row matrix and per-row blinds that `jolt_blindfold::prove` consumes — from the
+  row matrix and per-row blinds that `jolt_zk::prove` consumes — from the
   protocol's **public parts alone** (layout, constraint matrices, consistency,
   dimensions), so the verifier's lowering needs to expose nothing beyond the
   `BlindFoldProtocol` its `build` already returns:
@@ -134,7 +134,7 @@ Key abstractions introduced or modified:
   stage order: stage-1 uni-skip, stage-1 batch, stage-2 uni-skip, stage-2 batch, stages
   3, 4, 5, 6a, 6b, 7; `eval_outputs = [joint_evaluation]`, `eval_blindings =
   [evaluation_blind]`) → `transcript.append(&Label(b"BlindFold"))` →
-  `jolt_blindfold::prove` with `preprocessing.verifier.vc_setup` — the first real caller
+  `jolt_zk::prove` with `preprocessing.verifier.vc_setup` — the first real caller
   of the crate's prover — → final `JoltProof<PCS, VC>` reassembled from the shell with
   `claims: JoltProofClaims::Zk { blindfold_proof }`.
 - **Randomness**: `rand_core::OsRng`, held internally (legacy precedent:
@@ -247,7 +247,7 @@ invariant (`legacy_proof_byte_equality`) is explicitly clear-mode-only and stays
 - [ ] No runtime mode flag in prover code:
       `grep -rnE "zk_mode|zk: bool|is_zk" crates/jolt-prover/src crates/jolt-kernels/src`
       → no hits; every mode divergence is `#[cfg(feature = "zk")]`.
-- [ ] `jolt_blindfold::prove` has a production caller (the tail), and
+- [ ] `jolt_zk::prove` has a production caller (the tail), and
       `BlindFoldProtocolBuilder::build` / `blindfold::build` still exist with unchanged
       signatures (verification untouched).
 - [ ] `git diff <base> -- crates/jolt-verifier` is empty: the verifier crate gains no
@@ -263,9 +263,9 @@ invariant (`legacy_proof_byte_equality`) is explicitly clear-mode-only and stays
   tail) against the unmodified verifier. Committed-program variant covers the extra
   precommitted stages (6b/7 reductions) and their output-claim rows. Both run on a
   128 MiB-stack thread like the verifier's ZK suites.
-- **Witness assembly units** (jolt-blindfold): `assign_witness` against the existing
+- **Witness assembly units** (jolt-zk): `assign_witness` against the existing
   test-harness pipeline — same generated committed stages, prove with the real
-  `jolt_blindfold::prove` on the assembled rows/blinds and verify with
+  `jolt_zk::prove` on the assembled rows/blinds and verify with
   `BlindFoldProtocol::verify`; shape-mismatch rejection cases. The harness's independent
   reference prover is deliberately kept (it cross-validates `prove.rs`).
 - **Replay identity:** the ZK e2e `debug_assert`s (via the tail) that the replay
@@ -291,13 +291,13 @@ smoke check that nothing is accidentally quadratic.
 ### Architecture
 
 Mode is a type-level axis threaded through existing seams; no new crate and no new
-inter-crate edges except `jolt-prover → jolt-blindfold` (optional, `zk`):
+inter-crate edges except `jolt-prover → jolt-zk` (optional, `zk`):
 
 ```
 jolt-sumcheck     SumcheckRecorder: Clear ↔ Committed; prove_uniskip_{clear,committed}   [unchanged]
 jolt-crypto       Pedersen VectorCommitment                                              [unchanged]
 jolt-verifier     (consumed through its existing public surface only)                    [ZERO diff]
-jolt-blindfold    + BlindFoldProtocol::assign_witness (matrix-driven solver)
+jolt-zk    + BlindFoldProtocol::assign_witness (matrix-driven solver)
                   prove.rs gains its first caller                                        [prover-side API]
 jolt-openings     prove_batch_zk returns ZkBatchOpening (adds joint_evaluation)          [one struct]
 jolt-kernels      + zk feature: reference commit finish_zk_*                             [transcript-free]
@@ -318,7 +318,7 @@ replay      validate_and_seed_transcript + stage1..8::verify on the shell      [
             (prover-side spine, the zk-audit pattern)                           self-check + FS position]
 construct   blindfold::build(BlindFoldInputs { shell, stage outputs })          [verifier's own lowering]
 assign      protocol.assign_witness(domains, stage witnesses, [joint_eval], [blind])
-prove       Label(b"BlindFold"); jolt_blindfold::prove(vc_setup, …)
+prove       Label(b"BlindFold"); jolt_zk::prove(vc_setup, …)
 final       shell with claims = Zk { blindfold_proof }
 ```
 
@@ -394,7 +394,7 @@ anything else left unassigned fails the satisfaction check.
 - **Porting the legacy BlindFold prover** (`subprotocols/blindfold/` `StageConfig` /
   `BakedPublicInputs` / `VerifierR1CSBuilder`): rejected. It is a second, prover-owned
   encoding of the verifier R1CS — the exact dual-maintenance the shared
-  `jolt-blindfold` crate exists to end — and its accumulator-coupled witness types don't
+  `jolt-zk` crate exists to end — and its accumulator-coupled witness types don't
   fit the accumulator-free modular stack. The generic `prove.rs` is complete, tested by
   an independent reference prover, and shaped for exactly the inputs the recorder
   retains.
@@ -416,9 +416,9 @@ anything else left unassigned fails the satisfaction check.
   `build_construction` could surface. The matrix-driven product solver gets the same
   auxiliary witness from `BlindFoldProtocol.r1cs` alone, and is *less* machinery: no
   second builder pass, no source table, no layout re-allocation.
-- **Witness assembly in `jolt-prover` instead of `jolt-blindfold`**: rejected — the
+- **Witness assembly in `jolt-prover` instead of `jolt-zk`**: rejected — the
   assembly is generic over the protocol, needs layout/dimension slicing that shouldn't
-  leak, and in `jolt-blindfold` it is reusable by the crate's own tests and any future
+  leak, and in `jolt-zk` it is reusable by the crate's own tests and any future
   non-Jolt user.
 - **RNG as a `prove` parameter** (`#[cfg(feature = "zk")] rng: &mut R`): rejected —
   cfg-dependent public signatures poison every caller (SDK, tests) with the same cfg;
@@ -451,7 +451,7 @@ matrices:
 
 1. **jolt-openings**: `ZkBatchOpening` struct; `prove_batch_zk` returns it (one impl,
    one trait touch; verifier side untouched).
-2. **jolt-blindfold**: `BlindFoldProtocol::assign_witness` (matrix-driven product
+2. **jolt-zk**: `BlindFoldProtocol::assign_witness` (matrix-driven product
    solver) + `AssignedBlindFoldWitness` with shape errors under `ProverError`;
    prove/verify roundtrip tests over builder-built protocols.
 3. **jolt-verifier**: untouched. (Confirm with `git diff <base> -- crates/jolt-verifier`
@@ -484,7 +484,7 @@ look at absorb order around `ZkEvaluationClaim` before suspecting BlindFold.
   ("PR C"); its invariants carry over.
 - `specs/clean-slate-prover.md`, `specs/jolt-prover-model-crate.md` §BlindFold — the
   modular-prover plan and the (superseded) `from_committed_proofs` sketch.
-- `crates/jolt-blindfold/src/prove.rs` — the generic BlindFold prover (currently
+- `crates/jolt-zk/src/prove.rs` — the generic BlindFold prover (currently
   caller-free); `tests/support/mod.rs::protocol_backed_witness` — the witness-assembly
   prototype.
 - `crates/jolt-verifier/src/stages/zk/` — the lowering (`blindfold::build`) and the ZK
@@ -493,4 +493,4 @@ look at absorb order around `ZkEvaluationClaim` before suspecting BlindFold.
   `subprotocols/blindfold/` — the legacy reference for transcript discipline and witness
   content.
 - BlindFold: Nova-style folding of the sumcheck-verifier R1CS (see module docs in
-  `jolt-blindfold`); Hyrax row openings per Wahby et al.
+  `jolt-zk`); Hyrax row openings per Wahby et al.

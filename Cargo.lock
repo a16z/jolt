@@ -3211,24 +3211,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-blindfold"
-version = "0.1.0"
-dependencies = [
- "jolt-claims",
- "jolt-crypto",
- "jolt-field",
- "jolt-poly",
- "jolt-r1cs",
- "jolt-sumcheck",
- "jolt-transcript",
- "jolt-utils",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
@@ -3722,7 +3704,6 @@ dependencies = [
  "clap",
  "common",
  "jolt-akita",
- "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
@@ -3742,6 +3723,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "jolt-zk",
  "postcard",
  "rand_core 0.6.4",
  "rayon",
@@ -3908,7 +3890,6 @@ dependencies = [
  "blake2 0.11.0",
  "common",
  "jolt-akita",
- "jolt-blindfold",
  "jolt-claims",
  "jolt-claims-derive",
  "jolt-crypto",
@@ -3925,6 +3906,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier-derive",
  "jolt-witness",
+ "jolt-zk",
  "num-traits",
  "postcard",
  "quote",
@@ -3968,6 +3950,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "jolt-zk"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-utils",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

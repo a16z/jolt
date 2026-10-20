@@ -5,6 +5,8 @@ use jolt_openings::OpeningsError;
 use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
+#[cfg(feature = "zk")]
+use jolt_zk::ProverError as BlindFoldProverError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -78,7 +80,7 @@ pub enum ProverError<F: JoltField> {
     /// itself.
     #[cfg(feature = "zk")]
     #[error(transparent)]
-    BlindFold(#[from] jolt_blindfold::ProverError<F>),
+    BlindFold(#[from] BlindFoldProverError<F>),
 }
 
 /// Route the typed kernel seam's extraction/self-check failures through

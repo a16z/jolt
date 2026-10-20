@@ -175,7 +175,7 @@ New / moved tests:
   required-openings ordering) move onto the symbolic relation types; values are
   unchanged.
 - A `validate` test for every cross-relation consistency claim (covering the audit).
-- The `jolt-blindfold` `jolt_claims_pipeline` test switches to the symbolic API and
+- The `jolt-zk` `jolt_claims_pipeline` test switches to the symbolic API and
   asserts the `val_check` Public-symbol expression yields the same R1CS / input
   claim as the prior baked-coefficient form.
 - `jolt-eval` invariants (symbolic↔concrete id-set agreement; `val_check` input

@@ -27,7 +27,7 @@ members = [
   "crates/jolt-claims",
   "crates/jolt-claims-derive",
   "crates/jolt-akita",
-  "crates/jolt-blindfold",
+  "crates/jolt-zk",
   "crates/jolt-crypto",
   "crates/jolt-program",
   "crates/jolt-lean-gen",
@@ -443,7 +443,7 @@ secp256k1 = { version = "0.33", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-akita = { path = "./crates/jolt-akita" }
-jolt-blindfold = { path = "./crates/jolt-blindfold" }
+jolt-zk = { path = "./crates/jolt-zk" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
