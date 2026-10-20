@@ -18,6 +18,8 @@ pub(crate) mod one_hot_fold;
 pub(crate) mod pack;
 #[cfg(test)]
 pub(crate) mod pairing;
+#[cfg(test)]
+pub(crate) mod prefix_suffix;
 pub mod primitives;
 #[cfg(test)]
 pub(crate) mod ra_poly;

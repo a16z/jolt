@@ -92,6 +92,10 @@
 //! coefficients once on device, using at most 512 MiB. The prepared loop combines
 //! four strided pairs per thread to share accumulator squarings. Larger coefficient
 //! tables use the direct block loop; identity pairs skip coefficient reads.
+//! Prefix/suffix sumchecks first bind compact weight and accumulator tables,
+//! then fold the original field columns on device to build the suffix phase.
+//! Equality and shifted-equality weights share this engine; final column claims
+//! are read from the fully bound suffix tables.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
