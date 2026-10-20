@@ -330,12 +330,13 @@ natively. This deletes `jolt-akita/src/{scheme.rs (adapter parts), adapters.rs
   accepts an external permutation, the transcript may use `jolt-crypto`'s
   instead, and both are supported. The single-state permutation inside
   spongefish is a third-party dependency, so I2 does not count it as a copy.
-- `commitment` (lands in W4 with the lattice pad commitment, its first
-  non-scalar implementor): `VectorCommitment` takes an associated `Blind` type, replacing
-  today's scalar `blinding: &F`, so one trait covers Pedersen (a scalar blind)
-  and Ajtai (a vector of randomness digits drawn as in `lattice`). `jolt-zk`'s
-  pad commitment is a `VectorCommitment` with a hiding blind, so the masking
-  front end is generic over the curve and lattice back ends.
+- `commitment`: `VectorCommitment` keeps its scalar blind. The lattice pad
+  commitment is not a `VectorCommitment`: its committed vector is mixed-radix
+  and its opening is proved by the Σ-protocol, never by a row opening. It is
+  a `jolt-zk::whiteout` type that produces `ZkBackend`'s `PadCommitment` and
+  `PadOpening`, so the masking front end is generic over the back ends
+  through `ZkBackend`, not through `VectorCommitment`
+  (`specs/whiteout-sigma.md` §1.6).
 
 ### 7. `jolt-zk`
 

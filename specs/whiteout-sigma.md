@@ -4,94 +4,118 @@
 | --------- | --------------------------------------------------------------------------------------- |
 | Author(s) | @markosg04                                                                              |
 | Created   | 2026-10-19                                                                              |
-| Status    | design note, awaiting review                                                            |
+| Status    | design note, revised after crypto and architecture review                               |
 | Parent    | `specs/shared-primitive-layer.md` (W4, §6, §7), `specs/whiteout-interfaces.md` (§3, §5) |
-| Siblings  | `specs/whiteout-gaussian.md` (M5a), `specs/whiteout-masking.md` (M6b/M6c, on `wo/mask`) |
+| Siblings  | `specs/whiteout-gaussian.md` (M5a), `specs/whiteout-masking.md` (M6b/M6c)               |
 
-Design only. Paper labels refer to `akita-paper/sections/whiteout/` as read on
-2026-10-19. Numbers the text omits come from `scripts/whiteout-costs.py`, at its
-headline configuration (T = 2^24, k = 2, variant 1, base 16; the offloading mode
-does not change any number used here). Akita references are to
-`~/akita-whiteout` at `a0e3087ad`.
+This note is a design only. Paper labels refer to
+`akita-paper/sections/whiteout/` as read on 2026-10-19. Numbers that the text
+omits come from `scripts/whiteout-costs.py` at its headline configuration (T =
+2^24, k = 2, variant 1, base 16). Akita references are to `~/akita-whiteout` at
+`a0e3087ad`.
 
 ## Decision
 
-W4 adds the lattice half of `jolt-zk` and the primitives it needs:
+W4 builds the lattice half of `jolt-zk` and the primitives it needs.
 
-- **`jolt-crypto::lattice`** gains the Ajtai operation as a byte-exact
-  definition of what Akita computes today. That covers matrix views cut from
-  the seeded stream, balanced gadget digits, one- and two-level layouts, outer
-  hiding randomness, and the binary compression chain. Akita keeps its kernels
-  as the fast path. A test in `jolt-akita` pins the two to the same bytes.
-- **`VectorCommitment`** gains an associated `Blind`. Row openings move to a
-  `RowOpening` subtrait that only Pedersen implements. The lattice pad
-  commitment implements the base trait. It commits the pads, the
-  constant-term mask g, and the randomness r_p, plus the extra row
-  **L**r_p that the Σ-protocol needs.
-- **`jolt-zk::whiteout`** gets three pieces:
-  - the Σ-protocol of Protocol `wo:prot:sigma`. It uses a Gaussian mask,
-    joint rejection, internal retries keyed by secret 256-bit nonces, and
-    constant-time handling of everything an attempt computes before its
-    accept bit is known;
-  - the `ResponseStatement` / `ResponseWitness` pair with the
-    `ResponseProver` trait that Akita implements in W5;
-  - Whiteout's `ZkBackend` impl over M6b's `ResidualRelation`.
+- **`jolt-crypto::lattice`** gains the Ajtai map as a plain, constant-time
+  function on jolt-algebra's CRT-NTT, with its matrix views and layouts:
+  - **Matrix views** are cut from the seeded stream and length-checked in
+    release builds.
+  - **Gadget digits** are balanced, using one decomposition.
+  - **`AjtaiLevel`** is a one-level commitment with hiding randomness
+    columns.
+  - **`TwoLevelLayout`** describes the residual commitment's part of N. It
+    is a description only: Akita computes that commitment.
+  - **Box sampling and the randomness entropy rule.**
 
-Three choices change the interfaces of neighbouring tickets, and §9 lists them:
+  The layout defines the hiding columns that W1 adds. With zero randomness
+  columns its bytes equal Akita's today.
+- **`jolt-zk::whiteout`** gets the following:
+  - **The Σ-protocol** of Protocol `wo:prot:sigma`. It uses a Gaussian mask,
+    joint rejection, internal retries keyed by secret 256-bit nonces, and a
+    constant-time challenge sampler on the prover side.
+  - **Typed `ResponseStatement` and `ResponseWitness`**, and the
+    `ResponseProver` trait that Akita implements in W5.
+  - **`LatticePadCommitment`**, which produces `ZkBackend`'s `PadCommitment`
+    and `PadOpening`.
 
-- product rows become sums of products;
-- the residual relation gains a structured term for evaluating w_k;
-- Akita's parameter tables, not floating point at runtime, supply the
-  Gaussian widths and digit counts.
+  `ZkBackend for Whiteout` moves to W6, because it needs W3's residual
+  opening type.
+- **`Fork::attempt` in `jolt-transcript`**: the oracle domain of the attempt
+  challenges.
+
+**Out of W4:**
+
+- `VectorCommitment` keeps its scalar blind. The lattice pad commitment is
+  not a `VectorCommitment`.
+- The compression chain moves to W5, together with the Akita equivalence test
+  and any fast kernels. W4 sends t_p and t_D uncompressed (A12).
 
 ## 0. Notation and the private vector
 
-`R = F[X]/(X^64 + 1)` with `F = Prime128OffsetA7F7`, `q = 2^128 − 2^32 + 22537`.
-R is the challenge ring of §2.1, with d = 64. The private vector **s** of
-Def. `wo:def:residual` is held by `jolt-zk::whiteout` as an ordered list of
-**segments**. Each segment records:
+`R = F[X]/(X^64 + 1)` with `F = Prime128OffsetA7F7` and `q = 2^128 − 2^32 +
+22537`. R is the challenge ring of §2.1, with d = 64.
+
+`jolt-zk::whiteout` holds the private vector **s** of Def. `wo:def:residual` as
+an ordered list of **segments**:
 
 | Field | Meaning |
 |---|---|
 | `role` | `Witness` (w_k), `InnerDigits` (t̂_a), `ResidualRandomness` (r_a), `PadDigits` (regular pads and g), `OperandDigits` (operand-pad digit polynomials), `PadRandomness` (r_p) |
-| `len` | length in R-elements (multiples of 64 coefficients) |
-| `native_dim` | ring dimension of the matrix that consumes it (a multiple of 64) |
-| `digit_bound` | honest bound on `‖·‖∞`, which sets the shift bound `‖c‖₁·digit_bound` |
-| `mask` | `Gaussian(block)` or `Public` |
+| `len` | Length in R-elements, each 64 coefficients. |
+| `native_dim` | Ring dimension of the matrix that consumes the segment: a multiple of 64 and a power of two. |
+| `alphabet` | Balanced radix `2^log_basis`, i.e. digits in `[−2^{lb−1}, 2^{lb−1} − 1]`. |
+| `shape` | `Dense`, or `ConstantPoly`: every R-element is a constant polynomial. |
+| `mask` | `Gaussian` or `Public`. |
 
-A segment of native dimension d′ = 64m is viewed as a vector over R by
-restriction of scalars along R ↪ F[Y]/(Y^{d′}+1), X ↦ Y^m (§2.1, "Several ring
-dimensions"). The R-coordinates of a native element a = Σ_{k<m} Y^k a_k(Y^m)
-are a_0, …, a_{m−1}, so coefficient j = m·i + k of a is coefficient i of a_k
-(stride packing). Multiplication by c ∈ R is multiplication by c(Y^m) in the
-native ring, so `c·s` never repacks. Repacking happens only where the
-constant-term lift needs an R-element view, inside `LiftedFunctional`
-construction.
+Each segment has an **honest ℓ₂² bound**. With B = 2^{lb−1}, it is
+`γ² = 64·len·B²` for `Dense` and `γ² = len·B²` for `ConstantPoly`. This is the
+paper's worst-case honest norm, whose square root `γ_b` sets the widths
+(§5). A `ConstantPoly` segment such as the operand digits has a much smaller
+ℓ₂ norm than its ∞-norm suggests. That difference is why the widths of §6.2
+pass the zero-knowledge precondition.
+
+Coefficients are stored in native order. A native element of dimension
+d′ = 64m is viewed as an m-tuple over R by restriction of scalars along
+R ↪ F[Y]/(Y^{d′}+1), X ↦ Y^m (§2.1, "Several ring dimensions"):
+
+- `a = Σ_{k<m} Y^k a_k(Y^m)`, so native coefficient j = m·i + k is
+  coefficient i of a_k. This is stride packing.
+- Multiplying by c ∈ R is multiplying by c(Y^m) in the native ring, so c·s
+  never repacks.
+- In native order, a constant R-element means that only native coefficients
+  0..m of each native element can be nonzero.
+
+**Public ranges** are unions of whole native R_{d′} elements. The segment
+table checks this when it is built.
 
 ## 1. Ajtai commitments in `jolt-crypto::lattice`
 
 ### 1.1 Matrix views
 
 Every Ajtai matrix is an **offset-0 prefix** of the one stream
-`derive_public_matrix_prefix(·, &PublicMatrixSeed)` (moved in M5b), viewed
-row-major with ring-contiguous entries:
+`derive_public_matrix_prefix(·, &PublicMatrixSeed)` (moved in M5b). The prefix
+is viewed row-major, and each ring entry occupies contiguous positions:
 
 ```
 entry(row, col) = stream[(row · width + col) · d .. +d]   (coefficients in order)
 ```
 
-This matches Akita's `FlatMatrix::ring_view_dyn` (`akita-params/src/layout/flat_matrix.rs:96-100`).
-Consequences that the layout type must preserve:
+This matches Akita's `FlatMatrix::ring_view_dyn`
+(`akita-params/src/layout/flat_matrix.rs:96-100`). The layout types preserve
+three consequences:
 
-- Different roles overlap. A, B, D, K₁ and K₂ all start at offset 0, and
-  setup sizing takes the maximum footprint, not the sum
-  (`setup_projection.rs:62-90`). Stage-3 setup offloading depends on this.
-- A view is a function of `(rows, width, d)`. Changing the width changes every
-  row after row 0, so appending randomness columns to an outer map yields a
-  different matrix. With zero randomness columns the bytes equal today's.
-- The length check is the caller's. `check_public_matrix_prefix` accepts a
-  truncated slice, so every `MatrixView` constructor checks
-  `rows·width·d ≤ len` and returns `CryptoError::InvalidSetup` otherwise.
+- **Roles overlap.** A, B, D, K₁ and K₂ all start at offset 0, and setup
+  sizing takes the maximum footprint (`setup_projection.rs:62-90`). Stage-3
+  offloading relies on this. Sizing the pad view includes row `rank`,
+  which defines **L** (§1.6).
+- **A view is a function of (rows, width, d).** Changing the width changes
+  every row after row 0. Appending randomness columns therefore gives a
+  different matrix, unless there are zero of them.
+- **The caller checks the length.** `check_public_matrix_prefix` accepts a
+  truncated slice. `MatrixView::new` checks `rows·width·d ≤ len` and returns
+  `CryptoError::InvalidSize` otherwise, in release builds.
 
 ```rust
 pub struct MatrixShape { pub rows: usize, pub width: usize, pub ring_dim: usize }
@@ -102,31 +126,74 @@ pub struct MatrixView<'a, F> { shape: MatrixShape, data: &'a [F] }
 ### 1.2 Gadget digits
 
 `G⁻¹` is jolt-algebra's balanced power-of-two decomposition
-(`ring/cyclotomic/decomposition.rs`): base `2^log_basis` and `levels` digits,
-with digit 0 least significant. When `levels·log_basis` equals the field width
-it uses the asymmetric threshold `T_k`, and otherwise `q/2`. jolt-crypto adds no
-second decomposition. It names the parameters once:
+(`ring/cyclotomic/decomposition.rs`): base `2^log_basis`, `levels` digits,
+digit 0 least significant. It uses the threshold `T_k` when `levels·log_basis`
+equals the field width, and `q/2` otherwise. It is branch-free on the field
+path (`biased`). jolt-crypto adds no second decomposition and only names its
+parameters:
 
 ```rust
 pub struct GadgetDigits { pub log_basis: u32, pub levels: usize }
 ```
 
-The **input column order** of an Ajtai level is ring-major, digit-minor:
-column `ring · levels + digit` holds digit plane `digit` of input ring `ring`.
-This matches Akita's inner commitment (`sources/block_digits.rs:252-273`).
+An Ajtai level orders its input columns ring-major and digit-minor. Column
+`ring · levels + digit` is digit plane `digit` of input ring `ring`, which
+matches Akita's inner commitment (`sources/block_digits.rs:252-273`).
 
-### 1.3 The operation and layout type
+### 1.3 The operation
 
 ```rust
 /// One Ajtai map: y = M · (G⁻¹(x) ‖ r) over Z_q[X]/(X^d + 1).
 pub struct AjtaiLevel {
-    pub matrix: MatrixShape,        // rows = output rank, width = message + randomness columns
+    pub matrix: MatrixShape,        // rows = output rank; width = message + randomness columns
     pub digits: GadgetDigits,       // decomposition of the message
     pub message_rings: usize,       // ring elements of x before decomposition
     pub randomness_columns: usize,  // trailing columns acting on r (0 = binding only)
 }
+```
 
-/// Akita's two-level commitment (inner A per block, outer B per slice).
+Three functions, all generic over the ring dimension `D`; each checks
+`shape.ring_dim == D`:
+
+- `apply_centered(view, x: &[i64]) -> Vec<CyclotomicRing<F, D>>`: the map
+  `M·x` on centered integer columns. This is the Σ-protocol's `N·y`, and the
+  core of the other two.
+- `apply(view, x: &[CyclotomicRing<F, D>])`: the same map on field columns.
+- `commit(level, view, x, r)`. It computes
+  `apply_centered(view, G⁻¹(x) ‖ r)`, where `r` is box digits.
+
+**Implementation, one path for all three.** The public matrix is prepared once
+in CRT-NTT form. It uses jolt-algebra's `CrtNttParamSet<i32, 6, D>` over the
+Q128 primes and `CyclotomicCrtNtt::from_ring`, which may branch because the
+matrix is public. Each input column is lifted into Montgomery residues by
+`NttPrime::from_canonical` on its centered value. That lift is a branch-free
+Montgomery product and is valid for `|x| < 2^30`. The column is then
+transformed by the forward NTT and accumulated pointwise into each output row.
+
+- **Exactness.** Products are reconstructed exactly over Z and reduced mod q.
+  A row is chunked whenever `CrtCapacity::supports(width, bound)` fails, and
+  the chunk results are added in F.
+- **Reconstruction.** It uses a constant-time Garner that W4 adds next to
+  the existing one in jolt-algebra. That Garner selects with masks instead of
+  bool-to-int products, and lifts each digit into F without
+  `F::from_i64`/`from_i128`, which branch on sign
+  (`solinas/fp128.rs:1046`).
+- **No lookup tables.** No path uses `DigitMontLut`, `CenteredMontLut`, or a
+  value-dependent strategy such as `from_centered_coefficients`'s `max_abs`
+  switch. The i8 path in Akita's `block_parallel.rs:28-64` indexes
+  `DigitMontLut` by digit value, so it is not used for secrets. Neither is any
+  other Akita kernel.
+- **Input bound.** The bound `|x| < 2^30` is checked over all inputs as one
+  constant-time aggregate, and only the aggregate is branched on.
+
+`q ≡ 9 (mod 16)` gives no NTT over F_q for `X^256 + 1`. Schoolbook `N·y` would
+cost seconds per attempt. CRT-NTT is therefore the definition and also the
+production path.
+
+### 1.4 `TwoLevelLayout`: description only
+
+```rust
+/// Akita's two-level commitment, as one part of N (no commit function).
 pub struct TwoLevelLayout {
     pub blocks: BlockGeometry,      // live rings, rings per block M, live blocks
     pub num_polys: usize,
@@ -136,505 +203,401 @@ pub struct TwoLevelLayout {
 }
 ```
 
-The operation semantics are pinned to Akita (paths in `akita-cpu-backend` unless
-noted):
+The layout fixes the column semantics of N on the residual commitment. They
+follow Akita, with paths in `akita-cpu-backend`:
 
-- **Inner.** For each block, `t_i = A · G⁻¹(w_i)`, negacyclic in R_{d_A}
+- **Inner level.** Each block has `t_i = A·G⁻¹(w_i)`
   (`arithmetic/commitment.rs:159-237`).
-- **Decomposition for the outer level.** Each `t_i` is decomposed into outer
-  digits. Each d_A ring splits into d_A/d_B subcolumns of consecutive
-  coefficients, in the order `[A row][subcolumn][digit][coefficient]`
+- **Decomposition into the outer input.** Each d_A ring splits into
+  d_A/d_B subcolumns of consecutive coefficients, ordered
+  `[A row][subcolumn][digit][coefficient]`
   (`kernels/linear/decompose.rs:53-136`).
-- **Slices.** Slice inputs are polynomial-major. Each polynomial's segment is
+- **Slices.** Slice inputs are polynomial-major. Each polynomial segment is
   zero-padded to `max_blocks_per_slice · per_block`
   (`commitment/outer_slices.rs:6-73`).
-- **Randomness.** The randomness of slice s occupies the last
-  `randomness_columns` columns of that slice's input. This is the layout
-  W1 implements. The paper fixes only "appended to the input of its outer
-  map" (§4.1).
-- **Output.** `u` is the concatenation of the slice outputs.
+- **Randomness.** Slice s's randomness occupies the last
+  `randomness_columns` columns of that slice's input.
 
-jolt-crypto exposes three operations:
+Akita has no hiding code yet, so jolt-crypto defines W1's hiding layout here.
+The layout is byte-exact with today only for zero randomness columns. W4 has no
+`commit_two_level`. Akita computes the residual commitment, and W5 tests its
+kernels against these semantics (§7, item 5).
 
-- `apply(view, input: &[CyclotomicRing<F, d>])`: the linear map on
-  arbitrary inputs. The Σ-protocol uses it on the Gaussian mask y.
-- `apply_centered(view, input: &[i64])`: the same map on centred
-  integers. It never builds field elements from secrets with a branch
-  (§2.8).
-- `commit(level, x, r)` and `commit_two_level(layout, w, r)`: the
-  commitments.
+### 1.5 Hiding randomness
 
-Each operation returns `Result<_, CryptoError>` and checks its input lengths
-against the layout in release builds.
+- `sample_box_digits(rng, len, log_basis) -> Vec<i8>` draws uniform digits of
+  the balanced alphabet. Each digit is a masked byte, so the draw is constant
+  time. Distinct vectors then differ by a unit (§2.3: coordinates below
+  `q^{1/4}/2`).
+- `required_randomness_columns(image_coeffs, extra_coeffs, ring_dim, log_basis, slack_bits)`
+  returns the smallest whole number of ring columns whose entropy is at least
+  `(image_coeffs + extra_coeffs)·⌈log₂ q⌉ + 2λ + slack_bits`.
 
-`AjtaiLevel` and `TwoLevelLayout` are plain data that Akita's planner fills.
-`TwoLevelLayout` has a `From` conversion from Akita's `GroupCommitPhaseParams`
-on Akita's side, written in W5 or M8. jolt-crypto never imports Akita (I1).
+The extra term is `extra_coeffs = 64` for the pad commitment's row **L**, and
+the slack is `slack_bits = 8` (§6.2). With the rank-3 matrices over R_256 this
+gives:
 
-### 1.4 Hiding randomness
+| Randomness | Columns | Cells |
+|---|---|---|
+| r_p | 105 R_256 | 26,880 |
+| r_a | 97 R_256 | 24,832 |
 
-The commit takes an explicit `r`; jolt-crypto does not own `r`'s length, which
-is a layout field. It owns the sampler and the entropy rule:
+The script's 26,752 and 24,704 round to R_64 elements instead. Each slice
+draws its own randomness (§4.1).
 
-- `sample_box_digits(rng, len, log_basis) -> Vec<i8>` draws uniform digits in
-  the balanced alphabet `{−b/2, …, b/2 − 1}`. The draw is a constant-time
-  mask of uniform bytes. Distinct vectors differ by a coordinate below
-  `q^{1/4}/2`, so their difference is a unit (§2.3).
-- `required_randomness_columns(image_coeffs, extra_coeffs, log_basis, slack_bits)`
-  returns the smallest column count whose entropy is at least
-  `(image_coeffs + extra_coeffs)·⌈log₂ q⌉ + 2λ + slack_bits`. Here
-  `extra_coeffs = 64` for the pad commitment's row **L**, and
-  `slack_bits = 8` (§6.2). The count is rounded up to whole ring elements.
-  With a rank-3 pad matrix over R_256 this gives the script's 26,752 cells.
+### 1.6 The lattice pad commitment (`jolt-zk::whiteout`)
 
-Each slice draws its own randomness (§4.1).
+`LatticePadCommitment` produces `ZkBackend::PadCommitment` (the raw image t_p)
+and `ZkBackend::PadOpening` (pads, g and r_p). It is not a `VectorCommitment`.
+Its committed vector is mixed-radix, and its opening is proved by the
+Σ-protocol, never by a row opening.
 
-### 1.5 Compression chain
+**The column vector.** The commitment builds this vector itself. The same
+vector is the `PadDigits`, `OperandDigits` and `PadRandomness` segments of s,
+in this order, so the e layout of §3.2 follows it.
 
-Every commitment that Whiteout sends travels in compressed form (§2.4). Two of
-them, the pad commitment and t_D, are computed by `jolt-zk`, which cannot
-depend on Akita (I1). So W4 also copies Akita's compression chain into
-`jolt-crypto::lattice`, add-first and unchanged:
+1. **Regular pads, then g.**
+   - The pads go in pad-index order, skipping operand pads, which are
+     committed only in group 2 (A5).
+   - They are grouped into R-elements of 64 consecutive values, with the last
+     element zero-padded. g takes its own element.
+   - Each element is decomposed into 32 balanced radix-16 digit planes. Then
+     `p_i = Σ_j 16^j · digit_{i,j}` is a field-linear functional of s, and
+     `g = Σ_j 16^j g_j` is R-linear.
+2. **Operand pads.** For each p_x in `operand_pads` order there are 16
+   constant R-elements p_{x,j}, its balanced radix-256 digits, with
+   `P_x = Σ_j 256^j p_{x,j}` (§3.2).
+3. **r_p**, the box digits of §1.5.
 
-- exactly two rank-one maps K₁ and K₂, which are offset-0 views at ring
-  dimensions [16, 8] for Q128;
-- `PackedNegativeBinary` digits in `{−1, 0}`, bit-major
-  (`linear = bit·len + coeff`);
-- `width = ⌈in_coeffs·field_bits/d⌉`;
-- a 128-byte terminal of 8 field elements;
-- an input of at most 8 KiB (`akita-params/src/compression.rs`,
-  `compression/chain.rs`).
-
-```rust
-pub struct CompressedCommitment<F>([F; 8]);     // CanonicalBytes, 128 bytes
-pub struct CompressionWitness<F> { pub xi_1: Vec<i8>, pub xi_2: Vec<i8> }
-pub fn compress<F>(seed: &PublicMatrixSeed, image: &[F])
-    -> Result<(CompressedCommitment<F>, CompressionWitness<F>), CryptoError>;
-```
-
-Akita switching to this copy is a later Akita ticket (§9, A12).
-
-### 1.6 Relation to Akita's kernels
-
-- **Same bytes.** The jolt-crypto functions are the definition, written
-  schoolbook or NTT and readable. Akita's kernels (`kernels/linear/*`,
-  `arithmetic/exact_i16.rs`, `commitment_stage.rs`, `opaque/compression.rs`)
-  are the fast path for the same function.
-- **Pinning.** Akita has no commitment-byte golden vectors today. W4 adds
-  two kinds of test:
-  - frozen digests in jolt-crypto for small layouts: one level, two levels
-    with 2 slices and 2 polynomials, randomness columns, and both
-    compression maps;
-  - an equivalence test in `jolt-akita/tests`. It runs Akita's production
-    commit and compression paths through the pinned Akita on each
-    production profile of the K16 schedules (root, levels 1–5) and on
-    random inputs, and asserts byte equality with jolt-crypto.
-
-  The equivalence test needs Akita's commit entry points to be reachable
-  from `jolt-akita`. If they are not, a later Akita ticket adds the same
-  test there (W5).
-- **Kernel seam.** The prover's per-attempt `N·y` is the commitment of an
-  11.8M-coefficient vector (§6.4). jolt-zk takes an implementation of:
-
-  ```rust
-  pub trait AjtaiKernel<F> {
-      fn apply_centered(&self, view: &MatrixView<'_, F>, input: &[i64], out: &mut [F])
-          -> Result<(), CryptoError>;
-  }
-  ```
-
-  jolt-crypto provides `ReferenceKernel`. Akita may provide a fast one in
-  W5, and `WhiteoutSetup` carries the choice. Akita's i8/i16 digit kernels
-  do not apply to y, whose coefficients reach about 2^27. A fast kernel must
-  satisfy the constant-time contract of §2.8 and pass the equivalence test.
-
-### 1.7 Module structure
-
-The Σ-protocol needs **N** to be R-linear (`wo:lem:sigma-extract` cancels c),
-and restriction of scalars provides that only when each multiplication by a
-matrix entry acts on an input embedded by the stride map of §0. Akita's
-consecutive-coefficient split from d_A to d_B (§1.3) is a relabelling of
-coefficients, not a module map. So for the residual commitment and the pad
-commitment, `jolt-zk` rejects any layout with `d_A ≠ d_B`, or with a ring
-dimension that is not a multiple of 64, with
-`ZkError::Setup(NotModuleOverChallengeRing)`. The headline layouts use R_256 for
-A, B and the pad matrix, so they pass. Other folds and the proof of the response
-are unaffected.
-
-### 1.8 `VectorCommitment::Blind`
-
-This implements `whiteout-interfaces.md` §3.
-
-```rust
-pub trait VectorCommitment:
-    Commitment<Output: CanonicalBytes + CanonicalDecode + Serialize + DeserializeOwned>
-{
-    type Field: JoltField;
-    type Setup: Clone + Send + Sync;
-    /// Pedersen: one scalar. Lattice: randomness digits.
-    type Blind: Clone + Send + Sync;
-    fn capacity(setup: &Self::Setup) -> usize;
-    fn sample_blind<R: RngCore + CryptoRng>(setup: &Self::Setup, rng: &mut R) -> Self::Blind;
-    /// `values` are field elements; any gadget decomposition happens inside.
-    fn commit(setup: &Self::Setup, values: &[Self::Field], blind: &Self::Blind) -> Self::Output;
-    fn verify(setup: &Self::Setup, c: &Self::Output, values: &[Self::Field], blind: &Self::Blind) -> bool;
-}
-
-/// Row-combined openings: needs a homomorphic blind of norm independent of
-/// the combination, so only Pedersen implements it.
-pub trait RowOpening: VectorCommitment<Blind = Self::Field>
-where Self::Output: HomomorphicCommitment<Self::Field> + Copy
-{ /* open_committed_rows, verify_committed_rows: today's bodies */ }
-```
-
-- The `Copy` bound moves from `VectorCommitment::Output` to `RowOpening`
-  (`combine_commitments` needs it). Every current caller of
-  `open_committed_rows`, `verify_committed_rows` or `HomomorphicCommitment`
-  bounds `RowOpening`.
-- `Pedersen` and `NoVectorCommitment` set `Blind = F`. The lattice output is
-  the 128-byte `CompressedCommitment`, which is fixed size, so
-  `CanonicalBytes` holds.
-- Interaction with M6c: M6c rewrites the BlindFold code that calls these
-  traits. This slice lands after M6c, or rebases onto it, so the change is
-  made once.
-
-### 1.9 The lattice pad commitment
-
-`whiteout::LatticePadCommitment` implements `VectorCommitment`, with
-`Setup = PadCommitmentSetup` built from M6b's `PadLayout`.
-
-**Committed values** (`commit_pads`, interfaces §5): `values` is the pad vector
-p ∈ F^P in pad-index order, then the 64 coefficients of g. The setup knows
-which pad indices are operand pads (`PadLayout::operand_pads`). The message
-the matrix sees, in R-elements, is:
-
-1. **Regular pads, then g.** Grouped into R-elements of 64 consecutive values
-   (the last group zero-padded). g is aligned to its own element. Each
-   element is decomposed into 32 balanced radix-16 digit planes (§1.2), so
-   `p_i = Σ_j 16^j · digit_{i,j}`, and `g = Σ_j 16^j g_j` is R-linear in s.
-2. **Operand pads.** For each operand pad p_x in `operand_pads` order:
-   16 constant R-elements p_{x,j}, which are the balanced radix-256 digits of
-   p_x, with `P_x = Σ_j 256^j p_{x,j}` (§3.2). An operand pad is also
-   committed in group 1 only if it is also a regular slot. M6b's A5 decides
-   that. The reconstruction rule is the same either way.
-3. **r_p.** The blind: radix-16 box digits with the length from §1.4.
-
-The message is packed into R_{d_p} elements by the stride map (§0) and
-committed by one `AjtaiLevel`, `t_p = A_p · (message ‖ r_p)`. `Output` is the
-compressed form of t_p.
+The vector is packed into R_{d_p} elements by the stride map (§0). The
+commitment is `t_p = apply_centered(view_p, vector)`.
 
 **The row L.** The paper needs `[A_{p,r} ; L]` to be one uniform matrix
-instance (§4.2; H4 hypothesis). The pad level's view therefore has
-`rank + 1` rows. Row `rank` is never part of the commitment. Write `a_j` for
-its entries on the randomness columns. Then
+instance (§4.2; H4 hypothesis). The pad view therefore has `rank + 1` rows,
+and setup sizing counts row `rank`. That row is not part of the commitment.
+With `a_j` its entries on the randomness columns:
 
 ```
 L · r_p := π_0( Σ_j a_j · r_{p,j} ) ∈ R,
 ```
 
-where π_0 takes the k = 0 stride component (§0). For a uniform `a`, the map
-`r ↦ π_0(a·r)` is a uniform R-linear map on the four R-coordinates of r: the
-map `a ↦ π_0(a ·)` is an F-linear bijection between spaces of dimension 256.
-So the stacked matrix is uniform. This definition is W4's; §9 A8 asks the
-authors to confirm it.
+where π_0 takes stride component 0 (§0). For uniform `a`, the map
+`a ↦ π_0(a ·)` is an F-linear bijection onto R-linear maps on R^{d_p/64}, since
+both spaces have dimension d_p. The stacked matrix is therefore uniform.
+
+### 1.7 Module structure
+
+`wo:lem:sigma-extract` cancels c, which needs **N** to be R-linear. Restriction
+of scalars gives this only when every multiplication by a matrix entry acts on
+stride-embedded inputs (§0). Akita's consecutive-coefficient split from d_A to
+d_B (§1.4) only relabels coefficients; it is not a module map.
+
+The segment table therefore rejects a residual or pad layout in either case:
+
+- `d_A ≠ d_B`;
+- a ring dimension that is not a multiple of 64.
+
+The error is `ZkError::Setup(NotModuleOverChallengeRing)`. The headline
+layouts use R_256 throughout and pass.
 
 ## 2. The Σ-protocol
 
-### 2.1 Inputs
+### 2.1 Inputs and checks before ρ
 
-`whiteout::prove` receives the following.
+`whiteout::prove` takes three groups of inputs:
 
-- From M6b: the `ResidualRelation` and the `CommittedPads`.
-- From the Akita fold-k prover (W3): the residual opening `(w_k, t̂_a, r_a)`
-  with its image `u_a`. It also receives the public segments of w_k (§2.7).
-- From `WhiteoutSetup`: the layouts, `SigmaParams` (§5) and the
+- from M6b: the `ResidualRelation` and the `PadOpening`;
+- from W3, through W6: the residual opening `(w_k, t̂_a, r_a)`, its image
+  `u_a`, the evaluation points of its claims (A4), and the public segments
+  of w_k;
+- from the setup: the layouts and `SigmaParams` (§5), plus a
   `ResponseProver`.
 
-It assembles **s** in segment order (§0): w_k, t̂_a, r_a, regular and g digits,
-operand digits, r_p.
+It assembles **s** in segment order: w_k, t̂_a, r_a, regular digits and g
+digits, operand digits, r_p.
 
-**Release self-checks** run before any transcript operation. They cost one
-application of N and one evaluation of h:
+Before any transcript operation it runs the following **release checks**.
+Each failure is fatal and maps to a typed `ZkError`.
 
-- `N·s = t`. A failure returns `ZkError::ResidualOpeningMismatch`.
-- `ct(h) = 0`. A failure returns `ZkError::ResidualUnsatisfied`.
+1. **Segment alphabets.** Every coefficient lies in its segment's alphabet,
+   and every `ConstantPoly` element has zero coefficients outside native
+   positions 0..m.
+   - This is the zero-knowledge precondition: `‖cs‖_σ ≤ 1/α` (§5) holds
+     only for vectors with the declared shapes.
+   - M5a's ∞-norm `ShiftOutOfRange` cannot detect a violation. For example,
+     a dense operand segment passes the per-coordinate shift bound, but its
+     ℓ₂ norm can exceed the constant-polynomial bound by 8×.
+   - The check is constant time per coefficient, branching only on the
+     aggregate.
+2. **Every row of R_res, individually.** This covers each affine row, each
+   product row, each scalarity row, and `ct(g) = 0`, evaluated on the
+   decoded values.
+3. **N·s = t,** with t the raw images. They must equal the sent commitments:
+   t_p as sent by `commit_pads`, and u_a as W3 sent it.
 
-The second check also protects zero knowledge. h is a coordinate of V, V lies
-in e, and the proof of the response is not zero knowledge. If `ct(h) ≠ 0`, h
-would leak the violated rows, because H6 needs `ct(Q′) = 0`.
+After ρ is squeezed and before σ, it computes `h = Q_μ(1, s)` and asserts
+`ct(h) = 0`. Given check 2 this cannot fail, so the assertion is a release
+invariant check.
+
+**Why check 2 runs before ρ.** h is a coordinate of V, V lies in e, and the
+response proof is not zero knowledge. If ct(h) ≠ 0, then ct(h) =
+Σ_i μ_i·violation_i would publish one field element, a ρ-weighted combination
+of the violated rows. H6 needs `ct(Q′) = 0`. Checking each row before ρ keeps
+the transcript free of any such value.
 
 ### 2.2 Lifting the rows
 
 Each row becomes an R-linear form in `(u, s)` (`wo:lem:ct-lift`), built with
-`LiftedFunctional` (moved in M6d).
+`LiftedFunctional` (M6d):
 
 | Residual element | Lift |
 |---|---|
 | `ResidualVar::Pad(i)`, regular | `Σ_j 16^j ·` coordinate of digit `(i, j)` |
-| `ResidualVar::Pad(x)`, operand | `ct(P_x)`, i.e. `Σ_j 256^j ·` coefficient 0 of `p_{x,j}` (§3.2: "every use of this pad uses ct(P_x)") |
-| `ResidualVar::Witness(j)` | coordinate j of w_k |
-| structured evaluation term (A4) | `scale · Σ_j eq(r, j) w_{k,j}`, kept symbolic |
+| `ResidualVar::Pad(x)`, operand | `ct(P_x) = Σ_j 256^j ·` coefficient 0 of `p_{x,j}` (§3.2: "every use of this pad uses ct(P_x)") |
+| `ResidualVar::Witness(j)` | evaluation claim j of the residual commitment, `w̃_k(r_j)` (A4), kept as the symbolic term `eq(r_j, ·)` over w_k |
 | constant `b` | `u · b` |
 
-An `AffineRow` becomes a constant-term row `Λ_j`. Each operand pad adds the 63
-**scalarity rows** `ct(X^{−r} P_x) = 0`, r = 1..63. A `ProductRow` becomes
+- **Affine rows.** Each `AffineRow` becomes a constant-term row `Λ_j`.
+- **Scalarity rows.** Each operand pad adds 63 of them,
+  `ct(X^{−r} P_x) = 0` for r = 1..63.
+- **Product rows.** Each `ProductRow` becomes
+  `X_i(u, s) = u·x̂_i − P_{x_i}(s)`, with `Y_i, Z_i` the lifts of y, z.
 
-- `X_i(u, s) = u·x̂_i − P_{x_i}(s)`, the constant operand;
-- `Y_i`, `Z_i`, the lifts of y and z.
-
-M6b's `ProductRow` has one x. W4 asks for a sum-of-products row (A1), which this
-construction already supports. Each term contributes its own `X_{i,t} Y_{i,t}`,
-and all terms share the row's label.
+Every `ProductRow.x.pad` must be in `operand_pads`, checked in release (A5).
+Extension-field products reach W4 already expanded into single-term rows with
+auxiliary slots (A1).
 
 ### 2.3 Labels and aggregation (Step 1)
 
-Labels are assigned by one public function of the relation, `RowLabels::assign`
-(§4.2, "Verifier cost of the zero rows"):
+`RowLabels::assign` is one public function of the relation (§4.2, "Verifier
+cost of the zero rows"):
 
-- Operand o (in `operand_pads` order) owns the labels `64·o + r` for
+- Operand o, in `operand_pads` order, owns labels `64·o + r` for
   r ∈ [1, 63]. Label `64·o` is unused, and label 0 is the constant monomial
   reserved for `ct(g)`.
-- Product rows follow from label `64·n_ops`, in relation order, and affine
-  rows come after them.
-- `ℓ = ⌈log₂(max_label + 1)⌉`. At the headline shape the maximum label is
-  9,625 (119 operands, 119 products, 1,891 affine rows), so ℓ = 14.
+- Product rows take consecutive labels from `max(64·n_ops, 1)` in relation
+  order, then affine rows.
+- `ℓ = ⌈log₂(max_label + 1)⌉`. At the headline the largest label is 9,625,
+  so ℓ = 14.
 
-The verifier squeezes ℓ **full** field challenges ρ_1..ρ_ℓ with
-`challenge::<F>()`, consecutively and with no intervening prover message.
-`challenge_small` is not used, because the error term is ℓ/q. The weights are
-`μ_i = Π_{j : bit j of a_i} ρ_j`. Both roles then form
+The verifier squeezes ℓ **full** field challenges, `challenge::<F>()`
+consecutively, with no prover message in between. The error term is ℓ/q,
+which is why `challenge_small` is not used. Then
+`μ_i = Π_{j : bit j of a_i} ρ_j`, and both sides form
 
 ```
 Q_μ(u, s) = Σ_i μ_i (X_i Y_i − u Z_i) + u · Λ_μ(u, s) + u · g(s),
-Λ_μ = Σ_j μ_{n×+j} Λ_j     (one LiftedFunctional: a combination of lifts is the lift of the combination)
+Λ_μ = Σ_j μ_{n×+j} Λ_j     (one LiftedFunctional)
 ```
-
-The prover computes `h = Q_μ(1, s)` once.
 
 ### 2.4 Attempts (Steps 2–4)
 
-The prover first squeezes a 32-byte fork seed σ from the live transcript. The
-verifier squeezes it at the same position. σ binds the transcript τ of the
-oracle input. Then, for attempt i = 1..T_att:
+The prover squeezes a 32-byte fork seed σ from the live transcript, and the
+verifier squeezes it at the same position. σ binds the oracle input's τ. Then,
+for i = 1..T_att:
 
-1. **Mask.** Sample y ← π_0 with `GaussianSampler::fill`, one sampler per
-   block, writing y = 0 on Public segments.
-2. **First message.**
-   - `f = N·y`, through `AjtaiKernel::apply_centered`;
+1. **Mask.** Draw `y ← π_0` with M5a's `GaussianSampler::fill`, one sampler
+   per Gaussian segment. Public segments get `y = 0`.
+2. **First message.** Compute:
+   - `f = N·y`: `apply_centered` on each part of N;
    - `E_0 = L·y + Q_μ(0, y)`;
-   - `E_1 = L·s + B_μ((1, s), (0, y))`. Expanded, this is
-     `L·s + Σ_i μ_i (X_i(1,s) Y_i(0,y) + X_i(0,y) Y_i(1,s) − Z_i(0,y)) + Λ_μ(0,y) + g(y)`.
-3. **Commit to V.** Set `V = (f, E_0, E_1, h)`, take `t_D = A_D · G⁻¹(V)` with
-   radix-16 digits (32 per coefficient) and no randomness, and compress it to
-   `cm_D` (§1.5).
-4. **Nonce and challenge.**
-   - Draw `n_i` as 32 uniform bytes from the prover's RNG. It is never a
-     counter or a derived value.
-   - Take `c_i = SampleChallenge(Fork::attempt(σ, n_i).absorb(cm_D))`.
-     This uses the operator-norm-filtered d = 64 family
-     (`D64_L2_OP_NORM_PM1/PM2_COUNT`, `OperatorNormRejection::D64_SELECTIVE_L2`)
-     through `sample_indexed_challenges_from_seed` on a 32-byte squeeze of
-     the fork.
-5. **Respond and reject.**
-   - Compute `v = c_i·s` as the exact centred-integer negacyclic product,
-     never reduced mod q, and set `z = y + v`.
-   - Call `JointRejection::accept(z_G, v_G, rng)` on the Gaussian
-     coordinates only, block-major.
-6. **Outcome.**
-   - Accept: send cm_D, send n_i as 32 fixed-length bytes, and leave the
-     loop.
-   - Reject: discard everything the attempt produced and continue.
+   - `E_1 = L·s + Σ_i μ_i (X_i(1,s) Y_i(0,y) + X_i(0,y) Y_i(1,s) − Z_i(0,y)) + Λ_μ(0,y) + g(y)`.
 
-`Fork::attempt` is new in `jolt-transcript`. It constructs a fresh sponge with
-the tag `jolt-transcript/fork/attempt/v1`, then absorbs σ and the 32-byte nonce.
-It is separate from the grinding forks, which are keyed by a `u32` counter, so
-the attempt queries live in their own oracle domain (H2 hypothesis: "a separate
-domain of the oracle"). `Fork::new(seed, counter)` cannot serve here, because a
-counter is predictable and H2 needs a nonce that is uniform and secret until it
-is published.
+   Every lift of y into F (in Q_μ(0,y), B_μ, L·y, g(y) and Λ_μ(0,y)) uses the
+   branch-free centered lift of §1.3.
+3. **Commit to V.** Set `V = (f, E_0, E_1, h)` and compute
+   `t_D = commit(A_D, G⁻¹(V))`: radix-16 digits, 32 per coefficient, no
+   randomness. A_D is 1 × R_64, so t_D has 64 coefficients.
+4. **Nonce and challenge.**
+   - `n_i` is 32 uniform bytes from the prover's RNG, never a counter.
+   - `c_i = SampleChallenge(Fork::attempt(σ, n_i).absorb(t_D))`, from the
+     operator-norm-filtered d = 64 family.
+   - The prover uses the constant-time sampler of §2.8. Its output equals
+     `sample_indexed_challenges_from_seed(seed, 64, 1, cfg, Some(D64_SELECTIVE_L2))`,
+     which the verifier uses.
+5. **Response.** `v = c_i·s` is the exact centred-integer negacyclic product,
+   never reduced mod q. Set `z = y + v`, then call
+   `JointRejection::accept(z_G, v_G, rng)` on the Gaussian coordinates,
+   block-major.
+6. **Outcome.** On acceptance, send t_D and n_i, and leave the loop. On
+   rejection, discard the attempt.
+
+`Fork::attempt` is a fresh sponge. It absorbs the tag
+`jolt-transcript/fork/attempt/v1`, then σ, then the 32-byte nonce. It is
+separate from the grinding forks, which are keyed by a `u32` counter, so the
+attempt queries have their own oracle domain (H2: "a separate domain of the
+oracle"). A counter would not do: H2 needs a nonce that is uniform and secret
+until it is published.
+
+A fork lives outside the transcript. It records no `TranscriptEvent`, and a
+rejected attempt leaves nothing in the replay log.
 
 ### 2.5 What enters the transcript
 
 | Order | Event | Prover | Verifier |
 |---|---|---|---|
-| (earlier) | pad commitment `cm(t_p)` | sent by `commit_pads` | received by `receive_pad_commitment` |
-| (earlier) | residual commitment `cm(u_a)` | sent by Akita fold k (W3) | received in W3 |
+| (earlier) | pad commitment t_p, 768 coefficients raw | `commit_pads` | `receive_pad_commitment` |
+| (earlier) | residual commitment u_a | Akita fold k (W3) | W3; passed to `verify` as an argument |
 | 1 | ρ_1..ρ_ℓ | `challenge::<F>()` × ℓ | same |
 | 2 | σ | `challenge_bytes::<32>()` | same |
-| 3 | `cm_D` (128 bytes) | accepted attempt only | `receive` |
-| 4 | `n` (32 bytes) | accepted attempt only | `receive_bytes(32)` |
-| — | c | not a transcript event: derived from the fork | rebuilt from (σ, n, cm_D) |
+| 3 | t_D, 64 coefficients raw | accepted attempt only | `receive_n` |
+| 4 | n, 32 bytes | accepted attempt only | `receive_bytes(32)` |
+| — | c | derived from the fork | rebuilt from (σ, n, t_D) |
 | 5… | response proof | `ResponseProver::prove_response` | `verify_response` |
 
-The transcript absorbs `cm_D` and `n` as ordinary messages, so every later
-challenge binds them. A rejected attempt leaves no trace: no message, no site
-and no telemetry value. Only the attempt count may be recorded. H3 makes it
-independent of the witness.
+Sending t_p and t_D raw costs (768 + 64) × 16 B ≈ 13 KB more than the paper's
+two compressed 128-byte forms, until W5 adds compression (A12).
 
 ### 2.6 Retry versus abort
 
 | Event | Handling | Why |
 |---|---|---|
-| accept bit 0 | internal retry, fresh y and n_i | Step 4; Fiat–Shamir with aborts (§2.6 of the paper) |
-| all T_att attempts rejected | `ZkError::SigmaAttemptsExhausted`; the caller may rerun the whole proof with fresh randomness | probability ≤ 2^−128; H3 makes the event independent of the witness, so a rerun reveals nothing |
-| `SampleError::ShiftOutOfRange` | `ZkError::InvariantViolation`, fatal; never retried, never recorded | only a malformed s produces it (interfaces §5) |
-| other `SampleError` / layout errors | `ZkError::Setup(..)`, fatal | public parameters |
-| operator-norm challenge budget exhausted (`CryptoError`) | fatal on both sides | a public function of the oracle input, probability about 2^−1580 at 4,096 tries; never a retry trigger, since retrying on it would condition c |
-| self-check failure (§2.1) | fatal | invalid witness |
-| `ZkError::FoldOverflow` (W2) | whole-proof retry | outside the Σ-protocol |
+| accept bit 0 | Internal retry with fresh y and n_i. | Step 4: Fiat–Shamir with aborts. |
+| all T_att attempts rejected | `ZkError::SigmaAttemptsExhausted`. The caller may rerun the whole proof with fresh randomness. | Probability ≤ 2^−128. H3 makes the event independent of the witness, and the simulator outputs ⊥ at the same rate (A14). |
+| `SampleError::ShiftOutOfRange` | `ZkError::InvariantViolation`, fatal. Never retried, never recorded. | Unreachable after check 1 of §2.1. |
+| other `SampleError`, layout errors | `ZkError::Setup(..)`, fatal. | Public parameters. |
+| operator-norm budget exhausted | Fatal on both sides. | A public function of the oracle input, with probability about 2^−1580 at 4,096 tries. Conditioned on the budget not running out, c is uniform on the filtered family. Retrying on exhaustion would change nothing measurable, but it would add an attempt-dependent path, so it is fatal instead. |
+| `ZkError::FoldOverflow` (W2) | Whole-proof retry. | Outside the Σ-protocol. |
 
 ### 2.7 Public coordinates
 
-Public segments are declared, never inferred. Each one is a whole number of
-R-elements (§4.2: "Public coordinates are whole elements of the challenge
-ring"), and its ranges come from the residual layout. At k = 2 they are the
-6,291,456 setup-group cells of w_2 and the 589,824 inner digits of fully
-public blocks. On them:
+The public segments are declared by W3 as unions of whole native elements. At
+k = 2 they are the 6,291,456 setup-group cells of w_2 and the 589,824 inner
+digits of fully public blocks. On them:
 
-- y = 0 (§4.2);
-- they are excluded from every rejection block, from π_0 and from
-  `‖·‖_σ` (§5, standing notation);
-- `z = c·s_pub` gets fewer digits: D_pub = 3 at radix 16, since
-  `‖c‖₁ · 8 = 424 ≤ 7·(16³−1)/15`.
+- y = 0 (§4.2), and they are excluded from π_0, from `‖·‖_σ`, and from every
+  rejection block;
+- `z = c·s_pub` gets D_pub = 3 radix-16 digits, since
+  `κ₁ · 8 = 424 ≤ 7·(16³−1)/15`.
 
-The response proof checks them with the same equations and no
-`z = c·s_pub` rows. Every branch on "public" reads only the segment table.
+The response proof checks the same equations on public coordinates, with no
+separate `z = c·s_pub` rows. Every branch on "public" reads only the segment
+table.
 
 ### 2.8 Constant-time requirements
 
-The ZK theorem's view is the proof. The constant-time requirement adds one
-side channel that the paper's model excludes: per-attempt timing. A rejected
-attempt's values (y_i, c_i, z_i and V_i) are correlated with the witness
-through the rejection event, which is why H2 insists that their oracle answers
-are never observed. Timing must not reveal them either. The prover as a whole
-is not constant time with respect to s, as no Jolt prover is, and that timing
-is the same in every attempt. The rule is therefore:
+The ZK theorem's view is the proof. Per-attempt timing is a side channel that
+model excludes, and W4 closes it. A rejected attempt's y_i, c_i, z_i, V_i and
+t_D are correlated with the witness through the rejection event. H2 insists
+that the oracle's answers on them are never observed, and timing must not
+reveal them either.
 
-> Every step computed before the attempt's accept bit is known is constant time
-> with respect to the attempt's fresh secrets (y, n, c, and everything derived
-> from them). Steps on s alone, and steps after acceptance, inherit the
-> prover's ordinary posture.
+> **Rule.** Every step computed before an attempt's accept bit is known runs in
+> time, and with memory addresses, independent of the attempt's fresh secrets
+> (y, n, c, and everything derived from them). No secret value is used as a
+> branch condition, loop bound, table index, or divisor. Steps on s alone, and
+> steps after acceptance, inherit the prover's ordinary posture: Jolt's prover
+> is not constant time in its witness, and those steps are identical across
+> attempts.
 
 | Step | Secret inputs | Requirement |
 |---|---|---|
-| Gaussian `fill` | output y | M5a sampler (isochronous, reviewed) |
-| `N·y` | y | `apply_centered`: loop bounds and addresses from the layout; centred-to-field lift by constant-time select; NTT/CRT butterflies on public twiddles |
-| `Q_μ(0,y)`, `B_μ`, `L·y`, `g(y)` | y | ring products with public or s-only operands; fixed loops |
-| `G⁻¹(V)` | V | the branch-free bias path of `BalancedDecomposePow2Params::biased`; its `match` reads public parameters only |
-| `A_D·G⁻¹(V)`, `compress(t_D)` | V, t_D | fixed loops; `PackedNegativeBinary` digit extraction must be branch-free (audit when copying, §1.5) |
-| `Fork::attempt`, Keccak | n, cm_D | Keccak-f is constant time |
-| challenge sampling | c_i | the accepted candidate's processing must not branch or index on its positions or signs; the discarded-candidate count is independent of the accepted value (rejection-sampling isochrony). `position_sample.rs` must be audited and, if needed, given a constant-time prover variant with identical output (A13) |
-| `v = c·s` | c, s | dense 64×64 negacyclic convolution, with c as 64 `i8` coefficients; never a sparse loop over c's support |
-| `accept` | z, v | M5a's constant-time rule; only the `Choice` is branched on |
-| field arithmetic | all of the above | `Fp128` add/sub/mul reduction must compile without secret-dependent branches; checked by the assembly review |
+| Gaussian `fill` | y | M5a sampler (isochronous, reviewed). |
+| `N·y`, `A_D·G⁻¹(V)` | y, V | `apply_centered` of §1.3: branch-free Montgomery lift, NTT with public twiddles, constant-time Garner, no LUT. |
+| `Q_μ(0,y)`, `B_μ`, `L·y`, `g(y)`, `Λ_μ(0,y)` | y | Branch-free centered lift into F. Ring products with public or s-only operands. |
+| `G⁻¹(V)` | V | The bias path of `BalancedDecomposePow2Params::biased`. Its SIMD variants are on the audit list. |
+| `Fork::attempt`, Keccak | n, t_D | Keccak-f is constant time. |
+| challenge sampling | c_i | A prover-side constant-time sampler, byte-identical to the verifier's. It replaces Fisher–Yates swaps at secret indices with full-array masked swaps and drops the sparse hash-table path (d = 64 always takes the dense path). It always runs the operator-norm decision's exact certified evaluation, and never `decide_transposed_fused`'s spectrum-dependent fast path, its `Indeterminate` fallback, or its `freq_row` indexing by secret positions. Discarded candidates go through the same constant-time body. Their number is independent of the accepted value, by rejection-sampling isochrony. |
+| sparse-to-dense c | c_i | A constant-time scatter: each of the 64 output coefficients is a masked sum over all support entries. |
+| `v = c·s` | c | A dense 64×64 negacyclic convolution, with c as 64 `i8` coefficients. |
+| `accept` | z, v | M5a's constant-time rule. Only the `Choice` is branched on. |
 
-Further rules:
+**Audit list.** Each item is checked in the assembly record (§7, item 4):
 
-- Per-attempt buffers are allocated once and overwritten. No tracing span
-  carries an attempt value.
-- `#[inline(never)]` goes on the attempt body, so the assembly review covers
-  the production monomorphization (M5a §5).
-- **Platform.** The argument assumes data-independent timing of integer
-  multiply, add and compare. W4 records this as an accepted platform
-  assumption: neither arm64 DIT nor Intel DOITM is enabled. Enabling them
-  needs `unsafe` system-register access, which this crate forbids, so that
-  is a follow-up (A11).
+- `Fp128` add/sub `if overflow | carry3` (`solinas/fp128.rs:155-171`) must
+  compile to a select;
+- `GarnerData::centered_mixed_radix`'s bool-to-int products, which W4
+  replaces with masks in its constant-time Garner;
+- the value branches at `ntt/ifma52.rs:59,68,82` and
+  `crt_ntt_repr/lut.rs:105`, which W4 code must not reach;
+- the NEON and AVX butterflies and pointwise kernels;
+- the decomposition SIMD paths.
+
+Per-attempt buffers are allocated once and overwritten. No tracing span carries
+an attempt value. The attempt body is `#[inline(never)]`, so the review covers
+the production monomorphization.
+
+**Platform.** The argument assumes that integer multiply, add and compare take
+data-independent time. Neither arm64 DIT nor Intel DOITM is enabled, and this
+is recorded as an accepted assumption (A11).
 
 ## 3. Response statement and `ResponseProver`
 
 ### 3.1 The boundary
 
-`jolt-zk` owns everything that defines the Σ-protocol's relation:
+**`jolt-zk` owns what defines the Σ-protocol's relation:**
 
 - s, N, Q_μ and L;
 - the box and the certified alphabets;
-- the vector e (layout and contents).
+- the logical layout and contents of e, as typed segments.
 
-Akita (W5) owns how that relation is proved:
+**Akita (W5) owns how that relation is proved:**
 
-- committing to e;
-- the product sumcheck (2a + 3 field elements);
-- the row batching `H·e = b` at η;
-- the fused degree-3 range-and-relation sumcheck;
-- the evaluation of the structured weights A(**r**) and B(**r**);
-- setup offloading;
+- committing to e, the product sumcheck, and the row batch at η;
+- the fused range-and-relation sumcheck;
+- the structured weights A(**r**) and B(**r**), and setup offloading;
+- compression and the ξ digits;
 - the final opening.
 
-That split follows §4.3, "Evaluating the public weights": the description must
-let the verifier compute A(**r**) and B(**r**) succinctly, and only Akita's
-structured-weight machinery does that. The statement therefore carries
-**typed, structured descriptions**, never dense matrices.
+That split follows §4.3, "Evaluating the public weights": only Akita's
+structured-weight machinery evaluates those weights succinctly. So the
+statement carries typed, structured descriptions, never dense matrices. W5
+states its alignment needs for e's physical packing before slice 8 (A15).
 
 ### 3.2 `ResponseStatement<F>`
 
-The items follow the list in §4.3.
+The statement follows the items of §4.3. The seed and the layouts come from
+the setup, and the statement does not duplicate them.
 
 ```rust
 pub struct ResponseStatement<F> {
-    // Σ-protocol transcript values
     pub challenge: SparseChallenge,            // c
-    pub mu: Vec<F>,                            // μ, from ρ and the labels
-    // the vector e
+    pub rho: Vec<F>,                           // ρ; μ is derived by RowLabels
     pub layout: ResponseLayout,                // segments of e, below
-    // Item 2: compression and V-commitment equations
-    pub residual_commitment: CompressedCommitment<F>,  // cm(u_a)
-    pub pad_commitment: CompressedCommitment<F>,       // cm(t_p)
-    pub v_commitment: CompressedCommitment<F>,         // cm(t_D)
-    pub v_level: AjtaiLevel,                   // A_D (binding, no randomness)
-    pub seed: PublicMatrixSeed,
-    // Item 3: N z = f + c t
-    pub ring_linear: RingLinearStatement,      // residual TwoLevelLayout, pad AjtaiLevel, segment map of s
-    // Item 4: Q_μ(c, z) + L z = E_0 + c E_1 + c² h
-    pub quadratic: QuadraticStatement<F>,      // lifted rows (sparse terms + structured eval terms),
-                                               // operand list, labels, L (row index of the pad view)
+    pub residual_image: Vec<F>,                // u_a (raw until W5 compresses it)
+    pub pad_image: Vec<F>,                     // t_p (raw)
+    pub v_image: Vec<F>,                       // t_D (raw)
+    pub ring_linear: RingLinearStatement,      // N: residual TwoLevelLayout, pad AjtaiLevel, segment table
+    pub quadratic: QuadraticStatement<F>,      // see below
 }
 ```
 
-**`ResponseLayout`** lists e = (G_z⁻¹(z), G⁻¹(V), G⁻¹(θ), ξ_a, ξ_p, ξ_D) as
-ordered segments. Each segment has a length, a radix, a digit count and an
-alphabet (Item 1).
+- **`ResponseLayout`** lists e = (G_z⁻¹(z), G⁻¹(V), G⁻¹(θ)) as typed
+  segments. Each segment carries a length, a radix, a digit count and an
+  alphabet (Item 1). The ξ segments are added in W5.
+  - **z.** One segment per s-segment, in s order, which is also the pad
+    commitment's column order (§1.6). Within a segment, digits are
+    plane-major. The radix is 16, with D_b digits for Gaussian segments and
+    D_pub for public ones. `𝓑_cert` is the balanced D-digit range.
+  - **V.** 32 radix-16 digits per coefficient, the same digits that t_D
+    commits.
+  - **θ.** 63 coefficients × 32 digits = 2,016 cells.
+- **`QuadraticStatement`** lists every term of Item 4:
+  - Λ_μ's sparse pad and auxiliary terms, plus its evaluation-claim terms
+    `Witness(j) → eq(r_j, ·)`;
+  - the scalarity rows, implicitly, as the operand list and the label base;
+  - the products as `(x̂, operand, Y, Z)`;
+  - the `u·g(s)` term, which uses the g-element of `PadDigits`;
+  - the row index of L in the pad view.
 
-- **z.** One segment per s-segment, in s order. Within a segment the layout
-  is digit-plane-major, which is the output order of jolt-algebra's
-  decomposition. Radix 16; Gaussian blocks use D_b digits and public
-  segments D_pub. The certified box `𝓑_cert` is the balanced D-digit range.
-- **V.** 32 radix-16 digits per coefficient, the same digits that t_D
-  commits. So t_D = A_D·G⁻¹(V) is a check on e itself, with no second copy.
-- **θ.** 63 coefficients × 32 radix-16 digits (2,016 cells).
-- **ξ_a, ξ_p, ξ_D.** Binary `{−1, 0}`, laid out in the bit-major
-  `CompressionWitness` order (§1.5).
-
-**`QuadraticStatement`** stores Λ_μ as sparse pad and auxiliary terms plus at
-most a few structured evaluation terms over w_k (A4). The scalarity rows are
-stored implicitly: one operand list and one label base. Products are stored as
-`(x̂, operand, Y, Z)` with sparse lifts. With c, μ and these terms fixed,
-`H_e` in Item 4 is affine in e (§4.3, "Reducing the products"), and Akita
-derives the tables U_i and W_i from them.
-
-Item 5 (`ct(h) = 0`) is a single coefficient row on the V segment. It needs no
-field of its own.
+  With c and ρ fixed, H_e is affine in e (§4.3).
+- **Item 5**, `ct(h) = 0`, is one coefficient row on the V segment.
 
 ### 3.3 `ResponseWitness<F>`
 
-The witness carries `e: Vec<i8>`, the digit vector in `ResponseLayout` order,
-which is the paper's e exactly. It also carries the accepted
-`(z, V, θ)` in value form for the prover's product reduction. jolt-zk computes
-everything in it:
+The witness is e in digit form only, `Vec<i8>` in `ResponseLayout` order.
+jolt-zk computes all of it:
 
-- `G_z⁻¹(z)`;
-- `G⁻¹(V)`, already formed for t_D;
-- θ from (4), as the quotient of
-  `Σ μ_i [X_i(c,z)][Y_i(c,z)] − [H_e]` by `X^64 + 1`. The degree is below 63
-  by §4.3, and a nonzero remainder returns `ZkError::InvariantViolation`;
-- ξ_a, from `compress(u_a)` with u_a supplied by W3;
-- ξ_p and ξ_D, from `compress(t_p)` and `compress(t_D)`.
+- `G_z⁻¹(z)` and `G⁻¹(V)`, the latter already formed for t_D;
+- θ from (4), as the quotient of `Σ μ_i [X_i(c,z)][Y_i(c,z)] − [H_e]` by
+  `X^64 + 1`. Its degree is below 63, and a nonzero remainder returns
+  `ZkError::InvariantViolation`.
 
-At the headline shape, e has 65,450,122 cells (2^25.96), and i8 storage takes
-65 MB.
+At the headline shape, e has about 65.5M cells (§5), which is 65 MB as `i8`.
 
 ### 3.4 Trait
 
-This is interfaces §5, unchanged:
+The trait is that of interfaces §5:
 
 ```rust
 pub trait ResponseProver<F> {
@@ -645,301 +608,254 @@ pub trait ResponseProver<F> {
 }
 ```
 
-Contract for implementors:
+Its contract:
 
-- The commitment to e is the first transcript event after n (§4.3: "the
-  commitment to e precedes every challenge of this reduction").
-- `verify_response` checks Items 1–5 for the whole of e, public z segments
+- The commitment to e is the first transcript event after n.
+- `verify_response` checks Items 1–5 over all of e, public z segments
   included.
 - Errors map to `ZkError::Response(..)`.
 
-W4 ships no production implementor. Tests use `CheckingResponseProver`, a test
-support type that evaluates Items 1–5 directly on the witness and sends
-nothing. It is the statement's own semantics, so it is not a second
+W4's tests use `CheckingResponseProver`, test support that evaluates Items 1–5
+directly on the witness. It is the statement's own semantics, not a second
 implementation of an Akita rule.
 
-## 4. Whiteout's `ZkBackend`
+## 4. Whiteout's `ZkBackend` (W6)
 
-```rust
-pub struct Whiteout<P>(PhantomData<P>);
-impl<P: ResponseProver<F>> ZkBackend<F> for Whiteout<P> {
-    type Setup = WhiteoutSetup<F, P>;   // seed, pad/V/residual layouts, SigmaParams, kernel, P
-    type Blind = PadBlind;              // r_p digits
-    type Witness = ResidualOpening<F>;  // w_k, t̂_a, r_a, u_a, public segment table (W3)
-}
-```
+W6 implements the revised trait of interfaces §5 once W3's opening type exists:
 
-- **`commit_pads`.**
-  1. Sample uniform pads p ∈ F^P and g with `sample_zero_constant_term`
-     (moved in M6d).
-  2. Draw r_p with `sample_blind`, and commit with `LatticePadCommitment`
-     (§1.9).
-  3. Send the 128-byte `cm(t_p)` before the first challenge.
-  4. Return `CommittedPads { pads, cursor: 0, blind: (g, r_p) }`. g travels
-     with the blind because it is committed but is never a pad slot.
-- **`receive_pad_commitment`.** Receive `cm(t_p)` and return a view that
-  carries it. M6b's A3 (`CommittedPadsView` parameterized by the commitment)
-  is the shape W4 needs.
-- **`prove`.**
-  1. Check `pads.cursor == layout.num_pads`.
-  2. Build s and the segment table (§0, §2.1), and run the self-checks.
-  3. Lift (§2.2), label and squeeze ρ (§2.3), then run the attempts (§2.4).
-  4. Build the statement and witness (§3), and call `prove_response`.
-- **`verify`.**
-  1. Check the setup's module structure (§1.7) and the relation's shape.
-  2. Lift and label (§2.2–2.3). The verifier never applies N or Q_μ; it only
-     builds their descriptions.
-  3. Squeeze ρ and σ, receive `cm_D` and n, and derive c. A derivation error
-     rejects.
-  4. Build the statement and call `verify_response`.
-
-  The residual commitment `cm(u_a)` comes from W3's `ResidualRows`. The pad
-  commitment comes from the view, which needs the `verify` signature change
-  in M6b's A3.
-
-**Consuming `ResidualRelation`** (interfaces §5):
-
-| Part of the relation | Becomes |
+| Associated type | Whiteout's choice |
 |---|---|
-| `affine` | constant-term rows Λ_j (§2.2) |
-| `products` | product rows (X, Y, Z) |
-| `layout.operand_pads` | the operand group of the pad commitment, plus 63 scalarity rows each |
-| `layout.num_pads` | must equal P |
-| `num_witness` | must equal \|w_k\| |
-| `layout.auxiliary_slots` | ordinary pads; their defining equalities arrive as affine rows |
+| `PadCommitment` | raw t_p, from `LatticePadCommitment` |
+| `PadOpening` | pads, g and r_p |
+| `ResidualCommitment` | raw u_a, passed to `verify` as an argument |
+| `Witness` | W3's residual opening: w_k, t̂_a, r_a, and the evaluation points |
 
-The back end adds the ring-linear rows N·s = t itself, from its `Setup`
-layouts and the residual opening:
+W4 provides the parts:
+
+- `commit_pads` = sample pads + `sample_zero_constant_term` (M6d) + box r_p +
+  `LatticePadCommitment`, then send t_p;
+- `prove` = §2.1–§2.4, then §3 and `prove_response`;
+- `verify` = lift and label, squeeze ρ and σ, receive t_D and n, derive c,
+  then `verify_response`. The verifier never applies N or Q_μ.
+
+**How the backend reads `ResidualRelation`:**
+
+| Field | Consumed as |
+|---|---|
+| `affine` | constant-term rows (§2.2) |
+| `products` | product rows |
+| `layout.operand_pads` | the operand group plus 63 scalarity rows each |
+| `layout.num_pads` | must equal P |
+| `num_witness` | the number of evaluation claims of the residual commitment (A4) |
+| `layout.auxiliary_slots` | ordinary pads, with defining rows |
+
+N·s = t is the backend's own. It covers three parts:
 
 - the inner rows `A_a w_{k,i} − G t̂_{a,i} = 0`;
 - the outer rows `[B_a|B′_a](t̂_a, r_a) = u_a`;
-- `A_p(…, r_p) = t_p`.
+- `A_p(…) = t_p`.
 
-As the interfaces require, it never sees g as a row variable. g enters only
-through Q_μ's `u·g(s)` term.
+g enters only through Q_μ's `u·g(s)` term.
 
 ## 5. Parameters
 
 | Parameter | Headline value | Lives in | Validated by |
 |---|---|---|---|
-| challenge family | d = 64, 31 × ±1, 11 × ±2, ‖c‖_op ≤ Γ = 18, 2^128.06 elements, κ₁ = 53 | `jolt-crypto::challenge` constants (M5b) | `SparseChallengeConfig::validate_min_entropy` at `SigmaParams::new` |
-| α, ε | 16, 2^−137 (so M ≈ 2.37) | `SigmaParams` | `JointRejection::new` (M ≤ 4, bounds) |
-| block widths k_b | 16,080,468 (w, t̂, operand digits); 1,005,030 (r_a, pads, r_p) | Akita config table keyed by schedule and k (A10), carried in `WhiteoutSetup` | jolt-zk: exact rational check of `Σ_b 2 ln2 · Γ² γ_b² / k_b² ≤ 1/α²`, with `γ_b² = len_b·64·digit_bound_b²` and ln 2 replaced by a rational upper bound |
-| digit counts D_b, D_pub | 7, 3 at radix 16 | same table | jolt-zk: box ⊆ 𝓑_cert, and `D_pub` covers `κ₁ · digit_bound` |
-| box L_b | positive end of the D_b-digit range, `7(16^{D_b}−1)/15` (A9) | derived | jolt-zk: `L_b ≥ ⌈τσ_b⌉`, τ for p_𝓑 ≥ 0.999, so p_𝓑 meets §6.2 |
-| shift bound | `κ₁ · digit_bound_b` | derived from segments | `JointRejection::accept` (`ShiftOutOfRange`) |
-| T_att | 163 | derived | jolt-zk: smallest T with `(1 − (p_𝓑 − ε)/M)^T ≤ 2^−128`, in integer arithmetic |
+| challenge family | d = 64, 31 × ±1, 11 × ±2, ‖c‖_op ≤ Γ = 18, 2^128.06 elements, κ₁ = 53 | `jolt-crypto::challenge` (M5b) | `SigmaParams::new` (`validate_min_entropy`) |
+| α, ε | 16, 2^−137 (M ≈ 2.37) | `SigmaParams` | `JointRejection::new` |
+| widths k_b | derived (below): 6,765,904 for B = 8 dense segments; 13,531,806 for operand digits | `SigmaParams::derive(segments)` | exact rational check (below) |
+| digits D_b, D_pub | 7 for every Gaussian segment; 3 | derived | `L_b ≥` the box bound (below); `D_pub` covers `κ₁·B` |
+| box L_b | `7(16^{D_b}−1)/15`, the positive end of the certified range (A9) | derived | `Σ_b 64·len_b·2^{1−⌊L_b²/k_b²⌋} ≤ 10^{−3}`, which gives p_𝓑 ≥ 0.999 |
+| shift bound | `κ₁ · B_b` | derived | `JointRejection::accept` |
+| T_att | 163 | derived | smallest T with `(1 − (p_𝓑 − ε)/M)^T ≤ 2^−128`, in integers |
 | ν | 256 | const | — |
-| ℓ | 14 | derived from labels | `RowLabels::assign` |
-| A_a, [B_a\|B′_a], A_p ranks | 3 × R_256 each (768 rows) | Akita planner and SIS tables (rule 3), in `WhiteoutSetup` | Akita (SIS estimator); jolt-zk: module structure (§1.7), view lengths |
-| A_D | 1 × R_64, binding on radix-16 digits | Akita planner | Akita (SIS); jolt-crypto view length |
-| randomness | r_a 24,704 and r_p 26,752 cells, radix 16 | lengths in the layouts | jolt-crypto `required_randomness_columns` (§1.4), checked by jolt-zk at setup |
-| pad radices | 16 (32 digits), operands 256 (16 digits) | `PadCommitmentSetup` consts | `G⁻¹` parameter checks |
-| compression | K₁ at R_16, K₂ at R_8, 128-byte terminal | `jolt-crypto::lattice` (copied) | the chain's own shape checks |
+| ℓ | 14 | `RowLabels` | — |
+| A_a, [B_a\|B′_a], A_p ranks | 3 × R_256 each | Akita planner and SIS tables (rule 3), in the setup | Akita (SIS); W4 checks module structure and view lengths |
+| A_D | 1 × R_64, binding on radix-16 digits | Akita planner | Akita; view length |
+| randomness | r_a 97 and r_p 105 R_256 columns, radix 16 | layouts | `required_randomness_columns` |
+| pad radices | 16 (32 digits), operands 256 (16 digits) | `LatticePadCommitment` consts | `GadgetDigits` checks |
+
+**Width derivation** (A10). Widths are derived in jolt-zk with integer
+arithmetic, not tabulated. Prover and verifier must agree bit for bit, because
+D_b fixes the e layout.
+
+1. **Closed form.** Take the continuous optimum of §6.2,
+   `ω_b = N_b/ΣN` over Gaussian cells. The width is
+   `σ_b = αΓγ_b·√(ΣN/N_b)`, and so
+   `k_b = ⌈αΓ·√(2 ln 2 · γ_b² · ΣN / N_b)⌉ + 1`.
+   - ln 2 is a fixed-point upper bound with 2^−64 error.
+   - The final +1 leaves relative slack of about 10^−7, far above the
+     ceiling errors.
+2. **Exact check.** `Σ_b 2·LN2_HI·Γ²γ_b²α²/k_b² ≤ 1` is evaluated in
+   fixed point with ceilings. This is `‖cs‖_σ ≤ 1/α` for every c and every s
+   that passes check 1 of §2.1. `SigmaParams::new` runs it on whatever widths
+   it is given, so the derivation is checked too.
+3. **Digits.** `D_b` is the smallest D with
+   `⌊L(D)²/k_b²⌋ ≥ 1 + ⌈log₂(2000·N_tot)⌉`, followed by the exact box check
+   above.
+
+**Gap to the script's discrete optimum.**
+
+- The script gives 6 digits to r_a, pads and r_p, and 7 to w, t̂ and the
+  operands. It does this by stretching each width to its digit envelope.
+- The closed form gives 7 everywhere. That adds 111,968 cells to e
+  (65,450,122 → 65,562,090, still below 2^26), so the padded domain and the
+  proof size do not change.
+- Porting the discrete search in exact arithmetic is possible later and
+  would recover those cells. It is not needed now.
 
 ## 6. Soundness and zero knowledge, mapped to the paper
 
 | Implementation choice | Paper item it discharges |
 |---|---|
-| pad commitment sent before the first challenge; `CommittedPads` is the only constructor of masking channels (M6b) | §4.1 "Pads committed in advance"; `wo:thm:knowledge` (pads common to all leaves) |
-| ct(g) = 0 sampler and label 0 reserved | `wo:lem:sigma-complete`; `wo:lem:sigma-aggregate` (extracted g is not assumed scalar-free); H6 |
-| distinct nonzero labels, ℓ full-field ρ | `wo:lem:sigma-aggregate`, error ℓ/q |
-| c from the filtered family; differences are units (q ≡ 9 mod 16, ‖·‖∞ < q^{1/4}/2) | `wo:lem:sigma-extract`, 2/\|𝓒\| in `wo:thm:knowledge` |
-| N is R-linear (§1.7) | §2.1 restriction of scalars; `wo:lem:sigma-extract` |
-| 𝓑 ⊆ 𝓑_cert, with binding radius taken from 𝓑_cert | §4.3 "acceptance and certified boxes"; radius 4Γ_Δ B_M in `wo:thm:knowledge` |
-| A_D without randomness | `wo:thm:knowledge` (A_D collision on digit vectors); H-sequence needs no hiding for t_D |
-| `[A_{p,r}; L]` one offset-0 view, row `rank` | H4 hypothesis ("L is an extra row of the pad commitment's matrix") |
-| randomness entropy ≥ image + 2λ + 8 bits, fresh per slice | `wo:lem:stat-hiding`; δ_LHL ≤ 2^−129.2 (§6.2) |
-| exact integer v; shift check | `wo:def:joint-rejection` computed exactly; `‖cs‖_σ ≤ 1/α` validated (§5) gives `wo:thm:joint-rejection` |
-| y = 0 on declared public segments only | §4.2 "Public coordinates"; standing notation of §5 |
-| uniform secret 256-bit n_i; oracle input (σ ⊇ τ, cm_D, n_i) in its own fork domain; only the accepted attempt sent | H2: Bad ≤ (T_att Q_tot + T_att²)/2^256 |
-| fresh y per attempt, rejection via M5a | H3: ε/M per attempt; attempt count independent of the witness |
-| T_att = 163 | `wo:thm:completeness`; the `T_att ε/M` term of `wo:thm:zk` |
-| ct(h) = 0 self-check | H6 precondition, enforced in release |
-| sampler precision (M5a) | +2^−149 on `wo:thm:zk`'s 2^−128.8; §6.2 asks implementations to add it |
-| ChaCha20 expansion of per-chunk seeds (M5a) | adds a PRG assumption to statistical ZK; stated in the module docs |
-
-Not covered by this mapping:
-
-- whether the decoded transcript is accepting. That is
-  `wo:lem:residual-correct`, owned by M6b and W3 through `ResidualRows`;
-- prefix soundness of the randomized folds (`wo:lem:randomized-base`, W1
-  and W2).
+| Pad commitment sent before the first challenge (M6b) | §4.1, "Pads committed in advance"; `wo:thm:knowledge` |
+| ct(g) = 0 sampler; label 0 reserved | `wo:lem:sigma-complete`, `wo:lem:sigma-aggregate`, H6 |
+| Distinct nonzero labels; ℓ full-field ρ | `wo:lem:sigma-aggregate` (ℓ/q) |
+| Filtered challenge family; differences are units | `wo:lem:sigma-extract`; 2/\|𝓒\| |
+| N is R-linear (§1.7) | §2.1, restriction of scalars; `wo:lem:sigma-extract` |
+| 𝓑 ⊆ 𝓑_cert; binding radius from 𝓑_cert | §4.3, "acceptance and certified boxes"; radius 4Γ_Δ B_M |
+| A_D has no randomness | `wo:thm:knowledge`: an A_D collision on digit vectors |
+| `[A_{p,r}; L]` is one offset-0 view, with L as row `rank` | H4 hypothesis |
+| Randomness entropy ≥ image + 2λ + 8 bits, fresh per slice | `wo:lem:stat-hiding`; δ_LHL ≤ 2^−129.2 |
+| Alphabet and shape check (§2.1, check 1) plus the derived widths' exact check | the hypothesis `‖cs‖_σ ≤ 1/α` of `wo:thm:joint-rejection` and H3 |
+| Exact integer v | `wo:def:joint-rejection`, computed exactly |
+| y = 0 only on declared public segments | §4.2, "Public coordinates" |
+| Secret uniform 256-bit n_i; oracle input (σ ⊇ τ, t_D, n_i) in its own fork domain; only the accepted attempt is sent | H2: Pr[Bad] ≤ (T_att Q_tot + T_att²)/2^256 |
+| Constant-time attempt body (§2.8) | keeps H2's "answers at rejected inputs are never observed" true against a timing adversary (outside the paper's model) |
+| Fresh y per attempt; M5a rejection | H3: ε/M per attempt |
+| T_att = 163 | `wo:thm:completeness`; the `T_att ε/M` term |
+| Per-row checks before ρ; ct(h) assertion | H6 precondition; no ρ-weighted leak (§2.1) |
+| Raw t_p and t_D | Their compressed forms are functions of them (§2.4), so sending them raw removes nothing from H4 or H8: the hybrids already replace the raw images with uniform ones |
+| Sampler precision (M5a) | +2^−149 on 2^−128.8 |
+| ChaCha20 seed expansion (M5a) | adds a PRG assumption; stated in the module docs |
 
 ## 7. Test plan
 
-All suites run under `cargo nextest`. The synthetic relations are built in
-`jolt-zk` tests from random pads and witness, with row counts and operand
-counts scaled down (d = 64 is fixed).
-
 1. **Completeness at the predicted abort rate.**
-   - Run 2,000 honest proofs over `CheckingResponseProver`. All verify.
-   - The mean attempt count must lie within a binomial 5σ band of
-     `M/p_𝓑`, computed from the realized parameters.
-   - A second configuration at α = 10 (M ≈ 3.99) moves the rate. That
-     shows the test can tell different rates apart.
-2. **Tamper rejection.** Each of the following is rejected:
-   - flip one byte in each of `cm_D`, n, `cm(t_p)` and `cm(u_a)`;
-   - substitute a rejected attempt's (cm_D, n);
-   - reorder ρ;
-   - a witness violating one affine row, one product row, one scalarity row
-     (a non-constant operand pad), or `ct(g) ≠ 0`.
-
-   Each violating witness must be rejected by the prover's self-check. With
-   the self-check bypassed in a test-only path, the checking response prover
-   must reject it.
+   - 2,000 honest proofs over `CheckingResponseProver` all verify.
+   - The mean attempt count lies within a 5σ binomial band of `M/p_𝓑`.
+   - A run at α = 10 (M ≈ 3.99) moves the rate measurably.
+2. **Tamper rejection.**
+   - Flipping a byte of t_D, of n, of t_p or of u_a is rejected.
+   - Reordering ρ is rejected.
+   - Each of these witness faults fails the prover's per-row check: an
+     affine row, a product row, a scalarity row (a non-constant operand
+     pad), `ct(g) ≠ 0`, and an alphabet or shape violation. With the check
+     bypassed through a test-only path, the checking prover rejects the
+     result.
+   - Pairing a rejected attempt's (t_D, n) with a different attempt's z is
+     rejected. A whole rejected attempt, with its own z, is a valid proof
+     whenever z ∈ 𝓑_cert, and the test asserts that too.
 3. **Statistics.**
-   - Accepted z per Gaussian block: KS and χ² against π_0(·|𝓑).
-   - Accepted z is independent of s: a χ² test of homogeneity between two
-     different witnesses with equal public shape.
-   - Rejection over enumerable toy blocks reuses M5a's harness; W4 does not
-     re-test the sampler.
-   - The nonce distribution passes a byte-level χ² test.
-4. **dudect.** The attempt body joins `examples/sample_dudect.rs`. The test
-   uses fixed versus random (y seed, c), with s fixed, and passes at
-   |t| < 4.5. The `cargo asm` review of the production monomorphization of
-   `attempt`, `apply_centered`, the c·s convolution and the challenge
-   sampler's prover path is recorded in the PR (M5a §5).
-5. **Ajtai equivalence.**
-   - Frozen digests in jolt-crypto (§1.6).
-   - The `jolt-akita` test compares jolt-crypto with Akita's production
-     kernels and compression on every K16 profile.
-   - A property test checks `apply_centered = apply ∘ lift`.
-   - Another checks that the view-length rejection fires on truncated
-     streams.
+   - Accepted z per block passes KS and χ² tests against π_0(·|𝓑).
+   - A χ² homogeneity test across two witnesses of equal shape passes.
+   - Nonce bytes pass a χ² test.
+4. **Constant time.**
+   - `examples/sample_dudect.rs` gains the attempt body (fixed versus random
+     y-seed and c, s fixed), `apply_centered`, and the constant-time
+     challenge sampler (fixed versus random fork seeds). Each passes
+     |t| < 4.5.
+   - The `cargo asm` record covers the audit list of §2.8.
+   - Both are a W4 slice, and they land before W5's last PR.
+5. **Ajtai.**
+   - Frozen digests for `apply_centered`, `apply` and `commit`: one level,
+     with and without randomness columns, at d = 64 and 256.
+   - Property tests: `apply_centered = apply ∘ lift`; agreement with a
+     schoolbook negacyclic oracle on small shapes; chunking at the
+     `CrtCapacity` boundary; view-length rejection on truncated streams.
+   - The equivalence test against Akita's kernels is W5's.
 6. **Algebra.**
-   - The polar-form identity `Q(c,z) + Lz = E_0 + cE_1 + c²h` holds on random
-     data (`wo:lem:sigma-complete` as a property).
+   - The polar identity `Q(c,z) + Lz = E_0 + cE_1 + c²h` holds (as a
+     property).
    - θ satisfies (4) exactly.
-   - `R`-linearity of N under the stride map. The test checks
-     `N(c·s) = c·N(s)` on random layouts and that a `d_A ≠ d_B` layout
-     fails the module check.
-7. **Interface.**
-   - `VectorCommitment::Blind`: the Pedersen suites are unchanged.
-   - The lattice pad commitment satisfies `verify(commit(v, b), v, b)` and
-     rejects a changed value or blind.
+   - `N(c·s) = c·N(s)` under the stride map, and a `d_A ≠ d_B` layout is
+     rejected.
+7. **Challenge sampler.** The constant-time prover sampler equals the
+   verifier's sampler on 10⁵ random seeds, covering seeds that trigger
+   operator-norm rejections and position collisions.
+8. **Parameters.**
+   - The derived widths pass the exact check.
+   - Perturbing any k_b down by 1% fails it.
+   - The headline shape reproduces the values of §5.
 
-## 8. Implementation slices (W4 commits, in order)
+## 8. Implementation slices
 
-| # | Slice | Depends on |
-|---|---|---|
-| 1 | `jolt-crypto::lattice`: `MatrixShape`/`MatrixView`, `GadgetDigits`, `AjtaiLevel`, `TwoLevelLayout`, `apply`/`apply_centered`/`commit`, randomness sampler and entropy rule, `AjtaiKernel` + `ReferenceKernel`, frozen digests | M5b (landed) |
-| 2 | `jolt-crypto::lattice`: compression chain copy, digests | 1 |
-| 3 | `jolt-akita` equivalence test against Akita kernels | 1, 2; pinned Akita exposes commit entry points |
-| 4 | `jolt-transcript`: `Fork::attempt` (32-byte nonce, own tag) | — |
-| 5 | `jolt-crypto`: `VectorCommitment::Blind`, `sample_blind`, `RowOpening`; Pedersen and callers | **M6c** (rewrites the callers) |
-| 6 | `jolt-zk::whiteout`: segment table, `SigmaParams` (validation of §5), `RowLabels` | M5a, M6d |
-| 7 | `jolt-zk::whiteout`: lifting and Q_μ/B_μ evaluation | **M6b** `ResidualRelation` incl. A1 (sum-of-products) and A4 (structured w_k term) |
-| 8 | `jolt-zk::whiteout`: `LatticePadCommitment` | 1, 2, 5; **M6b** `PadLayout::operand_pads` (A5) |
-| 9 | `jolt-zk::whiteout`: Σ-protocol prover/verifier core, constant-time c·s, statistics tests | 4, 6, 7, 8 |
-| 10 | `ResponseStatement`/`ResponseWitness`/`ResponseProver`, θ, e layout, `CheckingResponseProver` (test support), completeness and tamper tests | 9 |
-| 11 | `ZkBackend for Whiteout<P>` | 10; **M6b** final `ZkBackend` signatures (A3 view, `verify` arguments) |
-| 12 | dudect extension and asm review record | 9 |
+| # | Slice | Depends on | Status |
+|---|---|---|---|
+| 1 | `jolt-crypto::lattice`: `MatrixShape`/`MatrixView`, `GadgetDigits`, `AjtaiLevel`, constant-time `apply`/`apply_centered` on CRT-NTT (with jolt-algebra's constant-time Garner), one-level `commit`, `sample_box_digits`, `required_randomness_columns`, frozen digests, `TwoLevelLayout` description | M5b | now |
+| 2 | `jolt-transcript`: `Fork::attempt` | — | now |
+| 3 | `jolt-zk::whiteout`: segment table, alphabet and shape check, `SigmaParams` with derived widths and the exact check | M5a, M6d | now |
+| 4 | `jolt-crypto::challenge`: constant-time prover-side attempt sampler, byte-identical to the verifier's | M5b | now |
+| 5 | `RowLabels`, lifting, Q_μ/B_μ | **M6b** relation shapes | later |
+| 6 | `LatticePadCommitment` (raw output), `operand_pads` check | 1, 3; **M6b** | later |
+| 7 | Σ core, statistics tests | 2, 4, 5, 6 | later |
+| 8 | `ResponseStatement`/`ResponseWitness` (no ξ), trait, θ, `CheckingResponseProver`, completeness and tamper tests | 7; W5 alignment note (A15) | later |
+| 9 | dudect and asm record | 1, 4, 7 | later, before W5's last PR |
 
-Slices 1–4 and 6 do not depend on M6b and can start now. Slices 7, 8 and 11
-consume shapes that M6b is still designing. Slice 5 is ordered after M6c to
-avoid editing the BlindFold callers twice.
+Moved out of W4:
+
+- to W5: Akita equivalence tests, compression, and fast kernels;
+- to W6: `ZkBackend for Whiteout`;
+- deleted: the `VectorCommitment::Blind` slice.
 
 ## 9. Ambiguity register
 
-**Open questions from `whiteout-interfaces.md`:**
+**Resolved by review:**
 
-- **A1. Extension-field products.**
-  - Problem: a product of extension elements has `E::DEGREE²` base-field
-    cross terms. With M6b's one-operand `ProductRow`, each needs an
-    auxiliary slot.
-  - Proposal: `ProductRow { terms: Vec<(MaskedOperand, AffineRow)>, z: AffineRow }`,
-    i.e. `Σ_t x_t·y_t = z` with one constant operand per term. Q_μ supports
-    it at no extra cost (§2.2), and the product sumcheck counts terms.
-  - Owner: M6b/W3. Whether W3's fold-k checks contain such products is still
-    W3's question.
-- **A2. `response_l2_sq` cut side.**
-  - If it falls after fold k, it disappears with the suffix and W4 sees
-    nothing.
-  - If it falls before, W3 must give it a field encoding, and it reaches W4
-    as an ordinary masked slot with affine rows.
-  - Neither case changes this design.
-- **A3. Stage-3 setup-offloading claims.** These are W3's routing question. W4
-  needs only one output from it: the **declared public segments** of w_k
-  (setup-group data), at whole-R-element granularity in the stride view
-  (§2.7). Owner: W3.
+- **A1 (rejected).** Sum-of-products rows. Extension products expand into
+  single-term rows with auxiliary slots. That keeps BlindFold's lowering
+  free of extra witness variables.
+- **A4 (resolved).** There is no new `ResidualVar`. `Witness(j)` is the j-th
+  evaluation claim of the backend's residual commitment, and Whiteout's
+  opening type carries the points. W3's test plan gains a dense-evaluation
+  test pinning three things:
+  - Akita's MLE variable order;
+  - power-of-two padding;
+  - the stride bit permutation.
+- **A5 (resolved).** Operand pads are committed only in the operand group.
+  `operand_pads` comes from M6b's shape routine, with a release check that
+  every `ProductRow.x.pad ∈ operand_pads`.
+- **A6 (resolved).** `verify` takes `CommittedPadsView<PadCommitment>` and
+  `ResidualCommitment` as arguments (interfaces §5, revised).
+- **A10 (resolved).** Widths are derived (§5). The gap to the script's
+  optimum is +111,968 cells of e.
 
-**Dependencies on M6b's shapes:**
+**Still open:**
 
-- **A4. Structured witness terms.**
-  - Problem: fold k's final claim `w̃_k(r) = v` touches all 11.8M
-    coordinates of w_k. `ResidualVar::Witness(j)` with explicit
-    coefficients cannot express it succinctly for the verifier.
-  - W4 needs `AffineRow` to admit a term `Eval { point, scale }` meaning
-    `scale · w̃_k(point)`, lifted symbolically (§2.2) and passed through
-    `QuadraticStatement` to Akita's structured weights.
-  - Owner: M6b, with W3 as producer.
-- **A5. `PadLayout::operand_pads` producer** (M6b A5). W4 is its first
-  consumer.
-  - Proposal: derive it from `products[].x` (and from the terms, under A1).
-  - It also needs a ruling on whether an operand pad also occupies a
-    regular slot (§1.9, group 1).
-- **A6. `CommittedPadsView` and `verify` arguments** (M6b A3). W4 needs the
-  view to carry `cm(t_p)` and `verify` to receive `cm(u_a)`.
-
-**Paper gaps and decisions that need the authors:**
-
-- **A7. Module structure.** §2.1's restriction of scalars requires the
-  stride embedding. Akita's consecutive d_A → d_B split is not a module map.
-  W4 requires `d_A = d_B` for the residual and pad commitments (§1.7). The
-  paper should state the condition. Confirm that the R_256/R_256 headline is
-  intended.
-- **A8. Definition of L.** The paper says "one extra row … acts only on r_p",
-  with output in R_64 and the matrix over R_256. W4 defines
-  `L·r := π_0(row_rank · r)` on the (rank+1)-row view (§1.9). Confirm,
-  including that offset-0 overlap of A_p's randomness columns with other
-  roles' matrices is acceptable for H4 and H8. The LHL statement allows side
-  information that depends on the matrix, so W4 believes it is.
-- **A9. Box L_b** (M5a Q2). W4 takes the largest box inside the certified
-  alphabet, the positive end of the balanced D_b-digit range. This
-  maximizes p_𝓑 and removes a parameter. Confirm.
-- **A10. Where widths come from** (M5a Q3).
-  - Problem: the script's discrete width optimization uses floating point.
-    The verifier needs D_b to build the e layout, so the values must be
-    bit-identical on both roles.
-  - Decision: k_b, D_b and D_pub are integers in an Akita config table
-    generated offline by the script. jolt-zk validates them with exact
-    rational arithmetic.
-  - Confirm that the paper is satisfied with tabulated widths. The table
-    keying (schedule, k) needs an Akita owner.
-- **A11. Platform constant time.** DIT/DOITM are not enabled (§2.8). Accept
-  this as a documented assumption, or schedule a follow-up with a narrowly
-  scoped `unsafe` system-register wrapper outside the verifier closure.
-- **A12. Compression ownership.** I1 forces the chain into `jolt-crypto` (§1.5),
-  which goes beyond the W4 scope in the parent spec. An Akita ticket that
-  switches to it and deletes `akita-params`' copy is needed, analogous to
-  M5c. Owner ruling.
-- **A13. Constant-time challenge sampling.** `position_sample.rs` and the
-  operator-norm loop were written for a public-coin verifier. Whether the
-  accepted candidate's processing is constant time is unaudited. If it is
-  not, W4 adds a prover-side constant-time variant with byte-identical
-  output.
-- **A14. Whole-proof rerun after `SigmaAttemptsExhausted`.** It is safe by H3,
-  and the paper's simulator outputs ⊥ with the same probability. Confirm that
-  outputting ⊥ (an error) is the intended behaviour, rather than an
-  unbounded loop.
-- **A15. Owner of θ and e.** W4 places them in jolt-zk (§3.3), because they
-  are functions of Q_μ and the Σ-protocol layout. W5 could instead own e's
-  digit layout to match Akita's witness packing. Then `ResponseWitness`
-  would carry values, not digits. Decide before slice 10.
-- **A16. Per-attempt cost of N·y.**
-  - The cost script charges N·y per attempt (2.37 expected). With y
-    centred at ~2^27, Akita's i8/i16 kernels do not apply, and the
-    reference NTT path on 11.8M coefficients is unmeasured.
-  - A fast `AjtaiKernel` is a W5 option.
-  - The prover-time claim (+4.7%) is unverified until measured.
+- **A2.** Which side of the cut `response_l2_sq` falls on. Either answer is
+  neutral for W4.
+- **A3.** W3 declares the public segments of w_k, as whole native elements.
+- **A7, module structure (authors).** §2.1 needs the stride embedding, so W4
+  requires `d_A = d_B` (§1.7). The paper should state this condition.
+- **A8, L (authors).** Confirm `L·r := π_0(row_rank · r)`, and that
+  overlapping other roles at offset 0 is acceptable for H4 and H8. The LHL
+  statement allows side information that depends on the matrix.
+- **A9, box (authors).** L_b is the full positive digit envelope.
+- **A11, platform.** DIT/DOITM are not enabled. W4 records this as an
+  accepted assumption; a follow-up needs a narrowly scoped `unsafe` wrapper
+  outside the verifier closure.
+- **A12, compression (W5, authors).**
+  - Akita caps a compression source at 8 KiB, i.e. 512 Fp128 coefficients
+    (`akita-params/src/compression.rs:19`). t_p and u_a have 768
+    coefficients each.
+  - W4 sends t_p and t_D raw, about 13 KB, until W5 provides an
+    Akita-owned compression for images above 512 coefficients through the
+    setup. W3 faces the same limit for u_a.
+  - For the authors: the cost script's `FCHAIN_MAX_IMAGE = 884` disagrees
+    with Akita's 512-coefficient cap.
+- **A13, challenge sampler.** Resolved by slice 4. The equivalence with the
+  verifier's sampler is a test (§7, item 7).
+- **A14 (authors).** Return ⊥ (an error) after T_att rejections, with the
+  caller free to rerun.
+- **A15 (W5).** θ and e's logical layout stay in jolt-zk. W5 states its
+  physical alignment needs before slice 8.
+- **A16, cost.** The per-attempt N·y time on CRT-NTT is measured in slice 1
+  (below). The paper's +4.7% prover overhead assumes a 10 ns Gaussian
+  sample and an Akita-speed N·y.
 
 ## Not verified by this note
 
-- Akita's commitment semantics are taken from code reading (the explorer
-  survey's citations). No byte comparison has been run yet; slice 3 does
-  that.
-- The headline numbers (labels, ℓ, cell counts) come from the cost script's
-  model of the Jolt and Akita schedules, not from a run of M6b or W3.
-- The constant-time status of the field reduction, the compression digit
-  extraction and the challenge sampler is unaudited (§2.8, A13).
+- Akita's commitment semantics come from reading the code. W5's equivalence
+  test checks the bytes.
+- The headline counts come from the cost script, not from runs of M6b or W3.
+- The constant-time audit list (§2.8) is pending slice 9.
