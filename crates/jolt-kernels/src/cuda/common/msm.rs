@@ -16,6 +16,9 @@
 //! signed 128-bit accumulator per component. Magnitudes stay on device in
 //! component-major order; sign bytes return to the host. CUDA uses `1` for
 //! negative components; the optimized CPU API uses `true` for positive ones.
+//! G2 Frobenius expansion emits the original span followed by its first three
+//! endomorphism images in the same component order. CUDA derives coefficient
+//! pairs from Arkworks' twist constants once; the CPU uses fixed coefficients.
 //!
 //! G1 doubling and addition keep Jacobian coordinates; mixed addition consumes
 //! affine addends with all-zero device coordinates representing infinity.
@@ -240,6 +243,8 @@ const MAX_WINDOW_BITS: usize = 16;
 
 const TARGET_REDUCE_BLOCKS: usize = 1024;
 
+const G2_POINT_WORDS: usize = 6 * FQ_LIMBS;
+
 const BATCHED_WINDOW_BYTES: usize = 64 << 20;
 
 const MAX_G1_BATCHED_WINDOW_BYTES: usize = 4 << 30;
@@ -283,6 +288,31 @@ fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
         (magnitudes, signs)
     });
     (magnitudes, signs)
+}
+
+fn glv_frobenius_coefficients() -> &'static [u64] {
+    static COEFFICIENTS: OnceLock<Vec<u64>> = OnceLock::new();
+    COEFFICIENTS.get_or_init(|| {
+        use ark_bn254::Config;
+        use ark_ec::bn::BnConfig;
+        use ark_ff::Field;
+        let x = Config::TWIST_MUL_BY_Q_X;
+        let y = Config::TWIST_MUL_BY_Q_Y;
+        let mut x_power = x;
+        let mut y_power = y;
+        let mut limbs = Vec::with_capacity(48);
+        for _ in 0..3 {
+            for value in [x_power, y_power] {
+                limbs.extend_from_slice(&value.c0.0 .0);
+                limbs.extend_from_slice(&value.c1.0 .0);
+            }
+            x_power.frobenius_map_in_place(1);
+            y_power.frobenius_map_in_place(1);
+            x_power *= x;
+            y_power *= y;
+        }
+        limbs
+    })
 }
 
 const SHARED_WINDOW_BITS: usize = 4;
@@ -815,6 +845,45 @@ impl CudaKernelContext {
         let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
         let hosted = self.download_u8(&signs)?;
         Ok((out, hosted))
+    }
+
+    fn g2_frobenius_span(
+        &self,
+        jacobian: &CudaSlice<u64>,
+        offset: usize,
+        count: usize,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let end = offset
+            .checked_add(count)
+            .and_then(|last| last.checked_mul(G2_POINT_WORDS))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a G2 Frobenius span overflowed the buffer index space",
+            })?;
+        if end > jacobian.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: end,
+                got: jacobian.len(),
+            });
+        }
+        let mut out = self.alloc_u64(4 * count.max(1) * G2_POINT_WORDS)?;
+        if count == 0 {
+            return Ok(out);
+        }
+        let span = jacobian.slice(offset * G2_POINT_WORDS..end);
+        let coefficients = self.upload_u64_slice(glv_frobenius_coefficients())?;
+        let count_arg = Self::count_of(count)?;
+        let mut builder = self.stream().launch_builder(self.msm_g2_frobenius());
+        let _ = builder.arg(&span);
+        let _ = builder.arg(&coefficients);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut out);
+        // SAFETY: thread `i < count` reads the 24 limbs of point `i` of the
+        // `count`-point view bounds-checked above plus the 48 coefficient limbs,
+        // and writes points `power * count + i` for `power < 4` (24 limbs each) of
+        // a `4 * count` point fresh allocation, so writes are four disjoint slots
+        // per thread and in bounds. Threads with `i >= count` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+        Ok(out)
     }
 
     fn glv_decompose_2d(
@@ -2579,6 +2648,8 @@ mod tests {
 
     const GLV_LENS: [usize; 5] = [1, 2, 257, 1024, 4096];
 
+    const FROBENIUS_LENS: [usize; 4] = [1, 2, 257, 1024];
+
     fn device() -> Option<&'static CudaKernelContext> {
         shared_context()
     }
@@ -3619,6 +3690,21 @@ mod tests {
         }
     }
 
+    fn g2_span(count: usize, seed: u64) -> Vec<G2Projective> {
+        let step = G2Projective::generator();
+        let mut walk = step * ArkFr::from(seed + 1);
+        (0..count)
+            .map(|index| {
+                walk += step;
+                if (index as u64 + seed).is_multiple_of(41) {
+                    G2Projective::zero()
+                } else {
+                    walk
+                }
+            })
+            .collect()
+    }
+
     fn flat_g2(points: &[G2Projective]) -> Vec<u64> {
         let mut flat = Vec::with_capacity(points.len() * 24);
         for value in points {
@@ -3881,6 +3967,54 @@ mod tests {
                     divergence, None,
                     "endomorphism diverged at count {count}, offset {offset}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn g2_frobenius_span_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        let lambda = psi_eigenvalue();
+        for count in FROBENIUS_LENS {
+            for offset in [0usize, 3] {
+                let lead = g2_span(offset, 17);
+                let points = g2_span(count, 23);
+                let mut flat = flat_g2(&lead);
+                flat.extend_from_slice(&flat_g2(&points));
+                let device_points = context.upload_raw_u64(&flat).expect("upload span");
+
+                let raw = context
+                    .g2_frobenius_span(&device_points, offset, count)
+                    .expect("frobenius");
+                let hosted = context.download_u64(&raw).expect("download frobenius");
+                assert_eq!(
+                    hosted.len(),
+                    4 * count * 24,
+                    "frobenius should emit four spans at count {count}"
+                );
+
+                let mut power = ArkFr::ONE;
+                for step in 0..4usize {
+                    let got: Vec<G2Projective> = (0..count)
+                        .map(|index| {
+                            let slot = (step * count + index) * 24;
+                            g2_from_limbs(&hosted[slot..slot + 24])
+                        })
+                        .collect();
+                    let want: Vec<G2Projective> =
+                        (0..count).map(|index| points[index] * power).collect();
+                    let divergence = G2Projective::normalize_batch(&got)
+                        .into_iter()
+                        .zip(G2Projective::normalize_batch(&want))
+                        .position(|(got, want)| got != want);
+                    assert_eq!(
+                        divergence, None,
+                        "psi^{step} diverged at count {count}, offset {offset}"
+                    );
+                    power *= lambda;
+                }
             }
         }
     }

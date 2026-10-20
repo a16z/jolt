@@ -365,6 +365,26 @@ __device__ __noinline__ void jac2_add(const u64 *p, const u64 *q, u64 *out) {
     fq2_copy(z3, out + 2 * FQ2_LIMBS);
 }
 
+__device__ __forceinline__ void g2_psi_power(const u64 *base, const u64 *coefficients,
+                                            unsigned int power, u64 *out) {
+    u64 scaled[2 * LIMBS], negated[LIMBS];
+    jac2_copy(base, out);
+    if ((power & 1u) == 1u) {
+        fq_neg(out + LIMBS, negated);
+        fq_copy(negated, out + LIMBS);
+        fq_neg(out + 3 * LIMBS, negated);
+        fq_copy(negated, out + 3 * LIMBS);
+        fq_neg(out + 5 * LIMBS, negated);
+        fq_copy(negated, out + 5 * LIMBS);
+    }
+    const u64 *coef_x = coefficients + (unsigned long long)(power - 1) * 4 * LIMBS;
+    const u64 *coef_y = coef_x + 2 * LIMBS;
+    fq2_mul(out, coef_x, scaled);
+    fq2_copy(scaled, out);
+    fq2_mul(out + 2 * LIMBS, coef_y, scaled);
+    fq2_copy(scaled, out + 2 * LIMBS);
+}
+
 __device__ __forceinline__ void g2_negate_y(u64 *point) {
     u64 negated[LIMBS];
     fq_neg(point + 2 * LIMBS, negated);
@@ -624,6 +644,23 @@ extern "C" __global__ void msm_glv_decompose_4d_kernel(
         unsigned long long slot = (unsigned long long)j * count + i;
         store4(out_scalars + slot * LIMBS, magnitude);
         out_signs[slot] = negative;
+    }
+}
+
+extern "C" __global__ void msm_g2_frobenius_kernel(const u64 *__restrict__ jacobian,
+                                                  const u64 *__restrict__ coefficients,
+                                                  unsigned int count, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    u64 base[G2_LIMBS];
+    jac2_copy(jacobian + (unsigned long long)i * G2_LIMBS, base);
+    jac2_copy(base, out + (unsigned long long)i * G2_LIMBS);
+
+    for (unsigned int power = 1; power < 4; power++) {
+        u64 res[G2_LIMBS];
+        g2_psi_power(base, coefficients, power, res);
+        jac2_copy(res, out + ((unsigned long long)power * count + i) * G2_LIMBS);
     }
 }
 

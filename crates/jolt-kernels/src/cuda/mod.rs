@@ -69,6 +69,8 @@
 //! G2 scalar decomposition sums precomputed power-of-two entries on device.
 //! Four component arrays retain their magnitudes there and return sign bytes
 //! to the host, with `1` meaning negative rather than the CPU's positive flag.
+//! G2 Frobenius expansion retains Jacobian coordinates and emits four point
+//! spans matching those components, using coefficients derived from Arkworks.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
