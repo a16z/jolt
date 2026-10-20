@@ -23,6 +23,7 @@
 
 use super::{XofCursor, D64_SELECTIVE_L2_OP_NORM_TABLE, MAX_OP_NORM_ATTEMPTS};
 use crate::challenge::sampler::IndexedXofPrefix;
+use crate::challenge::sparse::{eq_mask, scatter_ct};
 use crate::challenge::{
     OperatorNormRejection, SparseChallenge, D64_L2_OP_NORM_PM1_COUNT, D64_L2_OP_NORM_PM2_COUNT,
     D64_SELECTIVE_L2_CHALLENGE_CONFIG,
@@ -112,27 +113,6 @@ fn select_ct(values: &[u8; CHALLENGE_RING_DIM], index: usize) -> u8 {
         })
 }
 
-/// `0xFF` if `a == b`, else `0`, without a branch.
-fn eq_mask(a: usize, b: usize) -> u8 {
-    let difference = (a ^ b) as u64;
-    // The top bit of `d | −d` is set exactly when `d ≠ 0`.
-    (((difference | difference.wrapping_neg()) >> 63) as u8).wrapping_sub(1)
-}
-
-/// The dense coefficients of `(positions, coeffs)`, built by a masked scan:
-/// every output coefficient reads every support entry, and entries at a
-/// repeated position add.
-pub(crate) fn scatter_ct(positions: &[u32], coeffs: &[i8]) -> [i8; CHALLENGE_RING_DIM] {
-    std::array::from_fn(|index| {
-        positions
-            .iter()
-            .zip(coeffs)
-            .fold(0i8, |acc, (&position, &coeff)| {
-                acc.wrapping_add(coeff & eq_mask(position as usize, index) as i8)
-            })
-    })
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test code")]
 mod tests {
@@ -161,25 +141,8 @@ mod tests {
             rejected += usize::from(attempts > 1);
         }
         assert!(
-            rejected > 1_000,
+            rejected > 10_000,
             "only {rejected} seeds hit a norm rejection"
         );
-    }
-
-    #[test]
-    fn scatter_places_each_coefficient() {
-        let dense = scatter_ct(&[3, 0, 63], &[-2, 1, -1]);
-        let mut expected = [0i8; CHALLENGE_RING_DIM];
-        expected[3] = -2;
-        expected[0] = 1;
-        expected[63] = -1;
-        assert_eq!(dense, expected);
-    }
-
-    #[test]
-    fn scatter_adds_repeated_positions() {
-        let dense = scatter_ct(&[5, 5, 9], &[1, -2, 2]);
-        assert_eq!((dense[5], dense[9]), (-1, 2));
-        assert_eq!(dense.iter().filter(|&&coeff| coeff != 0).count(), 2);
     }
 }

@@ -43,6 +43,13 @@ impl GaussianWidth {
         self.k as f64 * BINARY_GAUSSIAN_SIGMA
     }
 
+    /// The hard tail cut: every sample `z = ±(k·x + y)` with `x ≤ 13` and
+    /// `y < k` has `|z| < 14k`, so `|z| ≤ 14k − 1`. A bound for exact
+    /// arithmetic on samples, never a statistical one.
+    pub fn tail_bound(&self) -> u64 {
+        (u64::from(CDT_LEN) + 1) * self.k - 1
+    }
+
     /// `k²`, the denominator of the trial's exponent.
     pub(crate) fn k_squared(&self) -> u128 {
         u128::from(self.k) * u128::from(self.k)

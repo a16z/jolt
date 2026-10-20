@@ -13,6 +13,7 @@
 //! This module deliberately depends only on `jolt-algebra`; it does not pull in
 //! the transcript layer or the sampler.
 
+use crate::lattice::CHALLENGE_RING_DIM;
 use crate::CryptoError;
 
 use jolt_algebra::{ExtField, Field, Ring};
@@ -68,12 +69,11 @@ pub struct SparseChallenge {
     pub coeffs: SparseChallengeCoefficients,
 }
 
-#[cfg(feature = "sample")]
 impl SparseChallenge {
     /// The dense coefficients of a D = 64 challenge, built by a masked scan
     /// in which every output coefficient reads every support entry, so no
     /// address depends on the positions. Entries at a repeated position add.
-    pub fn to_dense_ct(&self) -> Result<[i8; 64], CryptoError> {
+    pub fn to_dense_ct(&self) -> Result<[i8; CHALLENGE_RING_DIM], CryptoError> {
         if self.positions.len() != self.coeffs.len() {
             return Err(CryptoError::InvalidInput(
                 "sparse challenge positions and coefficients differ in length".into(),
@@ -90,10 +90,7 @@ impl SparseChallenge {
                 "sparse challenge position outside a D = 64 ring".into(),
             ));
         }
-        Ok(crate::challenge::sampler::scatter_ct(
-            &self.positions,
-            &self.coeffs,
-        ))
+        Ok(scatter_ct(&self.positions, &self.coeffs))
     }
 }
 
@@ -207,6 +204,27 @@ impl SparseChallenge {
     }
 }
 
+/// `0xFF` if `a == b`, else `0`, without a branch.
+pub(crate) fn eq_mask(a: usize, b: usize) -> u8 {
+    let difference = (a ^ b) as u64;
+    // The top bit of `d | −d` is set exactly when `d ≠ 0`.
+    (((difference | difference.wrapping_neg()) >> 63) as u8).wrapping_sub(1)
+}
+
+/// The dense coefficients of `(positions, coeffs)`, built by a masked scan:
+/// every output coefficient reads every support entry, and entries at a
+/// repeated position add.
+pub(crate) fn scatter_ct(positions: &[u32], coeffs: &[i8]) -> [i8; CHALLENGE_RING_DIM] {
+    std::array::from_fn(|index| {
+        positions
+            .iter()
+            .zip(coeffs)
+            .fold(0i8, |acc, (&position, &coeff)| {
+                acc.wrapping_add(coeff & eq_mask(position as usize, index) as i8)
+            })
+    })
+}
+
 #[expect(clippy::unwrap_used, reason = "test code")]
 #[cfg(test)]
 mod tests {
@@ -312,5 +330,22 @@ mod tests {
         let err = challenge.validate::<D>().unwrap_err();
 
         assert!(matches!(err, CryptoError::InvalidInput(msg) if msg.contains("out of range")));
+    }
+
+    #[test]
+    fn scatter_places_each_coefficient() {
+        let dense = scatter_ct(&[3, 0, 63], &[-2, 1, -1]);
+        let mut expected = [0i8; CHALLENGE_RING_DIM];
+        expected[3] = -2;
+        expected[0] = 1;
+        expected[63] = -1;
+        assert_eq!(dense, expected);
+    }
+
+    #[test]
+    fn scatter_adds_repeated_positions() {
+        let dense = scatter_ct(&[5, 5, 9], &[1, -2, 2]);
+        assert_eq!((dense[5], dense[9]), (-1, 2));
+        assert_eq!(dense.iter().filter(|&&coeff| coeff != 0).count(), 2);
     }
 }
