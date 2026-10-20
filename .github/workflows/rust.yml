@@ -119,6 +119,12 @@ jobs:
       # transcript event log locates each rejection. Lint it explicitly.
       - name: cargo clippy -p jolt-verifier --features akita,prover-fixtures,logging
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures,logging
+      # jolt-zk's Whiteout building blocks: the verifier-side feature alone
+      # (gating), then with the prover-only sampler.
+      - name: cargo clippy -p jolt-zk --features whiteout / whiteout-prover
+        run: |
+          cargo clippy -p jolt-zk --all-targets --features whiteout
+          cargo clippy -p jolt-zk --all-targets --features whiteout-prover
       # The modular prover's Akita path: lint alone and with
       # prover-fixtures so the acceptance suites keep compiling.
       - name: cargo clippy -p jolt-prover --features akita
@@ -783,10 +789,13 @@ jobs:
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
       # jolt-crypto's lattice primitives (sparse challenges, matrix derivation)
-      # and prover-only Gaussian sampler sit behind non-default features.
-      - name: Test jolt-crypto with lattice and sample
+      # and prover-only Gaussian sampler, and jolt-zk's Whiteout building
+      # blocks, sit behind non-default features.
+      - name: Test lattice features of jolt-crypto and jolt-zk
         if: matrix.shard == 2
-        run: cargo nextest run -p jolt-crypto --no-default-features --features lattice,sample,parallel --cargo-quiet
+        run: |
+          cargo nextest run -p jolt-crypto --no-default-features --features lattice,sample,parallel --cargo-quiet
+          cargo nextest run -p jolt-zk --features whiteout-prover --cargo-quiet
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet

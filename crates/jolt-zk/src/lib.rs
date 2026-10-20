@@ -25,6 +25,8 @@ pub mod r1cs;
 mod relaxed;
 mod statements;
 mod verify;
+#[cfg(feature = "whiteout")]
+pub mod whiteout;
 mod wire;
 
 pub use assignment::AssignedBlindFoldWitness;
