@@ -19,6 +19,7 @@ pub enum TowerProbe {
     Fq12Mul,
     Fq12Sqr,
     Fq12MulBy034,
+    Ell,
 }
 
 impl TowerProbe {
@@ -31,6 +32,7 @@ impl TowerProbe {
             Self::Fq12Mul => (2 * FQ12_LIMBS, FQ12_LIMBS),
             Self::Fq12Sqr => (FQ12_LIMBS, FQ12_LIMBS),
             Self::Fq12MulBy034 => (FQ12_LIMBS + 3 * FQ2_LIMBS, FQ12_LIMBS),
+            Self::Ell => (FQ12_LIMBS + 3 * FQ2_LIMBS + 2 * FQ_LIMBS, FQ12_LIMBS),
         }
     }
 }
@@ -59,6 +61,7 @@ impl CudaKernelContext {
             TowerProbe::Fq12Mul => &self.fq12_mul_probe,
             TowerProbe::Fq12Sqr => &self.fq12_sqr_probe,
             TowerProbe::Fq12MulBy034 => &self.fq12_mul_by_034_probe,
+            TowerProbe::Ell => &self.ell_probe,
         };
         let mut builder = self.stream().launch_builder(function);
         let _ = builder.arg(&device_in);
@@ -343,6 +346,45 @@ mod tests {
             probe_fq12(TowerProbe::Fq12MulBy034, &input),
             expected,
             "fq12_mul_by_034 diverged from arkworks"
+        );
+    }
+
+    fn fq2_scale(value: Fq2, scale: Fq) -> Fq2 {
+        Fq2::new(value.c0 * scale, value.c1 * scale)
+    }
+
+    #[test]
+    fn ell_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_900);
+        let samples = tower_fq12_samples(&mut rng);
+        let parts = tower_fq2_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, value) in samples.iter().enumerate() {
+            let coeff0 = parts[index % parts.len()];
+            let coeff1 = parts[(index + 2) % parts.len()];
+            let coeff2 = parts[(index + 4) % parts.len()];
+            let px = Fq::rand(&mut rng);
+            let py = Fq::rand(&mut rng);
+            input.extend_from_slice(&fq12_words(value));
+            input.extend_from_slice(&fq2_words(&coeff0));
+            input.extend_from_slice(&fq2_words(&coeff1));
+            input.extend_from_slice(&fq2_words(&coeff2));
+            input.extend_from_slice(&px.0 .0);
+            input.extend_from_slice(&py.0 .0);
+            let sparse = Fq12::new(
+                Fq6::new(fq2_scale(coeff0, py), Fq2::ZERO, Fq2::ZERO),
+                Fq6::new(fq2_scale(coeff1, px), coeff2, Fq2::ZERO),
+            );
+            expected.push(*value * sparse);
+        }
+        assert_eq!(
+            probe_fq12(TowerProbe::Ell, &input),
+            expected,
+            "ell diverged from arkworks"
         );
     }
 }

@@ -76,6 +76,8 @@
 //! estimate; their output stays in the device buffer.
 //! Fq6 and Fq12 arithmetic use Montgomery Fq2 coefficients, with specialized
 //! sparse products for pairing line evaluations.
+//! Line evaluation scales the coefficients by G1 coordinates and multiplies
+//! the sparse result into each thread's Fq12 accumulator.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

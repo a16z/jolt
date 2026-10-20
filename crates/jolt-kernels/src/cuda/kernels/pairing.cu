@@ -3,6 +3,11 @@
 
 static_assert(FQ2_LIMBS == 8, "Fq2 is two Fq limbs wide");
 
+__device__ __forceinline__ void fq2_mul_by_fp(const u64 *a, const u64 *k, u64 *out) {
+    fq_mul(a, k, out);
+    fq_mul(a + LIMBS, k, out + LIMBS);
+}
+
 __device__ void fq2_mul_by_nonresidue(const u64 *a, u64 *out) {
     u64 nine_a0[LIMBS], nine_a1[LIMBS], t[LIMBS], u[LIMBS], c0[LIMBS];
     fq_double(a, t);
@@ -120,6 +125,10 @@ __device__ void fq6_mul_by_fq2(const u64 *a, const u64 *k, u64 *out) {
     }
 }
 
+__device__ __forceinline__ void fq12_copy(const u64 *a, u64 *out) {
+    for (int i = 0; i < FQ12_LIMBS; i++) out[i] = a[i];
+}
+
 __device__ __noinline__ void fq12_mul(const u64 *a, const u64 *b, u64 *out) {
     const u64 *a0 = a;
     const u64 *a1 = a + FQ6_LIMBS;
@@ -185,6 +194,14 @@ __device__ __noinline__ void fq12_mul_by_034(const u64 *f, const u64 *c0, const 
     fq6_copy(e, out + FQ6_LIMBS);
 }
 
+__device__ __noinline__ void ell(u64 *f, const u64 *coeff, const u64 *px, const u64 *py) {
+    u64 c0[FQ2_LIMBS], c1[FQ2_LIMBS], scratch[FQ12_LIMBS];
+    fq2_mul_by_fp(coeff, py, c0);
+    fq2_mul_by_fp(coeff + FQ2_LIMBS, px, c1);
+    fq12_mul_by_034(f, c0, c1, coeff + 2 * FQ2_LIMBS, scratch);
+    fq12_copy(scratch, f);
+}
+
 extern "C" __global__ void fq6_mul_probe(const u64 *__restrict__ in, u64 *__restrict__ out,
                                         unsigned int n) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -240,4 +257,17 @@ extern "C" __global__ void fq12_mul_by_034_probe(const u64 *__restrict__ in,
     const u64 *a = in + (unsigned long long)i * (FQ12_LIMBS + 3 * FQ2_LIMBS);
     fq12_mul_by_034(a, a + FQ12_LIMBS, a + FQ12_LIMBS + FQ2_LIMBS,
                     a + FQ12_LIMBS + 2 * FQ2_LIMBS, out + (unsigned long long)i * FQ12_LIMBS);
+}
+
+extern "C" __global__ void ell_probe(const u64 *__restrict__ in, u64 *__restrict__ out,
+                                    unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const u64 *src = in + (unsigned long long)i * (FQ12_LIMBS + 3 * FQ2_LIMBS + 2 * LIMBS);
+    u64 f[FQ12_LIMBS];
+    for (int k = 0; k < FQ12_LIMBS; k++) f[k] = src[k];
+    ell(f, src + FQ12_LIMBS, src + FQ12_LIMBS + 3 * FQ2_LIMBS,
+        src + FQ12_LIMBS + 3 * FQ2_LIMBS + LIMBS);
+    u64 *dst = out + (unsigned long long)i * FQ12_LIMBS;
+    for (int k = 0; k < FQ12_LIMBS; k++) dst[k] = f[k];
 }
