@@ -473,6 +473,28 @@ pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> Cyc
     CycleMajorMatrix { entries }
 }
 
+/// Entry bytes [`round0_bind`] requests over `2^log_t >= 2` cycles and
+/// `2^log_k` addresses, its result included, at the largest entry count `M`:
+/// a cycle pair emits two entries only for distinct columns, so `M = T`, or
+/// `M = T/2` with one address. Rust 1.95 grows a `Vec` by doubling from four
+/// slots, and Rayon 1.12's collect keeps one such vector per split on a
+/// linked list, then reserves the destination once every split has
+/// finished: the splits request at most `4M` slots while growing and the
+/// destination `max(M, 4)`, so at most `5M + 3` slots and `M` list nodes (two
+/// links and a `Vec` header). These are pinned toolchain and lock facts, not
+/// an allocator contract; re-derive them on a toolchain, Rayon or collector
+/// change.
+pub(crate) fn round0_bind_bytes<F: JoltField>(log_t: usize, log_k: usize) -> usize {
+    let cycles = 1usize << log_t;
+    let entries = if log_k == 0 { cycles / 2 } else { cycles };
+    let node = size_of::<Vec<CycleMajorEntry<F>>>() + 2 * size_of::<usize>();
+    entries
+        .saturating_mul(5)
+        .saturating_add(3)
+        .saturating_mul(size_of::<CycleMajorEntry<F>>())
+        .saturating_add(entries.saturating_mul(node))
+}
+
 impl<F: JoltField> AddressMajorEntry<F> {
     fn bind(
         even: Option<&Self>,
@@ -735,6 +757,25 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         #[cfg(not(feature = "parallel"))]
         entries.sort_unstable_by_key(|entry| (entry.col, entry.row));
         Self { entries }
+    }
+
+    /// Entry bytes the first [`Self::bind`] of a matrix built by
+    /// [`Self::from_columns`] over `2^log_t` cycles requests while it
+    /// collects, with at most one entry per cycle: the old entries at their
+    /// collected capacity (at most `2T` slots), the splits' growing vectors
+    /// (at most `4T` slots, as in [`round0_bind_bytes`]), either the per-group
+    /// scratch or the destination, which is reserved only after every split
+    /// has finished (`T` slots), and at most `T` list nodes. The same pinned
+    /// Rust and Rayon facts apply.
+    pub fn first_bind_bytes(log_t: usize) -> usize {
+        let node = size_of::<Vec<AddressMajorEntry<F>>>() + 2 * size_of::<usize>();
+        (1usize << log_t).saturating_mul(7 * size_of::<AddressMajorEntry<F>>() + node)
+    }
+
+    /// Entry bytes of the bound entries the first [`Self::bind`] keeps after
+    /// dropping the old ones: at most `T` slots, one entry per cycle.
+    pub fn bound_bytes(log_t: usize) -> usize {
+        (1usize << log_t).saturating_mul(size_of::<AddressMajorEntry<F>>())
     }
 
     /// After binding every address, fill the remaining cycle tables using

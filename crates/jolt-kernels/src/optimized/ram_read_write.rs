@@ -35,7 +35,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
-    JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
+    JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic, ReadWriteDimensions,
 };
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
@@ -49,10 +49,10 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::{
 };
 use jolt_witness::JoltWitnessPlane;
 
-use super::ram_trace::RamAccessColumns;
+use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns};
 use super::read_write::ReadWriteOrder;
 use super::rw_matrix::{
-    round0_bind, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
+    round0_bind, round0_bind_bytes, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
     AddressMajorMatrix, CycleMajorMatrix,
 };
 use super::support::{pin_derived_term_if_derived, GruenRoundMessage};
@@ -452,10 +452,66 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
     }
 }
 
+/// Bytes the read-write kernel requests from its preparation through its
+/// first bind for `dimensions`, under `prepare`'s `ReadWriteOrder` dispatch,
+/// together with the two `K`-field tables RAM RAF evaluation prepares in the
+/// same batch (its folded `ra` and unmap tables, separate from `val_init`);
+/// none for a phase split `prepare` rejects before allocating.
+///
+/// Both orders count the increment table, `val_init` (at least four slots),
+/// the split-eq tables ([`GruenSplitEqPolynomial::low_to_high_bytes`]) and
+/// the RAF tables. Cycle-first adds one generation of access columns
+/// ([`ram_access_columns_bytes`]), queued for a background drop only after
+/// round 0 returns, and the round-0 collect at its largest entry count
+/// (`round0_bind_bytes`). Address-first adds the shared address column alone,
+/// as `prepare` drops the value columns, then the merged eq table and the
+/// larger of the first bind's collect (`AddressMajorMatrix::first_bind_bytes`)
+/// and its bound entries (`AddressMajorMatrix::bound_bytes`) beside one
+/// half-length copy of a `K`-entry table: `val_init`'s, or one of RAF's,
+/// which bind one at a time after the read-write kernel under the optimized
+/// backend's sequential member scheduler. The cycle-table handoff of a
+/// two-address first bind fits in these bytes. Later binds are not counted.
+///
+/// Every member of the batch prepares before any binds. The preparation
+/// transients (this kernel's, RAF's fold and the instruction claim
+/// reduction's collect beyond the storage it keeps) fit in these bytes
+/// because the matrix is priced at its largest entry count (address-first
+/// also needs fields of at least 16 bytes); the eager memory check relies on
+/// that.
+pub fn first_bind_bytes<F: JoltField>(dimensions: ReadWriteDimensions) -> usize {
+    let Ok(order) = ReadWriteOrder::new::<F>(dimensions) else {
+        return 0;
+    };
+    let (log_t, log_k) = (dimensions.log_t(), dimensions.log_k());
+    let (cycles, addresses) = (1usize << log_t, 1usize << log_k);
+    let field = |entries: usize| entries.saturating_mul(size_of::<F>());
+    let shared = [
+        field(cycles),
+        field(addresses.max(4)),
+        GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t),
+        field(addresses).saturating_mul(2),
+    ]
+    .into_iter()
+    .fold(0, usize::saturating_add);
+    match order {
+        ReadWriteOrder::CycleFirst => ram_access_columns_bytes(log_t, 1)
+            .saturating_add(shared)
+            .saturating_add(round0_bind_bytes::<F>(log_t, log_k)),
+        ReadWriteOrder::AddressFirst => {
+            let first_bind = AddressMajorMatrix::<F>::first_bind_bytes(log_t).max(
+                AddressMajorMatrix::<F>::bound_bytes(log_t).saturating_add(field(addresses / 2)),
+            );
+            ram_access_columns_bytes(log_t, 0)
+                .saturating_add(shared)
+                .saturating_add(field(cycles))
+                .saturating_add(first_bind)
+        }
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
