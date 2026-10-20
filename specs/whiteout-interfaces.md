@@ -300,7 +300,12 @@ pub struct CommittedPadsView<C> { /* commitment, cursor */ }
 ```
 
 The back end creates `CommittedPads` (§5); the prover sends the commitment
-before any challenge. At the end the cursor must equal `layout.num_pads`
+before any challenge. The prover masks through `CommittedPads::send` (and the
+masking `SumcheckRecorder` built on it) rather than a `PrivateChannel`, whose
+methods are generic over the message field; the verifier's masked
+`PrivateChannel` is built from `CommittedPadsView`. The layout is derived by
+replaying the masked verifier over the seeded prefix with a counting view
+(`CommittedPadsView::counting`). At the end the cursor must equal `layout.num_pads`
 (a diagnostic: soundness rests on the lowering emitting a row for every
 clear check). Masked intermediate products are sent through
 `exchange_private` at their auxiliary slots in one block after the last

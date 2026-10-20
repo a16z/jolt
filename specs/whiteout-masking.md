@@ -39,11 +39,13 @@ sent. Stage 8 follows today's ZK path (`verify_zk`, `ZkEvaluationClaim`):
 the joint evaluation stays in Dory's hiding evaluation commitment, Dory's
 cut point (parent §7).
 
-`pad_layout` in `jolt-verifier` is the one derivation. It counts base slots
-from the per-stage shape tables (relation objects from `new(dimensions)`,
-batch statements, claim layouts) and auxiliary slots by running the residual
-lowering in shape mode (below). Both roles call it. The final
-`cursor == num_pads` check is diagnostic only; soundness rests on the
+`pad_layout` in `jolt-verifier` is the one derivation. It runs the masked
+stage verifiers over the seeded prefix (header and commitments) followed by
+zero bytes, on a throwaway transcript, with an unbounded counting view: their
+own receives count the base slots, and the residual lowering in shape mode
+(below) counts the auxiliary slots. No value it reads changes either count, so
+the schedule's only owner is the masked verifier. Both roles call it. The
+final `cursor == num_pads` check is diagnostic only; soundness rests on the
 lowering emitting a row for every clear check.
 
 Pads are base-field coordinates: an extension element at slot `s` takes
@@ -63,12 +65,16 @@ auxiliary block, and the BlindFold tail.
 Only `ZkBackend::commit_pads` builds `CommittedPads` (pads, cursor, pad
 opening data), and only `receive_pad_commitment` builds
 `CommittedPadsView<PadCommitment>` (no blind). The prover's masking
-`SumcheckRecorder` owns `&mut CommittedPads`; the verifier threads
-`&mut CommittedPadsView` through the ZK drivers only. The recorder type, not
-a flag, decides which hidden-value checks are skipped. Clear `verify`
-signatures stay concrete; only leaf readers (`round_proof`, sumcheck
-verifier, `receive_member_claims`, `uniskip`, `ram_val_check`) are generic
-over `C: PrivateChannel` with `C::Error: From<TranscriptError>`.
+`SumcheckRecorder` owns `&mut CommittedPads`, and the prover's other private
+sends (uni-skip, stage 4's staged openings, the auxiliary block) go through
+`CommittedPads::send`. There is no prover-side `PrivateChannel`: its methods
+are generic over the message field, which a pad vector of one field cannot
+serve. The verifier threads `&mut CommittedPadsView` through the ZK drivers
+only; its `MaskedVerifier` is the masked `PrivateChannel`. The recorder type,
+not a flag, decides the routes a proof sends on and which hidden-value checks
+are skipped. Clear `verify` signatures stay concrete; only the masked leaf
+readers are generic over `C: PrivateChannel` with `C::Error:
+From<TranscriptError>`.
 
 ## Residual rows for Jolt's stages
 
