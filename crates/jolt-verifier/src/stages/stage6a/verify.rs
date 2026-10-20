@@ -1,9 +1,9 @@
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedClaims;
 
+use jolt_algebra::CanonicalDecode;
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::CanonicalDecode;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
@@ -176,10 +176,10 @@ mod tests {
     use super::*;
     use crate::stages::relations::test_transcript::{assert_same_draws, fresh};
     use crate::stages::relations::ClaimRoutes;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

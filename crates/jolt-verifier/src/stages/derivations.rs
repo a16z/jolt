@@ -7,7 +7,7 @@
 //! own stage error, so the per-family error content is byte-identical to the
 //! pre-consolidation hand-written derivations.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_poly::{try_eq_mle, LtPolynomial};
 
 /// The reversed sumcheck point — the opening point of every suffix-bound

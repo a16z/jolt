@@ -14,7 +14,7 @@
 //! arithmetic disagrees with the polynomial it defines or the verifier's
 //! challenges disagree with the prover's for the same bytes.
 
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_algebra::{CanonicalEncoding, Fr};
 use jolt_poly::CompressedPoly;
 use jolt_sumcheck::{EvaluationClaim, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};

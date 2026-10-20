@@ -7,9 +7,9 @@
 
 use std::fmt::Debug;
 
+use jolt_algebra::{Field, JoltField};
 use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::MissingOpeningValue;
-use jolt_field::{Field, JoltField};
 use jolt_sumcheck::ProveRounds;
 use jolt_verifier::stages::ids::VerifierDerivedId;
 use jolt_verifier::stages::relations::{

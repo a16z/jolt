@@ -3,6 +3,7 @@
 //! Owns the register read-write point derivation and the `EqCycle` public-value
 //! computation.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::registers::{
     RegistersReadWriteChallenges, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
@@ -12,7 +13,6 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RegistersReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;

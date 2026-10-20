@@ -28,9 +28,9 @@
 //! exact: the Gruen-reconstructed evaluations equal the true round
 //! polynomial's, and both sides interpolate the same four points.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_claims::NoChallenges;
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -466,9 +466,9 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use crate::optimized::parity::ExceptionalEq;
+    use jolt_algebra::{Fr, One, Ring, Zero};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
-    use jolt_field::{Fr, One, Ring, Zero};
     use jolt_riscv::JoltTraceRow as TraceRow;
     use jolt_witness::{JoltWitnessOracle, TraceBackend};
 

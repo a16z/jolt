@@ -7,7 +7,7 @@
     reason = "tests may panic on assertion failures and index fixture data"
 )]
 
-use jolt_field::{CanonicalEncoding, Field, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, CenteredIntegerDomain,

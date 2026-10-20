@@ -5,7 +5,7 @@
 
 mod rounds;
 
-use jolt_field::{CanonicalDecode, JoltField, One, Zero};
+use jolt_algebra::{CanonicalDecode, JoltField, One, Zero};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_spartan_verifier::{inner_relation, SpartanError, SpartanKey, INNER_DEGREE, OUTER_DEGREE};

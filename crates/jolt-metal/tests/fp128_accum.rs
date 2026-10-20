@@ -1,8 +1,8 @@
 //! Conformance of the `jolt::Fp128<C>` accumulators and the accumulator
-//! reductions with `jolt_field`.
+//! reductions with `jolt_algebra`.
 //!
 //! The oracle is field arithmetic: each threadgroup's reduced sum must equal
-//! the sum of its terms computed with `jolt_field` operations, on edge vectors
+//! the sum of its terms computed with `jolt_algebra` operations, on edge vectors
 //! and on 2^20 fixed-seed random terms, for every threadgroup shape
 //! `threadgroup_merge` must handle, and in every lane.
 //!
@@ -19,7 +19,7 @@ mod field;
 mod support;
 
 mod gpu {
-    use jolt_field::solinas::{Prime128Offset275, Prime128OffsetA7F7};
+    use jolt_algebra::solinas::{Prime128Offset275, Prime128OffsetA7F7};
     use jolt_metal::runtime::{
         host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, Pipeline, ShaderLibrary,
     };
@@ -369,13 +369,13 @@ mod gpu {
     }
 
     #[test]
-    fn fp128_a7f7_accumulators_match_jolt_field() {
-        accumulators::<Prime128OffsetA7F7>("fp128_a7f7_accumulators_match_jolt_field", 3);
+    fn fp128_a7f7_accumulators_match_jolt_algebra() {
+        accumulators::<Prime128OffsetA7F7>("fp128_a7f7_accumulators_match_jolt_algebra", 3);
     }
 
     #[test]
-    fn fp128_275_accumulators_match_jolt_field() {
-        accumulators::<Prime128Offset275>("fp128_275_accumulators_match_jolt_field", 5);
+    fn fp128_275_accumulators_match_jolt_algebra() {
+        accumulators::<Prime128Offset275>("fp128_275_accumulators_match_jolt_algebra", 5);
     }
 
     #[test]

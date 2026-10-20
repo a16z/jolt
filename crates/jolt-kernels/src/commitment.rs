@@ -6,13 +6,13 @@
 //! opening combines the commitments homomorphically, which is only meaningful
 //! when they share row geometry.
 
+#[cfg(not(feature = "akita"))]
+use jolt_algebra::JoltField;
 #[cfg(all(feature = "field-inline", not(feature = "akita")))]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-#[cfg(not(feature = "akita"))]
-use jolt_field::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::CommitmentScheme;
 #[cfg(all(not(feature = "zk"), not(feature = "akita")))]

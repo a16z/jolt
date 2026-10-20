@@ -10,12 +10,12 @@
 //! recovery and rayon walks as per the [`crate::optimized`] module docs.
 
 use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldRegistersIncClaimReductionChallenge,
     FieldRegistersIncClaimReductionPublic,
 };
 use jolt_claims::SumcheckChallenges as _;
-use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -191,11 +191,11 @@ impl<F: JoltField> SumcheckKernel<F> for FieldIncKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::{
         FieldRegistersIncClaimReductionChallenges, FieldRegistersIncClaimReductionInputClaims,
     };
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
-    use jolt_field::{Fr, Ring};
 
     use super::*;
     use crate::optimized::field_registers_testing::{

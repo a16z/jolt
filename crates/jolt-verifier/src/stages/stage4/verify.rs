@@ -1,3 +1,4 @@
+use jolt_algebra::{CanonicalDecode, JoltField};
 use jolt_claims::protocols::jolt::{
     geometry::{
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
@@ -6,7 +7,6 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalDecode, JoltField};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;

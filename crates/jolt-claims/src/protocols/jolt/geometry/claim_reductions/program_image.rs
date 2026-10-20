@@ -6,7 +6,7 @@
 //! the initial RAM words. This reduction binds that scalar to the trusted
 //! `ProgramImageInit` commitment over the shared precommitted schedule.
 
-use jolt_field::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring};
 use jolt_utils::log2_power_of_two;
 
 use crate::{derived, opening};
@@ -239,7 +239,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use jolt_poly::EqPolynomial;
 
     fn fr(value: u64) -> Fr {

@@ -4,13 +4,13 @@
 use std::sync::Arc;
 
 use common::constants::RAM_START_ADDRESS;
+use jolt_algebra::{Fr, Ring};
 use jolt_claims::protocols::{
     field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
     },
     jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial},
 };
-use jolt_field::{Fr, Ring};
 use jolt_program::{
     execution::{FieldEvent, JoltProgram, TraceData, TraceOutput},
     field_inline::{

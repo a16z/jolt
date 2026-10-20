@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 use crate::Polynomial;
 
@@ -446,7 +446,7 @@ impl<F: JoltField, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Field, Fr};
+    use jolt_algebra::{Field, Fr};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

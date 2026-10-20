@@ -54,6 +54,7 @@
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -107,7 +108,6 @@ use jolt_claims::{
     Expr, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
@@ -1408,12 +1408,12 @@ mod field_inline_relation_parity {
         ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
         SumcheckOutputClaims, SumcheckOutputPoints,
     };
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::{
         FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
         FieldRegistersTraceDimensions,
     };
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, Ring};
     use jolt_sumcheck::VerifiedCommittedRound;
 
     fn fr(value: u64) -> Fr {

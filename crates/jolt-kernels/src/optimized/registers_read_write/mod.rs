@@ -10,9 +10,9 @@
 //!
 //! Supports cycle-first and full address-first binding.
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltDerivedId, ReadWriteDimensions, RegistersReadWritePublic};
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{

@@ -16,7 +16,7 @@
 //! rounds, ending in `Truncated` or in `finish`'s `TrailingBytes`. So the
 //! harness asserts a plain reject: corrupted proofs never verify.
 
-use jolt_field::{CanonicalBytes, CanonicalEncoding, Field, Fr, Ring};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     send_full_round, BooleanHypercube, EvaluationClaim, SumcheckClaim, SumcheckError,

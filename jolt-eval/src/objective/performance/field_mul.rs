@@ -1,5 +1,5 @@
-use jolt_field::Fr;
-use jolt_field::{Field, Ring};
+use jolt_algebra::Fr;
+use jolt_algebra::{Field, Ring};
 
 use crate::objective::{Objective, OptimizationObjective, PerformanceObjective};
 

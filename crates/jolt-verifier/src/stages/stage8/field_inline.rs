@@ -1,6 +1,7 @@
 //! Stage 8's field-inline seam: the composed final-opening splice. `verify.rs` interacts with the field-inline protocol
 //! only through the functions here.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
 use jolt_claims::protocols::jolt::geometry::committed_openings::{
     commitment_embedding_scale, CommitmentEmbedding,
@@ -8,7 +9,6 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::{
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, TracePolynomialOrder,
 };
-use jolt_field::JoltField;
 
 use super::Stage8BatchEntry;
 use crate::proof::JoltCommitments;

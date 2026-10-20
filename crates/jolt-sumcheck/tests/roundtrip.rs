@@ -8,7 +8,7 @@
     reason = "tests may panic on assertion failures and index fixture data"
 )]
 
-use jolt_field::{Fr, Ring};
+use jolt_algebra::{Fr, Ring};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{
     send_compressed_round, send_full_round, BooleanHypercube, EvaluationClaim, SumcheckClaim,

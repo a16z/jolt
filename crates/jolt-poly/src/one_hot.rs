@@ -7,7 +7,7 @@
 //! a factor of `k` and enables ~254× faster commitment via generator lookup
 //! instead of full MSM.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 use crate::multilinear::MultilinearPoly;
 
@@ -226,7 +226,7 @@ impl<F: JoltField> MultilinearPoly<F> for OneHotPolynomial {
 mod tests {
     use super::*;
     use crate::Polynomial;
-    use jolt_field::{Field, Fr};
+    use jolt_algebra::{Field, Fr};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};

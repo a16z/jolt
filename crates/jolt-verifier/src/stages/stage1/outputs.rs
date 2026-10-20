@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 
 use super::outer_remainder::{OuterRemainder, OuterRemainderOutputClaims};

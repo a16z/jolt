@@ -21,7 +21,7 @@
 //! with no range relation at all — see "Increment range" in
 //! `specs/lattice-claims.md`. Do not treat this reduction as bounding `Inc`.
 
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
@@ -295,7 +295,7 @@ mod tests {
     use crate::protocols::jolt::{
         HammingWeightClaimReductionChallenge, JoltChallengeId, JoltDerivedId,
     };
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn public_unit_activation_ra_is_reconstructed_but_ram_keeps_base_legs() {

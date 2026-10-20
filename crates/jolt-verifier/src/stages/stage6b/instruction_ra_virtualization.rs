@@ -7,6 +7,7 @@
 //! stage-5 instruction address point. Its only public, `EqCycle`, ties the
 //! produced cycle to the stage-5 instruction read-RAF cycle.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionRaVirtualizationChallenges, InstructionRaVirtualizationInputClaims,
@@ -19,7 +20,6 @@ use jolt_claims::protocols::jolt::{
     InstructionRaVirtualizationPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;

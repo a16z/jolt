@@ -390,7 +390,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-field"
+name = "jolt-algebra"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
@@ -408,7 +408,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
@@ -422,7 +422,7 @@ dependencies = [
 name = "jolt-poly-fuzz"
 version = "0.0.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "libfuzzer-sys",
 ]

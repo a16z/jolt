@@ -23,10 +23,10 @@
 //! The per-cycle `rd` indices are reclaimed from the proof session when the
 //! stage-4 optimized kernel parked them, avoiding a second trace walk.
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -346,12 +346,12 @@ impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::Fr;
     use jolt_claims::protocols::jolt::geometry::dimensions::{
         TraceDimensions, REGISTER_ADDRESS_BITS,
     };
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_claims::NoChallenges;
-    use jolt_field::Fr;
     use jolt_poly::Polynomial;
     use jolt_verifier::stages::stage5::registers_val_evaluation::{
         RegistersValEvaluation, RegistersValEvaluationInputClaims,

@@ -7,8 +7,6 @@
 use super::*;
 use std::{ops::Range, sync::Arc};
 
-use akita_algebra::CyclotomicRing;
-use akita_challenges::{Challenges, SparseChallenge};
 use akita_params::{BasisMode, SetupMatrixCapacity, SubringCoefficientPackingGeometry};
 use akita_pcs::custom_source::{
     CommitInnerPlan, CpuFoldResponses, DecomposeFoldBatchPlan, OneHotBatchView, OpeningBatchKernel,
@@ -18,7 +16,8 @@ use akita_pcs::custom_source::{
 use akita_pcs::AkitaError;
 use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
 use akita_types::PreparedSubringCoefficientPackingPoint;
-use jolt_field::{Fp128x8i32, One, Ring};
+use jolt_algebra::{CyclotomicRing, Fp128x8i32, One, Ring};
+use jolt_crypto::challenge::{Challenges, SparseChallenge};
 
 use super::commit::commit_columns;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};

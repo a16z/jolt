@@ -5,6 +5,7 @@
 //! and produces the single `RamHammingWeight` opening; its only public,
 //! `EqCycle`, ties the sumcheck point to the stage-1 Spartan-outer cycle binding.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
@@ -14,7 +15,6 @@ use jolt_claims::protocols::jolt::{
     RamHammingBooleanityPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;

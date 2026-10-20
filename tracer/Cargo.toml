@@ -36,19 +36,19 @@ test-utils = ["dep:rand"]
 field-inline = [
   "jolt-program/field-inline",
   "jolt-riscv/field-inline",
-  "dep:jolt-field",
+  "dep:jolt-algebra",
 ]
 # The packed (akita) proof field: repoints the field-inline executors'
 # `ProofField` to the fp128 Akita field. Inert
 # without `field-inline`; enabled by the provers' `akita` features so
 # execution always matches the field the packed axis proves over.
-fp128-field-inline = ["jolt-field?/solinas"]
+fp128-field-inline = ["jolt-algebra?/solinas"]
 
 [dependencies]
 thiserror.workspace = true
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
-jolt-field = { workspace = true, optional = true }
+jolt-algebra = { workspace = true, optional = true }
 jolt-platform.workspace = true
 fnv.workspace = true
 object.workspace = true

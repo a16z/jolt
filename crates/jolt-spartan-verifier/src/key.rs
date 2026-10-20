@@ -1,5 +1,5 @@
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::{CanonicalDecode, JoltField};
+use jolt_algebra::{CanonicalDecode, JoltField};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
 use jolt_transcript::Channel;

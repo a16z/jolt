@@ -36,11 +36,11 @@
 
 use std::marker::PhantomData;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::{
     BytecodeClaimReductionLayout, PrecommittedClaimReduction, PrecommittedReductionLayout,
 };
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};

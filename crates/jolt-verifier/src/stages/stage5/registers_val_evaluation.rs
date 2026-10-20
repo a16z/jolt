@@ -1,5 +1,6 @@
 use core::marker::PhantomData;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::registers::{
     RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims,
@@ -9,7 +10,6 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RegistersValEvaluationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;

@@ -2,8 +2,8 @@
 
 use std::ops::Range;
 
+use jolt_algebra::Field;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_field::Field;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 
 use super::JoltVmWitnessConfig;

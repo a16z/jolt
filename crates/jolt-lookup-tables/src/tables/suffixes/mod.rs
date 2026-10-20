@@ -112,7 +112,7 @@ use xor_rot::XorRotSuffix;
 use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
 use xor_rotw::XorRotWSuffix;
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 /// A suffix polynomial: evaluates on unbound Boolean variables during sumcheck.
 ///

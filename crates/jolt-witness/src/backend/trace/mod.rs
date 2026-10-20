@@ -1,11 +1,11 @@
 //! The trace-backed witness backend: derives every served oracle from an
 //! execution trace via the atomic extractors in [`crate::witnesses`].
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::{
     geometry::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig, JoltVirtualPolynomial,
 };
-use jolt_field::JoltField;
 use jolt_lookup_tables::LookupTableKind;
 use jolt_program::{
     execution::{JoltProgram, TraceOutput},

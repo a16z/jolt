@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use jolt_field::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_riscv::InstructionFlags;
 
@@ -500,7 +500,7 @@ pub fn imm() -> JoltOpeningId {
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn read_raf_rejects_empty_dimensions() {

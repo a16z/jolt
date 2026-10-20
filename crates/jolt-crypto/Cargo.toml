@@ -29,9 +29,9 @@ bn254 = [
   "dep:num-bigint",
   "dep:num-integer",
   "dep:num-traits",
-  "jolt-field/bn254",
+  "jolt-algebra/bn254",
 ]
-parallel = ["dep:rayon", "jolt-field/parallel", "jolt-poly/parallel"]
+parallel = ["dep:rayon", "jolt-algebra/parallel", "jolt-poly/parallel"]
 # Lattice primitives: sparse ring challenges and the Ajtai public-matrix
 # stream. Off by default so curve-only builds, including the Dory verifier, do
 # not compile them; the Akita verifier enables this feature.
@@ -42,7 +42,7 @@ sample = ["dep:subtle", "dep:num-bigint"]
 
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
-jolt-field = { path = "../jolt-field", default-features = false }
+jolt-algebra = { path = "../jolt-algebra", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
@@ -68,7 +68,7 @@ rayon = { workspace = true, optional = true }
 [dev-dependencies]
 ark-std = { workspace = true }
 # The lattice tests instantiate Solinas fields.
-jolt-field = { path = "../jolt-field", default-features = false, features = [
+jolt-algebra = { path = "../jolt-algebra", default-features = false, features = [
   "solinas",
 ] }
 rand_chacha = { workspace = true }

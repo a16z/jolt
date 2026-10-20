@@ -16,8 +16,8 @@ pool. Its default feature set is empty.
   R1CS builder.
 
 Polynomial storage, compression, round generation, and the shared prover and
-verifier engines require `jolt_field::Field`. The stock clear recorder and
-the verifiers additionally require `jolt_field::CanonicalEncoding`, because
+verifier engines require `jolt_algebra::Field`. The stock clear recorder and
+the verifiers additionally require `jolt_algebra::CanonicalEncoding`, because
 they send, receive, and absorb field elements through `jolt_transcript`'s
 prover and verifier transcripts. Choose the sponge with the transcripts' `H`
 parameter. Jolt's own
@@ -56,7 +56,7 @@ An external project should pin all Jolt packages to the same full Git revision:
 ```toml
 [dependencies]
 jolt-sumcheck = { git = "https://github.com/a16z/jolt", rev = "FULL_COMMIT_SHA", default-features = false }
-jolt-field = { git = "https://github.com/a16z/jolt", rev = "FULL_COMMIT_SHA", default-features = false, features = ["solinas"] }
+jolt-algebra = { git = "https://github.com/a16z/jolt", rev = "FULL_COMMIT_SHA", default-features = false, features = ["solinas"] }
 jolt-poly = { git = "https://github.com/a16z/jolt", rev = "FULL_COMMIT_SHA", default-features = false }
 jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "FULL_COMMIT_SHA", default-features = false }
 ```

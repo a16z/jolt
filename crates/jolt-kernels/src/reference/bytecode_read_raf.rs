@@ -53,6 +53,7 @@ use std::collections::BTreeMap;
 #[cfg(feature = "field-inline")]
 use super::naive::sample_dense_round;
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
     geometry::bytecode as field_inline_bytecode, FIELD_REGISTERS_LOG_K,
@@ -73,7 +74,6 @@ use jolt_claims::protocols::jolt::{BytecodeReadRafPublic, JoltDerivedId};
 use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
 #[cfg(not(feature = "field-inline"))]
 use jolt_claims::{Source, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 #[cfg(not(feature = "field-inline"))]
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};

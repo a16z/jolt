@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 use crate::protocols::jolt::geometry::bytecode::{
     read_raf_address_input_fold, read_raf_cycle_output, BytecodeReadRafDimensions,

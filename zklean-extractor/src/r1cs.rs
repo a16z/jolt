@@ -1,7 +1,7 @@
+use jolt_algebra::{Fr, Ring};
 use jolt_claims::protocols::composed::r1cs::rv64::{
     self, RV64_CONSTRAINT_NAMES, RV64_VARIABLE_NAMES, V_CONST,
 };
-use jolt_field::{Fr, Ring};
 use jolt_r1cs::{ConstraintMatrices, SparseRow};
 use jolt_riscv::CircuitFlags;
 

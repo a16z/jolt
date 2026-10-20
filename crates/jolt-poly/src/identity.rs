@@ -1,6 +1,6 @@
 //! Identity polynomial evaluating to the integer index on the Boolean hypercube.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,8 +104,8 @@ impl<F: JoltField> crate::MultilinearEvaluation<F> for IdentityPolynomial {
 mod tests {
     use super::*;
     use crate::MultilinearEvaluation;
-    use jolt_field::Fr;
-    use jolt_field::Ring;
+    use jolt_algebra::Fr;
+    use jolt_algebra::Ring;
     use num_traits::{One, Zero};
 
     #[test]

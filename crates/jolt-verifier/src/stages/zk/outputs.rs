@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedOutputClaims};
 
 use crate::stages::relations::CommittedClaimLayout;

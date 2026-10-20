@@ -1,6 +1,6 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::{FieldInlineRelationId, FIELD_REGISTERS_LOG_K};
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::JoltField;
 
 use crate::stages::field_inline_bytecode::{
     field_inline_checked_split, field_inline_stage_gamma_powers, FieldInlineBytecodeFold,

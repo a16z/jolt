@@ -69,7 +69,7 @@ jobs:
         uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: nextest
-      - name: Require one jolt-field identity (no akita-field post-cutover)
+      - name: Require one jolt-algebra identity (no akita-field post-cutover)
         run: scripts/check-shared-field-identity.sh
       - name: Keep Metal out of the verifier
         run: scripts/check-metal-isolation.sh

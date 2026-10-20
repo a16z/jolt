@@ -10,9 +10,9 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::ram::{ram_inc, ram_ra, ram_val};
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamReadWritePublic};
-use jolt_field::JoltField;
 use jolt_poly::BindingOrder;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_witness::JoltWitnessPlane;

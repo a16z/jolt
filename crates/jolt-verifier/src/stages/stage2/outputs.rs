@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 
 use crate::stages::relations::SumcheckBatch;
@@ -214,6 +214,7 @@ mod tests {
     use crate::stages::relations::test_transcript::assert_same_draws;
     use crate::stages::relations::{ClaimRoutes, ConcreteSumcheck};
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_algebra::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::{
@@ -221,7 +222,6 @@ mod tests {
         ram::RamRafEvaluationDimensions,
         spartan::SpartanProductDimensions,
     };
-    use jolt_field::{Fr, Ring};
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::Channel;
 

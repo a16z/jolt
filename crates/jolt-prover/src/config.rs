@@ -12,8 +12,8 @@ use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
-use jolt_field::JoltField;
 use jolt_program::execution::ExecutionDimensions;
 
 use crate::ProverError;
@@ -256,7 +256,7 @@ pub(crate) fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
 mod dimension_tests {
     use super::*;
     use common::jolt_device::MemoryConfig;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
     use jolt_program::execution::RamAddressBounds;
     use jolt_riscv::{JoltTraceRow, RamAccess};
 
@@ -425,7 +425,7 @@ mod dimension_tests {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::jolt_device::MemoryLayout;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
     use jolt_program::execution::ExecutionDimensions;
     use jolt_riscv::JoltInstructionKind as Kind;
     use jolt_riscv::{JoltInstructionRow, JoltTraceRow, NormalizedOperands, RamAccess};

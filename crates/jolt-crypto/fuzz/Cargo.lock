@@ -416,6 +416,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-algebra"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff",
+ "ark-serialize",
+ "cc",
+ "num-traits",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "spongefish",
+ "thiserror",
+]
+
+[[package]]
 name = "jolt-crypto"
 version = "0.1.0"
 dependencies = [
@@ -424,7 +440,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "ark-std",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "num-bigint 0.4.8",
  "num-integer",
@@ -440,8 +456,8 @@ name = "jolt-crypto-fuzz"
 version = "0.0.0"
 dependencies = [
  "bincode",
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "libfuzzer-sys",
  "rand_chacha",
  "rand_core 0.6.4",
@@ -449,25 +465,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-field"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ff",
- "ark-serialize",
- "cc",
- "num-traits",
- "rand_core 0.6.4",
- "serde",
- "spongefish",
- "thiserror",
-]
-
-[[package]]
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",

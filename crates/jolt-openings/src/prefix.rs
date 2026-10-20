@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_poly::{eq_index_msb, Point, HIGH_TO_LOW};
 use jolt_transcript::Channel;
 

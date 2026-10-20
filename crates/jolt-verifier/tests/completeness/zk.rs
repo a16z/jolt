@@ -10,11 +10,11 @@
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use crate::support::{self, verifier_fixtures::ZkVerifierFixtureCase};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_algebra::Fr;
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_dory::DoryScheme;
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_field::Fr;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_transcript::VerifierTranscript;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]

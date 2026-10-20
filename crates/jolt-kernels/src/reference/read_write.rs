@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::ReadWriteDimensions;
-use jolt_field::JoltField;
 use jolt_poly::Polynomial;
 
 use crate::KernelError;
@@ -70,8 +70,8 @@ impl ReadWriteTableLayout {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr as F, Ring, Zero};
     use jolt_claims::protocols::jolt::ReadWriteDimensions;
-    use jolt_field::{Fr as F, Ring, Zero};
 
     use super::ReadWriteTableLayout;
     use crate::KernelError;

@@ -14,7 +14,7 @@ use crate::{
 use super::{decode_field, encode_field, ProofField};
 
 #[cfg(any(feature = "test-utils", test))]
-use jolt_field::{Field, Ring};
+use jolt_algebra::{Field, Ring};
 
 #[cfg(any(feature = "test-utils", test))]
 use crate::instruction::{Cycle, RISCVCycle};
@@ -197,7 +197,7 @@ mod injection {
 #[cfg(test)]
 mod tests {
     use common::constants::RISCV_REGISTER_COUNT;
-    use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding};
+    use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding};
     use jolt_riscv::FIELD_REGISTER_COUNT;
     use rand::SeedableRng;
 

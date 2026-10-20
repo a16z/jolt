@@ -6,12 +6,12 @@
 //! capacity.
 
 #[cfg(feature = "committed")]
+use jolt_algebra::CanonicalEncoding;
+use jolt_algebra::Field;
+#[cfg(feature = "committed")]
+use jolt_algebra::JoltField;
+#[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
-#[cfg(feature = "committed")]
-use jolt_field::CanonicalEncoding;
-use jolt_field::Field;
-#[cfg(feature = "committed")]
-use jolt_field::JoltField;
 #[cfg(feature = "committed")]
 use jolt_poly::UnivariatePoly;
 #[cfg(feature = "committed")]

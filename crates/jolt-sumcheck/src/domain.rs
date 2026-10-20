@@ -1,6 +1,6 @@
 use crate::error::SumcheckError;
 use core::ops::Range;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
 use jolt_poly::UnivariatePoly;
 

@@ -10,9 +10,9 @@
 
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
@@ -71,11 +71,11 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
     use jolt_claims::protocols::jolt::relations::ram::RamRafEvaluationInputClaims;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, Ring};
 
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,

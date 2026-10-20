@@ -13,6 +13,7 @@
 //! point from the output claims and asks the layout for the scale/weights at it,
 //! exactly as stage 4's `RamValCheck` recovers the cycle from its output point.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase as BytecodeAddressPhase;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
@@ -27,7 +28,6 @@ use jolt_claims::protocols::jolt::{
     ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::outputs::BytecodeReductionWeights;

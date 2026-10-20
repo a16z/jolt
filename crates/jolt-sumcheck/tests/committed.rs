@@ -4,10 +4,10 @@
     reason = "tests may panic on assertion failures and index fixture data"
 )]
 
+use jolt_algebra::{CanonicalBytes, Fr, Ring};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, NoVectorCommitment, Pedersen, PedersenSetup, VectorCommitment,
 };
-use jolt_field::{CanonicalBytes, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     CommittedOutputClaims, CommittedSumcheckBuilder, CommittedSumcheckConsistency,

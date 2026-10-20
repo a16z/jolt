@@ -1,5 +1,5 @@
+use jolt_algebra::{CanonicalDecode, JoltField};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::{CanonicalDecode, JoltField};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
@@ -409,10 +409,10 @@ mod tests {
         wire::send_opening,
         BlindFoldDimensions, RowDimensions, WitnessRowLayout,
     };
+    use jolt_algebra::{Fr, Ring};
     use jolt_crypto::{
         Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorOpeningError,
     };
-    use jolt_field::{Fr, Ring};
     use jolt_r1cs::ConstraintMatrices;
     use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, TranscriptError};
 

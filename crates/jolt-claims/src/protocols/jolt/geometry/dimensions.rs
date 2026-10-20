@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_utils::log2_power_of_two;
 use serde::{Deserialize, Serialize};
 
@@ -502,7 +502,7 @@ mod tests {
         PrecommittedClaimReduction, PrecommittedReductionLayout,
     };
     use super::*;
-    use jolt_field::{Field, Fr, Ring};
+    use jolt_algebra::{Field, Fr, Ring};
     use jolt_poly::EqPolynomial;
 
     fn dimensions() -> JoltOneHotDimensions {

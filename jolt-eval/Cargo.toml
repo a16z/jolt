@@ -13,7 +13,7 @@ jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-tracer-x86 = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
-jolt-field = { workspace = true }
+jolt-algebra = { workspace = true }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",

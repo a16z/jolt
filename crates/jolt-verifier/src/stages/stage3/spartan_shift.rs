@@ -4,6 +4,7 @@
 //! computations (against the product uni-skip `tau_low` and the product-remainder
 //! opening point).
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     SpartanShiftChallenges, SpartanShiftInputClaims, SpartanShiftOutputClaims,
@@ -12,7 +13,6 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, JoltDerivedId, SpartanShiftPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_poly::EqPlusOnePolynomial;
 
 use crate::stages::relations::ConcreteSumcheck;

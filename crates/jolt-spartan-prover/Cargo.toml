@@ -9,7 +9,7 @@ description = "PCS-generic clear Spartan proving for sparse R1CS"
 workspace = true
 
 [dependencies]
-jolt-field.workspace = true
+jolt-algebra.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs = { path = "../jolt-r1cs", default-features = false }

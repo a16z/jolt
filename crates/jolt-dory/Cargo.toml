@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
 jolt-crypto = { workspace = true }
-jolt-field = { workspace = true }
+jolt-algebra = { workspace = true }
 jolt-openings = { workspace = true }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true }

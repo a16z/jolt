@@ -12,11 +12,11 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     is_first_in_sequence_shift, is_noop_shift, is_virtual_shift, pc_shift, unexpanded_pc_shift,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPlusOnePolynomial, Polynomial};
 use jolt_verifier::stages::stage3::outputs::SpartanShift;
 use jolt_witness::JoltWitnessPlane;

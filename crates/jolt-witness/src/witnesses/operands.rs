@@ -1,4 +1,4 @@
-use jolt_field::{
+use jolt_algebra::{
     signed::{S128, S64},
     JoltField,
 };

@@ -4,7 +4,7 @@
     reason = "tests assert successful batch proof results"
 )]
 
-use jolt_field::Fr;
+use jolt_algebra::Fr;
 use jolt_openings::{
     BatchOpeningScheme, HomomorphicBatch, OpeningsError, ZkBatchOpeningScheme, ZkOpeningScheme,
 };

@@ -11,11 +11,11 @@
 //! lookup rows, fetched by its kernel's `prepare` off the witness plane's
 //! typed stage-5 rows accessor — never staged here.
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
@@ -127,6 +127,7 @@ where
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::relations::registers::FieldRegistersValEvaluationInputClaims;
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
@@ -135,7 +136,6 @@ mod field_inline_round_trip {
     use jolt_claims::NoChallenges;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;

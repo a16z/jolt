@@ -1,5 +1,5 @@
+use jolt_algebra::{Fr, One, Zero};
 use jolt_crypto::{Bn254G1, Commitment, JoltGroup};
-use jolt_field::{Fr, One, Zero};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};

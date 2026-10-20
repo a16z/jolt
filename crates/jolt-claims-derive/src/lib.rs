@@ -610,7 +610,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     });
 
     Ok(quote! {
-        impl<F: ::jolt_field::JoltField> ::jolt_claims::OutputClaims<F, #id_ty> for #name<F> {
+        impl<F: ::jolt_algebra::JoltField> ::jolt_claims::OutputClaims<F, #id_ty> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
@@ -649,7 +649,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
             }
         }
 
-        impl<F: ::jolt_field::JoltField> #name<::std::vec::Vec<F>> {
+        impl<F: ::jolt_algebra::JoltField> #name<::std::vec::Vec<F>> {
             #from_shared_point
             #(#point_accessors)*
         }
@@ -736,7 +736,7 @@ fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
     let point_accessors = plans.iter().map(point_accessor);
 
     Ok(quote! {
-        impl<F: ::jolt_field::JoltField> ::jolt_claims::InputClaims<F, #id_ty> for #name<F> {
+        impl<F: ::jolt_algebra::JoltField> ::jolt_claims::InputClaims<F, #id_ty> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
@@ -752,7 +752,7 @@ fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
             }
         }
 
-        impl<F: ::jolt_field::JoltField> #name<::std::vec::Vec<F>> {
+        impl<F: ::jolt_algebra::JoltField> #name<::std::vec::Vec<F>> {
             #(#point_accessors)*
         }
     })
@@ -855,7 +855,7 @@ fn expand_challenges(input: DeriveInput) -> Result<TokenStream2> {
     }
 
     Ok(quote! {
-        impl<#field: ::jolt_field::JoltField> ::jolt_claims::SumcheckChallenges<#field, #challenge_id_ty> for #name<#field> {
+        impl<#field: ::jolt_algebra::JoltField> ::jolt_claims::SumcheckChallenges<#field, #challenge_id_ty> for #name<#field> {
             fn from_transcript_values<__I: ::core::iter::Iterator<Item = #field>>(
                 values: __I,
             ) -> ::core::result::Result<Self, ::jolt_claims::ChallengeDrawError> {

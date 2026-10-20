@@ -30,7 +30,7 @@ weekly-seconds = 1500
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-poly = { path = ".." }
-jolt-field = { path = "../../jolt-field" }
+jolt-algebra = { path = "../../jolt-algebra" }
 
 [[bin]]
 name = "dense_poly_ops"

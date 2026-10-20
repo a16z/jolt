@@ -22,10 +22,10 @@
 //! cheap bind).
 
 use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::{
     FieldInlineDerivedId, FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
 };
-use jolt_field::JoltField;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -222,10 +222,10 @@ impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::relations::registers::FieldRegistersValEvaluationInputClaims;
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
     use jolt_witness::field_inline::FieldInlineWitnessOracle;
     use jolt_witness::JoltWitnessOracle;

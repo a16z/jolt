@@ -5,8 +5,8 @@
 //! random vector is uniformly random, so every such view is binding.
 
 use crate::CryptoError;
-use jolt_field::parallel::*;
-use jolt_field::{field_modulus_be_bytes, CanonicalEncoding, Field};
+use jolt_algebra::parallel::*;
+use jolt_algebra::{field_modulus_be_bytes, CanonicalEncoding, Field};
 use rand_core::{CryptoRng, Error, RngCore};
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
@@ -234,7 +234,7 @@ fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
 )]
 mod tests {
     use super::*;
-    use jolt_field::{Fp32, Fp64, One, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{Fp32, Fp64, One, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn seed_canonical_bytes_are_tag_then_seed() {

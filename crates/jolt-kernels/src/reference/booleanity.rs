@@ -23,12 +23,12 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::{
     BooleanityPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId, JoltRelationId,
 };
 use jolt_claims::{Source, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};

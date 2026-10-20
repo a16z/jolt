@@ -21,7 +21,7 @@ use akita_types::{
     AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup,
 };
-use jolt_field::{CanonicalBytes, CanonicalDecode, Zero};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, Zero};
 use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
@@ -1102,7 +1102,7 @@ impl CanonicalBytes for CommitmentHeader {
 
 impl Encoding<[u8]> for CommitmentHeader {
     fn encode(&self) -> impl AsRef<[u8]> {
-        ::jolt_field::narg::encode(self)
+        ::jolt_algebra::narg::encode(self)
     }
 }
 
@@ -1139,7 +1139,7 @@ impl CanonicalDecode for CommitmentHeader {
 
 impl NargDeserialize for CommitmentHeader {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        ::jolt_field::narg::deserialize(buf)
+        ::jolt_algebra::narg::deserialize(buf)
     }
 }
 
@@ -1419,7 +1419,7 @@ mod tests {
 
     use super::*;
     use akita_types::RingVec;
-    use jolt_field::Ring;
+    use jolt_algebra::Ring;
 
     fn af(value: u64) -> AkitaField {
         AkitaField::from_u64(value)

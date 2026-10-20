@@ -5,7 +5,7 @@
 //! The staged `BytecodeValClaim(i)` claims are batched with powers of
 //! `eta` and reduced over the shared precommitted schedule.
 
-use jolt_field::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
@@ -452,7 +452,7 @@ mod tests {
 
     use super::super::super::bytecode::{read_raf_public_values, BytecodeReadRafEvaluationInputs};
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use jolt_lookup_tables::InstructionLookupTable;
     use jolt_riscv::{
         Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionKind, JoltInstructionRow,
