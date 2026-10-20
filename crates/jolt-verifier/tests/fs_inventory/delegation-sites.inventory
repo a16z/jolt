@@ -262,3 +262,5 @@ jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::record_fork_draw::.record_for
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_full_round::.send#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_round::.send#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::finish::.send#0
+jolt-zk::whiteout/sigma.rs::prover::prove_sigma::.prove_response#4
+jolt-zk::whiteout/sigma.rs::verify_sigma::.verify_response#4
