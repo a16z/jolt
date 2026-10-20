@@ -1,7 +1,7 @@
 //! A synthetic masked sumcheck: Σ_x a(x)·b(x) = C over three variables,
 //! closed by the product of the two output claims, plus a uni-skip round.
-//! The honest masked transcript satisfies its residual rows, and changing
-//! any one masked value, with the challenges fixed, breaks some row.
+//! The honest masked transcript satisfies its residual rows, and on this
+//! instance changing any one masked value breaks some row.
 
 use jolt_claims::{challenge, constant, opening, Expr, FactoredExpr, Source};
 use jolt_field::{Field, Fr, Ring};
@@ -251,6 +251,11 @@ fn honest_masked_transcript_satisfies_its_rows() {
 
 type Perturbation = Box<dyn Fn(&mut Received)>;
 
+/// On this instance, changing any one masked value while the challenges stay
+/// those of the honest transcript breaks a row. The challenges are not
+/// re-derived, so this checks that every masked value reaches a row, not
+/// soundness against a prover who chooses its messages before the
+/// challenges.
 #[test]
 fn changing_any_masked_value_breaks_a_row() {
     let proof = prove();
