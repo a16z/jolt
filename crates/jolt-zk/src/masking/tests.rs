@@ -3,7 +3,7 @@
 //! The honest masked transcript satisfies its residual rows, and changing
 //! any one masked value, with the challenges fixed, breaks some row.
 
-use jolt_claims::{opening, FactoredExpr, Source};
+use jolt_claims::{challenge, constant, opening, Expr, FactoredExpr, Source};
 use jolt_field::{Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
@@ -13,6 +13,8 @@ use jolt_sumcheck::{
 use jolt_transcript::{
     Blake2b512, PrivateChannel, ProtocolId, ProverTranscript, VerifierTranscript,
 };
+use rand_chacha::ChaCha20Rng;
+use rand_core::{RngCore, SeedableRng};
 
 use super::*;
 
@@ -324,6 +326,107 @@ fn shape_and_values_domains_allocate_alike() {
     assert_eq!(shape.auxiliary, 3);
     assert_eq!(values.auxiliary, vec![fr(16), fr(80), fr(6)]);
     assert_eq!(value, fr(80) + fr(2));
+}
+
+type RandomExpr = Expr<Fr, usize, (), usize>;
+
+const RANDOM_OPENINGS: usize = 4;
+const RANDOM_CHALLENGES: usize = 3;
+
+fn pick(rng: &mut ChaCha20Rng, bound: usize) -> usize {
+    rng.next_u32() as usize % bound
+}
+
+/// One factor of every kind `lower_factored` classifies: public, a single
+/// scaled opening, or affine in several openings.
+fn random_factor(rng: &mut ChaCha20Rng) -> RandomExpr {
+    let opening_at =
+        |rng: &mut ChaCha20Rng| opening::<Fr, usize, (), usize>(pick(rng, RANDOM_OPENINGS));
+    let challenge_at =
+        |rng: &mut ChaCha20Rng| challenge::<Fr, usize, (), usize>(pick(rng, RANDOM_CHALLENGES));
+    match pick(rng, 5) {
+        0 => challenge_at(rng),
+        1 => constant(Fr::random(rng)),
+        2 => opening_at(rng),
+        3 => opening_at(rng) * challenge_at(rng),
+        _ => opening_at(rng) * challenge_at(rng) + opening_at(rng) + constant(Fr::random(rng)),
+    }
+}
+
+/// Sums of up to four products of up to four factors; a quarter of the
+/// coefficients are zero, which still allocate their slots.
+fn random_factored(rng: &mut ChaCha20Rng) -> FactoredExpr<Fr, usize, (), usize> {
+    (0..=pick(rng, 4)).fold(FactoredExpr::zero(), |sum, _| {
+        let factors = (0..pick(rng, 5)).map(|_| random_factor(rng)).collect();
+        let coefficient = if pick(rng, 4) == 0 {
+            Fr::from_u64(0)
+        } else {
+            Fr::random(rng)
+        };
+        sum + FactoredExpr::product(factors).scale(coefficient)
+    })
+}
+
+/// The shape, values and rows domains agree on random factored formulas:
+/// equal auxiliary counts, the values domain computes the expanded
+/// formula's value, and the rows domain's output equals that value over
+/// pads whose every row holds.
+#[test]
+fn lowering_domains_agree_on_random_formulas() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x6d61_736b);
+    for _ in 0..256 {
+        let expr = random_factored(&mut rng);
+        let openings: Vec<Fr> = (0..RANDOM_OPENINGS).map(|_| Fr::random(&mut rng)).collect();
+        let challenges: Vec<Fr> = (0..RANDOM_CHALLENGES)
+            .map(|_| Fr::random(&mut rng))
+            .collect();
+        let public = |source: &Source<usize, (), usize>| match source {
+            Source::Challenge(id) => Ok(challenges[*id]),
+            Source::Opening(_) | Source::Derived(()) => unreachable!(),
+        };
+        let expected = expr.clone().expand().evaluate(
+            |id| openings[*id],
+            |id| challenges[*id],
+            |()| unreachable!(),
+        );
+
+        let mut shape = ShapeDomain::default();
+        lower_factored(&expr, &mut shape, &mut |_| Ok(()), &mut public.clone()).unwrap();
+
+        let mut values = ValuesDomain::default();
+        let value = lower_factored(
+            &expr,
+            &mut values,
+            &mut |id| Ok(openings[*id]),
+            &mut public.clone(),
+        )
+        .unwrap();
+        assert_eq!(value, expected);
+        assert_eq!(values.auxiliary.len(), shape.auxiliary);
+
+        let layout = PadLayout::new(RANDOM_OPENINGS, shape.auxiliary).unwrap();
+        let pads: Vec<Fr> = (0..layout.num_pads).map(|_| Fr::random(&mut rng)).collect();
+        let masked_auxiliary: Vec<Fr> = values
+            .auxiliary
+            .iter()
+            .zip(&pads[layout.auxiliary.clone()])
+            .map(|(value, pad)| *value + *pad)
+            .collect();
+        let mut relation = ResidualRelation::new(layout, 0);
+        let mut rows = RowsDomain::new(&mut relation, &masked_auxiliary);
+        let output = lower_factored(
+            &expr,
+            &mut rows,
+            &mut |id| Ok(AffineRow::masked(openings[*id] + pads[*id], PadIndex(*id))),
+            &mut public.clone(),
+        )
+        .unwrap();
+        rows.finish().unwrap();
+        relation
+            .affine
+            .push(output.add_scaled(&AffineRow::constant(expected), -Fr::from_u64(1)));
+        assert_eq!(relation.first_violation(&pads, &[]).unwrap(), None);
+    }
 }
 
 #[test]
