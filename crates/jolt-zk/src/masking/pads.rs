@@ -23,6 +23,10 @@ pub struct PadIndex(pub usize);
 pub struct PadLayout {
     pub num_pads: usize,
     pub auxiliary: Range<usize>,
+    /// The pads of product operands, in first-use order, from the shape
+    /// routine (`OperandShapeDomain`). The lattice back end commits them as
+    /// constant digit polynomials; BlindFold ignores them.
+    pub operand_pads: Vec<PadIndex>,
 }
 
 impl PadLayout {
@@ -38,7 +42,17 @@ impl PadLayout {
         Ok(Self {
             num_pads,
             auxiliary: base..num_pads,
+            operand_pads: Vec::new(),
         })
+    }
+
+    /// This layout with `operand_pads` as its product operands.
+    #[must_use]
+    pub fn with_operand_pads(self, operand_pads: Vec<PadIndex>) -> Self {
+        Self {
+            operand_pads,
+            ..self
+        }
     }
 }
 
@@ -216,6 +230,7 @@ impl CommittedPadsView<()> {
             PadLayout {
                 num_pads: usize::MAX,
                 auxiliary: usize::MAX..usize::MAX,
+                operand_pads: Vec::new(),
             },
             (),
         )

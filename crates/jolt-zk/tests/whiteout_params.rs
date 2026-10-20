@@ -212,7 +212,7 @@ fn private_vector_check_rejects_alphabet_and_shape_violations() {
 
 #[test]
 fn segments_must_hold_whole_native_elements() {
-    let mut bad = small_table().segments()[0];
+    let mut bad = *small_table().segments().next().unwrap();
     bad.len = 3;
     assert!(matches!(
         SegmentTable::new(vec![bad]),
@@ -244,13 +244,24 @@ fn widths_must_match_the_gaussian_segments() {
 
 #[test]
 fn parameters_outside_the_rejection_arithmetic_are_rejected() {
-    // Three distinct widths near 2^31 make the product of the distinct k_b²
+    // Three distinct widths near 2^24 make the product of the distinct k_b²
     // exceed 2^126; the widths themselves are wide enough.
-    let table = SegmentTable::new((0..3).map(|_| small_table().segments()[0]).collect()).unwrap();
+    let table = SegmentTable::new(
+        (0..3)
+            .map(|_| *small_table().segments().next().unwrap())
+            .collect(),
+    )
+    .unwrap();
     assert_eq!(
-        SigmaParams::new(&table, &[1 << 31, (1 << 31) - 1, (1 << 31) - 2]),
+        SigmaParams::new(&table, &[1 << 24, (1 << 24) - 1, (1 << 24) - 2]),
         Err(WhiteoutError::RejectionArithmetic)
     );
-    let accepted = SigmaParams::new(&table, &[1 << 31, 1 << 31, (1 << 31) - 1]).unwrap();
+    let accepted = SigmaParams::new(&table, &[1 << 24, 1 << 24, (1 << 24) - 1]).unwrap();
     let _rejection = accepted.rejection().unwrap();
+    // Widths of 2^31 need nine response digits, past the Ajtai map's i32
+    // lift: rejected before any proof could fail on it.
+    assert_eq!(
+        SigmaParams::new(&table, &[1 << 31; 3]),
+        Err(WhiteoutError::ResponseBoundTooLarge)
+    );
 }

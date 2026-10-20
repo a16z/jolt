@@ -159,7 +159,8 @@ impl From<ZkError> for VerifierError {
             | ZkError::Sumcheck(_)
             | ZkError::BlindFoldShape(_)
             | ZkError::BlindFoldProver(_)
-            | ZkError::BlindFoldRejected(_) => Self::Masking(error),
+            | ZkError::BlindFoldRejected(_)
+            | ZkError::Whiteout(_) => Self::Masking(error),
         }
     }
 }

@@ -125,6 +125,10 @@ jobs:
         run: |
           cargo clippy -p jolt-zk --all-targets --features whiteout
           cargo clippy -p jolt-zk --all-targets --features whiteout-prover
+      # Feature additivity: enabling jolt-zk/whiteout must not break the
+      # verifier, which matches ZkError exhaustively.
+      - name: cargo clippy -p jolt-verifier --features jolt-zk/whiteout
+        run: cargo clippy -p jolt-verifier --all-targets --features jolt-zk/whiteout
       # The modular prover's Akita path: lint alone and with
       # prover-fixtures so the acceptance suites keep compiling.
       - name: cargo clippy -p jolt-prover --features akita

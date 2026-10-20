@@ -45,10 +45,18 @@ pub enum ZkError {
     /// A BlindFold `VerificationError<F>` other than a transcript failure.
     #[error("BlindFold proof rejected: {0}")]
     BlindFoldRejected(#[source] ErasedSource),
-    /// A Whiteout failure.
-    #[cfg(feature = "whiteout")]
-    #[error(transparent)]
-    Whiteout(#[from] WhiteoutError),
+    /// A Whiteout `WhiteoutError`, erased so the variant exists whether or
+    /// not the `whiteout` feature is on (feature additivity: dependents match
+    /// `ZkError` exhaustively).
+    #[error("Whiteout: {0}")]
+    Whiteout(#[source] ErasedSource),
+}
+
+#[cfg(feature = "whiteout")]
+impl From<WhiteoutError> for ZkError {
+    fn from(error: WhiteoutError) -> Self {
+        Self::Whiteout(Box::new(error))
+    }
 }
 
 /// A transcript failure surfaces as [`ZkError::Transcript`], and a

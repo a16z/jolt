@@ -19,7 +19,7 @@ use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 #[cfg(feature = "whiteout-prover")]
 use jolt_crypto::sample::{BlockParams, GaussianWidth, JointRejection};
 
-use super::segments::{SegmentMask, SegmentTable};
+use super::segments::{balanced_range, SegmentMask, SegmentTable};
 use super::WhiteoutError;
 
 /// Rejection parameter α of §6.2.
@@ -65,27 +65,39 @@ pub struct GaussianBlock {
 /// The Σ-protocol's realized parameters for one segment table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SigmaParams {
+    alpha: u32,
     blocks: Vec<GaussianBlock>,
     /// Radix-16 response digits per segment, Gaussian or public.
     response_digits: Vec<usize>,
+    /// A hard bound on every response coefficient with these digits.
+    response_bound: u32,
 }
 
 impl SigmaParams {
     /// Derives the widths in closed form and validates them with [`Self::new`].
     pub fn derive(table: &SegmentTable) -> Result<Self, WhiteoutError> {
+        Self::derive_with_alpha(table, ALPHA)
+    }
+
+    /// [`Self::derive`] at another rejection parameter α.
+    pub(crate) fn derive_with_alpha(
+        table: &SegmentTable,
+        alpha: u32,
+    ) -> Result<Self, WhiteoutError> {
         let (gamma, _) = challenge_norms();
-        let gaussian = table
+        let gaussian: Vec<_> = table
             .segments()
-            .iter()
-            .filter(|segment| segment.mask == SegmentMask::Gaussian);
+            .filter(|segment| segment.mask == SegmentMask::Gaussian)
+            .collect();
         let total = gaussian
-            .clone()
+            .iter()
             .map(|segment| segment.num_coefficients() as u128)
             .sum::<u128>();
         // `C = ⌈2 ln 2 · Γ² α² · 2^32⌉`, so `k_b² ≥ C γ_b² ΣN / (N_b 2^32)`.
-        let scale = (2 * LN2_CEIL_2_64 * u128::from(gamma).pow(2) * u128::from(ALPHA).pow(2))
+        let scale = (2 * LN2_CEIL_2_64 * u128::from(gamma).pow(2) * u128::from(alpha).pow(2))
             .div_ceil(1 << 32);
         let widths = gaussian
+            .iter()
             .map(|segment| {
                 let required = scale
                     .checked_mul(segment.honest_l2_sq())
@@ -96,7 +108,7 @@ impl SigmaParams {
                 u64::try_from(ceil_sqrt(required) + 1).map_err(|_| WhiteoutError::Overflow)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Self::new(table, &widths)
+        Self::new_with_alpha(table, &widths, alpha)
     }
 
     /// Validates `widths`, one per Gaussian segment in table order, and
@@ -113,6 +125,14 @@ impl SigmaParams {
     /// coefficient, so `p_𝓑 ≥ 1 − 1/2000` (§2.5's box bound) holds without a
     /// separate check.
     pub fn new(table: &SegmentTable, widths: &[u64]) -> Result<Self, WhiteoutError> {
+        Self::new_with_alpha(table, widths, ALPHA)
+    }
+
+    fn new_with_alpha(
+        table: &SegmentTable,
+        widths: &[u64],
+        alpha: u32,
+    ) -> Result<Self, WhiteoutError> {
         OperatorNormRejection::D64_SELECTIVE_L2
             .validate(CHALLENGE_RING_DIM, &D64_SELECTIVE_L2_CHALLENGE_CONFIG)
             .map_err(WhiteoutError::ChallengeFamily)?;
@@ -122,7 +142,6 @@ impl SigmaParams {
         let (gamma, kappa) = challenge_norms();
         let gaussian = table
             .segments()
-            .iter()
             .filter(|segment| segment.mask == SegmentMask::Gaussian)
             .collect::<Vec<_>>();
         if gaussian.is_empty() || gaussian.len() != widths.len() {
@@ -136,7 +155,7 @@ impl SigmaParams {
         }
 
         // Σ_b 2 ln2 Γ² α² γ_b² / k_b² ≤ 1, each term rounded up at 2^{−64}.
-        let numerator = 2 * LN2_CEIL_2_64 * u128::from(gamma).pow(2) * u128::from(ALPHA).pow(2);
+        let numerator = 2 * LN2_CEIL_2_64 * u128::from(gamma).pow(2) * u128::from(alpha).pow(2);
         let mut sum = 0u128;
         for (segment, &k) in gaussian.iter().zip(widths) {
             let term = numerator
@@ -157,7 +176,7 @@ impl SigmaParams {
         let mut blocks = Vec::with_capacity(gaussian.len());
         let mut response_digits = Vec::with_capacity(table.segments().len());
         let mut widths = widths.iter();
-        for (index, segment) in table.segments().iter().enumerate() {
+        for (index, segment) in table.segments().enumerate() {
             let shift_bound = u64::from(kappa) * segment.digit_bound();
             let Some(&width) = (segment.mask == SegmentMask::Gaussian)
                 .then(|| widths.next())
@@ -182,9 +201,21 @@ impl SigmaParams {
             });
         }
         check_rejection_arithmetic(&blocks)?;
+        // Every response coefficient goes through the Ajtai map's i32 lift.
+        let response_bound = response_digits
+            .iter()
+            .map(|&digits| {
+                balanced_range(RESPONSE_LOG_BASIS, digits).map(|(min, _)| min.unsigned_abs())
+            })
+            .try_fold(0u128, |bound, end| Some(bound.max(end?)))
+            .and_then(|bound| u32::try_from(bound).ok())
+            .filter(|&bound| bound <= i32::MAX as u32)
+            .ok_or(WhiteoutError::ResponseBoundTooLarge)?;
         Ok(Self {
+            alpha,
             blocks,
             response_digits,
+            response_bound,
         })
     }
 
@@ -195,6 +226,11 @@ impl SigmaParams {
     /// Radix-16 response digits per segment, in table order.
     pub fn response_digits(&self) -> &[usize] {
         &self.response_digits
+    }
+
+    /// A hard bound on every response coefficient, below `2^31`.
+    pub(crate) fn response_bound(&self) -> u32 {
+        self.response_bound
     }
 
     /// The joint rejection rule over the Gaussian blocks, in block order.
@@ -212,7 +248,7 @@ impl SigmaParams {
                 })
             })
             .collect::<Result<Vec<_>, WhiteoutError>>()?;
-        Ok(JointRejection::new(blocks, ALPHA, EPSILON_BITS)?)
+        Ok(JointRejection::new(blocks, self.alpha, EPSILON_BITS)?)
     }
 
     /// `T_att`, the prover's attempt cap: all attempts are rejected with
@@ -271,11 +307,9 @@ fn challenge_norms() -> (u32, u32) {
     )
 }
 
-/// The positive end of the balanced radix-16 range with `digits` digits,
-/// `7·(16^digits − 1)/15`.
+/// The positive end of the balanced radix-16 range with `digits` digits.
 fn box_end(digits: usize) -> u128 {
-    let radix = 1u128 << RESPONSE_LOG_BASIS;
-    (radix / 2 - 1) * (radix.pow(digits as u32) - 1) / (radix - 1)
+    balanced_range(RESPONSE_LOG_BASIS, digits).map_or(0, |(_, max)| max.unsigned_abs())
 }
 
 /// The fewest digits whose balanced range covers `[−bound, bound]`.

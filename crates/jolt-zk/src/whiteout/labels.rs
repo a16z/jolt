@@ -54,7 +54,7 @@ impl RowLabels {
     }
 
     /// Scalarity row `ct(X^{−r} P_x) = 0` of operand `operand`, `r ∈ [1, 63]`.
-    pub fn scalarity(&self, operand: usize, r: usize) -> usize {
+    pub fn scalarity(operand: usize, r: usize) -> usize {
         64 * operand + r
     }
 

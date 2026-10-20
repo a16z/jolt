@@ -20,12 +20,13 @@ use jolt_algebra::balanced_decompose_coefficients_pow2_i8_into;
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::{CyclotomicRing, JoltField};
 use jolt_crypto::challenge::SparseChallenge;
-use jolt_crypto::lattice::{commit, CHALLENGE_RING_DIM};
+use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 
 use super::challenge::{challenge_ring, challenge_times_ring};
 use super::lift::{ChallengeRing, LiftedRelation};
 use super::params::RESPONSE_LOG_BASIS;
+use super::segments::balanced_range;
 use super::sigma::SigmaSetup;
 use super::WhiteoutError;
 use crate::masking::ZkError;
@@ -33,10 +34,7 @@ use crate::masking::ZkError;
 /// Radix-16 digits of a field element of `V` or `θ`.
 pub const FIELD_LEVELS: usize = 32;
 /// Coefficients of `θ`, which has degree below 63.
-pub const THETA_COEFFICIENTS: usize = CHALLENGE_RING_DIM - 1;
-/// The balanced radix-16 digit alphabet `[−8, 7]`.
-const DIGIT_MIN: i8 = -8;
-const DIGIT_MAX: i8 = 7;
+pub(crate) const THETA_COEFFICIENTS: usize = CHALLENGE_RING_DIM - 1;
 
 /// One segment of `e`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,12 +90,12 @@ pub struct ResponseWitness {
 
 /// What the response proof certifies.
 pub struct ResponseStatement<'a, F: JoltField, const D: usize> {
-    pub setup: &'a SigmaSetup<F, D>,
-    pub relation: &'a LiftedRelation<F>,
-    pub challenge: SparseChallenge,
+    pub(crate) setup: &'a SigmaSetup<F, D>,
+    pub(crate) relation: &'a LiftedRelation<F>,
+    pub(crate) challenge: SparseChallenge,
     /// The aggregation challenges; `μ` follows from the relation's labels.
-    pub rho: Vec<F>,
-    pub v_image: Vec<ChallengeRing<F>>,
+    pub(crate) rho: Vec<F>,
+    pub(crate) v_image: Vec<ChallengeRing<F>>,
 }
 
 /// Proves the response statement. Akita implements it (W5).
@@ -121,6 +119,21 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         self.setup.response_layout()
     }
 
+    /// The Σ-protocol challenge `c`.
+    pub fn challenge(&self) -> &SparseChallenge {
+        &self.challenge
+    }
+
+    /// The aggregation challenges `ρ`.
+    pub fn rho(&self) -> &[F] {
+        &self.rho
+    }
+
+    /// The commitment `t_D` to `V`.
+    pub fn v_image(&self) -> &[ChallengeRing<F>] {
+        &self.v_image
+    }
+
     /// Whether `witness` satisfies items 1–5: the statement's definition.
     pub fn check_witness(&self, witness: &ResponseWitness) -> Result<(), WhiteoutError> {
         let layout = self.layout();
@@ -128,17 +141,21 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             return Err(WhiteoutError::ResponseRejected("response length"));
         }
         // Item 1.
+        let (min, max) = balanced_range(RESPONSE_LOG_BASIS, 1)
+            .ok_or(WhiteoutError::ResponseRejected("digit alphabet"))?;
         if witness
             .digits
             .iter()
-            .any(|digit| !(DIGIT_MIN..=DIGIT_MAX).contains(digit))
+            .any(|&digit| !(min..=max).contains(&i128::from(digit)))
         {
             return Err(WhiteoutError::ResponseRejected(
                 "digit outside its alphabet",
             ));
         }
-        let mut z = Vec::with_capacity(self.setup.table.num_coefficients());
+        let table = self.setup.table();
+        let mut z = Vec::with_capacity(table.num_coefficients());
         let mut v = Vec::new();
+        let mut v_digits: Vec<i64> = Vec::new();
         let mut theta = Vec::new();
         let mut rest = witness.digits.as_slice();
         for segment in &layout.segments {
@@ -155,6 +172,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                         v.extend(field_from_planes::<F>(ring, CHALLENGE_RING_DIM));
                     }
                     v.truncate(coefficients);
+                    v_digits = digits.iter().map(|&digit| i64::from(digit)).collect();
                 }
                 ResponseSegment::Theta => {
                     theta = field_from_planes::<F>(digits, THETA_COEFFICIENTS);
@@ -162,23 +180,21 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             }
         }
 
-        // Item 2: t_D = A_D G⁻¹(V).
-        let v_rings: Vec<ChallengeRing<F>> = v
-            .chunks_exact(CHALLENGE_RING_DIM)
-            .map(CyclotomicRing::from_slice)
-            .collect();
-        let t_d = commit(&self.setup.v_level, &self.setup.v_matrix, &v_rings, &[])?;
+        // Item 2: t_D = A_D G⁻¹(V), A_D applied to e's V digits as given.
+        let t_d = self
+            .setup
+            .v_matrix()
+            .apply_centered(&v_digits, max.unsigned_abs().max(min.unsigned_abs()) as u32)?;
         if t_d != self.v_image {
             return Err(WhiteoutError::ResponseRejected("V commitment"));
         }
 
         // Item 3: N z = f + c t.
         let c = self.challenge.to_dense_ct()?;
-        let bound = u32::try_from(self.setup.response_bound())
-            .map_err(|_| WhiteoutError::ResponseRejected("response bound"))?;
-        let nz = self.setup.linear.apply(&z, bound)?;
+        let bound = self.setup.params().response_bound();
+        let nz = self.setup.linear().apply(&z, bound)?;
         let f = v.chunks_exact(D).map(CyclotomicRing::<F, D>::from_slice);
-        for ((nz, f), t) in nz.iter().zip(f).zip(self.setup.linear.targets()) {
+        for ((nz, f), t) in nz.iter().zip(f).zip(self.setup.linear().targets()) {
             if *nz != f + challenge_times_ring(&c, t) {
                 return Err(WhiteoutError::ResponseRejected("ring-linear rows"));
             }
@@ -186,7 +202,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 
         // Items 4 and 5.
         let tail = v
-            .get(self.setup.linear.num_outputs() * D..)
+            .get(self.setup.linear().num_outputs() * D..)
             .ok_or(WhiteoutError::ResponseRejected("V too short"))?;
         let [e0, e1, h] = [0, 1, 2].map(|index| {
             CyclotomicRing::from_slice(
@@ -199,8 +215,9 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         }
         let c_ring: ChallengeRing<F> = challenge_ring(&c);
         let aggregated = self.relation.aggregate(&self.rho)?;
-        let parts = aggregated.linear_parts(&self.setup.table.challenge_view(&z)?)?;
-        let lhs = aggregated.quadratic(&c_ring, &parts) + self.setup.l_row.apply(&z, bound)?;
+        let tables = self.relation.claim_tables()?;
+        let parts = aggregated.linear_parts(&tables, &z, false)?;
+        let lhs = aggregated.quadratic(&c_ring, &parts) + self.setup.l_row().apply(&z, bound)?;
         if lhs != e0 + c_ring * e1 + c_ring * c_ring * h {
             return Err(WhiteoutError::ResponseRejected("ring-quadratic identity"));
         }
@@ -217,8 +234,9 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 #[cfg(feature = "whiteout-prover")]
 pub(crate) fn integer_digits(values: &[i64], levels: usize) -> Result<Vec<i8>, WhiteoutError> {
     let radix = 1i128 << RESPONSE_LOG_BASIS;
-    let offset = (radix / 2) * (radix.pow(levels as u32) - 1) / (radix - 1);
-    let top = (radix / 2 - 1) * (radix.pow(levels as u32) - 1) / (radix - 1);
+    let (min, top) = balanced_range(RESPONSE_LOG_BASIS, levels)
+        .ok_or(WhiteoutError::InvariantViolation("response digit range"))?;
+    let offset = -min;
     let mut digits = vec![0i8; values.len() * levels];
     for (index, &value) in values.iter().enumerate() {
         let value = i128::from(value);

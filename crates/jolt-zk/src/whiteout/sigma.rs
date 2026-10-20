@@ -4,23 +4,23 @@
 //! After the masked transcript, the prover holds `s` (laid out by the
 //! segment table) with `N·s = t` and every lifted row satisfied. It:
 //!
-//! 1. checks, before any challenge: the segment alphabets, every row, `ct(g)`,
-//!    and `N·s = t`;
+//! 1. checks, before any challenge, every row and `ct(g)`, `N·s = t`, and the
+//!    segment alphabets;
 //! 2. squeezes ℓ aggregation challenges `ρ` and asserts `ct(h) = 0` for
 //!    `h = Q_μ(1, s)`;
 //! 3. squeezes a fork seed `σ`, then per attempt samples a Gaussian mask `y`,
 //!    commits to `V = (N y, L y + Q_μ(0,y), L s + B_μ((1,s),(0,y)), h)` as
 //!    `t_D`, draws a secret 256-bit nonce `n`, derives `c` from the attempt
 //!    fork `(σ, n, t_D)`, and applies the joint rejection rule to
-//!    `z = y + c·s`;
+//!    `z = y + c·s` on the Gaussian coordinates;
 //! 4. sends only the accepted attempt's `t_D` and `n`, then proves the
 //!    response statement.
 //!
 //! Everything an attempt computes before its accept bit is constant time in
-//! the attempt's secrets (y, n, c and what derives from them): the Gaussian
-//! sampler, the Ajtai map, the branch-free lifts, the dense challenge
-//! product, and the joint rejection rule. A rejected attempt leaves nothing
-//! in the transcript.
+//! the attempt's secrets (y, n, c and what derives from them). A rejected
+//! attempt leaves nothing in the transcript.
+
+use std::ops::Range;
 
 use jolt_algebra::{CyclotomicRing, JoltField};
 use jolt_crypto::challenge::{
@@ -33,49 +33,129 @@ use jolt_transcript::{
     Channel, Fork, Sponge, VerifierTranscript, ATTEMPT_NONCE_LEN, FORK_SEED_LEN,
 };
 
-use super::lift::{ChallengeRing, LiftedRelation};
-use super::linear::{LRow, RingLinearMap};
+use super::lift::{ChallengeRing, EvaluationClaims, LiftedRelation};
+use super::linear::{GadgetTerm, LRow, LinearBlock, ResidualBlock, RingLinearMap};
+use super::pad_commitment::LatticePadCommitment;
+#[cfg(feature = "whiteout-prover")]
+use super::pad_commitment::LatticePadOpening;
 use super::params::{SigmaParams, RESPONSE_LOG_BASIS};
+use super::placement::PadPlacement;
 use super::response::{
     ResponseLayout, ResponseProver, ResponseSegment, ResponseStatement, FIELD_LEVELS,
 };
-use super::segments::SegmentTable;
+use super::segments::{Segment, SegmentRole, SegmentTable};
 use super::WhiteoutError;
-use crate::masking::ZkError;
+use crate::masking::{ResidualRelation, ZkError};
 
-/// The public setup of one Σ-protocol shape.
+/// The public setup of one Σ-protocol shape. Every position in `s` is
+/// derived here from the segment table and the pad placement; callers never
+/// pass offsets.
 pub struct SigmaSetup<F: JoltField, const D: usize> {
-    pub table: SegmentTable,
-    pub params: SigmaParams,
+    table: SegmentTable,
+    params: SigmaParams,
+    placement: PadPlacement,
     /// `N` and its targets: the commitment openings.
-    pub linear: RingLinearMap<F, D>,
-    pub l_row: LRow<F, D>,
+    linear: RingLinearMap<F, D>,
+    l_row: LRow<F, D>,
     /// `A_D`, binding on the radix-16 digits of `V`, over the challenge ring.
-    pub v_level: AjtaiLevel,
-    pub v_matrix: PreparedMatrix<F, CHALLENGE_RING_DIM>,
+    v_level: AjtaiLevel,
+    v_matrix: PreparedMatrix<F, CHALLENGE_RING_DIM>,
+    /// Native coefficients of the residual segments, which precede the pads.
+    #[cfg(feature = "whiteout-prover")]
+    residual_len: usize,
 }
 
 impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
-    /// The setup over `table`, with `A_D` of rank `v_rank` cut from
-    /// `v_stream`. Every segment must have native dimension `D`, so that `N`
-    /// is linear over the challenge ring.
+    /// The setup for a residual opening of `residual` segments (witness,
+    /// inner digits, randomness) with opening rows `blocks`, followed by the
+    /// pad segments of `pads` with image `pad_image`, and `A_D` of rank
+    /// `v_rank` cut from `v_stream`. Every segment must have native dimension
+    /// `D`, so that `N` is linear over the challenge ring.
     pub fn new(
-        table: SegmentTable,
-        linear: RingLinearMap<F, D>,
-        l_row: LRow<F, D>,
+        residual: Vec<Segment>,
+        blocks: Vec<ResidualBlock<F, D>>,
+        pads: &LatticePadCommitment<F, D>,
+        pad_image: Vec<CyclotomicRing<F, D>>,
         v_rank: usize,
         v_stream: &[F],
     ) -> Result<Self, WhiteoutError> {
+        if residual.iter().any(|segment| {
+            matches!(
+                segment.role,
+                SegmentRole::PadDigits | SegmentRole::OperandDigits | SegmentRole::PadRandomness
+            )
+        }) {
+            return Err(WhiteoutError::InvalidRelation(
+                "residual segments may not hold pads",
+            ));
+        }
+        let num_residual = residual.len();
+        let mut segments = residual;
+        segments.extend(pads.segments());
+        let table = SegmentTable::new(segments)?;
         if !D.is_multiple_of(CHALLENGE_RING_DIM)
-            || table
-                .segments()
-                .iter()
-                .any(|segment| segment.native_dim != D)
+            || table.segments().any(|segment| segment.native_dim != D)
         {
             return Err(WhiteoutError::InvalidRelation(
                 "every segment must have the setup's native ring dimension",
             ));
         }
+        let placed = table.placed();
+        let range = |segments: Range<usize>| -> Result<Range<usize>, WhiteoutError> {
+            let first = segments.start;
+            let last = segments
+                .end
+                .checked_sub(1)
+                .filter(|&last| first <= last && last < num_residual)
+                .ok_or(WhiteoutError::InvalidRelation(
+                    "block reads outside the residual",
+                ))?;
+            let start = placed
+                .get(first)
+                .ok_or(WhiteoutError::InvalidRelation("segment missing"))?
+                .coefficient;
+            let end = placed
+                .get(last)
+                .ok_or(WhiteoutError::InvalidRelation("segment missing"))?
+                .coefficients()
+                .end;
+            Ok(start..end)
+        };
+        let mut linear = Vec::with_capacity(blocks.len() + 1);
+        for block in blocks {
+            let gadget = match block.gadget {
+                Some(gadget) => Some(GadgetTerm {
+                    input: range(gadget.segment..gadget.segment + 1)?,
+                    log_basis: gadget.log_basis,
+                    levels: gadget.levels,
+                }),
+                None => None,
+            };
+            linear.push(LinearBlock {
+                matrix: block.matrix,
+                input: range(block.input)?,
+                gadget,
+                target: block.target,
+            });
+        }
+        let pad_start = table
+            .unique(SegmentRole::PadDigits)
+            .ok_or(WhiteoutError::InvalidRelation("pad digit segment missing"))?
+            .coefficient;
+        let randomness = table
+            .unique(SegmentRole::PadRandomness)
+            .ok_or(WhiteoutError::InvalidRelation(
+                "pad randomness segment missing",
+            ))?
+            .coefficients();
+        linear.push(LinearBlock {
+            matrix: pads.matrix(),
+            input: pad_start..randomness.end,
+            gadget: None,
+            target: pad_image,
+        });
+        let linear = RingLinearMap::new(linear)?;
+
         let message_rings = (linear.num_outputs() * D) / CHALLENGE_RING_DIM + 3;
         let v_level = AjtaiLevel {
             matrix: MatrixShape {
@@ -93,20 +173,102 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         let v_matrix = PreparedMatrix::new(&MatrixView::new(v_level.matrix, v_stream)?)?;
         Ok(Self {
             params: SigmaParams::derive(&table)?,
+            #[cfg(feature = "whiteout-prover")]
+            residual_len: pad_start,
+            placement: pads.placement().clone(),
+            l_row: LRow {
+                matrix: pads.l_matrix(),
+                input: randomness,
+            },
             table,
             linear,
-            l_row,
             v_level,
             v_matrix,
         })
     }
 
+    /// This setup at another rejection parameter α (tests of the abort rate).
+    #[cfg(all(test, feature = "whiteout-prover"))]
+    pub(crate) fn with_alpha(mut self, alpha: u32) -> Result<Self, WhiteoutError> {
+        self.params = SigmaParams::derive_with_alpha(&self.table, alpha)?;
+        Ok(self)
+    }
+
+    /// Lifts `relation` over this setup's table and pad placement.
+    pub fn lift(
+        &self,
+        relation: &ResidualRelation<F>,
+        claims: &EvaluationClaims<F>,
+    ) -> Result<LiftedRelation<F>, WhiteoutError> {
+        LiftedRelation::new(relation, &self.placement, &self.table, claims)
+    }
+
+    pub fn params(&self) -> &SigmaParams {
+        &self.params
+    }
+
+    pub(crate) fn table(&self) -> &SegmentTable {
+        &self.table
+    }
+
+    pub(crate) fn linear(&self) -> &RingLinearMap<F, D> {
+        &self.linear
+    }
+
+    pub(crate) fn l_row(&self) -> &LRow<F, D> {
+        &self.l_row
+    }
+
+    #[cfg(feature = "whiteout-prover")]
+    pub(crate) fn v_level(&self) -> &AjtaiLevel {
+        &self.v_level
+    }
+
+    pub(crate) fn v_matrix(&self) -> &PreparedMatrix<F, CHALLENGE_RING_DIM> {
+        &self.v_matrix
+    }
+
+    #[cfg(feature = "whiteout-prover")]
+    /// `s`: the residual opening followed by the pad opening.
+    pub(crate) fn private_vector(
+        &self,
+        residual: &[i64],
+        pads: &LatticePadOpening,
+    ) -> Result<Vec<i64>, WhiteoutError> {
+        if residual.len() != self.residual_len {
+            return Err(WhiteoutError::WitnessLength {
+                expected: self.residual_len,
+                actual: residual.len(),
+            });
+        }
+        let mut s = Vec::with_capacity(self.table.num_coefficients());
+        s.extend_from_slice(residual);
+        s.extend_from_slice(&pads.digits);
+        if s.len() != self.table.num_coefficients() {
+            return Err(WhiteoutError::WitnessLength {
+                expected: self.table.num_coefficients(),
+                actual: s.len(),
+            });
+        }
+        Ok(s)
+    }
+
+    /// Release check that `relation` was lifted over this setup's table.
+    fn check_relation(&self, relation: &LiftedRelation<F>) -> Result<(), WhiteoutError> {
+        if *relation.table() == self.table {
+            Ok(())
+        } else {
+            Err(WhiteoutError::InvalidRelation(
+                "the relation was lifted over another setup's table",
+            ))
+        }
+    }
+
     /// The layout of `e`.
-    pub fn response_layout(&self) -> ResponseLayout {
+    pub(crate) fn response_layout(&self) -> ResponseLayout {
         let mut segments: Vec<ResponseSegment> = self
             .table
             .segments()
-            .iter()
             .zip(self.params.response_digits())
             .enumerate()
             .map(|(segment, (entry, &digits))| ResponseSegment::Response {
@@ -121,22 +283,10 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         segments.push(ResponseSegment::Theta);
         ResponseLayout { segments }
     }
-
-    /// A hard bound on every coefficient of a response with its certified
-    /// digits: the negative end of the widest balanced range.
-    pub fn response_bound(&self) -> u64 {
-        let radix = 1u64 << RESPONSE_LOG_BASIS;
-        self.params
-            .response_digits()
-            .iter()
-            .map(|&digits| (radix / 2) * (radix.saturating_pow(digits as u32) - 1) / (radix - 1))
-            .max()
-            .unwrap_or(0)
-    }
 }
 
 /// The attempt seed: `(σ, n, t_D)` through the attempt fork.
-fn attempt_seed<H: Sponge, F: JoltField>(
+pub(crate) fn attempt_seed<H: Sponge, F: JoltField>(
     sigma: &[u8; FORK_SEED_LEN],
     nonce: &[u8; ATTEMPT_NONCE_LEN],
     t_d: &[ChallengeRing<F>],
@@ -158,6 +308,7 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
     transcript: &mut VerifierTranscript<'_, H>,
     response: &P,
 ) -> Result<(), ZkError> {
+    setup.check_relation(relation)?;
     let rho: Vec<F> = (0..relation.labels().num_challenges())
         .map(|_| transcript.challenge::<F>())
         .collect();
@@ -195,60 +346,97 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
 
 #[cfg(feature = "whiteout-prover")]
 pub use prover::prove_sigma;
+#[cfg(all(test, feature = "whiteout-prover"))]
+pub(crate) use prover::take_rejected;
+#[cfg(any(
+    all(test, feature = "whiteout-prover"),
+    feature = "whiteout-diagnostics"
+))]
+pub(crate) use prover::{prove_sigma_with, SelfChecks};
 
 #[cfg(feature = "whiteout-prover")]
 mod prover {
-    use jolt_algebra::{CyclotomicRing, JoltField};
     use std::ops::Range;
 
+    use jolt_algebra::{CyclotomicRing, JoltField};
     use jolt_crypto::challenge::{sample_challenge_ct, SparseChallenge};
     use jolt_crypto::lattice::{commit, CHALLENGE_RING_DIM};
     use jolt_crypto::sample::{GaussianSampler, GaussianWidth, JointRejection, SampleError};
     use jolt_transcript::{Channel, ProverTranscript, Sponge, ATTEMPT_NONCE_LEN, FORK_SEED_LEN};
     use rand_core::{CryptoRng, RngCore};
 
-    use super::super::challenge::{challenge_ring, challenge_times_i64};
+    use super::super::challenge::{challenge_ring, challenge_times_i64_into};
     use super::super::lift::{
-        constant_ring, AggregatedRelation, ChallengeRing, LiftedRelation, LinearParts,
+        constant_ring, AggregatedRelation, ChallengeRing, ClaimTables, LiftedRelation, LinearParts,
     };
+    use super::super::pad_commitment::LatticePadOpening;
     use super::super::response::{ResponseProver, ResponseStatement, ResponseWitness};
     use super::super::WhiteoutError;
     use super::{attempt_seed, SigmaSetup};
     use crate::masking::ZkError;
 
-    /// Every pad and witness digit is at most 2^7 in magnitude.
-    const DIGIT_BOUND: u32 = 1 << 7;
+    /// Which of the prover's own checks run before the challenges.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum SelfChecks {
+        Run,
+        /// Test-only: skip the per-row, opening, alphabet and `ct(h)`
+        /// checks, so tests can show the verifier rejects what they catch.
+        #[cfg(test)]
+        Skip,
+    }
+
+    #[cfg(test)]
+    thread_local! {
+        /// Rejected attempts' `(t_D bytes, nonce)`, for substitution tests.
+        static REJECTED: std::cell::RefCell<Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// The rejected attempts recorded on this thread, cleared.
+    #[cfg(test)]
+    pub(crate) fn take_rejected() -> Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])> {
+        REJECTED.with(|rejected| std::mem::take(&mut *rejected.borrow_mut()))
+    }
 
     /// What an accepted attempt hands on.
     struct Accepted<F: JoltField> {
         t_d: Vec<ChallengeRing<F>>,
         nonce: [u8; ATTEMPT_NONCE_LEN],
         challenge: SparseChallenge,
-        z: Vec<i64>,
         v: Vec<F>,
     }
 
-    /// Per-proof state shared by the attempts.
+    /// Per-proof state shared by the attempts, and the attempts' reused
+    /// buffers.
     struct Prover<'a, F: JoltField, const D: usize> {
         setup: &'a SigmaSetup<F, D>,
         aggregated: AggregatedRelation<'a, F>,
+        tables: ClaimTables<F>,
         s: &'a [i64],
         parts_s: LinearParts<F>,
         l_s: ChallengeRing<F>,
         h: ChallengeRing<F>,
-        /// `(coefficient range, sampler)` per Gaussian block.
-        samplers: Vec<(Range<usize>, GaussianSampler)>,
+        /// `(coefficient range, native dimension, sampler)` per Gaussian block.
+        samplers: Vec<(Range<usize>, usize, GaussianSampler)>,
         tail_bound: u32,
         sigma: [u8; FORK_SEED_LEN],
+        /// The mask, zero on public coordinates.
+        y: Vec<i64>,
+        /// `z` and the shift `v = c·s` on the Gaussian coordinates, block-major.
+        z_gaussian: Vec<i64>,
+        v_gaussian: Vec<i64>,
+        /// `V`'s coefficients.
+        v: Vec<F>,
     }
 
-    /// Proves the residual relation for `s`, returning the number of
-    /// attempts (independent of the witness; the only attempt-dependent
-    /// value that may leave).
+    /// Proves the residual relation for the residual opening `residual` and
+    /// the pad opening `pads`, returning the number of attempts (independent
+    /// of the witness; the only attempt-dependent value that may leave).
     pub fn prove_sigma<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
-        s: &[i64],
+        residual: &[i64],
+        pads: &LatticePadOpening,
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
         response: &P,
@@ -259,55 +447,100 @@ mod prover {
         R: RngCore + CryptoRng,
         P: ResponseProver<F, D>,
     {
-        // Before any challenge: alphabets, every row, ct(g), N·s = t.
-        setup.table.check_private_vector(s)?;
-        let s_view = setup.table.challenge_view(s)?;
-        if let Some(row) = relation.first_violation(&s_view)? {
-            return Err(WhiteoutError::ResidualUnsatisfied { row }.into());
+        let s = setup.private_vector(residual, pads)?;
+        prove_sigma_with(
+            setup,
+            relation,
+            &s,
+            transcript,
+            rng,
+            response,
+            SelfChecks::Run,
+        )
+    }
+
+    pub(crate) fn prove_sigma_with<F, const D: usize, H, R, P>(
+        setup: &SigmaSetup<F, D>,
+        relation: &LiftedRelation<F>,
+        s: &[i64],
+        transcript: &mut ProverTranscript<H>,
+        rng: &mut R,
+        response: &P,
+        checks: SelfChecks,
+    ) -> Result<usize, ZkError>
+    where
+        F: JoltField,
+        H: Sponge,
+        R: RngCore + CryptoRng,
+        P: ResponseProver<F, D>,
+    {
+        setup.check_relation(relation)?;
+        let table = setup.table();
+        if s.len() != table.num_coefficients() {
+            return Err(WhiteoutError::WitnessLength {
+                expected: table.num_coefficients(),
+                actual: s.len(),
+            }
+            .into());
         }
-        if !setup
-            .linear
-            .apply(s, DIGIT_BOUND)?
-            .iter()
-            .eq(setup.linear.targets())
-        {
-            return Err(WhiteoutError::ResidualOpeningMismatch.into());
+        let tables = relation.claim_tables()?;
+        // Before any challenge: every row and ct(g), N·s = t, the alphabets.
+        let digit_bound = table
+            .segments()
+            .map(|segment| segment.digit_bound() as u32)
+            .max()
+            .unwrap_or(0);
+        if checks == SelfChecks::Run {
+            if let Some(row) = relation.first_violation(&tables, s)? {
+                return Err(WhiteoutError::ResidualUnsatisfied { row }.into());
+            }
+            if !setup
+                .linear()
+                .apply(s, digit_bound)?
+                .iter()
+                .eq(setup.linear().targets())
+            {
+                return Err(WhiteoutError::ResidualOpeningMismatch.into());
+            }
+            table.check_private_vector(s)?;
         }
 
         let rho: Vec<F> = (0..relation.labels().num_challenges())
             .map(|_| transcript.challenge::<F>())
             .collect();
         let aggregated = relation.aggregate(&rho)?;
-        let parts_s = aggregated.linear_parts(&s_view)?;
+        let parts_s = aggregated.linear_parts(&tables, s, false)?;
         let h = aggregated.quadratic(&constant_ring(F::one()), &parts_s);
-        if !h.constant_term().is_zero() {
+        if checks == SelfChecks::Run && !h.constant_term().is_zero() {
             return Err(WhiteoutError::InvariantViolation("ct(h) ≠ 0").into());
         }
-        let starts = setup.table.starts();
         let samplers = setup
-            .params
+            .params()
             .blocks()
             .iter()
             .map(|block| {
-                let (start, _) = starts
+                let placed = table
+                    .placed()
                     .get(block.segment)
-                    .copied()
                     .ok_or(WhiteoutError::InvalidRelation("block segment missing"))?;
                 Ok((
-                    start..start + block.len,
+                    placed.coefficients(),
+                    placed.segment.native_dim,
                     GaussianSampler::new(GaussianWidth::from_multiplier(block.width)?),
                 ))
             })
             .collect::<Result<Vec<_>, WhiteoutError>>()?;
         let tail_bound = samplers
             .iter()
-            .map(|(_, sampler)| sampler.width().tail_bound())
+            .map(|(_, _, sampler)| sampler.width().tail_bound())
             .max()
             .unwrap_or(0);
-        let prover = Prover {
+        let gaussian_len = samplers.iter().map(|(range, _, _)| range.len()).sum();
+        let mut prover = Prover {
             setup,
-            l_s: setup.l_row.apply(s, DIGIT_BOUND)?,
+            l_s: setup.l_row().apply(s, digit_bound)?,
             aggregated,
+            tables,
             s,
             parts_s,
             h,
@@ -315,9 +548,13 @@ mod prover {
             tail_bound: u32::try_from(tail_bound)
                 .map_err(|_| WhiteoutError::InvariantViolation("tail bound exceeds u32"))?,
             sigma: transcript.challenge_bytes(),
+            y: vec![0i64; table.num_coefficients()],
+            z_gaussian: vec![0i64; gaussian_len],
+            v_gaussian: vec![0i64; gaussian_len],
+            v: Vec::with_capacity(setup.v_level().message_rings * CHALLENGE_RING_DIM),
         };
-        let rejection = setup.params.rejection()?;
-        let max_attempts = setup.params.max_attempts()?;
+        let rejection = setup.params().rejection()?;
+        let max_attempts = setup.params().max_attempts()?;
 
         for attempt in 1..=max_attempts {
             let Some(accepted) = prover.attempt::<H, R>(&rejection, rng)? else {
@@ -330,17 +567,7 @@ mod prover {
                 .collect();
             transcript.send_all(&flat);
             transcript.send_bytes(&accepted.nonce);
-            let c = accepted
-                .challenge
-                .to_dense_ct()
-                .map_err(WhiteoutError::from)?;
-            let c_ring: ChallengeRing<F> = challenge_ring(&c);
-            let parts_z = prover
-                .aggregated
-                .linear_parts(&setup.table.challenge_view(&accepted.z)?)?;
-            let product = prover.aggregated.product_polynomial(&c_ring, &parts_z);
-            let theta = product.get(CHALLENGE_RING_DIM..).unwrap_or_default();
-            let witness = ResponseWitness::new(setup, &accepted.z, &accepted.v, theta)?;
+            let witness = prover.witness(&accepted)?;
             let statement = ResponseStatement {
                 setup,
                 relation,
@@ -356,72 +583,76 @@ mod prover {
 
     impl<F: JoltField, const D: usize> Prover<'_, F, D> {
         /// One attempt. Every step before the accept bit is constant time in
-        /// the attempt's secrets; only that bit is branched on.
+        /// the attempt's secrets; only that bit is branched on. Public
+        /// coordinates are never touched: y is zero there and their shift
+        /// does not enter the rejection rule.
         #[inline(never)]
         fn attempt<H: Sponge, R: RngCore + CryptoRng>(
-            &self,
+            &mut self,
             rejection: &JointRejection,
             rng: &mut R,
         ) -> Result<Option<Accepted<F>>, WhiteoutError> {
-            let table = &self.setup.table;
-            let mut y = vec![0i64; table.num_coefficients()];
-            for (range, sampler) in &self.samplers {
+            for (range, _, sampler) in &self.samplers {
                 sampler.fill(
                     rng,
-                    y.get_mut(range.clone())
+                    self.y
+                        .get_mut(range.clone())
                         .ok_or(WhiteoutError::InvalidRelation("block outside s"))?,
                 );
             }
-            let parts_y = self.aggregated.linear_parts(&table.challenge_view(&y)?)?;
-            let f = self.setup.linear.apply(&y, self.tail_bound)?;
-            let e0 = self.setup.l_row.apply(&y, self.tail_bound)?
+            let parts_y = self.aggregated.linear_parts(&self.tables, &self.y, true)?;
+            let f = self.setup.linear().apply(&self.y, self.tail_bound)?;
+            let e0 = self.setup.l_row().apply(&self.y, self.tail_bound)?
                 + self.aggregated.quadratic_at_zero(&parts_y);
             let e1 = self.l_s + self.aggregated.polar(&self.parts_s, &parts_y);
-            let mut v: Vec<F> = f
-                .iter()
-                .flat_map(|ring| ring.coefficients().iter().copied())
-                .collect();
+            self.v.clear();
+            self.v.extend(
+                f.iter()
+                    .flat_map(|ring| ring.coefficients().iter().copied()),
+            );
             for ring in [e0, e1, self.h] {
-                v.extend_from_slice(ring.coefficients());
+                self.v.extend_from_slice(ring.coefficients());
             }
-            let v_rings: Vec<ChallengeRing<F>> = v
+            let v_rings: Vec<ChallengeRing<F>> = self
+                .v
                 .chunks_exact(CHALLENGE_RING_DIM)
                 .map(CyclotomicRing::from_slice)
                 .collect();
-            let t_d = commit(&self.setup.v_level, &self.setup.v_matrix, &v_rings, &[])?;
+            let t_d = commit(self.setup.v_level(), self.setup.v_matrix(), &v_rings, &[])?;
 
             let mut nonce = [0u8; ATTEMPT_NONCE_LEN];
             rng.fill_bytes(&mut nonce);
             let challenge = sample_challenge_ct(&attempt_seed::<H, F>(&self.sigma, &nonce, &t_d))?;
             let c = challenge.to_dense_ct()?;
 
-            // z = y + c·s on every coordinate; the shift on the Gaussian ones.
-            let mut z = y;
-            let mut z_gaussian = Vec::new();
-            let mut v_gaussian = Vec::new();
             let mut offset = 0;
-            for segment in table.segments() {
-                let range = offset..offset + segment.num_coefficients();
-                offset = range.end;
-                let shift = challenge_times_i64(
+            for (range, native_dim, _) in &self.samplers {
+                let (z, v_shift) = (
+                    self.z_gaussian
+                        .get_mut(offset..offset + range.len())
+                        .ok_or(WhiteoutError::InvalidRelation("Gaussian buffer"))?,
+                    self.v_gaussian
+                        .get_mut(offset..offset + range.len())
+                        .ok_or(WhiteoutError::InvalidRelation("Gaussian buffer"))?,
+                );
+                offset += range.len();
+                challenge_times_i64_into(
                     &c,
-                    segment.native_dim,
+                    *native_dim,
                     self.s
                         .get(range.clone())
                         .ok_or(WhiteoutError::InvalidRelation("segment outside s"))?,
+                    v_shift,
                 )?;
-                let target = z
-                    .get_mut(range.clone())
+                let y = self
+                    .y
+                    .get(range.clone())
                     .ok_or(WhiteoutError::InvalidRelation("segment outside s"))?;
-                for (dst, &value) in target.iter_mut().zip(&shift) {
-                    *dst += value;
-                }
-                if self.samplers.iter().any(|(block, _)| *block == range) {
-                    z_gaussian.extend_from_slice(target);
-                    v_gaussian.extend(shift);
+                for ((dst, &y), &shift) in z.iter_mut().zip(y).zip(v_shift.iter()) {
+                    *dst = y + shift;
                 }
             }
-            let accept = match rejection.accept(&z_gaussian, &v_gaussian, rng) {
+            let accept = match rejection.accept(&self.z_gaussian, &self.v_gaussian, rng) {
                 Ok(accept) => accept,
                 Err(SampleError::ShiftOutOfRange) => {
                     return Err(WhiteoutError::InvariantViolation(
@@ -431,15 +662,57 @@ mod prover {
                 Err(error) => return Err(error.into()),
             };
             if !bool::from(accept) {
+                #[cfg(test)]
+                REJECTED.with(|rejected| {
+                    let mut bytes = vec![0u8; F::NUM_BYTES];
+                    let mut flat = Vec::new();
+                    for coefficient in t_d.iter().flat_map(|ring| ring.coefficients()) {
+                        coefficient.to_bytes_le(&mut bytes);
+                        flat.extend_from_slice(&bytes);
+                    }
+                    rejected.borrow_mut().push((flat, nonce));
+                });
                 return Ok(None);
             }
             Ok(Some(Accepted {
                 t_d,
                 nonce,
                 challenge,
-                z,
-                v,
+                v: std::mem::take(&mut self.v),
             }))
+        }
+
+        /// `e` for the accepted attempt: `z = y + c·s` on every coordinate
+        /// (public ones are computed only now), `V`, and `θ`.
+        fn witness(&self, accepted: &Accepted<F>) -> Result<ResponseWitness, WhiteoutError> {
+            let table = self.setup.table();
+            let c = accepted.challenge.to_dense_ct()?;
+            let mut z = self.y.clone();
+            for placed in table.placed() {
+                let range = placed.coefficients();
+                let mut shift = vec![0i64; range.len()];
+                challenge_times_i64_into(
+                    &c,
+                    placed.segment.native_dim,
+                    self.s
+                        .get(range.clone())
+                        .ok_or(WhiteoutError::InvalidRelation("segment outside s"))?,
+                    &mut shift,
+                )?;
+                for (dst, value) in z
+                    .get_mut(range)
+                    .ok_or(WhiteoutError::InvalidRelation("segment outside s"))?
+                    .iter_mut()
+                    .zip(shift)
+                {
+                    *dst += value;
+                }
+            }
+            let c_ring: ChallengeRing<F> = challenge_ring(&c);
+            let parts_z = self.aggregated.linear_parts(&self.tables, &z, false)?;
+            let product = self.aggregated.product_polynomial(&c_ring, &parts_z);
+            let theta = product.get(CHALLENGE_RING_DIM..).unwrap_or_default();
+            ResponseWitness::new(self.setup, &z, &accepted.v, theta)
         }
     }
 }

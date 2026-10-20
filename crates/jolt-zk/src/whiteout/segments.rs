@@ -5,10 +5,29 @@
 //! `m`-tuple over the challenge ring `R = F[X]/(X^64 + 1)` by stride packing
 //! (native coefficient `m·i + k` is coefficient `i` of component `k`).
 
+use std::ops::Range;
+
 use jolt_algebra::{CyclotomicRing, Field};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 
 use super::WhiteoutError;
+
+/// `[min, max]` of `digits` balanced digits in base `2^log_basis`, each in
+/// `[−b/2, b/2 − 1]`: `min = −(b/2)(b^D − 1)/(b − 1)` and
+/// `max = (b/2 − 1)(b^D − 1)/(b − 1)`. The one owner of this range: segment
+/// alphabets, response digit counts, acceptance boxes and response bounds all
+/// use it. `None` if it overflows `i128`.
+pub fn balanced_range(log_basis: u32, digits: usize) -> Option<(i128, i128)> {
+    if !(1..=8).contains(&log_basis) {
+        return None;
+    }
+    let radix = 1i128 << log_basis;
+    let span = radix
+        .checked_pow(u32::try_from(digits).ok()?)?
+        .checked_sub(1)?
+        / (radix - 1);
+    Some((-(radix / 2) * span, (radix / 2 - 1) * span))
+}
 
 /// What a segment of `s` holds (Whiteout Def. `wo:def:residual`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,9 +84,10 @@ impl Segment {
         self.len * CHALLENGE_RING_DIM
     }
 
-    /// `B = 2^{log_basis − 1}`, the largest digit magnitude.
+    /// `B = 2^{log_basis − 1}`, the largest digit magnitude: the alphabet is
+    /// the one-digit balanced range `[−B, B − 1]`.
     pub fn digit_bound(&self) -> u64 {
-        1 << (self.log_basis - 1)
+        balanced_range(self.log_basis, 1).map_or(0, |(min, _)| min.unsigned_abs() as u64)
     }
 
     /// The honest bound on `‖s_b‖₂²`: `64·len·B²` for a dense segment and
@@ -108,111 +128,119 @@ impl Segment {
     }
 }
 
+/// Where one segment sits in `s`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Placed {
+    pub(crate) segment: Segment,
+    /// First native coefficient.
+    pub(crate) coefficient: usize,
+    /// First challenge-ring element.
+    pub(crate) ring: usize,
+}
+
+impl Placed {
+    pub(crate) fn coefficients(&self) -> Range<usize> {
+        self.coefficient..self.coefficient + self.segment.num_coefficients()
+    }
+
+    pub(crate) fn rings(&self) -> Range<usize> {
+        self.ring..self.ring + self.segment.len
+    }
+
+    pub(crate) fn stride(&self) -> usize {
+        self.segment.native_dim / CHALLENGE_RING_DIM
+    }
+}
+
 /// The ordered segments of `s`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SegmentTable {
-    segments: Vec<Segment>,
+    placed: Vec<Placed>,
     num_coefficients: usize,
 }
 
 impl SegmentTable {
     pub fn new(segments: Vec<Segment>) -> Result<Self, WhiteoutError> {
-        for (index, segment) in segments.iter().enumerate() {
+        let mut placed = Vec::with_capacity(segments.len());
+        let mut coefficient = 0usize;
+        for (index, segment) in segments.into_iter().enumerate() {
             segment.validate(index)?;
+            placed.push(Placed {
+                segment,
+                coefficient,
+                ring: coefficient / CHALLENGE_RING_DIM,
+            });
+            coefficient = coefficient.checked_add(segment.num_coefficients()).ok_or(
+                WhiteoutError::Segment {
+                    index,
+                    reason: "total length overflows",
+                },
+            )?;
         }
-        let num_coefficients = segments
-            .iter()
-            .try_fold(0usize, |total, segment| {
-                total.checked_add(segment.num_coefficients())
-            })
-            .ok_or(WhiteoutError::Segment {
-                index: segments.len(),
-                reason: "total length overflows",
-            })?;
         Ok(Self {
-            segments,
-            num_coefficients,
+            placed,
+            num_coefficients: coefficient,
         })
     }
 
-    pub fn segments(&self) -> &[Segment] {
-        &self.segments
+    pub fn segments(&self) -> impl ExactSizeIterator<Item = &Segment> {
+        self.placed.iter().map(|placed| &placed.segment)
+    }
+
+    pub(crate) fn placed(&self) -> &[Placed] {
+        &self.placed
     }
 
     pub fn num_coefficients(&self) -> usize {
         self.num_coefficients
     }
 
-    /// Number of challenge-ring elements of `s`.
-    pub fn num_rings(&self) -> usize {
-        self.num_coefficients / CHALLENGE_RING_DIM
-    }
-
-    /// For each segment, its first coefficient and its first
-    /// challenge-ring element.
-    pub fn starts(&self) -> Vec<(usize, usize)> {
-        let mut coefficient = 0;
-        self.segments
-            .iter()
-            .map(|segment| {
-                let start = (coefficient, coefficient / CHALLENGE_RING_DIM);
-                coefficient += segment.num_coefficients();
-                start
-            })
-            .collect()
-    }
-
-    /// The index of the only segment with `role`, if exactly one has it.
-    pub fn unique(&self, role: SegmentRole) -> Option<usize> {
+    /// The only segment with `role`, if exactly one has it.
+    pub(crate) fn unique(&self, role: SegmentRole) -> Option<&Placed> {
         let mut found = self
-            .segments
+            .placed
             .iter()
-            .enumerate()
-            .filter(|(_, segment)| segment.role == role)
-            .map(|(index, _)| index);
+            .filter(|placed| placed.segment.role == role);
         match (found.next(), found.next()) {
-            (Some(index), None) => Some(index),
+            (Some(placed), None) => Some(placed),
             _ => None,
         }
     }
 
-    /// The challenge-ring view of native coefficients `coefficients`, laid
-    /// out like `s`: native element `e` of a segment with `native_dim = 64m`
-    /// becomes ring elements `m·e .. m·e + m`, component `k` holding native
-    /// coefficients `m·i + k`.
-    ///
-    /// Every coefficient is lifted into `F` from its magnitude and sign by
-    /// arithmetic, so the view of a secret vector is computed in constant
-    /// time.
-    pub fn challenge_view<F: Field>(
+    /// Challenge-ring element `ring` of `coefficients` (laid out like `s`):
+    /// component `k` of native element `e` of its segment, holding native
+    /// coefficients `m·i + k`. Every coefficient is lifted into `F` by
+    /// [`lift_ct`], so a secret vector is read in constant time; the segment
+    /// lookup depends only on the public index.
+    pub(crate) fn ring<F: Field>(
         &self,
         coefficients: &[i64],
-    ) -> Result<Vec<CyclotomicRing<F, CHALLENGE_RING_DIM>>, WhiteoutError> {
-        if coefficients.len() != self.num_coefficients {
-            return Err(WhiteoutError::WitnessLength {
+        ring: usize,
+    ) -> Result<CyclotomicRing<F, CHALLENGE_RING_DIM>, WhiteoutError> {
+        let placed = self
+            .placed
+            .iter()
+            .find(|placed| placed.rings().contains(&ring))
+            .ok_or(WhiteoutError::InvalidRelation("ring outside s"))?;
+        let stride = placed.stride();
+        let local = ring - placed.ring;
+        let start =
+            placed.coefficient + (local / stride) * placed.segment.native_dim + local % stride;
+        let values = coefficients
+            .get(start..start + (CHALLENGE_RING_DIM - 1) * stride + 1)
+            .ok_or(WhiteoutError::WitnessLength {
                 expected: self.num_coefficients,
                 actual: coefficients.len(),
-            });
+            })?;
+        let mut out = CyclotomicRing::zero();
+        for (dst, &value) in out
+            .coefficients_mut()
+            .iter_mut()
+            .zip(values.iter().step_by(stride))
+        {
+            *dst = lift_ct(value);
         }
-        let mut view = Vec::with_capacity(self.num_rings());
-        let mut rest = coefficients;
-        for segment in &self.segments {
-            let (values, tail) = rest.split_at(segment.num_coefficients());
-            rest = tail;
-            let stride = segment.native_dim / CHALLENGE_RING_DIM;
-            for element in values.chunks_exact(segment.native_dim) {
-                for component in 0..stride {
-                    let ring: Vec<F> = element
-                        .iter()
-                        .skip(component)
-                        .step_by(stride)
-                        .map(|&value| lift_ct(value))
-                        .collect();
-                    view.push(CyclotomicRing::from_slice(&ring));
-                }
-            }
-        }
-        Ok(view)
+        Ok(out)
     }
 
     /// Release check that every coefficient of `s` lies in its segment's
@@ -233,20 +261,23 @@ impl SegmentTable {
             });
         }
         let mut outside = 0i64;
-        let mut rest = s;
-        for segment in &self.segments {
-            let (values, tail) = rest.split_at(segment.num_coefficients());
-            rest = tail;
-            let bound = segment.digit_bound() as i64;
+        for placed in &self.placed {
+            let segment = placed.segment;
+            let values = s
+                .get(placed.coefficients())
+                .ok_or(WhiteoutError::InvalidRelation("segment outside s"))?;
+            let (min, max) = balanced_range(segment.log_basis, 1)
+                .ok_or(WhiteoutError::InvalidRelation("segment alphabet"))?;
+            let (min, max) = (min as i64, max as i64);
             let constant_positions = match segment.shape {
                 SegmentShape::Dense => segment.native_dim,
-                SegmentShape::ConstantPoly => segment.native_dim / CHALLENGE_RING_DIM,
+                SegmentShape::ConstantPoly => placed.stride(),
             };
             for element in values.chunks_exact(segment.native_dim) {
                 let (free, fixed) = element.split_at(constant_positions);
-                // Negative exactly when `x` leaves `[−B, B − 1]`.
+                // Negative exactly when `x` leaves `[min, max]`.
                 outside = free.iter().fold(outside, |acc, &x| {
-                    acc | (bound - 1).wrapping_sub(x) | x.wrapping_add(bound)
+                    acc | max.wrapping_sub(x) | x.wrapping_sub(min)
                 });
                 // Negative when a non-constant coefficient is nonzero.
                 outside = fixed

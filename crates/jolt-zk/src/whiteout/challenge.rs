@@ -11,64 +11,78 @@ use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 
 use super::segments::lift_ct;
 use super::WhiteoutError;
+use rayon::prelude::*;
 
 /// The dense 64-coefficient form of a challenge, from
 /// `SparseChallenge::to_dense_ct`.
 pub type DenseChallenge = [i8; CHALLENGE_RING_DIM];
 
-/// `c·a` in `Z[X]/(X^64 + 1)`, exactly, for one challenge-ring element.
+/// `c·a` in `Z[X]/(X^64 + 1)`, exactly, for one challenge-ring element:
+/// `out[j..] += c_j·a[..64−j]` and `out[..j] −= c_j·a[64−j..]`, at public
+/// offsets, in loops the compiler vectorizes.
 fn negacyclic_i64(c: &DenseChallenge, a: &[i64], out: &mut [i64]) {
-    for (t, dst) in out.iter_mut().enumerate() {
-        *dst = c.iter().enumerate().fold(0i64, |acc, (j, &cj)| {
-            // `X^j · X^{t−j}`: a wrap past X^64 negates, at public indices.
-            let (index, sign) = if j <= t {
-                (t - j, 1)
-            } else {
-                (t + CHALLENGE_RING_DIM - j, -1)
-            };
-            acc + sign * i64::from(cj) * a.get(index).copied().unwrap_or_default()
-        });
+    out.fill(0);
+    for (j, &cj) in c.iter().enumerate() {
+        let cj = i64::from(cj);
+        let (high_out, low_out) = out.split_at_mut(j);
+        let (low_in, high_in) = a.split_at(CHALLENGE_RING_DIM - j);
+        for (dst, &value) in low_out.iter_mut().zip(low_in) {
+            *dst += cj * value;
+        }
+        for (dst, &value) in high_out.iter_mut().zip(high_in) {
+            *dst -= cj * value;
+        }
     }
 }
 
 /// `c(Y^m)·x` for native coefficients `x` of elements of dimension
-/// `native_dim = 64m`, exactly over the integers.
+/// `native_dim = 64m`, exactly over the integers, in parallel over elements.
 pub fn challenge_times_i64(
     c: &DenseChallenge,
     native_dim: usize,
     x: &[i64],
 ) -> Result<Vec<i64>, WhiteoutError> {
+    let mut out = vec![0i64; x.len()];
+    challenge_times_i64_into(c, native_dim, x, &mut out)?;
+    Ok(out)
+}
+
+/// [`challenge_times_i64`] into a caller-owned buffer.
+pub(crate) fn challenge_times_i64_into(
+    c: &DenseChallenge,
+    native_dim: usize,
+    x: &[i64],
+    out: &mut [i64],
+) -> Result<(), WhiteoutError> {
     let stride = native_dim / CHALLENGE_RING_DIM;
-    if stride == 0 || !x.len().is_multiple_of(native_dim) {
+    if stride == 0 || !x.len().is_multiple_of(native_dim) || out.len() != x.len() {
         return Err(WhiteoutError::InvalidRelation(
             "challenge product needs whole native elements",
         ));
     }
-    let mut out = vec![0i64; x.len()];
-    let mut component = [0i64; CHALLENGE_RING_DIM];
-    let mut product = [0i64; CHALLENGE_RING_DIM];
-    for (element, target) in x
-        .chunks_exact(native_dim)
-        .zip(out.chunks_exact_mut(native_dim))
-    {
-        for k in 0..stride {
-            for (dst, &value) in component
-                .iter_mut()
-                .zip(element.iter().skip(k).step_by(stride))
-            {
-                *dst = value;
+    x.par_chunks_exact(native_dim)
+        .zip(out.par_chunks_exact_mut(native_dim))
+        .for_each(|(element, target)| {
+            let mut component = [0i64; CHALLENGE_RING_DIM];
+            let mut product = [0i64; CHALLENGE_RING_DIM];
+            for k in 0..stride {
+                for (dst, &value) in component
+                    .iter_mut()
+                    .zip(element.iter().skip(k).step_by(stride))
+                {
+                    *dst = value;
+                }
+                negacyclic_i64(c, &component, &mut product);
+                for (dst, &value) in target.iter_mut().skip(k).step_by(stride).zip(&product) {
+                    *dst = value;
+                }
             }
-            negacyclic_i64(c, &component, &mut product);
-            for (dst, &value) in target.iter_mut().skip(k).step_by(stride).zip(&product) {
-                *dst = value;
-            }
-        }
-    }
-    Ok(out)
+        });
+    Ok(())
 }
 
 /// `c(Y^m)·a` for one native ring element over `F`.
-pub fn challenge_times_ring<F: Field, const D: usize>(
+pub(crate) fn challenge_times_ring<F: Field, const D: usize>(
     c: &DenseChallenge,
     a: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -98,6 +112,8 @@ pub fn challenge_times_ring<F: Field, const D: usize>(
 }
 
 /// `c` as an element of the challenge ring over `F`.
-pub fn challenge_ring<F: Field>(c: &DenseChallenge) -> CyclotomicRing<F, CHALLENGE_RING_DIM> {
+pub(crate) fn challenge_ring<F: Field>(
+    c: &DenseChallenge,
+) -> CyclotomicRing<F, CHALLENGE_RING_DIM> {
     CyclotomicRing::from_coefficients(c.map(|coefficient| lift_ct(i64::from(coefficient))))
 }

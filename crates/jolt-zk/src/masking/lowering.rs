@@ -12,14 +12,12 @@
 //! Auxiliary slots form an acyclic chain: each is defined by exactly one
 //! product row or defining affine row whose inputs are earlier slots.
 
-use std::ops::Range;
-
 use jolt_algebra::Field;
 use jolt_claims::{Expr, FactoredExpr, Source};
 use jolt_sumcheck::{BooleanHypercube, MaskedRound, SumcheckDomain, SumcheckDomainSpec};
 
 use super::residual::{AffineRow, ProductRow, ResidualRelation};
-use super::{PadIndex, ZkError};
+use super::{PadIndex, PadLayout, ZkError};
 
 /// The values a claim formula lowers into.
 pub trait ClaimDomain<F> {
@@ -70,37 +68,65 @@ impl ShapeDomain {
     }
 }
 
-/// The pads of product operands, recorded before the pads are committed:
-/// the lattice back end commits them as constant digit polynomials (Whiteout
-/// §3.2). Openings resolve to their masked slots; auxiliary slots are
-/// numbered from the layout's auxiliary range, as [`RowsDomain`] numbers
-/// them, so `operands` lists every product row's operand pad in the order the
-/// rows are emitted, each once.
+/// The numbering of auxiliary slots: slot `k` of the block is pad
+/// `start + k`. [`RowsDomain`] and [`OperandShapeDomain`] both take slots
+/// through it, so the shape routine names the pads the rows use.
+#[derive(Clone, Copy, Debug)]
+struct AuxiliarySlots {
+    start: usize,
+    next: usize,
+}
+
+impl AuxiliarySlots {
+    fn new(start: usize) -> Self {
+        Self { start, next: 0 }
+    }
+
+    /// The next slot, below `end` if the range is bounded.
+    fn take(&mut self, end: Option<usize>) -> Result<PadIndex, ZkError> {
+        let pad = self
+            .start
+            .checked_add(self.next)
+            .filter(|&pad| end.is_none_or(|end| pad < end))
+            .ok_or(ZkError::PadsExhausted {
+                requested: 1,
+                remaining: 0,
+            })?;
+        self.next += 1;
+        Ok(PadIndex(pad))
+    }
+}
+
+/// The shape routine: counts the auxiliary slots and records the pads of
+/// product operands, before the pads are committed. The lattice back end
+/// commits operand pads as constant digit polynomials (Whiteout §3.2).
+/// Openings resolve to their masked slots and auxiliary slots are numbered
+/// as [`RowsDomain`] numbers them, so the operands are every product row's
+/// operand pad, in the order the rows are emitted, each once.
 #[derive(Debug)]
 pub struct OperandShapeDomain {
-    auxiliary: usize,
-    end: usize,
-    pub operands: Vec<PadIndex>,
+    slots: AuxiliarySlots,
+    operands: Vec<PadIndex>,
 }
 
 impl OperandShapeDomain {
-    pub fn new(auxiliary: Range<usize>) -> Self {
+    /// The shape of a schedule with `base` message slots, whose auxiliary
+    /// block starts right after them.
+    pub fn new(base: usize) -> Self {
         Self {
-            auxiliary: auxiliary.start,
-            end: auxiliary.end,
+            slots: AuxiliarySlots::new(base),
             operands: Vec::new(),
         }
     }
 
-    fn next_slot(&mut self) -> Result<Option<PadIndex>, ZkError> {
-        if self.auxiliary >= self.end {
-            return Err(ZkError::PadsExhausted {
-                requested: 1,
-                remaining: 0,
-            });
-        }
-        self.auxiliary += 1;
-        Ok(Some(PadIndex(self.auxiliary - 1)))
+    /// The pad layout: `base` message slots, the auxiliary slots counted,
+    /// and the operand pads recorded.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::InvalidLayout`] if the total overflows `usize`.
+    pub fn layout(self) -> Result<PadLayout, ZkError> {
+        Ok(PadLayout::new(self.slots.start, self.slots.next)?.with_operand_pads(self.operands))
     }
 }
 
@@ -121,7 +147,7 @@ impl<F> ClaimDomain<F> for OperandShapeDomain {
     }
 
     fn define_auxiliary(&mut self, _value: Option<PadIndex>) -> Result<Option<PadIndex>, ZkError> {
-        self.next_slot()
+        Ok(Some(self.slots.take(None)?))
     }
 
     fn product(
@@ -135,7 +161,7 @@ impl<F> ClaimDomain<F> for OperandShapeDomain {
         if !self.operands.contains(&x) {
             self.operands.push(x);
         }
-        self.next_slot()
+        Ok(Some(self.slots.take(None)?))
     }
 }
 
@@ -178,15 +204,16 @@ impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
 pub struct RowsDomain<'r, F> {
     relation: &'r mut ResidualRelation<F>,
     masked_auxiliary: &'r [F],
-    next: usize,
+    slots: AuxiliarySlots,
 }
 
 impl<'r, F: Field> RowsDomain<'r, F> {
     pub fn new(relation: &'r mut ResidualRelation<F>, masked_auxiliary: &'r [F]) -> Self {
+        let slots = AuxiliarySlots::new(relation.layout.auxiliary.start);
         Self {
             relation,
             masked_auxiliary,
-            next: 0,
+            slots,
         }
     }
 
@@ -200,12 +227,12 @@ impl<'r, F: Field> RowsDomain<'r, F> {
     ///
     /// [`ZkError::PadCountMismatch`] otherwise.
     pub fn finish(&self) -> Result<(), ZkError> {
-        if self.next == self.masked_auxiliary.len() {
+        if self.slots.next == self.masked_auxiliary.len() {
             Ok(())
         } else {
             Err(ZkError::PadCountMismatch {
                 scheduled: self.masked_auxiliary.len(),
-                used: self.next,
+                used: self.slots.next,
             })
         }
     }
@@ -213,24 +240,13 @@ impl<'r, F: Field> RowsDomain<'r, F> {
     fn next_slot(&mut self) -> Result<AffineRow<F>, ZkError> {
         let masked = *self
             .masked_auxiliary
-            .get(self.next)
+            .get(self.slots.next)
             .ok_or(ZkError::PadsExhausted {
                 requested: 1,
                 remaining: 0,
             })?;
-        let pad = self
-            .relation
-            .layout
-            .auxiliary
-            .start
-            .checked_add(self.next)
-            .filter(|pad| self.relation.layout.auxiliary.contains(pad))
-            .ok_or(ZkError::PadsExhausted {
-                requested: 1,
-                remaining: 0,
-            })?;
-        self.next += 1;
-        Ok(AffineRow::masked(masked, PadIndex(pad)))
+        let pad = self.slots.take(Some(self.relation.layout.auxiliary.end))?;
+        Ok(AffineRow::masked(masked, pad))
     }
 }
 

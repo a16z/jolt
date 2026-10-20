@@ -17,10 +17,32 @@ use jolt_crypto::lattice::{PreparedMatrix, CHALLENGE_RING_DIM};
 use super::segments::lift_ct;
 use super::WhiteoutError;
 
+/// One block of the residual commitment's opening rows,
+/// `M·(input segments) − G(gadget segment) = target`, addressed by residual
+/// segment index: `SigmaSetup` turns the indices into positions in `s`, so a
+/// caller never handles raw offsets.
+pub struct ResidualBlock<F: Field, const D: usize> {
+    pub matrix: Arc<PreparedMatrix<F, D>>,
+    /// Consecutive residual segments the matrix reads.
+    pub input: Range<usize>,
+    pub gadget: Option<ResidualGadget>,
+    pub target: Vec<CyclotomicRing<F, D>>,
+}
+
+/// The gadget term of a [`ResidualBlock`]: the residual segment holding the
+/// digits of the matrix's image, `rows × levels` native elements ordered
+/// `[row][digit]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResidualGadget {
+    pub segment: usize,
+    pub log_basis: u32,
+    pub levels: usize,
+}
+
 /// `G(x) = Σ_j b^j · plane_j` per output row, over `rows × levels` native
 /// elements ordered `[row][digit]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GadgetTerm {
+pub(crate) struct GadgetTerm {
     /// Native coefficient range of `s`.
     pub input: Range<usize>,
     pub log_basis: u32,
@@ -28,7 +50,7 @@ pub struct GadgetTerm {
 }
 
 /// One block `M·x[input] − G(x[gadget]) = target`.
-pub struct LinearBlock<F: Field, const D: usize> {
+pub(crate) struct LinearBlock<F: Field, const D: usize> {
     pub matrix: Arc<PreparedMatrix<F, D>>,
     /// Native coefficient range of `s`, `matrix.width · D` long.
     pub input: Range<usize>,
@@ -37,7 +59,7 @@ pub struct LinearBlock<F: Field, const D: usize> {
 }
 
 /// `N` and its targets `t`.
-pub struct RingLinearMap<F: Field, const D: usize> {
+pub(crate) struct RingLinearMap<F: Field, const D: usize> {
     blocks: Vec<LinearBlock<F, D>>,
 }
 
@@ -89,9 +111,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
                 for (row, planes) in rows.iter_mut().zip(digits.chunks_exact(gadget.levels * D)) {
                     let mut power = F::one();
                     for plane in planes.chunks_exact(D) {
-                        let lifted: Vec<F> =
-                            plane.iter().map(|&value| lift_ct::<F>(value)).collect();
-                        *row -= CyclotomicRing::from_slice(&lifted).scale(&power);
+                        for (dst, &value) in row.coefficients_mut().iter_mut().zip(plane) {
+                            *dst -= lift_ct::<F>(value) * power;
+                        }
                         power *= radix;
                     }
                 }
@@ -111,7 +133,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
 /// `L·r := π_0(Σ_j a_j r_j)`, row `rank` of the pad view on its randomness
 /// columns, reduced to stride component 0. It is never part of the
 /// commitment; it hides the cross term `E_1`.
-pub struct LRow<F: Field, const D: usize> {
+pub(crate) struct LRow<F: Field, const D: usize> {
     pub matrix: Arc<PreparedMatrix<F, D>>,
     /// Native coefficient range of `s`: the pad commitment's randomness.
     pub input: Range<usize>,

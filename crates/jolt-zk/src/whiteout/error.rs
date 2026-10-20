@@ -37,6 +37,10 @@ pub enum WhiteoutError {
     /// shapes, breaking the joint rejection theorem's hypothesis.
     #[error("Gaussian widths too narrow for the segments' honest norms")]
     WidthsTooNarrow,
+    /// A response coefficient could exceed `2^31 − 1`, the Ajtai map's
+    /// exact lift: the table is too large for the derived widths.
+    #[error("response coefficients exceed the Ajtai map's i32 lift")]
+    ResponseBoundTooLarge,
     /// The parameters exceed the joint rejection rule's exact arithmetic.
     #[error("parameters exceed the rejection rule's arithmetic bounds")]
     RejectionArithmetic,

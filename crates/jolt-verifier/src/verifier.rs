@@ -193,8 +193,11 @@ impl<F: JoltField, C> MaskedStages<F, C> {
         &mut self,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Vec<F>, VerifierError> {
-        let count = self.residual.auxiliary_count()?;
-        if count != self.pads.layout().auxiliary.len() {
+        let layout = self
+            .residual
+            .pad_layout(self.pads.layout().auxiliary.start)?;
+        let count = layout.auxiliary.len();
+        if layout != *self.pads.layout() {
             return Err(VerifierError::Masking(ZkError::PadCountMismatch {
                 scheduled: self.pads.layout().auxiliary.len(),
                 used: count,
@@ -424,10 +427,9 @@ where
             Some(&mut counter),
         ) {
             Ok(stages) => {
-                let auxiliary = stages
+                return stages
                     .residual(&checked, preprocessing)?
-                    .auxiliary_count()?;
-                return Ok(PadLayout::new(counter.used(), auxiliary)?);
+                    .pad_layout(counter.used());
             }
             Err(VerifierError::Transcript(TranscriptError::Truncated)) if padding < 1 << 24 => {
                 padding <<= 1;

@@ -13,10 +13,11 @@ use std::sync::Arc;
 use jolt_algebra::balanced_decompose_coefficients_pow2_i8_into;
 #[cfg(feature = "whiteout-prover")]
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use jolt_algebra::{CyclotomicRing, JoltField};
+#[cfg(feature = "whiteout-prover")]
+use jolt_algebra::CyclotomicRing;
+use jolt_algebra::JoltField;
 use jolt_crypto::lattice::{MatrixShape, MatrixView, PreparedMatrix, CHALLENGE_RING_DIM};
 
-use super::linear::{LRow, LinearBlock};
 #[cfg(feature = "whiteout-prover")]
 use super::placement::{PadPlace, OPERAND_LEVELS, PAD_LEVELS};
 use super::placement::{PadPlacement, OPERAND_LOG_BASIS, PAD_LOG_BASIS};
@@ -26,14 +27,14 @@ use super::WhiteoutError;
 use crate::masking::PadIndex;
 
 /// Radix of the hiding randomness digits.
-pub const RANDOMNESS_LOG_BASIS: u32 = 4;
+pub(crate) const RANDOMNESS_LOG_BASIS: u32 = 4;
 
-/// The prover's opening of a pad commitment: the mask g and the committed
-/// digits, which are the pad segments of `s` in native order.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LatticePadOpening<F: JoltField> {
-    pub g: CyclotomicRing<F, CHALLENGE_RING_DIM>,
-    pub digits: Vec<i64>,
+#[cfg(feature = "whiteout-prover")]
+/// The prover's opening of a pad commitment: the committed digits, which are
+/// the pad segments of `s` in native order. Opaque and without `Debug`: it
+/// holds the pads, g and the hiding randomness.
+pub struct LatticePadOpening {
+    pub(crate) digits: Vec<i64>,
 }
 
 /// One pad layout's lattice pad commitment over `R_D`.
@@ -109,7 +110,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
 
     /// The pad segments of `s`, in order: pad digits, operand digits (if any
     /// operand pads), randomness. All Gaussian-masked.
-    pub fn segments(&self) -> Vec<Segment> {
+    pub(crate) fn segments(&self) -> Vec<Segment> {
         let segment = |role, len, log_basis, shape| Segment {
             role,
             len,
@@ -141,33 +142,25 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         segments
     }
 
-    /// Native coefficients of the pad segments.
-    pub fn num_coefficients(&self) -> usize {
-        (self.pad_rings + self.operand_rings) * CHALLENGE_RING_DIM + self.randomness_columns * D
+    /// The commitment matrix `A_p` (rows `0..rank`).
+    pub(crate) fn matrix(&self) -> Arc<PreparedMatrix<F, D>> {
+        Arc::clone(&self.matrix)
     }
 
-    /// The opening rows `A_p·(pad segments) = image`, for pad segments
-    /// starting at native coefficient `offset` of `s`.
-    pub fn linear_block(
-        &self,
-        offset: usize,
-        image: Vec<CyclotomicRing<F, D>>,
-    ) -> LinearBlock<F, D> {
-        LinearBlock {
-            matrix: Arc::clone(&self.matrix),
-            input: offset..offset + self.num_coefficients(),
-            gadget: None,
-            target: image,
-        }
+    /// Row `L` on the randomness columns.
+    pub(crate) fn l_matrix(&self) -> Arc<PreparedMatrix<F, D>> {
+        Arc::clone(&self.l_matrix)
     }
 
-    /// Row `L`, for pad segments starting at native coefficient `offset`.
-    pub fn l_row(&self, offset: usize) -> LRow<F, D> {
-        let end = offset + self.num_coefficients();
-        LRow {
-            matrix: Arc::clone(&self.l_matrix),
-            input: end - self.randomness_columns * D..end,
-        }
+    #[cfg(feature = "whiteout-prover")]
+    /// The largest digit magnitude of the pad segments, a hard bound on
+    /// every committed coefficient.
+    fn digit_bound(&self) -> u32 {
+        self.segments()
+            .iter()
+            .map(|segment| segment.digit_bound() as u32)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Commits `pads` (the whole schedule), the mask `g` and the box digits
@@ -180,7 +173,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         pads: &[F],
         g: CyclotomicRing<F, CHALLENGE_RING_DIM>,
         randomness: &[i8],
-    ) -> Result<(Vec<CyclotomicRing<F, D>>, LatticePadOpening<F>), WhiteoutError> {
+    ) -> Result<(Vec<CyclotomicRing<F, D>>, LatticePadOpening), WhiteoutError> {
         if pads.len() != self.placement.num_pads()
             || randomness.len() != self.randomness_columns * D
         {
@@ -189,7 +182,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
             ));
         }
         let mut regular = vec![F::zero(); self.placement.regular_groups() * CHALLENGE_RING_DIM];
-        let mut operands = vec![F::zero(); self.placement.operand_pads().len()];
+        let mut operands = vec![F::zero(); self.placement.num_operands()];
         for (pad, &value) in pads.iter().enumerate() {
             let slot = match self.placement.place(PadIndex(pad))? {
                 PadPlace::Regular { group, position } => {
@@ -201,6 +194,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
                 "pad placed outside its group",
             ))? = value;
         }
+        // g is the group after the regular ones (`PadPlacement::g_ring`).
         regular.extend_from_slice(g.coefficients());
 
         let mut rings = vec![[0i64; CHALLENGE_RING_DIM]; self.pad_rings + self.operand_rings];
@@ -210,7 +204,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
             balanced_decompose_coefficients_pow2_i8_into(values, &mut planes, &pad_params);
             for (level, plane) in planes.chunks_exact(CHALLENGE_RING_DIM).enumerate() {
                 let ring = rings
-                    .get_mut(group * PAD_LEVELS + level)
+                    .get_mut(PadPlacement::regular_ring(group, level))
                     .ok_or(WhiteoutError::InvalidRelation("pad digits overflow"))?;
                 for (dst, &digit) in ring.iter_mut().zip(plane) {
                     *dst = i64::from(digit);
@@ -228,7 +222,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
             );
             for (level, &digit) in digits.iter().enumerate() {
                 let ring = rings
-                    .get_mut(self.pad_rings + operand * OPERAND_LEVELS + level)
+                    .get_mut(self.pad_rings + PadPlacement::operand_ring(operand, level))
                     .ok_or(WhiteoutError::InvalidRelation("operand digits overflow"))?;
                 if let Some(constant) = ring.first_mut() {
                     *constant = i64::from(digit);
@@ -238,8 +232,8 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
 
         let mut native = pack_native::<D>(&rings);
         native.extend(randomness.iter().map(|&digit| i64::from(digit)));
-        let image = self.matrix.apply_centered(&native, 1 << 7)?;
-        Ok((image, LatticePadOpening { g, digits: native }))
+        let image = self.matrix.apply_centered(&native, self.digit_bound())?;
+        Ok((image, LatticePadOpening { digits: native }))
     }
 }
 
