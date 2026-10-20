@@ -63,10 +63,11 @@ tracing, before proving. The reservation counts the trace buffer at its
 reserved capacity and the largest stage-1–5 envelope of the Spartan,
 instruction-input and register (claim reduction, read/write checking and value
 evaluation) tables, with every register read/write entry generation at its
-worst case of three entries per cycle, and the RAM access columns of stages 2
-and 4 that may still be held. It omits most other allocations, so passing it
-does not mean the proof fits. It is not a lower bound on the memory a proof
-needs, and the budget does not cap process memory.
+worst case of three entries per cycle, the RAM access columns of stages 2
+and 4 that may still be held, and the RAM value check's tables through its
+first bind. It omits most other allocations, so passing it does not mean the
+proof fits. It is not a lower bound on the memory a proof needs, and the
+budget does not cap process memory.
 
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =

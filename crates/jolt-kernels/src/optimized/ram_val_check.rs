@@ -17,7 +17,7 @@ use jolt_witness::JoltWitnessPlane;
 use std::sync::Arc;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns, NO_ACCESS};
 use super::support::{
     bind_raw_twice, bound_pair, pin_derived_term, triple_product_round_evals, RoundProgress,
     SplitLt,
@@ -79,6 +79,23 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
             lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
         }))
     }
+}
+
+/// Bytes the value check requests from its preparation through its first
+/// bind over `2^log_t` cycles and `ram_k` addresses: the shared address
+/// column and two generations of value columns
+/// ([`ram_access_columns_bytes`]), stage 2's, which may still await its
+/// background drop, and the one preparation collects; plus the larger of two
+/// windows that never overlap, the collector's chunk views or the address eq
+/// table with the doubled table the first bind builds beside it and the split
+/// LT tables. Later binds, outer `Vec` and placeholder `Arc` headers and
+/// allocator requests are not counted.
+pub fn first_bind_bytes<F: JoltField>(log_t: usize, ram_k: usize) -> usize {
+    // `LazyFoldedRa::bind` doubles the `ram_k`-entry table while it is live.
+    let address_tables = ram_k.saturating_mul(3).saturating_mul(size_of::<F>());
+    let window = RamAccessColumns::chunk_view_bytes(log_t)
+        .max(address_tables.saturating_add(SplitLt::<F>::split_bytes(log_t)));
+    ram_access_columns_bytes(log_t, 2).saturating_add(window)
 }
 
 /// Raw trace values for two rounds; a dense `T/4` table afterward.
