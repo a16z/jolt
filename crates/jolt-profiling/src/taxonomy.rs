@@ -30,7 +30,8 @@
 //!
 //! The `zk` compile-time feature swaps two protocol seams for masked
 //! siblings: `prove_uniskip_clear` → `prove_uniskip_masked` and
-//! `HomomorphicBatch::prove_batch` → `HomomorphicBatch::prove_batch_zk`.
+//! `HomomorphicBatch::prove_batch` → `HomomorphicBatch::prove_batch_zk`, and
+//! adds the pad commitment and BlindFold tail seams of [`ZK_MODE_SPANS`].
 //! Exactly one of each pair fires per prove — [`always_present_spans`] takes
 //! the [`ProverMode`] and returns the matching presence set. The `akita`
 //! feature swaps the commitment seams wholesale: the Akita prover commits
@@ -182,9 +183,19 @@ pub const WITNESS_AND_OPENING_SPANS: [&str; 3] = [
 /// stage-8 joint opening.
 pub const CLEAR_MODE_SPANS: [&str; 2] = ["prove_uniskip_clear", "HomomorphicBatch::prove_batch"];
 
-/// ZK-mode siblings of [`CLEAR_MODE_SPANS`]: the pad-masked uni-skip first
-/// round and the hiding stage-8 joint opening.
-pub const ZK_MODE_SPANS: [&str; 2] = ["prove_uniskip_masked", "HomomorphicBatch::prove_batch_zk"];
+/// ZK-mode siblings of [`CLEAR_MODE_SPANS`] (the pad-masked uni-skip first
+/// round and the hiding stage-8 joint opening), plus the ZK-only seams: the
+/// stage-0 pad commitment with its `pad_layout` replay, and the BlindFold
+/// tail with its `replay_stages` relation replay and `BlindFold::prove`.
+pub const ZK_MODE_SPANS: [&str; 7] = [
+    "prove_uniskip_masked",
+    "HomomorphicBatch::prove_batch_zk",
+    "commit_pads",
+    "pad_layout",
+    "prove_blindfold",
+    "replay_stages",
+    "BlindFold::prove",
+];
 
 /// Akita-mode (`akita` feature) seams: the `OneHotTrace` column assembly
 /// and native group commit at stage 0, plus the native grouped stage-8

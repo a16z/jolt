@@ -18,7 +18,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use jolt_verifier::sites::{BLINDFOLD, PADS};
 use jolt_verifier::{
-    jolt_protocol_id, pad_layout, verify_stages, VerifiedStages, VerifierError, JOLT_SESSION,
+    jolt_protocol_id, pad_layout, replay_stages, VerifiedStages, VerifierError, JOLT_SESSION,
 };
 use jolt_zk::blindfold::{BlindFold, BlindFoldResidualWitness};
 use jolt_zk::masking::ZkBackend;
@@ -37,6 +37,7 @@ pub(crate) struct ZkFinalOpening<F> {
 /// Samples and commits the pads at the end of stage 0, before the first
 /// challenge, on the layout the masked verifier derives from the seeded
 /// prefix.
+#[tracing::instrument(skip_all, name = "commit_pads")]
 pub(crate) fn commit_pads<F, PCS, VC, H>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -50,12 +51,14 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
     H: Sponge,
 {
-    let layout = pad_layout::<F, PCS, VC>(
-        &preprocessing.verifier,
-        public_io,
-        trusted_advice_commitment,
-        transcript.narg(),
-    )?;
+    let layout = tracing::info_span!("pad_layout").in_scope(|| {
+        pad_layout::<F, PCS, VC>(
+            &preprocessing.verifier,
+            public_io,
+            trusted_advice_commitment,
+            transcript.narg(),
+        )
+    })?;
     let vc_setup = preprocessing
         .verifier
         .vc_setup
@@ -73,6 +76,7 @@ where
 /// residual relation. The verifier's stage spine is replayed over that prefix
 /// to obtain the relation, and the replay must land on the forward
 /// transcript's exact state.
+#[tracing::instrument(skip_all, name = "prove_blindfold")]
 pub(crate) fn prove_blindfold<F, PCS, VC, H>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -93,12 +97,15 @@ where
 {
     let mut replay =
         VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, transcript.narg());
-    let VerifiedStages::Zk(masked) = verify_stages::<F, PCS, VC, H>(
-        &preprocessing.verifier,
-        public_io,
-        trusted_advice_commitment,
-        &mut replay,
-    )?
+    let VerifiedStages::Zk(masked) = tracing::info_span!("replay_stages").in_scope(|| {
+        replay_stages::<F, PCS, VC, H>(
+            &preprocessing.verifier,
+            public_io,
+            trusted_advice_commitment,
+            &mut replay,
+            pads.layout(),
+        )
+    })?
     else {
         return Err(ProverError::InvariantViolation {
             reason: "the verifier replay of a ZK proof produced no residual relation",
@@ -128,17 +135,20 @@ where
         .ok_or(ProverError::Verifier(
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
-    BlindFold::<VC>::prove(
-        vc_setup,
-        &relation,
-        pads,
-        &masked.residual_commitment,
-        &BlindFoldResidualWitness {
-            evaluation: final_opening.joint_evaluation,
-            blind: final_opening.evaluation_blind,
-        },
-        transcript,
-        &mut OsRng,
-    )
-    .map_err(ProverError::from)
+    tracing::info_span!("BlindFold::prove")
+        .in_scope(|| {
+            BlindFold::<VC>::prove(
+                vc_setup,
+                &relation,
+                pads,
+                &masked.residual_commitment,
+                &BlindFoldResidualWitness {
+                    evaluation: final_opening.joint_evaluation,
+                    blind: final_opening.evaluation_blind,
+                },
+                transcript,
+                &mut OsRng,
+            )
+        })
+        .map_err(ProverError::from)
 }

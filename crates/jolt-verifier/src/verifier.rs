@@ -390,8 +390,11 @@ where
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
 {
-    // The masked messages of stages 1-7 grow with log T; the replay retries
-    // with more zero bytes when they outgrow the buffer.
+    // The stage 1-7 messages are polylogarithmic in T: muldiv's 2,073 masked
+    // values take 66 KB, so the first 1 MiB buffer covers every realistic
+    // trace. The
+    // doubling retry is a fallback, capped at 16 MiB so a malformed
+    // preprocessing cannot grow the buffer without bound.
     let mut padding = 1usize << 20;
     loop {
         let mut bytes = Vec::with_capacity(seeded_prefix.len().saturating_add(padding));
@@ -426,7 +429,7 @@ where
                     .auxiliary_count()?;
                 return Ok(PadLayout::new(counter.used(), auxiliary)?);
             }
-            Err(VerifierError::Transcript(TranscriptError::Truncated)) if padding < 1 << 28 => {
+            Err(VerifierError::Transcript(TranscriptError::Truncated)) if padding < 1 << 24 => {
                 padding <<= 1;
             }
             Err(error) => return Err(error),
@@ -435,15 +438,85 @@ where
 }
 
 /// Runs the stage spine on `transcript`: the seeding messages, (for a ZK
-/// proof) the pad commitment, stages 1–8, and, for a ZK proof, the residual
-/// structure of the masked stage outputs. The ZK prover replays its own
-/// argument string through this function to obtain the relation it proves.
+/// proof) the pad commitment on the layout [`pad_layout`] derives, stages
+/// 1–8, and, for a ZK proof, the residual structure of the masked stage
+/// outputs.
+///
+/// # Errors
+///
+/// [`VerifierError`] if any stage rejects.
 #[cfg(not(feature = "akita"))]
 pub fn verify_stages<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<VerifiedStages<F, VC::Output>, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>
+        + AdditivelyHomomorphic
+        + ZkOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
+    H: Sponge,
+{
+    verify_stages_on(
+        preprocessing,
+        public_io,
+        trusted_advice_commitment,
+        transcript,
+        None,
+    )
+}
+
+/// [`verify_stages`] on a pad layout the caller already derived with
+/// [`pad_layout`] over this transcript's seeded prefix. The ZK prover
+/// replays its own argument string through this function to obtain the
+/// relation it proves, reusing the layout it committed the pads on rather
+/// than replaying stages 1–7 a second time to re-derive it. A clear proof
+/// ignores `layout`.
+///
+/// # Errors
+///
+/// As [`verify_stages`].
+#[cfg(not(feature = "akita"))]
+pub fn replay_stages<F, PCS, VC, H>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut VerifierTranscript<'_, H>,
+    layout: &PadLayout,
+) -> Result<VerifiedStages<F, VC::Output>, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>
+        + AdditivelyHomomorphic
+        + ZkOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
+    H: Sponge,
+{
+    verify_stages_on(
+        preprocessing,
+        public_io,
+        trusted_advice_commitment,
+        transcript,
+        Some(layout),
+    )
+}
+
+/// `layout` is the derived pad layout when the caller has it; `None` derives
+/// it here.
+#[cfg(not(feature = "akita"))]
+fn verify_stages_on<F, PCS, VC, H>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut VerifierTranscript<'_, H>,
+    layout: Option<&PadLayout>,
 ) -> Result<VerifiedStages<F, VC::Output>, VerifierError>
 where
     F: JoltField,
@@ -467,20 +540,25 @@ where
     )?;
 
     let mut pads = if checked.zk {
-        let seeded_prefix = transcript.consumed();
-        let layout = pad_layout::<F, PCS, VC>(
-            preprocessing,
-            public_io,
-            trusted_advice_commitment,
-            seeded_prefix,
-        )?;
+        let derived;
+        let layout = if let Some(layout) = layout {
+            layout
+        } else {
+            derived = pad_layout::<F, PCS, VC>(
+                preprocessing,
+                public_io,
+                trusted_advice_commitment,
+                transcript.consumed(),
+            )?;
+            &derived
+        };
         let vc_setup = preprocessing
             .vc_setup
             .as_ref()
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
         transcript.site(PADS);
         Some(BlindFold::<VC>::receive_pad_commitment(
-            vc_setup, &layout, transcript,
+            vc_setup, layout, transcript,
         )?)
     } else {
         None
