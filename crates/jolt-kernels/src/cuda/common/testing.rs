@@ -13,7 +13,10 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::{Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::instructions::VirtualAdvice;
+use jolt_riscv::{
+    JoltInstruction, JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
+};
 use jolt_riscv::{RamRead, RamWrite};
 use jolt_sumcheck::ProveRounds;
 use jolt_witness::{
@@ -276,4 +279,100 @@ pub fn precommitted_cycle_variables(reduction: &PrecommittedClaimReduction, seed
     reduction
         .cycle_phase_variable_challenges(&challenges)
         .expect("cycle-phase variable challenges")
+}
+
+fn r1cs_fixture_operands(kind: JoltInstructionKind, slot: usize) -> NormalizedOperands {
+    let magnitude = 13 + 5 * slot as i128;
+    let imm = if slot.is_multiple_of(2) {
+        -magnitude
+    } else {
+        magnitude
+    };
+    let (rd, rs1, rs2) = match kind {
+        JoltInstructionKind::SD => (None, Some(2), Some(3)),
+        JoltInstructionKind::BEQ => (None, Some(2), Some(3)),
+        JoltInstructionKind::VirtualAssertEQ => (None, Some(2), Some(3)),
+        JoltInstructionKind::LD => (Some(1), Some(2), None),
+        JoltInstructionKind::ADDI
+        | JoltInstructionKind::VirtualMULI
+        | JoltInstructionKind::VirtualMovsign => (Some(1), Some(2), None),
+        JoltInstructionKind::LUI | JoltInstructionKind::JAL => (Some(1), None, None),
+        _ if kind == JoltInstruction::VirtualAdvice(VirtualAdvice(())) => (Some(1), None, None),
+        _ => (Some(1), Some(2), Some(3)),
+    };
+    NormalizedOperands { rd, rs1, rs2, imm }
+}
+
+fn committed_bytecode(rows: usize) -> Vec<JoltInstructionRow> {
+    let kinds = [
+        JoltInstructionKind::XOR,
+        JoltInstructionKind::ADD,
+        JoltInstructionKind::SUB,
+        JoltInstructionKind::MUL,
+        JoltInstructionKind::LD,
+        JoltInstructionKind::SD,
+        JoltInstructionKind::JAL,
+        JoltInstructionKind::BEQ,
+        JoltInstructionKind::ADDI,
+        JoltInstructionKind::LUI,
+    ];
+    (0..rows)
+        .map(|slot| {
+            let instruction_kind = kinds[slot % kinds.len()];
+            JoltInstructionRow {
+                instruction_kind,
+                address: 0x8000_0000 + 4 * slot,
+                operands: r1cs_fixture_operands(instruction_kind, slot),
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            }
+        })
+        .collect()
+}
+
+pub struct CommittedProgramFixture {
+    pub plane: FixedPlane,
+    pub bytecode_len: usize,
+}
+
+pub fn committed_program_plane(
+    bytecode_rows: usize,
+    image_words: usize,
+    min_bytecode_address: u64,
+    seed: u64,
+) -> CommittedProgramFixture {
+    let bytecode = BytecodePreprocessing::preprocess(
+        committed_bytecode(bytecode_rows),
+        0x8000_0000,
+        RV64IMAC_JOLT,
+    )
+    .expect("committed bytecode fixture");
+    let bytecode_len = bytecode.bytecode.len();
+    let words: Vec<u64> = (0..image_words)
+        .map(|index| {
+            seed.wrapping_mul(0x2545_F491_4F6C_DD1D)
+                ^ (index as u64)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .wrapping_add(index as u64 + 1)
+        })
+        .collect();
+    let program = JoltProgramPreprocessing {
+        bytecode,
+        ram: RAMPreprocessing {
+            min_bytecode_address,
+            bytecode_words: words,
+        },
+        memory_layout: MemoryLayout::default(),
+        max_padded_trace_length: 1,
+    };
+    CommittedProgramFixture {
+        plane: FixedPlane::with_program(
+            FixedBackend::new(),
+            "cuda committed-program claim-reduction fixture",
+            None,
+            program,
+        ),
+        bytecode_len,
+    }
 }

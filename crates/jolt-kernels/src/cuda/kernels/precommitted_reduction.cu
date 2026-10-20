@@ -22,6 +22,29 @@ extern "C" __global__ void pcr_round_kernel(const u64 *__restrict__ packed, unsi
     lane_block_reduce(scratch, 2, acc, partials);
 }
 
+extern "C" __global__ void pcr_lane_eq_kernel(const u64 *__restrict__ lane_weights,
+                                              const u64 *__restrict__ eq_cycle,
+                                              unsigned int chunk_cycle_len,
+                                              unsigned int lane_capacity, unsigned int lane_outer,
+                                              unsigned int table_len, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= table_len) return;
+    unsigned int lane;
+    unsigned int cycle;
+    if (lane_outer) {
+        lane = i / chunk_cycle_len;
+        cycle = i % chunk_cycle_len;
+    } else {
+        cycle = i / lane_capacity;
+        lane = i % lane_capacity;
+    }
+    u64 weight[LIMBS], cycle_eval[LIMBS], product[LIMBS];
+    load4(lane_weights + (unsigned long long)lane * LIMBS, weight);
+    load4(eq_cycle + (unsigned long long)cycle * LIMBS, cycle_eval);
+    fr_mul(weight, cycle_eval, product);
+    store4(out + (unsigned long long)i * LIMBS, product);
+}
+
 extern "C" __global__ void pcr_place_row_kernel(const u64 *__restrict__ src,
                                                 const unsigned int *__restrict__ new_lsb_to_old_lsb,
                                                 unsigned int num_vars, unsigned int permute,

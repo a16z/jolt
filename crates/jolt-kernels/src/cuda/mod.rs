@@ -1,6 +1,6 @@
-//! CUDA advice reduction alongside optimized kernels and the host witness plane.
+//! CUDA advice and bytecode reduction alongside optimized kernels and host witnesses.
 //!
-//! [`JoltBackend::cuda`] replaces the trusted and untrusted advice cycle/address
+//! [`JoltBackend::cuda`] replaces the advice and committed-bytecode cycle/address
 //! slots in the optimized registry. [`CudaDoryScheme`] selects the PCS separately
 //! and currently forwards to CPU Dory with shared proof and setup types.
 //!
@@ -122,6 +122,9 @@
 //! rounds reduce the product at 0 and 2 and interpolate with the incoming claim.
 //! The cycle phase parks its device rows for the address phase; optimized parks
 //! host polynomial tables across that same boundary.
+//! Committed bytecode uses the canonical host coefficient builder. CUDA forms
+//! the lane-weighted equality grid on device in the requested polynomial order,
+//! then permutes both rows for the shared cycle/address reduction engine.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -129,6 +132,7 @@ use jolt_openings::CommitmentScheme;
 use crate::{JoltBackend, KernelError, ModeStreamingCommitment};
 
 mod advice_claim_reduction;
+mod bytecode_claim_reduction;
 mod common;
 mod dory;
 #[cfg(test)]
@@ -168,7 +172,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Replace the trusted and untrusted advice slots with CUDA implementations.
+    /// Replace advice and committed-bytecode slots with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -178,8 +182,10 @@ where
         let mut backend = Self::optimized();
         backend.trusted_advice_cycle = Box::new(CudaBackend);
         backend.untrusted_advice_cycle = Box::new(CudaBackend);
+        backend.bytecode_reduction_cycle = Box::new(CudaBackend);
         backend.trusted_advice_address = Box::new(CudaBackend);
         backend.untrusted_advice_address = Box::new(CudaBackend);
+        backend.bytecode_reduction_address = Box::new(CudaBackend);
         backend
     }
 }

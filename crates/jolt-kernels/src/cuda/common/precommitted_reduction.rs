@@ -332,6 +332,10 @@ impl<F: JoltField, R> DeviceCycleReductionKernel<F, R> {
         }
     }
 
+    pub fn tables(&self) -> &DevicePrecommittedTables<F> {
+        &self.tables
+    }
+
     pub fn park_carry<RA: 'static>(self, session: &mut ProofSession)
     where
         F: 'static,
@@ -451,6 +455,38 @@ pub fn permuted_eq_point<F: JoltField>(
         None => point.to_vec(),
     };
     Ok(require_fr_slice(&permuted)?.to_vec())
+}
+
+pub fn lane_cycle_eq(
+    context: &'static CudaKernelContext,
+    lane_weights: &DeviceFrVec,
+    eq_cycle: &DeviceFrVec,
+    chunk_cycle_len: usize,
+    lane_capacity: usize,
+    lane_outer: bool,
+    table_len: usize,
+) -> Result<DeviceFrVec, CudaError> {
+    let mut out = context.alloc(table_len)?;
+    let count = CudaKernelContext::count_of(table_len)?;
+    let cycles = CudaKernelContext::count_of(chunk_cycle_len)?;
+    let lanes = CudaKernelContext::count_of(lane_capacity)?;
+    let outer = u32::from(lane_outer);
+    let mut builder = context.stream().launch_builder(context.pcr_lane_eq());
+    let _ = builder.arg(lane_weights.limbs());
+    let _ = builder.arg(eq_cycle.limbs());
+    let _ = builder.arg(&cycles);
+    let _ = builder.arg(&lanes);
+    let _ = builder.arg(&outer);
+    let _ = builder.arg(&count);
+    let _ = builder.arg(out.limbs_mut());
+    // SAFETY: thread `i < table_len` derives `lane < lane_capacity` and
+    // `cycle < chunk_cycle_len` from `i` by division and remainder against the
+    // interleave the caller declared, and `table_len = lane_capacity *
+    // chunk_cycle_len`, so `lane_weights[lane]` and `eq_cycle[cycle]` are inside
+    // their `lane_capacity` and `chunk_cycle_len` elements. It writes only
+    // `out[i]`.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+    Ok(out)
 }
 
 pub fn reclaim_carry<F: JoltField, R: 'static>(
