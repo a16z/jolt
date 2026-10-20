@@ -1122,3 +1122,105 @@ extern "C" __global__ void msm_point_rows_sum_kernel(const u64 *__restrict__ par
         }
     }
 }
+
+// All rows share this signed bucket schedule. Adjacent threads process
+// adjacent rows, giving coalesced reads for each scheduled term.
+extern "C" __global__ void msm_shared_scalar_windows_kernel(
+    const u64 *__restrict__ bases, const unsigned int *__restrict__ indices,
+    const unsigned int *__restrict__ offsets, unsigned int rows, unsigned int buckets,
+    u64 *__restrict__ out) {
+    unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= rows) return;
+    unsigned int window = blockIdx.y;
+    u64 running[3 * LIMBS], result[3 * LIMBS];
+    u64 base[3 * LIMBS], tmp[3 * LIMBS], negated[LIMBS];
+    jac_set_zero(running);
+    jac_set_zero(result);
+    for (int digit = (int)buckets - 1; digit > 0; digit--) {
+        unsigned int segment = window * buckets + (unsigned int)digit;
+        for (unsigned int pos = offsets[segment]; pos < offsets[segment + 1]; pos++) {
+            unsigned int index = indices[pos];
+            jac_copy(bases + ((unsigned long long)(index & 0x7fffffffu) * rows + row) * 3 * LIMBS,
+                     base);
+            if (index >> 31) {
+                fq_neg(base + LIMBS, negated);
+                fq_copy(negated, base + LIMBS);
+            }
+            jac_add(running, base, tmp);
+            jac_copy(tmp, running);
+        }
+        jac_add(result, running, tmp);
+        jac_copy(tmp, result);
+    }
+    jac_copy(result, out + ((unsigned long long)window * rows + row) * 3 * LIMBS);
+}
+
+extern "C" __global__ void msm_shared_scalar_rows_glv_kernel(
+    const u64 *__restrict__ bases, const u64 *__restrict__ coeffs,
+    const unsigned char *__restrict__ signs, const u64 *__restrict__ beta, unsigned int rows,
+    unsigned int terms, unsigned int max_bits, u64 *__restrict__ out) {
+    extern __shared__ u64 scratch[];
+    unsigned int row = blockIdx.x;
+    if (row >= rows) return;
+
+    u64 acc[3 * LIMBS], tmp[3 * LIMBS], product[3 * LIMBS];
+    u64 low[3 * LIMBS], high[3 * LIMBS], factor[LIMBS], scaled[LIMBS];
+    u64 both[3 * LIMBS];
+    load4(beta, factor);
+    jac_set_zero(acc);
+    for (unsigned int term = threadIdx.x; term < terms; term += blockDim.x) {
+        const u64 *source = bases + ((unsigned long long)term * rows + row) * 3 * LIMBS;
+        for (int limb = 0; limb < 3; limb++) {
+            load4(source + limb * LIMBS, low + limb * LIMBS);
+        }
+        if (jac_is_zero(low)) continue;
+
+        jac_copy(low, high);
+        fq_mul(low, factor, scaled);
+        fq_copy(scaled, high);
+        if (signs[term] != 0u) {
+            fq_neg(low + LIMBS, scaled);
+            fq_copy(scaled, low + LIMBS);
+        }
+        if (signs[(unsigned long long)terms + term] != 0u) {
+            fq_neg(high + LIMBS, scaled);
+            fq_copy(scaled, high + LIMBS);
+        }
+
+        const u64 *first = coeffs + (unsigned long long)term * LIMBS;
+        const u64 *second = coeffs + ((unsigned long long)terms + term) * LIMBS;
+        // Reuse low + high when both GLV components have this bit set.
+        jac_add(low, high, both);
+        jac_set_zero(product);
+        for (int bit = (int)max_bits - 1; bit >= 0; bit--) {
+            jac_double(product, tmp);
+            jac_copy(tmp, product);
+            const unsigned int pair =
+                (unsigned int)((first[bit >> 6] >> (bit & 63)) & 1ULL) |
+                ((unsigned int)((second[bit >> 6] >> (bit & 63)) & 1ULL) << 1);
+            if (pair != 0u) {
+                const u64 *addend = pair == 1u ? low : (pair == 2u ? high : both);
+                jac_add(product, addend, tmp);
+                jac_copy(tmp, product);
+            }
+        }
+        jac_add(acc, product, tmp);
+        jac_copy(tmp, acc);
+    }
+
+    u64 *slot = scratch + (unsigned long long)threadIdx.x * 3 * LIMBS;
+    jac_copy(acc, slot);
+    __syncthreads();
+    for (unsigned int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            jac_add(slot, scratch + (unsigned long long)(threadIdx.x + stride) * 3 * LIMBS, tmp);
+            jac_copy(tmp, slot);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        for (int limb = 0; limb < 3; limb++) {
+            store4(out + ((unsigned long long)row * 3 + limb) * LIMBS, scratch + limb * LIMBS);
+        }
+    }
+}

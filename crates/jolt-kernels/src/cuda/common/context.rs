@@ -115,6 +115,10 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_g1_endomorphism: CudaFunction,
     #[cfg(test)]
+    msm_shared_scalar_rows_glv: CudaFunction,
+    #[cfg(test)]
+    msm_shared_scalar_windows: CudaFunction,
+    #[cfg(test)]
     msm_segment_sum: CudaFunction,
     #[cfg(test)]
     msm_segment_sum_warp: CudaFunction,
@@ -231,6 +235,11 @@ impl CudaKernelContext {
             msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
             #[cfg(test)]
             msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
+            #[cfg(test)]
+            msm_shared_scalar_rows_glv: module
+                .load_function("msm_shared_scalar_rows_glv_kernel")?,
+            #[cfg(test)]
+            msm_shared_scalar_windows: module.load_function("msm_shared_scalar_windows_kernel")?,
             #[cfg(test)]
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             #[cfg(test)]
@@ -599,6 +608,16 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_g1_endomorphism(&self) -> &CudaFunction {
         &self.msm_g1_endomorphism
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_shared_scalar_rows_glv(&self) -> &CudaFunction {
+        &self.msm_shared_scalar_rows_glv
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_shared_scalar_windows(&self) -> &CudaFunction {
+        &self.msm_shared_scalar_windows
     }
 
     #[cfg(test)]

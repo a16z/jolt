@@ -59,6 +59,9 @@
 //! G1 GLV kernels split scalars into two signed components and emit matching
 //! original/endomorphism point spans. Magnitudes stay on device; signs return
 //! to the host for scheduling.
+//! Shared-scalar row MSMs reuse one coefficient vector across a matrix of points.
+//! Larger batches share a window schedule when the device memory budget permits;
+//! other batches use a GLV block reduction per row.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
