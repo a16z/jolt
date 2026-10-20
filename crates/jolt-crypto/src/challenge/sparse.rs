@@ -10,8 +10,8 @@
 //! type check cheap shape/range errors needed for memory safety, but they do
 //! not re-validate every sampler invariant on the hot path.
 //!
-//! This module deliberately depends only on `jolt-algebra`; it does not pull in
-//! the transcript layer or the sampler.
+//! This module depends on `jolt-algebra` and on the lattice module's ring
+//! dimension; it does not pull in the transcript layer or the sampler.
 
 use crate::lattice::CHALLENGE_RING_DIM;
 use crate::CryptoError;

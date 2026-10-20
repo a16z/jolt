@@ -383,4 +383,22 @@ mod tests {
             );
         }
     }
+
+    /// Every sample lies within the hard tail cut, which the samples come
+    /// close to at small widths.
+    #[test]
+    fn samples_stay_within_the_tail_bound() {
+        let mut rng = ChaCha20Rng::seed_from_u64(77);
+        for k in [1u64, 2, 3, 1000] {
+            let width = GaussianWidth::from_multiplier(k).unwrap();
+            let sampler = GaussianSampler::new(width);
+            let bound = width.tail_bound();
+            let largest = (0..200_000)
+                .map(|_| sampler.sample(&mut rng).unsigned_abs())
+                .max()
+                .unwrap();
+            assert!(largest <= bound, "k = {k}: |z| = {largest} > {bound}");
+        }
+        assert_eq!(GaussianWidth::from_multiplier(1).unwrap().tail_bound(), 13);
+    }
 }
