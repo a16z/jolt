@@ -32,7 +32,7 @@ use rand_core::RngCore;
 #[cfg(feature = "committed")]
 use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
 use crate::error::SumcheckError;
-use crate::round_proof::send_compressed_round;
+use crate::round_proof::{send_compressed_round, send_full_round};
 
 /// Records one sumcheck's proof material into the prover transcript,
 /// abstracting over clear vs. committed (ZK) recording: `absorb_input_claims`
@@ -66,6 +66,16 @@ pub trait SumcheckRecorder<F: Field> {
     /// Record one round polynomial of degree bound `degree` and draw the round
     /// challenge. Clear: sent compressed. Committed: its commitment is sent.
     fn absorb_round<H: Sponge>(
+        &mut self,
+        round_poly: &UnivariatePoly<F>,
+        degree: usize,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<F, Self::Error>;
+
+    /// Record one full-width round polynomial (every coefficient, as a
+    /// uni-skip round sends) of degree bound `degree` and draw the round
+    /// challenge.
+    fn absorb_full_round<H: Sponge>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
         degree: usize,
@@ -131,6 +141,16 @@ impl<F: Field + CanonicalEncoding> SumcheckRecorder<F> for ClearSumcheckRecorder
         Ok(transcript.challenge_small())
     }
 
+    fn absorb_full_round<H: Sponge>(
+        &mut self,
+        round_poly: &UnivariatePoly<F>,
+        degree: usize,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<F, SumcheckError<F>> {
+        send_full_round(round_poly, degree, transcript)?;
+        Ok(transcript.challenge_small())
+    }
+
     fn finish<H: Sponge>(
         self,
         output_claim_values: &[F],
@@ -193,6 +213,15 @@ where
     }
 
     fn absorb_round<H: Sponge>(
+        &mut self,
+        round_poly: &UnivariatePoly<F>,
+        degree: usize,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<F, SumcheckError<F>> {
+        self.builder.commit_round(round_poly, degree, transcript)
+    }
+
+    fn absorb_full_round<H: Sponge>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
         degree: usize,

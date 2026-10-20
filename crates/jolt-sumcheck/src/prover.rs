@@ -397,6 +397,40 @@ fn check_uniskip_round<F: Field>(
     CenteredIntegerDomain::new(domain_size).check_round_sum(0, input_claim, &padded)
 }
 
+/// Prove a uni-skip first round through `recorder`, mirroring the verifier's
+/// uni-skip step: self-check the round, record it at full width, draw the
+/// reduction challenge, evaluate the output claim and record it — before any
+/// post-uni-skip draw (the remainder batch's coefficient draw in particular),
+/// which is why the claim is recorded here and not in the stage.
+#[tracing::instrument(skip_all, name = "prove_uniskip")]
+pub fn prove_uniskip<F, R, H>(
+    round_poly: UnivariatePoly<F>,
+    input_claim: F,
+    degree: usize,
+    domain_size: usize,
+    mut recorder: R,
+    transcript: &mut ProverTranscript<H>,
+) -> Result<(ProvedUniskip<F>, R::Witness), SumcheckError<F>>
+where
+    F: Field,
+    R: SumcheckRecorder<F, Error = SumcheckError<F>>,
+    H: Sponge,
+{
+    check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
+
+    let challenge = recorder.absorb_full_round(&round_poly, degree, transcript)?;
+    let output_claim = round_poly.evaluate(challenge);
+    let witness = recorder.finish(&[output_claim], transcript)?;
+
+    Ok((
+        ProvedUniskip {
+            challenge,
+            output_claim,
+        },
+        witness,
+    ))
+}
+
 /// Prove a clear uni-skip first round, mirroring the verifier's
 /// `uniskip::verify_clear`: send the full round polynomial, draw the reduction
 /// challenge, evaluate the output claim, and send it — before any post-uni-skip

@@ -19,6 +19,7 @@
 mod assignment;
 mod builder;
 mod error;
+pub mod masking;
 pub mod protocol;
 mod prove;
 pub mod r1cs;

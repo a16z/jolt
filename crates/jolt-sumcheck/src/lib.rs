@@ -100,6 +100,7 @@ pub mod claim;
 pub mod committed;
 pub mod domain;
 pub mod error;
+pub mod masked;
 pub mod prover;
 #[cfg(feature = "r1cs")]
 pub mod r1cs;
@@ -125,8 +126,9 @@ pub use domain::{
     BooleanHypercube, CenteredIntegerDomain, EqFactoredRound, SumcheckDomain, SumcheckDomainSpec,
 };
 pub use error::SumcheckError;
+pub use masked::{receive_masked_rounds, BatchedMaskedRounds, MaskedRound, RoundWire};
 pub use prover::{
-    prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
+    prove_batch, prove_uniskip, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
     ProvedUniskip, RoundScheduler, SequentialRounds,
 };
 #[cfg(feature = "committed")]
@@ -141,7 +143,7 @@ pub use r1cs::{
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, SumcheckRecorder};
 pub use round_proof::{
-    padded_coefficients, receive_compressed_round, receive_full_round, receive_private_value,
+    compressed_wire, padded_coefficients, receive_compressed_round, receive_full_round, receive_private_value,
     send_compressed_round, send_full_round, send_private_value,
 };
 pub use single::{
