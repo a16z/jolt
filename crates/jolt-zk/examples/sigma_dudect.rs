@@ -117,7 +117,14 @@ fn fixed_vs_random<T: Clone>(
         let inputs: Vec<(usize, T)> = (0..CHUNK)
             .map(|_| {
                 let class = (rng.next_u32() & 1) as usize;
-                (class, if class == 0 { fixed.clone() } else { fresh(rng) })
+                (
+                    class,
+                    if class == 0 {
+                        fixed.clone()
+                    } else {
+                        fresh(rng)
+                    },
+                )
             })
             .collect();
         for (class, input) in &inputs {
@@ -183,7 +190,11 @@ fn run(seed: u64, measurements: usize, failures: &mut usize) {
             let _ = black_box(commit(&level, &v_matrix, v, &[]));
         },
     );
-    report("commitment t_D = A_D G⁻¹(V), fixed vs random V", &test, failures);
+    report(
+        "commitment t_D = A_D G⁻¹(V), fixed vs random V",
+        &test,
+        failures,
+    );
 
     let table = SegmentTable::new(vec![Segment {
         role: SegmentRole::Witness,
