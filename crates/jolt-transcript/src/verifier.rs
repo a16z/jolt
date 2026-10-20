@@ -1,12 +1,16 @@
 //! Spongefish-native [`VerifierTranscript`] surface.
 
+#[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
+use crate::Blake2b512;
 #[cfg(all(
     feature = "bn254",
     any(feature = "transcript-blake2b", feature = "transcript-keccak")
 ))]
 use jolt_field::Fr;
+#[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
+use spongefish::instantiations::Keccak;
 use spongefish::{
-    Decoding, DuplexSpongeInterface, Encoding, NargDeserialize, VerificationResult, VerifierState,
+    DuplexSpongeInterface, Encoding, FromNarg, FromUniform, VerificationError, VerifierState,
 };
 
 #[cfg(all(
@@ -18,13 +22,13 @@ use crate::prover::OptimizedChallenge;
 /// Verifier-side spongefish transcript.
 pub trait VerifierTranscript<H: DuplexSpongeInterface> {
     /// Absorbs `msg` symmetrically with the prover.
-    fn public_message<T: Encoding<[H::U]> + ?Sized>(&mut self, msg: &T);
+    fn public_message<T: Encoding<H::U> + ?Sized>(&mut self, msg: &T);
 
     /// Reads a prover message from the NARG, absorbing it into the sponge.
-    fn prover_message<T: Encoding<[H::U]> + NargDeserialize>(&mut self) -> VerificationResult<T>;
+    fn prover_message<T: Encoding<H::U> + FromNarg>(&mut self) -> Result<T, VerificationError>;
 
     /// Squeezes a verifier challenge.
-    fn verifier_message<T: Decoding<[H::U]>>(&mut self) -> T;
+    fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T;
 
     /// Asserts the NARG was fully consumed.
     ///
@@ -40,39 +44,39 @@ pub trait VerifierTranscript<H: DuplexSpongeInterface> {
     /// # Errors
     ///
     /// Returns `Err` if the NARG has unread bytes.
-    fn check_eof(self) -> VerificationResult<()>;
+    fn check_eof(self) -> Result<(), VerificationError>;
 }
 
 impl<H> VerifierTranscript<H> for VerifierState<'_, H>
 where
     H: DuplexSpongeInterface,
 {
-    fn public_message<T: Encoding<[H::U]> + ?Sized>(&mut self, msg: &T) {
+    fn public_message<T: Encoding<H::U> + ?Sized>(&mut self, msg: &T) {
         VerifierState::public_message(self, msg);
     }
 
-    fn prover_message<T: Encoding<[H::U]> + NargDeserialize>(&mut self) -> VerificationResult<T> {
+    fn prover_message<T: Encoding<H::U> + FromNarg>(&mut self) -> Result<T, VerificationError> {
         VerifierState::prover_message::<T>(self)
     }
 
-    fn verifier_message<T: Decoding<[H::U]>>(&mut self) -> T {
+    fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T {
         VerifierState::verifier_message::<T>(self)
     }
 
-    fn check_eof(self) -> VerificationResult<()> {
+    fn check_eof(self) -> Result<(), VerificationError> {
         VerifierState::check_eof(self)
     }
 }
 
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
-impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Blake2b512> {
+impl OptimizedChallenge for VerifierState<'_, Blake2b512> {
     fn challenge_128(&mut self) -> Fr {
         Fr::from(VerifierState::verifier_message::<u128>(self))
     }
 }
 
 #[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
-impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Keccak> {
+impl OptimizedChallenge for VerifierState<'_, Keccak> {
     fn challenge_128(&mut self) -> Fr {
         Fr::from(VerifierState::verifier_message::<u128>(self))
     }
