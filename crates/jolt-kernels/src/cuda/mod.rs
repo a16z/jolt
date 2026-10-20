@@ -80,6 +80,8 @@
 //! the sparse result into each thread's Fq12 accumulator.
 //! G2 Miller steps use homogeneous Fq2 coordinates and emit line coefficients.
 //! Each host thread caches curve and Frobenius constants per device.
+//! Fq12 products reduce independent segments in bounded chunks, repeating on
+//! device until only one product per segment remains for download.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

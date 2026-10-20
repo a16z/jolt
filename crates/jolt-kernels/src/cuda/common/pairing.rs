@@ -4,7 +4,7 @@ use ark_bn254::{Fq, Fq2};
 use ark_ec::bn::BnConfig;
 use ark_ec::short_weierstrass::SWCurveConfig;
 use ark_ff::{AdditiveGroup, Field, One};
-use cudarc::driver::{CudaSlice, PushKernelArg};
+use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 
 use super::context::CudaKernelContext;
 use super::error::CudaError;
@@ -61,6 +61,11 @@ impl G2StepProbe {
 }
 
 const PC_WORDS: usize = 28;
+
+const PRODUCT_BLOCK: u32 = 32;
+
+// Bound each block's serial work when a segment contains thousands of pairs.
+const PRODUCT_CHUNK: u32 = 256;
 
 struct Constants {
     values: CudaSlice<u64>,
@@ -207,10 +212,57 @@ impl CudaKernelContext {
         })?;
         self.download_u64(&device_out)
     }
+
+    fn fq12_product_batch(
+        &self,
+        mut values: CudaSlice<u64>,
+        mut count: u32,
+        segments: u32,
+    ) -> Result<Vec<u64>, CudaError> {
+        let expected_len = (segments as usize)
+            .checked_mul(count as usize)
+            .and_then(|len| len.checked_mul(FQ12_LIMBS));
+        if count == 0 || segments == 0 || expected_len != Some(values.len()) {
+            return Err(CudaError::InvariantViolation {
+                reason: "an Fq12 product batch needs nonempty, equally sized segments",
+            });
+        }
+        let shared = PRODUCT_BLOCK * FQ12_LIMBS as u32 * size_of::<u64>() as u32;
+        loop {
+            let chunks = count.div_ceil(PRODUCT_CHUNK);
+            let mut product = self.alloc_u64(segments as usize * chunks as usize * FQ12_LIMBS)?;
+            let mut builder = self.stream().launch_builder(self.pairing_fq12_product());
+            let _ = builder.arg(&values);
+            let _ = builder.arg(&count);
+            let _ = builder.arg(&PRODUCT_CHUNK);
+            let _ = builder.arg(&mut product);
+            // SAFETY: the grid indexes (chunk, segment). Each block reads at
+            // most PRODUCT_CHUNK values, clipped to its segment's count, and
+            // writes one distinct Fq12 at segment * chunks + chunk. The input
+            // length is checked above and each pass preserves this layout;
+            // output allocations only shrink, so their lengths cannot overflow.
+            // Shared memory holds PRODUCT_BLOCK Fq12 values. This power-of-two
+            // block size covers the halving tree, and all threads reach every
+            // barrier. Input and output are distinct, ordered on the same stream.
+            let _ = unsafe {
+                builder.launch(LaunchConfig {
+                    grid_dim: (chunks, segments, 1),
+                    block_dim: (PRODUCT_BLOCK, 1, 1),
+                    shared_mem_bytes: shared,
+                })
+            }?;
+            if chunks == 1 {
+                return self.download_u64(&product);
+            }
+            values = product;
+            count = chunks;
+        }
+    }
 }
 
 #[cfg(test)]
 #[expect(
+    clippy::unwrap_used,
     clippy::expect_used,
     reason = "test module: device operations fail loudly"
 )]
@@ -315,6 +367,34 @@ mod tests {
         let context = shared_context().expect("a CUDA device");
         let got = context.tower_probe(op, input).expect("a tower probe");
         got.chunks_exact(FQ12_LIMBS).map(fq12).collect()
+    }
+
+    #[test]
+    fn fq12_product_segments_match_arkworks_across_reduction_levels() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let mut rng = ChaCha20Rng::seed_from_u64(7_000);
+        let chunk = PRODUCT_CHUNK as usize;
+        for count in [chunk - 1, chunk, chunk + 1, 8193, chunk * chunk + 1] {
+            let mut values: Vec<Fq12> = (0..3 * count).map(|_| Fq12::rand(&mut rng)).collect();
+            values[2 * count - 1] = Fq12::ZERO;
+            values[2 * count..].fill(Fq12::ONE);
+            let expected: Vec<Fq12> = values
+                .chunks_exact(count)
+                .map(|segment| segment.iter().product())
+                .collect();
+            let words: Vec<u64> = values.iter().flat_map(fq12_words).collect();
+            let uploaded = context.upload_raw_u64(&words).unwrap();
+            let limbs = context
+                .fq12_product_batch(uploaded, count as u32, 3)
+                .unwrap();
+            let got: Vec<Fq12> = limbs.chunks_exact(FQ12_LIMBS).map(fq12).collect();
+            assert_eq!(
+                got, expected,
+                "Fq12 products diverged at {count} values per segment"
+            );
+        }
     }
 
     #[test]

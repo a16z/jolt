@@ -10,6 +10,11 @@
 static_assert(FQ2_LIMBS == 8, "Fq2 is two Fq limbs wide");
 static_assert(PC_WORDS == 28, "the pairing constant layout must match pairing.rs");
 
+__device__ __forceinline__ void fq2_set_one(u64 *out) {
+    fq_copy(FQ_MONT_ONE, out);
+    for (int i = 0; i < LIMBS; i++) out[LIMBS + i] = 0;
+}
+
 __device__ __forceinline__ void fq2_neg(const u64 *a, u64 *out) {
     fq_neg(a, out);
     fq_neg(a + LIMBS, out + LIMBS);
@@ -144,6 +149,11 @@ __device__ void fq6_mul_by_fq2(const u64 *a, const u64 *k, u64 *out) {
 
 __device__ __forceinline__ void fq12_copy(const u64 *a, u64 *out) {
     for (int i = 0; i < FQ12_LIMBS; i++) out[i] = a[i];
+}
+
+__device__ __forceinline__ void fq12_set_one(u64 *out) {
+    for (int i = 0; i < FQ12_LIMBS; i++) out[i] = 0;
+    fq2_set_one(out);
 }
 
 __device__ __noinline__ void fq12_mul(const u64 *a, const u64 *b, u64 *out) {
@@ -428,6 +438,42 @@ __device__ __noinline__ void mw_g2_mul_by_char(const u64 *qx, const u64 *qy, con
     mw_fq2_mul(t, consts + PC_TWIST_Q_X, outx);
     fq2_conj(qy, t);
     mw_fq2_mul(t, consts + PC_TWIST_Q_Y, outy);
+}
+
+extern "C" __global__ void pairing_fq12_product_kernel(const u64 *__restrict__ values,
+                                                       unsigned int count,
+                                                       unsigned int chunk_size,
+                                                       u64 *__restrict__ out) {
+    extern __shared__ u64 shared[];
+    u64 *slot = shared + (unsigned long long)threadIdx.x * FQ12_LIMBS;
+    const unsigned int start = blockIdx.x * chunk_size;
+    const unsigned int chunk_count = min(chunk_size, count - start);
+    const u64 *lane =
+        values + ((unsigned long long)blockIdx.y * count + start) * FQ12_LIMBS;
+
+    u64 acc[FQ12_LIMBS], scratch[FQ12_LIMBS];
+    fq12_set_one(acc);
+    for (unsigned int i = threadIdx.x; i < chunk_count; i += blockDim.x) {
+        fq12_mul(acc, lane + (unsigned long long)i * FQ12_LIMBS, scratch);
+        fq12_copy(scratch, acc);
+    }
+    fq12_copy(acc, slot);
+    __syncthreads();
+
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            fq12_mul(slot, shared + (unsigned long long)(threadIdx.x + stride) * FQ12_LIMBS,
+                     scratch);
+            fq12_copy(scratch, slot);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        u64 *target =
+            out + ((unsigned long long)blockIdx.y * gridDim.x + blockIdx.x) * FQ12_LIMBS;
+        for (int i = 0; i < FQ12_LIMBS; i++) target[i] = shared[i];
+    }
 }
 
 extern "C" __global__ void fq6_mul_probe(const u64 *__restrict__ in, u64 *__restrict__ out,

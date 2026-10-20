@@ -149,6 +149,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
     #[cfg(test)]
+    pairing_fq12_product: CudaFunction,
+    #[cfg(test)]
     pub(super) fq6_mul_probe: CudaFunction,
     #[cfg(test)]
     pub(super) fq6_mul_by_01_probe: CudaFunction,
@@ -305,6 +307,8 @@ impl CudaKernelContext {
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             #[cfg(test)]
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
+            #[cfg(test)]
+            pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
             #[cfg(test)]
             fq6_mul_probe: module.load_function("fq6_mul_probe")?,
             #[cfg(test)]
@@ -762,6 +766,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_jacobian_to_affine(&self) -> &CudaFunction {
         &self.msm_jacobian_to_affine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn pairing_fq12_product(&self) -> &CudaFunction {
+        &self.pairing_fq12_product
     }
 
     #[cfg(test)]
