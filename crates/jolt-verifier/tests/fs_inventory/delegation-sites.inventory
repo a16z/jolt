@@ -205,6 +205,7 @@ jolt-verifier::stages/zk/mod.rs::masked_channel::.channel#0
 jolt-verifier::verifier.rs::MaskedStages<F,C>::receive_auxiliary::.channel#0
 jolt-verifier::verifier.rs::pad_layout::seed_transcript#0
 jolt-verifier::verifier.rs::pad_layout::verify_stages_1_to_7::<F,PCS,VC,JoltSponge,()>#1
+jolt-verifier::verifier.rs::replay_stages::verify_stages_on#0
 jolt-verifier::verifier.rs::seed_transcript::ProofCommitments::receive::<PCS,H>#2
 jolt-verifier::verifier.rs::seed_transcript::ProofHeader::receive#0
 jolt-verifier::verifier.rs::seed_transcript::absorb_public_commitments#3
@@ -218,11 +219,7 @@ jolt-verifier::verifier.rs::verify::verify_stages#0
 jolt-verifier::verifier.rs::verify::verify_stages_1_to_7::<F,PCS,VC,H,()>#4
 jolt-verifier::verifier.rs::verify_residual::.receive_auxiliary#0
 jolt-verifier::verifier.rs::verify_residual::BlindFold::<VC>::verify#1
-jolt-verifier::verifier.rs::verify_stages::.consumed#1
-jolt-verifier::verifier.rs::verify_stages::BlindFold::<VC>::receive_pad_commitment#2
-jolt-verifier::verifier.rs::verify_stages::seed_transcript#0
-jolt-verifier::verifier.rs::verify_stages::stage8::verify#4
-jolt-verifier::verifier.rs::verify_stages::verify_stages_1_to_7::<F,PCS,VC,H,Vec<VC::Output>>#3
+jolt-verifier::verifier.rs::verify_stages::verify_stages_on#0
 jolt-verifier::verifier.rs::verify_stages_1_to_7::stage1::verify#0
 jolt-verifier::verifier.rs::verify_stages_1_to_7::stage2::verify#1
 jolt-verifier::verifier.rs::verify_stages_1_to_7::stage3::verify#2
@@ -231,6 +228,11 @@ jolt-verifier::verifier.rs::verify_stages_1_to_7::stage5::verify#4
 jolt-verifier::verifier.rs::verify_stages_1_to_7::stage6a::verify#5
 jolt-verifier::verifier.rs::verify_stages_1_to_7::stage6b::verify#6
 jolt-verifier::verifier.rs::verify_stages_1_to_7::stage7::verify#7
+jolt-verifier::verifier.rs::verify_stages_on::.consumed#1
+jolt-verifier::verifier.rs::verify_stages_on::BlindFold::<VC>::receive_pad_commitment#2
+jolt-verifier::verifier.rs::verify_stages_on::seed_transcript#0
+jolt-verifier::verifier.rs::verify_stages_on::stage8::verify#4
+jolt-verifier::verifier.rs::verify_stages_on::verify_stages_1_to_7::<F,PCS,VC,H,Vec<VC::Output>>#3
 jolt-zk::blindfold/backend.rs::BlindFold<VC>::prove::prove::<VC::Field,VC,H,R>#0
 jolt-zk::blindfold/backend.rs::BlindFold<VC>::verify::.verify#0
 jolt-zk::blindfold/prove.rs::prove::prove_with_row_committer::<F,VC,H,R,DirectBlindFoldRowCommitter>#0
