@@ -188,8 +188,9 @@ commitments are ZK only relative to themselves.
 | proof bytes | 97,663 | 65,599 | 113,951 |
 | bytes before the BlindFold tail | — | 44,959 | 102,143 |
 | BlindFold tail bytes | — | 20,640 | 11,808 |
-| BlindFold prover (replay, auxiliary block, fold, tail) | — | 262–272 ms | VERIFY_PROVER |
-| verifier | — | VERIFY_BASE | VERIFY_MASKED |
+| prover ZK work: pad commitment (incl. layout) + BlindFold tail (replay, auxiliary block, fold, tail) | — | 393–402 ms (tail only) | 85–96 + 308–313 ms |
+| full prove, including guest preparation | — | 1,770–1,797 ms | 1,660–1,688 ms |
+| verifier | — | 300 ms | 319 ms |
 
 The layout is 2,073 pads: 1,965 base slots and 108 auxiliary slots. The
 relation has 16 affine rows and 106 product rows. Masked messages are the
@@ -200,7 +201,12 @@ clear proof's field messages, so the masked proof is the clear proof plus
 committed round polynomials in rows instead of sending them; the masked
 proof grows with the round and claim count like the clear proof does.
 
-VERIFY_NOTE
+Times are medians of repeated runs in the test profile (opt-level 3) on
+one machine, optimized prover backend. The verifier's extra 19 ms is
+mostly `pad_layout`, which replays stages 1–7 a second time (about 46 ms);
+the masked stages themselves are cheaper than the per-round Pedersen
+checks. The prover derives the layout once and reuses it in its relation
+replay.
 
 Open size reductions, not implemented:
 
