@@ -67,14 +67,18 @@ use spongefish::VerificationError;
 /// w = ceil((MODULUS_BITS + 159 + ceil(log2(len)))/8),
 /// len·2δ ≤ len·2^MODULUS_BITS / 2^(8w+1) ≤ 2^-160,
 /// so the whole message has conventional TV ≤ 2^-161. For BN254's 254-bit
-/// modulus this gives 52 bytes per element for len 1–8, then 53 for len 9–128.
+/// modulus this gives 52 bytes per element for len 1–8, 53 for len 9–2048,
+/// 54 for len 2049–524288, and 55 above.
 ///
 /// # Binary fields (`binary`)
 ///
 /// `F8`, `F64`, `F128`, and `F192` decode consecutive `NUM_BYTES` chunks with
 /// checked little-endian decoding. Every correctly sized pattern is canonical,
 /// making the map a bijection with zero bias and no exhaustion.
-pub trait ChallengeCodec: Sized {
+///
+/// The trait is sealed: every implementation lives in this module, next to
+/// the argument for its TV bound.
+pub trait ChallengeCodec: Sized + sealed::Sealed {
     /// Bytes squeezed for `len` elements; depends only on the type and `len`.
     /// Returns `None` on arithmetic overflow or an unattainable rejection bound.
     fn challenge_bytes(len: usize) -> Option<usize>;
@@ -84,6 +88,15 @@ pub trait ChallengeCodec: Sized {
     /// Allocates only the returned vector, with capacity `len`.
     fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>>;
 }
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Largest challenge message, in squeezed bytes. Larger requests are rejected
+/// before touching the sponge, so a length taken from the input cannot make
+/// the verifier allocate without bound.
+pub const MAX_CHALLENGE_BYTES: usize = 1 << 24;
 
 #[cfg(any(feature = "solinas", feature = "bn254"))]
 fn ceil_log2(n: u128) -> u32 {
@@ -145,6 +158,8 @@ where
 #[cfg(feature = "solinas")]
 macro_rules! prime_codec {
     ($field:ident, $word:ty) => {
+        impl<const P: $word> sealed::Sealed for $field<P> {}
+
         impl<const P: $word> ChallengeCodec for $field<P> {
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<Self>(len)
@@ -190,6 +205,8 @@ tower_bases!(
 #[cfg(feature = "solinas")]
 macro_rules! extension_codec {
     ($extension:ident, $degree:literal) => {
+        impl<F: TowerBase> sealed::Sealed for $extension<F> {}
+
         impl<F: TowerBase> ChallengeCodec for $extension<F> {
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<F>(len.checked_mul(Self::DEGREE)?)
@@ -220,6 +237,8 @@ fn reduction_width<F: CanonicalEncoding>(len: usize) -> Option<usize> {
 #[cfg(feature = "bn254")]
 macro_rules! reduction_codec {
     ($($field:ty),+ $(,)?) => {$(
+        impl sealed::Sealed for $field {}
+
         impl ChallengeCodec for $field {
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(reduction_width::<Self>(len)?)
@@ -248,6 +267,8 @@ reduction_codec!(Fr, Fq);
 #[cfg(feature = "binary")]
 macro_rules! binary_codec {
     ($($field:ty),+ $(,)?) => {$(
+        impl sealed::Sealed for $field {}
+
         impl ChallengeCodec for $field {
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(<Self as jolt_field::CanonicalBytes>::NUM_BYTES)
@@ -270,22 +291,14 @@ macro_rules! binary_codec {
 #[cfg(feature = "binary")]
 binary_codec!(F8, F64, F128, F192);
 
+/// Bytes squeezed for a message of `len` elements of `F`.
+///
+/// # Errors
+/// Returns `VerificationError` when `F` does not support `len` or the message
+/// would exceed [`MAX_CHALLENGE_BYTES`].
 #[cfg(feature = "spongefish")]
-pub(crate) fn decode_message<F: ChallengeCodec>(
-    bytes: &[u8],
-    len: usize,
-) -> Result<Vec<F>, VerificationError> {
-    F::decode_challenges(bytes, len).ok_or(VerificationError)
-}
-
-#[cfg(all(test, feature = "spongefish", feature = "solinas"))]
-#[expect(clippy::unwrap_used, reason = "tests")]
-mod tests {
-    use super::{decode_message, ChallengeCodec, Prime64Offset59};
-
-    #[test]
-    fn exhaustion_is_a_verification_error() {
-        let bytes = vec![0xff; Prime64Offset59::challenge_bytes(1).unwrap()];
-        assert!(decode_message::<Prime64Offset59>(&bytes, 1).is_err());
-    }
+pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, VerificationError> {
+    F::challenge_bytes(len)
+        .filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
+        .ok_or(VerificationError)
 }

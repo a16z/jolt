@@ -101,6 +101,10 @@ jobs:
         run: cargo clippy --all --all-targets --features allocative,host,zk
       - name: cargo clippy --no-default-features
         run: cargo clippy --all --all-targets --no-default-features
+      # jolt-transcript's field codecs and sponge backends sit behind features
+      # that no workspace consumer enables together, so lint them all here.
+      - name: cargo clippy -p jolt-transcript --all-features
+        run: cargo clippy -p jolt-transcript --all-targets --all-features
       # jolt-verifier's prover-fixtures feature gates live prover artifact
       # generation for verifier tests. It is not enabled by the workspace-wide
       # invocations above, so build it explicitly in both modes.
@@ -770,6 +774,11 @@ jobs:
       # jolt-witness's parallel feature is not a default, so the shard loop
       # above tests only the serial paths; the shipped provers enable it
       # (via jolt-kernels' default), so test the rayon fast paths directly.
+      # The shard loop above tests jolt-transcript with default features only,
+      # which skips the field codecs, the extra sponges and their tests.
+      - name: Test jolt-transcript with all features
+        if: matrix.shard == 1
+        run: cargo nextest run -p jolt-transcript --all-features --cargo-quiet
       - name: Test jolt-witness with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-witness --features test-utils,parallel --cargo-quiet

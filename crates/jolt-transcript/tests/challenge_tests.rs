@@ -24,6 +24,8 @@ use jolt_field::{
 use jolt_field::{Fq, Fr};
 #[cfg(feature = "binary")]
 use jolt_field::{F128, F192, F64, F8};
+#[cfg(feature = "binary")]
+use jolt_transcript::MAX_CHALLENGE_BYTES;
 
 const SESSION: &[u8] = b"jolt/challenge-codecs/v1";
 const INSTANCE: [u8; 32] = [0x42; 32];
@@ -154,6 +156,103 @@ fn unsupported_lengths_return_transcript_errors() {
     }
 }
 
+#[cfg(feature = "binary")]
+#[test]
+fn messages_above_the_byte_cap_are_rejected_before_touching_the_sponge() {
+    let mut prover = prover_transcript::<Keccak>(SESSION, INSTANCE);
+    let full = ProverTranscript::field_challenges::<F8>(&mut prover, MAX_CHALLENGE_BYTES).unwrap();
+    assert_eq!(full.len(), MAX_CHALLENGE_BYTES);
+    let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, &[]);
+    assert_eq!(
+        VerifierTranscript::field_challenges::<F8>(&mut verifier, MAX_CHALLENGE_BYTES).unwrap(),
+        full
+    );
+
+    for len in [MAX_CHALLENGE_BYTES + 1, usize::MAX] {
+        let mut prover = prover_transcript::<Keccak>(SESSION, INSTANCE);
+        assert!(ProverTranscript::field_challenges::<F8>(&mut prover, len).is_err());
+        let mut fresh = prover_transcript::<Keccak>(SESSION, INSTANCE);
+        assert_eq!(
+            prover.verifier_message::<[u8; 16]>(),
+            fresh.verifier_message::<[u8; 16]>()
+        );
+        let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, &[]);
+        assert!(VerifierTranscript::field_challenges::<F8>(&mut verifier, len).is_err());
+        verifier.check_eof().unwrap();
+    }
+}
+
+/// An empty message skips the squeeze, so it leaves every sponge untouched,
+/// including the Blake2b bridge, where an empty squeeze is not a no-op.
+#[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
+#[test]
+fn empty_messages_leave_the_sponge_untouched() {
+    use jolt_transcript::Blake2b512;
+
+    fn check<H: spongefish::DuplexSpongeInit<U = u8>>() {
+        let mut prover = prover_transcript::<H>(SESSION, INSTANCE);
+        assert!(ProverTranscript::field_challenges::<Fr>(&mut prover, 0)
+            .unwrap()
+            .is_empty());
+        let mut fresh = prover_transcript::<H>(SESSION, INSTANCE);
+        assert_eq!(
+            prover.verifier_message::<[u8; 16]>(),
+            fresh.verifier_message::<[u8; 16]>()
+        );
+        let mut verifier = verifier_transcript::<H>(SESSION, INSTANCE, &[]);
+        assert!(VerifierTranscript::field_challenges::<Fr>(&mut verifier, 0)
+            .unwrap()
+            .is_empty());
+        let mut fresh = verifier_transcript::<H>(SESSION, INSTANCE, &[]);
+        assert_eq!(
+            verifier.verifier_message::<[u8; 16]>(),
+            fresh.verifier_message::<[u8; 16]>()
+        );
+    }
+    check::<Keccak>();
+    check::<Blake2b512>();
+}
+
+/// A sponge whose output is all ones, so every pooled candidate is rejected.
+#[cfg(feature = "solinas")]
+#[derive(Clone)]
+struct Saturated;
+
+#[cfg(feature = "solinas")]
+impl spongefish::DuplexSpongeInterface for Saturated {
+    type U = u8;
+
+    fn absorb(&mut self, _input: &[u8]) -> &mut Self {
+        self
+    }
+
+    fn squeeze(&mut self, output: &mut [u8]) -> &mut Self {
+        output.fill(0xff);
+        self
+    }
+}
+
+#[cfg(feature = "solinas")]
+impl spongefish::DuplexSpongeInit for Saturated {
+    fn init(_session_id: &[u8; 32]) -> Self {
+        Self
+    }
+}
+
+#[cfg(feature = "solinas")]
+#[test]
+fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
+    let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
+    assert!(ProverTranscript::field_challenges::<Prime64Offset59>(&mut prover, 3).is_err());
+
+    let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
+    prover.prover_message(&BytesMsg(b"after".to_vec()));
+    let mut verifier = verifier_transcript::<Saturated>(SESSION, INSTANCE, prover.narg_string());
+    assert!(VerifierTranscript::field_challenges::<Prime64Offset59>(&mut verifier, 3).is_err());
+    assert!(verifier.prover_message::<BytesMsg>().is_err());
+    assert!(verifier.check_eof().is_err());
+}
+
 #[cfg(feature = "solinas")]
 #[test]
 fn rejection_exhaustion_and_accepted_order() {
@@ -190,6 +289,42 @@ fn subword_candidates_mask_unused_high_bits() {
     check::<Prime24Offset3>([7, 0, 0, 0xff]);
     check::<Prime30Offset35>([7, 0, 0, 0xc0]);
     check::<Prime31Offset19>([7, 0, 0, 0x80]);
+}
+
+/// For every registered base, the candidate p is rejected and p - 1, the
+/// largest element, is accepted.
+#[cfg(feature = "solinas")]
+#[test]
+fn candidates_at_the_modulus_boundary() {
+    use jolt_field::PseudoMersenne;
+
+    fn check<F: ChallengeCodec + PseudoMersenne + PartialEq + Debug>() {
+        let p = (u128::MAX >> (128 - F::MODULUS_BITS)) - (F::OFFSET - 1);
+        let width = <F as CanonicalBytes>::NUM_BYTES;
+        let mut tape = vec![0xff; F::challenge_bytes(1).unwrap()];
+        assert!(
+            tape.len() >= 2 * width,
+            "the pool has at least two candidates"
+        );
+        tape.get_mut(..width)
+            .unwrap()
+            .copy_from_slice(p.to_le_bytes().get(..width).unwrap());
+        let largest = (p - 1).to_le_bytes();
+        tape.get_mut(width..2 * width)
+            .unwrap()
+            .copy_from_slice(largest.get(..width).unwrap());
+        let expected = F::from_bytes_le_checked(largest.get(..width).unwrap()).unwrap();
+        assert_eq!(F::decode_challenges(&tape, 1), Some(vec![expected]));
+    }
+    check::<Prime24Offset3>();
+    check::<Prime30Offset35>();
+    check::<Prime31Offset19>();
+    check::<Prime32Offset99>();
+    check::<Prime40Offset195>();
+    check::<Prime48Offset59>();
+    check::<Prime56Offset27>();
+    check::<Prime64Offset59>();
+    check::<Prime128Offset275>();
 }
 
 #[cfg(feature = "solinas")]

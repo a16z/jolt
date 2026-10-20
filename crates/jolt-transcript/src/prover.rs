@@ -6,7 +6,7 @@
 
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 use crate::Blake2b512;
-use crate::{challenge::decode_message, ChallengeCodec};
+use crate::{challenge::message_bytes, ChallengeCodec};
 #[cfg(feature = "bn254")]
 use jolt_field::Fr;
 #[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
@@ -30,10 +30,13 @@ pub trait ProverTranscript<H: DuplexSpongeInterface> {
 
     /// Draws one message with conventional TV ≤ 2^-161 across all `len` elements.
     /// The protocol session/version must bind the codec, field, and length.
+    /// `len == 0` returns an empty vector without touching the sponge.
     ///
     /// # Errors
-    /// Returns `VerificationError` on length overflow, an unsupported length,
-    /// or rejection-pool exhaustion (probability at most 2^-161).
+    /// Returns `VerificationError`, before any sponge operation, when the codec
+    /// does not support `len` or the message would exceed
+    /// [`MAX_CHALLENGE_BYTES`](crate::MAX_CHALLENGE_BYTES) bytes. Otherwise on
+    /// rejection-pool exhaustion (probability at most 2^-161).
     fn field_challenges<F: ChallengeCodec>(
         &mut self,
         len: usize,
@@ -69,8 +72,12 @@ where
     where
         H: DuplexSpongeInterface<U = u8>,
     {
-        let n = F::challenge_bytes(len).ok_or(VerificationError)?;
-        ProverState::verifier_message_as(self, n, |bytes| decode_message::<F>(bytes, len))
+        let n = message_bytes::<F>(len)?;
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        ProverState::verifier_message_as(self, n, |bytes| F::decode_challenges(bytes, len))
+            .ok_or(VerificationError)
     }
 
     fn narg_string(&self) -> &[u8] {

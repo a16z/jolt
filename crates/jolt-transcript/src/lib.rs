@@ -47,7 +47,7 @@ mod setup;
 #[cfg(feature = "spongefish")]
 mod verifier;
 
-pub use challenge::ChallengeCodec;
+pub use challenge::{ChallengeCodec, MAX_CHALLENGE_BYTES};
 #[cfg(feature = "spongefish")]
 pub use codec::BytesMsg;
 #[cfg(feature = "digest")]
