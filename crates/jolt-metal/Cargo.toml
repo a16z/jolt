@@ -3,7 +3,7 @@ name = "jolt-metal"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Prover-only Metal runtime and field arithmetic for jolt-field"
+description = "Prover-only Metal runtime and field arithmetic for jolt-algebra"
 repository = "https://github.com/a16z/jolt"
 keywords = ["SNARK", "cryptography", "metal", "gpu"]
 categories = ["cryptography"]
@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 bytemuck = { workspace = true }
-jolt-field = { path = "../jolt-field", default-features = false, features = [
+jolt-algebra = { path = "../jolt-algebra", default-features = false, features = [
   "bytemuck",
   "solinas",
 ] }
@@ -22,7 +22,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 # The CPU baseline uses the multiply Akita's prover uses.
-jolt-field = { path = "../jolt-field", default-features = false, features = [
+jolt-algebra = { path = "../jolt-algebra", default-features = false, features = [
   "asm",
   "bytemuck",
   "solinas",

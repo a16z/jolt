@@ -20,7 +20,7 @@
 
 #![no_main]
 
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_algebra::{CanonicalEncoding, Fr};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{send_full_round, BooleanHypercube, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};

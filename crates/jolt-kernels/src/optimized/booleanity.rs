@@ -61,6 +61,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 #[cfg(feature = "akita")]
@@ -73,7 +74,6 @@ use jolt_claims::protocols::jolt::lattice::BalancedIncChunking;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningId};
 use jolt_claims::OutputClaims;
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
     try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
 };
@@ -898,12 +898,12 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
 pub(crate) mod testing {
+    use jolt_algebra::Fr;
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
     };
-    use jolt_field::Fr;
     use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
@@ -1100,7 +1100,7 @@ pub(crate) mod testing {
     }
 
     pub(crate) fn test_challenge(round: usize) -> Fr {
-        use jolt_field::Ring;
+        use jolt_algebra::Ring;
         Fr::from_u64(0x1234_5678 + 1000 * round as u64 + 7)
     }
 }
@@ -1109,9 +1109,9 @@ pub(crate) mod testing {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use crate::optimized::parity::ExceptionalEq;
+    use jolt_algebra::{Fr, Ring, Zero};
     use jolt_claims::protocols::jolt::JoltChallengeId;
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, Ring, Zero};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheckChallenges;
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
@@ -1570,8 +1570,8 @@ mod tests {
 mod categorical_tests {
     use crate::optimized::parity::ExceptionalEq;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
-    use jolt_field::{Fr, JoltField, Ring, Zero};
+    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::{Fr, JoltField, Ring, Zero};
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
     use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa};

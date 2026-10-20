@@ -9,6 +9,7 @@
 //! in `aliased_output_openings` below; the generated drivers absorb each via its
 //! instruction-input source and enforce the wire copies equal it.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::registers::{
     RegistersClaimReductionChallenges, RegistersClaimReductionInputClaims,
@@ -20,7 +21,6 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId, RegistersClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;

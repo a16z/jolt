@@ -18,6 +18,7 @@ use crate::{
     verifier::CheckedInputs,
     VerifierError,
 };
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
@@ -37,7 +38,6 @@ use jolt_claims::protocols::jolt::{
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{
@@ -483,12 +483,12 @@ where
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::composed::ComposedOpeningId;
     use jolt_claims::protocols::jolt::geometry::committed_openings::{
         final_opening_id, final_opening_polynomial_order,
     };
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, Ring};
 
     fn layout() -> JoltRaPolynomialLayout {
         JoltRaPolynomialLayout::new(2, 1, 2).unwrap()

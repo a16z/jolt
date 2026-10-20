@@ -107,7 +107,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 
 **jolt-host / jolt-program** — Guest builds, tracing entry points, bytecode expansion, and shared program preprocessing.
 
-**jolt-field / jolt-poly / jolt-sumcheck / jolt-openings** — Field, polynomial, sumcheck, and PCS abstractions.
+**jolt-algebra / jolt-poly / jolt-sumcheck / jolt-openings** — Field, polynomial, sumcheck, and PCS abstractions.
 
 **tracer** — RISC-V emulator producing execution traces (`Cycle` per instruction)
 

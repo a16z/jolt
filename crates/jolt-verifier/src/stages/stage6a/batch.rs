@@ -6,10 +6,10 @@
 //! are single-sourced across the two fronts — the same idiom as stage 6b's
 //! `Stage6bSumchecks::build_from_parts`.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::{
     booleanity::BooleanityDimensions, dimensions::JoltFormulaDimensions,
 };
-use jolt_field::JoltField;
 
 use super::booleanity::BooleanityAddressPhase;
 use super::bytecode_read_raf::{bytecode_stage_points, BytecodeReadRafAddressPhase};

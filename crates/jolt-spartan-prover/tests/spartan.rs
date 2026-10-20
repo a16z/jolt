@@ -4,9 +4,9 @@
     reason = "test fixtures fail loudly"
 )]
 
+use jolt_algebra::{Fr, One, Ring, Zero};
 use jolt_crypto::{Bn254, JoltGroup};
 use jolt_dory::DoryScheme;
-use jolt_field::{Fr, One, Ring, Zero};
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGSetupParams};
 use jolt_openings::CommitmentScheme;
 use jolt_r1cs::ConstraintMatrices;

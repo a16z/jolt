@@ -85,8 +85,8 @@ mod tamper {
     reason = "integration tests should fail loudly"
 )]
 mod clear {
+    use jolt_algebra::Fr;
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_prover::{JoltBackend, ProverError};
     use jolt_verifier::VerifierError;
 

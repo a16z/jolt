@@ -1,5 +1,5 @@
+use jolt_algebra::{Fr, One, Zero};
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, PairingGroup};
-use jolt_field::{Fr, One, Zero};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 
 use crate::{HyperKZGError, HyperKZGProverSetup, HyperKZGVerifierSetup};

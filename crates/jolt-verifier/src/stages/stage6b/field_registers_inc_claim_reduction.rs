@@ -10,6 +10,7 @@
 //! cycle point)` and `EqValEvaluation = Eq(bound cycle point, the stage-5 field-register
 //! value-evaluation cycle point)`.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::ClaimReduction;
 pub use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::{
     FieldRegistersIncClaimReductionChallenges, FieldRegistersIncClaimReductionInputClaims,
@@ -19,7 +20,6 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineDerivedId, FieldRegistersIncClaimReductionPublic, FieldRegistersTraceDimensions,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
@@ -126,8 +126,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersIncClaimReduction<F> {
 mod tests {
     use super::*;
 
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
-    use jolt_field::{Fr, Ring};
 
     use crate::stages::stage6b::inc_claim_reduction::{
         IncClaimReduction, IncClaimReductionInputClaims,

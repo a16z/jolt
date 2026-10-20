@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::ops::{Add, Neg, Sub};
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use thiserror::Error;
 
 use crate::constraint::SparseRow;
@@ -286,7 +286,7 @@ impl<F: JoltField> R1csBuilder<F> {
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn builder_checks_satisfied_product() {

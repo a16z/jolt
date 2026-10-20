@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_lookup_tables::XLEN;
 use jolt_openings::{
     CommitmentGroupRole, EvaluationClaim, OpeningsError, PrefixPackedClaims, PrefixPackedLayout,
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn padded_capacity_claims_reduce_to_the_slot_zero_embedding() {
-        use jolt_field::{Fr, Ring};
+        use jolt_algebra::{Fr, Ring};
 
         let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 9).unwrap();
         let id = JoltCommittedPolynomial::UntrustedAdvice;

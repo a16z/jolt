@@ -16,6 +16,7 @@
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     lane_weights, BytecodeLaneWeightInputs,
@@ -41,7 +42,6 @@ use jolt_claims::protocols::jolt::{
     PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 
 use super::outputs::BytecodeReductionWeights;
 use crate::stages::relations::ConcreteSumcheck;
@@ -503,6 +503,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "contract assertions fail loudly")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
         cycle_phase_output_openings, COMMITTED_BYTECODE_LANE_CAPACITY,
     };
@@ -511,7 +512,6 @@ mod tests {
         JoltCommittedPolynomial, PrecommittedClaimReduction, TracePolynomialOrder,
     };
     use jolt_claims::OutputClaims;
-    use jolt_field::{Fr, Ring};
 
     use super::*;
 

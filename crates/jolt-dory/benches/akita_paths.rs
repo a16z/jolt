@@ -50,8 +50,8 @@ use jolt_akita::{
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
+use jolt_algebra::{Fr, JoltField, Ring, Zero};
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
-use jolt_field::{Fr, JoltField, Ring, Zero};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, PrefixPackedClaims, PrefixPackedLayout,
     VerifierOpeningClaim,

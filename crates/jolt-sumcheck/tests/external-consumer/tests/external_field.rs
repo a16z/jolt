@@ -4,7 +4,7 @@ use std::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use jolt_field::{
+use jolt_algebra::{
     AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, Prime64Offset59, Ring,
 };
 use jolt_poly::UnivariatePoly;
@@ -186,7 +186,7 @@ impl CanonicalBytes for ExternalField {
 
 impl Encoding<[u8]> for ExternalField {
     fn encode(&self) -> impl AsRef<[u8]> {
-        jolt_field::narg::encode(self)
+        jolt_algebra::narg::encode(self)
     }
 }
 
@@ -198,7 +198,7 @@ impl CanonicalDecode for ExternalField {
 
 impl NargDeserialize for ExternalField {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        jolt_field::narg::deserialize(buf)
+        jolt_algebra::narg::deserialize(buf)
     }
 }
 

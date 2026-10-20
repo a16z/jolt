@@ -18,6 +18,7 @@
 //! - **Eval-at-1 recovery** and **rayon walks** (module docs on
 //!   [`crate::optimized`]).
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 #[cfg(feature = "akita")]
@@ -28,7 +29,6 @@ use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
 };
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_claims::OutputClaims;
-use jolt_field::JoltField;
 #[cfg(feature = "akita")]
 use jolt_poly::boolean_point_msb;
 use jolt_poly::{Polynomial, UnivariatePoly};
@@ -450,10 +450,10 @@ impl<F: JoltField> SumcheckKernel<F> for HammingWeightKernel<F> {
 #[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     };
@@ -549,8 +549,8 @@ mod tests {
 #[cfg(all(test, feature = "akita"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod akita_tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::lattice::relations::digit_zero::LatticeDigitZeroClaimReductionDimensions;
-    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     };

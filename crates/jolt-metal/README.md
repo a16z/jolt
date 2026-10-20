@@ -1,6 +1,6 @@
 # jolt-metal
 
-Prover-only Metal support for `jolt-field`: a runtime for compiling,
+Prover-only Metal support for `jolt-algebra`: a runtime for compiling,
 dispatching, and reading back Metal compute kernels, and the MSL field
 arithmetic that Jolt's and Akita's GPU provers share.
 Design and invariants: [`specs/jolt-metal-field.md`](../../specs/jolt-metal-field.md).
@@ -22,9 +22,9 @@ returns `MetalError::Unavailable`.
 
 ## Field arithmetic
 
-Each field type is bit-exact with its `jolt_field` counterpart:
+Each field type is bit-exact with its `jolt_algebra` counterpart:
 
-| MSL type | Header | `jolt_field` type |
+| MSL type | Header | `jolt_algebra` type |
 |---|---|---|
 | `jolt::Fp128<C>`, the field `2^128 − C` | `shaders/jolt/field/fp128.h` | `solinas::Fp128<P>` |
 | `jolt::Fp64<C>`, the field `2^64 − C`, odd `C < 2^32` | `shaders/jolt/field/fp64.h` | `solinas::Fp64<P>` with a 64-bit `P` |

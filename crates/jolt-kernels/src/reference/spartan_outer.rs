@@ -24,13 +24,13 @@ use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
-use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
@@ -407,7 +407,7 @@ fn row_value_tables<F: JoltField>(
 
 #[cfg(test)]
 mod orientation_probes {
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
 
     /// Pin the composite orientation assumption: an `EqPolynomial` table

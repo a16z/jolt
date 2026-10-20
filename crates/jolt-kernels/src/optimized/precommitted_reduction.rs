@@ -36,13 +36,13 @@
 
 use std::marker::PhantomData;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, JoltChallengeId, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout,
 };
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
@@ -382,8 +382,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for Optimize
 #[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
 mod tests {
     use common::jolt_device::{JoltDevice, MemoryLayout};
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
-    use jolt_field::{Fr, Ring};
     use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,

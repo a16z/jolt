@@ -2,7 +2,7 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 
-use jolt_field::Fr;
+use jolt_algebra::Fr;
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial};
 
 use super::{CheckError, Invariant, InvariantViolation};

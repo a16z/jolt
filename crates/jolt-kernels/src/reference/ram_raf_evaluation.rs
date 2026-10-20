@@ -13,9 +13,9 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
-use jolt_field::JoltField;
 use jolt_poly::BindingOrder;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;

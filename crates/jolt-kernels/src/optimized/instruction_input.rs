@@ -6,9 +6,9 @@
 //! Round 0 evaluates native integer rows. The first bind materializes all
 //! eight columns at `T/2`. The bound eq scalar is checked against the verifier.
 
+use jolt_algebra::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
-use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -452,6 +452,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
 mod tests {
     use std::collections::BTreeMap;
 
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::instruction::{
         imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
         rs1_value, rs2_value, unexpanded_pc,
@@ -460,7 +461,6 @@ mod tests {
         InstructionInputChallenges, InstructionInputInputClaims,
     };
     use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId, TraceDimensions};
-    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;

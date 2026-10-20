@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::SumcheckBatch;
@@ -168,6 +168,7 @@ mod tests {
     use super::*;
     use crate::stages::relations::test_transcript::assert_same_draws;
     use crate::stages::relations::ClaimRoutes;
+    use jolt_algebra::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -175,7 +176,6 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
-    use jolt_field::{Fr, Ring};
     use jolt_transcript::Channel;
 
     fn fr(value: u64) -> Fr {

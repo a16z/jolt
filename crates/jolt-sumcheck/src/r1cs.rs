@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 use thiserror::Error;
 
@@ -337,7 +337,7 @@ fn polynomial_eval_lc<F: JoltField>(coefficients: &[Variable], point: F) -> Line
 )]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct Round {

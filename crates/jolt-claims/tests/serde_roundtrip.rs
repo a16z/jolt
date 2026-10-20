@@ -10,12 +10,12 @@
 )]
 
 use core::fmt::Debug;
+use jolt_algebra::{Field, Fr, Ring};
 use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderOutputClaims, OuterUniskipOutputClaims, ProductRemainderOutputClaims,
     ProductUniskipOutputClaims, SpartanShiftOutputClaims,
 };
 use jolt_claims::{OutputClaims, SumcheckDomain};
-use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use serde::de::DeserializeOwned;

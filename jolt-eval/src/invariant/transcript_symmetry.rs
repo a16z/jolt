@@ -4,7 +4,7 @@
 //! and consume the argument string exactly.
 
 use arbitrary::{Arbitrary, Result as ArbitraryResult, Unstructured};
-use jolt_field::{CanonicalEncoding, Fr as JFr};
+use jolt_algebra::{CanonicalEncoding, Fr as JFr};
 use jolt_transcript::{
     Blake2b512, Channel, Keccak, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
     TranscriptError, VerifierTranscript,

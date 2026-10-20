@@ -1,6 +1,6 @@
 //! Sparse per-cycle R1CS constraint matrices.
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
@@ -389,7 +389,7 @@ fn matrix_bilinear_eval_columns<F: Field>(
 #[expect(clippy::expect_used, reason = "tests should fail loudly")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn violated_constraint() {

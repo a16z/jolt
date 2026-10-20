@@ -2,8 +2,8 @@
 //! attached by the prover for its kernel. Verification evaluates the composed
 //! symbolic claim without materializing that geometry.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::FieldInlineBytecodeReadRafInputs;
-use jolt_field::JoltField;
 
 use super::outputs::Stage6aSumchecks;
 use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};

@@ -9,6 +9,8 @@
 //! relation's fold of the stage-1 openings), so the verification core is
 //! shared here.
 
+use jolt_algebra::CanonicalDecode;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -20,8 +22,6 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::CanonicalDecode;
-use jolt_field::JoltField;
 use jolt_sumcheck::{
     receive_private_value, CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim,
     SumcheckStatement, SumcheckVerifier,

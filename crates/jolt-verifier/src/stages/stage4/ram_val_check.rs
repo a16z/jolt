@@ -29,8 +29,8 @@ use jolt_claims::protocols::jolt::{
 };
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 use jolt_claims::{MapCells, OutputClaims, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
 use jolt_sumcheck::receive_private_value;
 use jolt_transcript::{PadSlots, PrivateChannel, ProverTranscript, Sponge, VerifierTranscript};

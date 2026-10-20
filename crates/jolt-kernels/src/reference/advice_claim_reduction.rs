@@ -10,11 +10,11 @@
 //! fully bound value coefficient IS the final `@AdviceClaimReduction` opening
 //! value.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedReductionLayout,
 };
-use jolt_field::JoltField;
 use jolt_witness::JoltWitnessOracle;
 
 use crate::ProverInputs;

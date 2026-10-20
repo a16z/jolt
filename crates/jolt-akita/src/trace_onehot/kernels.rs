@@ -17,7 +17,7 @@ use akita_pcs::custom_source::{
 };
 use akita_pcs::CpuBackend;
 use akita_types::{FpExtEncoding, RingVec};
-use jolt_field::ExtField;
+use jolt_algebra::ExtField;
 
 use super::commit::commit_columns;
 use super::decomposition::{decompose_fold_columns_with_mode, DecomposeRotationMode};

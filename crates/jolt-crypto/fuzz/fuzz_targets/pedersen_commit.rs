@@ -10,7 +10,7 @@
 use std::sync::OnceLock;
 
 use jolt_crypto::{Bn254, Bn254G1, Pedersen, PedersenSetup, VectorCommitment};
-use jolt_field::{CanonicalEncoding, Fr, Ring};
+use jolt_algebra::{CanonicalEncoding, Fr, Ring};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

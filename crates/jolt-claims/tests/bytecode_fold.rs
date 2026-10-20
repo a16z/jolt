@@ -1,9 +1,9 @@
+use jolt_algebra::{Fr, One, Ring, Zero};
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     read_raf_fold_stage_values, BytecodeReadRafStageValueInputs, BYTECODE_STAGE_GAMMA_COUNTS,
 };
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use jolt_claims::protocols::jolt::geometry::dimensions::PointGeometryError;
-use jolt_field::{Fr, One, Ring, Zero};
 use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands};
 use rayon::ThreadPoolBuilder;
 

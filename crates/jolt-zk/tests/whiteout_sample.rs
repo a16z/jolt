@@ -4,7 +4,7 @@
     clippy::unwrap_used,
     reason = "sampled coefficients are canonical field elements"
 )]
-use jolt_field::{CanonicalEncoding, Fp64, Prime128Offset275, Zero};
+use jolt_algebra::{CanonicalEncoding, Fp64, Prime128Offset275, Zero};
 use jolt_zk::whiteout::sample_zero_constant_term;
 use rand::rngs::StdRng;
 use rand::SeedableRng;

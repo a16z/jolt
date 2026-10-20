@@ -13,10 +13,10 @@
 
 use std::marker::PhantomData;
 
-use jolt_field::parallel::*;
-use jolt_field::ring::cyclotomic::BalancedDecomposePow2Params;
-use jolt_field::tables::{q128_primes, validate_profile_crt_ring_degree, Q128_MAX_RING_D};
-use jolt_field::{
+use jolt_algebra::parallel::*;
+use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+use jolt_algebra::tables::{q128_primes, validate_profile_crt_ring_degree, Q128_MAX_RING_D};
+use jolt_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, CanonicalEncoding, CrtNttParamSet,
     CyclotomicCrtNtt, CyclotomicRing, Field,
 };

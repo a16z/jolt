@@ -18,10 +18,10 @@
 //! through the recorder.
 
 #[cfg(feature = "committed")]
-use jolt_crypto::VectorCommitment;
+use jolt_algebra::JoltField;
+use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(feature = "committed")]
-use jolt_field::JoltField;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_crypto::VectorCommitment;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{Channel, PadSlots, ProverTranscript, Sponge};
 #[cfg(feature = "committed")]

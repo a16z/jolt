@@ -1,7 +1,7 @@
 //! The private-message seam: witness-dependent field messages, which masked
 //! mode hides behind pads and clear mode exchanges as they are.
 
-use jolt_field::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
 
 use crate::{Channel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 

@@ -157,11 +157,11 @@ mod stage7 {
 mod twin_tests {
     use core::marker::PhantomData;
 
+    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::{
         JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
-    use jolt_field::{Fr, JoltField, Ring};
     use jolt_kernels::{
         KernelContext, KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs,
         SumcheckKernel, SumcheckKernelError,

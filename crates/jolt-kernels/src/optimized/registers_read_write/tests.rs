@@ -1,8 +1,8 @@
+use jolt_algebra::{Fr, Ring};
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     ReadWriteDimensions, REGISTER_ADDRESS_BITS,
 };
 use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-use jolt_field::{Fr, Ring};
 use jolt_poly::Polynomial;
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChallenges, RegistersReadWriteChecking, RegistersReadWriteInputClaims,

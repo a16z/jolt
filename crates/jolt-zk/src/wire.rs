@@ -9,8 +9,8 @@
 //! transcript from the stages that produced them, and its remaining rows are
 //! fixed padding.
 
+use jolt_algebra::{CanonicalDecode, JoltField};
 use jolt_crypto::VectorCommitmentOpening;
-use jolt_field::{CanonicalDecode, JoltField};
 use jolt_transcript::{ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 
 use crate::BlindFoldDimensions;

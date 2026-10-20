@@ -1,4 +1,4 @@
-//! Prover-only Metal support for `jolt-field`.
+//! Prover-only Metal support for `jolt-algebra`.
 //!
 //! This crate owns the Metal runtime and the MSL field arithmetic shared by
 //! Jolt's and Akita's GPU provers. It never enters a verifier dependency graph. On non-macOS targets

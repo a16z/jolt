@@ -13,12 +13,12 @@ use std::sync::Arc;
 
 #[cfg(feature = "allocative")]
 use allocative::{Allocative, Key, Visitor};
+use jolt_algebra::JoltField;
 #[cfg(all(feature = "field-inline", not(feature = "akita")))]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
@@ -606,7 +606,7 @@ impl Allocative for ProofSession {
 
 #[cfg(test)]
 mod kernel_slots_derive_tests {
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     use super::*;
 

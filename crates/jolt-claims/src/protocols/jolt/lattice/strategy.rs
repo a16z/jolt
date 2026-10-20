@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_openings::OpeningsError;
 
 use super::super::JoltCommittedPolynomial;
@@ -212,7 +212,7 @@ fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     fn shape(log_t: usize) -> OneHotTraceShape {
         OneHotTraceShape {

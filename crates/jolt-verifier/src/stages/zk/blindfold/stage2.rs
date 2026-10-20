@@ -296,11 +296,11 @@ fn bake_product_weights<F: JoltField>(
 mod tests {
     use super::*;
     use crate::stages::stage2::outputs::FieldRegistersProductOutputClaims;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::spartan::{
         product_outer_opening, product_should_branch_outer_opening,
         product_should_jump_outer_opening,
     };
-    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

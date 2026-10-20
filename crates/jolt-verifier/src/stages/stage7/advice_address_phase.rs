@@ -12,6 +12,7 @@
 //! function of the reduction's final opening point, which `derive_output_term`
 //! recovers from the output claims.
 
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::cycle_phase_advice_opening;
 use jolt_claims::protocols::jolt::relations;
@@ -24,7 +25,6 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 
 use crate::stages::relations::ConcreteSumcheck;
 #[cfg(not(feature = "akita"))]

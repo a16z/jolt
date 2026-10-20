@@ -10,12 +10,12 @@
 //! type check cheap shape/range errors needed for memory safety, but they do
 //! not re-validate every sampler invariant on the hot path.
 //!
-//! This module deliberately depends only on `jolt-field`; it does not pull in
+//! This module deliberately depends only on `jolt-algebra`; it does not pull in
 //! the transcript layer or the sampler.
 
 use crate::CryptoError;
 
-use jolt_field::{ExtField, Field, Ring};
+use jolt_algebra::{ExtField, Field, Ring};
 use smallvec::SmallVec;
 
 use crate::challenge::{D64_L2_OP_NORM_PM1_COUNT, D64_L2_OP_NORM_PM2_COUNT};
@@ -211,7 +211,7 @@ impl SparseChallenge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128Offset275;
+    use jolt_algebra::Prime128Offset275;
 
     type F = Prime128Offset275;
     const D: usize = 4;

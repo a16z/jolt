@@ -28,7 +28,7 @@ use jolt_claims::{
     },
     Source, Term,
 };
-use jolt_field::{Fr, Ring};
+use jolt_algebra::{Fr, Ring};
 use jolt_verifier::stages::zk::blindfold::evaluate_mapped_expression;
 use libfuzzer_sys::fuzz_target;
 

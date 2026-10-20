@@ -40,8 +40,8 @@ mod metal {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
-    use jolt_field::solinas::Prime128OffsetA7F7;
-    use jolt_field::Zero;
+    use jolt_algebra::solinas::Prime128OffsetA7F7;
+    use jolt_algebra::Zero;
     use jolt_metal::runtime::{Batch, Binding, Device, DeviceBuffer, Grid};
 
     use super::support::{dispatch, elements, library, pipeline, threadgroup, words};

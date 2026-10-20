@@ -4,12 +4,12 @@
     reason = "shared integration-test harness is intentionally broader than each test file"
 )]
 
+use jolt_algebra::{CanonicalBytes, Field, Fr, Ring};
 use jolt_claims::r1cs::ClaimSourceTable;
 use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
-use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
@@ -122,7 +122,7 @@ pub fn f(value: u64) -> F {
 pub fn rng_field(rng: &mut impl RngCore) -> F {
     let mut bytes = [0u8; 32];
     rng.fill_bytes(&mut bytes);
-    <F as jolt_field::CanonicalEncoding>::from_bytes_le_reduced(&bytes)
+    <F as jolt_algebra::CanonicalEncoding>::from_bytes_le_reduced(&bytes)
 }
 
 pub fn inverse(value: F) -> F {

@@ -17,7 +17,7 @@
 //!   2^64 * FieldRdValue`. RV64 row 12 and the `RangeCheck` lookup bound
 //!   the advice limb below 2^64; canonicality belongs to the guest readout.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_r1cs::{ConstraintMatrices, SparseRow};
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
@@ -231,7 +231,7 @@ pub fn field_inline_trace_constraints<F: JoltField>() -> ConstraintMatrices<F> {
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use jolt_field::{Field, Fr, Ring};
+    use jolt_algebra::{Field, Fr, Ring};
     use num_traits::Zero;
 
     fn witness(field_rs1: Fr, field_rs2: Fr, field_rd: Fr, flags: &[(usize, Fr)]) -> Vec<Fr> {

@@ -8,7 +8,7 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 [features]
 default = []
 parallel = [
-  "jolt-field/parallel",
+  "jolt-algebra/parallel",
   "jolt-poly/parallel",
   "jolt-crypto?/parallel",
 ]
@@ -23,7 +23,7 @@ workspace = true
 
 [dependencies]
 jolt-crypto = { path = "../jolt-crypto", default-features = false, optional = true }
-jolt-field = { path = "../jolt-field", default-features = false }
+jolt-algebra = { path = "../jolt-algebra", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 jolt-r1cs = { path = "../jolt-r1cs", default-features = false, optional = true }
 jolt-transcript = { path = "../jolt-transcript", default-features = false }
@@ -35,7 +35,7 @@ thiserror.workspace = true
 [dev-dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
 jolt-crypto = { workspace = true, features = ["bn254"] }
-jolt-field = { workspace = true, features = ["bn254", "solinas", "binary"] }
+jolt-algebra = { workspace = true, features = ["bn254", "solinas", "binary"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",

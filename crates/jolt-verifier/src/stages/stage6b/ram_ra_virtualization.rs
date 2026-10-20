@@ -7,6 +7,7 @@
 //! reduced opening point. Its only public, `EqCycle`, ties the produced cycle to
 //! the reduced cycle.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
@@ -16,7 +17,6 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RamRaVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;

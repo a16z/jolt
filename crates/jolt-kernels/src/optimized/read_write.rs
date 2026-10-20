@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::ReadWriteDimensions;
-use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -184,7 +184,7 @@ impl<F: JoltField, R: ConcreteSumcheck<F>> SumcheckKernel<F> for RamAddressKerne
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     use super::*;
 

@@ -3,8 +3,8 @@
 use crate::challenge::{SparseChallenge, SparseChallengePositions};
 use crate::CryptoError;
 #[cfg(feature = "parallel")]
-use jolt_field::parallel::*;
-use jolt_field::{ExtField, Field, Ring};
+use jolt_algebra::parallel::*;
+use jolt_algebra::{ExtField, Field, Ring};
 use std::sync::Arc;
 
 #[cfg(feature = "parallel")]
@@ -306,7 +306,7 @@ impl Challenges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128Offset275;
+    use jolt_algebra::Prime128Offset275;
 
     type F = Prime128Offset275;
 

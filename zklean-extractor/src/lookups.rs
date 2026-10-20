@@ -108,7 +108,7 @@ mod test {
     use super::*;
     use crate::util::{arb_field_elem, Environment};
 
-    use jolt_field::{Fr, JoltField};
+    use jolt_algebra::{Fr, JoltField};
 
     use proptest::{collection::vec, prelude::*};
 

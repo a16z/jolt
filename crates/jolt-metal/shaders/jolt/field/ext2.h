@@ -1,10 +1,10 @@
 // jolt::Ext2<F>: the quadratic extension F[u] / (u^2 - 2), bit-exact with
-// jolt_field::solinas::Ext2<F> (FpExt2<F, TwoNr>).
+// jolt_algebra::solinas::Ext2<F> (FpExt2<F, TwoNr>).
 //
 // The formulas follow crates/jolt-algebra/src/solinas/ext.rs. F[u] / (u^2 - 2)
 // is a field exactly when p = +-3 (mod 8); every registered pseudo-Mersenne
 // prime has p = 5 (mod 8). The arithmetic here does not depend on that, and
-// agrees with jolt_field for any F.
+// agrees with jolt_algebra for any F.
 //
 // Representation: the coefficients c0 and c1 of c0 + c1 u, in that order,
 // the layout of the CPU's [F; 2]. F is any field type with the operators of

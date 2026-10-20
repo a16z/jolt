@@ -10,7 +10,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use super::ajtai::field_bits;
 use crate::CryptoError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// The statistical security parameter λ: the hiding entropy exceeds the
 /// image's bit length by `2λ`.

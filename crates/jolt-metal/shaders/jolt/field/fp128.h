@@ -1,5 +1,5 @@
 // jolt::Fp128<C>: the prime field p = 2^128 - C for odd C < 2^32, bit-exact
-// with jolt_field::solinas::Fp128<P>.
+// with jolt_algebra::solinas::Fp128<P>.
 //
 // The algorithms and their names follow crates/jolt-algebra/src/solinas/fp128.rs:
 // a schoolbook widening product, a first fold of the high 128 bits through

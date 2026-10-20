@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 use super::super::{FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial};
 
@@ -168,7 +168,7 @@ pub(crate) fn field_rd_value_product() -> FieldInlineOpeningId {
 #[expect(clippy::panic, reason = "tests may unwind via panic")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     fn inputs() -> FieldProductLaneInputs<Fr> {
         FieldProductLaneInputs {

@@ -33,7 +33,7 @@ host = [
   "dep:common",
   "dep:jolt-crypto",
   "dep:jolt-dory",
-  "dep:jolt-field",
+  "dep:jolt-algebra",
   "dep:jolt-host",
   "dep:jolt-openings",
   "dep:jolt-program",
@@ -62,7 +62,7 @@ guest-verifier = [
   "dep:common",
   "dep:jolt-crypto",
   "dep:jolt-dory",
-  "dep:jolt-field",
+  "dep:jolt-algebra",
   "dep:jolt-verifier",
 ]
 
@@ -108,7 +108,7 @@ bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
-jolt-field = { workspace = true, optional = true }
+jolt-algebra = { workspace = true, optional = true }
 jolt-host = { workspace = true, optional = true }
 jolt-openings = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }

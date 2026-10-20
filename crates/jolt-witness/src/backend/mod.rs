@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use jolt_algebra::Field;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_field::Field;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 
 #[cfg(feature = "field-inline")]

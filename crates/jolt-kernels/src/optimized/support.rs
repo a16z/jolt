@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use jolt_field::{Accumulator, JoltField};
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
 };
@@ -1083,8 +1083,8 @@ pub(crate) fn bind_raw_twice<F: JoltField>(
 #[cfg(test)]
 mod product_grid_tests {
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
-    use jolt_field::{Accumulator, Fr, JoltField};
+    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::{Accumulator, Fr, JoltField};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 

@@ -13,11 +13,11 @@ This page focuses on `Prime128OffsetA7F7`. The
 [scalar Fp64 page](field-kernels-fp64.md) describes the separate
 `Prime64Offset59` proofs.
 
-The `jolt-field/asm` feature opts into these architecture kernels. A `solinas`
+The `jolt-algebra/asm` feature opts into these architecture kernels. A `solinas`
 build without `asm` uses portable Rust even on AArch64 and x86-64. The
 inspection-only `fp128-proof-linkage` feature implies `asm`.
 
-No product crate in this workspace enables `jolt-field/asm` in this change.
+No product crate in this workspace enables `jolt-algebra/asm` in this change.
 The benchmark, fuzz, and proof workflows enable it explicitly to validate the
 library option. A product that adopts the Solinas backend must make a separate
 rollout decision and forward `asm` from its own feature configuration.
@@ -427,8 +427,8 @@ The result relies on the following assumptions.
 
 Jolt owns the kernel, theorem, proof object, and inspection witness. This
 does not yet prove every executable that depends on Jolt. In particular, the
-`akita` path (`jolt-akita` and the `akita` feature of `jolt-prover`) now uses the shared `jolt_field::Fp128` at
-`Prime128OffsetA7F7`, but it enables only `jolt-field/solinas`, not `asm`, so
+`akita` path (`jolt-akita` and the `akita` feature of `jolt-prover`) now uses the shared `jolt_algebra::Fp128` at
+`Prime128OffsetA7F7`, but it enables only `jolt-algebra/solinas`, not `asm`, so
 it runs the portable Rust bodies rather than the proved kernels. These
 theorems do not cover that path. A production rollout must forward `asm` from
 the product's feature configuration and inspect that final binary before

@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Shared-field identity check for the post-cutover workspace.
 #
-# The shared-field cutover chain is Jolt #1810 (rebuilt `jolt-field`), Akita
+# The shared-field cutover chain is Jolt #1810 (rebuilt `jolt-field`, since renamed `jolt-algebra`), Akita
 # #447 (Akita rebound onto it and deleted `akita-field`), and this PR, Jolt
-# #1796 (downstream completion). The workspace must resolve exactly one `jolt-field` package
+# #1796 (downstream completion). The workspace must resolve exactly one `jolt-algebra` package
 # identity — the workspace path, unified with Akita's Git pin via the
 # `[patch]` table in the root manifest — and no `akita-field` identity at
 # all: the crate no longer exists, so any occurrence means a stale pre-cutover
@@ -19,11 +19,11 @@ export CARGO_TERM_COLOR=always
 
 metadata="$(cargo metadata --format-version 1 --locked)"
 
-jolt_identities="$(jq -r '.packages[] | select(.name == "jolt-field") | .id' <<<"$metadata" | sort -u)"
+jolt_identities="$(jq -r '.packages[] | select(.name == "jolt-algebra") | .id' <<<"$metadata" | sort -u)"
 jolt_count="$(grep -c . <<<"$jolt_identities" || true)"
 
 if [[ "$jolt_count" -ne 1 ]]; then
-  echo "error: expected exactly one jolt-field package identity, found $jolt_count" >&2
+  echo "error: expected exactly one jolt-algebra package identity, found $jolt_count" >&2
   printf '%s\n' "$jolt_identities" >&2
   exit 1
 fi

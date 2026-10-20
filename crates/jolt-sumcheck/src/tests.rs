@@ -8,8 +8,8 @@
     reason = "tests may panic on assertion failures and index fixture data"
 )]
 
+use jolt_algebra::{CanonicalBytes, Field, Fr, Ring};
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{
     Blake2b512, Channel, PrivateChannel, ProtocolId, ProverTranscript, TranscriptError,

@@ -11,10 +11,10 @@
 //! and RAM openings after the rounds, while a committed proof commits all of
 //! them in the claims struct's declaration order.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::opening::RamInitialOpening;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
@@ -238,6 +238,7 @@ where
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::relations::registers::{
         FieldRegistersReadWriteChallenges, FieldRegistersReadWriteInputClaims,
     };
@@ -246,7 +247,6 @@ mod field_inline_round_trip {
     };
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
@@ -435,9 +435,9 @@ mod field_inline_round_trip {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use jolt_algebra::Fr;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_verifier::JoltSponge;
 
     use super::*;

@@ -4,8 +4,8 @@
 
 use std::time::Duration;
 
-use jolt_field::solinas::{Ext2, Fp128, Fp64};
-use jolt_field::Ring;
+use jolt_algebra::solinas::{Ext2, Fp128, Fp64};
+use jolt_algebra::Ring;
 use jolt_metal::runtime::{
     host_name, Batch, Binding, Device, Grid, LibrarySpec, Pipeline, ShaderLibrary,
 };

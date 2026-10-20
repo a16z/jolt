@@ -129,7 +129,7 @@ macro_rules! impl_jolt_group_wrapper {
 
         impl ::serde::Serialize for $wrapper {
             fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.serialize_bytes(&::jolt_field::CanonicalBytes::to_bytes_le_vec(self))
+                serializer.serialize_bytes(&::jolt_algebra::CanonicalBytes::to_bytes_le_vec(self))
             }
         }
 
@@ -150,7 +150,7 @@ macro_rules! impl_jolt_group_wrapper {
                 // Exact-size gate: `deserialize_compressed` stops after one
                 // point and would silently accept trailing bytes, giving one
                 // group element many encodings.
-                let expected_len = <Self as ::jolt_field::CanonicalBytes>::NUM_BYTES;
+                let expected_len = <Self as ::jolt_algebra::CanonicalBytes>::NUM_BYTES;
                 if bytes.len() != expected_len {
                     return Err(format!(
                         "{} encoding must be exactly {expected_len} bytes, got {}",
@@ -163,7 +163,7 @@ macro_rules! impl_jolt_group_wrapper {
                     .map_err(|error| error.to_string())?;
                 // arkworks returns the identity for any x under the infinity
                 // flag; only the canonical encoding may decode.
-                if <Self as ::jolt_field::CanonicalBytes>::to_bytes_le_vec(&point) != bytes {
+                if <Self as ::jolt_algebra::CanonicalBytes>::to_bytes_le_vec(&point) != bytes {
                     return Err(format!(
                         "{} encoding is not canonical",
                         stringify!($wrapper)
@@ -174,7 +174,7 @@ macro_rules! impl_jolt_group_wrapper {
         }
 
         /// The compressed arkworks encoding.
-        impl ::jolt_field::CanonicalBytes for $wrapper {
+        impl ::jolt_algebra::CanonicalBytes for $wrapper {
             const NUM_BYTES: usize = $compressed_len;
 
             fn to_bytes_le(&self, out: &mut [u8]) {
@@ -188,11 +188,11 @@ macro_rules! impl_jolt_group_wrapper {
 
         impl ::spongefish::Encoding<[u8]> for $wrapper {
             fn encode(&self) -> impl AsRef<[u8]> {
-                ::jolt_field::narg::encode(self)
+                ::jolt_algebra::narg::encode(self)
             }
         }
 
-        impl ::jolt_field::CanonicalDecode for $wrapper {
+        impl ::jolt_algebra::CanonicalDecode for $wrapper {
             fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
                 Self::decode_compressed(bytes).ok()
             }
@@ -200,7 +200,7 @@ macro_rules! impl_jolt_group_wrapper {
 
         impl ::spongefish::NargDeserialize for $wrapper {
             fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
-                ::jolt_field::narg::deserialize(buf)
+                ::jolt_algebra::narg::deserialize(buf)
             }
         }
 
@@ -221,12 +221,12 @@ macro_rules! impl_jolt_group_wrapper {
             }
 
             #[inline]
-            fn scalar_mul<F: ::jolt_field::JoltField>(&self, scalar: &F) -> Self {
+            fn scalar_mul<F: ::jolt_algebra::JoltField>(&self, scalar: &F) -> Self {
                 Self(self.0 * super::field_to_fr(scalar))
             }
 
             #[inline]
-            fn msm<F: ::jolt_field::JoltField>(bases: &[Self], scalars: &[F]) -> Self {
+            fn msm<F: ::jolt_algebra::JoltField>(bases: &[Self], scalars: &[F]) -> Self {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
                 // Arkworks' msm_bigint silently truncates to the shorter slice,
@@ -267,7 +267,7 @@ use ark_bn254::Bn254 as ArkBn254;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField as _;
-use jolt_field::JoltField;
+use jolt_algebra::{Fr, JoltField};
 
 use crate::PairingGroup;
 
@@ -295,7 +295,7 @@ impl Bn254 {
 }
 
 impl PairingGroup for Bn254 {
-    type ScalarField = jolt_field::Fr;
+    type ScalarField = Fr;
     type G1 = Bn254G1;
     type G2 = Bn254G2;
     type GT = Bn254GT;
@@ -319,14 +319,14 @@ impl PairingGroup for Bn254 {
 
 /// Converts a generic `JoltField` element to an arkworks `Fr` via serialization.
 ///
-/// This is the bridge between jolt-field's backend-agnostic `JoltField` trait and
+/// This is the bridge between jolt-algebra's backend-agnostic `JoltField` trait and
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
 ///
 /// WARNING: in release builds, values `>= Fr::MODULUS` are silently reduced
 /// mod r (`from_le_bytes_mod_order`). Callers must pass scalars from a field
-/// with modulus <= BN254 Fr — in practice jolt-field's `Fr` itself. Notably
-/// `jolt_field::Fq` (BN254 base field, larger modulus) implements `Field` and
+/// with modulus <= BN254 Fr — in practice jolt-algebra's `Fr` itself. Notably
+/// `jolt_algebra::Fq` (BN254 base field, larger modulus) implements `Field` and
 /// must NOT be used as a scalar here. A release-mode range check is
 /// deliberately omitted: this function sits in per-element MSM/GLV hot loops,
 /// and the scalar type is fixed at compile time by internal callers, not by
@@ -355,7 +355,7 @@ pub(crate) fn field_to_fr<F: JoltField>(f: &F) -> ark_bn254::Fr {
 #[expect(clippy::expect_used, reason = "tests may fail loudly")]
 mod tests {
     use ark_serialize::CanonicalSerialize;
-    use jolt_field::{CanonicalBytes, CanonicalDecode};
+    use jolt_algebra::{CanonicalBytes, CanonicalDecode};
 
     use super::{Bn254, Bn254G1, Bn254G2};
     use crate::JoltGroup;

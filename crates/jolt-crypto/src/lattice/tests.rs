@@ -1,7 +1,7 @@
 #![expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 
-use jolt_field::ring::cyclotomic::BalancedDecomposePow2Params;
-use jolt_field::{CanonicalBytes, CyclotomicRing, Field, Prime128OffsetA7F7, Ring};
+use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+use jolt_algebra::{CanonicalBytes, CyclotomicRing, Field, Prime128OffsetA7F7, Ring};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use shake::digest::{ExtendableOutput, Update, XofReader};
@@ -183,7 +183,7 @@ fn check_commit<const D: usize>(
     let mut columns = Vec::new();
     for ring in &message {
         let mut digits = vec![0i8; levels * D];
-        jolt_field::balanced_decompose_coefficients_pow2_i8_into(
+        jolt_algebra::balanced_decompose_coefficients_pow2_i8_into(
             ring.coefficients(),
             &mut digits,
             &params,

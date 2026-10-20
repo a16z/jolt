@@ -14,9 +14,9 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
-use jolt_field::JoltField;
 use jolt_poly::BindingOrder;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_witness::JoltWitnessPlane;

@@ -9,9 +9,9 @@ description = "R1CS constraint data structures for the Jolt proving system"
 workspace = true
 
 [dependencies]
-jolt-field = { path = "../jolt-field", default-features = false }
+jolt-algebra = { path = "../jolt-algebra", default-features = false }
 serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-algebra = { path = "../jolt-algebra", features = ["bn254"] }

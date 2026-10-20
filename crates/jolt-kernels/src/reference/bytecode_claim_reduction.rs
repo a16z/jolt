@@ -2,7 +2,7 @@
 //! summand is the committed row/lane grid times the lane-weight/address-equality
 //! grid, bound over the canonical two-phase precommitted schedule.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhase;
 use jolt_witness::JoltWitnessPlane;
 

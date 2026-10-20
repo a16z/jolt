@@ -12,7 +12,7 @@ workspace = true
 # Whiteout's verifier-side building blocks (the constant-term lift, the
 # Σ-protocol's segment table and parameters). Off by
 # default so the Dory verifier never compiles the lattice ring (I6).
-whiteout = ["jolt-crypto/lattice", "jolt-field/solinas"]
+whiteout = ["jolt-algebra/solinas", "jolt-crypto/lattice"]
 # Whiteout's prover-only pieces (the zero-constant-term mask sampler, the
 # witness alphabet check, the rejection rule), kept out
 # of every verifier build.
@@ -21,7 +21,7 @@ whiteout-prover = ["jolt-crypto/sample", "whiteout"]
 [dependencies]
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
-jolt-field.workspace = true
+jolt-algebra.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
@@ -32,7 +32,7 @@ rayon.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-jolt-field = { workspace = true, features = ["bn254"] }
+jolt-algebra = { workspace = true, features = ["bn254"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",

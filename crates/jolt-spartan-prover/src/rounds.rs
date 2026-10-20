@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_spartan_verifier::{
     inner_relation, outer_relation, SpartanError, SpartanKey, INNER_DEGREE, OUTER_DEGREE,

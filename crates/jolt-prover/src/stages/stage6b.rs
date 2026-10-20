@@ -19,11 +19,11 @@
 //! to the bytecode read-RAF points (which fires when the bytecode address
 //! width is a multiple of the committed chunk width).
 
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
@@ -210,6 +210,7 @@ where
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::{
         FieldRegistersIncClaimReductionChallenges, FieldRegistersIncClaimReductionInputClaims,
     };
@@ -218,7 +219,6 @@ mod field_inline_round_trip {
     };
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
@@ -379,10 +379,10 @@ mod field_inline_round_trip {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use jolt_algebra::Fr;
     use jolt_claims::OutputClaims;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_verifier::JoltSponge;
 
     use super::*;

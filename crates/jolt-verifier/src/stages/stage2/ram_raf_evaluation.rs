@@ -8,6 +8,7 @@
 //! The produced `ram_ra` opening point is `[r_address(log_k) ‖ tau_low(log_t)]`;
 //! `UnmapAddress` reads only the address prefix.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
@@ -17,7 +18,6 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RamRafEvaluationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -157,7 +157,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRafEvaluation<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     #[test]
     fn instance_point_offset_spans_the_batch_tail() {

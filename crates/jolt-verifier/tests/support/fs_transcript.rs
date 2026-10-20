@@ -30,7 +30,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_transcript::DuplexSpongeInterface;
 use jolt_transcript::{
     is_fork_domain, Blake2b512, Channel, ProtocolId, Sponge, VerifierTranscript,

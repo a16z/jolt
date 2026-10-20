@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use std::fmt::Debug;
 
 use super::group::JoltGroup;

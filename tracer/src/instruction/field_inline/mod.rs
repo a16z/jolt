@@ -26,10 +26,10 @@ pub use mul::FIELD_MUL;
 pub use sub::FIELD_SUB;
 
 #[cfg(not(feature = "fp128-field-inline"))]
-use jolt_field::Fr;
+use jolt_algebra::Fr;
 #[cfg(feature = "fp128-field-inline")]
-use jolt_field::Prime128OffsetA7F7;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::Prime128OffsetA7F7;
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_platform::FieldInlineModulus;
 use jolt_program::field_inline::FieldEncodedValue;
 
@@ -92,7 +92,7 @@ fn encode_field<F: CanonicalEncoding>(value: F) -> FieldEncodedValue {
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::{CanonicalBytes, CanonicalDecode, Ring};
+    use jolt_algebra::{CanonicalBytes, CanonicalDecode, Ring};
 
     use super::*;
 

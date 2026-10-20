@@ -3,8 +3,8 @@
 //! string is the [`JoltProof`]; Akita's opening messages are its tail.
 
 use common::jolt_device::JoltDevice;
+use jolt_algebra::JoltField;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };

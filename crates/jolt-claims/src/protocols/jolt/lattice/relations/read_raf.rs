@@ -23,7 +23,7 @@
 //! disjointness check on the public bytecode re-verifies this per row at
 //! preprocessing.
 
-use jolt_field::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::bytecode::{
@@ -228,7 +228,7 @@ impl SymbolicSumcheck for LatticeReadRafCyclePhaseCommitted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn composite_input_claims_resolve_base_and_inc() {

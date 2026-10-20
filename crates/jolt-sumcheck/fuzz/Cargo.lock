@@ -447,7 +447,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-field"
+name = "jolt-algebra"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
@@ -465,7 +465,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
@@ -479,7 +479,7 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "jolt-transcript",
  "serde",
@@ -491,7 +491,7 @@ dependencies = [
 name = "jolt-sumcheck-fuzz"
 version = "0.0.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
@@ -505,7 +505,7 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ff",
- "jolt-field",
+ "jolt-algebra",
  "light-poseidon",
  "rand 0.8.7",
  "rand_core 0.6.4",

@@ -1,5 +1,5 @@
+use jolt_algebra::Fr;
 use jolt_crypto::{Bn254G1, Bn254G2, JoltGroup};
-use jolt_field::Fr;
 use jolt_transcript::{Channel, TranscriptError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -109,8 +109,8 @@ pub enum HyperKZGError {
     reason = "test fixture serialization fails loudly"
 )]
 mod tests {
+    use jolt_algebra::{One, Ring, Zero};
     use jolt_crypto::Bn254;
-    use jolt_field::{One, Ring, Zero};
     use jolt_transcript::{Blake2b512, ProtocolId, VerifierTranscript};
 
     use super::*;

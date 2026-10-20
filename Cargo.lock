@@ -103,13 +103,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-challenges"
-version = "0.1.0"
-dependencies = [
- "jolt-crypto",
-]
-
-[[package]]
 name = "akita-config"
 version = "0.1.0"
 dependencies = [
@@ -2549,7 +2542,7 @@ name = "field-ops"
 version = "0.1.0"
 dependencies = [
  "field-ops-guest",
- "jolt-field",
+ "jolt-algebra",
  "jolt-program",
  "jolt-prover",
  "jolt-sdk",
@@ -3145,8 +3138,6 @@ dependencies = [
 name = "jolt-akita"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
- "akita-challenges",
  "akita-config",
  "akita-error",
  "akita-params",
@@ -3155,9 +3146,9 @@ dependencies = [
  "akita-schedules",
  "akita-types",
  "bincode 2.0.1",
+ "jolt-algebra",
  "jolt-claims",
  "jolt-crypto",
- "jolt-field",
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
@@ -3199,8 +3190,8 @@ dependencies = [
  "bincode 2.0.1",
  "blake2 0.11.0",
  "derive_more",
+ "jolt-algebra",
  "jolt-claims-derive",
- "jolt-field",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
@@ -3236,7 +3227,7 @@ dependencies = [
  "ark-std 0.5.0",
  "bincode 2.0.1",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "keccak 0.1.6",
  "libm",
@@ -3269,8 +3260,8 @@ dependencies = [
  "criterion",
  "dory-pcs",
  "jolt-akita",
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "jolt-openings",
  "jolt-optimizations",
  "jolt-poly",
@@ -3298,10 +3289,10 @@ dependencies = [
  "hex",
  "iai-callgrind",
  "iai-callgrind-runner",
+ "jolt-algebra",
  "jolt-crypto",
  "jolt-dory",
  "jolt-eval-macros",
- "jolt-field",
  "jolt-host",
  "jolt-inlines-keccak256",
  "jolt-inlines-secp256k1",
@@ -3338,19 +3329,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-field"
-version = "0.1.0"
-dependencies = [
- "jolt-algebra",
-]
-
-[[package]]
 name = "jolt-host"
 version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "common",
- "jolt-field",
+ "jolt-algebra",
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",
@@ -3365,8 +3349,8 @@ name = "jolt-hyperkzg"
 version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
@@ -3510,9 +3494,9 @@ dependencies = [
  "allocative",
  "common",
  "jolt-akita",
+ "jolt-algebra",
  "jolt-claims",
  "jolt-dory",
- "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
@@ -3555,7 +3539,7 @@ dependencies = [
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-riscv",
  "rand 0.8.7",
  "serde",
@@ -3569,7 +3553,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "objc2",
  "objc2-foundation",
  "objc2-metal",
@@ -3581,9 +3565,9 @@ dependencies = [
 name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-crypto",
  "jolt-dory",
- "jolt-field",
  "jolt-poly",
  "jolt-transcript",
  "rand_chacha 0.3.1",
@@ -3628,7 +3612,7 @@ dependencies = [
  "allocative",
  "bincode 2.0.1",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "jolt-utils",
  "num-traits",
  "rand 0.8.7",
@@ -3685,10 +3669,10 @@ dependencies = [
  "clap",
  "common",
  "jolt-akita",
+ "jolt-algebra",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
- "jolt-field",
  "jolt-host",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
@@ -3721,7 +3705,7 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "serde",
  "thiserror 2.0.20",
 ]
@@ -3745,9 +3729,9 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "common",
+ "jolt-algebra",
  "jolt-crypto",
  "jolt-dory",
- "jolt-field",
  "jolt-host",
  "jolt-openings",
  "jolt-platform",
@@ -3777,9 +3761,9 @@ dependencies = [
 name = "jolt-spartan-prover"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-crypto",
  "jolt-dory",
- "jolt-field",
  "jolt-hyperkzg",
  "jolt-openings",
  "jolt-poly",
@@ -3794,7 +3778,7 @@ name = "jolt-spartan-verifier"
 version = "0.1.0"
 dependencies = [
  "blake2 0.11.0",
- "jolt-field",
+ "jolt-algebra",
  "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
@@ -3807,8 +3791,8 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
@@ -3845,7 +3829,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "light-poseidon",
  "rand 0.8.7",
  "rand_core 0.6.4",
@@ -3857,7 +3841,7 @@ dependencies = [
 name = "jolt-utils"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "num-traits",
  "rayon",
 ]
@@ -3871,11 +3855,11 @@ dependencies = [
  "blake2 0.11.0",
  "common",
  "jolt-akita",
+ "jolt-algebra",
  "jolt-claims",
  "jolt-claims-derive",
  "jolt-crypto",
  "jolt-dory",
- "jolt-field",
  "jolt-host",
  "jolt-lookup-tables",
  "jolt-openings",
@@ -3912,8 +3896,8 @@ name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
  "common",
+ "jolt-algebra",
  "jolt-claims",
- "jolt-field",
  "jolt-lookup-tables",
  "jolt-program",
  "jolt-riscv",
@@ -3937,9 +3921,9 @@ dependencies = [
 name = "jolt-zk"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-claims",
  "jolt-crypto",
- "jolt-field",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-sumcheck",
@@ -7005,7 +6989,7 @@ dependencies = [
  "fnv",
  "inventory",
  "itertools 0.15.0",
- "jolt-field",
+ "jolt-algebra",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-platform",
@@ -7792,8 +7776,8 @@ name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
  "common",
+ "jolt-algebra",
  "jolt-claims",
- "jolt-field",
  "jolt-r1cs",
  "jolt-riscv",
  "paste",
@@ -8013,8 +7997,8 @@ dependencies = [
  "build-fs-tree",
  "clap",
  "common",
+ "jolt-algebra",
  "jolt-claims",
- "jolt-field",
  "jolt-lookup-tables",
  "jolt-r1cs",
  "jolt-riscv",

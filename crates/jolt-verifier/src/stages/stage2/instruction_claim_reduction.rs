@@ -14,6 +14,7 @@
 //! below; the generated drivers absorb each aliased opening via its
 //! product-remainder source and enforce the wire copies equal it.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::{
     InstructionClaimReductionChallenges, InstructionClaimReductionInputClaims,
@@ -24,7 +25,6 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;

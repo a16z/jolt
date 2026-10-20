@@ -11,9 +11,9 @@
 //! proof session (`park_residue`) — each `prepare` reclaims its carry by
 //! move and mounts a fresh address-phase kernel over it.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]

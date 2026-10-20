@@ -24,10 +24,10 @@
 #[cfg(not(feature = "akita"))]
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, ProgramImageClaimReductionLayout};
-use jolt_field::JoltField;
 use jolt_poly::sparse_segments_mle_msb;
 #[cfg(not(feature = "akita"))]
 use jolt_poly::MultilinearPoly;

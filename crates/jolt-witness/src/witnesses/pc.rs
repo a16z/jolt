@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::{Extract, ToField, WitnessEnv};

@@ -1,8 +1,8 @@
-use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
 use akita_error::AkitaError;
 use akita_pcs::custom_source::{RootPolyShape, SubringCoefficientPackingPlan};
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalEncoding, ExtField, PseudoMersenne, Unreduced, Zero};
+use jolt_algebra::ring::WideCyclotomicRing;
+use jolt_algebra::{CanonicalEncoding, CyclotomicRing, ExtField, PseudoMersenne, Unreduced, Zero};
 use rayon::prelude::*;
 
 use super::source::{validate_dimension, TraceOneHotColumn};

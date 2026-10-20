@@ -3,9 +3,9 @@
 //! is the [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
+use jolt_algebra::CanonicalDecode;
+use jolt_algebra::{Accumulator, JoltField, WithAccumulator};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::CanonicalDecode;
-use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::Sponge;

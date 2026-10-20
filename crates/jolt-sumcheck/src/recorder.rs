@@ -18,10 +18,10 @@
 use std::marker::PhantomData;
 
 #[cfg(feature = "committed")]
-use jolt_crypto::VectorCommitment;
+use jolt_algebra::JoltField;
+use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(feature = "committed")]
-use jolt_field::JoltField;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_crypto::VectorCommitment;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{
     Channel, PadSlots, PrivateChannel, ProverTranscript, Sponge, TranscriptError,

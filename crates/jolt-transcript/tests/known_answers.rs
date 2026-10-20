@@ -4,7 +4,7 @@
 
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
-use jolt_field::{CanonicalBytes, Fr};
+use jolt_algebra::{CanonicalBytes, Fr};
 use jolt_transcript::{
     Blake2b512, Channel, Keccak, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
     VerifierTranscript,

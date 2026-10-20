@@ -1,7 +1,7 @@
 use common::jolt_device::JoltDevice;
+use jolt_algebra::Fr;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
-use jolt_field::Fr;
 use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig, ProverError};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::JoltSponge;

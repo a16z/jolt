@@ -9,7 +9,7 @@
 //! All tables are generic over `const XLEN: usize`. The supported word sizes
 //! are `XLEN = 64` (production) and `XLEN = 8` (full-hypercube tests).
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};

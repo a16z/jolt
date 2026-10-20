@@ -13,7 +13,7 @@
 use std::sync::OnceLock;
 
 use jolt_dory::{DoryCommitment, DoryScheme, DoryVerifierSetup};
-use jolt_field::{CanonicalDecode, Fr, Ring};
+use jolt_algebra::{CanonicalDecode, Fr, Ring};
 use jolt_openings::{CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{Blake2b512, ProtocolId, VerifierTranscript};
 use libfuzzer_sys::fuzz_target;

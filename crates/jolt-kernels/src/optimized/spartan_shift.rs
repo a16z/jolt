@@ -29,8 +29,8 @@
 //!   accumulation** (u32-split `fmadd_u64`) for the phase-2 PC folds, and
 //!   ring-accumulator `fmadd` for the field-by-field `Q` products.
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -479,9 +479,9 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPlusOnePolynomial;
     use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{

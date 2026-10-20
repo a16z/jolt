@@ -15,7 +15,7 @@
 //!   for zero randomness columns);
 //! - `u` the concatenation of the slice outputs.
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 use super::ajtai::AjtaiLevel;
 use crate::CryptoError;

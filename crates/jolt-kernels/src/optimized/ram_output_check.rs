@@ -27,9 +27,9 @@
 //! the zeros literally — matching the reference tier — and the engine's
 //! batched-polynomial trim reproduces the wire bytes.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -227,8 +227,8 @@ impl<F: JoltField> SumcheckKernel<F> for OutputCheckKernel<F> {
 mod tests {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, ReadWriteDimensions};
-    use jolt_field::{Fr, Ring};
     use jolt_program::execution::{JoltProgram, MemoryImage, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, PublicIoMemory, RAMPreprocessing,

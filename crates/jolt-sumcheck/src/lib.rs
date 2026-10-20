@@ -65,7 +65,7 @@
 //! # Dependency position
 //!
 //! ```text
-//! jolt-field      ─┐
+//! jolt-algebra    ─┐
 //! jolt-poly       ─┼─> jolt-sumcheck
 //! jolt-transcript ─┘
 //!
@@ -73,8 +73,8 @@
 //! ```
 //!
 //! Polynomial and clear sumcheck arithmetic is generic over
-//! [`Field`](jolt_field::Field); transcript paths additionally require
-//! [`CanonicalEncoding`](jolt_field::CanonicalEncoding) to send and draw field
+//! [`Field`](jolt_algebra::Field); transcript paths additionally require
+//! [`CanonicalEncoding`](jolt_algebra::CanonicalEncoding) to send and draw field
 //! elements. Optimized Jolt kernels and commitment backends retain their
 //! stronger capability bounds at their own integration points.
 //!

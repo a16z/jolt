@@ -10,13 +10,13 @@
 //! here.
 
 use common::jolt_device::JoltDevice;
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::geometry::committed_openings::proof_commitment_order;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, WitnessCommitment};
@@ -398,9 +398,9 @@ fn assemble_commitments<PCS: CommitmentScheme>(
 mod field_inline_tests {
     use super::*;
     use crate::stages::field_inline_fixtures::{field_arithmetic_backend, LOG_T};
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
     use jolt_dory::{DoryCommitment, DoryScheme};
-    use jolt_field::{Fr, Ring};
     use jolt_kernels::finish_streamed;
     use jolt_kernels::KernelError;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};

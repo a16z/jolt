@@ -2,7 +2,7 @@
 
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -613,8 +613,8 @@ impl<F: JoltField> Neg for Polynomial<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
-    use jolt_field::{Field, Ring};
+    use jolt_algebra::Fr;
+    use jolt_algebra::{Field, Ring};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 

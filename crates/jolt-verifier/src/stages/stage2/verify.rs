@@ -1,3 +1,4 @@
+use jolt_algebra::{CanonicalDecode, JoltField};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::{
@@ -8,7 +9,6 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_claims::NoChallenges;
-use jolt_field::{CanonicalDecode, JoltField};
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 

@@ -31,9 +31,9 @@ mod matrix {
     #[cfg(all(feature = "field-inline", feature = "akita"))]
     use jolt_akita::AkitaField as Field;
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
-    use jolt_field::Fr as Field;
+    use jolt_algebra::Fr as Field;
     #[cfg(feature = "field-inline")]
-    use jolt_field::Ring;
+    use jolt_algebra::Ring;
     #[cfg(feature = "field-inline")]
     use jolt_host::field_inline::canonical_limbs;
 
@@ -247,9 +247,9 @@ mod matrix {
 
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     mod mode {
+        use jolt_algebra::Fr;
         use jolt_crypto::{Bn254G1, Pedersen};
         use jolt_dory::DoryScheme;
-        use jolt_field::Fr;
         use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
         use jolt_verifier::JoltSponge;
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};

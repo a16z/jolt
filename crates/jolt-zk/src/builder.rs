@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_claims::Expr;
-use jolt_field::JoltField;
 use jolt_sumcheck::{
     CommittedOutputClaims, CommittedSumcheckConsistency, SumcheckDomainSpec, SumcheckStatement,
 };

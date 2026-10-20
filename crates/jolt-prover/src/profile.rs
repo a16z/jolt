@@ -45,11 +45,11 @@ use common::jolt_device::{MemoryConfig, MemoryLayout};
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
 #[cfg(not(feature = "akita"))]
+use jolt_algebra::Fr;
+#[cfg(not(feature = "akita"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(not(feature = "akita"))]
 use jolt_dory::DoryScheme;
-#[cfg(not(feature = "akita"))]
-use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 use jolt_akita::AkitaField;

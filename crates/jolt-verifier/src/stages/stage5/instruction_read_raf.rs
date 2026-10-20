@@ -7,6 +7,7 @@
 //! full instruction address is split across the virtual-RA opening points, so
 //! `derive_output_term` reconstructs it from the output opening cells.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafChallenges, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
@@ -18,7 +19,6 @@ use jolt_claims::protocols::jolt::{
     InstructionReadRafPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
     try_eq_mle, IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
@@ -218,9 +218,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::ConcreteSumcheck;
+    use jolt_algebra::{Fr, Ring as _};
     use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
     use jolt_claims::SymbolicSumcheck;
-    use jolt_field::{Fr, Ring as _};
 
     /// Locks the `expected_output_openings` invariant for the one stage-5 relation
     /// with a size-parameter-dependent shape: the openings the read-RAF output `Expr`

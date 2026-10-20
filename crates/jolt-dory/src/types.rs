@@ -2,8 +2,8 @@ use std::io::Cursor;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::backends::arkworks::{ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, Fr, JoltField};
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
-use jolt_field::{CanonicalBytes, CanonicalDecode, Fr};
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use spongefish::Encoding;
 use spongefish::NargDeserialize;
@@ -50,7 +50,7 @@ impl CanonicalBytes for DoryCommitment {
 
 impl Encoding<[u8]> for DoryCommitment {
     fn encode(&self) -> impl AsRef<[u8]> {
-        ::jolt_field::narg::encode(self)
+        ::jolt_algebra::narg::encode(self)
     }
 }
 
@@ -62,11 +62,11 @@ impl CanonicalDecode for DoryCommitment {
 
 impl NargDeserialize for DoryCommitment {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        ::jolt_field::narg::deserialize(buf)
+        ::jolt_algebra::narg::deserialize(buf)
     }
 }
 
-impl<F: jolt_field::JoltField> HomomorphicCommitment<F> for DoryCommitment {
+impl<F: JoltField> HomomorphicCommitment<F> for DoryCommitment {
     #[inline]
     fn add(c1: &Self, c2: &Self) -> Self {
         Self(<Bn254GT as HomomorphicCommitment<F>>::add(&c1.0, &c2.0))
@@ -211,14 +211,14 @@ fn validate_verifier_setup_structure(buf: &[u8]) -> Result<(), String> {
 )]
 mod tests {
     use super::*;
-    use jolt_field::Field;
+    use jolt_algebra::Field;
     use jolt_openings::CommitmentScheme;
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
     use crate::DoryScheme;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     #[test]
     fn dory_commitment_serde_round_trip() {

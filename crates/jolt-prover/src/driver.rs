@@ -23,8 +23,8 @@
 
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_algebra::JoltField;
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 #[cfg(feature = "allocative")]
 use jolt_kernels::ProofSession;
 use jolt_kernels::{
@@ -415,7 +415,7 @@ macro_rules! impl_stage_prover {
             $({ name: $member:ident, relation: $relation:ident, presence: $presence:ident },)+
         ]
     ) => {
-        impl<F: ::jolt_field::JoltField> $crate::driver::StageProver<F> for $batch<F> {
+        impl<F: ::jolt_algebra::JoltField> $crate::driver::StageProver<F> for $batch<F> {
             type InputClaims = $input_claims<F>;
             type InputPoints = $input_points<F>;
             type Challenges = $challenges_ty<F>;
@@ -532,7 +532,7 @@ macro_rules! impl_stage_prover {
             }
         }
 
-        impl<F: ::jolt_field::JoltField, B> $crate::driver::KernelSource<F, $batch<F>> for ::jolt_kernels::KernelContext<'_, F, B>
+        impl<F: ::jolt_algebra::JoltField, B> $crate::driver::KernelSource<F, $batch<F>> for ::jolt_kernels::KernelContext<'_, F, B>
         where
             B: ?Sized $(+ ::jolt_kernels::PrepareKernel<F, $relation<F>>)+,
         {

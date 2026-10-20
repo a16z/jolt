@@ -7,6 +7,7 @@
 //!
 //! The relation has no input opening; its claimed sum is the constant zero.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamOutputCheckChallenges, RamOutputCheckInputClaims, RamOutputCheckOutputClaims,
@@ -15,7 +16,6 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamOutputCheckPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::Channel;
@@ -175,7 +175,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
 mod tests {
     use super::*;
     use common::jolt_device::{JoltDevice, MemoryConfig};
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     /// The `instance_point_offset` override must place the relation's own
     /// rounds exactly at the batch tail, and reject batch vectors shorter

@@ -2,7 +2,7 @@
 
 #![expect(clippy::unwrap_used, reason = "tests unwrap well-formed inputs")]
 
-use jolt_field::{CyclotomicRing, Field, Fp64, One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{CyclotomicRing, Field, Fp64, One, Prime128Offset275, Ring, Zero};
 use jolt_zk::whiteout::LiftedFunctional;
 use rand::rngs::StdRng;
 use rand::SeedableRng;

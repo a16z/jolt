@@ -442,13 +442,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-algebra"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff",
+ "ark-serialize",
+ "cc",
+ "num-traits",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "spongefish",
+ "thiserror",
+]
+
+[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "blake2",
  "derive_more",
+ "jolt-algebra",
  "jolt-claims-derive",
- "jolt-field",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
@@ -473,8 +489,8 @@ dependencies = [
 name = "jolt-claims-fuzz"
 version = "0.0.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-claims",
- "jolt-field",
  "jolt-r1cs",
  "libfuzzer-sys",
 ]
@@ -488,7 +504,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "ark-std",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "num-bigint 0.4.8",
  "num-integer",
@@ -500,25 +516,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-field"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ff",
- "ark-serialize",
- "cc",
- "num-traits",
- "rand_core 0.6.4",
- "serde",
- "spongefish",
- "thiserror",
-]
-
-[[package]]
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-riscv",
  "serde",
  "strum",
@@ -528,8 +529,8 @@ dependencies = [
 name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "jolt-poly",
  "jolt-transcript",
  "serde",
@@ -541,7 +542,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
@@ -555,7 +556,7 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "serde",
  "thiserror",
 ]
@@ -574,7 +575,7 @@ dependencies = [
 name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "rand 0.8.7",
  "rand_core 0.6.4",
  "spongefish",

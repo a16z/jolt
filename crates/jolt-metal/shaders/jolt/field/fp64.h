@@ -1,10 +1,10 @@
 // jolt::Fp64<C>: the prime field p = 2^64 - C for odd C < 2^32, bit-exact
-// with jolt_field::solinas::Fp64<P> for 64-bit P.
+// with jolt_algebra::solinas::Fp64<P> for 64-bit P.
 //
 // The algorithms and their names follow crates/jolt-algebra/src/solinas/word.rs:
 // a widening product, a first fold of the high 64 bits through
 // 2^64 = C (mod p), then fold2_canonicalize. Each bound the code relies on is
-// argued next to it. Moduli below 2^63 (jolt_field's sub-word Fp64) fold at
+// argued next to it. Moduli below 2^63 (jolt_algebra's sub-word Fp64) fold at
 // a different bit and are not covered.
 //
 // Representation: one ulong holding the canonical value in [0, p), the bytes

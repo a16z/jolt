@@ -2,12 +2,12 @@
 //! Both commitment backends use one whole bytecode grid.
 //! Each row uses the shared lane layout, interleaved by the trace order.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     bytecode_total_vars, is_valid_committed_program_immediate, BYTECODE_LANE_LAYOUT,
     COMMITTED_BYTECODE_LANE_CAPACITY, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
 use jolt_riscv::{
     Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction, JoltInstructionRow,

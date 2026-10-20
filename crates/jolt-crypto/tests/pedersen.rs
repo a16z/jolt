@@ -1,10 +1,10 @@
 #![expect(clippy::unwrap_used, reason = "tests should fail loudly")]
 
+use jolt_algebra::{Field, Fr, Ring};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
     VectorOpeningError,
 };
-use jolt_field::{Field, Fr, Ring};
 use jolt_poly::EqPolynomial;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

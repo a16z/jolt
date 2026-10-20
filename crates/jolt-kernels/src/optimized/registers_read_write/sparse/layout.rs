@@ -3,7 +3,7 @@ use core::{
     mem::{size_of, MaybeUninit},
 };
 
-use jolt_field::{Accumulator, JoltField};
+use jolt_algebra::{Accumulator, JoltField};
 
 use super::{CoeffLut, LutIndex, OneHotCoeff};
 use crate::optimized::registers_read_write::rows::RegisterCycleRow;

@@ -46,10 +46,10 @@ use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -429,6 +429,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::num::NonZeroUsize;
 
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
     use jolt_claims::protocols::jolt::geometry::instruction::{
         committed_instruction_ra, InstructionRaVirtualizationDimensions,
@@ -437,7 +438,6 @@ mod tests {
         InstructionRaVirtualizationChallenges, InstructionRaVirtualizationInputClaims,
     };
     use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
-    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
