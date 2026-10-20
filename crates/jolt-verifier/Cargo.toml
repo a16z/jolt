@@ -51,7 +51,6 @@ allocative = { workspace = true, optional = true }
 bincode.workspace = true
 blake2.workspace = true
 common.workspace = true
-jolt-blindfold.workspace = true
 jolt-claims.workspace = true
 jolt-claims-derive.workspace = true
 jolt-crypto.workspace = true
@@ -65,6 +64,7 @@ jolt-sumcheck.workspace = true
 # Blake2b is always built: it is `JoltSponge` unless another sponge is selected.
 jolt-transcript = { workspace = true, features = ["transcript-blake2b"] }
 jolt-verifier-derive.workspace = true
+jolt-zk.workspace = true
 num-traits.workspace = true
 serde.workspace = true
 thiserror.workspace = true

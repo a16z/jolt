@@ -1,11 +1,11 @@
 //! Jolt-specific BlindFold protocol construction.
 //!
 //! This module lowers the already-verified committed-sumcheck frontier into the
-//! generic `jolt-blindfold` statement API. It does not build R1CS matrices
+//! generic `jolt-zk` statement API. It does not build R1CS matrices
 //! directly. Instead, it describes the verifier equations in typed Jolt terms:
 //! sumcheck statements, domains, committed round consistency, committed output
 //! claim rows, input/output claim expressions, public constants, transcript
-//! challenges, and the final PCS opening binding. `jolt-blindfold` then lowers
+//! challenges, and the final PCS opening binding. `jolt-zk` then lowers
 //! that statement into `jolt-r1cs` constraints and exposes the row layout used
 //! by the BlindFold verifier.
 //!
@@ -54,7 +54,6 @@
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
-use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder};
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -122,6 +121,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
 };
+use jolt_zk::{BlindFoldProtocol, BlindFoldProtocolBuilder};
 
 use super::{inputs::BlindFoldInputs, outputs::CommittedOutputClaimOutput};
 use crate::stages::{

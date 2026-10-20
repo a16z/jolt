@@ -139,7 +139,7 @@ H: Sponge
 3. **Commit**: stage 0 commits the trace objects. Dory streams individual polynomials; Akita commits the one-hot columns as one native group and auxiliary objects separately.
 4. **Reduce**: `jolt-prover/src/stages/` proves stages 1–7 from the symbolic relations in `jolt-claims`.
 5. **Open**: stage 8 reduces the remaining claims and dispatches the joint PCS opening.
-6. **BlindFold**: ZK builds prove the committed sumcheck transcript with `jolt-blindfold`.
+6. **BlindFold**: ZK builds prove the committed sumcheck transcript with `jolt-zk`.
 
 ### Protocol Ownership
 
@@ -148,7 +148,7 @@ H: Sponge
 - `jolt-prover` owns proving orchestration and backend-specific stage 0/stage 8 integration; it consumes the shared claims rather than restating verifier formulas.
 - `jolt-witness` owns trace-backed witness construction. `jolt-kernels` owns reference and optimized evaluation kernels.
 - `jolt-poly`, `jolt-sumcheck`, `jolt-openings`, `jolt-dory`, and `jolt-akita` own the reusable polynomial, sumcheck, and PCS layers.
-- `jolt-claims` owns the RV64 and field-inline constraint tables and variable layout under `protocols::composed::r1cs`; `jolt-r1cs` owns the generic builder and matrix layer. `jolt-blindfold` owns the generic zero-knowledge proof over recorded sumchecks.
+- `jolt-claims` owns the RV64 and field-inline constraint tables and variable layout under `protocols::composed::r1cs`; `jolt-r1cs` owns the generic builder and matrix layer. `jolt-zk` owns the generic zero-knowledge proof over recorded sumchecks.
 
 Committed trace polynomials are identified by `JoltCommittedPolynomial`; virtual
 polynomials by `JoltVirtualPolynomial`. Do not recreate their ordering or opening

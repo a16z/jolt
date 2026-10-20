@@ -2,8 +2,6 @@
 
 use common::constants::MAX_BLINDFOLD_GENERATORS;
 use common::jolt_device::JoltDevice;
-#[cfg(not(feature = "akita"))]
-use jolt_blindfold::BlindFoldProtocol;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{
     JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
@@ -17,6 +15,8 @@ use jolt_openings::CommitmentScheme;
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_transcript::{Channel, ProtocolId, Sponge, VerifierTranscript};
+#[cfg(not(feature = "akita"))]
+use jolt_zk::BlindFoldProtocol;
 
 #[cfg(not(feature = "akita"))]
 use crate::sites::BLINDFOLD;
