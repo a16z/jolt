@@ -980,8 +980,11 @@ Moved out of W4:
   first point coordinate as the most significant index bit. This is
   provisional until W3 pins Akita's MLE order and the stride permutation.
 - **A19, `operand_pads` at commit time.** Resolved. `PadLayout` carries
-  `operand_pads`, and the only producer is `OperandShapeDomain::layout`, the
-  shape routine's own domain. Its production caller is the verifier's
+  `operand_pads`, and the only production producer is
+  `OperandShapeDomain::layout`, the shape routine's own domain
+  (`with_operand_pads` is crate-private; the field, like `PadLayout`'s
+  others, stays public, so a caller can still build a layout by hand, which
+  the verifier's comparison rejects). Its production caller is the verifier's
   `pad_layout` (jolt-verifier `stages/zk/residual`), which derives the layout
   it compares against the committed one. `PadPlacement::new` reads the field,
   and `check_relation` requires the relation's layout to equal the
@@ -1013,6 +1016,6 @@ Moved out of W4:
   test checks the bytes.
 - The headline counts come from the cost script, not from runs of M6b or W3.
 - The constant-time audit (§2.8) leaves two items open: the NEON/AVX NTT
-  kernels line by line, and the DIT decision (A23).
+  kernels line by line, and the DIT decision (A11).
 - Secret buffers (y, rejected z, V, e) are dropped, not zeroized: `zeroize`
   is not a workspace dependency. Open item for W6.
