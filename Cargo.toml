@@ -216,7 +216,6 @@ jolt-sumcheck = { path = "crates/jolt-sumcheck" }
 # [pin] Local-only: build against the Akita integration branch (~/akita-whiteout).
 [patch."https://github.com/LayerZero-Labs/akita.git"]
 akita-algebra = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-algebra" }
-akita-challenges = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-challenges" }
 akita-config = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-config" }
 akita-cpu-backend = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-cpu-backend" }
 akita-error = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-error" }
