@@ -27,8 +27,13 @@ use jolt_field::{
 use jolt_field::{Fq, Fr};
 #[cfg(feature = "binary")]
 use jolt_field::{F128, F192, F64, F8};
+#[cfg(feature = "transcript-keccak")]
+use spongefish::instantiations::Keccak;
 #[cfg(feature = "spongefish")]
-use spongefish::VerificationError;
+use spongefish::{DuplexSpongeInterface, VerificationError};
+
+#[cfg(feature = "transcript-blake2b")]
+use crate::Blake2b512;
 
 use sealed::Sealed;
 
@@ -74,7 +79,8 @@ mod sealed {
 /// len·2δ ≤ len·2^MODULUS_BITS / 2^(8w+1) ≤ 2^-160,
 /// so the whole message has conventional TV ≤ 2^-161. For BN254's 254-bit
 /// modulus this gives 52 bytes per element for len 1–8, 53 for len 9–2048,
-/// 54 for len 2049–524288, and 55 above.
+/// and 54 above, up to the [`MAX_CHALLENGE_BYTES`] cap (310,689 elements).
+/// The 55-byte width would need more than 524,288 elements.
 ///
 /// # Binary fields (`binary`)
 ///
@@ -94,6 +100,24 @@ pub trait ChallengeCodec: Sized + Sealed {
     /// Allocates only the returned vector, with capacity `len`.
     fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>>;
 }
+
+/// A sponge whose squeezed bytes are uniform, up to the sponge's own
+/// security. Field challenges are decoded from raw squeezed bytes, so the
+/// codecs' TV bounds hold only on such a sponge.
+///
+/// `PoseidonSponge` is not one: each block it squeezes is the little-endian
+/// encoding of a BN254 scalar, whose top bits are far from uniform.
+#[cfg(feature = "spongefish")]
+pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
+
+#[cfg(feature = "transcript-keccak")]
+impl Sealed for Keccak {}
+#[cfg(feature = "transcript-keccak")]
+impl UniformBytes for Keccak {}
+#[cfg(feature = "transcript-blake2b")]
+impl Sealed for Blake2b512 {}
+#[cfg(feature = "transcript-blake2b")]
+impl UniformBytes for Blake2b512 {}
 
 /// Largest challenge message, in squeezed bytes. Larger requests are rejected
 /// before touching the sponge, so a length taken from the input cannot make
@@ -303,4 +327,57 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
     F::challenge_bytes(len)
         .filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
         .ok_or(VerificationError)
+}
+
+#[cfg(all(test, feature = "solinas"))]
+mod tests {
+    use super::{Prime64Offset59, Sealed, UniformBytes};
+    use crate::{
+        prover_transcript, verifier_transcript, BytesMsg, ProverTranscript, VerifierTranscript,
+    };
+    use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
+
+    /// A sponge whose output is all ones, so every pooled candidate is
+    /// rejected. It lives here because `UniformBytes` is sealed.
+    #[derive(Clone)]
+    struct Saturated;
+
+    impl DuplexSpongeInterface for Saturated {
+        type U = u8;
+
+        fn absorb(&mut self, _input: &[u8]) -> &mut Self {
+            self
+        }
+
+        fn squeeze(&mut self, output: &mut [u8]) -> &mut Self {
+            output.fill(0xff);
+            self
+        }
+    }
+
+    impl DuplexSpongeInit for Saturated {
+        fn init(_session_id: &[u8; 32]) -> Self {
+            Self
+        }
+    }
+
+    impl Sealed for Saturated {}
+    impl UniformBytes for Saturated {}
+
+    const SESSION: &[u8] = b"jolt/challenge-codecs/v1";
+    const INSTANCE: [u8; 32] = [0x42; 32];
+
+    #[test]
+    fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
+        let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
+        assert!(ProverTranscript::field_challenges::<Prime64Offset59>(&mut prover, 3).is_err());
+
+        let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
+        prover.prover_message(&BytesMsg(b"after".to_vec()));
+        let mut verifier =
+            verifier_transcript::<Saturated>(SESSION, INSTANCE, prover.narg_string());
+        assert!(VerifierTranscript::field_challenges::<Prime64Offset59>(&mut verifier, 3).is_err());
+        assert!(verifier.prover_message::<BytesMsg>().is_err());
+        assert!(verifier.check_eof().is_err());
+    }
 }

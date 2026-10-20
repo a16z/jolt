@@ -6,7 +6,7 @@
 
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 use crate::Blake2b512;
-use crate::{challenge::message_bytes, ChallengeCodec};
+use crate::{challenge::message_bytes, ChallengeCodec, UniformBytes};
 #[cfg(feature = "bn254")]
 use jolt_field::Fr;
 #[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
@@ -30,7 +30,9 @@ pub trait ProverTranscript<H: DuplexSpongeInterface> {
 
     /// Draws one message with conventional TV ≤ 2^-161 across all `len` elements.
     /// The protocol session/version must bind the codec, field, and length.
-    /// `len == 0` returns an empty vector without touching the sponge.
+    /// `len == 0` returns an empty vector without touching the sponge. Only
+    /// sponges with uniform output qualify ([`UniformBytes`]); `PoseidonSponge`
+    /// does not.
     ///
     /// # Errors
     /// Returns `VerificationError`, before any sponge operation, when the codec
@@ -42,7 +44,7 @@ pub trait ProverTranscript<H: DuplexSpongeInterface> {
         len: usize,
     ) -> Result<Vec<F>, VerificationError>
     where
-        H: DuplexSpongeInterface<U = u8>;
+        H: UniformBytes;
 
     /// Bytes accumulated in the NARG so far.
     fn narg_string(&self) -> &[u8];
@@ -70,7 +72,7 @@ where
         len: usize,
     ) -> Result<Vec<F>, VerificationError>
     where
-        H: DuplexSpongeInterface<U = u8>,
+        H: UniformBytes,
     {
         let n = message_bytes::<F>(len)?;
         if len == 0 {

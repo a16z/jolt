@@ -771,14 +771,14 @@ jobs:
               cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
             fi
           done
-      # jolt-witness's parallel feature is not a default, so the shard loop
-      # above tests only the serial paths; the shipped provers enable it
-      # (via jolt-kernels' default), so test the rayon fast paths directly.
       # The shard loop above tests jolt-transcript with default features only,
       # which skips the field codecs, the extra sponges and their tests.
       - name: Test jolt-transcript with all features
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-transcript --all-features --cargo-quiet
+      # jolt-witness's parallel feature is not a default, so the shard loop
+      # above tests only the serial paths; the shipped provers enable it
+      # (via jolt-kernels' default), so test the rayon fast paths directly.
       - name: Test jolt-witness with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-witness --features test-utils,parallel --cargo-quiet

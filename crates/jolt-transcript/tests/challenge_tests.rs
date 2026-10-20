@@ -12,8 +12,6 @@ use jolt_transcript::{
     VerifierTranscript,
 };
 use spongefish::instantiations::Keccak;
-#[cfg(feature = "solinas")]
-use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 use std::fmt::{Debug, Write};
 
 #[cfg(feature = "solinas")]
@@ -154,7 +152,7 @@ fn unsupported_lengths_return_transcript_errors() {
         assert!(
             VerifierTranscript::field_challenges::<Prime24Offset3>(&mut verifier, len).is_err()
         );
-        verifier.check_eof().unwrap();
+        assert!(verifier.check_eof().is_err());
     }
 }
 
@@ -180,7 +178,7 @@ fn messages_above_the_byte_cap_are_rejected_before_touching_the_sponge() {
         );
         let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, &[]);
         assert!(VerifierTranscript::field_challenges::<F8>(&mut verifier, len).is_err());
-        verifier.check_eof().unwrap();
+        assert!(verifier.check_eof().is_err());
     }
 }
 
@@ -190,9 +188,10 @@ fn messages_above_the_byte_cap_are_rejected_before_touching_the_sponge() {
 #[test]
 fn empty_messages_leave_the_sponge_untouched() {
     use jolt_transcript::Blake2b512;
+    use jolt_transcript::UniformBytes;
     use spongefish::DuplexSpongeInit;
 
-    fn check<H: DuplexSpongeInit<U = u8>>() {
+    fn check<H: DuplexSpongeInit<U = u8> + UniformBytes>() {
         let mut prover = prover_transcript::<H>(SESSION, INSTANCE);
         assert!(ProverTranscript::field_challenges::<Fr>(&mut prover, 0)
             .unwrap()
@@ -214,46 +213,6 @@ fn empty_messages_leave_the_sponge_untouched() {
     }
     check::<Keccak>();
     check::<Blake2b512>();
-}
-
-/// A sponge whose output is all ones, so every pooled candidate is rejected.
-#[cfg(feature = "solinas")]
-#[derive(Clone)]
-struct Saturated;
-
-#[cfg(feature = "solinas")]
-impl DuplexSpongeInterface for Saturated {
-    type U = u8;
-
-    fn absorb(&mut self, _input: &[u8]) -> &mut Self {
-        self
-    }
-
-    fn squeeze(&mut self, output: &mut [u8]) -> &mut Self {
-        output.fill(0xff);
-        self
-    }
-}
-
-#[cfg(feature = "solinas")]
-impl DuplexSpongeInit for Saturated {
-    fn init(_session_id: &[u8; 32]) -> Self {
-        Self
-    }
-}
-
-#[cfg(feature = "solinas")]
-#[test]
-fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
-    let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
-    assert!(ProverTranscript::field_challenges::<Prime64Offset59>(&mut prover, 3).is_err());
-
-    let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
-    prover.prover_message(&BytesMsg(b"after".to_vec()));
-    let mut verifier = verifier_transcript::<Saturated>(SESSION, INSTANCE, prover.narg_string());
-    assert!(VerifierTranscript::field_challenges::<Prime64Offset59>(&mut verifier, 3).is_err());
-    assert!(verifier.prover_message::<BytesMsg>().is_err());
-    assert!(verifier.check_eof().is_err());
 }
 
 #[cfg(feature = "solinas")]
