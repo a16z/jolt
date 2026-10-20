@@ -59,13 +59,12 @@ catalogs and their prepared setups.
 
 The default K=16 catalogs cover native arities 16–35 and widths 51–64, that is,
 traces through `2^31` cycles. K=256 single-chunk native rows are explicit
-adapter and benchmark fixtures, including the narrowest and widest native
-traces, 27 and 37 columns, at `2^30` and `2^31`. One-hot trace rows use direct
-schedules below logical `2^21` cycles. Every single-chunk trace row from that
-cutoff uses setup offloading; multi-chunk rows there follow the planner's
-objective. `one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover`
-checks both rules for every emitted trace key. Multi-chunk fixture inventories are declared in
-`src/schedules/mod.rs`; deployment inventories belong to their applications.
+adapter and benchmark fixtures. One-hot trace rows use direct schedules below
+logical `2^21` cycles. Every single-chunk trace row from that cutoff uses setup
+offloading; multi-chunk rows there follow the planner's objective.
+`one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover` checks both
+rules for every emitted trace key. Multi-chunk fixture inventories are declared
+in `src/schedules/mod.rs`; deployment inventories belong to their applications.
 
 Regenerate this repository's catalogs:
 

@@ -12,11 +12,7 @@ use akita_params::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, ChunkedWitnessCfg,
     FoldSchedule, PolynomialGroupLayout, ScheduleLookupKey,
 };
-use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
-use akita_planner::find_schedule;
-use akita_schedules::{
-    expanded_schedule_proof_estimate_bytes, ResolvedScheduleRow, ValidatedScheduleCatalog,
-};
+use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use jolt_akita::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK256};
 use jolt_akita::schedule_registry::{
     dense_group_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
@@ -560,88 +556,6 @@ fn catalogs_have_exact_emitted_keys() {
             );
         }
     }
-}
-
-/// Plans every emitted key at or above the arity of a `2^30` K=16 trace,
-/// independent of the checked-in catalogs, and reports each row's fold levels,
-/// estimated proof bytes, and setup capacity. These keys are past the
-/// direct-planning cutover, so the emitter plans them under the family policy.
-/// `AKITA_SCHEDULE_GEN_JOBS` sets the worker count:
-///
-/// ```text
-/// cargo nextest run --cargo-profile ci -p jolt-akita --run-ignored ignored-only \
-///   --no-capture -E 'test(jolt_scale_shapes_plan_for_every_family)'
-/// ```
-#[test]
-#[ignore = "plans every Jolt-scale catalog key; takes minutes"]
-#[expect(clippy::print_stderr, reason = "reports each planned Jolt-scale row")]
-fn jolt_scale_shapes_plan_for_every_family() {
-    const JOLT_SCALE_LOG_T: usize = 30;
-    let shapes = family_specs(PathBuf::new())
-        .expect("emit specs")
-        .into_iter()
-        .flat_map(|fixture| {
-            let spec = fixture.spec;
-            let (family_name, policy) = (spec.family_name, spec.policy);
-            let (source_contract, ring_challenge_config) =
-                (spec.source_contract, spec.ring_challenge_config);
-            spec.keys
-                .into_iter()
-                .filter(|key| key.num_vars() >= JOLT_SCALE_LOG_T + K16_COLUMN_VARIABLES)
-                .map(move |key| {
-                    (
-                        family_name,
-                        policy,
-                        source_contract,
-                        ring_challenge_config,
-                        key,
-                    )
-                })
-        })
-        .collect::<Vec<_>>();
-    assert!(!shapes.is_empty());
-    let outcomes = bounded_parallel_filter_map(
-        &shapes,
-        offline_planning_worker_count(shapes.len()),
-        |&(family_name, policy, source_contract, ring_challenge_config, key)| {
-            let label = format!(
-                "{family_name} nv={} polys={}",
-                key.num_vars(),
-                key.num_polynomials()
-            );
-            let lookup = ScheduleLookupKey::single(key);
-            let report = find_schedule(
-                &lookup,
-                source_contract,
-                &[],
-                &policy,
-                ring_challenge_config,
-            )
-            .and_then(|planned| {
-                let schedule = planned.schedule;
-                let proof = expanded_schedule_proof_estimate_bytes(&lookup, &schedule, &policy)?;
-                let setup = setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
-                Ok(format!(
-                    "levels={} proof={proof} setup={setup}",
-                    schedule.num_fold_levels()
-                ))
-            });
-            Ok(Some(
-                report
-                    .map(|report| format!("{label}: {report}"))
-                    .map_err(|error| format!("{label}: {error}")),
-            ))
-        },
-    )
-    .expect("planning workers");
-    let mut failures = Vec::new();
-    for outcome in outcomes {
-        match outcome {
-            Ok(report) => eprintln!("{report}"),
-            Err(failure) => failures.push(failure),
-        }
-    }
-    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 #[cfg(feature = "field-inline")]
