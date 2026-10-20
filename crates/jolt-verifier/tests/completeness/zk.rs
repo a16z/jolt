@@ -71,13 +71,13 @@ fn zk_muldiv_masked_shape_matches_golden() {
     assert_eq!(relation.products.len(), 106);
 }
 
-/// Changing any one masked value of the muldiv fixture, with the challenges
-/// fixed, breaks a row of its residual relation. Every masked value enters
-/// the rows as m̂ − p, so a row's dependence on m̂_i is minus its coefficient
-/// on pad i: perturbing m̂_i violates an affine row exactly when pad i has a
-/// nonzero coefficient there, and a product row whenever i is one of its
-/// operands. The test checks every pad slot of the layout, base and
-/// auxiliary, against that criterion.
+/// Every pad slot of the muldiv fixture's layout, base and auxiliary, has a
+/// nonzero coefficient in some row of its residual relation: no masked value
+/// is left out of the relation. This is a structural check. It does not show
+/// that changing a value breaks a row, since a product row with a zero
+/// cofactor or two compensating rows would pass it; the prover-side probe
+/// `zk_muldiv_shifting_any_decoded_value_breaks_a_row` (jolt-prover
+/// `zk_e2e`) checks that.
 #[test]
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn zk_muldiv_every_masked_value_is_constrained() {

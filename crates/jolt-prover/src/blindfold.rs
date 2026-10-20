@@ -128,6 +128,12 @@ where
     let masked_auxiliary = pads.send(&auxiliary, transcript)?;
     let relation = masked.relation(&masked_auxiliary)?;
 
+    #[cfg(feature = "prover-fixtures")]
+    secrets::record(secrets::ZkSecrets {
+        pads: pads.pads().to_vec(),
+        joint_evaluation: final_opening.joint_evaluation,
+    });
+
     let vc_setup = preprocessing
         .verifier
         .vc_setup
@@ -151,4 +157,36 @@ where
             )
         })
         .map_err(ProverError::from)
+}
+
+/// Test-only seam (`prover-fixtures`): the secrets of the last ZK proof
+/// proved on this thread, for soundness probes that rebuild the residual
+/// relation as a cheating prover would.
+#[cfg(feature = "prover-fixtures")]
+pub mod secrets {
+    use std::any::Any;
+    use std::cell::RefCell;
+
+    /// The pads and the stage-8 joint evaluation (the residual witness).
+    pub struct ZkSecrets<F> {
+        pub pads: Vec<F>,
+        pub joint_evaluation: F,
+    }
+
+    thread_local! {
+        static LAST: RefCell<Option<Box<dyn Any>>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn record<F: 'static>(secrets: ZkSecrets<F>) {
+        LAST.with(|last| *last.borrow_mut() = Some(Box::new(secrets)));
+    }
+
+    /// Takes the recorded secrets, if the last ZK proof on this thread was
+    /// over `F`.
+    pub fn take<F: 'static>() -> Option<ZkSecrets<F>> {
+        LAST.with(|last| last.borrow_mut().take())?
+            .downcast()
+            .ok()
+            .map(|secrets| *secrets)
+    }
 }
