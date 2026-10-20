@@ -140,12 +140,18 @@ pub struct EqPlusOnePrefixSuffix<F: JoltField> {
 }
 
 impl<F: JoltField> EqPlusOnePrefixSuffix<F> {
+    /// Variables of `r_hi`, the suffix half of a `num_vars`-variable point;
+    /// `r_lo`, the prefix half, takes the rest.
+    pub const fn suffix_vars(num_vars: usize) -> usize {
+        num_vars / 2
+    }
+
     /// Creates the decomposition from a big-endian point `r`.
     ///
-    /// Splits at `r.len() / 2`: the first half is `r_hi`, the second is `r_lo`.
+    /// Splits at [`Self::suffix_vars`]: the first half is `r_hi`, the second is `r_lo`.
     pub fn new(r: &[F]) -> Self {
         jolt_utils::math::assert_shiftable_dim(r.len());
-        let mid = r.len() / 2;
+        let mid = Self::suffix_vars(r.len());
         let (r_hi, r_lo) = r.split_at(mid);
 
         let ones: Vec<F> = vec![F::one(); r_lo.len()];

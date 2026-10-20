@@ -389,6 +389,28 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
 /// the linear-time round kernel.
 pub struct OptimizedProductRemainder;
 
+/// Entries of each of the remainder's `left` and `right` tables over
+/// `2^log_t` cycles.
+fn remainder_len(log_t: usize) -> usize {
+    1usize << log_t
+}
+
+impl OptimizedProductRemainder {
+    /// Peak bytes of the remainder's tables over `2^log_t` cycles: `left` and
+    /// `right` at [`remainder_len`] entries each, plus the buffer the first
+    /// in-place shrink of `left` allocates while `right` still holds its full
+    /// capacity ([`Polynomial::in_place_shrink_len`]). The closing opening
+    /// walk's `2^log_t` cycle weights come after both tables are bound down.
+    /// Not counted: the row store, a handle on the witness's rows when it has
+    /// one; the split-eq tables; the field-inline rows.
+    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
+        let len = remainder_len(log_t);
+        len.saturating_mul(2)
+            .saturating_add(Polynomial::<F>::in_place_shrink_len(len))
+            .saturating_mul(size_of::<F>())
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemainder {
     fn prepare(
         &self,
@@ -458,9 +480,8 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         // full-range terms reach ~2^318.6, a latent wrong-answer for unlucky
         // weight draws that the composed 5-node Lagrange weights actually
         // hit). Right's i128 lane goes through the signed-product path.
-        let cycles = 1usize << log_t;
-        let mut left: Vec<F> = unsafe_allocate_zero_vec(cycles);
-        let mut right: Vec<F> = unsafe_allocate_zero_vec(cycles);
+        let mut left: Vec<F> = unsafe_allocate_zero_vec(remainder_len(log_t));
+        let mut right: Vec<F> = unsafe_allocate_zero_vec(remainder_len(log_t));
         let e_out = split_eq.e_out_current();
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();

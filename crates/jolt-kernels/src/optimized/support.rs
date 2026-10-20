@@ -877,6 +877,20 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
     }
 }
 
+/// Pool threads that can run a parallel pass's closures at once; one without
+/// `parallel`. A rayon worker runs one closure body at a time, so per-call
+/// scratch a pass allocates inside its closures is live at most this many times.
+pub(crate) fn pool_workers() -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        rayon::current_num_threads()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        1
+    }
+}
+
 /// `LT(·, r) + constant` served from split tables and bound low-to-high
 /// (legacy `LtPolynomial` port).
 ///

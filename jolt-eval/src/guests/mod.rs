@@ -55,7 +55,7 @@ pub fn prove(
     prover_pp: &ProverPreprocessing,
     inputs: &[u8],
 ) -> (Proof, JoltDevice) {
-    jolt_sdk::prove_program(program, prover_pp, inputs, &[], &[], None, None, None)
+    jolt_sdk::prove_program(program, prover_pp, inputs, &[], &[], None, None, None, None)
         .expect("prover should produce verifier-native proof")
 }
 

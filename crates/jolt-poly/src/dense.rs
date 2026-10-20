@@ -12,6 +12,10 @@ use crate::BindingOrder;
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
 
+/// [`Polynomial::bind_low_to_high_in_place`] releases the backing allocation
+/// once its capacity reaches this multiple of the live length.
+const IN_PLACE_SHRINK_FACTOR: usize = 8;
+
 /// Multilinear polynomial stored as evaluations over the Boolean hypercube $\{0,1\}^n$.
 ///
 /// Generic over the scalar type `T`:
@@ -252,10 +256,19 @@ impl<F: JoltField> Polynomial<F> {
         self.num_vars -= 1;
     }
 
+    /// Entries of the largest buffer [`Self::bind_low_to_high_in_place`]
+    /// allocates while binding a table that starts with `len` entries at
+    /// capacity `len`: the first release, at `len / IN_PLACE_SHRINK_FACTOR`
+    /// (none for shorter tables); later releases are smaller. An allocator
+    /// that moves the entries holds the old buffer too until the copy ends.
+    pub const fn in_place_shrink_len(len: usize) -> usize {
+        len / IN_PLACE_SHRINK_FACTOR
+    }
+
     /// Binds the LSB variable in place without another buffer:
     /// `v[j] = v[2j] + r·(v[2j+1] − v[2j])`. Once the backing allocation
-    /// reaches 8x the live length it is released; the return value reports
-    /// that release so callers can purge after it.
+    /// reaches `IN_PLACE_SHRINK_FACTOR` times the live length it is released;
+    /// the return value reports that release so callers can purge after it.
     ///
     /// Each power-of-two level writes below its read window. Earlier outputs
     /// lie below later reads, and each level splits into disjoint `dst` and
@@ -292,7 +305,7 @@ impl<F: JoltField> Polynomial<F> {
         self.evals.truncate(half);
 
         self.num_vars -= 1;
-        let shrink = self.evals.capacity() >= 8 * self.evals.len().max(1);
+        let shrink = self.evals.capacity() >= IN_PLACE_SHRINK_FACTOR * self.evals.len().max(1);
         if shrink {
             self.evals.shrink_to_fit();
         }
@@ -880,5 +893,29 @@ mod tests {
         }
         assert_eq!(lo_to_hi.len(), 1);
         assert_eq!(lo_to_hi.evaluations()[0], poly.evaluate(&point));
+    }
+
+    /// In-place binding first releases its buffer at `in_place_shrink_len`
+    /// entries when the table reaches a release, and never otherwise.
+    #[test]
+    fn in_place_binding_first_releases_at_the_shrink_len() {
+        let mut rng = ChaCha20Rng::seed_from_u64(901);
+        for num_vars in 1..=10 {
+            let len = 1usize << num_vars;
+            let mut poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+            assert_eq!(poly.evals.capacity(), len);
+            let mut first_release = None;
+            while poly.num_vars() > 0 {
+                let released = poly.bind_low_to_high_in_place(Fr::random(&mut rng));
+                if released && first_release.is_none() {
+                    first_release = Some(poly.evals.capacity());
+                }
+            }
+            assert_eq!(
+                first_release.unwrap_or(0),
+                Polynomial::<Fr>::in_place_shrink_len(len),
+                "len {len}"
+            );
+        }
     }
 }

@@ -42,7 +42,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{bind_pairs, fmadd_u64_split, pin_derived_term, BundleStore, RoundChallenges};
+use super::support::{
+    bind_pairs, fmadd_u64_split, pin_derived_term, pool_workers, BundleStore, RoundChallenges,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -72,6 +74,42 @@ impl WitnessBundle for RegisterValuesRow {
 }
 
 pub struct OptimizedRegistersClaimReduction;
+
+/// Prefix entries per Q-build block.
+const BLOCK: usize = 32;
+
+/// Variables of `tau_hi`, the suffix half of the `log_t`-variable point;
+/// `tau_lo`, the prefix half, takes the rest.
+const fn suffix_vars(log_t: usize) -> usize {
+    log_t / 2
+}
+
+impl OptimizedRegistersClaimReduction {
+    /// Peak bytes of the kernel over `2^log_t` cycles, with `P` prefix and
+    /// `S` suffix entries ([`suffix_vars`]). Preparation holds the `P`-entry
+    /// prefix eq table, the `S`-entry suffix eq table and the `P`-entry Q
+    /// table while the pool's Q blocks fold. The dense transition holds the
+    /// prefix and Q tables at their `2P` capacity, the `2P` prefix eq tables
+    /// and the `3S` folds beside the four `S`-entry dense tables. Not
+    /// counted: transients inside `jolt-poly` evaluations and the parallel
+    /// collect's partial buffers.
+    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
+        let (p, s) = (
+            1usize << (log_t - suffix_vars(log_t)),
+            1usize << suffix_vars(log_t),
+        );
+        let blocks = pool_workers().min(p.div_ceil(BLOCK));
+        let scratch = blocks
+            .saturating_mul(BLOCK.min(p))
+            .saturating_mul(3 * size_of::<F::SmallScalarAccumulator>());
+        let bytes = |p_tables: usize, s_tables: usize| {
+            p.saturating_mul(p_tables)
+                .saturating_add(s.saturating_mul(s_tables))
+                .saturating_mul(size_of::<F>())
+        };
+        bytes(2, 1).saturating_add(scratch).max(bytes(4, 7))
+    }
+}
 
 impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
     for OptimizedRegistersClaimReduction
@@ -103,12 +141,11 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        let (tau_hi, tau_lo) = tau.split_at(log_t / 2);
+        let (tau_hi, tau_lo) = tau.split_at(suffix_vars(log_t));
         let prefix_vars = tau_lo.len();
         let p = EqPolynomial::<F>::evals(tau_lo, None);
         let eq_suffix = EqPolynomial::<F>::evals(tau_hi, None);
 
-        const BLOCK: usize = 32;
         let build_q_block =
             |(block_index, q_block): (usize, &mut [F])| -> Result<(), WitnessError> {
                 let mut folds = vec![[F::SmallScalarAccumulator::default(); 3]; q_block.len()];
@@ -209,7 +246,7 @@ impl<F: JoltField> ClaimReductionKernel<F> {
 
         self.values = BundleStore::Retained(Vec::new());
 
-        let (tau_hi, tau_lo) = self.tau.split_at(self.log_t / 2);
+        let (tau_hi, tau_lo) = self.tau.split_at(suffix_vars(self.log_t));
         let eq_prefix_eval = EqPolynomial::<F>::mle(&r_prefix, tau_lo);
         self.phase = Phase::Dense {
             eq: EqPolynomial::<F>::evals(tau_hi, Some(eq_prefix_eval)),

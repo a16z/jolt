@@ -38,6 +38,7 @@ fn profile_run_emits_conformant_artifacts() {
         backend: BackendKind::Reference,
         #[cfg(feature = "akita")]
         akita_chunk_profile: AkitaChunkProfile::Single,
+        memory_budget: None,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");
