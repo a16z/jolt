@@ -24,7 +24,7 @@ catalog, duplicate key, or missing exact row fails loading or setup. The applica
 producer and consumer setups must use compatible frozen producer profiles.
 
 Committed programs use one whole-bytecode group and one image group. Their
-physical arities are `max(14, logical_arity)` with a ceiling of 34. Bytecode
+physical arities are `max(14, logical_arity)` with a ceiling of 35. Bytecode
 logical arity is `9 + log2(padded_bytecode_rows)` and may exceed the trace
 group arity. Producer and grouped schedule admission run before whole-table
 allocation. Existing dense catalogs are reused; this changes the requested
@@ -57,10 +57,14 @@ cross-profile commitment-reuse tests exercise compatible producer profiles.
 Changing that policy requires regenerating compatible producer and consumer
 catalogs and their prepared setups.
 
-The default K=16 catalogs cover native arities 16–34 and widths 51–64. K=256
-single-chunk native rows are explicit adapter and benchmark fixtures. One-hot
-rows use direct schedules below logical `2^21` cycles and setup offloading from
-that cutoff. Multi-chunk fixture inventories are declared in
+The default K=16 catalogs cover native arities 16–35 and widths 51–64, that is,
+traces through `2^31` cycles. K=256 single-chunk native rows are explicit
+adapter and benchmark fixtures, including the narrowest and widest native
+traces, 27 and 37 columns, at `2^30` and `2^31`. One-hot trace rows use direct
+schedules below logical `2^21` cycles. Every single-chunk trace row from that
+cutoff uses setup offloading; multi-chunk rows there follow the planner's
+objective. `one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover`
+checks both rules for every emitted trace key. Multi-chunk fixture inventories are declared in
 `src/schedules/mod.rs`; deployment inventories belong to their applications.
 
 Regenerate this repository's catalogs:
@@ -71,7 +75,10 @@ cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/
 
 Selectors include `k16`, `k256`, `k16-single`, `k256-single`, `w8r2`, `dense-bounded`, and `dense-full`. Append `--check` to replan and compare
 canonical bytes without replacing the files. The catalogs are generated with
-the Akita revision pinned in the workspace `Cargo.toml`.
+the Akita revision pinned in the workspace `Cargo.toml`. Every catalog binds
+Akita's planner policy digest, which includes the SIS security policy and its
+estimator tables, so catalogs planned under an earlier policy are rejected at
+load time.
 
 `external_catalog` generates a two-chunk shape absent from the packaged
 fixtures, proves it with that external catalog, and verifies the transported
