@@ -494,9 +494,9 @@ are Whiteout work.
 | W1 | Akita: outer hiding randomness per slice, carried into the next fold's witness | Akita `dev` | P0 |
 | W2 | Akita: one-shot fold responses in ZK mode; overflow is an abort, not a retry | Akita `dev` | P0 |
 | W3 | Akita fold verifier implements `ResidualRows`; masked cut point at fold k | Akita `dev` | P0 |
-| W4 | `jolt-zk::whiteout`: Σ-protocol with Gaussian mask and joint rejection, response statement, `ResponseProver` trait; `jolt-crypto::lattice`'s Ajtai operation and layout type; `VectorCommitment::Blind` and the lattice pad commitment | jolt | P0 |
+| W4 | `jolt-zk::whiteout`: Σ-protocol with Gaussian mask and joint rejection, response statement, `ResponseProver` trait, and the lattice pad commitment; `jolt-crypto::lattice`'s constant-time Ajtai operation and layout types | jolt | P0 |
 | W5 | Akita implements `ResponseProver` (digit ranges, ring-quadratic reduction, setup offloading); the last PR turns ZK mode on and adds hidden-vs-transparent tests | Akita `dev` | P0 |
-| W6 | Jolt + Akita ZK integration: pin Akita `dev`; split `HidingCommitment` / `ZkOpening`, and `jolt-akita` implements `HidingCommitment`; the `akita` and `zk` features become compatible; end-to-end prover and verifier | jolt | P0 |
+| W6 | Jolt + Akita ZK integration: pin Akita `dev`; `ZkBackend for Whiteout` over W3's residual opening; split `HidingCommitment` / `ZkOpening`, and `jolt-akita` implements `HidingCommitment`; the `akita` and `zk` features become compatible; end-to-end prover and verifier | jolt | P0 |
 | M7 | eq / multilinear evaluation into `jolt-poly` with typed bit order | both | P1 |
 | M8 | `akita-pcs` implements `jolt-openings` natively; delete the `jolt-akita` adapter; `jolt-akita`'s configs become an `akita-config` preset | both | P1 |
 | M9 | Delete `akita-serialization` and `ark-serialize` | both | P2 |

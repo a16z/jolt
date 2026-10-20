@@ -153,17 +153,21 @@ pub struct AjtaiLevel {
 ```
 
 A view is prepared once as `PreparedMatrix<F, D>`, which checks
-`shape.ring_dim == D`. It offers three operations:
+`shape.ring_dim == D`. It offers two operations:
 
 - `apply_centered(x: &[i64], bound) -> Vec<CyclotomicRing<F, D>>`: the map
   `M·x` on centered integer columns with `|x| ≤ bound < 2^31`. This is the
-  Σ-protocol's `N·y`, and the core of the other two.
-- `apply(x: &[CyclotomicRing<F, D>])`: the same map on field columns. It
-  splits each column into 16 radix-256 planes, at 16 times the cost.
+  Σ-protocol's `N·y`, and the core of `commit`. `bound` must be a hard bound,
+  such as the sampler's tail cut, never a statistical one: an input above it
+  returns an error, which for a secret input would be an abort correlated
+  with the secret.
 - `commit(level, prepared, x, r)`. It computes
   `apply_centered(G⁻¹(x) ‖ r, 128)`, where `r` is box digits.
 
-**Implementation, one path for all three.** The public matrix is prepared once
+A map on arbitrary field columns has no planned caller: every input of N is
+a digit or a Gaussian coefficient.
+
+**Implementation, one path for both.** The public matrix is prepared once
 in CRT-NTT form. It uses jolt-algebra's `CrtNttParamSet<i32, 6, D>` over the
 Q128 primes and `CyclotomicCrtNtt::from_ring`, which may branch because the
 matrix is public. Each input column is lifted into Montgomery residues by
@@ -226,7 +230,8 @@ kernels against these semantics (§7, item 5).
 
 ### 1.5 Hiding randomness
 
-- `sample_box_digits(rng, len, log_basis) -> Vec<i8>` draws uniform digits of
+- `sample_box_digits(rng, len, log_basis) -> Vec<i8>`, which is prover-only
+  and gated behind jolt-crypto's `sample` feature, draws uniform digits of
   the balanced alphabet. Each digit is a masked byte, so the draw is constant
   time. Distinct vectors then differ by a unit (§2.3: coordinates below
   `q^{1/4}/2`).
@@ -496,7 +501,7 @@ reveal them either.
 | Gaussian `fill` | y | M5a sampler (isochronous, reviewed). |
 | `N·y`, `A_D·G⁻¹(V)` | y, V | `apply_centered` of §1.3: branch-free Montgomery lift, NTT with public twiddles, constant-time Garner, no LUT. |
 | `Q_μ(0,y)`, `B_μ`, `L·y`, `g(y)`, `Λ_μ(0,y)` | y | Branch-free centered lift into F. Ring products with public or s-only operands. |
-| `G⁻¹(V)` | V | The bias path of `BalancedDecomposePow2Params::biased`. Its SIMD variants are on the audit list. |
+| `G⁻¹(V)` | V | The bias path of `BalancedDecomposePow2Params::biased`, whose sign select is a 129-bit signed subtraction. A comparison there compiled to branches on x86 (W4 found and fixed this; `cargo asm` on `x86_64-apple-darwin` shows the scalar kernel and the AVX2/AVX-512 remainder loops branch-free). |
 | `Fork::attempt`, Keccak | n, t_D | Keccak-f is constant time. |
 | challenge sampling | c_i | A prover-side constant-time sampler, byte-identical to the verifier's. It replaces Fisher–Yates swaps at secret indices with full-array masked swaps and drops the sparse hash-table path (d = 64 always takes the dense path). It always runs the operator-norm decision's exact certified evaluation, and never `decide_transposed_fused`'s spectrum-dependent fast path, its `Indeterminate` fallback, or its `freq_row` indexing by secret positions. Discarded candidates go through the same constant-time body. Their number is independent of the accepted value, by rejection-sampling isochrony. |
 | sparse-to-dense c | c_i | A constant-time scatter: each of the 64 output coefficients is a masked sum over all support entries. |
@@ -662,13 +667,14 @@ g enters only through Q_μ's `u·g(s)` term.
 
 | Parameter | Headline value | Lives in | Validated by |
 |---|---|---|---|
-| challenge family | d = 64, 31 × ±1, 11 × ±2, ‖c‖_op ≤ Γ = 18, 2^128.06 elements, κ₁ = 53 | `jolt-crypto::challenge` (M5b) | `SigmaParams::new` (`validate_min_entropy`) |
+| challenge family | d = 64, 31 × ±1, 11 × ±2, ‖c‖_op ≤ Γ = 18, 2^128.06 elements, κ₁ = 53 | `jolt-crypto::challenge` (M5b) | `SigmaParams::new`: `OperatorNormRejection::D64_SELECTIVE_L2.validate(64, cfg)` and `validate_min_entropy_for_ring_dim(64, 128)`. The latter bounds the unfiltered family; the filtered family's 2^128.06 is the certificate checked when the table is built (M5b) |
 | α, ε | 16, 2^−137 (M ≈ 2.37) | `SigmaParams` | `JointRejection::new` |
-| widths k_b | derived (below): 6,765,904 for B = 8 dense segments; 13,531,806 for operand digits | `SigmaParams::derive(segments)` | exact rational check (below) |
-| digits D_b, D_pub | 7 for every Gaussian segment; 3 | derived | `L_b ≥` the box bound (below); `D_pub` covers `κ₁·B` |
-| box L_b | `7(16^{D_b}−1)/15`, the positive end of the certified range (A9) | derived | `Σ_b 64·len_b·2^{1−⌊L_b²/k_b²⌋} ≤ 10^{−3}`, which gives p_𝓑 ≥ 0.999 |
+| widths k_b | derived (below): 6,766,161 for B = 8 dense segments; 13,532,321 for operand digits (headline table, ΣN = 6,221,056) | `SigmaParams::derive(segments)` | exact rational check (below) |
+| digits D_b, D_pub | 7 for every Gaussian segment; 3 | derived | `⌊L_b²/k_b²⌋ ≥ 1 + ⌈log₂(2000 N)⌉` (below); `D_pub` covers `κ₁·B` |
+| box L_b | `7(16^{D_b}−1)/15`, the positive end of the certified range (A9) | derived | implied by the digit rule: `p_𝓑 ≥ 1 − 1/2000` |
 | shift bound | `κ₁ · B_b` | derived | `JointRejection::accept` |
-| T_att | 163 | derived | smallest T with `(1 − (p_𝓑 − ε)/M)^T ≤ 2^−128`. It bounds only the prover's retries, so it is computed in `f64`, with the acceptance probability shaded down by 2^−40 |
+| T_att | 163 | prover-only: `JointRejection::max_attempts`, from the sampler's realized M | smallest T with `(1 − (p_𝓑 − ε)/M′)^T ≤ 2^−128`, in 128-bit fixed point with every rounding against acceptance |
+| rejection arithmetic | — | derived | `SigmaParams::new` mirrors `JointRejection::new`'s bounds: boxes and shifts ≤ 2^62, the product of distinct k_b² < 2^126, worst-case exponent numerator < 2^126. A table the prover could not run is rejected by both roles |
 | ν | 256 | const | — |
 | ℓ | 14 | `RowLabels` | — |
 | A_a, [B_a\|B′_a], A_p ranks | 3 × R_256 each | Akita planner and SIS tables (rule 3), in the setup | Akita (SIS); W4 checks module structure and view lengths |
@@ -678,7 +684,11 @@ g enters only through Q_μ's `u·g(s)` term.
 
 **Width derivation** (A10). Widths are derived in jolt-zk with integer
 arithmetic, not tabulated. Prover and verifier must agree bit for bit, because
-D_b fixes the e layout.
+D_b fixes the e layout. The numbers above come from the code's headline
+table, in which every segment holds whole R_256 elements, so ΣN = 6,221,056.
+The cost script counts unaligned cells (ΣN = 6,220,582), so its widths
+differ slightly. It also stretches each width to its digit envelope, and
+those widths fail the whole-element table at Σ = 1.003.
 
 1. **Closed form.** Take the continuous optimum of §6.2,
    `ω_b = N_b/ΣN` over Gaussian cells. The width is
@@ -692,8 +702,10 @@ D_b fixes the e layout.
    that passes check 1 of §2.1. `SigmaParams::new` runs it on whatever widths
    it is given, so the derivation is checked too.
 3. **Digits.** `D_b` is the smallest D with
-   `⌊L(D)²/k_b²⌋ ≥ 1 + ⌈log₂(2000·N_tot)⌉`, followed by the exact box check
-   above.
+   `⌊L(D)²/k_b²⌋ ≥ 1 + ⌈log₂(2000·N_tot)⌉`. Then each coefficient leaves the
+   box with probability at most `2^{1−L²/k²} ≤ 1/(2000 N)`, so p_𝓑 ≥ 1 −
+   1/2000 needs no separate check. With `k ≤ 2^31`, nine digits always
+   suffice.
 
 **Gap to the script's discrete optimum.**
 
@@ -759,11 +771,11 @@ D_b fixes the e layout.
    - The `cargo asm` record covers the audit list of §2.8.
    - Both are a W4 slice, and they land before W5's last PR.
 5. **Ajtai.**
-   - Frozen digests for `apply_centered`, `apply` and `commit`: one level,
-     with and without randomness columns, at d = 64 and 256.
-   - Property tests: `apply_centered = apply ∘ lift`; agreement with a
-     schoolbook negacyclic oracle on small shapes; chunking at the
-     `CrtCapacity` boundary; view-length rejection on truncated streams.
+   - Frozen digests for `apply_centered` and `commit`: one level, with and
+     without randomness columns, at d = 64 and 256.
+   - Property tests: agreement with a schoolbook negacyclic oracle in F on
+     small shapes; chunking across column chunks; view-length rejection on
+     truncated streams.
    - The equivalence test against Akita's kernels is W5's.
 6. **Algebra.**
    - The polar identity `Q(c,z) + Lz = E_0 + cE_1 + c²h` holds (as a
@@ -783,10 +795,10 @@ D_b fixes the e layout.
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
-| 1 | `jolt-crypto::lattice`: `MatrixShape`/`MatrixView`, `GadgetDigits`, `AjtaiLevel`, constant-time `apply`/`apply_centered` on CRT-NTT (with jolt-algebra's constant-time Garner), one-level `commit`, `sample_box_digits`, `required_randomness_columns`, frozen digests, `TwoLevelLayout` description | M5b | now |
-| 2 | `jolt-transcript`: `Fork::attempt` | — | now |
-| 3 | `jolt-zk::whiteout`: segment table, alphabet and shape check, `SigmaParams` with derived widths and the exact check | M5a, M6d | now |
-| 4 | `jolt-crypto::challenge`: constant-time prover-side attempt sampler, byte-identical to the verifier's | M5b | now |
+| 1 | `jolt-crypto::lattice`: `MatrixShape`/`MatrixView`, `GadgetDigits`, `AjtaiLevel`, constant-time `apply_centered` on CRT-NTT (with jolt-algebra's constant-time Garner and branch-free decomposition), one-level `commit`, `sample_box_digits`, `required_randomness_columns`, frozen digests, `TwoLevelLayout` description | M5b | done |
+| 2 | `jolt-transcript`: `Fork::attempt`, `is_fork_domain` for transcript audits, redacted `Debug` | — | done |
+| 3 | `jolt-zk::whiteout`: segment table, alphabet and shape check, `SigmaParams` with derived widths, the exact check and typed errors; `JointRejection::max_attempts` | M5a, M6d | done |
+| 4 | `jolt-crypto::challenge`: constant-time prover-side attempt sampler, byte-identical to the verifier's; `SparseChallenge::to_dense_ct` | M5b | done |
 | 5 | `RowLabels`, lifting, Q_μ/B_μ | **M6b** relation shapes | later |
 | 6 | `LatticePadCommitment` (raw output), `operand_pads` check | 1, 3; **M6b** | later |
 | 7 | Σ core, statistics tests | 2, 4, 5, 6 | later |
