@@ -78,6 +78,8 @@
 //! sparse products for pairing line evaluations.
 //! Line evaluation scales the coefficients by G1 coordinates and multiplies
 //! the sparse result into each thread's Fq12 accumulator.
+//! G2 Miller steps use homogeneous Fq2 coordinates and emit line coefficients.
+//! Each host thread caches curve and Frobenius constants per device.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

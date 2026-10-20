@@ -1,4 +1,10 @@
-use cudarc::driver::PushKernelArg;
+use std::cell::RefCell;
+
+use ark_bn254::{Fq, Fq2};
+use ark_ec::bn::BnConfig;
+use ark_ec::short_weierstrass::SWCurveConfig;
+use ark_ff::{AdditiveGroup, Field, One};
+use cudarc::driver::{CudaSlice, PushKernelArg};
 
 use super::context::CudaKernelContext;
 use super::error::CudaError;
@@ -37,7 +43,92 @@ impl TowerProbe {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum G2StepProbe {
+    DoubleStep,
+    AddStep,
+    MulByChar,
+}
+
+impl G2StepProbe {
+    const fn widths(self) -> (usize, usize) {
+        match self {
+            Self::DoubleStep => (3 * FQ2_LIMBS, 12 * FQ2_LIMBS),
+            Self::AddStep => (5 * FQ2_LIMBS, 12 * FQ2_LIMBS),
+            Self::MulByChar => (2 * FQ2_LIMBS, 4 * FQ2_LIMBS),
+        }
+    }
+}
+
+const PC_WORDS: usize = 28;
+
+struct Constants {
+    values: CudaSlice<u64>,
+}
+
+thread_local! {
+    static CONSTANTS: RefCell<Vec<Option<Constants>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn fq_words(value: &Fq) -> [u64; FQ_LIMBS] {
+    value.0 .0
+}
+
+fn push_fq2(out: &mut Vec<u64>, value: &Fq2) {
+    out.extend_from_slice(&fq_words(&value.c0));
+    out.extend_from_slice(&fq_words(&value.c1));
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "two is invertible in Fq; the alternative is a Result on an infallible constant"
+)]
+fn constant_words() -> Vec<u64> {
+    let mut out = Vec::with_capacity(PC_WORDS);
+    push_fq2(&mut out, &<ark_bn254::Config as BnConfig>::TWIST_MUL_BY_Q_X);
+    push_fq2(&mut out, &<ark_bn254::Config as BnConfig>::TWIST_MUL_BY_Q_Y);
+    push_fq2(&mut out, &<ark_bn254::g2::Config as SWCurveConfig>::COEFF_B);
+    let two_inv = Fq::one().double().inverse().expect("two is invertible");
+    out.extend_from_slice(&fq_words(&two_inv));
+    out
+}
+
 impl CudaKernelContext {
+    fn with_pairing_constants<R>(
+        &self,
+        act: impl FnOnce(&Constants) -> Result<R, CudaError>,
+    ) -> Result<R, CudaError> {
+        CONSTANTS.with_borrow_mut(|cached| {
+            let ordinal = self.ordinal();
+            if cached.len() <= ordinal {
+                cached.resize_with(ordinal + 1, || None);
+            }
+            let slot = cached
+                .get_mut(ordinal)
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "the per-device pairing constant cache was just sized",
+                })?;
+            if slot.is_none() {
+                let words = constant_words();
+                if words.len() != PC_WORDS {
+                    return Err(CudaError::LengthMismatch {
+                        expected: PC_WORDS,
+                        got: words.len(),
+                    });
+                }
+                *slot = Some(Constants {
+                    values: self.upload_raw_u64(&words)?,
+                });
+            }
+            match slot.as_ref() {
+                Some(constants) => act(constants),
+                None => Err(CudaError::InvariantViolation {
+                    reason: "the pairing constants did not initialise",
+                }),
+            }
+        })
+    }
+
     pub fn tower_probe(&self, op: TowerProbe, input: &[u64]) -> Result<Vec<u64>, CudaError> {
         let (in_width, out_width) = op.widths();
         if in_width == 0 || !input.len().is_multiple_of(in_width) {
@@ -76,6 +167,46 @@ impl CudaKernelContext {
         let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
         self.download_u64(&device_out)
     }
+
+    pub fn g2_step_probe(&self, op: G2StepProbe, input: &[u64]) -> Result<Vec<u64>, CudaError> {
+        let (in_width, out_width) = op.widths();
+        if in_width == 0 || !input.len().is_multiple_of(in_width) {
+            return Err(CudaError::LengthMismatch {
+                expected: in_width,
+                got: input.len(),
+            });
+        }
+        let elements = input.len() / in_width;
+        if elements == 0 {
+            return Ok(Vec::new());
+        }
+        let count = Self::count_of(elements)?;
+        let device_in = self.upload_u64_slice(input)?;
+        let mut device_out = self.alloc_u64(elements * out_width)?;
+        let function = match op {
+            G2StepProbe::DoubleStep => &self.g2_double_step_probe,
+            G2StepProbe::AddStep => &self.g2_add_step_probe,
+            G2StepProbe::MulByChar => &self.g2_mul_by_char_probe,
+        };
+        self.with_pairing_constants(|constants| {
+            let mut builder = self.stream().launch_builder(function);
+            let _ = builder.arg(&device_in);
+            let _ = builder.arg(&constants.values);
+            let _ = builder.arg(&mut device_out);
+            let _ = builder.arg(&count);
+            // SAFETY: thread `i < count` reads exactly the `in_width` u64s at
+            // `input[i * in_width]` plus the `PC_WORDS` pairing constants whose
+            // length is fixed at upload, and writes exactly the `out_width` u64s
+            // at `output[i * out_width]`. The upload holds `count * in_width`
+            // u64s and the allocation `count * out_width`, both sized above from
+            // the same `elements`, and the two are distinct allocations, so no
+            // thread aliases another's write. Threads with `i >= count` return
+            // before any access.
+            let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+            Ok(())
+        })?;
+        self.download_u64(&device_out)
+    }
 }
 
 #[cfg(test)]
@@ -84,8 +215,8 @@ impl CudaKernelContext {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use ark_bn254::{Fq, Fq12, Fq2, Fq6};
-    use ark_ff::{AdditiveGroup, BigInt, Field, UniformRand};
+    use ark_bn254::{Fq12, Fq6, G2Projective};
+    use ark_ff::{BigInt, UniformRand};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -353,6 +484,37 @@ mod tests {
         Fq2::new(value.c0 * scale, value.c1 * scale)
     }
 
+    fn probe_g2_step_pair(op: G2StepProbe, input: &[u64]) -> (Vec<Fq2>, Vec<Fq2>) {
+        let context = shared_context().expect("a CUDA device");
+        let (_, out_width) = op.widths();
+        let raw = context.g2_step_probe(op, input).expect("a g2 step probe");
+        let half = out_width / 2;
+        let mut plain = Vec::new();
+        let mut warp = Vec::new();
+        for chunk in raw.chunks_exact(out_width) {
+            plain.extend(chunk[..half].chunks_exact(FQ2_LIMBS).map(fq2));
+            warp.extend(chunk[half..].chunks_exact(FQ2_LIMBS).map(fq2));
+        }
+        (plain, warp)
+    }
+
+    fn g2_step_input(count: usize, parts: usize, rng: &mut ChaCha20Rng) -> Vec<u64> {
+        let mut input = Vec::new();
+        for _ in 0..count {
+            let mut emitted = 0;
+            while emitted < parts {
+                let point = G2Projective::rand(rng);
+                for value in [&point.x, &point.y, &point.z] {
+                    if emitted < parts {
+                        input.extend_from_slice(&fq2_words(value));
+                        emitted += 1;
+                    }
+                }
+            }
+        }
+        input
+    }
+
     #[test]
     fn ell_matches_arkworks() {
         if shared_context().is_none() {
@@ -385,6 +547,48 @@ mod tests {
             probe_fq12(TowerProbe::Ell, &input),
             expected,
             "ell diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn g2_double_step_matches_the_warp_implementation() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(8_000);
+        let input = g2_step_input(12, 3, &mut rng);
+        let (plain, warp) = probe_g2_step_pair(G2StepProbe::DoubleStep, &input);
+        assert_eq!(
+            plain, warp,
+            "g2_double_step diverged from the mw_ implementation it mirrors"
+        );
+    }
+
+    #[test]
+    fn g2_add_step_matches_the_warp_implementation() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(8_100);
+        let input = g2_step_input(12, 5, &mut rng);
+        let (plain, warp) = probe_g2_step_pair(G2StepProbe::AddStep, &input);
+        assert_eq!(
+            plain, warp,
+            "g2_add_step diverged from the mw_ implementation it mirrors"
+        );
+    }
+
+    #[test]
+    fn g2_mul_by_char_matches_the_warp_implementation() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(8_200);
+        let input = g2_step_input(12, 2, &mut rng);
+        let (plain, warp) = probe_g2_step_pair(G2StepProbe::MulByChar, &input);
+        assert_eq!(
+            plain, warp,
+            "g2_mul_by_char diverged from the mw_ implementation it mirrors"
         );
     }
 }

@@ -165,6 +165,12 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     pub(super) ell_probe: CudaFunction,
     #[cfg(test)]
+    pub(super) g2_double_step_probe: CudaFunction,
+    #[cfg(test)]
+    pub(super) g2_add_step_probe: CudaFunction,
+    #[cfg(test)]
+    pub(super) g2_mul_by_char_probe: CudaFunction,
+    #[cfg(test)]
     hf_half_fold: CudaFunction,
     #[cfg(test)]
     hf_row_fold: CudaFunction,
@@ -315,6 +321,12 @@ impl CudaKernelContext {
             fq12_mul_by_034_probe: module.load_function("fq12_mul_by_034_probe")?,
             #[cfg(test)]
             ell_probe: module.load_function("ell_probe")?,
+            #[cfg(test)]
+            g2_double_step_probe: module.load_function("g2_double_step_probe")?,
+            #[cfg(test)]
+            g2_add_step_probe: module.load_function("g2_add_step_probe")?,
+            #[cfg(test)]
+            g2_mul_by_char_probe: module.load_function("g2_mul_by_char_probe")?,
             #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             #[cfg(test)]
