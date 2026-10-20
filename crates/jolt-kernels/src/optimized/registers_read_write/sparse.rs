@@ -3,7 +3,35 @@ use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized};
+use super::rows::CollectRegisterEntries;
+use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized, pool_workers};
+
+/// Values a coefficient LUT may hold: it squares only while the square fits.
+const MAX_LUT_VALUES: usize = 1 << 16;
+
+/// Read LUT seed values, one per `ra` code: `[0, γ, γ², γ + γ²]`.
+const READ_SEED_VALUES: usize = 4;
+
+/// Write LUT seed values, one per `wa` code: `[0, 1]`.
+const WRITE_SEED_VALUES: usize = 2;
+
+/// Values of a LUT seeded with `seed` values after `binds` binds.
+const fn lut_len(seed: usize, binds: u32) -> usize {
+    seed.pow(1 << binds)
+}
+
+const fn lut_saturated(values: usize) -> bool {
+    values * values > MAX_LUT_VALUES
+}
+
+// `CycleState::peak_bytes` prices this schedule: the third bind still squares
+// both LUTs in place, and the fourth replaces the indexed generation.
+const _: () = assert!(
+    !lut_saturated(lut_len(READ_SEED_VALUES, 2))
+        && !lut_saturated(lut_len(WRITE_SEED_VALUES, 2))
+        && (lut_saturated(lut_len(READ_SEED_VALUES, 3))
+            || lut_saturated(lut_len(WRITE_SEED_VALUES, 3)))
+);
 
 /// Bound one-hot coefficient values indexed by `u16`. Each bind squares the
 /// table: `(a ≪ bits) | b` maps to `b + r·(a − b)`.
@@ -14,8 +42,6 @@ pub(super) struct CoeffLut<F> {
 }
 
 impl<F: JoltField> CoeffLut<F> {
-    const MAX_VALUES: usize = 1 << 16;
-
     pub(super) fn new(values: Vec<F>) -> Self {
         debug_assert!(values.len().is_power_of_two());
         debug_assert!(values[0] == F::zero());
@@ -27,7 +53,7 @@ impl<F: JoltField> CoeffLut<F> {
     }
 
     pub(super) fn saturated(&self) -> bool {
-        self.values.len() * self.values.len() > Self::MAX_VALUES
+        lut_saturated(self.values.len())
     }
 
     pub(super) fn bind(&mut self, r: F) {
@@ -141,13 +167,14 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
 pub(crate) mod layout;
 pub(crate) mod ops;
 
-pub(super) use layout::SeedEntry;
 use layout::{
     load_indexed, merge_bind, split_pair_group, Cell, IndexedMeta, MatrixEntry, SparseEntry,
 };
+pub(super) use layout::{SeedEntry, MAX_ENTRIES_PER_CYCLE};
 use ops::{
     bind_indexed_in_place_soa, bind_indexed_to_direct, bind_seed_entries_fused,
-    bind_sparse_entries_in_place, sparse_quadratic, sparse_quadratic_fused, sparse_quadratic_soa,
+    bind_sparse_entries_in_place, block_count, sparse_quadratic, sparse_quadratic_fused,
+    sparse_quadratic_soa, FUSED_SCRATCH_LEN, IN_PLACE_SCRATCH_LEN,
 };
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CyclePhase<F: JoltField> {
@@ -190,18 +217,99 @@ fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
 }
 
 impl<F: JoltField> CycleState<F> {
-    pub(super) fn new(
-        entries: Vec<SeedEntry>,
-        ra_lut: CoeffLut<F>,
-        wa_lut: CoeffLut<F>,
-        rd_inc: Vec<i128>,
-    ) -> Self {
+    pub(super) fn new(entries: Vec<SeedEntry>, gamma: F, rd_inc: Vec<i128>) -> Self {
+        let gamma_sq = gamma * gamma;
+        let read: [F; READ_SEED_VALUES] = [F::zero(), gamma, gamma_sq, gamma + gamma_sq];
+        let write: [F; WRITE_SEED_VALUES] = [F::zero(), F::one()];
         Self(CyclePhase::Seed {
             entries,
-            ra_lut,
-            wa_lut,
+            ra_lut: CoeffLut::new(read.to_vec()),
+            wa_lut: CoeffLut::new(write.to_vec()),
             rd_inc,
         })
+    }
+
+    /// Peak bytes of the cycle-first state over `2^log_t >= 2^8` cycles: the
+    /// most any phase holds at once, with every entry generation at
+    /// [`MAX_ENTRIES_PER_CYCLE`] entries per cycle (`R`; binding only merges
+    /// rows):
+    ///
+    /// - preparation: the `R` seed entries and raw increments, with the
+    ///   parallel collect's chunk bookkeeping;
+    /// - round 1: the seed state and each pool worker's merge scratch (the
+    ///   first bind's LUT clones hold less);
+    /// - the second bind: the indexed generation (`R` values and packed
+    ///   metadata) filled beside the seed state through per-block scratch,
+    ///   then the LUT squaring and the `T/4` bound increments. The seeds,
+    ///   queued for a background drop after the fill, count to its end;
+    /// - the third bind: the indexed generation compacted in place through
+    ///   per-block scratch, then the LUT squaring and the increment bind;
+    /// - the fourth bind: the direct generation (`R` entries) beside the
+    ///   indexed one, the saturated LUTs and the increments;
+    /// - later binds: the direct generation compacted in place beside the
+    ///   increments.
+    ///
+    /// A LUT squaring holds each new table beside the one it replaces, and a
+    /// block pass its bounds, counts and slices plus scratch for one block
+    /// per pool worker. The increments keep at most the second bind's `T/4`
+    /// allocation: [`Polynomial::bind_with_order`] binds in place and
+    /// truncates, keeping the capacity, except on its parallel path for a
+    /// large table, where the old table and its half-length copy coexist
+    /// until the copy replaces it (`T/4 + T/8` at the third bind, less than
+    /// `T/4` after it). The collapse to the `K`-entry address tables, the
+    /// address rounds and the output eq tables hold less than the fourth
+    /// bind.
+    pub(super) fn peak_bytes(log_t: usize) -> usize {
+        let cycles = 1usize << log_t;
+        let entries = cycles.saturating_mul(MAX_ENTRIES_PER_CYCLE);
+        let sum = |terms: &[usize]| terms.iter().copied().fold(0, usize::saturating_add);
+        let field = |count: usize| count.saturating_mul(size_of::<F>());
+        let read = |binds: u32| lut_len(READ_SEED_VALUES, binds);
+        let write = |binds: u32| lut_len(WRITE_SEED_VALUES, binds);
+        let lut = |binds: u32| field(read(binds) + write(binds));
+        // The read LUT squares first, then the write LUT.
+        let squaring =
+            |binds: u32| field(read(binds + 1) + write(binds) + read(binds).max(write(binds + 1)));
+        let increments = field(cycles / 4);
+        let blocks = block_count(entries);
+        let block_pass = |task_scratch: usize| {
+            let bookkeeping = 2 * size_of::<usize>() + 2 * size_of::<&mut [F]>();
+            sum(&[
+                (blocks + 1).saturating_mul(bookkeeping),
+                pool_workers().min(blocks).saturating_mul(task_scratch),
+            ])
+        };
+        let seeds = sum(&[
+            entries.saturating_mul(size_of::<SeedEntry>()),
+            cycles.saturating_mul(size_of::<i128>()),
+        ]);
+        let indexed = entries.saturating_mul(size_of::<F>() + size_of::<IndexedMeta>());
+        let direct = entries.saturating_mul(size_of::<SparseEntry<F, F>>());
+        let fused = 2 * FUSED_SCRATCH_LEN * size_of::<SparseEntry<F, LutIndex>>();
+        let soa_scratch = IN_PLACE_SCRATCH_LEN * (size_of::<F>() + size_of::<IndexedMeta>());
+        let direct_scratch = IN_PLACE_SCRATCH_LEN * size_of::<SparseEntry<F, F>>();
+        [
+            sum(&[seeds, CollectRegisterEntries::chunk_bytes(cycles)]),
+            sum(&[seeds, lut(0), lut(1), pool_workers().saturating_mul(fused)]),
+            sum(&[
+                seeds,
+                indexed,
+                lut(0),
+                sum(&[lut(1), block_pass(fused)])
+                    .max(squaring(1))
+                    .max(sum(&[lut(2), increments])),
+            ]),
+            sum(&[
+                indexed,
+                sum(&[lut(2), increments, block_pass(soa_scratch)])
+                    .max(sum(&[squaring(2), increments]))
+                    .max(sum(&[lut(3), increments, field(cycles / 8)])),
+            ]),
+            sum(&[indexed, direct, lut(3), increments, block_pass(0)]),
+            sum(&[direct, increments, block_pass(direct_scratch)]),
+        ]
+        .into_iter()
+        .fold(0, usize::max)
     }
 
     pub(super) fn unused_lut() -> CoeffLut<F> {

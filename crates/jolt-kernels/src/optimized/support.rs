@@ -914,13 +914,27 @@ pub(crate) enum SplitLt<F> {
 }
 
 impl<F: JoltField> SplitLt<F> {
+    /// Variables of `lt_lo` over a `vars`-variable point; `lt_hi` and
+    /// `eq_hi` take the rest.
+    const fn lo_vars(vars: usize) -> usize {
+        vars / 2
+    }
+
+    /// Bytes of the three split tables over `vars >= 2` variables.
+    pub(crate) fn split_bytes(vars: usize) -> usize {
+        let hi = 1usize << (vars - Self::lo_vars(vars));
+        (1usize << Self::lo_vars(vars))
+            .saturating_add(hi.saturating_mul(2))
+            .saturating_mul(size_of::<F>())
+    }
+
     pub(crate) fn new(r_cycle: &[F]) -> Self {
         Self::new_plus_constant(r_cycle, F::zero())
     }
 
     /// `LT(·, r_cycle) + constant` — the constant rides in the hi table.
     pub(crate) fn new_plus_constant(r_cycle: &[F], constant: F) -> Self {
-        let mid = r_cycle.len() / 2;
+        let mid = Self::lo_vars(r_cycle.len());
         let (r_hi, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
         if r_lo.is_empty() {
             return Self::Dense(

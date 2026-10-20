@@ -25,7 +25,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::rows::{raw_rd_inc, RegisterCycleRow, SharedRdIndices};
-use crate::optimized::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
+use crate::optimized::support::{
+    collect_rows, pin_derived_term, pool_workers, GruenRoundMessage, RoundProgress,
+};
 use crate::{KernelError, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
 const CHUNK: usize = 1 << 12;
@@ -85,6 +87,33 @@ pub(super) struct AddressFirstKernel<F: JoltField> {
 }
 
 impl<F: JoltField> AddressFirstKernel<F> {
+    /// Peak bytes over `2^log_t >= 2^8` cycles. The handoff to the cycle rounds
+    /// holds the access rows, the increment checkpoints and the `K` bound
+    /// address weights while it fills the five `T`-entry cycle tables (`rs1`
+    /// in the address eq table's allocation) through one checkpoint value per
+    /// chunk task; the cycle rounds then hold the five tables and the first
+    /// in-place release's buffer. Preparation and the address rounds hold the
+    /// rows, the checkpoints, the `T`-entry eq table and at most `K`
+    /// checkpoint values per chunk task, less than the handoff.
+    pub(super) fn peak_bytes(log_t: usize) -> usize {
+        let cycles = 1usize << log_t;
+        let field = |count: usize| count.saturating_mul(size_of::<F>());
+        let chunks = cycles.div_ceil(CHUNK);
+        let tables = field(cycles.saturating_mul(5));
+        let handoff = [
+            cycles.saturating_mul(size_of::<Access>()),
+            chunks.saturating_mul(size_of::<[i128; 1 << REGISTER_ADDRESS_BITS]>()),
+            field(1 << REGISTER_ADDRESS_BITS),
+            tables,
+            field(pool_workers().min(chunks)),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add);
+        let cycle_rounds =
+            tables.saturating_add(field(Polynomial::<F>::in_place_shrink_len(cycles)));
+        handoff.max(cycle_rounds)
+    }
+
     pub(super) fn prepare(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,

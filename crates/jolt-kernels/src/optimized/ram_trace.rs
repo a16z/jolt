@@ -1,6 +1,6 @@
 //! Sparse per-cycle RAM addresses and values shared across RAM kernels.
-//! [`SharedRamAddresses`] survives stages 2–6b; [`RamAccessColumns`] owns the
-//! stage-2-only values.
+//! [`SharedRamAddresses`] survives stages 2–6b; each [`RamAccessColumns`] owns
+//! one generation of values, collected in stage 2 and again in stage 4.
 
 use core::marker::PhantomData;
 use std::sync::Arc;
@@ -58,12 +58,16 @@ fn access_column_rows(log_t: usize) -> usize {
     1usize << log_t
 }
 
-/// Bytes one generation of RAM access columns requests over `2^log_t`
-/// cycles, at [`access_column_rows`] each: the `u32` address column, one
-/// backing however many handles share it, and the two `u64` value columns of
-/// [`RamAccessColumns`]. Excludes allocator slack and collector bookkeeping.
-pub fn ram_access_columns_bytes(log_t: usize) -> usize {
-    access_column_rows(log_t).saturating_mul(size_of::<u32>() + 2 * size_of::<u64>())
+/// Bytes `value_generations` generations of RAM access columns request over
+/// `2^log_t` cycles, at [`access_column_rows`] each: the `u32` address
+/// column once, one backing however many handles and generations share it,
+/// and the two `u64` value columns each [`RamAccessColumns::collect_full`]
+/// call collects. Excludes allocator slack and collector bookkeeping.
+pub fn ram_access_columns_bytes(log_t: usize, value_generations: usize) -> usize {
+    let row_bytes = value_generations
+        .saturating_mul(2 * size_of::<u64>())
+        .saturating_add(size_of::<u32>());
+    access_column_rows(log_t).saturating_mul(row_bytes)
 }
 
 /// Session-shared remapped addresses; [`NO_ACCESS`] marks absent accesses.
@@ -372,11 +376,13 @@ mod tests {
         column.capacity() * size_of::<T>()
     }
 
-    /// One generation of collected RAM access columns requests exactly the
-    /// bytes `ram_access_columns_bytes` reserves: a second request for the
-    /// address column shares its backing, and each value column has its own.
+    /// Collected RAM access columns request exactly the bytes
+    /// `ram_access_columns_bytes` reserves, for stage 2's generation alone and
+    /// with stage 4's beside it, as while stage 2's awaits its background
+    /// drop: every collection shares the parked address backing, counted
+    /// once, and brings two value columns of its own.
     #[test]
-    fn access_columns_request_the_reserved_bytes() {
+    fn access_column_generations_request_the_reserved_bytes() {
         let shape = FixtureShape {
             log_t: 6,
             ram_k: 16,
@@ -389,16 +395,25 @@ mod tests {
         ];
         with_ram_fixture(shape, ops, |witness| {
             let mut session = ProofSession::default();
-            let columns =
+            let stage2 =
                 RamAccessColumns::collect_full::<Fr>(&mut session, witness, shape.log_t).unwrap();
             let addresses =
                 SharedRamAddresses::shared::<Fr>(&mut session, witness, shape.log_t).unwrap();
-            assert!(Arc::ptr_eq(&columns.addresses, &addresses));
+            let values = |columns: &RamAccessColumns| {
+                requested_bytes(&columns.pre_values) + requested_bytes(&columns.post_values)
+            };
+            assert!(Arc::ptr_eq(&stage2.addresses, &addresses));
             assert_eq!(
-                requested_bytes(&columns.addresses)
-                    + requested_bytes(&columns.pre_values)
-                    + requested_bytes(&columns.post_values),
-                ram_access_columns_bytes(shape.log_t)
+                requested_bytes(&addresses) + values(&stage2),
+                ram_access_columns_bytes(shape.log_t, 1)
+            );
+
+            let stage4 =
+                RamAccessColumns::collect_full::<Fr>(&mut session, witness, shape.log_t).unwrap();
+            assert!(Arc::ptr_eq(&stage4.addresses, &addresses));
+            assert_eq!(
+                requested_bytes(&addresses) + values(&stage2) + values(&stage4),
+                ram_access_columns_bytes(shape.log_t, 2)
             );
         });
     }
