@@ -288,7 +288,7 @@ source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cf95fd05b1d4070830
 dependencies = [
  "akita-error",
  "jolt-field",
- "spongefish",
+ "spongefish 0.7.4",
 ]
 
 [[package]]
@@ -2708,9 +2708,20 @@ dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
- "r-efi",
+ "r-efi 5.3.0",
  "wasip2",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "getrandom"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "r-efi 6.0.0",
 ]
 
 [[package]]
@@ -3339,7 +3350,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "spongefish",
+ "spongefish 0.8.0",
  "tempfile",
  "tracer",
  "tracing",
@@ -3885,8 +3896,7 @@ dependencies = [
  "digest 0.11.3",
  "jolt-field",
  "light-poseidon",
- "rand 0.8.7",
- "spongefish",
+ "spongefish 0.8.0",
 ]
 
 [[package]]
@@ -5372,6 +5382,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
+name = "r-efi"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
 name = "radium"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6602,15 +6618,26 @@ name = "spongefish"
 version = "0.7.4"
 source = "git+https://github.com/arkworks-rs/spongefish?rev=ef9741346a150039427d9e0c02d6b2d73e93ec81#ef9741346a150039427d9e0c02d6b2d73e93ec81"
 dependencies = [
- "ark-ff 0.6.0",
- "ark-serialize 0.6.0",
  "blake2 0.11.0",
  "digest 0.11.3",
- "keccak 0.2.0",
  "p3-koala-bear",
  "rand 0.8.7",
  "sha2 0.11.0",
  "sha3 0.11.0",
+]
+
+[[package]]
+name = "spongefish"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62560b5029264a655fc461a0ecadc4d24862799190897d3225b3272b7a3f13b7"
+dependencies = [
+ "digest 0.11.3",
+ "getrandom 0.4.3",
+ "keccak 0.2.0",
+ "shake",
+ "turboshake",
+ "zeroize",
 ]
 
 [[package]]
@@ -7236,6 +7263,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "turboshake"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
+dependencies = [
+ "digest 0.11.3",
+ "keccak 0.2.0",
+ "sponge-cursor",
 ]
 
 [[package]]

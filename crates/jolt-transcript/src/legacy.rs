@@ -12,12 +12,12 @@ use std::marker::PhantomData;
 use jolt_field::CanonicalEncoding;
 use jolt_field::{CanonicalBytes, Ring};
 #[cfg(feature = "spongefish")]
-use spongefish::{DuplexSpongeInterface, Encoding};
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding};
 
 #[cfg(feature = "spongefish")]
 use crate::codec::BytesMsg;
 #[cfg(feature = "spongefish")]
-use crate::setup::{EmptyInstance, PROTOCOL_ID};
+use crate::setup::session_id;
 
 /// Maximum label length in bytes accepted by [`Transcript::new`] and the
 /// label helpers below.
@@ -31,9 +31,8 @@ pub const MAX_LABEL_LEN: usize = 32;
 ///
 /// # Security
 ///
-/// The label passed to [`new`](Transcript::new) is mapped to the
-/// spongefish session value, so distinct labels carry distinct domain
-/// barriers.
+/// The label passed to [`new`](Transcript::new) binds the transcript to
+/// a protocol domain.
 pub trait Transcript: Default + Sync + Send + 'static {
     /// The challenge type produced by this transcript. Concrete transcript
     /// implementations state any decoding or canonical-encoding capability
@@ -206,12 +205,12 @@ impl AppendToTranscript for U64Word {
 /// `state`. New code should use [`crate::ProverTranscript`] /
 /// [`crate::VerifierTranscript`] instead.
 ///
-/// Construction mirrors spongefish's `DomainSeparator` builder:
-/// `protocol_id || session(label) || instance(())` are absorbed in order.
+/// Construction initializes the protocol session and absorbs the
+/// length-prefixed label as a non-empty instance.
 #[cfg(feature = "spongefish")]
 pub struct SpongeTranscript<H, F>
 where
-    H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
+    H: DuplexSpongeInit<U = u8> + Clone + Default + Send + Sync + 'static,
     F: CanonicalEncoding,
 {
     sponge: H,
@@ -221,21 +220,12 @@ where
 #[cfg(feature = "spongefish")]
 impl<H, F> Default for SpongeTranscript<H, F>
 where
-    H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
+    H: DuplexSpongeInit<U = u8> + Clone + Default + Send + Sync + 'static,
     F: CanonicalEncoding,
 {
     fn default() -> Self {
         Self::new(b"")
     }
-}
-
-#[cfg(feature = "spongefish")]
-fn absorb_encoded<H, T>(sponge: &mut H, value: &T)
-where
-    H: DuplexSpongeInterface<U = u8>,
-    T: Encoding<[u8]> + ?Sized,
-{
-    let _ = sponge.absorb(value.encode().as_ref());
 }
 
 /// Peeks 32 bytes from a clone of the sponge so the real state stays put.
@@ -250,7 +240,7 @@ fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] 
 #[cfg(feature = "spongefish")]
 impl<H, F> Transcript for SpongeTranscript<H, F>
 where
-    H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
+    H: DuplexSpongeInit<U = u8> + Clone + Default + Send + Sync + 'static,
     F: CanonicalEncoding,
 {
     type Challenge = F;
@@ -260,10 +250,8 @@ where
             label.len() <= MAX_LABEL_LEN,
             "label must be at most {MAX_LABEL_LEN} bytes",
         );
-        let mut sponge = H::default();
-        absorb_encoded(&mut sponge, &PROTOCOL_ID);
-        absorb_encoded(&mut sponge, &BytesMsg(label.to_vec()));
-        absorb_encoded(&mut sponge, &EmptyInstance);
+        let mut sponge = H::init(session_id().as_bytes());
+        let _ = sponge.absorb(BytesMsg(label.to_vec()).encode().as_ref());
         Self {
             sponge,
             _field: PhantomData,

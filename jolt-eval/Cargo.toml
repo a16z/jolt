@@ -30,7 +30,7 @@ postcard = { workspace = true, features = ["use-std"] }
 eyre = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
-rand = { workspace = true }
+rand = { workspace = true, features = ["std", "std_rng"] }
 tracing-subscriber = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
