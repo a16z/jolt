@@ -1328,6 +1328,9 @@ impl CanonicalBytes for MleAst {
 
 impl CanonicalEncoding for MleAst {
     const MODULUS_BITS: u32 = 254;
+    /// Mirrors BN254 `Fr`, which this AST models.
+    const CHALLENGE_BITS: u32 = 125;
+    const SCALAR_CHALLENGE_BITS: u32 = 128;
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         if let Some(challenge) = take_pending_challenge() {

@@ -116,6 +116,9 @@ impl CanonicalBytes for F192 {
 
 impl CanonicalEncoding for F192 {
     const MODULUS_BITS: u32 = 193;
+    /// All 16 bytes, as the two low coefficients.
+    const CHALLENGE_BITS: u32 = 128;
+    const SCALAR_CHALLENGE_BITS: u32 = 128;
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut coefficients = [F64::zero(); 3];

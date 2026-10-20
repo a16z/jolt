@@ -41,12 +41,13 @@ mod grind_bits;
 mod legacy;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
-#[cfg(feature = "spongefish")]
 mod pow;
 #[cfg(feature = "spongefish")]
 mod prover;
 #[cfg(feature = "spongefish")]
 mod setup;
+#[cfg(feature = "test-utils")]
+mod unpriced;
 #[cfg(feature = "spongefish")]
 mod verifier;
 
@@ -57,17 +58,22 @@ pub use challenge::{ChallengeCodec, MAX_CHALLENGE_BYTES};
 pub use codec::BytesMsg;
 #[cfg(feature = "digest")]
 pub use digest::DigestTranscript;
-pub use grind_bits::{grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS};
+pub use grind_bits::{
+    grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS, SECURITY_BITS,
+};
 #[cfg(feature = "spongefish")]
 pub use legacy::SpongeTranscript;
 pub use legacy::{
     append_length_prefixed, AppendToTranscript, Label, LabelWithCount, Transcript, U64Word,
     MAX_LABEL_LEN,
 };
+pub use pow::ProofOfWorkError;
 #[cfg(feature = "prover-grinding")]
 pub use pow::{MessageSearch, Probe};
 #[cfg(feature = "spongefish")]
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
+#[cfg(feature = "test-utils")]
+pub use unpriced::UnpricedTranscript;
 
 /// Source-compatible re-exports of legacy label / count / word helpers
 /// under their `jolt_transcript::domain::*` path (matches the path used

@@ -19,6 +19,7 @@
 mod assignment;
 mod builder;
 mod error;
+mod pow;
 mod proof;
 pub mod protocol;
 mod prove;

@@ -18,17 +18,41 @@
 //! `prover-grinding` feature. Cargo unifies features across a build, so a
 //! binary that links a grinding prover compiles its verifier with
 //! `yolocrypto` too; in 0.8.0 the feature changes visibility only, not bytes.
+//!
+//! The legacy [`Transcript`](crate::Transcript) facade carries the same step
+//! with the nonce outside the transcript ([`Transcript::grind`] and
+//! [`Transcript::check_grind`]). It copies its own state, so it needs neither
+//! feature.
+//!
+//! [`Transcript::grind`]: crate::Transcript::grind
+//! [`Transcript::check_grind`]: crate::Transcript::check_grind
+
+use std::error::Error;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[cfg(feature = "prover-grinding")]
 use spongefish::DuplexSpongeInterface;
 
 use crate::MAX_POW_BITS;
 
+/// A proof of work was rejected: its difficulty is above [`MAX_POW_BITS`], its
+/// nonce is missing, unexpected or out of range, or the nonce fails the check.
+/// On the prover side, the nonce search exhausted the nonce space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProofOfWorkError;
+
+impl Display for ProofOfWorkError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.write_str("proof of work rejected")
+    }
+}
+
+impl Error for ProofOfWorkError {}
+
 /// Evaluates the transcript on a candidate prover message without sending it.
 ///
 /// A probe is [`Sync`], so a search may run on
 /// several threads at once.
-#[cfg(feature = "prover-grinding")]
 pub trait Probe: Sync {
     /// Writes into `out` the bytes the transcript would squeeze right after
     /// absorbing `candidate`. The transcript itself is unchanged.
@@ -137,7 +161,6 @@ impl SpongePow {
     }
 
     /// Whether sending `nonce` makes the next squeezed bytes pass the check.
-    #[cfg(feature = "prover-grinding")]
     fn accepts_nonce(self, probe: &impl Probe, nonce: u32) -> bool {
         let mut check = [0u8; 4];
         let Some(out) = check.get_mut(..self.word_len()) else {
@@ -148,20 +171,20 @@ impl SpongePow {
     }
 
     /// The least accepted nonce.
-    #[cfg(all(feature = "prover-grinding", not(feature = "parallel")))]
+    #[cfg(not(feature = "parallel"))]
     pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
         self.search_sequential(probe)
     }
 
     /// The least accepted nonce, scanned in increasing order.
-    #[cfg(all(feature = "prover-grinding", any(test, not(feature = "parallel"))))]
+    #[cfg(any(test, not(feature = "parallel")))]
     fn search_sequential(self, probe: &impl Probe) -> Option<u32> {
         (0..=self.last_nonce()).find(|&nonce| self.accepts_nonce(probe, nonce))
     }
 
     /// The least accepted nonce, searched on all threads. The result equals
     /// the sequential search.
-    #[cfg(all(feature = "prover-grinding", feature = "parallel"))]
+    #[cfg(feature = "parallel")]
     pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -189,14 +212,12 @@ impl SpongePow {
 
 /// The canonical LEB128 encoding of a `u32`: seven bits per byte, least
 /// significant first, the high bit set on every byte but the last.
-#[cfg(feature = "prover-grinding")]
 #[derive(Clone, Copy)]
 pub(crate) struct Leb128 {
     bytes: [u8; 5],
     len: usize,
 }
 
-#[cfg(feature = "prover-grinding")]
 impl Leb128 {
     pub(crate) fn new(mut value: u32) -> Self {
         let mut bytes = [0u8; 5];
@@ -268,7 +289,6 @@ mod tests {
         assert_eq!(read(8, &[0x80]), Err("short"));
     }
 
-    #[cfg(feature = "prover-grinding")]
     mod search {
         use super::super::{Leb128, Probe, SpongePow, MAX_POW_BITS};
 

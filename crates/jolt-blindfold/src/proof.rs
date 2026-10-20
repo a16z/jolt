@@ -17,10 +17,16 @@ pub struct BlindFoldProof<F: JoltField, Com> {
     pub random_eval_commitments: Vec<Com>,
     pub random_u: F,
     pub cross_term_error_row_commitments: Vec<Com>,
+    /// Proof-of-work nonce ground before the folding challenge.
+    pub fold_pow_nonce: Option<u32>,
+    /// Proof-of-work nonce ground before the outer zero-check point.
+    pub outer_point_pow_nonce: Option<u32>,
     pub outer_sumcheck: CompressedSumcheckProof<F>,
     pub az_rx: F,
     pub bz_rx: F,
     pub cz_rx: F,
+    /// Proof-of-work nonce ground before the inner combination challenges.
+    pub inner_combination_pow_nonce: Option<u32>,
     pub inner_sumcheck: CompressedSumcheckProof<F>,
     pub witness_opening: VectorCommitmentOpening<F>,
     pub error_opening: VectorCommitmentOpening<F>,

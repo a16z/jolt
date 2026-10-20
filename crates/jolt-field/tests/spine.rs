@@ -90,6 +90,8 @@ impl CanonicalBytes for M61 {
 
 impl CanonicalEncoding for M61 {
     const MODULUS_BITS: u32 = 61;
+    const CHALLENGE_BITS: u32 = 60;
+    const SCALAR_CHALLENGE_BITS: u32 = 60;
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let base = M61::from_u64(256);
         bytes

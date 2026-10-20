@@ -286,6 +286,16 @@ pub trait CanonicalEncoding:
     /// Bit length of the field order `|F|` (for prime fields, the modulus).
     const MODULUS_BITS: u32;
 
+    /// Min-entropy of [`from_challenge_bytes`](Self::from_challenge_bytes) on
+    /// 16 uniform bytes, the width the legacy transcripts squeeze: no value
+    /// has probability above `2^-CHALLENGE_BITS`. Proof-of-work difficulty is
+    /// priced from it.
+    const CHALLENGE_BITS: u32;
+
+    /// [`CHALLENGE_BITS`](Self::CHALLENGE_BITS) for
+    /// [`from_scalar_challenge_bytes`](Self::from_scalar_challenge_bytes).
+    const SCALAR_CHALLENGE_BITS: u32;
+
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;
 

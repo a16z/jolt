@@ -121,6 +121,10 @@ macro_rules! wrap_bn254 {
 
         impl CanonicalEncoding for $ty {
             const MODULUS_BITS: u32 = 254;
+            /// 125 masked bits, mapped injectively below the modulus.
+            const CHALLENGE_BITS: u32 = 125;
+            /// A 128-bit integer, below the modulus.
+            const SCALAR_CHALLENGE_BITS: u32 = 128;
 
             #[inline]
             fn from_bytes_le_reduced(bytes: &[u8]) -> Self {

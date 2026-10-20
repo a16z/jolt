@@ -12,7 +12,7 @@ use jolt_sumcheck::{
     OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, ChallengeSetSize, Transcript};
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 
@@ -179,7 +179,7 @@ impl AppendToTranscript for ExternalField {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ExternalTranscript {
     state: [u8; 32],
     cursor: usize,
@@ -187,6 +187,9 @@ struct ExternalTranscript {
 
 impl Transcript for ExternalTranscript {
     type Challenge = ExternalField;
+    // Scripted challenges: no proof of work.
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
+    const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         let mut transcript = Self::default();
@@ -208,6 +211,10 @@ impl Transcript for ExternalTranscript {
     fn challenge(&mut self) -> ExternalField {
         self.append_bytes(b"challenge");
         ExternalField::from_u64(u64::from_le_bytes(self.state[..8].try_into().unwrap()))
+    }
+
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        out.fill(0);
     }
 
     fn state(&self) -> [u8; 32] {

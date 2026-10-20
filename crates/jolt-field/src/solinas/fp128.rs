@@ -1129,6 +1129,10 @@ impl<const P: u128> CanonicalBytes for Fp128<P> {
 impl<const P: u128> CanonicalEncoding for Fp128<P> {
     // C < 2^32 implies p > 2^127, so the modulus is exactly 128 bits.
     const MODULUS_BITS: u32 = 128;
+    /// 16 bytes reduced modulo `p = 2^128 − C`: the values below `C` have
+    /// probability `2^-127`, the rest `2^-128`.
+    const CHALLENGE_BITS: u32 = 127;
+    const SCALAR_CHALLENGE_BITS: u32 = 127;
 
     #[inline(always)]
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {

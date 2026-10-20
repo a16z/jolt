@@ -56,7 +56,7 @@ fn challenge_draw_rotates_state_and_truncates_to_sixteen_bytes() {
     let mut transcript = T::new(KAT_LABEL);
     transcript.append_bytes(b"jolt says hello");
     let mut buf = [0u8; 16];
-    transcript.raw_challenge_bytes(&mut buf);
+    transcript.challenge_bytes(&mut buf);
 
     assert_eq!(
         hex(&buf),
@@ -74,7 +74,7 @@ fn challenge_draw_rotates_state_and_truncates_to_sixteen_bytes() {
 fn multi_chunk_draw_concatenates_successive_squeezes() {
     let mut transcript = T::new(KAT_LABEL);
     let mut out = [0u8; 48];
-    transcript.raw_challenge_bytes(&mut out);
+    transcript.challenge_bytes(&mut out);
     assert_eq!(
         hex(&out),
         "0db99faadc348c2ecdd3faf44d5f94cf27b2a8b93e757d60eae8a2bc1c057d95\

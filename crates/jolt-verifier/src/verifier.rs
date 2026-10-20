@@ -1804,10 +1804,13 @@ mod tests {
             random_eval_commitments: Vec::new(),
             random_u: Fr::zero(),
             cross_term_error_row_commitments: Vec::new(),
+            fold_pow_nonce: None,
+            outer_point_pow_nonce: None,
             outer_sumcheck: CompressedSumcheckProof::default(),
             az_rx: Fr::zero(),
             bz_rx: Fr::zero(),
             cz_rx: Fr::zero(),
+            inner_combination_pow_nonce: None,
             inner_sumcheck: CompressedSumcheckProof::default(),
             witness_opening: VectorCommitmentOpening {
                 combined_vector: Vec::new(),

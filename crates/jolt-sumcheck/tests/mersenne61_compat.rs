@@ -1,5 +1,3 @@
-#![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
-
 //! Compatibility test for non-BN254 sumcheck verifier plumbing.
 //!
 //! `Mersenne61` is intentionally small and exists here only to prove that the
@@ -19,7 +17,7 @@ use jolt_field::{
     WithAccumulator,
 };
 use jolt_sumcheck::{
-    BooleanHypercube, ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier,
+    BooleanHypercube, ClearRound, RoundMessage, SumcheckClaim, SumcheckError, SumcheckVerifier,
 };
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, KeccakTranscript, Transcript};
 use num_traits::{One, Zero};
@@ -249,6 +247,8 @@ impl CanonicalBytes for Mersenne61 {
 
 impl CanonicalEncoding for Mersenne61 {
     const MODULUS_BITS: u32 = 61;
+    const CHALLENGE_BITS: u32 = 60;
+    const SCALAR_CHALLENGE_BITS: u32 = 60;
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut buf = [0u8; 16];
@@ -323,32 +323,19 @@ impl ClearRound<Mersenne61> for LinearRound {
     }
 }
 
-fn build_rounds() -> (
-    SumcheckClaim<Mersenne61>,
-    Vec<LinearRound>,
-    EvaluationClaim<Mersenne61>,
-) {
-    let mut transcript = Blake2bTranscript::<Mersenne61>::new(b"mersenne61");
+fn build_rounds() -> (SumcheckClaim<Mersenne61>, Vec<LinearRound>) {
     let mut running_sum = Mersenne61::from_u64(10);
-    let mut point = Vec::new();
     let mut rounds = Vec::new();
 
     for _ in 0..4 {
         let c0 = running_sum * Mersenne61::from_u64(3);
         let c1 = running_sum - c0 - c0;
         let round = LinearRound { coeffs: [c0, c1] };
-        round.append_to_transcript(&mut transcript);
-        let r = transcript.challenge();
-        running_sum = round.evaluate(r);
-        point.push(r);
+        running_sum = round.evaluate(Mersenne61::from_u64(5));
         rounds.push(round);
     }
 
-    (
-        SumcheckClaim::new(4, 1, Mersenne61::from_u64(10)),
-        rounds,
-        EvaluationClaim::new(point, running_sum),
-    )
+    (SumcheckClaim::new(4, 1, Mersenne61::from_u64(10)), rounds)
 }
 
 #[test]
@@ -362,12 +349,24 @@ fn hash_transcripts_accept_mersenne61_without_bn254_field_surface() {
     let _: Mersenne61 = keccak.challenge();
 }
 
+/// 60-bit challenges cannot reach the 128-bit Fiat-Shamir target with any
+/// supported proof of work, so the verifier refuses the proof before touching
+/// the transcript rather than accepting it at reduced security.
 #[test]
-fn sumcheck_verifier_accepts_mersenne61_round_proof() {
-    let (claim, rounds, expected) = build_rounds();
+fn sumcheck_verifier_refuses_mersenne61_challenges_below_target() {
+    let (claim, rounds) = build_rounds();
     let mut verifier_transcript = Blake2bTranscript::<Mersenne61>::new(b"mersenne61");
-    let actual =
-        SumcheckVerifier::verify(&claim, &rounds, BooleanHypercube, &mut verifier_transcript)
-            .unwrap();
-    assert_eq!(actual, expected);
+    let before = verifier_transcript.state();
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &rounds,
+        &[],
+        BooleanHypercube,
+        &mut verifier_transcript,
+    );
+    assert!(matches!(
+        result,
+        Err(SumcheckError::PowDifficulty { degree: 1 })
+    ));
+    assert_eq!(verifier_transcript.state(), before);
 }

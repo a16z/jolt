@@ -8,6 +8,7 @@
 use digest::{consts::U32, Digest};
 
 use crate::legacy::{Transcript, MAX_LABEL_LEN};
+use crate::ChallengeSetSize;
 
 #[cfg(test)]
 #[derive(Clone, Default)]
@@ -76,15 +77,6 @@ where
     D: Digest<OutputSize = U32>,
     F: jolt_field::CanonicalEncoding,
 {
-    /// Raw multi-byte squeeze backing the deployed challenge decoding, so the
-    /// compatibility `Transcript` vocabulary can drive this engine
-    /// directly (no state handoffs). Hidden: protocol code squeezes through
-    /// the [`Transcript`] challenge methods.
-    #[doc(hidden)]
-    pub fn raw_challenge_bytes(&mut self, out: &mut [u8]) {
-        self.challenge_bytes(out);
-    }
-
     #[inline]
     fn hasher(&self) -> D {
         let mut round_bytes = [0u8; 32];
@@ -92,7 +84,7 @@ where
         D::new().chain_update(self.state).chain_update(round_bytes)
     }
 
-    fn challenge_bytes(&mut self, out: &mut [u8]) {
+    fn squeeze(&mut self, out: &mut [u8]) {
         let mut out = &mut *out;
 
         while out.len() > 32 {
@@ -143,6 +135,10 @@ where
 {
     type Challenge = F;
 
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(F::CHALLENGE_BITS);
+    const SCALAR_CHALLENGE_SET: ChallengeSetSize =
+        ChallengeSetSize::power_of_two(F::SCALAR_CHALLENGE_BITS);
+
     fn new(label: &'static [u8]) -> Self {
         assert!(
             label.len() <= MAX_LABEL_LEN,
@@ -174,14 +170,18 @@ where
 
     fn challenge(&mut self) -> F {
         let mut buf = [0u8; 16];
-        self.challenge_bytes(&mut buf);
+        self.squeeze(&mut buf);
         F::from_challenge_bytes(&buf)
     }
 
     fn challenge_scalar(&mut self) -> F {
         let mut buf = [0u8; 16];
-        self.challenge_bytes(&mut buf);
+        self.squeeze(&mut buf);
         F::from_scalar_challenge_bytes(&buf)
+    }
+
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        self.squeeze(out);
     }
 
     #[inline]

@@ -7,7 +7,7 @@
 use std::{any::Any, cell::RefCell, collections::BTreeMap, sync::Arc};
 
 use jolt_field::{Field, Ring};
-use jolt_transcript::Transcript;
+use jolt_transcript::{ChallengeSetSize, Transcript};
 use jolt_verifier::fs_audit::{self, FsScope};
 
 /// The transcript API used to derive a challenge.
@@ -154,6 +154,7 @@ where
 }
 
 /// Transcript wrapper that records or replays challenge calls for the active session.
+#[derive(Clone)]
 pub struct AuditTranscript<T> {
     inner: T,
 }
@@ -172,6 +173,8 @@ where
     T::Challenge: Field + 'static,
 {
     type Challenge = T::Challenge;
+    const CHALLENGE_SET: ChallengeSetSize = T::CHALLENGE_SET;
+    const SCALAR_CHALLENGE_SET: ChallengeSetSize = T::SCALAR_CHALLENGE_SET;
 
     fn new(label: &'static [u8]) -> Self {
         Self {
@@ -215,6 +218,12 @@ where
             powers[index] = powers[index - 1] * base;
         }
         powers
+    }
+
+    // Proof-of-work check bytes are not challenges; they pass through
+    // unrecorded, so a replay recomputes them from the replayed transcript.
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        self.inner.challenge_bytes(out);
     }
 
     fn state(&self) -> [u8; 32] {

@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SumcheckError;
 #[cfg(feature = "committed")]
+use crate::pow::grind_round;
+#[cfg(feature = "committed")]
 use crate::proof::SumcheckProof;
 use crate::round_proof::RoundMessage;
 
@@ -59,6 +61,9 @@ impl<C: AppendToTranscript> AppendToTranscript for CommittedOutputClaims<C> {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedSumcheckProof<C> {
     pub rounds: Vec<CommittedRound<C>>,
+    /// One proof-of-work nonce per round, ground after the round commitment
+    /// and before its challenge; empty when the round difficulty is zero.
+    pub pow_nonces: Vec<u32>,
     pub output_claims: CommittedOutputClaims<C>,
 }
 
@@ -202,7 +207,7 @@ impl<F> CommittedSumcheckWitness<F> {
 
 /// Incrementally assembles a [`CommittedSumcheckProof`]: per round, commit the
 /// round polynomial's coefficients with a fresh blinding, absorb the
-/// commitment, and squeeze the round challenge; at the end, row-commit the
+/// commitment, grind the round's proof of work, and squeeze the round challenge; at the end, row-commit the
 /// flattened output-claim values and absorb those commitments. Blindings are
 /// drawn from the caller-supplied `rng` and retained in the witness — the
 /// caller owns the randomness source, so a fixed seed reproduces the proof.
@@ -216,6 +221,7 @@ where
     setup: &'a VC::Setup,
     rng: R,
     rounds: Vec<CommittedRound<VC::Output>>,
+    pow_nonces: Vec<u32>,
     witness: CommittedSumcheckWitness<F>,
 }
 
@@ -234,15 +240,18 @@ where
             setup,
             rng,
             rounds: Vec::new(),
+            pow_nonces: Vec::new(),
             witness: CommittedSumcheckWitness::new(),
         })
     }
 
-    /// Commit one round polynomial, absorb the commitment, and squeeze the
-    /// round challenge.
+    /// Commit one round polynomial, absorb the commitment, grind the round's
+    /// proof of work at the difficulty for `degree_bound` (the verifier's
+    /// statement degree), and squeeze the round challenge.
     pub fn commit_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
+        degree_bound: usize,
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
@@ -263,6 +272,12 @@ where
         };
         let round = witness.commit::<VC>(self.setup)?;
         round.append_to_transcript(transcript);
+        grind_round(
+            degree_bound,
+            self.rounds.len(),
+            &mut self.pow_nonces,
+            transcript,
+        )?;
         let challenge = transcript.challenge();
 
         self.rounds.push(round);
@@ -301,6 +316,7 @@ where
         Ok((
             SumcheckProof::Committed(CommittedSumcheckProof {
                 rounds: self.rounds,
+                pow_nonces: self.pow_nonces,
                 output_claims,
             }),
             self.witness,

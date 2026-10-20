@@ -17,11 +17,13 @@ use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::{CompressedPoly, EqPolynomial};
 use jolt_r1cs::{ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
-    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
-    CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage, SumcheckDomainSpec,
-    SumcheckR1csLayout, SumcheckStatement, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    grind_round, CommittedOutputClaims, CommittedRound, CommittedRoundWitness,
+    CommittedSumcheckConsistency, CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage,
+    SumcheckDomainSpec, SumcheckR1csLayout, SumcheckStatement, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, Transcript};
+use jolt_transcript::{
+    grind_bits_for_loss, AppendToTranscript, Blake2bTranscript, Label, Transcript, SECURITY_BITS,
+};
 use rand_core::RngCore;
 
 pub type F = Fr;
@@ -404,13 +406,16 @@ impl<R: RngCore> SumcheckTestProver<R> {
         let mut coefficients = Vec::with_capacity(statement.num_vars);
         let mut blindings = Vec::with_capacity(statement.num_vars);
         let mut claim_outs = Vec::with_capacity(statement.num_vars);
+        let mut pow_nonces = Vec::with_capacity(statement.num_vars);
 
-        for _ in 0..statement.num_vars {
+        for round_index in 0..statement.num_vars {
             let round_coefficients =
                 coefficients_for_claim_with_rng(claim, statement.degree, &mut self.rng);
             let blinding = rng_field(&mut self.rng);
             let round = commit_round_with_blinding(setup, round_coefficients.clone(), blinding);
             round.append_to_transcript(transcript);
+            grind_round::<F, _>(statement.degree, round_index, &mut pow_nonces, transcript)
+                .expect("proof of work");
             let challenge = transcript.challenge();
             claim = eval_poly(&round_coefficients, challenge);
 
@@ -440,6 +445,7 @@ impl<R: RngCore> SumcheckTestProver<R> {
             statement,
             proof: CommittedSumcheckProof {
                 rounds,
+                pow_nonces,
                 output_claims,
             },
             coefficients,
@@ -464,13 +470,23 @@ impl<R: RngCore> SumcheckTestProver<R> {
 }
 
 pub fn generate_zero_stage(setup: &PedersenSetup<Bn254G1>, num_vars: usize) -> GeneratedStage {
-    let rounds = (0..num_vars)
+    let rounds: Vec<_> = (0..num_vars)
         .map(|round| commit_round(setup, vec![f(0)], round))
         .collect();
+    // Ground on the transcript `stage_consistency` replays.
+    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
+    let mut pow_nonces = Vec::with_capacity(num_vars);
+    for (round_index, round) in rounds.iter().enumerate() {
+        round.append_to_transcript(&mut transcript);
+        grind_round::<F, _>(1, round_index, &mut pow_nonces, &mut transcript)
+            .expect("proof of work");
+        let _challenge: F = transcript.challenge();
+    }
     GeneratedStage {
         statement: SumcheckStatement::new(num_vars, 1),
         proof: CommittedSumcheckProof {
             rounds,
+            pow_nonces,
             output_claims: CommittedOutputClaims::default(),
         },
         coefficients: vec![vec![f(0)]; num_vars],
@@ -1264,6 +1280,8 @@ fn prove_from_protocol_witness<R: RngCore>(
         &random_instance.eval_commitments,
     );
     transcript.append_values(b"bf_cross_e", &cross_term_error_row_commitments);
+    // A bad fold survives at most 2 values of r: E₁ + r·T + r²·E₂.
+    let fold_pow_nonce = grind_draw(transcript, 2);
     let folding_challenge = transcript.challenge();
 
     let folded_u = f(1) + folding_challenge * random_u;
@@ -1343,6 +1361,8 @@ fn prove_from_protocol_witness<R: RngCore>(
     transcript.append(&Label(b"bf_spartan"));
     let outer_num_vars =
         log2(protocol.dimensions.error.row_count) + log2(protocol.dimensions.error.row_len);
+    // The outer zero-check sum is multilinear in τ.
+    let outer_point_pow_nonce = grind_draw(transcript, outer_num_vars as u64);
     let tau = transcript.challenge_vector(outer_num_vars);
     let outer_trace = prove_slow_sumcheck(
         outer_num_vars,
@@ -1388,6 +1408,7 @@ fn prove_from_protocol_witness<R: RngCore>(
         &error_opening,
     );
 
+    let inner_combination_pow_nonce = grind_draw(transcript, 1);
     let ra = transcript.challenge();
     let rb = transcript.challenge();
     let rc = transcript.challenge();
@@ -1438,10 +1459,13 @@ fn prove_from_protocol_witness<R: RngCore>(
         random_eval_commitments,
         random_u,
         cross_term_error_row_commitments,
+        fold_pow_nonce,
+        outer_point_pow_nonce,
         outer_sumcheck: outer_trace.proof,
         az_rx,
         bz_rx,
         cz_rx,
+        inner_combination_pow_nonce,
         inner_sumcheck: inner_trace.proof,
         witness_opening,
         error_opening,
@@ -1713,6 +1737,7 @@ fn prove_slow_sumcheck(
     let mut running_sum = claim;
     let mut prefix = Vec::with_capacity(num_vars);
     let mut rounds = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::with_capacity(num_vars);
 
     for round in 0..num_vars {
         let remaining = num_vars - round - 1;
@@ -1737,6 +1762,7 @@ fn prove_slow_sumcheck(
         compressed.push(coefficients[0]);
         compressed.extend_from_slice(&coefficients[2..]);
         transcript.append_values(label, &compressed);
+        grind_round::<F, _>(degree, round, &mut pow_nonces, transcript).expect("proof of work");
         let challenge = transcript.challenge();
         running_sum = eval_poly(&coefficients, challenge);
         prefix.push(challenge);
@@ -1746,9 +1772,18 @@ fn prove_slow_sumcheck(
     SumcheckTrace {
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
+            pow_nonces,
         },
         point: prefix,
     }
+}
+
+/// Grinds the nonce an honest prover sends before a challenge draw of loss
+/// `loss` over `Transcript::challenge`.
+fn grind_draw(transcript: &mut Blake2bTranscript<F>, loss: u64) -> Option<u32> {
+    let bits = grind_bits_for_loss(loss, Blake2bTranscript::<F>::CHALLENGE_SET, SECURITY_BITS)
+        .expect("difficulty");
+    transcript.grind(bits).expect("proof of work")
 }
 
 fn interpolate_zero_to_degree(values: &[F]) -> Vec<F> {

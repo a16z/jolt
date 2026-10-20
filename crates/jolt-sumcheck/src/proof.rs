@@ -27,6 +27,9 @@ use serde::{Deserialize, Serialize};
 pub struct ClearSumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
+    /// One proof-of-work nonce per round, ground after the round polynomial
+    /// and before its challenge; empty when the round difficulty is zero.
+    pub pow_nonces: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +37,8 @@ pub struct ClearSumcheckProof<F: Field> {
 pub struct CompressedSumcheckProof<F: Field> {
     /// Boolean-hypercube round polynomials with the linear coefficient omitted.
     pub round_polynomials: Vec<CompressedPoly<F>>,
+    /// One proof-of-work nonce per round, as in [`ClearSumcheckProof`].
+    pub pow_nonces: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,7 +119,7 @@ impl<F: Field, C> SumcheckProof<F, C> {
                     .iter()
                     .map(|poly| LabeledRoundPoly::new(poly, round_label))
                     .collect::<Vec<_>>();
-                SumcheckVerifier::verify(claim, &rounds, domain, transcript)
+                SumcheckVerifier::verify(claim, &rounds, &proof.pow_nonces, domain, transcript)
             }
             Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "full clear",

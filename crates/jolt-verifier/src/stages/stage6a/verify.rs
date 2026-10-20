@@ -192,6 +192,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::{Fr, Ring};
+    use jolt_transcript::ChallengeSetSize;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -337,6 +338,9 @@ mod tests {
 
     impl Transcript for ConstantChallengeTranscript {
         type Challenge = Fr;
+        // Scripted challenges: no proof of work.
+        const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
+        const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
         fn new(_label: &'static [u8]) -> Self {
             Self
         }
@@ -344,6 +348,10 @@ mod tests {
         fn challenge(&mut self) -> Self::Challenge {
             Fr::from_u64(7)
         }
+        fn challenge_bytes(&mut self, out: &mut [u8]) {
+            out.fill(0);
+        }
+
         fn state(&self) -> [u8; 32] {
             [0u8; 32]
         }

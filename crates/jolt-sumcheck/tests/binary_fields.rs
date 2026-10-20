@@ -7,18 +7,24 @@
 use jolt_field::{Field, Fr, JoltField, One, Ring, F128, F64};
 use jolt_poly::{CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{
-    prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
+    prove_batch, prove_uniskip_clear, round_pow_bits, BatchMember, BatchPrelude, BooleanHypercube,
     CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, EvaluationClaim, LabeledRoundPoly,
     ProveRounds, ProvedBatch, RoundMessage, SequentialRounds, SumcheckClaim, SumcheckDomain,
     SumcheckDomainSpec, SumcheckError, SumcheckProof, SumcheckRecorder, SumcheckVerifier,
     OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_transcript::{
+    AppendToTranscript, Blake2bTranscript, ChallengeSetSize, LabelWithCount, Transcript,
+    UnpricedTranscript,
+};
 
 const LABEL: &[u8] = b"binary-sumcheck";
 
 trait BinaryField: JoltField + AppendToTranscript {
+    /// The hashing transcript these tests run over this field.
+    type HashTranscript: Transcript<Challenge = Self>;
+
     fn sample(seed: u64) -> Self;
 }
 
@@ -30,6 +36,8 @@ fn sample_word(seed: u64) -> u64 {
 }
 
 impl BinaryField for F128 {
+    type HashTranscript = Blake2bTranscript<Self>;
+
     fn sample(seed: u64) -> Self {
         Self::from_raw(
             u128::from(sample_word(seed)) | (u128::from(sample_word(seed.wrapping_add(1))) << 64),
@@ -37,7 +45,12 @@ impl BinaryField for F128 {
     }
 }
 
+// `F64` challenges carry 64 bits, which no supported proof of work lifts to
+// the 128-bit target, so a priced transcript rejects every round; the `F64`
+// tests check sumcheck algebra, not Fiat-Shamir security.
 impl BinaryField for F64 {
+    type HashTranscript = UnpricedTranscript<Blake2bTranscript<Self>>;
+
     fn sample(seed: u64) -> Self {
         Self::from_raw(sample_word(seed))
     }
@@ -297,9 +310,9 @@ fn mixed_linear_members<F: BinaryField>() {
         &[0, 2, 0, 1],
         4,
         1,
-        Blake2bTranscript::<F>::new(LABEL),
+        F::HashTranscript::new(LABEL),
     );
-    let _ = fixture.verify(Blake2bTranscript::<F>::new(LABEL));
+    let _ = fixture.verify(F::HashTranscript::new(LABEL));
     for (member, indices) in [(1, [0, 1, 2, 3]), (2, [0, 4, 8, 12]), (3, [0, 2, 4, 6])] {
         let mut extended = vec![F::zero(); 16];
         for (&value, index) in products[member].factors[0].iter().zip(indices) {
@@ -319,14 +332,8 @@ fn mixed_quadratic_members<F: BinaryField>() {
         DenseProduct::<F>::sampled(2, 2, 200),
         DenseProduct::<F>::sampled(2, 2, 300),
     ];
-    let fixture = BatchFixture::prove(
-        &products,
-        &[0, 2, 1],
-        4,
-        2,
-        Blake2bTranscript::<F>::new(LABEL),
-    );
-    let _ = fixture.verify(Blake2bTranscript::<F>::new(LABEL));
+    let fixture = BatchFixture::prove(&products, &[0, 2, 1], 4, 2, F::HashTranscript::new(LABEL));
+    let _ = fixture.verify(F::HashTranscript::new(LABEL));
     let r = &fixture.proved.challenges;
     assert_eq!(
         fixture.proved.member_claims[1],
@@ -349,18 +356,18 @@ fn zero_native_claim<F: BinaryField>() {
             rounds: 1,
         },
     ];
-    let fixture = BatchFixture::prove(&products, &[0, 1], 2, 1, Blake2bTranscript::<F>::new(LABEL));
+    let fixture = BatchFixture::prove(&products, &[0, 1], 2, 1, F::HashTranscript::new(LABEL));
     assert_eq!(fixture.prelude.members[1].input_claim, F::zero());
     assert_eq!(
         fixture.proved.member_claims[1],
         u * (F::one() - fixture.proved.challenges[0])
     );
     assert!(!fixture.proved.member_claims[1].is_zero());
-    let _ = fixture.verify(Blake2bTranscript::<F>::new(LABEL));
+    let _ = fixture.verify(F::HashTranscript::new(LABEL));
     fixture.check_output_scales(&products);
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ScriptedTranscript<F> {
     script: Vec<F>,
     next: usize,
@@ -381,6 +388,9 @@ impl<F: BinaryField> ScriptedTranscript<F> {
 
 impl<F: BinaryField> Transcript for ScriptedTranscript<F> {
     type Challenge = F;
+    // Scripted challenges: no proof of work.
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
+    const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         let mut transcript = Self::default();
@@ -405,6 +415,10 @@ impl<F: BinaryField> Transcript for ScriptedTranscript<F> {
         self.append_bytes(b"scripted_challenge");
         challenge.append_to_transcript(self);
         challenge
+    }
+
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        out.fill(0);
     }
 
     fn state(&self) -> [u8; 32] {
@@ -440,7 +454,7 @@ fn rejection<F: BinaryField>() {
         DenseProduct::<F>::sampled(4, 2, 31),
         DenseProduct::<F>::sampled(2, 2, 97),
     ];
-    let fixture = BatchFixture::prove(&products, &[0, 1], 4, 2, Blake2bTranscript::<F>::new(LABEL));
+    let fixture = BatchFixture::prove(&products, &[0, 1], 4, 2, F::HashTranscript::new(LABEL));
     let mut changed_prelude = fixture.prelude.clone();
     changed_prelude.claimed_sum += F::one();
     let mut members = products.clone();
@@ -448,7 +462,7 @@ fn rejection<F: BinaryField>() {
         .iter_mut()
         .map(|member| member as &mut dyn ProveRounds<F>)
         .collect();
-    let mut transcript = Blake2bTranscript::<F>::new(LABEL);
+    let mut transcript = F::HashTranscript::new(LABEL);
     fixture.replay_head(&mut transcript);
     assert!(matches!(
         prove_batch(
@@ -469,7 +483,29 @@ fn rejection<F: BinaryField>() {
     let mut coefficients = round.coeffs_except_linear_term().to_vec();
     coefficients[0] += F::one();
     *round = CompressedPoly::new(coefficients);
-    let mut transcript = Blake2bTranscript::<F>::new(LABEL);
+    // The honest nonces were ground against the untampered rounds; regrind so
+    // the round loop reaches the final oracle check under test.
+    let mut transcript = F::HashTranscript::new(LABEL);
+    fixture.replay_head(&mut transcript);
+    proof.pow_nonces = proof
+        .round_polynomials
+        .iter()
+        .filter_map(|round| {
+            let coefficients = round.coeffs_except_linear_term();
+            transcript.append(&LabelWithCount(
+                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+                coefficients.len() as u64,
+            ));
+            for coefficient in coefficients {
+                coefficient.append_to_transcript(&mut transcript);
+            }
+            let bits = round_pow_bits::<F, F::HashTranscript>(2).unwrap();
+            let nonce = transcript.grind(bits).unwrap();
+            let _ = transcript.challenge();
+            nonce
+        })
+        .collect();
+    let mut transcript = F::HashTranscript::new(LABEL);
     fixture.replay_head(&mut transcript);
     let reduced = altered
         .verify_compressed_boolean(4, 2, fixture.prelude.claimed_sum, &mut transcript)
@@ -498,7 +534,7 @@ fn rejection<F: BinaryField>() {
         panic!("expected a compressed proof")
     };
     let _ = proof.round_polynomials.pop().unwrap();
-    let mut transcript = Blake2bTranscript::<F>::new(LABEL);
+    let mut transcript = F::HashTranscript::new(LABEL);
     fixture.replay_head(&mut transcript);
     let state = transcript.state();
     assert!(matches!(
@@ -515,15 +551,18 @@ fn uncompressed<F: BinaryField>() {
     let original = DenseProduct::<F>::sampled(4, 3, 27);
     let input_claim = original.claimed_sum();
     let mut member = original.clone();
-    let mut prover = Blake2bTranscript::<F>::new(LABEL);
+    let mut prover = F::HashTranscript::new(LABEL);
     let mut previous_claim = input_claim;
     let mut bind = None;
     let mut rounds = Vec::new();
     let mut challenges = Vec::new();
+    let mut pow_nonces = Vec::new();
     for round in 0..4 {
         let polynomial = member.prove_round(bind, round, previous_claim).unwrap();
         LabeledRoundPoly::new(&polynomial, SUMCHECK_ROUND_TRANSCRIPT_LABEL)
             .append_to_transcript(&mut prover);
+        let bits = round_pow_bits::<F, F::HashTranscript>(3).unwrap();
+        pow_nonces.extend(prover.grind(bits).unwrap());
         let challenge = prover.challenge();
         previous_claim = polynomial.evaluate(challenge);
         bind = Some(challenge);
@@ -535,10 +574,11 @@ fn uncompressed<F: BinaryField>() {
         .iter()
         .map(|polynomial| LabeledRoundPoly::new(polynomial, SUMCHECK_ROUND_TRANSCRIPT_LABEL))
         .collect();
-    let mut verifier = Blake2bTranscript::<F>::new(LABEL);
+    let mut verifier = F::HashTranscript::new(LABEL);
     let reduced = SumcheckVerifier::verify(
         &SumcheckClaim::new(4, 3, input_claim),
         &labeled,
+        &pow_nonces,
         BooleanHypercube,
         &mut verifier,
     )
@@ -634,7 +674,7 @@ fn integer_domains<F: BinaryField>() {
         CenteredIntegerDomain::new(3).check_round_sum(0, F::sample(4), &polynomial),
         Err(SumcheckError::IntegerDomainNotDistinct { domain_size: 3 })
     ));
-    let mut transcript = Blake2bTranscript::<F>::new(LABEL);
+    let mut transcript = F::HashTranscript::new(LABEL);
     let state = transcript.state();
     assert!(matches!(
         prove_uniskip_clear::<F, _>(polynomial.clone(), F::sample(4), 2, 3, &mut transcript),

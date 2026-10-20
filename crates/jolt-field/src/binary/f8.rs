@@ -101,6 +101,9 @@ impl CanonicalBytes for F8 {
 
 impl CanonicalEncoding for F8 {
     const MODULUS_BITS: u32 = 9;
+    /// The first byte.
+    const CHALLENGE_BITS: u32 = 8;
+    const SCALAR_CHALLENGE_BITS: u32 = 8;
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut word = [0; 1];

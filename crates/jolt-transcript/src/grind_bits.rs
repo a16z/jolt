@@ -26,6 +26,10 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 /// difficulty, still holds `2^7` times the expected number of trials.
 pub const MAX_POW_BITS: u32 = 25;
 
+/// The Fiat-Shamir security level Jolt targets: about `2^128` hash calls to
+/// make any protected challenge land in its bad set.
+pub const SECURITY_BITS: u32 = 128;
+
 /// The largest security level [`grind_bits_for_loss`] accepts. With a `u64`
 /// loss factor it keeps `L · 2^λ` below `2^256 − 1`, the largest size a
 /// [`ChallengeSetSize`] stores exactly.
