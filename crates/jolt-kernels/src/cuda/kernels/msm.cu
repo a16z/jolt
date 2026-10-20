@@ -218,6 +218,161 @@ __device__ __noinline__ void jac_add_affine(const u64 *p, const u64 *ax, const u
     fq_sub(t0, hh, out + 2 * LIMBS);
 }
 
+#define FQ2_LIMBS (2 * LIMBS)
+#define G2_LIMBS (3 * FQ2_LIMBS)
+
+__device__ __forceinline__ int fq2_is_zero(const u64 *a) {
+    return fq_is_zero(a) && fq_is_zero(a + LIMBS);
+}
+
+__device__ __forceinline__ void fq2_copy(const u64 *a, u64 *out) {
+    for (int i = 0; i < FQ2_LIMBS; i++) out[i] = a[i];
+}
+
+__device__ __forceinline__ void fq2_add(const u64 *a, const u64 *b, u64 *out) {
+    fq_add(a, b, out);
+    fq_add(a + LIMBS, b + LIMBS, out + LIMBS);
+}
+
+__device__ __forceinline__ void fq2_sub(const u64 *a, const u64 *b, u64 *out) {
+    fq_sub(a, b, out);
+    fq_sub(a + LIMBS, b + LIMBS, out + LIMBS);
+}
+
+__device__ __forceinline__ void fq2_double(const u64 *a, u64 *out) {
+    fq2_add(a, a, out);
+}
+
+__device__ __noinline__ void fq2_mul(const u64 *a, const u64 *b, u64 *out) {
+    u64 v0[LIMBS], v1[LIMBS], s[LIMBS], t[LIMBS], c1[LIMBS];
+    fq_mul(a, b, v0);
+    fq_mul(a + LIMBS, b + LIMBS, v1);
+    fq_add(a, a + LIMBS, s);
+    fq_add(b, b + LIMBS, t);
+    fq_mul(s, t, c1);
+    fq_sub(c1, v0, s);
+    fq_sub(s, v1, c1);
+    fq_sub(v0, v1, out);
+    fq_copy(c1, out + LIMBS);
+}
+
+__device__ __noinline__ void fq2_sqr(const u64 *a, u64 *out) {
+    u64 s[LIMBS], d[LIMBS], m[LIMBS], c0[LIMBS];
+    fq_add(a, a + LIMBS, s);
+    fq_sub(a, a + LIMBS, d);
+    fq_mul(a, a + LIMBS, m);
+    fq_mul(s, d, c0);
+    fq_double(m, out + LIMBS);
+    fq_copy(c0, out);
+}
+
+__device__ __forceinline__ int jac2_is_zero(const u64 *p) {
+    return fq2_is_zero(p + 2 * FQ2_LIMBS);
+}
+
+__device__ __forceinline__ void jac2_set_zero(u64 *p) {
+    for (int i = 0; i < G2_LIMBS; i++) p[i] = 0;
+}
+
+__device__ __forceinline__ void jac2_copy(const u64 *p, u64 *out) {
+    for (int i = 0; i < G2_LIMBS; i++) out[i] = p[i];
+}
+
+__device__ __noinline__ void jac2_double(const u64 *p, u64 *out) {
+    if (jac2_is_zero(p)) {
+        jac2_set_zero(out);
+        return;
+    }
+    const u64 *x = p;
+    const u64 *y = p + FQ2_LIMBS;
+    const u64 *z = p + 2 * FQ2_LIMBS;
+    u64 a[FQ2_LIMBS], b[FQ2_LIMBS], c[FQ2_LIMBS], d[FQ2_LIMBS];
+    u64 e[FQ2_LIMBS], f[FQ2_LIMBS], t0[FQ2_LIMBS], t1[FQ2_LIMBS], z3[FQ2_LIMBS];
+    fq2_sqr(x, a);
+    fq2_sqr(y, b);
+    fq2_sqr(b, c);
+    fq2_add(x, b, t0);
+    fq2_sqr(t0, t1);
+    fq2_sub(t1, a, t0);
+    fq2_sub(t0, c, t1);
+    fq2_double(t1, d);
+    fq2_add(a, a, t0);
+    fq2_add(t0, a, e);
+    fq2_sqr(e, f);
+    fq2_mul(y, z, t0);
+    fq2_double(t0, z3);
+    fq2_double(d, t0);
+    fq2_sub(f, t0, out);
+    fq2_sub(d, out, t0);
+    fq2_mul(e, t0, t1);
+    fq2_double(c, t0);
+    fq2_double(t0, c);
+    fq2_double(c, t0);
+    fq2_sub(t1, t0, out + FQ2_LIMBS);
+    fq2_copy(z3, out + 2 * FQ2_LIMBS);
+}
+
+__device__ __noinline__ void jac2_add(const u64 *p, const u64 *q, u64 *out) {
+    if (jac2_is_zero(p)) {
+        jac2_copy(q, out);
+        return;
+    }
+    if (jac2_is_zero(q)) {
+        jac2_copy(p, out);
+        return;
+    }
+    u64 z1z1[FQ2_LIMBS], z2z2[FQ2_LIMBS], u1[FQ2_LIMBS], s1[FQ2_LIMBS];
+    u64 h[FQ2_LIMBS], i[FQ2_LIMBS], j[FQ2_LIMBS], r[FQ2_LIMBS], v[FQ2_LIMBS];
+    u64 t0[FQ2_LIMBS], t1[FQ2_LIMBS], z3[FQ2_LIMBS];
+    fq2_sqr(p + 2 * FQ2_LIMBS, z1z1);
+    fq2_sqr(q + 2 * FQ2_LIMBS, z2z2);
+    fq2_mul(p, z2z2, u1);
+    fq2_mul(q, z1z1, t1);
+    fq2_mul(p + FQ2_LIMBS, z2z2, t0);
+    fq2_mul(t0, q + 2 * FQ2_LIMBS, s1);
+    fq2_mul(q + FQ2_LIMBS, z1z1, t0);
+    fq2_mul(t0, p + 2 * FQ2_LIMBS, v);
+    fq2_sub(t1, u1, h);
+    fq2_sub(v, s1, t0);
+    if (fq2_is_zero(h) && fq2_is_zero(t0)) {
+        jac2_double(p, out);
+        return;
+    }
+    if (fq2_is_zero(h)) {
+        jac2_set_zero(out);
+        return;
+    }
+    fq2_add(p + 2 * FQ2_LIMBS, q + 2 * FQ2_LIMBS, t1);
+    fq2_sqr(t1, z3);
+    fq2_sub(z3, z1z1, t1);
+    fq2_sub(t1, z2z2, z3);
+    fq2_mul(z3, h, t1);
+    fq2_copy(t1, z3);
+    fq2_double(t0, r);
+    fq2_double(h, t0);
+    fq2_sqr(t0, i);
+    fq2_mul(h, i, j);
+    fq2_mul(u1, i, v);
+    fq2_sqr(r, t0);
+    fq2_sub(t0, j, t1);
+    fq2_double(v, t0);
+    fq2_sub(t1, t0, out);
+    fq2_sub(v, out, t0);
+    fq2_mul(r, t0, t1);
+    fq2_mul(s1, j, t0);
+    fq2_double(t0, j);
+    fq2_sub(t1, j, out + FQ2_LIMBS);
+    fq2_copy(z3, out + 2 * FQ2_LIMBS);
+}
+
+__device__ __forceinline__ void g2_negate_y(u64 *point) {
+    u64 negated[LIMBS];
+    fq_neg(point + 2 * LIMBS, negated);
+    fq_copy(negated, point + 2 * LIMBS);
+    fq_neg(point + 3 * LIMBS, negated);
+    fq_copy(negated, point + 3 * LIMBS);
+}
+
 extern "C" __global__ void msm_fq_add_kernel(const u64 *__restrict__ left,
                                              const u64 *__restrict__ right, u64 *__restrict__ out,
                                              unsigned int count) {
@@ -320,6 +475,65 @@ extern "C" __global__ void msm_g1_add_kernel(const u64 *__restrict__ left,
     jac_add(a, b, c);
     for (int limb = 0; limb < 3; limb++) {
         store4(out + ((unsigned long long)i * 3 + limb) * LIMBS, c + limb * LIMBS);
+    }
+}
+
+__device__ __forceinline__ void msm_g2_segment_accumulate(
+    const u64 *bases, const unsigned int *indices, unsigned int start, unsigned int end,
+    unsigned int rank, unsigned int stride, u64 *acc) {
+    u64 base[G2_LIMBS], tmp[G2_LIMBS];
+    jac2_set_zero(acc);
+    for (unsigned int i = start + rank; i < end; i += stride) {
+        unsigned int index = indices[i];
+        jac2_copy(bases + (unsigned long long)(index & 0x7fffffffu) * G2_LIMBS, base);
+        if (index >> 31) g2_negate_y(base);
+        jac2_add(acc, base, tmp);
+        jac2_copy(tmp, acc);
+    }
+}
+
+extern "C" __global__ void msm_g2_segment_sum_small_kernel(const u64 *__restrict__ bases,
+                                                          const unsigned int *__restrict__ indices,
+                                                          const unsigned int *__restrict__ offsets,
+                                                          const unsigned int *__restrict__ counts,
+                                                          unsigned int segments,
+                                                          u64 *__restrict__ out) {
+    constexpr unsigned int WARP = 32u;
+    constexpr unsigned int SERIAL_LIMIT = 64u;
+    unsigned int segment = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int lane = threadIdx.x & (WARP - 1u);
+    unsigned int start = segment < segments ? offsets[segment] : 0;
+    unsigned int size = segment < segments ? counts[segment] : 0;
+    unsigned int pending = __ballot_sync(0xffffffffu, size > SERIAL_LIMIT);
+    // A warp handles selected buckets sequentially. Keep many medium-sized
+    // buckets independent, but share the few large high-window GLV buckets.
+    bool cooperative = size > SERIAL_LIMIT && size > SERIAL_LIMIT * __popc(pending);
+    pending = __ballot_sync(0xffffffffu, cooperative);
+
+    u64 acc[G2_LIMBS], tmp[G2_LIMBS], peer[G2_LIMBS];
+    if (segment < segments && !cooperative) {
+        msm_g2_segment_accumulate(bases, indices, start, start + size, 0, 1, acc);
+        jac2_copy(acc, out + (unsigned long long)segment * G2_LIMBS);
+    }
+    while (pending != 0) {
+        unsigned int leader = __ffs(pending) - 1;
+        unsigned int begin = __shfl_sync(0xffffffffu, start, leader);
+        unsigned int length = __shfl_sync(0xffffffffu, size, leader);
+        msm_g2_segment_accumulate(bases, indices, begin, begin + length, lane, WARP, acc);
+        for (unsigned int stride = WARP >> 1; stride != 0; stride >>= 1) {
+            for (int limb = 0; limb < G2_LIMBS; limb++) {
+                peer[limb] = __shfl_down_sync(0xffffffffu, acc[limb], stride);
+            }
+            if (lane < stride) {
+                jac2_add(acc, peer, tmp);
+                jac2_copy(tmp, acc);
+            }
+        }
+        if (lane == 0) {
+            unsigned int target = (segment & ~(WARP - 1u)) + leader;
+            jac2_copy(acc, out + (unsigned long long)target * G2_LIMBS);
+        }
+        pending &= pending - 1;
     }
 }
 

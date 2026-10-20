@@ -127,6 +127,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_segment_sum_small: CudaFunction,
     #[cfg(test)]
+    msm_g2_segment_sum_small: CudaFunction,
+    #[cfg(test)]
     msm_bucket_reduce_chunked: CudaFunction,
     #[cfg(test)]
     msm_point_rows_sum: CudaFunction,
@@ -248,6 +250,8 @@ impl CudaKernelContext {
             msm_segment_sum_classed: module.load_function("msm_segment_sum_classed_kernel")?,
             #[cfg(test)]
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
+            #[cfg(test)]
+            msm_g2_segment_sum_small: module.load_function("msm_g2_segment_sum_small_kernel")?,
             #[cfg(test)]
             msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
             #[cfg(test)]
@@ -638,6 +642,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_segment_sum_small(&self) -> &CudaFunction {
         &self.msm_segment_sum_small
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_g2_segment_sum_small(&self) -> &CudaFunction {
+        &self.msm_g2_segment_sum_small
     }
 
     #[cfg(test)]

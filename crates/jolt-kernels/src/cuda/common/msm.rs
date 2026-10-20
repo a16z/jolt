@@ -1,4 +1,4 @@
-//! BN254 base-field and G1 arithmetic on the device.
+//! BN254 base-field, G1 and G2 arithmetic on the device.
 //!
 //! Row MSMs use Pippenger buckets built by device count/scan/scatter passes.
 //! G1 window batches use a memory budget informed by free device memory and
@@ -8,6 +8,10 @@
 //! Inputs and outputs use four Montgomery limbs per field element. Each GPU
 //! thread inverts a chunk using its output range for prefix products; zero
 //! entries remain zero.
+//!
+//! G2 points use Jacobian coordinates over Fq2, with 24 Montgomery limbs per
+//! point. Segmented sums keep medium segments on independent threads and let
+//! a warp cooperate on large segments; the index high bit encodes negation.
 //!
 //! G1 doubling and addition keep Jacobian coordinates; mixed addition consumes
 //! affine addends with all-zero device coordinates representing infinity.
@@ -2462,7 +2466,7 @@ pub(crate) mod testing {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use ark_bn254::{Fq, Fr as ArkFr, G1Affine, G1Projective};
+    use ark_bn254::{Fq, Fq2, Fr as ArkFr, G1Affine, G1Projective, G2Projective};
     use ark_ec::scalar_mul::glv::GLVConfig;
     use ark_ec::scalar_mul::variable_base::msm_i128;
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
@@ -3535,6 +3539,108 @@ mod tests {
                     .expect("adaptive small segment sums"),
             );
             assert_eq!(got, expected, "{segments} segments");
+        }
+    }
+
+    fn flat_g2(points: &[G2Projective]) -> Vec<u64> {
+        let mut flat = Vec::with_capacity(points.len() * 24);
+        for value in points {
+            for coordinate in [&value.x, &value.y, &value.z] {
+                flat.extend_from_slice(&coordinate.c0.0 .0);
+                flat.extend_from_slice(&coordinate.c1.0 .0);
+            }
+        }
+        flat
+    }
+
+    fn g2_from_limbs(limbs: &[u64]) -> G2Projective {
+        let fq2 = |chunk: &[u64]| {
+            Fq2::new(
+                fq_from_limbs(take_limbs(&chunk[..FQ_LIMBS])),
+                fq_from_limbs(take_limbs(&chunk[FQ_LIMBS..])),
+            )
+        };
+        G2Projective::new_unchecked(fq2(&limbs[..8]), fq2(&limbs[8..16]), fq2(&limbs[16..24]))
+    }
+
+    #[test]
+    fn g2_segment_sums_handle_skew_and_partial_warps() {
+        use cudarc::driver::PushKernelArg;
+
+        let Some(context) = device() else { return };
+        let generator = G2Projective::generator();
+        let bases: Vec<G2Projective> = (0..SEGMENT_BASES)
+            .map(|index| generator * ArkFr::from(index as u64))
+            .collect();
+        let device_bases = context
+            .upload_raw_u64(&flat_g2(&bases))
+            .expect("upload bases");
+        for segments in [1usize, 31, 32, 33, 255, 256, 257] {
+            let counts: Vec<u32> = (0..segments)
+                .map(|index| {
+                    if index + 1 == segments {
+                        4097
+                    } else {
+                        [0, 1, 63, 64, 65, 66, 128, 129, 1024][index % 9]
+                    }
+                })
+                .collect();
+            let mut offsets = Vec::with_capacity(segments);
+            let mut indices = Vec::new();
+            // Base i is i times the generator, including the identity at zero.
+            let expected: Vec<G2Projective> = counts
+                .iter()
+                .enumerate()
+                .map(|(segment, &count)| {
+                    offsets.push(indices.len() as u32);
+                    let mut sum = 0i64;
+                    for term in 0..count {
+                        let index = (term / 2 + segment as u32 + 1) % SEGMENT_BASES as u32;
+                        let negate = if segment % 2 == 0 {
+                            term % 2 != 0
+                        } else {
+                            term % 3 == 0
+                        };
+                        indices.push(index | (u32::from(negate) << 31));
+                        sum += if negate {
+                            -i64::from(index)
+                        } else {
+                            i64::from(index)
+                        };
+                    }
+                    let result = generator * ArkFr::from(sum.unsigned_abs());
+                    if sum < 0 {
+                        -result
+                    } else {
+                        result
+                    }
+                })
+                .collect();
+            let device_indices = context.upload_u32_slice(&indices).expect("upload indices");
+            let device_offsets = context.upload_u32_slice(&offsets).expect("upload offsets");
+            let device_counts = context.upload_u32_slice(&counts).expect("upload counts");
+            let mut out = context.alloc_u64(segments * 24).expect("allocate sums");
+            let segments_arg = segments as u32;
+            let mut builder = context
+                .stream()
+                .launch_builder(context.msm_g2_segment_sum_small());
+            let _ = builder.arg(&device_bases);
+            let _ = builder.arg(&device_indices);
+            let _ = builder.arg(&device_offsets);
+            let _ = builder.arg(&device_counts);
+            let _ = builder.arg(&segments_arg);
+            let _ = builder.arg(&mut out);
+            // SAFETY: the CSR ranges partition indices, every masked index is
+            // below bases.len(), and the rounded launch provides complete warps.
+            let _ = unsafe { builder.launch(CudaKernelContext::launch_config(segments_arg)) }
+                .expect("G2 segment sums");
+            let hosted = context.download_u64(&out).expect("download sums");
+            let got: Vec<G2Projective> = hosted.chunks_exact(24).map(g2_from_limbs).collect();
+            assert_eq!(
+                G2Projective::normalize_batch(&got),
+                G2Projective::normalize_batch(&expected),
+                "{segments} segments"
+            );
         }
     }
 

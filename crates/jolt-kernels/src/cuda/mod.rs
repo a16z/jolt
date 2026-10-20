@@ -64,6 +64,8 @@
 //! other batches use a GLV block reduction per row.
 //! Resident G1 MSMs read a device point span and store the sum back on device;
 //! their GLV-expanded affine bases and Pippenger accumulators stay on the GPU.
+//! G2 sums use Jacobian coordinates over Fq2 and signed base indices. Segments
+//! run independently unless a large segment benefits from warp cooperation.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
