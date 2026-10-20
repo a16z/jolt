@@ -5,6 +5,7 @@
 
 mod common;
 
+use ark_bn254::Fr as BnFr;
 use ark_ff::{BigInteger, PrimeField};
 use jolt_field::{CanonicalBytes, Fr};
 use jolt_transcript::{
@@ -12,7 +13,7 @@ use jolt_transcript::{
     FrUnit, PoseidonSponge, PoseidonTranscript, ProverTranscript, VerifierTranscript,
     MAX_CHALLENGE_BYTES,
 };
-use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding};
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState};
 
 type Pos = PoseidonTranscript;
 
@@ -60,7 +61,7 @@ fn legacy_known_vector() {
 }
 
 /// One prover message of each kind, then two challenges.
-fn sample_prover() -> spongefish::ProverState<PoseidonSponge> {
+fn sample_prover() -> ProverState<PoseidonSponge> {
     let mut prover = prover_transcript::<PoseidonSponge>(SESSION, INSTANCE);
     prover.public_message(&BytesMsg(b"public".to_vec()));
     prover.prover_message(&BytesMsg(b"jolt".to_vec()));
@@ -89,9 +90,7 @@ fn native_known_vector() {
 fn packed(bytes: &[u8]) -> Vec<FrUnit> {
     let mut units = vec![FrUnit::from(fr(bytes.len() as u64))];
     for chunk in bytes.chunks(31) {
-        units.push(FrUnit::from(Fr::from(
-            ark_bn254::Fr::from_le_bytes_mod_order(chunk),
-        )));
+        units.push(FrUnit::from(Fr::from(BnFr::from_le_bytes_mod_order(chunk))));
     }
     units
 }
@@ -182,7 +181,7 @@ fn field_narg(value: Fr) -> Vec<u8> {
 #[test]
 fn rejects_truncated_non_canonical_and_trailing_input() {
     let narg = field_narg(fr(42));
-    let modulus = ark_bn254::Fr::MODULUS.to_bytes_le();
+    let modulus = BnFr::MODULUS.to_bytes_le();
     let mut above = modulus.clone();
     above[0] += 1;
     let rejected = [
