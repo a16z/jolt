@@ -1,5 +1,6 @@
 #![expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 
+use jolt_field::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_field::{CanonicalBytes, CyclotomicRing, Field, Prime128OffsetA7F7, Ring};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -183,8 +184,7 @@ fn check_commit<const D: usize>(
     let randomness = sample_box_digits(&mut rng, randomness_columns * D, 4).unwrap();
     let commitment = commit(&level, &matrix, &message, &randomness).unwrap();
 
-    let params =
-        jolt_field::ring::cyclotomic::BalancedDecomposePow2Params::<F>::new(levels, log_basis);
+    let params = BalancedDecomposePow2Params::<F>::new(levels, log_basis);
     let radix = F::from_u64(1 << log_basis);
     let mut columns = Vec::new();
     for ring in &message {
