@@ -85,8 +85,8 @@ jolt-prover::blindfold.rs::prove_blindfold::.narg#0
 jolt-prover::blindfold.rs::prove_blindfold::.send#2
 jolt-prover::blindfold.rs::prove_blindfold::BlindFold::<VC>::prove#3
 jolt-prover::dory/prover.rs::prove::.finish#11
-jolt-prover::dory/prover.rs::prove::crate::blindfold::commit_pads::<F,PCS,VC,H>#0
-jolt-prover::dory/prover.rs::prove::crate::blindfold::prove_blindfold::<F,PCS,VC,H>#10
+jolt-prover::dory/prover.rs::prove::commit_pads::<F,PCS,VC,H>#0
+jolt-prover::dory/prover.rs::prove::prove_blindfold::<F,PCS,VC,H>#10
 jolt-prover::dory/prover.rs::prove::prove_stage1::<F,PCS,VC,H>#1
 jolt-prover::dory/prover.rs::prove::prove_stage2::<F,PCS,VC,H>#2
 jolt-prover::dory/prover.rs::prove::prove_stage3::<F,PCS,VC,H>#3
