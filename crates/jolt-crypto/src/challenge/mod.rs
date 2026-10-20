@@ -8,6 +8,9 @@
 //! - [`sample_indexed_challenges_from_seed`]: the indexed signed-sparse
 //!   sampler, one SHAKE256-keyed stream per coordinate. Akita's fold-response
 //!   drawing (`fold_draw.rs`, which stays in Akita) is its consumer.
+//! - [`sample_challenge_ct`] (feature `sample`): the same draw for one D = 64
+//!   selective-L2 challenge, constant time in the challenge, for Whiteout's
+//!   prover.
 
 mod challenges;
 mod config;
@@ -22,6 +25,8 @@ pub use config::{
     D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT, D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
+#[cfg(feature = "sample")]
+pub use sampler::sample_challenge_ct;
 pub use sampler::sample_indexed_challenges_from_seed;
 pub use sparse::{
     SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions, INLINE_SPARSE_WEIGHT,

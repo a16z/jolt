@@ -49,7 +49,7 @@ mod verifier;
 
 pub use channel::Channel;
 pub use error::TranscriptError;
-pub use fork::{Fork, FORK_SEED_LEN};
+pub use fork::{is_fork_domain, Fork, ATTEMPT_NONCE_LEN, FORK_SEED_LEN};
 pub use grinding::{
     grinding_predicate_accepts, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_LEN,
     MAX_GRINDING_BITS,

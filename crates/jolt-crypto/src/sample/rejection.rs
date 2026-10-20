@@ -44,6 +44,7 @@ pub struct JointRejection {
     /// `2^{−2^i/Q}` for every bit `i` of `Q`.
     exp_table: Vec<Fix192>,
     inverse_m: Fix192,
+    epsilon_bits: u32,
     total_len: usize,
 }
 
@@ -126,11 +127,60 @@ impl JointRejection {
         Ok(Self {
             exp_table: pow2_neg_table(denominator, 128 - denominator.leading_zeros()),
             inverse_m,
+            epsilon_bits,
             blocks,
             scales,
             denominator,
             total_len,
         })
+    }
+
+    /// `T_att`: the fewest attempts after which every attempt is rejected
+    /// with probability at most `2^{−failure_bits}` (Thm `wo:thm:completeness`).
+    ///
+    /// Each attempt accepts with probability at least `(p_𝓑 − ε)/M'`
+    /// (Thm `wo:thm:joint-rejection`), with `M'` this rule's realized
+    /// repetition rate (`M^{−1}` floored) and `p_𝓑 ≥ 1 − 1/box_failure_inverse`
+    /// the caller's bound on the box. Every rounding makes the per-attempt
+    /// failure probability larger, so the returned count is conservative.
+    pub fn max_attempts(
+        &self,
+        box_failure_inverse: u64,
+        failure_bits: u32,
+    ) -> Result<usize, SampleError> {
+        if box_failure_inverse < 2 {
+            return Err(SampleError::BadRejectionParameters);
+        }
+        // Fractions below one at scale 2^128, rounded against acceptance.
+        let box_mass = u128::MAX / u128::from(box_failure_inverse) + 1;
+        let epsilon = 1u128 << 128u32.saturating_sub(self.epsilon_bits).min(127);
+        let p_box = u128::MAX - box_mass - epsilon;
+        let [_, middle, top] = self.inverse_m.0;
+        let inverse_m = (u128::from(top) << 64) | u128::from(middle);
+        let (acceptance, _) = mul_wide(p_box, inverse_m);
+        if acceptance == 0 {
+            return Err(SampleError::BadRejectionParameters);
+        }
+        // `failure = 2^128 − acceptance`, normalized as `m · 2^{−128−e}`.
+        let failure = u128::MAX - acceptance + 1;
+        let (step, step_exponent) = normalize(failure);
+        let (mut mantissa, mut exponent) = (step, step_exponent);
+        for attempts in 1..=MAX_ATTEMPTS {
+            // `m · 2^{−128−e} ≤ 2^{−bits}` iff `m ≤ 2^{128+e−bits}`.
+            let done = match (128 + exponent).checked_sub(failure_bits) {
+                Some(shift) if shift >= 128 => true,
+                Some(127) => mantissa == 1 << 127,
+                _ => false,
+            };
+            if done {
+                return Ok(attempts);
+            }
+            let (high, low) = mul_wide(mantissa, step);
+            let (product, shift) = normalize(high + u128::from(low != 0));
+            mantissa = product;
+            exponent += step_exponent + shift;
+        }
+        Err(SampleError::BadRejectionParameters)
     }
 
     /// Applies the rule to `z = y + v`, where `v = cs` is the exact
@@ -218,6 +268,27 @@ impl JointRejection {
             threshold: Fix192::conditional_select(&right, &left, positive),
         }
     }
+}
+
+/// Largest attempt cap [`JointRejection::max_attempts`] returns.
+const MAX_ATTEMPTS: usize = 1 << 16;
+
+/// The 256-bit product `a·b` as `(high, low)` 128-bit halves.
+fn mul_wide(a: u128, b: u128) -> (u128, u128) {
+    const LOW: u128 = u64::MAX as u128;
+    let (a_high, a_low) = (a >> 64, a & LOW);
+    let (b_high, b_low) = (b >> 64, b & LOW);
+    let low = a_low * b_low;
+    let (middle_a, middle_b) = (a_high * b_low, a_low * b_high);
+    let cross = (low >> 64) + (middle_a & LOW) + (middle_b & LOW);
+    let high = a_high * b_high + (middle_a >> 64) + (middle_b >> 64) + (cross >> 64);
+    (high, (cross << 64) | (low & LOW))
+}
+
+/// `x = m · 2^{−shift}` with the top bit of `m` set; `x` must be nonzero.
+fn normalize(x: u128) -> (u128, u32) {
+    let shift = x.leading_zeros();
+    (x << shift, shift)
 }
 
 #[cfg(test)]
@@ -525,5 +596,36 @@ mod tests {
             );
         }
         assert!(JointRejection::new(small_blocks(), ALPHA_NEAR_BOUND, EPSILON_BITS).is_ok());
+    }
+
+    /// `T_att` against the completeness bound in `f64` with the exact `M`:
+    /// 163 at the paper's parameters (§6.2), and the same rule at the
+    /// near-bound `α`.
+    #[test]
+    fn max_attempts_meets_the_completeness_bound() {
+        for (alpha, expected) in [(ALPHA, 163), (ALPHA_NEAR_BOUND, 0)] {
+            let rule = JointRejection::new(small_blocks(), alpha, EPSILON_BITS).unwrap();
+            let attempts = rule.max_attempts(1000, 128).unwrap();
+            let t = (2.0 * f64::from(EPSILON_BITS) * LN_2).sqrt();
+            let m = (t / f64::from(alpha) + 0.5 / f64::from(alpha).powi(2)).exp();
+            let failure = 1.0 - (0.999 - (-f64::from(EPSILON_BITS)).exp2()) / m;
+            let bits = |n: usize| -(n as f64) * failure.log2();
+            assert!(
+                bits(attempts) >= 128.0 && bits(attempts - 1) < 128.0,
+                "α = {alpha}"
+            );
+            if expected > 0 {
+                assert_eq!(attempts, expected);
+            }
+        }
+        let rule = JointRejection::new(small_blocks(), ALPHA, EPSILON_BITS).unwrap();
+        assert!(rule.max_attempts(1, 128).is_err());
+    }
+
+    #[test]
+    fn wide_product_matches_its_halves() {
+        assert_eq!(mul_wide(u128::MAX, u128::MAX), (u128::MAX - 1, 1));
+        assert_eq!(mul_wide(1 << 100, 1 << 100), (1 << 72, 0));
+        assert_eq!(mul_wide(3, u128::MAX), (2, u128::MAX - 2));
     }
 }

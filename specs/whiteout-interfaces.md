@@ -263,17 +263,20 @@ pub trait ZkOpening: HidingCommitment {
 supertrait, because its implementors are batching markers, so it bounds its
 `PCS` parameter instead.
 
-The vector-commitment change lands in W4 with the lattice pad commitment, its
-first non-scalar implementor:
+`VectorCommitment` does not change, and keeps its scalar blind. W4's lattice
+pad commitment is not a `VectorCommitment`:
 
-- `VectorCommitment` gains `type Blind` and `sample_blind`. Its `Output: Copy`
-  bound relaxes to `Clone`, because an Ajtai commitment is heap-allocated.
-- `commit` takes field values and documents that any gadget decomposition
-  happens inside it.
-- Row openings move to `RowOpening: VectorCommitment<Blind = Self::Field>`,
-  which only Pedersen implements. An Ajtai blind's norm grows under
-  combination, and the lattice pad commitment is opened by the Σ-protocol
-  instead.
+- Its committed vector is mixed-radix: radix-16 digits of the regular pads
+  and of the mask g, radix-256 constant digit polynomials of the operand
+  pads, and the randomness r_p.
+- Its opening is proved by the Σ-protocol, never by a row opening; an Ajtai
+  blind's norm grows under combination anyway.
+
+It is `jolt_zk::whiteout::LatticePadCommitment`, which produces the back end's
+`ZkBackend::PadCommitment` (the raw image t_p, compressed once W5 provides
+compression) and `ZkBackend::PadOpening` (pads, g and r_p). It is built on
+`jolt-crypto::lattice`'s constant-time Ajtai map
+(`specs/whiteout-sigma.md` §1).
 
 ## 4. Pads (M6b)
 

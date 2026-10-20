@@ -308,14 +308,16 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
     fn biased(&self, canonical: u128) -> [u64; 3] {
         let low = canonical as u64;
         let high = (canonical >> 64) as u64;
-        let threshold_low = self.threshold as u64;
-        let threshold_high = (self.threshold >> 64) as u64;
-        #[expect(
-            clippy::needless_bitwise_bool,
-            reason = "constant-time: no short-circuit on witness digits"
-        )]
-        let negative = (high > threshold_high) | ((high == threshold_high) & (low > threshold_low));
-        let select = u64::from(negative).wrapping_neg();
+        // `select` is all ones exactly when `canonical > threshold`: the sign
+        // of `threshold − canonical`, computed in 129-bit signed arithmetic
+        // with no comparison or boolean. WARNING: a comparison here, word-wise
+        // or as a `u128` borrow flag, lets LLVM turn the bias selection below
+        // into a branch on x86, which leaks secret digits.
+        let low_difference = u128::from(self.threshold as u64).wrapping_sub(u128::from(low));
+        let low_borrow = (low_difference >> 64) & 1;
+        let high_difference =
+            i128::from((self.threshold >> 64) as u64) - i128::from(high) - low_borrow as i128;
+        let select = (high_difference >> 64) as u64;
         let [nonnegative0, nonnegative1, nonnegative2] = self.bias_nonnegative;
         let [negative0, negative1, negative2] = self.bias_negative;
         let bias0 = nonnegative0 ^ ((nonnegative0 ^ negative0) & select);
