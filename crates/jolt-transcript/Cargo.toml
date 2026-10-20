@@ -62,6 +62,10 @@ name = "blake2b_tests"
 required-features = ["bn254", "transcript-blake2b"]
 
 [[test]]
+name = "legacy_digest_tests"
+required-features = ["bn254", "transcript-blake2b"]
+
+[[test]]
 name = "keccak_tests"
 required-features = ["bn254", "transcript-keccak"]
 
