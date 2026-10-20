@@ -32,10 +32,16 @@ bn254 = [
   "jolt-field/bn254",
 ]
 parallel = ["dep:rayon", "jolt-field/parallel", "jolt-poly/parallel"]
-# Lattice primitives: sparse ring challenges and the Ajtai public-matrix
-# stream. Off by default so curve-only builds, including the Dory verifier, do
+# Lattice primitives: sparse ring challenges, the Ajtai public-matrix stream,
+# and the Ajtai map over jolt-algebra's ring and CRT-NTT. Off by default so curve-only builds, including the Dory verifier, do
 # not compile them; the Akita verifier enables this feature.
-lattice = ["dep:keccak", "dep:shake", "dep:smallvec", "dep:thiserror"]
+lattice = [
+  "dep:keccak",
+  "dep:shake",
+  "dep:smallvec",
+  "dep:thiserror",
+  "jolt-field/solinas",
+]
 # Whiteout's constant-time Gaussian sampler and joint rejection rule. Prover-only,
 # so separate from `lattice` and kept out of every verifier build.
 sample = ["dep:subtle", "dep:num-bigint"]

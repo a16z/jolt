@@ -4,6 +4,7 @@ use std::mem::size_of;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx;
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt, inverse_ntt_cyclic};
+use crate::ntt::crt::digits_to_field_ct;
 use crate::ntt::field_limbs::{field_residues, FieldModulusLimbs, FIELD_CHUNK};
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
@@ -526,6 +527,36 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         (Self { limbs: neg_limbs }, Self { limbs: cyc_limbs })
     }
 
+    /// [`Self::to_ring`] with no branch, table lookup or memory address that
+    /// depends on the coefficients: masked centering and Garner digits, and a
+    /// sign-free lift of each digit into `F`.
+    ///
+    /// Constant time holds if the target's integer and `F` arithmetic and the
+    /// inverse NTT kernel are themselves data independent.
+    pub fn to_ring_ct<F: CrtNttConvertibleField>(
+        &self,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> CyclotomicRing<F, D> {
+        let mut digits = [[0i64; D]; K];
+        for (k, ((column, prime), twiddles)) in digits
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+            .enumerate()
+        {
+            let mut limb = self.limbs[k];
+            inverse_ntt(&mut limb, *prime, twiddles, params.kernel_plan);
+            for (dst, src) in column.iter_mut().zip(limb.iter()) {
+                *dst = prime.center(prime.to_canonical(*src)).to_i64();
+            }
+        }
+        params.garner.centered_mixed_radix_ct(&mut digits);
+        let (weights, _) = params.garner.field_weights::<F>();
+        CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+            digits_to_field_ct(&std::array::from_fn(|limb| digits[limb][index]), &weights)
+        }))
+    }
+
     /// Convert from CRT+NTT domain back to coefficient form.
     pub fn to_ring<F: CrtNttConvertibleField>(
         &self,
@@ -590,5 +621,32 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
         let coeffs = params.reconstruct::<F>(&canonical);
         CyclotomicRing::from_coefficients(coeffs)
+    }
+}
+
+impl<const K: usize, const D: usize> CyclotomicCrtNtt<i32, K, D> {
+    /// Overwrite `self` with the negacyclic CRT+NTT image of centered `i32`
+    /// coefficients, in time and with memory addresses independent of their
+    /// values: one Montgomery product per residue, no lookup table, and no
+    /// strategy chosen from the magnitudes.
+    ///
+    /// Every `i32` is exact: with `R = 2^32`, its Montgomery product with
+    /// `R² mod p` stays below `p · 2^31` in magnitude.
+    pub fn assign_centered_i32_ct(
+        &mut self,
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<i32, K, D>,
+    ) {
+        for ((limb, prime), tw) in self
+            .limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            for (dst, &coefficient) in limb.iter_mut().zip(coeffs) {
+                *dst = prime.from_canonical(coefficient);
+            }
+            forward_ntt(limb, *prime, tw, params.kernel_plan);
+        }
     }
 }

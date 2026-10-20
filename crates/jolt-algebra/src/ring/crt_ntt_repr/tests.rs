@@ -1,5 +1,5 @@
 #![expect(clippy::expect_used, clippy::unwrap_used, reason = "test code")]
-use crate::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use crate::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring};
 
 use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::*;
@@ -507,4 +507,55 @@ fn i32_crt_mat_vec_with_i16_tail_matches_schoolbook() {
         CyclotomicCrtNtt::mat_vec_i16::<F>(&wide_matrix, num_rows, num_cols, &rhs, &wide)
             .expect("wide matvec");
     assert_ne!(wide_only[0], actual[0]);
+}
+
+/// Constant-time i32 lift and reconstruction against schoolbook field
+/// arithmetic, with full-range field entries and inputs at the i32 extremes.
+fn assert_ct_i32_mat_vec_matches_field_schoolbook<const D: usize>() {
+    type F = Prime128OffsetA7F7;
+    let (num_rows, num_cols) = (2, 3);
+    let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
+    let matrix = (0..num_rows * num_cols)
+        .map(|entry| {
+            CyclotomicRing::<F, D>::from_coefficients(from_fn(|index| {
+                let seed = (entry * D + index) as u64;
+                F::from_u128(
+                    u128::from(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15)) << 64
+                        | u128::from(seed.rotate_left(29)),
+                )
+            }))
+        })
+        .collect::<Vec<_>>();
+    let rhs = (0..num_cols)
+        .map(|column| {
+            from_fn(|index| match (column * D + index) % 7 {
+                0 => i32::MAX,
+                1 => i32::MIN + 1,
+                _ => centered_probe(column * D + index, i128::from(i32::MAX)) as i32,
+            })
+        })
+        .collect::<Vec<[i32; D]>>();
+    let prepared = matrix
+        .iter()
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
+        .collect::<Vec<_>>();
+    let mut column = CyclotomicCrtNtt::<i32, Q128_NUM_PRIMES, D>::zero();
+    for row in 0..num_rows {
+        let mut acc = CyclotomicCrtNtt::zero();
+        let mut expected = CyclotomicRing::<F, D>::zero();
+        for (col, digits) in rhs.iter().enumerate() {
+            column.assign_centered_i32_ct(digits, &params);
+            acc.add_assign_pointwise_mul(&prepared[row * num_cols + col], &column, &params);
+            let lifted = CyclotomicRing::from_coefficients(digits.map(|v| F::from_i64(v.into())));
+            matrix[row * num_cols + col].mul_accumulate_into(&lifted, &mut expected);
+        }
+        assert_eq!(acc.to_ring_ct::<F>(&params), expected, "D={D}");
+        assert_eq!(acc.to_ring::<F>(&params), expected, "D={D}");
+    }
+}
+
+#[test]
+fn ct_i32_mat_vec_matches_field_schoolbook() {
+    assert_ct_i32_mat_vec_matches_field_schoolbook::<64>();
+    assert_ct_i32_mat_vec_matches_field_schoolbook::<256>();
 }
