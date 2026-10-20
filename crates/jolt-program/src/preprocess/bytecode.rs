@@ -173,8 +173,17 @@ impl BytecodePCMapper {
     }
 
     /// Bytes the slot table holds on the heap, at capacity.
-    pub(crate) fn heap_bytes(&self) -> usize {
+    pub fn heap_bytes(&self) -> usize {
         self.slots.capacity() * size_of::<PcSlot>()
+    }
+
+    /// Bytes [`Self::try_new`] requests for `bytecode`'s slot table.
+    pub fn required_allocation_bytes(
+        bytecode: &[JoltInstructionRow],
+    ) -> Result<usize, PreprocessingError> {
+        Self::index_count(bytecode)?
+            .checked_mul(size_of::<PcSlot>())
+            .ok_or(PreprocessingError::BytecodeTooLarge)
     }
 
     fn validate_run(

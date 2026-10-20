@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
+use jolt_program::execution::{TraceAllocationError, TraceAllocationPhase};
+
+use crate::trace_allocation::{bytes_of, reserve_exact, TraceAllocationAllowance};
 
 /// Backing storage for guest memory, at doubleword granularity.
 ///
@@ -36,6 +39,26 @@ fn out_of_bounds(index: usize, num_doublewords: usize) -> ! {
     panic!("Out of bounds memory access ({index} >= {num_doublewords})");
 }
 
+/// Doublewords a flat backing of `capacity` bytes holds.
+pub(crate) fn flat_doublewords(capacity: u64) -> u64 {
+    capacity.div_ceil(8)
+}
+
+/// Passes each nonzero byte of the doubleword at `index` to `emit` as
+/// `(address, value)`, in address order.
+fn for_each_nonzero_byte(index: usize, doubleword: u64, mut emit: impl FnMut((u64, u8))) {
+    if doubleword == 0 {
+        return;
+    }
+    let base_address = (index as u64) * 8;
+    for byte_offset in 0..8 {
+        let byte = (doubleword >> (byte_offset * 8)) as u8;
+        if byte != 0 {
+            emit((base_address + byte_offset, byte));
+        }
+    }
+}
+
 impl MemoryData {
     fn empty() -> Self {
         Self {
@@ -47,7 +70,7 @@ impl MemoryData {
     }
 
     fn init_with_capacity(&mut self, capacity: u64) {
-        self.num_doublewords = capacity.div_ceil(8) as usize;
+        self.num_doublewords = flat_doublewords(capacity) as usize;
         self.backing = MemoryBacking::Flat(vec![0; self.num_doublewords]);
         self.high_water = 0;
     }
@@ -340,32 +363,53 @@ impl Memory {
 
     pub fn materialized_nonzero_bytes(&self) -> Vec<(u64, u8)> {
         let mut bytes = Vec::new();
-        let push_nonzero = |index: usize, doubleword: u64, bytes: &mut Vec<(u64, u8)>| {
-            if doubleword == 0 {
-                return;
-            }
-            let base_address = (index as u64) * 8;
-            for byte_offset in 0..8 {
-                let byte = (doubleword >> (byte_offset * 8)) as u8;
-                if byte != 0 {
-                    bytes.push((base_address + byte_offset, byte));
-                }
-            }
-        };
         match &self.data.backing {
             MemoryBacking::Flat(dwords) => {
                 for (index, &doubleword) in dwords.iter().enumerate() {
-                    push_nonzero(index, doubleword, &mut bytes);
+                    for_each_nonzero_byte(index, doubleword, |byte| bytes.push(byte));
                 }
             }
             MemoryBacking::Sparse(map) => {
                 for (&index, &doubleword) in map {
-                    push_nonzero(index, doubleword, &mut bytes);
+                    for_each_nonzero_byte(index, doubleword, |byte| bytes.push(byte));
                 }
             }
         }
         bytes.sort_by_key(|(address, _)| *address);
         bytes
+    }
+
+    /// Bytes the flat backing holds at capacity. Panics on a sparse
+    /// (checkpoint-replay) backing, like [`MemoryData::flat_parts`].
+    pub(crate) fn flat_heap_bytes(&self) -> usize {
+        match &self.data.backing {
+            MemoryBacking::Flat(dwords) => dwords.capacity() * size_of::<u64>(),
+            MemoryBacking::Sparse(_) => {
+                panic!("sparse (checkpoint-replay) memory has no flat backing")
+            }
+        }
+    }
+
+    /// [`Self::materialized_nonzero_bytes`] of a flat backing as one exact
+    /// allocation, admitted by `allowance` first. Flat doublewords are in
+    /// address order, so the image needs no sort.
+    pub(crate) fn try_flat_nonzero_bytes(
+        &self,
+        allowance: TraceAllocationAllowance,
+    ) -> Result<Vec<(u64, u8)>, TraceAllocationError> {
+        let phase = TraceAllocationPhase::FinalMemory;
+        let (dwords, _) = self.data.flat_parts();
+        let mut count = 0;
+        for (index, &doubleword) in dwords.iter().enumerate() {
+            for_each_nonzero_byte(index, doubleword, |_| count += 1);
+        }
+        allowance.check_request(phase, 0, bytes_of::<(u64, u8)>(count, phase)?)?;
+        let mut bytes = Vec::new();
+        reserve_exact(&mut bytes, count, phase)?;
+        for (index, &doubleword) in dwords.iter().enumerate() {
+            for_each_nonzero_byte(index, doubleword, |byte| bytes.push(byte));
+        }
+        Ok(bytes)
     }
 
     /// Reads multiple bytes from memory.
@@ -461,6 +505,30 @@ mod tests {
             memory.materialized_nonzero_bytes(),
             vec![(3, 0xCC), (9, 0xAA), (40, 0xBB)]
         );
+    }
+
+    #[test]
+    fn limited_flat_image_is_one_exact_ordered_request() {
+        let mut memory = memory(64);
+        memory.write_byte(40, 0xBB);
+        memory.write_byte(9, 0xAA);
+        memory.write_byte(3, 0xCC);
+        // Three (u64, u8) elements of 16 bytes each, not 9 packed bytes.
+        let request = 48;
+        let phase = TraceAllocationPhase::FinalMemory;
+        assert_eq!(
+            memory.try_flat_nonzero_bytes(TraceAllocationAllowance::new(request + 7, 8)),
+            Err(TraceAllocationError::LimitExceeded {
+                phase,
+                limit_bytes: request + 7,
+                required_bytes: request + 8,
+            })
+        );
+        let image = memory
+            .try_flat_nonzero_bytes(TraceAllocationAllowance::new(request + 8, 8))
+            .expect("the image fits exactly");
+        assert_eq!(image, vec![(3, 0xCC), (9, 0xAA), (40, 0xBB)]);
+        assert_eq!(image.capacity(), 3);
     }
 
     #[test]

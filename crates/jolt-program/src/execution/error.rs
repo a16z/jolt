@@ -1,3 +1,4 @@
+use common::jolt_device::MemoryLayoutError;
 use jolt_riscv::{SourceInstructionKind, TraceRowError};
 
 use crate::preprocess::PreprocessingError;
@@ -27,4 +28,38 @@ pub enum TraceError {
     InvalidFieldEvent { cycle: usize },
     #[error("RAM minimum address exceeds maximum address")]
     InvalidRamBounds,
+    #[error(transparent)]
+    TraceAllocation(#[from] TraceAllocationError),
+    #[error("an explicit trace allocation limit supports only serial eager tracing")]
+    UnsupportedTraceAllocationMode,
+    #[error(transparent)]
+    InvalidMemoryLayout(#[from] MemoryLayoutError),
+}
+
+/// The trace-storage request an explicit trace allocation limit stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceAllocationPhase {
+    /// Setup buffers, the initial row reserve and the pending cycle window.
+    Initial,
+    RowGrowth,
+    /// Converted-chunk metadata and field-event buffers.
+    Conversion,
+    FieldMerge,
+    FinalMemory,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum TraceAllocationError {
+    #[error(
+        "{phase:?} trace storage needs {required_bytes} bytes, over the {limit_bytes}-byte trace allocation limit"
+    )]
+    LimitExceeded {
+        phase: TraceAllocationPhase,
+        limit_bytes: usize,
+        required_bytes: usize,
+    },
+    #[error("{phase:?} trace storage size overflows usize")]
+    SizeOverflow { phase: TraceAllocationPhase },
+    #[error("the allocator refused {phase:?} trace storage")]
+    AllocationFailed { phase: TraceAllocationPhase },
 }

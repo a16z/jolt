@@ -16,7 +16,7 @@ pub use crate::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
 pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary};
-pub use error::TraceError;
+pub use error::{TraceAllocationError, TraceAllocationPhase, TraceError};
 #[cfg(feature = "field-inline")]
 pub use trace::FieldEvent;
 pub use trace::{
