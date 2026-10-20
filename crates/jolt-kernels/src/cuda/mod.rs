@@ -82,6 +82,9 @@
 //! Each host thread caches curve and Frobenius constants per device.
 //! Fq12 products reduce independent segments in bounded chunks, repeating on
 //! device until only one product per segment remains for download.
+//! The warp Miller loop assigns one warp per G1/G2 pair. Lanes cooperate on
+//! the six Fq2 accumulator coefficients; normalization and loop steps stay on
+//! device, and identity pairs contribute one to the segment product.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

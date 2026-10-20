@@ -149,6 +149,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
     #[cfg(test)]
+    pairing_miller_warp: CudaFunction,
+    #[cfg(test)]
     pairing_fq12_product: CudaFunction,
     #[cfg(test)]
     pub(super) fq6_mul_probe: CudaFunction,
@@ -308,6 +310,8 @@ impl CudaKernelContext {
             #[cfg(test)]
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
             #[cfg(test)]
+            pairing_miller_warp: module.load_function("pairing_miller_warp_kernel")?,
+            #[cfg(test)]
             pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
             #[cfg(test)]
             fq6_mul_probe: module.load_function("fq6_mul_probe")?,
@@ -413,6 +417,11 @@ impl CudaKernelContext {
             }?;
         }
         Ok(buffer)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn alloc_u64_unset(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
+        self.alloc_unset::<u64>(len)
     }
 
     #[cfg(test)]
@@ -766,6 +775,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_jacobian_to_affine(&self) -> &CudaFunction {
         &self.msm_jacobian_to_affine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn pairing_miller_warp(&self) -> &CudaFunction {
+        &self.pairing_miller_warp
     }
 
     #[cfg(test)]
