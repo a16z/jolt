@@ -2,14 +2,16 @@
 //!
 //! The prover
 //! sends a nonce below `2^(bits + 7)` as canonical LEB128, one byte per prover
-//! message, and both parties squeeze `ceil(bits / 8)` bytes and accept iff
-//! their low `bits` bits are zero. The step protects the verifier messages
-//! that follow it, up to the next prover message. The check is squeezed in one
-//! call; on every sponge here that gives the same bytes as squeezing it one
-//! byte at a time, because each buffers its squeeze output.
+//! message, and both parties squeeze a check and accept iff its low `bits`
+//! bits are zero. On a byte sponge the check is `ceil(bits / 8)` bytes read
+//! little-endian; on `PoseidonSponge` it is one field element's canonical
+//! integer ([`PowUnit`]). The step protects the verifier messages that follow
+//! it, up to the next prover message. The check is squeezed in one call; on
+//! every sponge here that gives the same output as squeezing it one unit at a
+//! time, because squeezing is associative.
 //!
-//! The same layout, search primitive and probe are proposed for spongefish in
-//! arkworks-rs/spongefish#301 (`PowTranscriptExt::sponge_pow`,
+//! The same byte-sponge layout, search primitive and probe are proposed for
+//! spongefish in arkworks-rs/spongefish#301 (`PowTranscriptExt::sponge_pow`,
 //! `MessageSearch`, `Probe`); none of them is in the published 0.8.0.
 //!
 //! The prover searches by evaluating candidate nonces on a copy of the sponge
@@ -19,32 +21,68 @@
 //! binary that links a grinding prover compiles its verifier with
 //! `yolocrypto` too; in 0.8.0 the feature changes visibility only, not bytes.
 
+use spongefish::Unit;
 #[cfg(feature = "prover-grinding")]
-use spongefish::DuplexSpongeInterface;
+use spongefish::{DuplexSpongeInterface, Encoding};
+
+use crate::challenge::sealed::Sealed;
 
 /// The largest supported difficulty. The nonce space, all of `u32` at this
 /// difficulty, still holds `2^7` times the expected number of trials.
 pub const MAX_POW_BITS: u32 = 25;
+
+/// A sponge alphabet the proof-of-work check is read from.
+///
+/// `u8`: the check is `ceil(bits / 8)` squeezed bytes, read little-endian.
+/// [`FrUnit`](crate::FrUnit): the check is one squeezed element, read as the
+/// canonical integer below the BN254 modulus. Either way the check passes iff
+/// its low `bits` bits are zero.
+///
+/// The trait is sealed.
+pub trait PowUnit: Unit + Sealed {
+    /// Units squeezed for the check at `bits` difficulty, `1..=4`.
+    fn check_len(bits: u32) -> usize;
+
+    /// The low 32 bits of the check, or `None` unless `check` holds exactly
+    /// the units of one check. The byte form also needs `check_len(bits)`
+    /// bytes; the caller compares lengths.
+    fn low_word(check: &[Self]) -> Option<u32>;
+}
+
+impl Sealed for u8 {}
+
+impl PowUnit for u8 {
+    fn check_len(bits: u32) -> usize {
+        (bits as usize).div_ceil(8)
+    }
+
+    fn low_word(check: &[u8]) -> Option<u32> {
+        let mut word = [0u8; 4];
+        word.get_mut(..check.len())?.copy_from_slice(check);
+        Some(u32::from_le_bytes(word))
+    }
+}
 
 /// Evaluates the transcript on a candidate prover message without sending it.
 ///
 /// A probe is [`Sync`], so a search may run on
 /// several threads at once.
 #[cfg(feature = "prover-grinding")]
-pub trait Probe: Sync {
-    /// Writes into `out` the bytes the transcript would squeeze right after
-    /// absorbing `candidate`. The transcript itself is unchanged.
-    fn probe(&self, candidate: &[u8], out: &mut [u8]);
+pub trait Probe<U = u8>: Sync {
+    /// Writes into `out` the units the transcript would squeeze right after
+    /// receiving `candidate`. The transcript itself is unchanged.
+    fn probe(&self, candidate: &[u8], out: &mut [U]);
 }
 
 /// A copy of the prover's public sponge, for searching over a prover message:
 /// a proof-of-work nonce, or a retry counter whose following challenges must
 /// satisfy a prover-side condition.
 ///
-/// A probe absorbs the candidate one byte per absorb call, exactly as sending
-/// it as single-byte prover messages does. For the Keccak and Blake2b sponges
-/// this equals one absorb of the whole candidate; [`PoseidonSponge`] absorbs a
-/// length with every call, so for it only the byte-by-byte form matches.
+/// A probe absorbs the encoding of each candidate byte, one absorb per byte,
+/// exactly as sending the candidate as single-byte prover messages does. On
+/// a byte sponge that is the candidate itself; on [`PoseidonSponge`] it is
+/// one element per byte. Every sponge here absorbs associatively, so this
+/// equals one absorb of the concatenated encodings.
 ///
 /// It holds no private randomness, writes no proof bytes and cannot restore
 /// or advance the live prover state.
@@ -64,11 +102,15 @@ impl<H> MessageSearch<H> {
 }
 
 #[cfg(feature = "prover-grinding")]
-impl<H: DuplexSpongeInterface<U = u8> + Sync> Probe for MessageSearch<H> {
-    fn probe(&self, candidate: &[u8], out: &mut [u8]) {
+impl<H> Probe<H::U> for MessageSearch<H>
+where
+    H: DuplexSpongeInterface + Sync,
+    u8: Encoding<H::U>,
+{
+    fn probe(&self, candidate: &[u8], out: &mut [H::U]) {
         let mut sponge = self.sponge.clone();
         for byte in candidate {
-            let _ = sponge.absorb(core::slice::from_ref(byte));
+            let _ = sponge.absorb(byte.encode().as_ref());
         }
         let _ = sponge.squeeze(out);
     }
@@ -100,20 +142,11 @@ impl SpongePow {
         (self.bits as usize + 13) / 7
     }
 
-    /// `ceil(bits / 8)` squeezed bytes carry the checked bits, at most 4.
-    pub(crate) const fn word_len(self) -> usize {
-        (self.bits as usize).div_ceil(8)
-    }
-
-    /// The low `bits` bits of the little-endian check bytes are zero.
-    /// Rejects check bytes of the wrong length.
-    pub(crate) fn accepts(self, check: &[u8]) -> bool {
-        let mut word = [0u8; 4];
-        match word.get_mut(..self.word_len()) {
-            Some(prefix) if prefix.len() == check.len() => prefix.copy_from_slice(check),
-            _ => return false,
-        }
-        u32::from_le_bytes(word) & ((1u32 << self.bits) - 1) == 0
+    /// The low `bits` bits of the check are zero. Rejects a check of the
+    /// wrong length.
+    pub(crate) fn accepts<U: PowUnit>(self, check: &[U]) -> bool {
+        check.len() == U::check_len(self.bits)
+            && U::low_word(check).is_some_and(|word| word & ((1u32 << self.bits) - 1) == 0)
     }
 
     /// Reads a nonce byte by byte through `next`. Returns `None` unless its
@@ -138,11 +171,11 @@ impl SpongePow {
         Ok(None)
     }
 
-    /// Whether sending `nonce` makes the next squeezed bytes pass the check.
+    /// Whether sending `nonce` makes the next squeezed check pass.
     #[cfg(feature = "prover-grinding")]
-    fn accepts_nonce(self, probe: &impl Probe, nonce: u32) -> bool {
-        let mut check = [0u8; 4];
-        let Some(out) = check.get_mut(..self.word_len()) else {
+    fn accepts_nonce<U: PowUnit>(self, probe: &impl Probe<U>, nonce: u32) -> bool {
+        let mut check: [U; 4] = core::array::from_fn(|_| U::ZERO);
+        let Some(out) = check.get_mut(..U::check_len(self.bits)) else {
             return false;
         };
         probe.probe(Leb128::new(nonce).as_bytes(), out);
@@ -151,20 +184,20 @@ impl SpongePow {
 
     /// The least accepted nonce.
     #[cfg(all(feature = "prover-grinding", not(feature = "parallel")))]
-    pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
+    pub(crate) fn search<U: PowUnit>(self, probe: &impl Probe<U>) -> Option<u32> {
         self.search_sequential(probe)
     }
 
     /// The least accepted nonce, scanned in increasing order.
     #[cfg(all(feature = "prover-grinding", any(test, not(feature = "parallel"))))]
-    fn search_sequential(self, probe: &impl Probe) -> Option<u32> {
+    fn search_sequential<U: PowUnit>(self, probe: &impl Probe<U>) -> Option<u32> {
         (0..=self.last_nonce()).find(|&nonce| self.accepts_nonce(probe, nonce))
     }
 
     /// The least accepted nonce, searched on all threads. The result equals
     /// the sequential search.
     #[cfg(all(feature = "prover-grinding", feature = "parallel"))]
-    pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
+    pub(crate) fn search<U: PowUnit>(self, probe: &impl Probe<U>) -> Option<u32> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         // `u64::MAX` is no nonce, so it marks "not found".
@@ -223,7 +256,7 @@ impl Leb128 {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
-    use super::{SpongePow, MAX_POW_BITS};
+    use super::{PowUnit, SpongePow, MAX_POW_BITS};
 
     #[test]
     fn difficulty_bounds() {
@@ -236,7 +269,7 @@ mod tests {
     fn layout() {
         let layout = |bits| {
             let pow = SpongePow::new(bits).unwrap();
-            (pow.last_nonce(), pow.max_nonce_len(), pow.word_len())
+            (pow.last_nonce(), pow.max_nonce_len(), u8::check_len(bits))
         };
         assert_eq!(layout(1), (255, 2, 1));
         assert_eq!(layout(8), ((1 << 15) - 1, 3, 1));

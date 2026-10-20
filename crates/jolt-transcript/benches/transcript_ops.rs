@@ -34,7 +34,7 @@ fn bench_append_bytes(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("Poseidon", label), data, |bench, data| {
             bench.iter_batched(
-                || PoseidonTranscript::<Fr>::new(b"bench"),
+                || PoseidonTranscript::new(b"bench"),
                 |mut t| {
                     t.append_bytes(black_box(data));
                     t
@@ -76,7 +76,7 @@ fn bench_challenge(c: &mut Criterion) {
     group.bench_function("Poseidon", |bench| {
         bench.iter_batched(
             || {
-                let mut t = PoseidonTranscript::<Fr>::new(b"bench");
+                let mut t = PoseidonTranscript::new(b"bench");
                 t.append_bytes(&[42u8; 32]);
                 t
             },

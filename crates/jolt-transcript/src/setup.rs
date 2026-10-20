@@ -2,10 +2,11 @@
 //!
 //! The session identifier is derived from [`PROTOCOL_ID`]. Each transcript
 //! absorbs one instance encoding: the length-prefixed caller session followed
-//! by the 32-byte public-statement digest.
+//! by the 32-byte public-statement digest. Byte sponges absorb those bytes;
+//! `PoseidonSponge` absorbs both parts packed into field elements.
 
 use spongefish::instantiations::TurboShake128;
-use spongefish::{DuplexSpongeInit, ProverState, SessionId, VerifierState};
+use spongefish::{DuplexSpongeInit, Encoding, ProverState, SessionId, VerifierState};
 
 use crate::codec::BytesMsg;
 
@@ -68,7 +69,8 @@ fn transcript_instance(session: &[u8], digest: [u8; 32]) -> (BytesMsg, [u8; 32])
 #[must_use]
 pub fn prover_transcript<H>(session: &[u8], instance: [u8; 32]) -> ProverState<H>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit,
+    (BytesMsg, [u8; 32]): Encoding<H::U>,
 {
     ProverState::new(&session_id(), &transcript_instance(session, instance))
 }
@@ -84,7 +86,8 @@ pub fn verifier_transcript<'a, H>(
     narg: &'a [u8],
 ) -> VerifierState<'a, H>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit,
+    (BytesMsg, [u8; 32]): Encoding<H::U>,
 {
     VerifierState::new(&session_id(), &transcript_instance(session, instance), narg)
 }
@@ -121,13 +124,13 @@ mod tests {
 
         let digest = [0xA5u8; 32];
         let instance = transcript_instance(b"", digest);
-        let encoded = instance.encode();
+        let encoded = Encoding::<u8>::encode(&instance);
         let mut expected = vec![0; 8];
         expected.extend_from_slice(&digest);
         assert_eq!(encoded.as_ref(), expected);
 
         let instance = transcript_instance(b"session", digest);
-        let encoded = instance.encode();
+        let encoded = Encoding::<u8>::encode(&instance);
         let mut expected = 7u64.to_le_bytes().to_vec();
         expected.extend_from_slice(b"session");
         expected.extend_from_slice(&digest);

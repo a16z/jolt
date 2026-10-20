@@ -1,8 +1,12 @@
-//! Length-prefixed byte messages for byte-oriented spongefish transcripts.
+//! Prover and public message codecs.
 //!
 //! `BytesMsg` uses an eight-byte little-endian length, followed by the body.
-//! Challenges use spongefish's built-in `u128` codec.
+//! `FieldMsg` is one field element in its canonical little-endian bytes.
+//! These are the NARG serializations and the encodings byte sponges absorb;
+//! the Poseidon sponge absorbs its own encodings of the same messages
+//! (`poseidon.rs`).
 
+use jolt_field::CanonicalEncoding;
 use spongefish::{Encoding, FromNarg, NargReader, VerificationError};
 
 /// Length-prefixed byte string. 8-byte LE length keeps `BytesMsg(a) ; BytesMsg(b)`
@@ -44,6 +48,32 @@ impl FromNarg for BytesMsg {
     }
 }
 
+/// One field element. Serialized and absorbed by byte sponges as its
+/// canonical little-endian bytes, a fixed width per field; the Poseidon
+/// sponge absorbs a `FieldMsg<Fr>` natively, as one element.
+///
+/// Reading one from the NARG rejects non-canonical encodings, so each element
+/// has exactly one serialization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldMsg<F>(pub F);
+
+impl<F: CanonicalEncoding> Encoding for FieldMsg<F> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.to_bytes_le_vec()
+    }
+}
+
+impl<F: CanonicalEncoding> FromNarg for FieldMsg<F> {
+    fn from_narg(reader: &mut NargReader<'_>) -> Result<Self, VerificationError> {
+        reader.read_with(|reader| {
+            let bytes = reader.take(F::NUM_BYTES)?;
+            F::from_bytes_le_checked(bytes)
+                .map(FieldMsg)
+                .ok_or(VerificationError)
+        })
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
@@ -52,7 +82,7 @@ mod tests {
     #[test]
     fn bytes_msg_is_length_prefixed() {
         let m = BytesMsg(vec![1, 2, 3, 4]);
-        let enc = m.encode();
+        let enc = Encoding::<u8>::encode(&m);
         let bytes = enc.as_ref();
         assert_eq!(bytes.len(), 8 + 4);
         assert_eq!(&bytes[..8], &4u64.to_le_bytes());
@@ -63,7 +93,7 @@ mod tests {
     fn bytes_msg_narg_rejects_truncation() {
         let m = BytesMsg(vec![9, 8, 7]);
         let mut narg: Vec<u8> = Vec::new();
-        narg.extend_from_slice(m.encode().as_ref());
+        narg.extend_from_slice(Encoding::<u8>::encode(&m).as_ref());
         let _ = narg.pop();
         let mut reader = NargReader::new(&narg);
         let result = BytesMsg::from_narg(&mut reader);

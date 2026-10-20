@@ -13,7 +13,8 @@
 //!
 //! Three sponges feature-gated: `transcript-blake2b` (spongefish
 //! `Blake2b512`), `transcript-keccak` (spongefish `Keccak`),
-//! `transcript-poseidon` (local Circom-compatible BN254 [`PoseidonSponge`]).
+//! `transcript-poseidon` ([`PoseidonSponge`], a duplex sponge over BN254 `Fr`
+//! on the Circom-compatible Poseidon permutation).
 
 #![deny(missing_docs)]
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
@@ -49,23 +50,25 @@ mod setup;
 #[cfg(feature = "spongefish")]
 mod verifier;
 
-#[cfg(feature = "spongefish")]
-pub use challenge::UniformBytes;
 pub use challenge::{ChallengeCodec, MAX_CHALLENGE_BYTES};
 #[cfg(feature = "spongefish")]
-pub use codec::BytesMsg;
+pub use challenge::{ChallengeSponge, UniformBytes};
+#[cfg(feature = "spongefish")]
+pub use codec::{BytesMsg, FieldMsg};
 #[cfg(feature = "digest")]
 pub use digest::DigestTranscript;
+#[cfg(feature = "transcript-poseidon")]
+pub use legacy::PoseidonTranscript;
 #[cfg(feature = "spongefish")]
 pub use legacy::SpongeTranscript;
 pub use legacy::{
     append_length_prefixed, AppendToTranscript, Label, LabelWithCount, Transcript, U64Word,
     MAX_LABEL_LEN,
 };
-#[cfg(feature = "spongefish")]
-pub use pow::MAX_POW_BITS;
 #[cfg(feature = "prover-grinding")]
 pub use pow::{MessageSearch, Probe};
+#[cfg(feature = "spongefish")]
+pub use pow::{PowUnit, MAX_POW_BITS};
 #[cfg(feature = "spongefish")]
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
 
@@ -77,7 +80,7 @@ pub mod domain {
 }
 
 #[cfg(feature = "transcript-poseidon")]
-pub use poseidon::PoseidonSponge;
+pub use poseidon::{FrUnit, PoseidonPermutation, PoseidonSponge};
 #[cfg(all(feature = "bn254", feature = "spongefish"))]
 pub use prover::OptimizedChallenge;
 #[cfg(feature = "spongefish")]
@@ -89,11 +92,7 @@ pub use verifier::VerifierTranscript;
 use blake2::{digest::consts::U32, Blake2b, Blake2b512 as Blake2b512Digest};
 #[cfg(all(
     feature = "bn254",
-    any(
-        feature = "transcript-blake2b",
-        feature = "transcript-keccak",
-        feature = "transcript-poseidon"
-    )
+    any(feature = "transcript-blake2b", feature = "transcript-keccak")
 ))]
 use jolt_field::Fr;
 #[cfg(feature = "transcript-blake2b")]
@@ -126,7 +125,3 @@ pub type KeccakTranscript<F = Fr> = SpongeTranscript<Keccak, F>;
 /// Fiat-Shamir transcript backed by Keccak-f1600 for an explicitly selected field.
 #[cfg(all(feature = "transcript-keccak", not(feature = "bn254")))]
 pub type KeccakTranscript<F> = SpongeTranscript<Keccak, F>;
-
-/// Fiat-Shamir transcript backed by Circom-compatible BN254 Poseidon.
-#[cfg(feature = "transcript-poseidon")]
-pub type PoseidonTranscript<F = Fr> = SpongeTranscript<PoseidonSponge, F>;

@@ -30,14 +30,15 @@ use jolt_field::{F128, F192, F64, F8};
 #[cfg(feature = "transcript-keccak")]
 use spongefish::instantiations::Keccak;
 #[cfg(feature = "spongefish")]
-use spongefish::{DuplexSpongeInterface, VerificationError};
+use spongefish::DuplexSpongeInterface;
 
 #[cfg(feature = "transcript-blake2b")]
 use crate::Blake2b512;
 
 use sealed::Sealed;
 
-mod sealed {
+pub(crate) mod sealed {
+    /// Seals the crate's codec, sponge and unit traits.
     pub trait Sealed {}
 }
 
@@ -101,14 +102,46 @@ pub trait ChallengeCodec: Sized + Sealed {
     fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>>;
 }
 
-/// A sponge whose squeezed bytes are uniform, up to the sponge's own
+/// A byte sponge whose squeezed bytes are uniform, up to the sponge's own
 /// security. Field challenges are decoded from raw squeezed bytes, so the
 /// codecs' TV bounds hold only on such a sponge.
 ///
-/// `PoseidonSponge` is not one: each block it squeezes is the little-endian
-/// encoding of a BN254 scalar, whose top bits are far from uniform.
+/// `PoseidonSponge` squeezes field elements, not bytes, and is not one; it
+/// draws `Fr` challenges natively through [`ChallengeSponge`].
 #[cfg(feature = "spongefish")]
 pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
+
+/// A sponge that draws one message of `len` challenges in `F` with
+/// conventional TV at most 2^-161 for the whole message.
+///
+/// Every [`UniformBytes`] sponge draws every [`ChallengeCodec`] field by
+/// decoding squeezed bytes. `PoseidonSponge` draws only BN254 `Fr`, one
+/// squeezed element per challenge with no decoding; challenges in other
+/// fields have no implementation on it.
+///
+/// The trait is sealed.
+#[cfg(feature = "spongefish")]
+pub trait ChallengeSponge<F>: DuplexSpongeInterface + Sealed {
+    /// Units squeezed for `len` elements; depends only on the sponge, `F` and
+    /// `len`. `None` when `F` does not support `len` or the message would
+    /// exceed [`MAX_CHALLENGE_BYTES`] bytes of squeezed output.
+    fn challenge_units(len: usize) -> Option<usize>;
+
+    /// Decodes exactly `challenge_units(len)` squeezed units. `None` on a
+    /// wrong length or rejection-pool exhaustion.
+    fn decode_challenges(units: &[Self::U], len: usize) -> Option<Vec<F>>;
+}
+
+#[cfg(feature = "spongefish")]
+impl<H: UniformBytes, F: ChallengeCodec> ChallengeSponge<F> for H {
+    fn challenge_units(len: usize) -> Option<usize> {
+        F::challenge_bytes(len).filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
+    }
+
+    fn decode_challenges(units: &[u8], len: usize) -> Option<Vec<F>> {
+        F::decode_challenges(units, len)
+    }
+}
 
 #[cfg(feature = "transcript-keccak")]
 impl Sealed for Keccak {}
@@ -119,9 +152,10 @@ impl Sealed for Blake2b512 {}
 #[cfg(feature = "transcript-blake2b")]
 impl UniformBytes for Blake2b512 {}
 
-/// Largest challenge message, in squeezed bytes. Larger requests are rejected
-/// before touching the sponge, so a length taken from the input cannot make
-/// the verifier allocate without bound.
+/// Largest challenge message, in squeezed bytes; a Poseidon element counts as
+/// 32 bytes. Larger requests are rejected before touching the sponge, so a
+/// length taken from the input cannot make the verifier allocate without
+/// bound.
 pub const MAX_CHALLENGE_BYTES: usize = 1 << 24;
 
 #[cfg(any(feature = "solinas", feature = "bn254"))]
@@ -316,18 +350,6 @@ macro_rules! binary_codec {
 
 #[cfg(feature = "binary")]
 binary_codec!(F8, F64, F128, F192);
-
-/// Bytes squeezed for a message of `len` elements of `F`.
-///
-/// # Errors
-/// Returns `VerificationError` when `F` does not support `len` or the message
-/// would exceed [`MAX_CHALLENGE_BYTES`].
-#[cfg(feature = "spongefish")]
-pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, VerificationError> {
-    F::challenge_bytes(len)
-        .filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
-        .ok_or(VerificationError)
-}
 
 #[cfg(all(test, feature = "solinas"))]
 mod tests {

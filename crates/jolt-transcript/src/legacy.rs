@@ -16,8 +16,12 @@ use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding};
 
 #[cfg(feature = "spongefish")]
 use crate::codec::BytesMsg;
+#[cfg(feature = "transcript-poseidon")]
+use crate::poseidon::{FrUnit, PoseidonSponge};
 #[cfg(feature = "spongefish")]
 use crate::setup::session_id;
+#[cfg(feature = "transcript-poseidon")]
+use jolt_field::Fr;
 
 /// Maximum label length in bytes accepted by [`Transcript::new`] and the
 /// label helpers below.
@@ -228,6 +232,34 @@ where
     }
 }
 
+/// Rejects labels longer than [`MAX_LABEL_LEN`].
+#[cfg(feature = "spongefish")]
+fn check_label(label: &[u8]) {
+    assert!(
+        label.len() <= MAX_LABEL_LEN,
+        "label must be at most {MAX_LABEL_LEN} bytes",
+    );
+}
+
+/// The byte string a legacy `append_bytes` absorbs: a 1-byte non-zero domain
+/// marker, the 8-byte LE length, then the body.
+///
+/// The marker sub-domain-separates legacy-facade `append_bytes` calls from
+/// spongefish-native `public_message` / `prover_message` calls on the same
+/// sponge type, so a future protocol that mixes both paths can't have a
+/// legacy append collide with a spongefish-native BytesMsg of the same body.
+/// The length prefix keeps `append_bytes(a) ; append_bytes(b)` distinct from
+/// `append_bytes(a || b)`.
+#[cfg(feature = "spongefish")]
+fn framed_append(bytes: &[u8]) -> Vec<u8> {
+    const APPEND_MARKER: u8 = 0x9B;
+    let mut buf = Vec::with_capacity(9 + bytes.len());
+    buf.push(APPEND_MARKER);
+    buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    buf.extend_from_slice(bytes);
+    buf
+}
+
 /// Peeks 32 bytes from a clone of the sponge so the real state stays put.
 #[cfg(feature = "spongefish")]
 fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] {
@@ -246,12 +278,9 @@ where
     type Challenge = F;
 
     fn new(label: &'static [u8]) -> Self {
-        assert!(
-            label.len() <= MAX_LABEL_LEN,
-            "label must be at most {MAX_LABEL_LEN} bytes",
-        );
+        check_label(label);
         let mut sponge = H::init(session_id().as_bytes());
-        let _ = sponge.absorb(BytesMsg(label.to_vec()).encode().as_ref());
+        let _ = sponge.absorb(Encoding::<u8>::encode(&BytesMsg(label.to_vec())).as_ref());
         Self {
             sponge,
             _field: PhantomData,
@@ -259,32 +288,13 @@ where
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) {
-        // 1-byte non-zero domain marker + 8-byte LE length + body.
-        //
-        // The marker sub-domain-separates legacy-facade `append_bytes` calls
-        // from spongefish-native `public_message` / `prover_message` calls on
-        // the same sponge type, so a future protocol that mixes both paths
-        // can't have a legacy append collide with a spongefish-native
-        // BytesMsg of the same body. The length prefix keeps
-        // `append_bytes(a) ; append_bytes(b)` distinct from
-        // `append_bytes(a || b)`.
-        const APPEND_MARKER: u8 = 0x9B;
-        let mut buf = Vec::with_capacity(9 + bytes.len());
-        buf.push(APPEND_MARKER);
-        buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-        buf.extend_from_slice(bytes);
-        let _ = self.sponge.absorb(&buf);
+        let _ = self.sponge.absorb(&framed_append(bytes));
     }
 
     fn challenge(&mut self) -> F {
-        // WARNING: this squeezes 16 bytes for every sponge — including
-        // Poseidon — even though the split-trait surface (`OptimizedChallenge`,
-        // see `prover.rs:53-55`) deliberately makes 128-bit challenges a
-        // compile error on Poseidon-backed states. The two surfaces
-        // disagree on purpose: the legacy facade preserves the legacy
-        // deployed challenge width for in-flight consumers (jolt-sumcheck,
-        // jolt-openings, jolt-crypto). Once those migrate to the split-trait
-        // surface this facade goes away and the inconsistency with it.
+        // Squeezes 16 bytes: the legacy deployed challenge width, kept for
+        // in-flight consumers (jolt-sumcheck, jolt-openings, jolt-crypto)
+        // until they migrate to the split-trait surface.
         let mut buf = [0u8; 16];
         let _ = self.sponge.squeeze(&mut buf);
         F::from_challenge_bytes(&buf)
@@ -300,5 +310,65 @@ where
 
     fn state(&self) -> [u8; 32] {
         peek_state(&self.sponge)
+    }
+}
+
+/// Legacy facade over [`PoseidonSponge`], with native BN254 `Fr` challenges.
+///
+/// Construction initializes the protocol session and absorbs the
+/// length-prefixed label, as [`SpongeTranscript`] does. `append_bytes`
+/// absorbs the same framed byte string as [`SpongeTranscript`], packed into
+/// field elements. Every challenge, scalar or not, is one squeezed element,
+/// so challenges are full-width and uniform; there is no 128-bit form.
+#[cfg(feature = "transcript-poseidon")]
+#[derive(Clone)]
+pub struct PoseidonTranscript {
+    sponge: PoseidonSponge,
+}
+
+#[cfg(feature = "transcript-poseidon")]
+impl Default for PoseidonTranscript {
+    fn default() -> Self {
+        Self::new(b"")
+    }
+}
+
+#[cfg(feature = "transcript-poseidon")]
+impl PoseidonTranscript {
+    fn absorb_bytes(&mut self, bytes: Vec<u8>) {
+        let _ = self
+            .sponge
+            .absorb(<BytesMsg as Encoding<FrUnit>>::encode(&BytesMsg(bytes)).as_ref());
+    }
+}
+
+#[cfg(feature = "transcript-poseidon")]
+impl Transcript for PoseidonTranscript {
+    type Challenge = Fr;
+
+    fn new(label: &'static [u8]) -> Self {
+        check_label(label);
+        let mut transcript = Self {
+            sponge: PoseidonSponge::init(session_id().as_bytes()),
+        };
+        transcript.absorb_bytes(label.to_vec());
+        transcript
+    }
+
+    fn append_bytes(&mut self, bytes: &[u8]) {
+        self.absorb_bytes(framed_append(bytes));
+    }
+
+    fn challenge(&mut self) -> Fr {
+        let [unit] = self.sponge.squeeze_array::<1>();
+        unit.into()
+    }
+
+    /// The little-endian bytes of the next element, squeezed from a clone.
+    fn state(&self) -> [u8; 32] {
+        let [unit] = self.sponge.clone().squeeze_array::<1>();
+        let mut out = [0u8; 32];
+        Fr::from(unit).to_bytes_le(&mut out);
+        out
     }
 }

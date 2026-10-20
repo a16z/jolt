@@ -15,7 +15,10 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryHint;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 use jolt_dory::{DoryCommitment, DoryScheme};
-#[cfg(any(feature = "host", feature = "guest-verifier"))]
+#[cfg(all(
+    any(feature = "host", feature = "guest-verifier"),
+    not(feature = "transcript-poseidon")
+))]
 use jolt_field::Fr;
 #[cfg(feature = "host")]
 use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
@@ -56,7 +59,7 @@ pub use jolt_host as host;
     any(feature = "host", feature = "guest-verifier"),
     feature = "transcript-poseidon"
 ))]
-pub type ProtocolTranscript = PoseidonTranscript<Fr>;
+pub type ProtocolTranscript = PoseidonTranscript;
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
     feature = "transcript-keccak"

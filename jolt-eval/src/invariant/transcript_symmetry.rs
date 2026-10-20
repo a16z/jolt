@@ -4,12 +4,13 @@
 //! verifier challenges.
 
 use arbitrary::{Arbitrary, Result as ArbitraryResult, Unstructured};
-use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr as JFr};
+use jolt_field::{CanonicalEncoding, Fr as JFr};
 use spongefish::instantiations::Keccak;
-use spongefish::{DuplexSpongeInit, VerificationError};
+use spongefish::{DuplexSpongeInit, Encoding, VerificationError};
 
 use jolt_transcript::{
-    prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge,
+    prover_transcript, verifier_transcript, Blake2b512, BytesMsg, ChallengeSponge, FieldMsg,
+    PoseidonSponge, ProverTranscript, VerifierTranscript,
 };
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
@@ -67,22 +68,29 @@ fn arb_scalar(u: &mut Unstructured<'_>) -> ArbitraryResult<JFr> {
     Ok(JFr::from_bytes_le_reduced(&bytes))
 }
 
+/// Scalars travel as [`FieldMsg`] and challenges are one-element `Fr`
+/// messages, so the same sequence runs on the byte sponges and on Poseidon,
+/// which absorbs and squeezes `Fr` natively.
 fn run_check<H>(input: &Input) -> Result<(), CheckError>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit + ChallengeSponge<JFr>,
+    BytesMsg: Encoding<H::U>,
+    FieldMsg<JFr>: Encoding<H::U>,
+    (BytesMsg, [u8; 32]): Encoding<H::U>,
 {
     let mut prover = prover_transcript::<H>(SESSION, INSTANCE_DIGEST);
-    let mut prover_challenges: Vec<[u8; 32]> = Vec::new();
+    let mut prover_challenges: Vec<JFr> = Vec::new();
 
     for op in &input.ops {
         match op {
             Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => prover.public_message(&scalar_bytes(*f)),
+            Op::PublicScalar(f) => prover.public_message(&FieldMsg(*f)),
             Op::ProverBytes(b) => prover.prover_message(&BytesMsg(b.clone())),
-            Op::ProverScalar(f) => prover.prover_message(&scalar_bytes(*f)),
+            Op::ProverScalar(f) => prover.prover_message(&FieldMsg(*f)),
             Op::Challenge => {
-                let c: [u8; 32] = prover.verifier_message();
-                prover_challenges.push(c);
+                let c = ProverTranscript::field_challenges::<JFr>(&mut prover, 1)
+                    .map_err(|e| prover_violation("field_challenges", e))?;
+                prover_challenges.extend(c);
             }
         }
     }
@@ -94,7 +102,7 @@ where
     for (op_idx, op) in input.ops.iter().enumerate() {
         match op {
             Op::PublicBytes(b) => verifier.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => verifier.public_message(&scalar_bytes(*f)),
+            Op::PublicScalar(f) => verifier.public_message(&FieldMsg(*f)),
             Op::ProverBytes(expected) => {
                 let got: BytesMsg = verifier
                     .prover_message()
@@ -104,16 +112,17 @@ where
                 }
             }
             Op::ProverScalar(expected) => {
-                let got: [u8; 32] = verifier
+                let got: FieldMsg<JFr> = verifier
                     .prover_message()
-                    .map_err(|e| violation("prover_message<[u8; 32]>", op_idx, e))?;
-                if got != scalar_bytes(*expected) {
+                    .map_err(|e| violation("prover_message<FieldMsg<Fr>>", op_idx, e))?;
+                if got.0 != *expected {
                     return Err(mismatch("ProverScalar round-trip", op_idx));
                 }
             }
             Op::Challenge => {
-                let verifier_c: [u8; 32] = verifier.verifier_message();
-                if verifier_c != prover_challenges[challenge_idx] {
+                let verifier_c = VerifierTranscript::field_challenges::<JFr>(&mut verifier, 1)
+                    .map_err(|e| violation("field_challenges", op_idx, e))?;
+                if verifier_c.first() != prover_challenges.get(challenge_idx) {
                     return Err(mismatch("Challenge", op_idx));
                 }
                 challenge_idx += 1;
@@ -127,10 +136,11 @@ where
     Ok(())
 }
 
-fn scalar_bytes(value: JFr) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    value.to_bytes_le(&mut out);
-    out
+fn prover_violation(what: &str, err: VerificationError) -> CheckError {
+    CheckError::Violation(InvariantViolation::with_details(
+        format!("{what} failed on prover"),
+        format!("err={err:?}"),
+    ))
 }
 
 fn violation(what: &str, op_idx: usize, err: VerificationError) -> CheckError {

@@ -2,7 +2,10 @@
 
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 use crate::Blake2b512;
-use crate::{challenge::message_bytes, pow::SpongePow, ChallengeCodec, UniformBytes};
+use crate::{
+    pow::{PowUnit, SpongePow},
+    ChallengeSponge,
+};
 #[cfg(all(
     feature = "bn254",
     any(feature = "transcript-blake2b", feature = "transcript-keccak")
@@ -11,7 +14,7 @@ use jolt_field::Fr;
 #[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
 use spongefish::instantiations::Keccak;
 use spongefish::{
-    DuplexSpongeInterface, Encoding, FromNarg, FromUniform, Transcript, VerificationError,
+    DuplexSpongeInterface, Encoding, FromNarg, FromUniform, NargReader, Unit, VerificationError,
     VerifierState,
 };
 
@@ -34,30 +37,31 @@ pub trait VerifierTranscript<H: DuplexSpongeInterface> {
 
     /// Draws one message with conventional TV ≤ 2^-161 across all `len` elements.
     /// The protocol session/version must bind the codec, field, and length.
-    /// `len == 0` returns an empty vector without touching the sponge. Only
-    /// sponges with uniform output qualify ([`UniformBytes`]); `PoseidonSponge`
-    /// does not.
+    /// `len == 0` returns an empty vector without touching the sponge. Byte
+    /// sponges with uniform output ([`UniformBytes`](crate::UniformBytes))
+    /// decode every [`ChallengeCodec`](crate::ChallengeCodec) field;
+    /// `PoseidonSponge` squeezes `Fr` natively and offers no other field
+    /// ([`ChallengeSponge`]).
     ///
     /// # Errors
-    /// Returns `VerificationError`, before any sponge operation, when the codec
-    /// does not support `len` or the message would exceed
+    /// Returns `VerificationError`, before any sponge operation, when `F` does
+    /// not support `len` or the message would exceed
     /// [`MAX_CHALLENGE_BYTES`](crate::MAX_CHALLENGE_BYTES) bytes. Otherwise on
     /// rejection-pool exhaustion (probability at most 2^-161). Every failure
     /// poisons the state, so later reads and `check_eof` fail.
-    fn field_challenges<F: ChallengeCodec>(
-        &mut self,
-        len: usize,
-    ) -> Result<Vec<F>, VerificationError>
+    fn field_challenges<F>(&mut self, len: usize) -> Result<Vec<F>, VerificationError>
     where
-        H: UniformBytes;
+        H: ChallengeSponge<F>;
 
     /// Checks a proof of work of `bits` bits on this transcript's own sponge.
     ///
     /// For `bits == 0` this does nothing. For `1 <= bits <= MAX_POW_BITS`, it
     /// reads a nonce below `2^(bits + 7)` as canonical LEB128, one byte per
-    /// prover message, then squeezes `ceil(bits / 8)` bytes and requires their
-    /// low `bits` bits to be zero. The layout is the one proposed in
-    /// arkworks-rs/spongefish#301.
+    /// prover message, then squeezes the check and requires its low `bits`
+    /// bits to be zero. On a byte sponge the check is `ceil(bits / 8)` bytes
+    /// read little-endian; on `PoseidonSponge` it is one element's canonical
+    /// integer ([`PowUnit`](crate::PowUnit)). The byte-sponge layout is the one
+    /// proposed in arkworks-rs/spongefish#301.
     ///
     /// The step protects the verifier messages drawn after it, up to the next
     /// prover message. The protocol must draw the challenges it protects
@@ -84,7 +88,8 @@ pub trait VerifierTranscript<H: DuplexSpongeInterface> {
     /// failure poisons the state, so later reads and `check_eof` fail.
     fn check_grind(&mut self, bits: u32) -> Result<(), VerificationError>
     where
-        H: DuplexSpongeInterface<U = u8>;
+        H::U: PowUnit,
+        u8: Encoding<H::U>;
 
     /// Asserts the NARG was fully consumed.
     ///
@@ -103,6 +108,38 @@ pub trait VerifierTranscript<H: DuplexSpongeInterface> {
     fn check_eof(self) -> Result<(), VerificationError>;
 }
 
+/// A prover message that never parses: reading one poisons the verifier
+/// without touching the sponge, over any unit.
+struct Rejection;
+
+impl<U: Unit> Encoding<U> for Rejection {
+    fn encode(&self) -> impl AsRef<[U]> {
+        let empty: [U; 0] = [];
+        empty
+    }
+}
+
+impl FromNarg for Rejection {
+    fn from_narg(_: &mut NargReader<'_>) -> Result<Self, VerificationError> {
+        Err(VerificationError)
+    }
+}
+
+/// Fails unless `holds` and the state is unpoisoned; a failure poisons the
+/// state, so later reads and `check_eof` fail too. Spongefish's
+/// `Transcript::check` covers byte sponges only, and neither branch here
+/// absorbs or squeezes.
+fn check<H: DuplexSpongeInterface>(
+    state: &mut VerifierState<'_, H>,
+    holds: bool,
+) -> Result<(), VerificationError> {
+    if holds {
+        state.prover_messages_vec::<Rejection>(0).map(drop)
+    } else {
+        state.prover_message::<Rejection>().map(drop)
+    }
+}
+
 impl<H> VerifierTranscript<H> for VerifierState<'_, H>
 where
     H: DuplexSpongeInterface,
@@ -119,45 +156,44 @@ where
         VerifierState::verifier_message::<T>(self)
     }
 
-    fn field_challenges<F: ChallengeCodec>(
-        &mut self,
-        len: usize,
-    ) -> Result<Vec<F>, VerificationError>
+    fn field_challenges<F>(&mut self, len: usize) -> Result<Vec<F>, VerificationError>
     where
-        H: UniformBytes,
+        H: ChallengeSponge<F>,
     {
-        // A length the codec rejects poisons the state too, so a caller that
+        // A length the sponge rejects poisons the state too, so a caller that
         // drops the error still fails `check_eof`.
-        let n = message_bytes::<F>(len);
-        Transcript::check(self, || n.is_ok())?;
-        let n = n?;
+        let n = H::challenge_units(len);
+        check(self, n.is_some())?;
+        let n = n.ok_or(VerificationError)?;
         if len == 0 {
             return Ok(Vec::new());
         }
         let challenges =
-            VerifierState::verifier_message_as(self, n, |bytes| F::decode_challenges(bytes, len));
+            VerifierState::verifier_message_as(self, n, |units| H::decode_challenges(units, len));
         // Exhaustion poisons the state, so later reads and `check_eof` fail too.
-        Transcript::check(self, || challenges.is_some())?;
+        check(self, challenges.is_some())?;
         challenges.ok_or(VerificationError)
     }
 
     fn check_grind(&mut self, bits: u32) -> Result<(), VerificationError>
     where
-        H: DuplexSpongeInterface<U = u8>,
+        H::U: PowUnit,
+        u8: Encoding<H::U>,
     {
         if bits == 0 {
             return Ok(());
         }
         let Some(pow) = SpongePow::new(bits) else {
-            return Transcript::check(self, || false);
+            return check(self, false);
         };
         // Failed reads poison the state themselves; failed checks poison it
-        // through `Transcript::check`, so `check_eof` fails afterwards too.
+        // through `check`, so `check_eof` fails afterwards too.
         let nonce = pow.read_nonce(|| VerifierState::prover_message::<u8>(self))?;
-        Transcript::check(self, || nonce.is_some())?;
-        let passes =
-            VerifierState::verifier_message_as(self, pow.word_len(), |check| pow.accepts(check));
-        Transcript::check(self, || passes)
+        check(self, nonce.is_some())?;
+        let passes = VerifierState::verifier_message_as(self, H::U::check_len(bits), |check| {
+            pow.accepts(check)
+        });
+        check(self, passes)
     }
 
     fn check_eof(self) -> Result<(), VerificationError> {
