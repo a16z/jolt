@@ -73,10 +73,15 @@ const MILLER_WARP_WARPS: u32 = 4;
 
 const MILLER_WARP_MAX_PAIRS: usize = 256;
 
+const PREPARED_PAIRS_PER_THREAD: usize = 4;
+
+const MAX_PREPARED_BYTES: usize = 512 * 1024 * 1024;
+
 struct Constants {
     values: CudaSlice<u64>,
     ate: CudaSlice<u64>,
     ate_len: usize,
+    line_count: usize,
 }
 
 thread_local! {
@@ -141,10 +146,14 @@ impl CudaKernelContext {
                     });
                 }
                 let ate = ate_words();
+                let steps = ate.len().saturating_sub(1);
+                let line_count =
+                    steps + ate.iter().take(steps).filter(|&&bit| bit != 0).count() + 2;
                 *slot = Some(Constants {
                     values: self.upload_raw_u64(&words)?,
                     ate: self.upload_raw_u64(&ate)?,
                     ate_len: ate.len(),
+                    line_count,
                 });
             }
             match slot.as_ref() {
@@ -284,16 +293,67 @@ impl CudaKernelContext {
         let device_g1_offsets = self.upload_u32_slice(&g1_offsets)?;
         let device_g2_offsets = self.upload_u32_slice(&g2_offsets)?;
 
-        let lanes = self.with_pairing_constants(|constants| {
+        let (lanes, reduced_pairs) = self.with_pairing_constants(|constants| {
             let ate_len = Self::count_of(constants.ate_len)?;
+            let prepared_words = count
+                .checked_mul(constants.line_count)
+                .and_then(|words| words.checked_mul(3 * FQ2_LIMBS))
+                .filter(|&words| words <= MAX_PREPARED_BYTES / size_of::<u64>());
+            let shared_offset = g2_offsets.first().copied().filter(|offset| {
+                g2_offsets.len() > 1 && g2_offsets.iter().all(|candidate| candidate == offset)
+            });
+            let prepared = shared_offset.zip(prepared_words);
+            let reduced_count = if prepared.is_some() {
+                count.div_ceil(PREPARED_PAIRS_PER_THREAD)
+            } else {
+                count
+            };
             let lanes_len = segments
                 .len()
-                .checked_mul(count)
+                .checked_mul(reduced_count)
                 .and_then(|pairs| pairs.checked_mul(FQ12_LIMBS))
                 .ok_or(CudaError::InvariantViolation {
                     reason: "a multi-Miller batch overflowed its lane buffer",
                 })?;
             let mut lanes = self.alloc_u64_unset(lanes_len)?;
+            let reduced_pairs = Self::count_of(reduced_count)?;
+            if let Some((offset, words)) = prepared {
+                let mut lines = self.alloc_u64_unset(words)?;
+                let mut prepare = self.stream().launch_builder(self.pairing_prepare_g2());
+                let _ = prepare.arg(g2);
+                let _ = prepare.arg(&offset);
+                let _ = prepare.arg(&constants.values);
+                let _ = prepare.arg(&constants.ate);
+                let _ = prepare.arg(&ate_len);
+                let _ = prepare.arg(&pairs);
+                let _ = prepare.arg(&mut lines);
+                // SAFETY: the G2 span was checked above. Each pair writes its
+                // own lane of every coefficient, with line_count derived from
+                // the same ATE digits as the kernel. Identity lanes stay unset;
+                // the consumer checks the same G2 identity before reading them.
+                let _ = unsafe { prepare.launch(Self::launch_config(pairs)) }?;
+
+                let mut apply = self.stream().launch_builder(self.pairing_miller_prepared());
+                let _ = apply.arg(g1);
+                let _ = apply.arg(g2);
+                let _ = apply.arg(&lines);
+                let _ = apply.arg(&constants.ate);
+                let _ = apply.arg(&ate_len);
+                let _ = apply.arg(&device_g1_offsets);
+                let _ = apply.arg(&offset);
+                let _ = apply.arg(&pairs);
+                let _ = apply.arg(&mut lanes);
+                let mut config = Self::launch_config(reduced_pairs);
+                config.grid_dim.1 = lanes_of;
+                // SAFETY: the checked G1 spans and common G2 span cover the
+                // grid. Preparation runs first on this stream, and every
+                // nonidentity pair's coefficient lanes are initialized. Each
+                // (segment, group) writes one distinct Fq12 in lanes. The
+                // kernel groups four strided pairs, matching reduced_count.
+                let _ = unsafe { apply.launch(config) }?;
+                return Ok((lanes, reduced_pairs));
+            }
+
             let mut builder = self.stream().launch_builder(self.pairing_miller());
             let _ = builder.arg(g1);
             let _ = builder.arg(g2);
@@ -320,10 +380,10 @@ impl CudaKernelContext {
             config.grid_dim.1 = lanes_of;
             // SAFETY: as argued above.
             let _ = unsafe { builder.launch(config) }?;
-            Ok(lanes)
+            Ok((lanes, pairs))
         })?;
 
-        self.fq12_product_batch(lanes, pairs, lanes_of)
+        self.fq12_product_batch(lanes, reduced_pairs, lanes_of)
     }
 
     pub fn multi_miller_warp_batch(
@@ -919,6 +979,57 @@ mod tests {
             assert_eq!(
                 got, expected,
                 "the block Miller loop diverged for {segments} segments of {count} pairs"
+            );
+        }
+    }
+
+    #[test]
+    fn shared_g2_miller_segments_match_arkworks() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let mut rng = ChaCha20Rng::seed_from_u64(6_300);
+        let count = 129;
+        let segments = 3;
+        let offset = 7;
+        let mut ps: Vec<G1Projective> = (0..offset + count * segments)
+            .map(|_| G1Projective::rand(&mut rng))
+            .collect();
+        let mut qs: Vec<G2Projective> = (0..offset + count)
+            .map(|_| G2Projective::rand(&mut rng))
+            .collect();
+        for slot in (offset..ps.len()).step_by(19) {
+            ps[slot] = G1Projective::default();
+        }
+        for slot in (offset..qs.len()).step_by(23) {
+            qs[slot] = G2Projective::default();
+        }
+        for slot in (offset + 1..qs.len()).step_by(17) {
+            ps[slot] = ps[slot].into_affine().into();
+            qs[slot] = qs[slot].into_affine().into();
+        }
+        ps[offset + 2 * count..].fill(G1Projective::default());
+        let device_g1 = context
+            .upload_raw_u64(&ps.iter().flat_map(g1_words).collect::<Vec<_>>())
+            .unwrap();
+        let device_g2 = context
+            .upload_raw_u64(&qs.iter().flat_map(g2_words).collect::<Vec<_>>())
+            .unwrap();
+        let ranges: Vec<_> = (0..segments)
+            .map(|segment| (offset + segment * count, offset))
+            .collect();
+        let actual = context
+            .multi_miller_batch(&device_g1, &device_g2, &ranges, count)
+            .unwrap();
+        for (segment, &(start, _)) in ranges.iter().enumerate() {
+            let expected = Bn254::multi_miller_loop(
+                ps[start..start + count].iter().copied(),
+                qs[offset..].iter().copied(),
+            )
+            .0;
+            assert_eq!(
+                fq12(&actual[segment * FQ12_LIMBS..(segment + 1) * FQ12_LIMBS]),
+                expected
             );
         }
     }

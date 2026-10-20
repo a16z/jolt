@@ -441,6 +441,149 @@ extern "C" __global__ void pairing_miller_kernel(const u64 *__restrict__ g1,
     }
 }
 
+__device__ __forceinline__ void miller_store_coeff(u64 *lines, const u64 *coeff,
+                                                   unsigned int step, unsigned int pair,
+                                                   unsigned int count) {
+    for (int limb = 0; limb < 3 * FQ2_LIMBS; limb++) {
+        lines[((unsigned long long)step * 3 * FQ2_LIMBS + limb) * count + pair] = coeff[limb];
+    }
+}
+
+__device__ __forceinline__ void miller_load_coeff(const u64 *lines, u64 *coeff,
+                                                  unsigned int step, unsigned int pair,
+                                                  unsigned int count) {
+    for (int limb = 0; limb < 3 * FQ2_LIMBS; limb++) {
+        coeff[limb] = lines[((unsigned long long)step * 3 * FQ2_LIMBS + limb) * count + pair];
+    }
+}
+
+// Shared G2 segments reuse these coefficients for every G1 column. The
+// step/limb/pair layout coalesces coefficient traffic across adjacent threads.
+extern "C" __global__ void pairing_prepare_g2_kernel(const u64 *__restrict__ g2,
+                                                     unsigned int offset,
+                                                     const u64 *__restrict__ consts,
+                                                     const u64 *__restrict__ ate,
+                                                     unsigned int ate_len,
+                                                     unsigned int count,
+                                                     u64 *__restrict__ lines) {
+    unsigned int pair = blockIdx.x * blockDim.x + threadIdx.x;
+    if (pair >= count) return;
+    const u64 *q = g2 + ((unsigned long long)offset + pair) * 3 * FQ2_LIMBS;
+    if (jac2_is_zero(q)) return;
+
+    u64 qx[FQ2_LIMBS], qy[FQ2_LIMBS], inv[FQ2_LIMBS], inv2[FQ2_LIMBS], tmp[FQ2_LIMBS];
+    if (fq2_is_one(q + 2 * FQ2_LIMBS)) {
+        fq2_copy(q, qx);
+        fq2_copy(q + FQ2_LIMBS, qy);
+    } else {
+        fq2_inverse(q + 2 * FQ2_LIMBS, inv);
+        fq2_sqr(inv, inv2);
+        fq2_mul(q, inv2, qx);
+        fq2_mul(q + FQ2_LIMBS, inv2, tmp);
+        fq2_mul(tmp, inv, qy);
+    }
+
+    u64 rx[FQ2_LIMBS], ry[FQ2_LIMBS], rz[FQ2_LIMBS], neg_qy[FQ2_LIMBS];
+    u64 coeff[3 * FQ2_LIMBS];
+    fq2_copy(qx, rx);
+    fq2_copy(qy, ry);
+    fq2_set_one(rz);
+    fq2_neg(qy, neg_qy);
+    unsigned int step = 0;
+    for (int i = (int)ate_len - 1; i >= 1; i--) {
+        g2_double_step(rx, ry, rz, consts, coeff);
+        miller_store_coeff(lines, coeff, step++, pair, count);
+        u64 bit = ate[i - 1];
+        if (bit != 0ULL) {
+            g2_add_step(rx, ry, rz, qx, bit == 1ULL ? qy : neg_qy, coeff);
+            miller_store_coeff(lines, coeff, step++, pair, count);
+        }
+    }
+
+    u64 q1x[FQ2_LIMBS], q1y[FQ2_LIMBS], q2x[FQ2_LIMBS], q2y[FQ2_LIMBS];
+    g2_mul_by_char(qx, qy, consts, q1x, q1y);
+    g2_mul_by_char(q1x, q1y, consts, q2x, q2y);
+    fq2_neg(q2y, tmp);
+    fq2_copy(tmp, q2y);
+    g2_add_step(rx, ry, rz, q1x, q1y, coeff);
+    miller_store_coeff(lines, coeff, step++, pair, count);
+    g2_add_step(rx, ry, rz, q2x, q2y, coeff);
+    miller_store_coeff(lines, coeff, step, pair, count);
+}
+
+extern "C" __global__ void pairing_miller_prepared_kernel(
+    const u64 *__restrict__ g1, const u64 *__restrict__ g2,
+    const u64 *__restrict__ lines, const u64 *__restrict__ ate,
+    unsigned int ate_len, const unsigned int *__restrict__ g1_offsets,
+    unsigned int g2_offset, unsigned int count, u64 *__restrict__ out) {
+    constexpr unsigned PACK = 4;
+    unsigned int groups = count / PACK + (count % PACK != 0);
+    unsigned int group = blockIdx.x * blockDim.x + threadIdx.x;
+    if (group >= groups) return;
+    unsigned int segment = blockIdx.y;
+    unsigned long long idx = (unsigned long long)segment * groups + group;
+    u64 px[PACK][LIMBS], py[PACK][LIMBS];
+    bool active[PACK], any = false;
+#pragma unroll
+    for (unsigned member = 0; member < PACK; member++) {
+        unsigned pair = group + member * groups;
+        active[member] = false;
+        if (pair >= count) continue;
+        const u64 *p = g1 + ((unsigned long long)g1_offsets[segment] + pair) * 3 * LIMBS;
+        const u64 *q = g2 + ((unsigned long long)g2_offset + pair) * 3 * FQ2_LIMBS;
+        if (jac_is_zero(p) || jac2_is_zero(q)) continue;
+        active[member] = true;
+        any = true;
+        if (fq_is_one(p + 2 * LIMBS)) {
+            fq_copy(p, px[member]);
+            fq_copy(p + LIMBS, py[member]);
+        } else {
+            u64 inv[LIMBS], inv2[LIMBS], tmp[LIMBS];
+            fq_inverse(p + 2 * LIMBS, inv);
+            fq_sqr(inv, inv2);
+            fq_mul(p, inv2, px[member]);
+            fq_mul(p + LIMBS, inv2, tmp);
+            fq_mul(tmp, inv, py[member]);
+        }
+    }
+    // Squaring the product once replaces a separate square for each pair.
+    u64 f[FQ12_LIMBS];
+    fq12_set_one(f);
+    if (any) {
+        u64 coeff[3 * FQ2_LIMBS];
+        unsigned step = 0;
+        for (int i = (int)ate_len - 1; i >= 1; i--) {
+            if (i != (int)ate_len - 1) {
+                u64 squared[FQ12_LIMBS];
+                fq12_sqr(f, squared);
+                fq12_copy(squared, f);
+            }
+#pragma unroll
+            for (unsigned member = 0; member < PACK; member++) {
+                if (!active[member]) continue;
+                unsigned pair = group + member * groups;
+                miller_load_coeff(lines, coeff, step, pair, count);
+                ell(f, coeff, px[member], py[member]);
+                if (ate[i - 1] != 0ULL) {
+                    miller_load_coeff(lines, coeff, step + 1, pair, count);
+                    ell(f, coeff, px[member], py[member]);
+                }
+            }
+            step += 1 + (ate[i - 1] != 0ULL);
+        }
+#pragma unroll
+        for (unsigned member = 0; member < PACK; member++) {
+            if (!active[member]) continue;
+            unsigned pair = group + member * groups;
+            miller_load_coeff(lines, coeff, step, pair, count);
+            ell(f, coeff, px[member], py[member]);
+            miller_load_coeff(lines, coeff, step + 1, pair, count);
+            ell(f, coeff, px[member], py[member]);
+        }
+    }
+    for (int i = 0; i < FQ12_LIMBS; i++) out[idx * FQ12_LIMBS + i] = f[i];
+}
+
 #define MW_COEFFS 6
 #define MW_GROUPS 3
 #define MW_MASK 0xffffffffu

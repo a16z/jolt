@@ -88,6 +88,10 @@
 //! The block Miller loop assigns one pair per thread, keeping its full Fq12
 //! accumulator local. Batches with at most 256 total pairs use the warp loop;
 //! larger batches use the block loop.
+//! When multiple block-loop segments share a G2 span, CUDA prepares its line
+//! coefficients once on device, using at most 512 MiB. The prepared loop combines
+//! four strided pairs per thread to share accumulator squarings. Larger coefficient
+//! tables use the direct block loop; identity pairs skip coefficient reads.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
