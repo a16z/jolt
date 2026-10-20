@@ -76,20 +76,26 @@ fn uniskip_input() -> Fr {
         .sum()
 }
 
-fn shape_auxiliary() -> usize {
-    let mut shape = ShapeDomain::default();
-    lower_factored(&product(), &mut shape, &mut |_| Ok(()), &mut |_| {
-        Ok(Fr::from_u64(0))
-    })
-    .unwrap();
-    shape.auxiliary
-}
-
 fn layout() -> PadLayout {
     // Uni-skip: DEGREE + 1 coefficients and its output claim; the sumcheck:
     // DEGREE wire values per round and the two output claims.
     let base = DEGREE + 1 + 1 + NUM_VARS * DEGREE + 2;
-    PadLayout::new(base, shape_auxiliary()).unwrap()
+    // The two output claims take the last base slots.
+    let mut shape = OperandShapeDomain::new(base);
+    let _ = lower_factored(
+        &product(),
+        &mut shape,
+        &mut |id| {
+            Ok(Some(PadIndex(match id {
+                Opening::A => base - 2,
+                Opening::B => base - 1,
+                Opening::Uniskip => unreachable!(),
+            })))
+        },
+        &mut |_| Ok(Fr::from_u64(0)),
+    )
+    .unwrap();
+    shape.layout().unwrap()
 }
 
 struct Proof {
@@ -308,11 +314,15 @@ fn shape_and_values_domains_allocate_alike() {
         ]) + FactoredExpr::from(opening::<Fr, Opening, (), ()>(Opening::A))
             + FactoredExpr::product(vec![opening(Opening::A), opening(Opening::B)])
                 .scale(Fr::from_u64(0));
-    let mut shape = ShapeDomain::default();
-    lower_factored(&three_factors, &mut shape, &mut |_| Ok(()), &mut |_| {
-        Ok(Fr::from_u64(0))
-    })
+    let mut shape = OperandShapeDomain::new(3);
+    let _ = lower_factored(
+        &three_factors,
+        &mut shape,
+        &mut |id| Ok(Some(PadIndex(*id as usize))),
+        &mut |_| Ok(Fr::from_u64(0)),
+    )
     .unwrap();
+    let shape = shape.layout().unwrap();
     let mut values = ValuesDomain::default();
     let value = lower_factored(
         &three_factors,
@@ -328,7 +338,7 @@ fn shape_and_values_domains_allocate_alike() {
     )
     .unwrap();
     // A zero coefficient still allocates its product slot.
-    assert_eq!(shape.auxiliary, 3);
+    assert_eq!(shape.auxiliary.len(), 3);
     assert_eq!(values.auxiliary, vec![fr(16), fr(80), fr(6)]);
     assert_eq!(value, fr(80) + fr(2));
 }
@@ -395,8 +405,15 @@ fn lowering_domains_agree_on_random_formulas() {
             |()| unreachable!(),
         );
 
-        let mut shape = ShapeDomain::default();
-        lower_factored(&expr, &mut shape, &mut |_| Ok(()), &mut public.clone()).unwrap();
+        let mut shape = OperandShapeDomain::new(RANDOM_OPENINGS);
+        let _ = lower_factored(
+            &expr,
+            &mut shape,
+            &mut |id| Ok(Some(PadIndex(*id))),
+            &mut public.clone(),
+        )
+        .unwrap();
+        let layout = shape.layout().unwrap();
 
         let mut values = ValuesDomain::default();
         let value = lower_factored(
@@ -407,9 +424,7 @@ fn lowering_domains_agree_on_random_formulas() {
         )
         .unwrap();
         assert_eq!(value, expected);
-        assert_eq!(values.auxiliary.len(), shape.auxiliary);
-
-        let layout = PadLayout::new(RANDOM_OPENINGS, shape.auxiliary).unwrap();
+        assert_eq!(values.auxiliary.len(), layout.auxiliary.len());
         let pads: Vec<Fr> = (0..layout.num_pads).map(|_| Fr::random(&mut rng)).collect();
         let masked_auxiliary: Vec<Fr> = values
             .auxiliary

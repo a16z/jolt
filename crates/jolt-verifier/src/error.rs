@@ -154,6 +154,7 @@ impl From<ZkError> for VerifierError {
             ZkError::Transcript(error) => Self::Transcript(error),
             ZkError::PadsExhausted { .. }
             | ZkError::PadCountMismatch { .. }
+            | ZkError::OperandPadsMismatch
             | ZkError::InvalidLayout { .. }
             | ZkError::InvalidRelation { .. }
             | ZkError::Sumcheck(_)

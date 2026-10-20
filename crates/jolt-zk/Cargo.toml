@@ -19,7 +19,12 @@ whiteout = ["jolt-algebra/solinas", "jolt-crypto/lattice"]
 whiteout-prover = ["jolt-crypto/sample", "whiteout"]
 # Timing harness for examples/sigma_dudect.rs: exposes the Σ-protocol
 # attempt's steps on a synthetic instance. Diagnostics only.
-whiteout-diagnostics = ["dep:rand_chacha", "whiteout-prover"]
+whiteout-diagnostics = [
+  "dep:rand_chacha",
+  "jolt-crypto/sample-diagnostics",
+  "jolt-transcript/transcript-blake2b",
+  "whiteout-prover",
+]
 
 [dependencies]
 jolt-claims.workspace = true

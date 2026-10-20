@@ -23,13 +23,17 @@ use super::fixture::{
     digits, layout, lengths, pad_commitment, residual_matrices, residual_segments, stream,
     Instance, F, PAD_RANDOMNESS_COLUMNS, PAD_RANK,
 };
+use super::labels::RowLabels;
 use super::lift::constant_ring;
 use super::params::{ALPHA, EPSILON_BITS};
 use super::placement::{PadPlace, PadPlacement, OPERAND_LEVELS, PAD_LEVELS};
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
 use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
 use super::sigma::{prove_sigma_with, take_rejected, SelfChecks};
-use super::{verify_sigma, LiftedRelation, ResidualBlock, SigmaParams, SigmaSetup, WhiteoutError};
+use super::{
+    verify_sigma, LiftedRelation, ResidualBlock, ResponseSegment, SegmentTable, SigmaParams,
+    SigmaSetup, WhiteoutError,
+};
 use crate::masking::{AffineRow, PadIndex, ResidualRelation, ResidualVar, ZkError};
 
 const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-sigma");
@@ -102,7 +106,7 @@ impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
         let mut z = Vec::new();
         let mut rest = witness.digits.as_slice();
         for segment in statement.layout().segments {
-            if let super::ResponseSegment::Response {
+            if let ResponseSegment::Response {
                 coefficients,
                 digits,
                 ..
@@ -330,13 +334,20 @@ fn each_self_check_fires_on_its_own_case() {
 
 /// `ct Q_μ(1, s)` on arbitrary `s` against an independent decoding:
 /// `Σ μ_row · row(s) + ct(g)`, where a product row's term includes the
-/// difference `Σ_r P_x[r]·Y_{64−r}` that a non-constant operand adds.
+/// difference `Σ_r P_x[r]·Y_{64−r}` that a non-constant operand adds. At
+/// `D = 256` the decoding reads challenge-ring element `E·m + k` as native
+/// coefficients `m·i + k` of element `E` (the stride map of §0).
 #[test]
 fn quadratic_constant_term_matches_an_independent_decoding() {
-    let instance = Instance::<64>::new(30);
+    check_quadratic_against_decoding::<64>(30);
+    check_quadratic_against_decoding::<256>(32);
+}
+
+fn check_quadratic_against_decoding<const D: usize>(seed: u64) {
+    let instance = Instance::<D>::new(seed);
     let setup = instance.setup();
     let lifted = setup.lift(&instance.relation, &instance.claims).unwrap();
-    let mut rng = ChaCha20Rng::seed_from_u64(31);
+    let mut rng = ChaCha20Rng::seed_from_u64(seed + 1);
     let rho: Vec<F> = (0..lifted.labels().num_challenges())
         .map(|_| F::random(&mut rng))
         .collect();
@@ -355,7 +366,10 @@ fn quadratic_constant_term_matches_an_independent_decoding() {
     let placement = PadPlacement::new(&layout()).unwrap();
     let pad = instance.start(SegmentRole::PadDigits);
     let operand_start = instance.start(SegmentRole::OperandDigits);
-    let coefficient = |ring: usize, i: usize| F::from_i64(s[ring * 64 + i]);
+    // Challenge-ring element `ring` (counted from the start of s) and its
+    // coefficient `i`.
+    let m = D / 64;
+    let coefficient = |ring: usize, i: usize| F::from_i64(s[(ring / m) * D + m * i + ring % m]);
     let radix16 = F::from_u64(16);
     let radix256 = F::from_u64(256);
     let operand_poly = |operand: usize| -> Vec<F> {
@@ -375,7 +389,7 @@ fn quadratic_constant_term_matches_an_independent_decoding() {
         }
         PadPlace::Operand(operand) => operand_poly(operand)[0],
     };
-    let w_len: usize = lengths::<64>(1)[..2].iter().sum::<usize>() * 64;
+    let w_len: usize = lengths::<D>(1)[..2].iter().sum::<usize>() * 64;
     let eq = EqPolynomial::new(instance.claims.points[0].clone()).evaluations();
     let claim: F = s[..w_len]
         .iter()
@@ -418,7 +432,8 @@ fn quadratic_constant_term_matches_an_independent_decoding() {
                 },
                 ResidualVar::Witness(_) => {
                     for (n, e) in eq.iter().enumerate().take(w_len) {
-                        weights.push((n / 64, n % 64, *e * weight));
+                        let (element, j) = (n / D, n % D);
+                        weights.push((element * m + j % m, j / m, *e * weight));
                     }
                 }
             }
@@ -444,7 +459,7 @@ fn quadratic_constant_term_matches_an_independent_decoding() {
     }
     let p_x = operand_poly(0);
     for (r, coefficient) in p_x.iter().enumerate().skip(1) {
-        expected += weight(super::labels::RowLabels::scalarity(0, r)) * *coefficient;
+        expected += weight(RowLabels::scalarity(0, r)) * *coefficient;
     }
     for (index, product) in instance.relation.products.iter().enumerate() {
         let x = product.x.masked - p_x[0];
@@ -713,14 +728,14 @@ fn rejected_attempts_cannot_be_substituted() {
 
 #[test]
 fn oversized_tables_are_rejected_before_the_lift_overflows() {
-    let table = super::SegmentTable::new(residual_segments::<64>(1)).unwrap();
+    let table = SegmentTable::new(residual_segments::<64>(1)).unwrap();
     let widths = vec![1u64 << 31; 3];
     // Widths this large need at least nine digits: past the i32 lift.
     assert!(matches!(
         SigmaParams::new(&table, &widths),
         Err(WhiteoutError::ResponseBoundTooLarge | WhiteoutError::RejectionArithmetic)
     ));
-    let big = super::SegmentTable::new(vec![Segment {
+    let big = SegmentTable::new(vec![Segment {
         role: SegmentRole::Witness,
         len: 1 << 20,
         native_dim: 64,

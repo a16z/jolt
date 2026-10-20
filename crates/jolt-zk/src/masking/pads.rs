@@ -48,7 +48,7 @@ impl PadLayout {
 
     /// This layout with `operand_pads` as its product operands.
     #[must_use]
-    pub fn with_operand_pads(self, operand_pads: Vec<PadIndex>) -> Self {
+    pub(crate) fn with_operand_pads(self, operand_pads: Vec<PadIndex>) -> Self {
         Self {
             operand_pads,
             ..self

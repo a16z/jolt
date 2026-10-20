@@ -121,10 +121,14 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures,logging
       # jolt-zk's Whiteout building blocks: the verifier-side feature alone
       # (gating), then with the prover-only sampler.
-      - name: cargo clippy -p jolt-zk --features whiteout / whiteout-prover
+      - name: cargo clippy -p jolt-zk --features whiteout / whiteout-prover / whiteout-diagnostics
         run: |
           cargo clippy -p jolt-zk --all-targets --features whiteout
           cargo clippy -p jolt-zk --all-targets --features whiteout-prover
+          cargo clippy -p jolt-zk --all-targets --features whiteout-diagnostics
+      # The diagnostics feature alone must build the library (no dev-deps).
+      - name: cargo check -p jolt-zk --features whiteout-diagnostics --lib
+        run: cargo check -p jolt-zk --features whiteout-diagnostics --lib
       # Feature additivity: enabling jolt-zk/whiteout must not break the
       # verifier, which matches ZkError exhaustively.
       - name: cargo clippy -p jolt-verifier --features jolt-zk/whiteout

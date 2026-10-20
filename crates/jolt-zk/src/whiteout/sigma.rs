@@ -379,8 +379,8 @@ mod prover {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) enum SelfChecks {
         Run,
-        /// Test-only: skip the per-row, opening, alphabet and `ct(h)`
-        /// checks, so tests can show the verifier rejects what they catch.
+        /// Test-only: skip the per-row, opening and alphabet checks, so
+        /// tests can show the verifier rejects what they catch.
         #[cfg(test)]
         Skip,
     }
@@ -510,10 +510,9 @@ mod prover {
             .collect();
         let aggregated = relation.aggregate(&rho)?;
         let parts_s = aggregated.linear_parts(&tables, s, false)?;
+        // ct(h) = Σ μ_row · row(s) + ct(g), so the per-row check above
+        // already guarantees ct(h) = 0.
         let h = aggregated.quadratic(&constant_ring(F::one()), &parts_s);
-        if checks == SelfChecks::Run && !h.constant_term().is_zero() {
-            return Err(WhiteoutError::InvariantViolation("ct(h) ≠ 0").into());
-        }
         let samplers = setup
             .params()
             .blocks()

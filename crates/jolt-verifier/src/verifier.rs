@@ -197,11 +197,15 @@ impl<F: JoltField, C> MaskedStages<F, C> {
             .residual
             .pad_layout(self.pads.layout().auxiliary.start)?;
         let count = layout.auxiliary.len();
-        if layout != *self.pads.layout() {
+        let committed = self.pads.layout();
+        if layout.num_pads != committed.num_pads || layout.auxiliary != committed.auxiliary {
             return Err(VerifierError::Masking(ZkError::PadCountMismatch {
-                scheduled: self.pads.layout().auxiliary.len(),
+                scheduled: committed.auxiliary.len(),
                 used: count,
             }));
+        }
+        if layout != *committed {
+            return Err(VerifierError::Masking(ZkError::OperandPadsMismatch));
         }
         let mut masked = vec![F::zero(); count];
         let _ = self

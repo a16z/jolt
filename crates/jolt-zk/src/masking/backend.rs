@@ -32,6 +32,10 @@ pub enum ZkError {
     PadCountMismatch { scheduled: usize, used: usize },
     #[error("invalid pad layout: {reason}")]
     InvalidLayout { reason: &'static str },
+    /// The schedule's product operand pads differ from the committed
+    /// layout's, with equal pad counts.
+    #[error("product operand pads differ from the committed layout")]
+    OperandPadsMismatch,
     #[error("invalid residual relation: {reason}")]
     InvalidRelation { reason: &'static str },
     /// A `SumcheckError<F>`.

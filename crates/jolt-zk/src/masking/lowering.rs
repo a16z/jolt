@@ -5,7 +5,8 @@
 //! The allocation depends only on the formula's structure, never on values,
 //! so the same routine serves three domains:
 //!
-//! - [`ShapeDomain`] counts auxiliary slots for the pad layout;
+//! - [`OperandShapeDomain`] counts auxiliary slots and records the product
+//!   operands' pads, giving the pad layout;
 //! - [`RowsDomain`] builds the residual rows over (pads, witness);
 //! - [`ValuesDomain`] computes the prover's auxiliary values.
 //!
@@ -30,42 +31,6 @@ pub trait ClaimDomain<F> {
     fn define_auxiliary(&mut self, value: Self::Value) -> Result<Self::Value, ZkError>;
     /// A new auxiliary slot holding `x · y`, where `x` is a masked slot.
     fn product(&mut self, x: Self::Value, y: Self::Value) -> Result<Self::Value, ZkError>;
-}
-
-/// Counts auxiliary slots; carries no values.
-#[derive(Debug, Default)]
-pub struct ShapeDomain {
-    pub auxiliary: usize,
-}
-
-impl<F> ClaimDomain<F> for ShapeDomain {
-    type Value = ();
-
-    fn constant(&self, _value: F) {}
-
-    fn add(&self, _lhs: &(), _rhs: &()) {}
-
-    fn scale(&self, _value: &(), _scale: F) {}
-
-    fn define_auxiliary(&mut self, _value: ()) -> Result<(), ZkError> {
-        self.bump()
-    }
-
-    fn product(&mut self, _x: (), _y: ()) -> Result<(), ZkError> {
-        self.bump()
-    }
-}
-
-impl ShapeDomain {
-    fn bump(&mut self) -> Result<(), ZkError> {
-        self.auxiliary = self
-            .auxiliary
-            .checked_add(1)
-            .ok_or(ZkError::InvalidLayout {
-                reason: "auxiliary slot count overflows usize",
-            })?;
-        Ok(())
-    }
 }
 
 /// The numbering of auxiliary slots: slot `k` of the block is pad
