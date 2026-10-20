@@ -8,7 +8,7 @@
 //! constant-term technique of lattice-based proofs (Esgin–Nguyen–Seiler 2020,
 //! Lyubashevsky–Nguyen–Plançon 2022).
 
-use jolt_field::{CyclotomicRing, Field};
+use jolt_algebra::{CyclotomicRing, Field};
 
 use super::WhiteoutError;
 
