@@ -5,12 +5,18 @@
 //! commitment. Every [`SparseChallengeConfig`] uses the signed-sparse sampler:
 //! `count_pm1` coefficients at ±1 and `count_pm2` at ±2.
 
+#[cfg(feature = "sample")]
+mod constant_time;
 mod op_norm;
 mod op_norm_accumulate;
 mod position_sample;
 mod signed_sparse;
 mod xof;
 
+#[cfg(feature = "sample")]
+pub use constant_time::sample_challenge_ct;
+#[cfg(feature = "sample")]
+pub(crate) use constant_time::scatter_ct;
 use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::{IndexedXofPrefix, XofCursor};

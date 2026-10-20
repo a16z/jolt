@@ -67,6 +67,35 @@ pub struct SparseChallenge {
     pub coeffs: SparseChallengeCoefficients,
 }
 
+#[cfg(feature = "sample")]
+impl SparseChallenge {
+    /// The dense coefficients of a D = 64 challenge, built by a masked scan
+    /// in which every output coefficient reads every support entry, so no
+    /// address depends on the positions.
+    pub fn to_dense_ct(&self) -> Result<[i8; 64], CryptoError> {
+        if self.positions.len() != self.coeffs.len() {
+            return Err(CryptoError::InvalidInput(
+                "sparse challenge positions and coefficients differ in length".into(),
+            ));
+        }
+        // One aggregate range check: a position at or above 64 sets a high bit.
+        if self
+            .positions
+            .iter()
+            .fold(0u32, |acc, &position| acc | position)
+            >= 64
+        {
+            return Err(CryptoError::InvalidInput(
+                "sparse challenge position outside a D = 64 ring".into(),
+            ));
+        }
+        Ok(crate::challenge::sampler::scatter_ct(
+            &self.positions,
+            &self.coeffs,
+        ))
+    }
+}
+
 impl SparseChallenge {
     /// Validate the sampler invariants for ring dimension `D`.
     ///
