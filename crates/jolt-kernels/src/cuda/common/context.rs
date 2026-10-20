@@ -83,6 +83,24 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     rwm_deref_coeffs: CudaFunction,
     #[cfg(test)]
+    rwm_permute_words: CudaFunction,
+    #[cfg(test)]
+    amm_segment_flags: CudaFunction,
+    #[cfg(test)]
+    amm_segment_bounds: CudaFunction,
+    #[cfg(test)]
+    amm_count: CudaFunction,
+    #[cfg(test)]
+    amm_merge: CudaFunction,
+    #[cfg(test)]
+    amm_message: CudaFunction,
+    #[cfg(test)]
+    amm_materialize: CudaFunction,
+    #[cfg(test)]
+    amm_initial_values: CudaFunction,
+    #[cfg(test)]
+    amm_lift: CudaFunction,
+    #[cfg(test)]
     unr_mul_scatter: CudaFunction,
     #[cfg(test)]
     unr_reduce: CudaFunction,
@@ -266,6 +284,24 @@ impl CudaKernelContext {
             rwm_square_lut: module.load_function("rwm_square_lut_kernel")?,
             #[cfg(test)]
             rwm_deref_coeffs: module.load_function("rwm_deref_coeffs_kernel")?,
+            #[cfg(test)]
+            rwm_permute_words: module.load_function("rwm_permute_words_kernel")?,
+            #[cfg(test)]
+            amm_segment_flags: module.load_function("amm_segment_flags_kernel")?,
+            #[cfg(test)]
+            amm_segment_bounds: module.load_function("amm_segment_bounds_kernel")?,
+            #[cfg(test)]
+            amm_count: module.load_function("amm_count_kernel")?,
+            #[cfg(test)]
+            amm_merge: module.load_function("amm_merge_kernel")?,
+            #[cfg(test)]
+            amm_message: module.load_function("amm_message_kernel")?,
+            #[cfg(test)]
+            amm_materialize: module.load_function("amm_materialize_kernel")?,
+            #[cfg(test)]
+            amm_initial_values: module.load_function("amm_initial_values_kernel")?,
+            #[cfg(test)]
+            amm_lift: module.load_function("amm_lift_kernel")?,
             #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             #[cfg(test)]
@@ -694,6 +730,51 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn rwm_deref_coeffs(&self) -> &CudaFunction {
         &self.rwm_deref_coeffs
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn rwm_permute_words(&self) -> &CudaFunction {
+        &self.rwm_permute_words
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn amm_segment_flags(&self) -> &CudaFunction {
+        &self.amm_segment_flags
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn amm_segment_bounds(&self) -> &CudaFunction {
+        &self.amm_segment_bounds
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn amm_count(&self) -> &CudaFunction {
+        &self.amm_count
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn amm_merge(&self) -> &CudaFunction {
+        &self.amm_merge
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn amm_message(&self) -> &CudaFunction {
+        &self.amm_message
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn amm_materialize(&self) -> &CudaFunction {
+        &self.amm_materialize
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn amm_initial_values(&self) -> &CudaFunction {
+        &self.amm_initial_values
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn amm_lift(&self) -> &CudaFunction {
+        &self.amm_lift
     }
 
     #[cfg(test)]

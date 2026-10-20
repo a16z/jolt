@@ -112,6 +112,11 @@
 //! direct stages compact existing entries in place.
 //! Cycle shards sum round coefficients on the host and gather their remaining
 //! rows on GPU 0 before binding the shard variables.
+//! Address-first rounds sort entry indices on the host and permute their device
+//! columns, then merge adjacent addresses with initial-value checkpoints.
+//! After the last address bind, dense cycle columns use split-eq reductions.
+//! CUDA uses this sparse matrix path for both RAM and registers; optimized
+//! registers instead scan compact access chunks with raw increment checkpoints.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

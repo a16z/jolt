@@ -6,11 +6,15 @@
 //! until their index capacity requires direct field coefficients.
 //!
 //! Device count/scan passes allocate disjoint segments for sparse row merges.
+//! Address-first conversion sorts row/address indices on the host, then uses
+//! that permutation to reorder values and coefficients on the device. Both
+//! representations avoid the full address-by-cycle matrix.
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::BindingOrder;
 
+use super::address_major_matrix::DeviceAddressMajorMatrix;
 use super::context::{context_for, CudaKernelContext, BLOCK};
 use super::device::{require_fr, DeviceFrVec, LIMBS};
 use super::devices::{fan_out, DeviceTask};
@@ -421,6 +425,62 @@ impl DeviceReadWriteMatrix {
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(entries)) }?;
         context.stream().synchronize()?;
         Ok((segment_count, seg))
+    }
+
+    pub(crate) fn into_address_first(
+        mut self,
+        context: &CudaKernelContext,
+        val_init: &[Fr],
+    ) -> Result<DeviceAddressMajorMatrix, CudaError> {
+        self.deref_coeffs(context)?;
+        let rows = context.download_u32(&self.rows)?;
+        let cols = context.download_u32(&self.cols)?;
+        let count = CudaKernelContext::count_of(self.entries)?;
+        let mut order: Vec<u32> = (0..count).collect();
+        order.sort_unstable_by_key(|&index| (cols[index as usize], rows[index as usize]));
+        let sorted_rows: Vec<_> = order.iter().map(|&i| rows[i as usize]).collect();
+        let sorted_cols: Vec<_> = order.iter().map(|&i| cols[i as usize]).collect();
+        let order = context.upload_u32_slice(&order)?;
+        let permute = |input: &CudaSlice<u64>, width: usize| -> Result<CudaSlice<u64>, CudaError> {
+            let mut out = context.alloc_u64(self.entries * width)?;
+            if self.entries > 0 {
+                let width = CudaKernelContext::count_of(width)?;
+                let words = CudaKernelContext::count_of(out.len())?;
+                let mut builder = context.stream().launch_builder(context.rwm_permute_words());
+                let _ = builder.arg(input);
+                let _ = builder.arg(&order);
+                let _ = builder.arg(&width);
+                let _ = builder.arg(&words);
+                let _ = builder.arg(&mut out);
+                // SAFETY: order is a permutation of 0..entries. Each thread
+                // copies one word from the same-width entry into a distinct slot.
+                let _ = unsafe { builder.launch(CudaKernelContext::launch_config(words)) }?;
+            }
+            Ok(out)
+        };
+        let values = DeviceFrVec::from_parts(
+            context.stream().clone(),
+            permute(self.val_coeff.limbs(), LIMBS)?,
+            self.entries,
+        );
+        let coeffs = DeviceFrVec::from_parts(
+            context.stream().clone(),
+            permute(self.coeffs.limbs(), self.coeff_width * LIMBS)?,
+            self.entries * self.coeff_width,
+        );
+        DeviceAddressMajorMatrix::from_parts(
+            context,
+            context.upload_u32_slice(&sorted_rows)?,
+            context.upload_u32_slice(&sorted_cols)?,
+            &values,
+            &permute(&self.prev_val, 1)?,
+            &permute(&self.next_val, 1)?,
+            &coeffs,
+            val_init,
+            &self.wa_scale,
+            self.coeff_width,
+            self.entries,
+        )
     }
 
     pub fn quadratic_coeffs<F: JoltField>(
