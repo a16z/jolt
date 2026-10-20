@@ -62,6 +62,8 @@
 //! Shared-scalar row MSMs reuse one coefficient vector across a matrix of points.
 //! Larger batches share a window schedule when the device memory budget permits;
 //! other batches use a GLV block reduction per row.
+//! Resident G1 MSMs read a device point span and store the sum back on device;
+//! their GLV-expanded affine bases and Pippenger accumulators stay on the GPU.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

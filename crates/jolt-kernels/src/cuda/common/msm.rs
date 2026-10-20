@@ -18,6 +18,8 @@
 //! Affine base tables remain on their owning stream. Normalization extracts
 //! Jacobian z-coordinates, batch-inverts them on the device, and converts the
 //! selected span without downloading its coordinates.
+//! Resident G1 MSMs expand and normalize a device point span, then run GLV
+//! Pippenger and copy the result into the requested slot on the same device.
 //! Two-dimensional GLV decomposition produces signed scalar magnitudes on device.
 //! G1 endomorphism spans retain the original Jacobian points followed by their
 //! mapped points, matching the two component arrays.
@@ -692,6 +694,48 @@ impl CudaKernelContext {
         self.upload_u64_slice(values)
     }
 
+    pub fn write_u64_range(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        start: usize,
+        values: &[u64],
+    ) -> Result<(), CudaError> {
+        if start + values.len() > buffer.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: buffer.len(),
+                got: start + values.len(),
+            });
+        }
+        if values.is_empty() {
+            return Ok(());
+        }
+        let mut target = buffer.slice_mut(start..start + values.len());
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok::<_, CudaError>(self.stream().memcpy_htod(values, &mut target)?)
+        })
+    }
+
+    fn resident_span_end(
+        offset: usize,
+        count: usize,
+        words: usize,
+        buffer: &CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let end = offset
+            .checked_add(count)
+            .and_then(|last| last.checked_mul(words))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a resident point span overflowed",
+            })?;
+        if end > buffer.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: buffer.len(),
+                got: end,
+            });
+        }
+        Ok(())
+    }
+
     fn glv_decompose_2d(
         &self,
         scalars: &CudaSlice<u64>,
@@ -825,6 +869,58 @@ impl CudaKernelContext {
             limbs: affine,
             count,
         })
+    }
+
+    pub(crate) fn g1_msm_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        base_offset: usize,
+        out_offset: usize,
+        count: usize,
+        scalars: &[Fr],
+    ) -> Result<(), CudaError> {
+        if count != scalars.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: count,
+                got: scalars.len(),
+            });
+        }
+        let words = 3 * FQ_LIMBS;
+        Self::resident_span_end(out_offset, 1, words, buffer)?;
+        if count == 0 {
+            let zero = vec![0u64; words];
+            return self.write_u64_range(buffer, out_offset * words, &zero);
+        }
+        let bases = {
+            let _span = tracing::info_span!("g1r_normalise", len = count).entered();
+            let mapped = self.g1_endomorphism_span(buffer, base_offset, count)?;
+            self.normalise_g1_span(&mapped, 0, 2 * count)?
+        };
+        let (split, signs) = {
+            let _span = tracing::info_span!("g1r_scalars", len = count).entered();
+            let uploaded = self.upload(scalars)?;
+            let canonical = self.canonical_scalars(&uploaded)?;
+            let (split, signs) = self.glv_decompose_2d(&canonical, count)?;
+            (split, self.upload_u8_slice(&signs)?)
+        };
+        let accumulator = {
+            let _span = tracing::info_span!("g1r_pippenger", len = count).entered();
+            self.pippenger_device(
+                &bases,
+                DeviceScalars {
+                    values: &split,
+                    limbs: FQ_LIMBS,
+                },
+                &signs,
+                2 * count,
+                2 * count,
+                GLV_SCALAR_BITS,
+            )?
+        };
+        let source = accumulator.slice(0..words);
+        let mut target = buffer.slice_mut(out_offset * words..(out_offset + 1) * words);
+        self.stream().memcpy_dtod(&source, &mut target)?;
+        Ok(())
     }
 
     pub fn msm_rows_shared_scalars(
@@ -3502,6 +3598,52 @@ mod tests {
                     "normalised span diverged at count {count}, offset {offset}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn resident_g1_msm_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        for count in RESIDENT_MSM_LENS {
+            let points = jacobian_span(count, 5);
+            let scalars: Vec<Fr> = (0..count)
+                .map(|index| {
+                    if index.is_multiple_of(17) {
+                        Fr::from_u64(0)
+                    } else {
+                        Fr::from_u64(index as u64 * 1_000_003 + 7)
+                    }
+                })
+                .collect();
+            let expected = points
+                .iter()
+                .zip(&scalars)
+                .map(|(base, scalar)| *base * ark_fr(*scalar))
+                .sum::<G1Projective>();
+
+            let out_offset = count + 2;
+            let mut flat = flat_jacobian(&points);
+            flat.extend(std::iter::repeat_n(
+                0u64,
+                (out_offset + 1 - count) * 3 * FQ_LIMBS,
+            ));
+            let mut buffer = context.upload_raw_u64(&flat).expect("upload arena");
+            context
+                .g1_msm_in_place(&mut buffer, 0, out_offset, count, &scalars)
+                .expect("resident g1 msm");
+            let raw = context.download_u64(&buffer).expect("download arena");
+            let slot = out_offset * 3 * FQ_LIMBS;
+            let got = projectives(&unflatten_jacobian(
+                raw.get(slot..slot + 3 * FQ_LIMBS).expect("output slot"),
+            ));
+
+            assert_eq!(
+                got.first().map(|point| point.into_affine()),
+                Some(expected.into_affine()),
+                "resident g1 msm diverged at count {count}"
+            );
         }
     }
 
