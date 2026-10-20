@@ -8,6 +8,14 @@ description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 [lints]
 workspace = true
 
+[features]
+# Whiteout's verifier-side building blocks (the constant-term lift). Off by
+# default so the Dory verifier never compiles the lattice ring (I6).
+whiteout = ["jolt-field/solinas"]
+# Whiteout's prover-only pieces (the zero-constant-term mask sampler), kept out
+# of every verifier build.
+whiteout-prover = ["whiteout"]
+
 [dependencies]
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
@@ -27,5 +35,14 @@ jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",
 ] }
+rand = { workspace = true, features = ["std_rng"] }
 rand_chacha.workspace = true
 rand_core.workspace = true
+
+[[test]]
+name = "whiteout_ring"
+required-features = ["whiteout"]
+
+[[test]]
+name = "whiteout_sample"
+required-features = ["whiteout-prover"]
