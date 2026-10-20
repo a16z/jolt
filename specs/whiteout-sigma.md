@@ -519,9 +519,42 @@ reveal them either.
 - the NEON and AVX butterflies and pointwise kernels;
 - the decomposition SIMD paths.
 
-Per-attempt buffers are allocated once and overwritten. No tracing span carries
-an attempt value. The attempt body is `#[inline(never)]`, so the review covers
-the production monomorphization.
+Per-attempt buffers have public sizes. No tracing span carries an attempt
+value. The attempt body is `#[inline(never)]`, so the review covers the
+production monomorphization.
+
+**Record (W4, 2026-10-20, Apple M4 Max).**
+
+- **dudect.** `crates/jolt-zk/examples/sigma_dudect.rs` covers the steps the
+  attempt adds around M5a's sampler and rejection rule:
+  - the Ajtai map on a Gaussian-range mask;
+  - `t_D = A_D G⁻¹(V)` with its decomposition;
+  - the challenge view (the lift of y into F);
+  - `c·s` with fixed vs random c;
+  - the constant-time challenge sampler, split by the accepted challenge.
+
+  Every test passed (|t| < 4.5): 10⁵ measurements × 3 seeds, then 10⁶ × 2
+  seeds. The largest |t| was 4.17, the challenge view on one 10⁶ run. A rerun
+  of the same seed gave −1.61, which is consistent with load noise from a
+  concurrent build.
+- **asm, branch-free.** `Fp128` add, sub and mul have no conditional branch on
+  aarch64 or x86_64; add/sub compile to `csel` and `cmov`.
+- **asm, public branches only.** These branch only on loop counters and
+  public indices:
+  - `challenge_times_i64`;
+  - the challenge view;
+  - the constant-time sampler, apart from two kinds of allowed branch: the
+    `next_usize_mod` rejection on discarded bytes, and the per-candidate
+    accept bit.
+- **asm, decomposition.** The scalar kernel and the AVX2/AVX-512 remainder
+  loops of `BalancedDecomposePow2Params::biased` are branch-free on x86_64
+  after the W4 fix.
+- **Not audited line by line:**
+  - the NEON/AVX NTT butterflies and pointwise kernels, which the dudect
+    Ajtai test covers only empirically;
+  - `Fp128`'s canonical encoding in the attempt fork's absorb of t_D.
+
+  Both are open audit items for the W5 last-PR gate.
 
 **Platform.** The argument assumes that integer multiply, add and compare take
 data-independent time. Neither arm64 DIT nor Intel DOITM is enabled, and this
@@ -799,11 +832,11 @@ those widths fail the whole-element table at Σ = 1.003.
 | 2 | `jolt-transcript`: `Fork::attempt`, `is_fork_domain` for transcript audits, redacted `Debug` | — | done |
 | 3 | `jolt-zk::whiteout`: segment table, alphabet and shape check, `SigmaParams` with derived widths, the exact check and typed errors; `JointRejection::max_attempts` | M5a, M6d | done |
 | 4 | `jolt-crypto::challenge`: constant-time prover-side attempt sampler, byte-identical to the verifier's; `SparseChallenge::to_dense_ct` | M5b | done |
-| 5 | `RowLabels`, lifting, Q_μ/B_μ | **M6b** relation shapes | later |
-| 6 | `LatticePadCommitment` (raw output), `operand_pads` check | 1, 3; **M6b** | later |
-| 7 | Σ core, statistics tests | 2, 4, 5, 6 | later |
-| 8 | `ResponseStatement`/`ResponseWitness` (no ξ), trait, θ, `CheckingResponseProver`, completeness and tamper tests | 7; W5 alignment note (A15) | later |
-| 9 | dudect and asm record | 1, 4, 7 | later, before W5's last PR |
+| 5 | `RowLabels`, lifting, Q_μ/B_μ | **M6b** relation shapes | done |
+| 6 | `LatticePadCommitment` (raw output), `PadPlacement`, `OperandShapeDomain`, `operand_pads` check | 1, 3; **M6b** | done |
+| 7 | Σ core, statistics tests | 2, 4, 5, 6 | done |
+| 8 | `ResponseStatement`/`ResponseWitness` (no ξ), trait, θ, `CheckingResponseProver`, completeness and tamper tests | 7; W5 alignment note (A15) | done |
+| 9 | dudect and asm record | 1, 4, 7 | done (§2.8 record); remaining audit items before W5's last PR |
 
 Moved out of W4:
 
@@ -875,6 +908,40 @@ Moved out of W4:
   At 2.37 expected attempts, that is about 0.07 s per proof on 16 threads.
   This is within the paper's +4.7% (1.15 s) budget, which also assumes a
   10 ns Gaussian sample (M5a measured 0.5 µs on one thread).
+
+**Found in implementation (W4 slices 5–9):**
+
+- **A17, `ResponseProver` signature.** The trait is
+  `ResponseProver<F, const D: usize>`, because the statement references the
+  setup's native-dimension `N`. Interfaces §5 names `ResponseProver<F>`.
+- **A18, `Witness(j)` variable order.** `w̃(r_j)` is over the `Witness`
+  segments in table order and native coefficient order, zero-padded, with the
+  first point coordinate as the most significant index bit. This is
+  provisional until W3 pins Akita's MLE order and the stride permutation.
+- **A19, `operand_pads` at commit time.**
+  - `OperandShapeDomain` derives the operand pads from the shape routine, and
+    `PadPlacement` takes them.
+  - `ZkBackend::commit_pads` receives only `PadLayout`, which has no
+    operand-pad field.
+  - W6 needs either a `PadLayout.operand_pads` field (M6b owner) or the list
+    carried in Whiteout's `Setup`.
+- **A20, one native dimension.** `SigmaSetup` requires every segment, and so
+  every block of `N`, to share one native dimension `D`. That covers the
+  headline (R_256 for A, B and A_p).
+- **A21, per-proof setup cost.**
+  - `prove_sigma` rebuilds `JointRejection` and the samplers per proof. Their
+    320-bit constants cost about 10–20 ms.
+  - W6 should cache them alongside the setup.
+- **A22, shift independence is not testable.** At the derived widths,
+  `‖c s‖_σ ≤ 1/α` puts the shift's effect on z far below sampling error. The
+  statistics test therefore checks z's moments and the abort rate; M5a's
+  tests cover the rule on large shifts.
+- **Measured abort rate.**
+  - The mean attempt count was 2.394 over 10,000 proofs, against
+    M = 2.371 (standard error 0.018, so 1.3σ).
+  - The relation was synthetic: D = 64, 1 product, 2 affine rows, 1 public
+    segment.
+  - The permanent test runs 1,000 proofs with a 5σ band.
 
 ## Not verified by this note
 
