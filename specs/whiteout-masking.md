@@ -44,9 +44,12 @@ stage verifiers over the seeded prefix (header and commitments) followed by
 zero bytes, on a throwaway transcript, with an unbounded counting view: their
 own receives count the base slots, and the residual lowering in shape mode
 (below) counts the auxiliary slots. No value it reads changes either count, so
-the schedule's only owner is the masked verifier. Both roles call it. The
-final `cursor == num_pads` check is diagnostic only; soundness rests on the
-lowering emitting a row for every clear check.
+the schedule's only owner is the masked verifier. Both roles call it; the
+prover computes it once, commits the pads on it, and its relation replay
+reuses it (`replay_stages`). The final `cursor == num_pads` check is a
+release check in `BlindFold::verify` (and `CommittedPads::finish` on the
+prover side): a proof that leaves scheduled pads unused is rejected.
+Soundness rests on the lowering emitting a row for every clear check.
 
 Pads are base-field coordinates: an extension element at slot `s` takes
 `s..s+E::DEGREE` in `ExtField` coefficient order. Jolt/Dory has `E = F`.
@@ -67,7 +70,8 @@ opening data), and only `receive_pad_commitment` builds
 `CommittedPadsView<PadCommitment>` (no blind). The prover's masking
 `SumcheckRecorder` owns `&mut CommittedPads`, and the prover's other private
 sends (uni-skip, stage 4's staged openings, the auxiliary block) go through
-`CommittedPads::send`. There is no prover-side `PrivateChannel`: its methods
+`CommittedPads::send`, which returns the masked values it sent. There is no
+prover-side `PrivateChannel`: its methods
 are generic over the message field, which a pad vector of one field cannot
 serve. The verifier threads `&mut CommittedPadsView` through the ZK drivers
 only; its `MaskedVerifier` is the masked `PrivateChannel`. The recorder type,
@@ -138,9 +142,18 @@ Whiteout will be `Whiteout<R: ResponseProver<F>>` with R reached through
 - `jolt-verifier`: `stages/zk/{inputs,outputs}.rs`, the commitment ZK
   branches of `stage{1..7}`, `CommittedClaimLayout` and its helpers,
   `CheckedInputs::committed_row_len`, derive's `committed_claim_layout`.
-- `jolt-prover`: `ZkStageWitnesses`, `STAGE_DOMAINS`, `ClaimRecorder`, the ZK
-  fields of `ProvedUniskipMode`, `tests/engine_twins.rs`.
+- `jolt-prover`: `ZkStageWitnesses`, `STAGE_DOMAINS`, the ZK fields of
+  `ProvedUniskipMode`, the committed engine twin.
 - `specs/jolt-prover-blindfold.md`'s per-round design and the book page.
+
+Kept: `ClaimRecorder`, since the `impl_stage_prover!` driver is generic over
+the recorder and the recorder type decides which claim routes the batch
+sends (the clear routes, or `ClaimRoutes::masked`); and
+`tests/engine_twins.rs`, with its clear and uni-skip twins and a masked twin
+(`MaskingRecorder` against the generated `verify_masked`) in place of the
+committed one. The `claim_lowering_equivalence` fuzz target is replaced by a
+property test that the shape, values and rows domains of `lower_factored`
+agree on random factored formulas.
 
 Regenerated: ZK fixtures (renamed, since fixtures are cached by name), the
 golden-shape test, the FS inventory, profiling spans.
@@ -154,8 +167,12 @@ opens `PADS`, so it equals p. The curve analogue of Lemma
 `wo:lem:residual-correct` (products are native gates: no constant-term lift,
 no scalarity rows) decodes an accepting clear transcript with the same
 challenges, prefix-preserving. The y row and Dory's ZK opening bind the
-final evaluation; clear Jolt soundness finishes. A structural test perturbs
-each m̂_i with challenges fixed and asserts some row breaks.
+final evaluation; clear Jolt soundness finishes. Two tests back the
+lowering: a structural check that every pad has a nonzero coefficient in
+some row (jolt-verifier), and a prover-side probe that shifts each decoded
+base value of the muldiv proof, recomputes the auxiliary block as a cheater
+would, and asserts a row breaks (jolt-prover `zk_e2e`, with a two-value
+test binding the stage-6b alias cell to its source).
 
 **Zero knowledge** (Theorem `wo:thm:zk`, fewer hybrids, no retries):
 per-row-blinded Pedersen hides p; one-time uniform pads make m̂ uniform; the
@@ -164,20 +181,35 @@ y + r·y′ and ρ + r·ρ′ only; Dory's and BlindFold's simulators share y_co
 Pre-existing leakage is unchanged: the `ProofHeader` fields, and preprocessing
 commitments are ZK only relative to themselves.
 
-## Cost (muldiv, T = 2¹⁰, measured in release on M6c)
+## Cost (muldiv, T = 2¹⁰)
 
-| | per-round Pedersen | masked |
-|---|---|---|
-| proof bytes | 65,599 | 113,951 |
-| bytes before the BlindFold tail | 44,959 | 102,143 |
-| BlindFold tail bytes | 20,640 | 11,808 |
-| BlindFold prover (replay, auxiliary block, fold, tail) | 262–272 ms | 195–196 ms |
+| | clear | per-round Pedersen | masked |
+|---|---|---|---|
+| proof bytes | 97,663 | 65,599 | 113,951 |
+| bytes before the BlindFold tail | — | 44,959 | 102,143 |
+| BlindFold tail bytes | — | 20,640 | 11,808 |
+| BlindFold prover (replay, auxiliary block, fold, tail) | — | 262–272 ms | VERIFY_PROVER |
+| verifier | — | VERIFY_BASE | VERIFY_MASKED |
 
 The layout is 2,073 pads: 1,965 base slots and 108 auxiliary slots. The
 relation has 16 affine rows and 106 product rows. Masked messages are the
-clear proof's field messages, so a masked proof is about a clear proof plus
-the pad commitment (65 rows), the auxiliary block and the tail: +48 KB over
-the per-round design at this size, growing with the round and claim count.
+clear proof's field messages, so the masked proof is the clear proof plus
+16,288 B (+17%): the pad commitment (65 rows, 2,080 B), the auxiliary block
+(3,456 B), the BlindFold tail (about 8,350 B) and Dory's hiding opening
+(about 2,370 B). The per-round design was smaller at this size because it
+committed round polynomials in rows instead of sending them; the masked
+proof grows with the round and claim count like the clear proof does.
+
+VERIFY_NOTE
+
+Open size reductions, not implemented:
+
+- A public per-round degree schedule, so rounds send only the coefficients
+  their member degrees need: about 33.5 KB.
+- Taking the y row commitment to be Dory's hiding evaluation commitment
+  instead of a separate row: about 2.3 KB.
+- Carrying the auxiliary products as BlindFold witness instead of masked
+  messages: about 3.3 KB.
 
 ## Open questions
 

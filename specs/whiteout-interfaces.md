@@ -305,9 +305,11 @@ masking `SumcheckRecorder` built on it) rather than a `PrivateChannel`, whose
 methods are generic over the message field; the verifier's masked
 `PrivateChannel` is built from `CommittedPadsView`. The layout is derived by
 replaying the masked verifier over the seeded prefix with a counting view
-(`CommittedPadsView::counting`). At the end the cursor must equal `layout.num_pads`
-(a diagnostic: soundness rests on the lowering emitting a row for every
-clear check). Masked intermediate products are sent through
+(`CommittedPadsView::counting`). `CommittedPads::send` returns the masked
+values it sent, so m̂ = m + p has one owner. At the end the cursor must equal
+`layout.num_pads`, a release check in `ZkBackend::verify` that rejects a
+proof leaving scheduled pads unused (soundness rests on the lowering
+emitting a row for every clear check). Masked intermediate products are sent through
 `exchange_private` at their auxiliary slots in one block after the last
 masked base message. Auxiliary slots form an acyclic chain: each is defined
 by exactly one product row or defining affine row whose inputs are earlier
@@ -398,7 +400,9 @@ pub trait ZkBackend<F> {
 }
 
 pub enum ZkError {
-    // invariant violations, transcript errors, back-end failures, …
+    // invariant violations and transcript errors; back-end and sumcheck
+    // failures carry their typed source (field-generic sources are boxed,
+    // since `ZkError` and `VerifierError` are field-independent), …
     // W2 adds `FoldOverflow`: a one-shot fold response overflowed its digit
     // range; retry the whole proof, resampling every pad and all randomness.
 }
