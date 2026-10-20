@@ -12,14 +12,18 @@ use akita_params::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, ChunkedWitnessCfg,
     FoldSchedule, PolynomialGroupLayout, ScheduleLookupKey,
 };
-use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
+use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
+use akita_planner::find_schedule;
+use akita_schedules::{
+    expanded_schedule_proof_estimate_bytes, ResolvedScheduleRow, ValidatedScheduleCatalog,
+};
 use jolt_akita::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK256};
 use jolt_akita::schedule_registry::{
     dense_group_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
 };
 use jolt_akita::schedules::emit::{
-    family_specs, K16_COLUMN_VARIABLES, K16_NUM_VARS, K256_COLUMN_VARIABLES,
-    RECURSIVE_TRACE_LOG_T_CUTOVER,
+    family_specs, one_hot_keys, K16_COLUMN_VARIABLES, K16_NUM_VARS, K256_COLUMN_VARIABLES,
+    ONE_HOT_SCALAR_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
 };
 use jolt_akita::{
     AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
@@ -121,7 +125,7 @@ fn k16_catalogs_cover_production_trace_geometry() {
             {
                 continue;
             }
-            for log_t in 12..=30 {
+            for log_t in 12..=31 {
                 shape.log_t = log_t;
                 let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape).expect("trace layout");
                 let _ = expected.insert((plan.num_vars(), plan.ids().len()));
@@ -192,31 +196,41 @@ fn uses_setup_offloading(schedule: &FoldSchedule) -> bool {
         .any(|fold| fold.params.setup_prefix().is_some())
 }
 
+/// Below the cutover every trace row is direct; at or above it every Single
+/// trace row offloads its setup. Multi-chunk rows above the cutover follow the
+/// planner's objective and are not constrained here.
 #[test]
 fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
-    for (catalog, column_variables, num_polys) in [
-        (
-            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::new(1, 0)),
-            K16_COLUMN_VARIABLES,
-            51,
-        ),
-        (
-            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::new(1, 0)),
-            K256_COLUMN_VARIABLES,
-            27,
-        ),
+    for (one_hot_k, column_variables) in [
+        (AKITA_ONE_HOT_K16, K16_COLUMN_VARIABLES),
+        (AKITA_ONE_HOT_K256, K256_COLUMN_VARIABLES),
     ] {
         let cutover_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + column_variables;
-        assert!(!uses_setup_offloading(&trace_schedule(
-            &catalog,
-            cutover_num_vars - 1,
-            num_polys,
-        )));
-        assert!(uses_setup_offloading(&trace_schedule(
-            &catalog,
-            cutover_num_vars,
-            num_polys,
-        )));
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
+            let catalog = one_hot_catalog(one_hot_k, profile);
+            let trace_keys = one_hot_keys(one_hot_k, profile)
+                .expect("one-hot keys")
+                .into_iter()
+                .filter(|key| !ONE_HOT_SCALAR_NUM_POLYS.contains(&key.num_polynomials()));
+            for key in trace_keys {
+                let offloaded = uses_setup_offloading(&trace_schedule(
+                    &catalog,
+                    key.num_vars(),
+                    key.num_polynomials(),
+                ));
+                if key.num_vars() < cutover_num_vars {
+                    assert!(
+                        !offloaded,
+                        "K={one_hot_k} {profile} {key:?} offloads below the cutover"
+                    );
+                } else if profile == AkitaChunkProfile::new(1, 0) {
+                    assert!(
+                        offloaded,
+                        "K={one_hot_k} Single {key:?} stays direct at or above the cutover"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -548,6 +562,88 @@ fn catalogs_have_exact_emitted_keys() {
     }
 }
 
+/// Plans every emitted key at or above the arity of a `2^30` K=16 trace,
+/// independent of the checked-in catalogs, and reports each row's fold levels,
+/// estimated proof bytes, and setup capacity. These keys are past the
+/// direct-planning cutover, so the emitter plans them under the family policy.
+/// `AKITA_SCHEDULE_GEN_JOBS` sets the worker count:
+///
+/// ```text
+/// cargo nextest run --cargo-profile ci -p jolt-akita --run-ignored ignored-only \
+///   --no-capture -E 'test(jolt_scale_shapes_plan_for_every_family)'
+/// ```
+#[test]
+#[ignore = "plans every Jolt-scale catalog key; takes minutes"]
+#[expect(clippy::print_stderr, reason = "reports each planned Jolt-scale row")]
+fn jolt_scale_shapes_plan_for_every_family() {
+    const JOLT_SCALE_LOG_T: usize = 30;
+    let shapes = family_specs(PathBuf::new())
+        .expect("emit specs")
+        .into_iter()
+        .flat_map(|fixture| {
+            let spec = fixture.spec;
+            let (family_name, policy) = (spec.family_name, spec.policy);
+            let (source_contract, ring_challenge_config) =
+                (spec.source_contract, spec.ring_challenge_config);
+            spec.keys
+                .into_iter()
+                .filter(|key| key.num_vars() >= JOLT_SCALE_LOG_T + K16_COLUMN_VARIABLES)
+                .map(move |key| {
+                    (
+                        family_name,
+                        policy,
+                        source_contract,
+                        ring_challenge_config,
+                        key,
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    assert!(!shapes.is_empty());
+    let outcomes = bounded_parallel_filter_map(
+        &shapes,
+        offline_planning_worker_count(shapes.len()),
+        |&(family_name, policy, source_contract, ring_challenge_config, key)| {
+            let label = format!(
+                "{family_name} nv={} polys={}",
+                key.num_vars(),
+                key.num_polynomials()
+            );
+            let lookup = ScheduleLookupKey::single(key);
+            let report = find_schedule(
+                &lookup,
+                source_contract,
+                &[],
+                &policy,
+                ring_challenge_config,
+            )
+            .and_then(|planned| {
+                let schedule = planned.schedule;
+                let proof = expanded_schedule_proof_estimate_bytes(&lookup, &schedule, &policy)?;
+                let setup = setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
+                Ok(format!(
+                    "levels={} proof={proof} setup={setup}",
+                    schedule.num_fold_levels()
+                ))
+            });
+            Ok(Some(
+                report
+                    .map(|report| format!("{label}: {report}"))
+                    .map_err(|error| format!("{label}: {error}")),
+            ))
+        },
+    )
+    .expect("planning workers");
+    let mut failures = Vec::new();
+    for outcome in outcomes {
+        match outcome {
+            Ok(report) => eprintln!("{report}"),
+            Err(failure) => failures.push(failure),
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[cfg(feature = "field-inline")]
 mod field_inc {
     #![expect(
@@ -627,7 +723,7 @@ mod field_inc {
             .into_iter()
             .filter(|group| group.num_polynomials() > 2)
             .collect::<Vec<_>>();
-        assert_eq!(groups.len(), 266);
+        assert_eq!(groups.len(), 280);
         field_inline_rows_plan_and_resolve(AKITA_ONE_HOT_K16, profile, groups);
     }
 
