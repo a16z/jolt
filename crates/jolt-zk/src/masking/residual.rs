@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 use super::{PadIndex, PadLayout, ZkError};
 

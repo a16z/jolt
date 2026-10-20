@@ -8,7 +8,7 @@ use crate::protocols::jolt::{
 };
 use crate::SymbolicSumcheck;
 use crate::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 /// Produced instruction-input virtualization openings (the left/right operand
 /// selector flags and their operand values), all sharing the single

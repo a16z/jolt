@@ -1,6 +1,6 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use jolt_utils::FirstErrorLatch;
 use jolt_witness::__private::TraceRow;

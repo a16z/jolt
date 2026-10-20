@@ -53,7 +53,7 @@ pub mod xor_rot;
 pub mod xor_rotl1;
 pub mod xor_rotw;
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use std::fmt::Display;
 use std::ops::Index;
 

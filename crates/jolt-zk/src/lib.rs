@@ -1,5 +1,6 @@
-//! Zero knowledge for Jolt: the shared masking front end ([`masking`]) and the
-//! curve back end ([`blindfold`]).
+//! Zero knowledge for Jolt: the shared masking front end ([`masking`]), the
+//! curve back end ([`blindfold`]), and, under `whiteout`, the lattice back
+//! end's building blocks (`whiteout`).
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
@@ -19,3 +20,5 @@
 
 pub mod blindfold;
 pub mod masking;
+#[cfg(feature = "whiteout")]
+pub mod whiteout;

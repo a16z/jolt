@@ -9,11 +9,11 @@
 //! split tables. Increment columns stay in trace rows until the first bind,
 //! avoiding four `T`-length eq tables and two `T`-length increment tables.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
-use jolt_field::JoltField;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
@@ -379,9 +379,9 @@ impl<F: JoltField> SumcheckKernel<F> for IncKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6b::inc_claim_reduction::{
         IncClaimReductionChallenges, IncClaimReductionInputClaims,
     };

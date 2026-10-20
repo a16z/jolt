@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::VerifierOpeningClaim;
 use jolt_poly::{Point, HIGH_TO_LOW};

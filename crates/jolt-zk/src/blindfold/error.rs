@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_crypto::VectorOpeningError;
-use jolt_field::JoltField;
 use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::TranscriptError;

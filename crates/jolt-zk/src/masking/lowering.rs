@@ -12,8 +12,8 @@
 //! Auxiliary slots form an acyclic chain: each is defined by exactly one
 //! product row or defining affine row whose inputs are earlier slots.
 
+use jolt_algebra::Field;
 use jolt_claims::{Expr, FactoredExpr, Source};
-use jolt_field::Field;
 use jolt_sumcheck::{BooleanHypercube, MaskedRound, SumcheckDomain, SumcheckDomainSpec};
 
 use super::residual::{AffineRow, ProductRow, ResidualRelation};

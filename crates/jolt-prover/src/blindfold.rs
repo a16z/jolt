@@ -12,8 +12,8 @@
 //! values the prover's pads decode.
 
 use common::jolt_device::JoltDevice;
+use jolt_algebra::{CanonicalDecode, JoltField};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::{CanonicalDecode, JoltField};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use jolt_verifier::sites::{BLINDFOLD, PADS};
@@ -24,6 +24,8 @@ use jolt_zk::blindfold::{BlindFold, BlindFoldResidualWitness};
 use jolt_zk::masking::ZkBackend;
 use rand_core::OsRng;
 
+#[cfg(feature = "prover-fixtures")]
+use self::secrets::ZkSecrets;
 use crate::recorder::{ModePads, ProofMode};
 use crate::{JoltProverPreprocessing, ProverError};
 
@@ -129,7 +131,7 @@ where
     let relation = masked.relation(&masked_auxiliary)?;
 
     #[cfg(feature = "prover-fixtures")]
-    secrets::record(secrets::ZkSecrets {
+    secrets::record(ZkSecrets {
         pads: pads.pads().to_vec(),
         joint_evaluation: final_opening.joint_evaluation,
     });

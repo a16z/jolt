@@ -7,7 +7,7 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
 [features]
 default = []
-parallel = ["jolt-field/parallel", "jolt-poly/parallel"]
+parallel = ["jolt-algebra/parallel", "jolt-poly/parallel"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
@@ -16,7 +16,7 @@ transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 workspace = true
 
 [dependencies]
-jolt-field = { path = "../jolt-field", default-features = false }
+jolt-algebra = { path = "../jolt-algebra", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde = { workspace = true, features = ["derive"] }
@@ -25,7 +25,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
-jolt-field = { workspace = true, features = ["bn254", "solinas", "binary"] }
+jolt-algebra = { workspace = true, features = ["bn254", "solinas", "binary"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",

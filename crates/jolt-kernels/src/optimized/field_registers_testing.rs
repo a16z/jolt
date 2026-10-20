@@ -16,8 +16,8 @@
 use std::sync::Arc;
 
 use common::constants::RAM_START_ADDRESS;
+use jolt_algebra::{CanonicalBytes, Fr, Ring};
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
-use jolt_field::{CanonicalBytes, Fr, Ring};
 use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,

@@ -1,4 +1,4 @@
-use jolt_field::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use super::BytecodeReductionAddressPhaseOutputClaims;

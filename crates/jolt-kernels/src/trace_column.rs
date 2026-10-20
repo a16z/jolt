@@ -2,8 +2,8 @@
 
 use std::ops::Range;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_utils::unsafe_allocate_zero_vec;

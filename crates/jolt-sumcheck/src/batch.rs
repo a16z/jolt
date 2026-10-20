@@ -9,7 +9,7 @@
 //! types, so this crate's provers can consume it without naming any stage.
 //! Its field-dependent padding contract is documented on [`BatchPrelude`].
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 use crate::SumcheckError;
 
@@ -227,7 +227,7 @@ fn validate_batch_dimensions<F: Field>(
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::{Prime64Offset59, Ring};
+    use jolt_algebra::{Prime64Offset59, Ring};
 
     use super::{BatchMember, BatchPrelude};
     use crate::SumcheckError;

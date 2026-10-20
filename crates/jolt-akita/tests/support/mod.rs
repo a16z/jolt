@@ -2,7 +2,7 @@ use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatchStatement,
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
 };
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use jolt_openings::{CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};

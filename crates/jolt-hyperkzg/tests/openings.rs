@@ -4,8 +4,8 @@
     reason = "test fixtures fail loudly"
 )]
 
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, Fr, One, Ring, Zero};
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup};
-use jolt_field::{CanonicalBytes, CanonicalDecode, Fr, One, Ring, Zero};
 use jolt_hyperkzg::{
     HyperKZGError, HyperKZGProverSetup, HyperKZGScheme, HyperKZGSetupParams, HyperKZGVerifierSetup,
 };

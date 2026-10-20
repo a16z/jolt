@@ -10,8 +10,8 @@ use dory::primitives::arithmetic::{
 };
 use dory::primitives::poly::{MultilinearLagrange, Polynomial as DoryPolynomial};
 use dory::Mode;
+use jolt_algebra::Fr;
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
-use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
@@ -621,8 +621,8 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
 
     use super::*;
+    use jolt_algebra::Ring;
     use jolt_crypto::{Pedersen, VectorCommitment};
-    use jolt_field::Ring;
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

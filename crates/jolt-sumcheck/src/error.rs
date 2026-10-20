@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_transcript::TranscriptError;
 
 #[derive(Debug, thiserror::Error)]

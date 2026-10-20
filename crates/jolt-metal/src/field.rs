@@ -1,15 +1,15 @@
-//! `jolt_field` types with MSL counterparts in `shaders/jolt/field`.
+//! `jolt_algebra` types with MSL counterparts in `shaders/jolt/field`.
 
 use std::marker::PhantomData;
 
 use bytemuck::checked::CheckedBitPattern;
 use bytemuck::{NoUninit, Pod, Zeroable};
-use jolt_field::solinas::{Ext2, Fp128, Fp64};
-use jolt_field::Field;
+use jolt_algebra::solinas::{Ext2, Fp128, Fp64};
+use jolt_algebra::Field;
 
 use crate::runtime::MslType;
 
-/// A `jolt_field` type whose MSL counterpart gives bit-identical results.
+/// A `jolt_algebra` type whose MSL counterpart gives bit-identical results.
 ///
 /// Values upload as their bytes ([`NoUninit`]) and read back only through a
 /// canonical-form check ([`CheckedBitPattern`]), so a kernel that writes a
@@ -34,7 +34,7 @@ impl<const P: u128> MslType for Fp128<P> {
 struct Fp128Spelling<const P: u128>;
 
 impl<const P: u128> Fp128Spelling<P> {
-    /// `jolt_field` const-asserts `C < 2^32`, so the cast is exact.
+    /// `jolt_algebra` const-asserts `C < 2^32`, so the cast is exact.
     const OFFSET: [u8; 8] = hex8(Fp128::<P>::C as u32);
     const MSL_NAME: Spelling = spell(&[b"jolt::Fp128<0x", &Self::OFFSET, b"u>"]);
     const HOST_SUFFIX: Spelling = spell(&[b"fp128_", &Self::OFFSET]);
@@ -52,7 +52,7 @@ impl<const P: u64> MslType for Fp64<P> {
 struct Fp64Spelling<const P: u64>;
 
 impl<const P: u64> Fp64Spelling<P> {
-    /// `jolt_field` const-asserts `C (C + 1) < P < 2^64`, so `C < 2^32` and
+    /// `jolt_algebra` const-asserts `C (C + 1) < P < 2^64`, so `C < 2^32` and
     /// the cast is exact.
     const OFFSET: [u8; 8] = {
         assert!(P >> 63 == 1, "jolt::Fp64 needs a 64-bit modulus");
@@ -141,7 +141,7 @@ const fn hex8(value: u32) -> [u8; 8] {
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::solinas::{Prime128Offset275, Prime128OffsetA7F7, Prime64Offset59};
+    use jolt_algebra::solinas::{Prime128Offset275, Prime128OffsetA7F7, Prime64Offset59};
 
     use super::*;
 

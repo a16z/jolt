@@ -2,9 +2,9 @@ use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use dory::backends::arkworks::ArkG1;
 use dory::primitives::arithmetic::DoryRoutines;
+use jolt_algebra::Fr;
 use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
 use jolt_crypto::Bn254G1;
-use jolt_field::Fr;
 use jolt_openings::{StreamingCommitment, ZkStreamingCommitment};
 use rayon::prelude::*;
 
@@ -457,8 +457,8 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
     #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
-    use jolt_field::Field;
-    use jolt_field::Ring;
+    use jolt_algebra::Field;
+    use jolt_algebra::Ring;
     use jolt_openings::{
         CommitmentScheme, StreamingCommitment, ZkOpeningScheme, ZkStreamingCommitment,
     };
@@ -466,7 +466,7 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     use crate::DoryScheme;
 

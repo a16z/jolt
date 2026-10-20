@@ -279,8 +279,8 @@ mod tests {
     use crate::testing::with_sample_backend;
     use crate::witnesses::{Extract, NextUnexpandedPc, ToField, UnexpandedPc};
     use crate::BundleSource;
+    use jolt_algebra::Fr;
     use jolt_claims::protocols::jolt::JoltPolynomialId;
-    use jolt_field::Fr;
     use std::sync::Arc;
 
     /// A hand-implemented bundle carrying a lookahead witness, so chunk

@@ -14,11 +14,11 @@ use std::{
 use std::{os::fd::AsRawFd, os::raw::c_int};
 
 use common::jolt_device::JoltDevice;
+use jolt_algebra::Fr;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;
-use jolt_field::Fr;
 use jolt_host::Program;
 use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_prover::dory::DoryProverPreprocessing;
@@ -756,9 +756,9 @@ mod field_inline {
     use std::sync::Arc;
 
     use common::jolt_device::{MemoryConfig, MemoryLayout};
+    use jolt_algebra::Fr;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_verifier::JoltSponge;

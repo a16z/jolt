@@ -20,4 +20,4 @@ num-traits = { workspace = true }
 rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
-jolt-field = { workspace = true }
+jolt-algebra = { workspace = true }

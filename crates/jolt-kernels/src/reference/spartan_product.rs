@@ -22,6 +22,7 @@ use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_BASE_LANES;
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
@@ -38,7 +39,6 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
-use jolt_field::JoltField;
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };

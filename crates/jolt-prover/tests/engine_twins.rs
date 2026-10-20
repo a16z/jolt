@@ -9,12 +9,12 @@
 
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
+use jolt_algebra::{Fr, JoltField, Ring};
 use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
 use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
-use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearSumcheckRecorder, ProveRounds,

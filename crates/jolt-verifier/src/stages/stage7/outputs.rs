@@ -1,6 +1,6 @@
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
-use jolt_field::JoltField;
 use jolt_sumcheck::BatchedMaskedRounds;
 
 use crate::stages::relations::{MaskedClaims, SumcheckBatch};
@@ -162,6 +162,9 @@ mod tests {
     use crate::stages::relations::ClaimRoutes;
     #[cfg(not(feature = "akita"))]
     use crate::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;
+    use jolt_algebra::Fr;
+    #[cfg(not(feature = "akita"))]
+    use jolt_algebra::Ring;
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
@@ -170,9 +173,6 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionAddressPhaseOutputClaims;
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::ProgramImageReductionAddressPhaseOutputClaims;
-    use jolt_field::Fr;
-    #[cfg(not(feature = "akita"))]
-    use jolt_field::Ring;
 
     #[cfg(not(feature = "akita"))]
     fn fr(value: u64) -> Fr {

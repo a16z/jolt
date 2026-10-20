@@ -10,11 +10,11 @@
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use crate::support::{self, verifier_fixtures::ZkVerifierFixtureCase};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_algebra::Fr;
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_dory::DoryScheme;
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_field::Fr;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_transcript::VerifierTranscript;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -81,7 +81,7 @@ fn zk_muldiv_masked_shape_matches_golden() {
 #[test]
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn zk_muldiv_every_masked_value_is_constrained() {
-    use jolt_field::Zero;
+    use jolt_algebra::Zero;
     use jolt_zk::masking::{AffineRow, ResidualVar};
     use std::collections::BTreeSet;
 

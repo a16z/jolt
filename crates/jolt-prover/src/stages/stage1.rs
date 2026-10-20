@@ -7,12 +7,12 @@
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
 //! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::r1cs::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
@@ -101,12 +101,12 @@ where
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
+    use jolt_algebra::Fr;
     use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
     use jolt_claims::OutputClaims;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_poly::Polynomial;
     use jolt_verifier::stages::stage2::product_tau_low;
     use jolt_verifier::JoltSponge;
@@ -169,9 +169,9 @@ mod field_inline_round_trip {
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
+    use jolt_algebra::Fr;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::Fr;
     use jolt_verifier::JoltSponge;
 
     use super::*;

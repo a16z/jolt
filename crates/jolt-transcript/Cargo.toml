@@ -15,7 +15,7 @@ workspace = true
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 # Records every transcript operation with its site and argument-string range.
 logging = []
-bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
+bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-algebra/bn254"]
 transcript-blake2b = ["spongefish/blake2"]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["bn254", "dep:light-poseidon"]
@@ -30,11 +30,11 @@ spongefish = { workspace = true, features = ["sha3"] }
 rand = { workspace = true, features = ["std_rng"] }
 rand_core = { workspace = true }
 thiserror = { workspace = true }
-jolt-field = { path = "../jolt-field", default-features = false }
+jolt-algebra = { path = "../jolt-algebra", default-features = false }
 
 [dev-dependencies]
 criterion = { workspace = true }
-jolt-field = { path = "../jolt-field", default-features = false, features = [
+jolt-algebra = { path = "../jolt-algebra", default-features = false, features = [
   "solinas",
 ] }
 

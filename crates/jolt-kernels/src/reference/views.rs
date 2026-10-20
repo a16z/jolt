@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::JoltOpeningId;
-use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 #[cfg(feature = "parallel")]
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -155,10 +155,10 @@ pub(crate) fn stream_pair_lsb<F: JoltField>(values: [F; 2], cycles: usize) -> Ve
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::{
         JoltOpeningId, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
     };
-    use jolt_field::{Fr, Ring};
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
 
     use super::{address_fold, cycle_fold, dense_view};

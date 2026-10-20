@@ -321,9 +321,9 @@ fn new_transcript(narg: &[u8]) -> VerifierTranscript<'_, JoltSponge> {
 #[cfg(not(feature = "akita"))]
 mod dory {
     use common::jolt_device::JoltDevice;
+    use jolt_algebra::{CanonicalBytes, Fr};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
-    use jolt_field::{CanonicalBytes, Fr};
     use jolt_verifier::{
         verify, verify_residual, verify_stages, JoltProof, JoltSponge, JoltVerifierPreprocessing,
         VerifiedStages, VerifierError,
@@ -420,7 +420,7 @@ mod dory {
 mod akita {
     use common::jolt_device::JoltDevice;
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
-    use jolt_field::CanonicalBytes;
+    use jolt_algebra::CanonicalBytes;
     use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_verifier::stages::{
         stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,

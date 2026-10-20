@@ -12,8 +12,8 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
-use jolt_field::JoltField;
-use jolt_field::{
+use jolt_algebra::JoltField;
+use jolt_algebra::{
     AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator,
     Ring, WithAccumulator,
 };
@@ -1331,7 +1331,7 @@ impl CanonicalBytes for MleAst {
 
 impl Encoding<[u8]> for MleAst {
     fn encode(&self) -> impl AsRef<[u8]> {
-        jolt_field::narg::encode(self)
+        jolt_algebra::narg::encode(self)
     }
 }
 
@@ -1360,7 +1360,7 @@ impl CanonicalDecode for MleAst {
 
 impl NargDeserialize for MleAst {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        jolt_field::narg::deserialize(buf)
+        jolt_algebra::narg::deserialize(buf)
     }
 }
 

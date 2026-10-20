@@ -7,7 +7,7 @@
 //! batched PCS opening. Dory layout parameters (`main_k`, `main_t`, layout,
 //! configured column count) are passed explicitly.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::PointGeometryError;
@@ -494,7 +494,7 @@ mod tests {
 
     use super::*;
     use crate::protocols::jolt::geometry::dimensions::TracePolynomialOrder;
-    use jolt_field::{Field, Fr, Ring};
+    use jolt_algebra::{Field, Fr, Ring};
 
     #[test]
     fn cycle_skip_scale_counts_inactive_cycle_rounds() {

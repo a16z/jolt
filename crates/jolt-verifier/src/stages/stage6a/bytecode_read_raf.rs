@@ -18,6 +18,7 @@ use jolt_claims::protocols::composed::ReadRafAddressPhase as ComposedReadRafAddr
 #[cfg(not(feature = "akita"))]
 use relations::bytecode::ReadRafAddressPhase as BaseAddressPhaseSymbolic;
 
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
@@ -31,7 +32,6 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 
 #[cfg(feature = "field-inline")]
 use super::field_inline::FieldInlineBytecodeReadRafGeometry;
@@ -390,10 +390,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
 )]
 mod field_inline_tests {
     use super::*;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::composed::FieldInlineBytecodeReadRafInputs;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::{InputClaims as _, SumcheckChallenges as _};
-    use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
     fn fr(value: u64) -> Fr {

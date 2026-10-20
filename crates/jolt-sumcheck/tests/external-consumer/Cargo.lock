@@ -110,7 +110,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-field"
+name = "jolt-algebra"
 version = "0.1.0"
 dependencies = [
  "cc",
@@ -125,7 +125,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
@@ -138,7 +138,7 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "jolt-transcript",
  "serde",
@@ -150,7 +150,7 @@ dependencies = [
 name = "jolt-sumcheck-external-consumer"
 version = "0.0.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
@@ -163,7 +163,7 @@ dependencies = [
 name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "spongefish",

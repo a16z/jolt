@@ -21,6 +21,7 @@
 //! evaluation to the masked claims, belongs to the back end's PCS integration
 //! and is built from [`JoltResidual::opening_form`].
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -72,7 +73,6 @@ use jolt_claims::{
 #[cfg(any(feature = "fuzzing", all(test, feature = "field-inline")))]
 use jolt_claims::{Expr, Term};
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
@@ -1604,12 +1604,12 @@ mod field_inline_relation_parity {
         ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
         SumcheckOutputClaims, SumcheckOutputPoints,
     };
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::{
         FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
         FieldRegistersTraceDimensions,
     };
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, Ring};
     use jolt_transcript::PadSlots;
 
     fn fr(value: u64) -> Fr {

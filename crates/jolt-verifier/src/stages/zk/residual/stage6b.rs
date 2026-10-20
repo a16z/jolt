@@ -112,6 +112,7 @@ mod field_inline_tests {
         BytecodeReadRaf, BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims,
         BytecodeReadRafOutputClaims, BytecodeReadRafTableFoldInputs, READ_RAF_CYCLE_STAGES,
     };
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
@@ -119,7 +120,6 @@ mod field_inline_tests {
         BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafCyclePhaseChallenges,
         ReadRafCyclePhase,
     };
-    use jolt_field::{Fr, Ring};
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
     fn fr(value: u64) -> Fr {

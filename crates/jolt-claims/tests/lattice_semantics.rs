@@ -1,6 +1,6 @@
+use jolt_algebra::{Fr, Ring};
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
 use jolt_claims::protocols::jolt::lattice::BalancedIncChunking;
-use jolt_field::{Fr, Ring};
 use jolt_poly::{boolean_point_msb, EqPolynomial, Polynomial};
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)

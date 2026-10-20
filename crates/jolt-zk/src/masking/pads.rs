@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, ExtField, Field};
 use jolt_transcript::{
     Channel, PadSlots, PrivateChannel, ProverTranscript, SiteId, Sponge, TranscriptError,
     VerifierTranscript,

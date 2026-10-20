@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use jolt_field::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::ram_val_final;

@@ -14,7 +14,7 @@
 
 #![no_main]
 
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_algebra::{CanonicalEncoding, Fr};
 use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{Blake2b512, ProtocolId, VerifierTranscript};
 use libfuzzer_sys::fuzz_target;

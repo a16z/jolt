@@ -12,6 +12,7 @@
 //! which extends the same boolean fold over the increment digit and carry
 //! one-hot columns, all opened at the shared `(r_address ‖ r_cycle)` point.
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::relations::booleanity as lattice_booleanity;
 #[cfg(not(feature = "akita"))]
@@ -23,7 +24,6 @@ use jolt_claims::protocols::jolt::{
     geometry::booleanity::BooleanityDimensions, BooleanityPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints, SumcheckOutputPoints};

@@ -3,7 +3,7 @@
 //! Used in sumcheck proofs to save one field element per round polynomial.
 //! The linear term is recoverable from the sumcheck claim `f(0) + f(1)`.
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::univariate::{UnivariatePoly, UnivariatePolynomial};
@@ -118,7 +118,7 @@ impl<F: Field> CompressedPoly<F> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use num_traits::{One, Zero};
 
     fn poly_and_hint(coeffs: Vec<Fr>) -> (UnivariatePoly<Fr>, Fr) {

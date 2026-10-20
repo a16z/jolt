@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use jolt_riscv::CircuitFlags;
 use serde::{Deserialize, Serialize};
 
@@ -217,7 +217,7 @@ impl SymbolicSumcheck for OuterRemainder {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltVirtualPolynomial;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
     use jolt_riscv::CIRCUIT_FLAGS;
 
     /// Pins the circuit-flag coverage of the outer-remainder output claims: every

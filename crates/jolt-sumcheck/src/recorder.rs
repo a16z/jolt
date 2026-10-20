@@ -16,7 +16,7 @@
 
 use std::marker::PhantomData;
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{
     Channel, PadSlots, PrivateChannel, ProverTranscript, Sponge, TranscriptError,

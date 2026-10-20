@@ -841,7 +841,7 @@ mod tests {
     use akita_config::{policy_of, CommitmentConfig};
     use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
     use akita_schedules::ValidatedScheduleCatalog;
-    use jolt_field::Ring;
+    use jolt_algebra::Ring;
 
     #[test]
     fn full_width_objects_do_not_widen_bounded_dense_commitments() {

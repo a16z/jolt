@@ -7,6 +7,7 @@
 //! the staged `BytecodeReadRafAddrClaim` intermediate produced by the stage-6a
 //! address phase.
 
+use jolt_algebra::JoltField;
 pub use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
 #[cfg(feature = "akita")]
 pub use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeReadRafOutputClaims;
@@ -28,7 +29,6 @@ use jolt_claims::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
-use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_riscv::JoltInstructionRow;
 
@@ -488,11 +488,11 @@ mod field_inline_tests {
     use crate::stages::field_inline_bytecode::{
         field_inline_stage_gamma_powers, FieldInlineBytecodeFold,
     };
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_geometry;
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafEvaluationInputs;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
-    use jolt_field::{Fr, Ring};
     use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands};
 
     fn fr(value: u64) -> Fr {

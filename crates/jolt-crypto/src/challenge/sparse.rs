@@ -10,19 +10,20 @@
 //! type check cheap shape/range errors needed for memory safety, but they do
 //! not re-validate every sampler invariant on the hot path.
 //!
-//! This module deliberately depends only on `jolt-field`; it does not pull in
+//! This module deliberately depends only on `jolt-algebra`; it does not pull in
 //! the transcript layer or the sampler.
 
 use crate::CryptoError;
 
-use jolt_field::{ExtField, Field, Ring};
+use jolt_algebra::{ExtField, Field, Ring};
 use smallvec::SmallVec;
 
-use crate::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
+use crate::challenge::{D64_L2_OP_NORM_PM1_COUNT, D64_L2_OP_NORM_PM2_COUNT};
 
-/// Inline capacity chosen for the heaviest production family, D64 `(31, 10)`.
-/// Every other production ring dimension has weight at most 31 and also fits.
-pub const INLINE_SPARSE_WEIGHT: usize = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
+/// Inline capacity chosen for the heaviest family, the D64 selective-L2 shell
+/// `(31, 11)`. The D64 production family `(31, 10)` and every other ring
+/// dimension's family have smaller weight and also fit.
+pub const INLINE_SPARSE_WEIGHT: usize = D64_L2_OP_NORM_PM1_COUNT + D64_L2_OP_NORM_PM2_COUNT;
 
 /// Public storage type for sparse challenge positions.
 pub type SparseChallengePositions = SmallVec<[u32; INLINE_SPARSE_WEIGHT]>;
@@ -65,6 +66,35 @@ pub struct SparseChallenge {
     /// Small integer coefficients at the corresponding positions. Stored
     /// as `i8` since every shipping sampling family caps `|coeff| <= 8`.
     pub coeffs: SparseChallengeCoefficients,
+}
+
+#[cfg(feature = "sample")]
+impl SparseChallenge {
+    /// The dense coefficients of a D = 64 challenge, built by a masked scan
+    /// in which every output coefficient reads every support entry, so no
+    /// address depends on the positions. Entries at a repeated position add.
+    pub fn to_dense_ct(&self) -> Result<[i8; 64], CryptoError> {
+        if self.positions.len() != self.coeffs.len() {
+            return Err(CryptoError::InvalidInput(
+                "sparse challenge positions and coefficients differ in length".into(),
+            ));
+        }
+        // One aggregate range check: a position at or above 64 sets a high bit.
+        if self
+            .positions
+            .iter()
+            .fold(0u32, |acc, &position| acc | position)
+            >= 64
+        {
+            return Err(CryptoError::InvalidInput(
+                "sparse challenge position outside a D = 64 ring".into(),
+            ));
+        }
+        Ok(crate::challenge::sampler::scatter_ct(
+            &self.positions,
+            &self.coeffs,
+        ))
+    }
 }
 
 impl SparseChallenge {
@@ -181,7 +211,7 @@ impl SparseChallenge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128Offset275;
+    use jolt_algebra::Prime128Offset275;
 
     type F = Prime128Offset275;
     const D: usize = 4;

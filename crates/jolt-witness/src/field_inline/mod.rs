@@ -1,8 +1,8 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
     FIELD_REGISTERS_LOG_K,
 };
-use jolt_field::JoltField;
 use jolt_program::{
     execution::{FieldEvent, JoltProgram, TraceData},
     field_inline::{
@@ -678,8 +678,8 @@ fn invalid_row(index: usize, reason: &'static str) -> WitnessError {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::constants::RAM_START_ADDRESS;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
-    use jolt_field::{Fr, Ring};
     use jolt_program::{
         execution::{JoltProgram, TraceOutput},
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},

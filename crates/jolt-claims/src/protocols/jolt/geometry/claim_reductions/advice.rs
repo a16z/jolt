@@ -2,7 +2,7 @@
 
 use std::{cmp::min, ops::Range};
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_poly::EqPolynomial;
 
 use super::super::super::{JoltAdviceKind, JoltOpeningId, JoltRelationId};

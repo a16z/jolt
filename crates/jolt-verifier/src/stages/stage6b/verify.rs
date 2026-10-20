@@ -1,6 +1,6 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 use jolt_zk::masking::CommittedPadsView;
@@ -281,8 +281,8 @@ mod tests {
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
     use crate::stages::relations::{ClaimRoute, ClaimRoutes};
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
-    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

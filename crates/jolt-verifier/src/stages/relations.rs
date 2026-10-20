@@ -26,8 +26,8 @@ use core::convert::Infallible;
 use core::fmt::Debug;
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 use jolt_sumcheck::receive_private_value;
 use jolt_transcript::{Channel, PrivateChannel, Sponge, VerifierTranscript};
 use jolt_zk::masking::{MaskedOperand, PadIndex};
@@ -678,11 +678,11 @@ pub(crate) mod test_transcript {
 mod tests {
     use super::*;
 
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_claims_derive::{InputClaims, OutputClaims};
-    use jolt_field::{Fr, Ring};
     use jolt_riscv::CircuitFlags;
 
     fn fr(value: u64) -> Fr {
@@ -1086,8 +1086,8 @@ mod sumcheck_batch_derive_tests {
         RegistersValEvaluationOutputClaims,
     };
     use crate::VerifierError;
+    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-    use jolt_field::{Fr, JoltField, Ring};
 
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
@@ -1235,11 +1235,11 @@ mod begin_batch_tests {
     use super::test_transcript::{assert_same_draws, fresh};
     use super::ConcreteSumcheck as _;
     use crate::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
+    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
-    use jolt_field::{Fr, JoltField, Ring};
     use jolt_sumcheck::{BatchMember, ClearSumcheckRecorder};
     use jolt_transcript::Channel;
 

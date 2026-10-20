@@ -9,8 +9,8 @@
 //! sharing one transcript: a sub-protocol takes the caller's transcript rather
 //! than starting its own.
 //!
-//! Message atoms are the [`CanonicalBytes`](jolt_field::CanonicalBytes) /
-//! [`CanonicalDecode`](jolt_field::CanonicalDecode) codecs owned by each
+//! Message atoms are the [`CanonicalBytes`](jolt_algebra::CanonicalBytes) /
+//! [`CanonicalDecode`](jolt_algebra::CanonicalDecode) codecs owned by each
 //! type's crate, whose spongefish `Encoding` / `NargDeserialize` they are. Challenges are exactly uniform ([`Channel::challenge`]) or
 //! drawn from a field's small challenge set ([`Channel::challenge_small`]).
 //! The sponge is a type parameter ([`Sponge`]) bound into the [`ProtocolId`].
@@ -49,7 +49,7 @@ mod verifier;
 
 pub use channel::Channel;
 pub use error::TranscriptError;
-pub use fork::{Fork, FORK_SEED_LEN};
+pub use fork::{is_fork_domain, Fork, ATTEMPT_NONCE_LEN, FORK_SEED_LEN};
 pub use grinding::{
     grinding_predicate_accepts, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_LEN,
     MAX_GRINDING_BITS,

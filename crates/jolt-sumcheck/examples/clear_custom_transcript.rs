@@ -1,4 +1,4 @@
-use jolt_field::{Prime64Offset59, Ring};
+use jolt_algebra::{Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds, SequentialRounds,

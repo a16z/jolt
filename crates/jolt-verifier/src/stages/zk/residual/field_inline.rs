@@ -1,4 +1,5 @@
 use crate::stages::derivations;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::relations::claim_reductions::increments as field_increments;
 use jolt_claims::protocols::field_inline::relations::claim_reductions::registers as field_registers_reduction;
 use jolt_claims::protocols::field_inline::relations::registers as field_registers;
@@ -11,7 +12,6 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_claims::SymbolicSumcheck as _;
-use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::BatchedMaskedRounds;

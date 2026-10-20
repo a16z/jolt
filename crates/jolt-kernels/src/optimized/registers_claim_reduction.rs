@@ -23,10 +23,10 @@
 //! - **Raw `u64` trace values with small-scalar deferred-reduction
 //!   accumulation** (`fmadd_u64`) for the Q build and the phase-2 folds.
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, RegistersClaimReductionPublic,
 };
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -359,9 +359,9 @@ impl<F: JoltField> SumcheckKernel<F> for ClaimReductionKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, Ring};
     use jolt_poly::Polynomial;
     use jolt_verifier::stages::stage3::registers_claim_reduction::{
         RegistersClaimReduction, RegistersClaimReductionChallenges,

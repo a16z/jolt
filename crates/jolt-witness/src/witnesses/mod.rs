@@ -14,7 +14,7 @@
 //! is a function of rows `t` and `t + 1`, with padding semantics at
 //! `T - 1`) and the environment ([`WitnessEnv`]).
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_lookup_tables::{JoltLookupQuery, LookupQuery};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{

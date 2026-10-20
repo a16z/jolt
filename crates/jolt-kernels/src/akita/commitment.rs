@@ -1,9 +1,9 @@
 //! Backend-owned trace preparation and commitment for the Akita prover.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::lattice::{
     OneHotTraceLayoutPlan, OneHotTraceShape, ONE_HOT_TRACE_LAYOUT,
 };
-use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, OpeningsError};
 use jolt_witness::JoltWitnessPlane;
 

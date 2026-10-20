@@ -1,3 +1,4 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::{
     geometry::{
         claim_reductions::{
@@ -8,7 +9,6 @@ use jolt_claims::protocols::jolt::{
     },
     JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
-use jolt_field::JoltField;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 use jolt_zk::masking::CommittedPadsView;
 

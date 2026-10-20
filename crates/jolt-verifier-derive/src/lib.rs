@@ -1199,7 +1199,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     let driver_impl = quote! {
-        impl<#f: ::jolt_field::JoltField> #name<#f> {
+        impl<#f: ::jolt_algebra::JoltField> #name<#f> {
             #draw_challenges_method
 
             #begin_batch_method
@@ -1226,12 +1226,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #input_claims_name<#f: ::jolt_field::JoltField> {
+        #vis struct #input_claims_name<#f: ::jolt_algebra::JoltField> {
             #(#input_claims_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #input_points_name<#f: ::jolt_field::JoltField> {
+        #vis struct #input_points_name<#f: ::jolt_algebra::JoltField> {
             #(#input_points_fields,)*
         }
 
@@ -1243,24 +1243,24 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[derive(Clone, Debug, PartialEq, Eq, ::serde::Serialize, ::serde::Deserialize)]
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
         #[serde(bound(serialize = #serialize_bound, deserialize = #deserialize_bound))]
-        #vis struct #output_claims_name<#f: ::jolt_field::JoltField> {
+        #vis struct #output_claims_name<#f: ::jolt_algebra::JoltField> {
             #(#output_claims_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-        #vis struct #output_points_name<#f: ::jolt_field::JoltField> {
+        #vis struct #output_points_name<#f: ::jolt_algebra::JoltField> {
             #(#output_points_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-        #vis struct #challenges_name<#f: ::jolt_field::JoltField> {
+        #vis struct #challenges_name<#f: ::jolt_algebra::JoltField> {
             #(#challenge_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #batching_coefficients_name<#f: ::jolt_field::JoltField> {
+        #vis struct #batching_coefficients_name<#f: ::jolt_algebra::JoltField> {
             #(#batching_coefficient_fields,)*
         }
 

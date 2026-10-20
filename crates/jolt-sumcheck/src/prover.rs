@@ -16,7 +16,7 @@
 //! not compressed — coefficients), so it is not a batch member; it records its
 //! round and output claim through the recorder's full-round hook.
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{ProverTranscript, Sponge};
 

@@ -15,7 +15,7 @@ mod pipeline {
         ProtocolSponge, TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS,
         VerifierVC,
     };
-    use jolt_field::{CanonicalBytes, Ring};
+    use jolt_algebra::{CanonicalBytes, Ring};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceData};
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};

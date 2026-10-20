@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
 use jolt_sumcheck::send_compressed_round;

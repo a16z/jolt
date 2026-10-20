@@ -29,8 +29,8 @@ pub trait WitnessBundle: Sized {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, Ring};
     use jolt_riscv::CircuitFlags;
 
     use super::WitnessBundle;

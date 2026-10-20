@@ -2,7 +2,7 @@
 //! so the verifier records each round's wire values, pad slots and
 //! challenge, and leaves the round checks to the residual relation.
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_transcript::{Channel, PadSlots, PrivateChannel, TranscriptError};
 
 use crate::claim::SumcheckStatement;

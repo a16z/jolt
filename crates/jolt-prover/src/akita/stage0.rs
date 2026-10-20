@@ -10,10 +10,10 @@ use common::jolt_device::JoltDevice;
 use jolt_kernels::akita::commitment::{WitnessCommitRequest, WitnessCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::lattice::OneHotTraceShape;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use jolt_verifier::sites::{COMMITMENTS, PREAMBLE};

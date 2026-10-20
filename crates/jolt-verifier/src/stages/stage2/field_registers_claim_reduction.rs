@@ -14,6 +14,7 @@
 //! `EqSpartan = Eq(reduced opening point, tau_low)` where `tau_low` is stage
 //! 1's remainder point tail, reversed.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::relations::claim_reductions::registers::ClaimReduction;
 pub use jolt_claims::protocols::field_inline::relations::claim_reductions::registers::{
     FieldRegistersClaimReductionChallenges, FieldRegistersClaimReductionInputClaims,
@@ -25,7 +26,6 @@ use jolt_claims::protocols::field_inline::{
     FieldRegistersTraceDimensions,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};

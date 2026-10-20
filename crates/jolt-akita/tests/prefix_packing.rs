@@ -5,7 +5,7 @@
 )]
 
 use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use jolt_openings::{CommitmentScheme, PrefixPackedClaims, PrefixPackedLayout};
 use jolt_poly::Polynomial;
 use support::{new_prover_transcript, new_verifier_transcript};

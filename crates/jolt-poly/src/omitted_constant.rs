@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_algebra::Field;
 use serde::{Deserialize, Serialize};
 
 /// Stores `[q1, q2, ..., qd]` for an inner polynomial

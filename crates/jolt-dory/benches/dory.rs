@@ -6,8 +6,8 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
+use jolt_algebra::{Field, Fr};
 use jolt_dory::{DoryScheme, DoryVerifierSetup};
-use jolt_field::{Field, Fr};
 use jolt_openings::{CommitmentScheme, StreamingCommitment, ZkOpeningScheme};
 use jolt_poly::{OneHotPolynomial, Polynomial};
 use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, VerifierTranscript};

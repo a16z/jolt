@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
     FieldAdd, FieldAssertEq, FieldAssertZero, FieldInv, FieldLoadAccumulateFromMemory,

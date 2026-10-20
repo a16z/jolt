@@ -1,6 +1,6 @@
 //! Host encodings for field-inline guests.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use postcard::Error;
 
 /// The canonical little-endian `u64` limbs of `value`, zero-extended to `N`
@@ -40,7 +40,7 @@ pub fn eqpoly_inputs<F: JoltField>(pairs: [[u64; 2]; 4]) -> Result<Vec<u8>, Erro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn limb_width_depends_on_the_value() {

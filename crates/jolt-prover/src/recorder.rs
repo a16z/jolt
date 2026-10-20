@@ -13,10 +13,10 @@
 use core::marker::PhantomData;
 
 #[cfg(feature = "zk")]
+use jolt_algebra::CanonicalEncoding;
+#[cfg(feature = "zk")]
 use jolt_crypto::Commitment;
 use jolt_crypto::VectorCommitment;
-#[cfg(feature = "zk")]
-use jolt_field::CanonicalEncoding;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::ClearSumcheckRecorder;
 #[cfg(feature = "zk")]

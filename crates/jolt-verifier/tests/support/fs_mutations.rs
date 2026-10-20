@@ -17,9 +17,9 @@ use std::{fmt::Debug, ops::Range};
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 
-use jolt_field::{CanonicalBytes, CanonicalDecode, JoltField};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, JoltField};
 #[cfg(not(feature = "akita"))]
-use jolt_field::{Fr, Ring};
+use jolt_algebra::{Fr, Ring};
 use jolt_sumcheck::CenteredIntegerDomain;
 use jolt_transcript::{SiteId, TranscriptEvent, TranscriptOp, VerifierTranscript};
 use jolt_verifier::{

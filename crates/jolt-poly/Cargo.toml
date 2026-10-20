@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-jolt-field = { path = "../jolt-field", default-features = false }
+jolt-algebra = { path = "../jolt-algebra", default-features = false }
 jolt-utils = { workspace = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
@@ -23,7 +23,7 @@ num-traits = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-jolt-field = { workspace = true, features = ["bn254", "solinas"] }
+jolt-algebra = { workspace = true, features = ["bn254", "solinas"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 bincode = { workspace = true }
@@ -40,6 +40,6 @@ ignored = ["rand"]
 default = ["parallel"]
 parallel = ["rayon"]
 # Heap visitation of this crate's tables for the profile harness.
-# Forwards to jolt-field so `F: JoltField` implies `F: Allocative`; without
+# Forwards to jolt-algebra so `F: JoltField` implies `F: Allocative`; without
 # it this crate's field-generic derives cannot discharge their scalar bound.
-allocative = ["dep:allocative", "jolt-field/allocative"]
+allocative = ["dep:allocative", "jolt-algebra/allocative"]

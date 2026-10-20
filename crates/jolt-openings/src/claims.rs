@@ -1,4 +1,4 @@
-use jolt_field::{CanonicalBytes, JoltField};
+use jolt_algebra::{CanonicalBytes, JoltField};
 use jolt_poly::EvaluationClaim;
 use jolt_transcript::Channel;
 

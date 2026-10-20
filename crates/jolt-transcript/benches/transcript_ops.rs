@@ -6,7 +6,7 @@ use criterion::measurement::WallTime;
 use criterion::{
     criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId, Criterion,
 };
-use jolt_field::Fr;
+use jolt_algebra::Fr;
 use jolt_transcript::{
     Blake2b512, Channel, Keccak, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
 };

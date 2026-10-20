@@ -10,6 +10,7 @@
 //! exactly when their precommitted layout needs a cycle-phase reduction, so the
 //! batch's instance count matches the prover's.
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 #[cfg(not(feature = "akita"))]
@@ -24,7 +25,6 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::JoltInstructionRow;
 use jolt_transcript::Channel;
@@ -560,7 +560,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::test_transcript::assert_same_draws;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     /// Pins the post-6a draw schedule to member declaration order, one uniform
     /// challenge each: the instruction-RA gamma, (base) the inc gamma, under

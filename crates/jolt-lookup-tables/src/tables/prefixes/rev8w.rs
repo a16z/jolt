@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::tables::virtual_rev8w::rev8w;

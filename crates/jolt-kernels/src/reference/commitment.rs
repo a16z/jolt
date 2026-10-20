@@ -22,12 +22,12 @@
 
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldIncrementColumn;
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltPolynomialId, TracePolynomialOrder,
 };
-use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
@@ -484,12 +484,12 @@ impl<F: JoltField> StreamConsumer for MaterializedColumn<F> {
 mod field_inline_tests {
     #![expect(clippy::unwrap_used, reason = "test module")]
 
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
     };
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, Ring};
     use jolt_openings::StreamingCommitment;
     use jolt_witness::JoltWitnessOracle;
 

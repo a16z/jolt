@@ -5,7 +5,7 @@
 //! reproduce the original polynomial and its evaluations. This is the wire
 //! transformation every compressed sumcheck round goes through.
 
-use jolt_field::{CanonicalEncoding, Fr, Ring};
+use jolt_algebra::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use libfuzzer_sys::fuzz_target;
 

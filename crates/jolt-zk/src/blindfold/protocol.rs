@@ -16,8 +16,8 @@
 
 use std::ops::Range;
 
+use jolt_algebra::JoltField;
 use jolt_crypto::HomomorphicCommitment;
-use jolt_field::JoltField;
 use jolt_r1cs::{ConstraintMatrices, LinearCombination, Variable};
 
 use super::{RelaxedError, RelaxedInstance};

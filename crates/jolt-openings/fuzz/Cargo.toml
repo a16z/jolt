@@ -26,7 +26,7 @@ weekly-seconds = 3600
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-dory = { path = "../../jolt-dory" }
-jolt-field = { path = "../../jolt-field", features = ["bn254"] }
+jolt-algebra = { path = "../../jolt-algebra", features = ["bn254"] }
 jolt-openings = { path = ".." }
 jolt-poly = { path = "../../jolt-poly" }
 jolt-transcript = { path = "../../jolt-transcript" }

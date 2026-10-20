@@ -1,7 +1,7 @@
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
-use jolt_field::JoltField;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 use jolt_zk::masking::CommittedPadsView;
 

@@ -1,7 +1,7 @@
 //! Sumcheck verifier: reads round polynomials from the proof and checks them
 //! against the running sum.
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim};

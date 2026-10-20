@@ -21,14 +21,14 @@ use std::sync::Arc;
 use crate::JoltBackend;
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+use jolt_algebra::Fr;
+#[cfg(feature = "zk")]
+use jolt_algebra::Ring;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
 #[cfg(feature = "zk")]
 use jolt_crypto::{Bn254, JoltGroup, PedersenSetup};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
-use jolt_field::Fr;
-#[cfg(feature = "zk")]
-use jolt_field::Ring;
 #[cfg(feature = "akita")]
 use jolt_kernels::{
     CommitWitness, KernelError, ProofSession, WitnessCommitRequest, WitnessCommitment,

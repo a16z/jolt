@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS};
 
 use crate::derived;

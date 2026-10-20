@@ -3,12 +3,12 @@
 
 use std::collections::HashMap;
 
+use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
 };
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_field::JoltField;
 
 #[cfg(feature = "field-inline")]
 use crate::field_inline::{
@@ -166,8 +166,8 @@ impl<F: JoltField> JoltWitnessOracle<F> for FixedBackend<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::JoltVirtualPolynomial;
-    use jolt_field::{Fr, Ring};
 
     use super::*;
     use crate::PolynomialEncoding;

@@ -1,10 +1,10 @@
 //! Akita advice and direct committed-program objects.
 
+use jolt_algebra::{JoltField, Ring};
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, PrecommittedPackingPlan, PrefixPackedObjectPlan,
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
-use jolt_field::{JoltField, Ring};
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_poly::Polynomial;
 use jolt_program::preprocess::JoltProgramPreprocessing;

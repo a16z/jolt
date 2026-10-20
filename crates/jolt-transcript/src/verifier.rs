@@ -3,7 +3,7 @@
 use core::fmt::Result as FmtResult;
 use std::num::NonZeroU8;
 
-use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
 use spongefish::VerifierState;
 
 use crate::grinding::{grinding_accepts, nonce_bits, GRINDING_SEED_LEN};

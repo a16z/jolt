@@ -3,6 +3,7 @@ use std::sync::Arc;
 #[cfg(feature = "zk")]
 use common::constants::MAX_BLINDFOLD_GENERATORS;
 use common::jolt_device::MemoryLayout;
+use jolt_algebra::{Fr, Ring};
 use jolt_claims::protocols::jolt::geometry::{
     claim_reductions::{bytecode, program_image},
     dimensions::{CommitmentMatrixShape, TracePolynomialOrder},
@@ -11,7 +12,6 @@ use jolt_claims::protocols::jolt::geometry::{
 use jolt_crypto::DeriveSetup;
 use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
 use jolt_dory::{DoryCommitment, DoryScheme};
-use jolt_field::{Fr, Ring};
 use jolt_kernels::committed_program::{
     build_committed_bytecode_coeffs, program_image_words_padded,
 };

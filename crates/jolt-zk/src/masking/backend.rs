@@ -3,7 +3,7 @@
 
 use std::error::Error;
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 use rand_core::{CryptoRng, RngCore};

@@ -3,8 +3,8 @@
 use core::fmt::Write;
 use core::marker::PhantomData;
 
-use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Ext2, ExtField, Field};
-use jolt_field::{One, Prime128Offset275 as P, Prime64Offset59, Ring, Zero};
+use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Ext2, ExtField, Field};
+use jolt_algebra::{One, Prime128Offset275 as P, Prime64Offset59, Ring, Zero};
 use jolt_poly::{OmittedConstantPoly, Point, UnivariatePoly};
 use jolt_sumcheck::{
     prove_single, verify_single, EqFactoredRound, ProveRounds, ProverRoundContext, SingleFormat,

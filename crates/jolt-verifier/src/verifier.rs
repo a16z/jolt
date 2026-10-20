@@ -2,6 +2,7 @@
 
 use common::constants::MAX_BLINDFOLD_GENERATORS;
 use common::jolt_device::JoltDevice;
+use jolt_algebra::{CanonicalDecode, JoltField};
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
@@ -11,7 +12,6 @@ use jolt_claims::protocols::jolt::{
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalDecode, JoltField};
 use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
@@ -1022,10 +1022,10 @@ mod tests {
     use super::*;
     use crate::preprocessing::ProgramPreprocessing;
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    use jolt_algebra::Fr;
     #[cfg(feature = "zk")]
     use jolt_crypto::PedersenSetup;
     use jolt_crypto::{Bn254G1, Commitment, Pedersen};
-    use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::MultilinearPoly;
     use jolt_program::preprocess::JoltProgramPreprocessing;

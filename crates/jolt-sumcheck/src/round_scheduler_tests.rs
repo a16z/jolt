@@ -6,7 +6,7 @@
     reason = "tests use unwrap on fallible prove paths under assertion"
 )]
 
-use jolt_field::{Fr, Ring};
+use jolt_algebra::{Fr, Ring};
 use jolt_transcript::{Blake2b512, Channel, ProverTranscript};
 
 use crate::batch::{BatchMember, BatchPrelude};

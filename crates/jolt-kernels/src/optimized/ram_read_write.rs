@@ -33,11 +33,11 @@
 //! O(T + K) storage, but with a larger peak constant than cycle-first.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -455,9 +455,9 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
-    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,

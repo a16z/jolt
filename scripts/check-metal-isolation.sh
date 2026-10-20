@@ -4,7 +4,7 @@ set -euo pipefail
 # Keeps Metal out of the verifier (specs/jolt-metal-field.md, invariant 3).
 #
 # `jolt-metal` and its `objc2*` bindings must not appear in the normal or
-# build dependency graph of `jolt-verifier` or `jolt-field`, under any feature
+# build dependency graph of `jolt-verifier` or `jolt-algebra`, under any feature
 # combination, on any target. Features are additive, so `--all-features`
 # covers every combination, and `--target all` includes macOS-only
 # dependencies even when this runs on Linux. Dev-dependencies are excluded:
@@ -27,7 +27,7 @@ if ! grep -Eq '^objc2-metal ' <<<"$graph"; then
 fi
 
 status=0
-for package in jolt-verifier jolt-field; do
+for package in jolt-verifier jolt-algebra; do
   graph=$(packages "$package")
   if leaked=$(grep -E "$forbidden" <<<"$graph"); then
     echo "error: $package depends on Metal crates:" >&2

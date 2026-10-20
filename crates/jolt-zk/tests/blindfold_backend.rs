@@ -8,9 +8,9 @@
     reason = "integration tests should fail loudly"
 )]
 
+use jolt_algebra::{Field, Fr, Ring};
 use jolt_claims::{opening, FactoredExpr, Source};
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-use jolt_field::{Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{receive_masked_rounds, RoundWire, SumcheckRecorder, SumcheckStatement};
 use jolt_transcript::{

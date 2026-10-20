@@ -7,7 +7,7 @@
 //! through `s(0) + s(1) = running_sum`. A polynomial of lower degree is padded
 //! with zero coefficients.
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_poly::{CompressedPoly, UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{
     PadSlots, PrivateChannel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript,

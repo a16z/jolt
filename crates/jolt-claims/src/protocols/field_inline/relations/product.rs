@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::opening;
@@ -86,7 +86,7 @@ impl SymbolicSumcheck for FieldProduct {
 mod tests {
     use super::*;
     use crate::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn claim_struct_field_order_matches_geometry_opening_order() {

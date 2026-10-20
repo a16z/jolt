@@ -5,8 +5,8 @@
 //! `LT + γ` in ~√T space. [`IncColumn`] derives `inc` from raw trace values
 //! for two rounds, then materializes at `T/4`.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -240,6 +240,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module: fail loudly")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{
         ram_inc_val_check, ram_ra_val_check, RamValCheckInit,
@@ -247,7 +248,6 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::{
         RamValCheckChallenges, RamValCheckInputClaims,
     };
-    use jolt_field::{Fr, Ring};
     use jolt_poly::LtPolynomial;
 
     use super::super::testing::{

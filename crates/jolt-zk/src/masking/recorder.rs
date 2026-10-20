@@ -1,6 +1,6 @@
 //! The prover's masking sumcheck recorder.
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{compressed_wire, padded_coefficients, SumcheckError, SumcheckRecorder};
 use jolt_transcript::{Channel, PrivateChannel, ProverTranscript, Sponge, TranscriptError};

@@ -3,8 +3,8 @@
 
 use std::marker::PhantomData;
 
+use jolt_algebra::{CanonicalDecode, Field, Zero};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::{CanonicalDecode, Field, Zero};
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 use rand_core::{CryptoRng, RngCore};
 

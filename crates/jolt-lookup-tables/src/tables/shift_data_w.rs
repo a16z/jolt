@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -74,7 +74,7 @@ mod tests {
         prefix_suffix_test,
     };
     use crate::XLEN;
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     #[test]
     fn mle_random() {

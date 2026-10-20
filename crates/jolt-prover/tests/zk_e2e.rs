@@ -24,9 +24,9 @@ mod zk {
     extern crate jolt_inlines_keccak256;
 
     use common::jolt_device::JoltDevice;
+    use jolt_algebra::{Fr, Ring, Zero};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
-    use jolt_field::{Fr, Ring, Zero};
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::zk_secrets::{self, ZkSecrets};
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};

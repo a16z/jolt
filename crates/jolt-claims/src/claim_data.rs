@@ -16,7 +16,7 @@
 //! sends [`OutputClaims::opening_values`], so neither can disagree with the
 //! canonical order defined here.
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use thiserror::Error;
 
 use crate::protocols::jolt::{JoltChallengeId, JoltOpeningId};
@@ -202,7 +202,7 @@ pub struct NoOutputs<C>(::core::marker::PhantomData<C>);
 mod sumcheck_challenges_tests {
     use crate::protocols::jolt::{BooleanityChallenge, JoltChallengeId, RamReadWriteChallenge};
     use crate::{ChallengeDrawError, SumcheckChallenges};
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -284,7 +284,7 @@ mod sumcheck_challenges_tests {
 #[expect(clippy::unwrap_used)]
 mod map_cells_tests {
     use crate::{MapCells, OutputClaims};
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[derive(Debug, PartialEq, crate::OutputClaims)]
     #[relation(SpartanOuter)]

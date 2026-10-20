@@ -3,10 +3,10 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, ReferenceBackend,
     SumcheckKernel,
 };
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::geometry::claim_reductions::registers::claim_reduction_output_openings;
 use jolt_claims::protocols::field_inline::FieldRegistersClaimReductionPublic;
 use jolt_claims::protocols::field_inline::{FieldInlineDerivedId, FieldInlineOpeningId};
-use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 use jolt_witness::{JoltWitnessPlane, WitnessError};

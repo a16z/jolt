@@ -2,7 +2,7 @@
 
 use std::vec::IntoIter;
 
-use jolt_field::{Field, Fr, JoltField, One, Ring, F128, F64};
+use jolt_algebra::{Field, Fr, JoltField, One, Ring, F128, F64};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, send_compressed_round, send_full_round, BatchMember,

@@ -43,6 +43,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     self, read_raf_stage_values, BytecodeReadRafStageValueInputs,
 };
@@ -52,7 +53,6 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
-use jolt_field::JoltField;
 #[cfg(feature = "akita")]
 use jolt_poly::BindingOrder;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
@@ -1192,7 +1192,7 @@ impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
 
 #[cfg(test)]
 mod stage_pushforward_tests {
-    use jolt_field::{Fr, One, Ring, Zero};
+    use jolt_algebra::{Fr, One, Ring, Zero};
 
     use super::*;
     use crate::optimized::parity::synthetic_point;
@@ -1340,7 +1340,7 @@ mod stage_pushforward_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn fp128_weighted_tiles_and_batches_match_the_cycle_eq_mle() {
-        use jolt_field::Prime128OffsetA7F7;
+        use jolt_algebra::Prime128OffsetA7F7;
         tiled_weighted_pushforwards::<Prime128OffsetA7F7>(19, 7, 1 << 17);
     }
 }
@@ -1358,12 +1358,12 @@ mod stage_pushforward_tests {
 #[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold;
     use jolt_verifier::stages::relations::SumcheckInputPoints;
@@ -1624,13 +1624,13 @@ mod tests {
 #[cfg(all(test, feature = "akita"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod akita_tests {
+    use jolt_algebra::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::{
         BytecodeReadRafDimensions, LATTICE_FUSED_INC_STAGES,
     };
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
-    use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold;
     use jolt_verifier::stages::relations::SumcheckInputPoints;
@@ -1904,7 +1904,7 @@ mod akita_tests {
 /// sample point to the next; these tests recompute each sample from scratch.
 #[cfg(test)]
 mod cycle_group_tests {
-    use jolt_field::{Field, Fr, Ring, Zero};
+    use jolt_algebra::{Field, Fr, Ring, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 

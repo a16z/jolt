@@ -176,10 +176,10 @@ mod tests {
     use super::*;
     use crate::stages::relations::test_transcript::{assert_same_draws, fresh};
     use crate::stages::relations::ClaimRoutes;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

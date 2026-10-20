@@ -9,7 +9,7 @@
 
 use std::ops::Add;
 
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 use crate::{Expr, Source, Term};
 
@@ -132,7 +132,7 @@ impl<F, O, P, C> Add for FactoredExpr<F, O, P, C> {
 mod tests {
     use super::*;
     use crate::{challenge, derived, opening};
-    use jolt_field::Fr;
+    use jolt_algebra::Fr;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Opening {

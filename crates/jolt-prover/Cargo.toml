@@ -48,7 +48,7 @@ akita = [
   "dep:akita-params",
   "jolt-verifier/akita",
   "jolt-claims/akita",
-  "jolt-field/solinas",
+  "jolt-algebra/solinas",
   "jolt-kernels/akita",
   # The Akita axis proves over fp128, so field-inline execution and the value encoding
   # flip with it (inert while field-inline is off; the tracer forward is the
@@ -84,7 +84,7 @@ profiling = [
 allocative = [
   "dep:allocative",
   "dep:jolt-profiling",
-  "jolt-field/allocative",
+  "jolt-algebra/allocative",
   "jolt-kernels/allocative",
   "jolt-profiling/allocative",
   "jolt-verifier/allocative",
@@ -97,7 +97,7 @@ akita-params = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-dory.workspace = true
-jolt-field.workspace = true
+jolt-algebra.workspace = true
 jolt-kernels = { workspace = true, default-features = false }
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true

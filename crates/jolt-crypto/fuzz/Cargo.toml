@@ -47,7 +47,7 @@ weekly-seconds = 2700
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-crypto = { path = ".." }
-jolt-field = { path = "../../jolt-field" }
+jolt-algebra = { path = "../../jolt-algebra" }
 serde_json = "1"
 bincode = { version = "2", features = ["serde"] }
 rand_chacha = "0.3"

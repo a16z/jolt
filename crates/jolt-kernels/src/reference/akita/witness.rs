@@ -4,10 +4,10 @@
 use crate::field_inline::FieldIncrementColumn;
 use crate::KernelError;
 use jolt_akita::{no_selected_row, TraceOneHotRows};
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
-use jolt_field::JoltField;
 use jolt_witness::witnesses::{
     BalancedIncColumn, BytecodePc, FusedInc, LookupIndex, RaChunkSelector, RemappedRamAddress,
 };

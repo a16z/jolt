@@ -41,7 +41,7 @@ weekly-seconds = 2700
 libfuzzer-sys = "0.4"
 dory = { package = "dory-pcs", version = "0.4.0" }
 jolt-dory = { path = ".." }
-jolt-field = { path = "../../jolt-field" }
+jolt-algebra = { path = "../../jolt-algebra" }
 jolt-openings = { path = "../../jolt-openings" }
 jolt-poly = { path = "../../jolt-poly" }
 jolt-transcript = { path = "../../jolt-transcript" }

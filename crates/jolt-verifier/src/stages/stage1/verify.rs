@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
-use jolt_field::JoltField;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 use jolt_zk::masking::CommittedPadsView;
 

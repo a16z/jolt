@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 use super::{BytecodeReadRafCycleShape, BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims};
 use crate::protocols::jolt::geometry::bytecode::{

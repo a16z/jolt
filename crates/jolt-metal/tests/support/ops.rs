@@ -1,6 +1,6 @@
 //! The field-operation conformance check shared by the field suites: every
 //! kernel of `tests/shaders/field_ops.metal`, run on the GPU and compared
-//! with `jolt_field` byte for byte.
+//! with `jolt_algebra` byte for byte.
 
 use std::fmt::Debug;
 
@@ -155,7 +155,7 @@ type BinaryOp<F> = fn(F, F) -> F;
 type UnaryOp<F> = fn(F) -> F;
 
 /// Runs every operation of `field_ops.metal` on `inputs` and records each
-/// disagreement with `jolt_field` in `failures`.
+/// disagreement with `jolt_algebra` in `failures`.
 pub fn check_ops<F: MetalField + Debug>(
     device: &Device,
     library: &ShaderLibrary,

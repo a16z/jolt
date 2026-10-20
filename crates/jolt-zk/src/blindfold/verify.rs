@@ -1,5 +1,5 @@
+use jolt_algebra::{CanonicalDecode, JoltField};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::{CanonicalDecode, JoltField};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};

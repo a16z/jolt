@@ -1,4 +1,4 @@
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 use crate::{Expr, FactoredExpr, Source, SumcheckDomain};
 
@@ -108,7 +108,7 @@ pub trait SymbolicSumcheck {
 mod tests {
     use super::*;
     use crate::{challenge, constant, derived, opening, NoChallenges, NoInputs, NoOutputs};
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use std::collections::BTreeSet;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

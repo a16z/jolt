@@ -30,9 +30,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_transcript::DuplexSpongeInterface;
-use jolt_transcript::{Blake2b512, Channel, ProtocolId, Sponge, VerifierTranscript};
+use jolt_transcript::{
+    is_fork_domain, Blake2b512, Channel, ProtocolId, Sponge, VerifierTranscript,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
@@ -51,9 +53,6 @@ struct Tape {
 thread_local! {
     static ACTIVE: RefCell<Option<Arc<Mutex<Tape>>>> = const { RefCell::new(None) };
 }
-
-/// The first absorb of every [`jolt_transcript::Fork`].
-const FORK_TAG: &[u8] = b"jolt-transcript/fork/v1";
 
 /// [`Blake2b512`] with a recorded or replayed squeeze stream.
 ///
@@ -85,7 +84,7 @@ impl DuplexSpongeInterface for AuditSponge {
     fn absorb(&mut self, input: &[u8]) -> &mut Self {
         if !self.absorbed {
             self.absorbed = true;
-            if input == FORK_TAG {
+            if is_fork_domain(input) {
                 self.tape = None;
             } else {
                 assert!(

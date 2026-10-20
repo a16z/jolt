@@ -21,12 +21,12 @@
 //!   come from one split-eq walk over the retained per-cycle value triples
 //!   (the sibling kernels' post-hoc extraction pattern).
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldRegistersClaimReductionChallenge,
     FieldRegistersClaimReductionPublic,
 };
 use jolt_claims::SumcheckChallenges as _;
-use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -297,11 +297,11 @@ impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::relations::claim_reductions::registers::{
         FieldRegistersClaimReductionChallenges, FieldRegistersClaimReductionInputClaims,
     };
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
-    use jolt_field::{Fr, Ring};
     use jolt_riscv::JoltInstructionKind;
 
     use super::*;

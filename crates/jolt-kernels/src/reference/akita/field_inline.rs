@@ -1,9 +1,9 @@
 use crate::{
     field_inline::FieldIncrementColumn, trace_column::DenseTraceColumnPoly, CommitmentGrid,
 };
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_verifier::VerifierError;
 

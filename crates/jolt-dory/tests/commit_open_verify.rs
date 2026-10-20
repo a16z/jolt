@@ -6,8 +6,8 @@
 
 use dory::backends::arkworks::ArkG1;
 use dory::primitives::DorySerialize;
+use jolt_algebra::{Field, Fr, Ring};
 use jolt_dory::DoryScheme;
-use jolt_field::{Field, Fr, Ring};
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
 };

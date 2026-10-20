@@ -91,7 +91,7 @@ mod tests {
     use crate::protocols::field_inline::geometry::claim_reductions::registers::{
         claim_reduction_input_openings, claim_reduction_output_openings,
     };
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     #[test]
     fn claim_struct_field_order_matches_geometry_opening_order() {

@@ -15,7 +15,7 @@
 )]
 
 #[cfg(feature = "lattice")]
-use jolt_field::AlgebraError;
+use jolt_algebra::AlgebraError;
 
 #[cfg(feature = "lattice")]
 pub mod challenge;

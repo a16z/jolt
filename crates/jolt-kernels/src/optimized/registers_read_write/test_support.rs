@@ -1,8 +1,8 @@
 use core::fmt::Debug;
 
+use jolt_algebra::{Fr, Ring};
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::{Fr, Ring};
 use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};

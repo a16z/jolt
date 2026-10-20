@@ -123,9 +123,9 @@ mod audit_sponge {
 #[cfg(not(feature = "akita"))]
 mod dory {
     use common::jolt_device::JoltDevice;
+    use jolt_algebra::Fr;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
-    use jolt_field::Fr;
     use jolt_verifier::{
         verify, verify_stages, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError,
     };
@@ -194,7 +194,7 @@ mod dory {
 
     #[cfg(not(feature = "zk"))]
     mod clear {
-        use jolt_field::{Fr, Ring};
+        use jolt_algebra::{Fr, Ring};
 
         use super::super::fs_mutations::equivocate_stage1_clear;
         use super::super::support::verifier_fixtures::{standard_muldiv_case, VerifierFixtureCase};
@@ -267,7 +267,7 @@ mod dory {
 #[cfg(feature = "akita")]
 mod akita {
     use jolt_akita::{AkitaField, AkitaScheme};
-    use jolt_field::Ring;
+    use jolt_algebra::Ring;
     use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_verifier::{
         seed_transcript, stages::stage1, verify, JoltProof, JoltSponge, JoltVerifierPreprocessing,

@@ -1,4 +1,4 @@
-//! Conformance of `jolt::Ext2<F>` with `jolt_field::solinas::Ext2<F>`.
+//! Conformance of `jolt::Ext2<F>` with `jolt_algebra::solinas::Ext2<F>`.
 //!
 //! Every MSL operation, and multiplication by a base-field element, runs
 //! through a generic test kernel and must match the CPU result byte for
@@ -30,8 +30,8 @@ mod ops;
 mod support;
 
 mod gpu {
-    use jolt_field::solinas::{Ext2, Fp64, Prime128Offset275, Prime64Offset59};
-    use jolt_field::ExtField;
+    use jolt_algebra::solinas::{Ext2, Fp64, Prime128Offset275, Prime64Offset59};
+    use jolt_algebra::ExtField;
     use jolt_metal::runtime::{Binding, DeviceBuffer};
     use jolt_metal::MetalField;
 
@@ -254,22 +254,22 @@ mod gpu {
     }
 
     #[test]
-    fn ext2_fp64_59_matches_jolt_field() {
-        conformance::<Prime64Offset59>("ext2_fp64_59_matches_jolt_field", 0xe264_003b);
+    fn ext2_fp64_59_matches_jolt_algebra() {
+        conformance::<Prime64Offset59>("ext2_fp64_59_matches_jolt_algebra", 0xe264_003b);
     }
 
     #[test]
-    fn ext2_fp64_max_sum_offset_matches_jolt_field() {
-        conformance::<MaxSumOffset>("ext2_fp64_max_sum_offset_matches_jolt_field", 0xe264_7fff);
+    fn ext2_fp64_max_sum_offset_matches_jolt_algebra() {
+        conformance::<MaxSumOffset>("ext2_fp64_max_sum_offset_matches_jolt_algebra", 0xe264_7fff);
     }
 
     #[test]
-    fn ext2_fp64_max_offset_matches_jolt_field() {
-        conformance::<MaxOffset>("ext2_fp64_max_offset_matches_jolt_field", 0xe264_ffff);
+    fn ext2_fp64_max_offset_matches_jolt_algebra() {
+        conformance::<MaxOffset>("ext2_fp64_max_offset_matches_jolt_algebra", 0xe264_ffff);
     }
 
     #[test]
-    fn ext2_fp128_275_matches_jolt_field() {
-        conformance::<Prime128Offset275>("ext2_fp128_275_matches_jolt_field", 0xe228_0113);
+    fn ext2_fp128_275_matches_jolt_algebra() {
+        conformance::<Prime128Offset275>("ext2_fp128_275_matches_jolt_algebra", 0xe228_0113);
     }
 }

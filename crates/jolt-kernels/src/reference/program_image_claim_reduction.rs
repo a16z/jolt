@@ -10,8 +10,8 @@
 //! block starting at `start_index`, so the slice makes `Σ value · eq` exactly
 //! the staged stage-4 contribution.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::{PrecommittedReductionLayout, ProgramImageClaimReductionLayout};
-use jolt_field::JoltField;
 
 use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::ProgramImageReductionCyclePhase;

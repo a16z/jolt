@@ -14,7 +14,7 @@ use std::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use jolt_field::{
+use jolt_algebra::{
     AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator,
     Ring, WithAccumulator,
 };
@@ -255,7 +255,7 @@ impl CanonicalBytes for Mersenne61 {
 
 impl Encoding<[u8]> for Mersenne61 {
     fn encode(&self) -> impl AsRef<[u8]> {
-        jolt_field::narg::encode(self)
+        jolt_algebra::narg::encode(self)
     }
 }
 
@@ -268,7 +268,7 @@ impl CanonicalDecode for Mersenne61 {
 
 impl NargDeserialize for Mersenne61 {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        jolt_field::narg::deserialize(buf)
+        jolt_algebra::narg::deserialize(buf)
     }
 }
 

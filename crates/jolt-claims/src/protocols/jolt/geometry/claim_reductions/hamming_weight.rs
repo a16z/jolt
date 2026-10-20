@@ -1,4 +1,4 @@
-use jolt_field::{JoltField, Ring};
+use jolt_algebra::{JoltField, Ring};
 
 use crate::opening;
 
@@ -121,7 +121,7 @@ mod tests {
 
     use super::super::super::dimensions::JoltFormulaDimensionsError;
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
 
     fn layout(
         instruction: usize,

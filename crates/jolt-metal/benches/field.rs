@@ -1,9 +1,9 @@
-//! Throughput of the MSL field types on the GPU against `jolt_field` on the
+//! Throughput of the MSL field types on the GPU against `jolt_algebra` on the
 //! CPU.
 //!
 //! GPU samples are GPU execution time from command-buffer timestamps, which
 //! exclude host submission and wake-up; CPU samples are wall time over all
-//! cores with rayon, using `jolt_field`'s `asm` multiply as Akita does.
+//! cores with rayon, using `jolt_algebra`'s `asm` multiply as Akita does.
 //! Every kernel's output is checked against the CPU once before it is
 //! timed.
 //!
@@ -21,7 +21,7 @@
 //!
 //! For `fp128_a7f7`, whose accumulators are the only ones in MSL so far:
 //! - `accum/{fmadd,fmadd4,fmadd_i64}`: deferred-reduction terms per thread in
-//!   registers, reported as terms per second, against `jolt_field`'s
+//!   registers, reported as terms per second, against `jolt_algebra`'s
 //!   accumulators;
 //! - `accum_inner_product`: `inner_product` with unreduced products and
 //!   merged accumulators on both sides.
@@ -39,8 +39,8 @@ mod metal {
     use std::time::Duration;
 
     use criterion::{BenchmarkId, Criterion, Throughput};
-    use jolt_field::solinas::{Ext2, Prime128OffsetA7F7, Prime64Offset59};
-    use jolt_field::{Accumulator, WithAccumulator};
+    use jolt_algebra::solinas::{Ext2, Prime128OffsetA7F7, Prime64Offset59};
+    use jolt_algebra::{Accumulator, WithAccumulator};
     use jolt_metal::runtime::{Binding, Device, DeviceBuffer, Grid, ShaderLibrary};
     use rayon::prelude::*;
 

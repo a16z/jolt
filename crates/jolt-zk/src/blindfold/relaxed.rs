@@ -1,5 +1,5 @@
+use jolt_algebra::JoltField;
 use jolt_crypto::HomomorphicCommitment;
-use jolt_field::JoltField;
 
 use super::RelaxedError;
 
@@ -217,8 +217,8 @@ fn ensure_len(name: &'static str, expected: usize, actual: usize) -> Result<(), 
 )]
 mod tests {
     use super::*;
+    use jolt_algebra::{Fr, Ring};
     use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-    use jolt_field::{Fr, Ring};
 
     fn f(value: u64) -> Fr {
         Fr::from_u64(value)

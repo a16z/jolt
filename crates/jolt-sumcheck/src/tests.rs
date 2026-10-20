@@ -8,7 +8,7 @@
     reason = "tests may panic on assertion failures and index fixture data"
 )]
 
-use jolt_field::{CanonicalBytes, Field, Fr, Ring};
+use jolt_algebra::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{
     Blake2b512, Channel, PadSlots, PrivateChannel, ProtocolId, ProverTranscript, TranscriptError,

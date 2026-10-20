@@ -6,7 +6,7 @@ The `akita` Cargo feature selects this protocol at compile time. The current imp
 
 ## Field and witness representation
 
-Jolt's Akita path uses `AkitaField`, the upstream `fp128` configuration's alias for `jolt_field::Prime128OffsetA7F7`. Its modulus is
+Jolt's Akita path uses `AkitaField`, the upstream `fp128` configuration's alias for `jolt_algebra::Prime128OffsetA7F7`. Its modulus is
 
 $$
 p = 2^{128} - 2^{32} + 22537.

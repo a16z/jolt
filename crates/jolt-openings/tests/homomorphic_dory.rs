@@ -4,8 +4,8 @@
     reason = "tests assert successful proof paths"
 )]
 
+use jolt_algebra::Fr;
 use jolt_dory::{DoryCommitment, DoryScheme, DoryVerifierSetup};
-use jolt_field::Fr;
 use jolt_openings::{
     BatchOpeningScheme, HomomorphicBatch, OpeningsError, ZkBatchOpeningScheme, ZkOpeningScheme,
 };

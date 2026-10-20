@@ -17,12 +17,10 @@ profiling = []
 spongefish = { workspace = true, features = ["sha3"] }
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
-akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
 akita-params.workspace = true
 akita-pcs = { workspace = true, features = ["parallel"] }
-akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
 akita-types.workspace = true
@@ -32,7 +30,7 @@ jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
   "lattice",
   "parallel",
 ] }
-jolt-field = { path = "../jolt-field", default-features = false, features = [
+jolt-algebra = { path = "../jolt-algebra", default-features = false, features = [
   "solinas",
 ] }
 jolt-openings = { path = "../jolt-openings", default-features = false, features = [

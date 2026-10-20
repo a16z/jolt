@@ -17,9 +17,9 @@
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedClaims;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
@@ -168,9 +168,9 @@ where
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
+    use jolt_algebra::{Fr, Ring};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, Ring};
     use jolt_verifier::JoltSponge;
 
     use super::*;

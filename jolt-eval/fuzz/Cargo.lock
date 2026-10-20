@@ -1122,19 +1122,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-zk"
+name = "jolt-algebra"
 version = "0.1.0"
 dependencies = [
- "jolt-claims",
- "jolt-crypto",
- "jolt-field",
- "jolt-poly",
- "jolt-r1cs",
- "jolt-sumcheck",
- "jolt-transcript",
- "jolt-utils",
+ "ark-bn254",
+ "ark-ff",
+ "ark-serialize",
+ "cc",
+ "num-traits",
  "rand_core 0.6.4",
  "rayon",
+ "serde",
+ "spongefish",
  "thiserror 2.0.18",
 ]
 
@@ -1144,8 +1143,8 @@ version = "0.1.0"
 dependencies = [
  "blake2 0.11.0-rc.6",
  "derive_more",
+ "jolt-algebra",
  "jolt-claims-derive",
- "jolt-field",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
@@ -1175,7 +1174,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "ark-std",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "num-bigint 0.4.6",
  "num-integer",
@@ -1194,8 +1193,8 @@ dependencies = [
  "ark-ec",
  "ark-serialize",
  "dory-pcs",
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "jolt-openings",
  "jolt-optimizations",
  "jolt-poly",
@@ -1216,10 +1215,10 @@ dependencies = [
  "enumset",
  "eyre",
  "hex",
+ "jolt-algebra",
  "jolt-crypto",
  "jolt-dory",
  "jolt-eval-macros",
- "jolt-field",
  "jolt-host",
  "jolt-inlines-keccak256",
  "jolt-inlines-secp256k1",
@@ -1261,22 +1260,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "jolt-field"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ff",
- "ark-serialize",
- "cc",
- "num-traits",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "spongefish",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1335,8 +1318,8 @@ dependencies = [
 name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-claims",
- "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
@@ -1367,7 +1350,7 @@ dependencies = [
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-riscv",
  "serde",
  "strum",
@@ -1377,8 +1360,8 @@ dependencies = [
 name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "jolt-poly",
  "jolt-transcript",
  "serde",
@@ -1417,7 +1400,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
@@ -1445,10 +1428,10 @@ name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
  "common",
+ "jolt-algebra",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
- "jolt-field",
  "jolt-kernels",
  "jolt-lookup-tables",
  "jolt-openings",
@@ -1469,7 +1452,7 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -1492,9 +1475,9 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "common",
+ "jolt-algebra",
  "jolt-crypto",
  "jolt-dory",
- "jolt-field",
  "jolt-host",
  "jolt-openings",
  "jolt-platform",
@@ -1524,8 +1507,8 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
@@ -1554,7 +1537,7 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ff",
- "jolt-field",
+ "jolt-algebra",
  "light-poseidon",
  "rand 0.8.7",
  "rand_core 0.6.4",
@@ -1577,11 +1560,10 @@ dependencies = [
  "bincode 2.0.1",
  "blake2 0.11.0-rc.6",
  "common",
- "jolt-zk",
+ "jolt-algebra",
  "jolt-claims",
  "jolt-claims-derive",
  "jolt-crypto",
- "jolt-field",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
@@ -1590,6 +1572,7 @@ dependencies = [
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier-derive",
+ "jolt-zk",
  "num-traits",
  "serde",
  "thiserror 2.0.18",
@@ -1609,8 +1592,8 @@ name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
  "common",
+ "jolt-algebra",
  "jolt-claims",
- "jolt-field",
  "jolt-lookup-tables",
  "jolt-program",
  "jolt-riscv",
@@ -1628,6 +1611,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "jolt-zk"
+version = "0.1.0"
+dependencies = [
+ "jolt-algebra",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-utils",
+ "rand_core 0.6.4",
+ "rayon",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

@@ -12,9 +12,9 @@
 
 use jolt_verifier::stages::relations::OpeningIdOf;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,

@@ -1,7 +1,7 @@
 use core::{cmp::Ordering, mem::MaybeUninit};
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
-use jolt_field::{Accumulator, JoltField};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

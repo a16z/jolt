@@ -6,7 +6,7 @@
 //! family instantiates it with its own committed-polynomial vocabulary
 //! (pinned by the `protocol_modules_are_import_disjoint` boundary test).
 
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use thiserror::Error;
 
 /// Bit width one balanced-digit numeral covers: the digits decompose a 64-bit
@@ -156,7 +156,7 @@ pub fn balanced_carry_row(value: i128, width: usize) -> usize {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_algebra::{Fr, Ring};
     use jolt_poly::boolean_point_msb;
 
     #[test]

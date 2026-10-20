@@ -79,8 +79,8 @@ mod tests {
     use crate::stages::stage1::outer_remainder::OuterRemainder;
     use crate::stages::stage1::outputs::Stage1BatchSumchecks;
     use core::convert::Infallible;
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::spartan::outer_opening;
-    use jolt_field::{Fr, Ring};
     use num_traits::Zero;
     use std::collections::BTreeMap;
 
