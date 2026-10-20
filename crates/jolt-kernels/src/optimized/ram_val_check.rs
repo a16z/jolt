@@ -90,6 +90,9 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
 /// table with the doubled table the first bind builds beside it and the split
 /// LT tables. Later binds, outer `Vec` and placeholder `Arc` headers and
 /// allocator requests are not counted.
+/// Valid only for canonical prover dimensions (`log_t >= 8`, or `>= 12` under
+/// Akita, as `ProverConfig::from_padded_dimensions` enforces), where the first
+/// bind keeps the split LT tables instead of building their dense replacement.
 pub fn first_bind_bytes<F: JoltField>(log_t: usize, ram_k: usize) -> usize {
     // `LazyFoldedRa::bind` doubles the `ram_k`-entry table while it is live.
     let address_tables = ram_k.saturating_mul(3).saturating_mul(size_of::<F>());
