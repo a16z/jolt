@@ -8046,7 +8046,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "akita-challenges"
-version = "0.1.0"
