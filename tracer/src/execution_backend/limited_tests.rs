@@ -169,8 +169,9 @@ fn pending_window_holds_the_longest_tick_without_growing() {
 }
 
 /// Row growth is charged with the old and new row buffers, the held chunk
-/// metadata and the pending cycles live together, and chunk-metadata growth
-/// before it is allocated; a rejection changes nothing.
+/// metadata and the pending cycles live together; chunk-metadata growth with
+/// its old and new buffers, and a first metadata buffer, likewise, each before
+/// it is allocated. A rejection changes nothing.
 #[test]
 fn conversion_growth_is_checked_before_it_is_made() {
     let row = size_of::<JoltTraceRow>();
@@ -194,6 +195,19 @@ fn conversion_growth_is_checked_before_it_is_made() {
     trace.convert_pending(&bytecode, 0).unwrap();
     assert_eq!((trace.rows.len(), trace.rows.capacity()), (16, 16));
     assert_eq!((trace.chunks.len(), trace.cycles.len()), (2, 0));
+
+    // Two new chunk records beside the one they replace; rows do not grow.
+    let replaced = pending + 12 * row + 3 * chunk;
+    let mut trace = storage(replaced - 1, cycles.clone(), Vec::with_capacity(12));
+    trace.chunks = vec![ConvertedChunk::default()];
+    assert_eq!(
+        rejection(trace.convert_pending(&bytecode, 0)),
+        Some((TraceAllocationPhase::Conversion, replaced))
+    );
+    assert_eq!((trace.rows.capacity(), trace.chunks.capacity()), (12, 1));
+    trace.limit = replaced;
+    trace.convert_pending(&bytecode, 0).unwrap();
+    assert_eq!((trace.chunks.len(), trace.chunks.capacity()), (2, 2));
 
     let mut trace = storage(0, cycles, Vec::with_capacity(12));
     let held = pending + 12 * row;

@@ -750,7 +750,9 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     let limited = args
         .memory_budget
         .and_then(|budget| TracerBackend::limited_for_row_domain(budget.bytes(), max_trace_length));
-    let (limited_trace, memory_layout) = if let Some(mut tracer) = limited {
+    // The original route keeps its sizing run's device owned until the run
+    // ends, as it did before the limited route existed.
+    let (limited_trace, memory_layout, _sizing_device) = if let Some(mut tracer) = limited {
         // The tracer symbolizes a guest panic's backtrace from the ELF path;
         // building here sets it, so `trace_with_backend` does not rebuild.
         // `prove_workload`'s `ProverConfig::derive_from_dimensions` rejects a
@@ -761,7 +763,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
             .trace_with_backend(&mut tracer, &input, &[], &[])
             .expect("modular trace");
         let memory_layout = trace_output.device.memory_layout.clone();
-        (Some(trace_output), memory_layout)
+        (Some(trace_output), memory_layout, None)
     } else {
         let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
         assert!(
@@ -769,7 +771,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
             "Trace is longer than expected"
         );
         jolt_kernels::mem::drop_in_background_thread(sizing_trace);
-        (None, io_device.memory_layout.clone())
+        (None, io_device.memory_layout.clone(), Some(io_device))
     };
     let jolt_program = Arc::new(program.build_jolt_program().expect("build Jolt program"));
     let program_preprocessing = JoltProgramPreprocessing::new(
