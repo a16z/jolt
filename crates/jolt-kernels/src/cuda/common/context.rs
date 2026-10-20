@@ -65,6 +65,10 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     sfx_eval_batch: CudaFunction,
     #[cfg(test)]
+    pfx_mle_round: CudaFunction,
+    #[cfg(test)]
+    ap_bind_lanes: CudaFunction,
+    #[cfg(test)]
     unr_mul_scatter: CudaFunction,
     #[cfg(test)]
     unr_reduce: CudaFunction,
@@ -230,6 +234,10 @@ impl CudaKernelContext {
             ra_gather: module.load_function("ra_gather_kernel")?,
             #[cfg(test)]
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
+            #[cfg(test)]
+            pfx_mle_round: module.load_function("pfx_mle_round_kernel")?,
+            #[cfg(test)]
+            ap_bind_lanes: module.load_function("ap_bind_lanes_kernel")?,
             #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             #[cfg(test)]
@@ -581,6 +589,16 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn sfx_eval_batch(&self) -> &CudaFunction {
         &self.sfx_eval_batch
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn pfx_mle_round(&self) -> &CudaFunction {
+        &self.pfx_mle_round
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn ap_bind_lanes(&self) -> &CudaFunction {
+        &self.ap_bind_lanes
     }
 
     #[cfg(test)]

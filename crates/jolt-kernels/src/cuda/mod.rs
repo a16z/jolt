@@ -102,6 +102,10 @@
 //! Lookup suffixes evaluate masked bit strings with integer arithmetic on
 //! device, matching the optimized lookup tables' `u64` results. One thread
 //! handles each input; field promotion is left to the consuming sumcheck.
+//! Prefix phase tables use the canonical host definitions for every prefix;
+//! optimized materializes only prefixes used by present lookup tables. CUDA
+//! uploads the phase tables, evaluates them at 0 and 2, and binds their rows
+//! in batched device launches before downloading the next phase's checkpoints.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
