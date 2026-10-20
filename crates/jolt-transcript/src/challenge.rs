@@ -30,6 +30,12 @@ use jolt_field::{F128, F192, F64, F8};
 #[cfg(feature = "spongefish")]
 use spongefish::VerificationError;
 
+use sealed::Sealed;
+
+mod sealed {
+    pub trait Sealed {}
+}
+
 /// Decodes a fixed-length uniform byte tape into one message of field elements.
 ///
 /// Implementations must budget conventional TV ≤ 2^-161 for the entire message,
@@ -78,7 +84,7 @@ use spongefish::VerificationError;
 ///
 /// The trait is sealed: every implementation lives in this module, next to
 /// the argument for its TV bound.
-pub trait ChallengeCodec: Sized + sealed::Sealed {
+pub trait ChallengeCodec: Sized + Sealed {
     /// Bytes squeezed for `len` elements; depends only on the type and `len`.
     /// Returns `None` on arithmetic overflow or an unattainable rejection bound.
     fn challenge_bytes(len: usize) -> Option<usize>;
@@ -87,10 +93,6 @@ pub trait ChallengeCodec: Sized + sealed::Sealed {
     /// Returns `None` on a wrong/unsupported length or rejection-pool exhaustion.
     /// Allocates only the returned vector, with capacity `len`.
     fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>>;
-}
-
-mod sealed {
-    pub trait Sealed {}
 }
 
 /// Largest challenge message, in squeezed bytes. Larger requests are rejected
@@ -158,7 +160,7 @@ where
 #[cfg(feature = "solinas")]
 macro_rules! prime_codec {
     ($field:ident, $word:ty) => {
-        impl<const P: $word> sealed::Sealed for $field<P> {}
+        impl<const P: $word> Sealed for $field<P> {}
 
         impl<const P: $word> ChallengeCodec for $field<P> {
             fn challenge_bytes(len: usize) -> Option<usize> {
@@ -205,7 +207,7 @@ tower_bases!(
 #[cfg(feature = "solinas")]
 macro_rules! extension_codec {
     ($extension:ident, $degree:literal) => {
-        impl<F: TowerBase> sealed::Sealed for $extension<F> {}
+        impl<F: TowerBase> Sealed for $extension<F> {}
 
         impl<F: TowerBase> ChallengeCodec for $extension<F> {
             fn challenge_bytes(len: usize) -> Option<usize> {
@@ -237,7 +239,7 @@ fn reduction_width<F: CanonicalEncoding>(len: usize) -> Option<usize> {
 #[cfg(feature = "bn254")]
 macro_rules! reduction_codec {
     ($($field:ty),+ $(,)?) => {$(
-        impl sealed::Sealed for $field {}
+        impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
             fn challenge_bytes(len: usize) -> Option<usize> {
@@ -267,7 +269,7 @@ reduction_codec!(Fr, Fq);
 #[cfg(feature = "binary")]
 macro_rules! binary_codec {
     ($($field:ty),+ $(,)?) => {$(
-        impl sealed::Sealed for $field {}
+        impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
             fn challenge_bytes(len: usize) -> Option<usize> {

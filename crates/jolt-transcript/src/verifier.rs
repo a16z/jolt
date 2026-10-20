@@ -11,7 +11,8 @@ use jolt_field::Fr;
 #[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
 use spongefish::instantiations::Keccak;
 use spongefish::{
-    DuplexSpongeInterface, Encoding, FromNarg, FromUniform, VerificationError, VerifierState,
+    DuplexSpongeInterface, Encoding, FromNarg, FromUniform, Transcript, VerificationError,
+    VerifierState,
 };
 
 #[cfg(all(
@@ -95,7 +96,7 @@ where
         let challenges =
             VerifierState::verifier_message_as(self, n, |bytes| F::decode_challenges(bytes, len));
         // Exhaustion poisons the state, so later reads and `check_eof` fail too.
-        spongefish::Transcript::check(self, || challenges.is_some())?;
+        Transcript::check(self, || challenges.is_some())?;
         challenges.ok_or(VerificationError)
     }
 

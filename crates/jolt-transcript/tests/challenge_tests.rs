@@ -12,6 +12,8 @@ use jolt_transcript::{
     VerifierTranscript,
 };
 use spongefish::instantiations::Keccak;
+#[cfg(feature = "solinas")]
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 use std::fmt::{Debug, Write};
 
 #[cfg(feature = "solinas")]
@@ -188,8 +190,9 @@ fn messages_above_the_byte_cap_are_rejected_before_touching_the_sponge() {
 #[test]
 fn empty_messages_leave_the_sponge_untouched() {
     use jolt_transcript::Blake2b512;
+    use spongefish::DuplexSpongeInit;
 
-    fn check<H: spongefish::DuplexSpongeInit<U = u8>>() {
+    fn check<H: DuplexSpongeInit<U = u8>>() {
         let mut prover = prover_transcript::<H>(SESSION, INSTANCE);
         assert!(ProverTranscript::field_challenges::<Fr>(&mut prover, 0)
             .unwrap()
@@ -219,7 +222,7 @@ fn empty_messages_leave_the_sponge_untouched() {
 struct Saturated;
 
 #[cfg(feature = "solinas")]
-impl spongefish::DuplexSpongeInterface for Saturated {
+impl DuplexSpongeInterface for Saturated {
     type U = u8;
 
     fn absorb(&mut self, _input: &[u8]) -> &mut Self {
@@ -233,7 +236,7 @@ impl spongefish::DuplexSpongeInterface for Saturated {
 }
 
 #[cfg(feature = "solinas")]
-impl spongefish::DuplexSpongeInit for Saturated {
+impl DuplexSpongeInit for Saturated {
     fn init(_session_id: &[u8; 32]) -> Self {
         Self
     }
