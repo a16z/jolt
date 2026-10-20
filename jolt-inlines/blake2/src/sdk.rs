@@ -10,6 +10,7 @@ const INITIAL_STATE: [u64; STATE_VECTOR_LEN] = {
     h
 };
 
+#[derive(Clone)]
 pub struct Blake2b {
     h: [u64; STATE_VECTOR_LEN],
     buffer: [u8; BLOCK_INPUT_SIZE_IN_BYTES],
@@ -22,6 +23,28 @@ impl Blake2b {
     pub fn new() -> Self {
         Self {
             h: INITIAL_STATE,
+            buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
+            buffer_len: 0,
+            counter: 0,
+        }
+    }
+
+    /// Blake2b with an `output_len`-byte digest (1..=64). The digest length is
+    /// part of the parameter block folded into the IV, so a shorter digest is
+    /// its own hash function, not a truncation of the 64-byte one.
+    ///
+    /// # Panics
+    /// Panics if `output_len` is not in `1..=64`.
+    #[inline(always)]
+    pub fn new_with_output_len(output_len: usize) -> Self {
+        assert!(
+            (1..=OUTPUT_SIZE).contains(&output_len),
+            "Blake2b digest length must be 1..=64 bytes"
+        );
+        let mut h = IV;
+        h[0] ^= 0x01010000 ^ (output_len as u64);
+        Self {
+            h,
             buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
@@ -110,6 +133,24 @@ impl Blake2b {
 
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
+        self.compress_final();
+        to_bytes(self.h)
+    }
+
+    /// Finalize into `out`, which holds the digest length this hasher was
+    /// created with (the leading bytes of the state).
+    ///
+    /// # Panics
+    /// Panics if `out` is longer than 64 bytes.
+    #[inline(always)]
+    pub fn finalize_into(mut self, out: &mut [u8]) {
+        self.compress_final();
+        out.copy_from_slice(&to_bytes(self.h)[..out.len()]);
+    }
+
+    /// Compresses the buffered bytes, zero-padded, as the final block.
+    #[inline(always)]
+    fn compress_final(&mut self) {
         self.counter += self.buffer_len as u64;
 
         if self.buffer_len < BLOCK_INPUT_SIZE_IN_BYTES {
@@ -123,22 +164,6 @@ impl Blake2b {
         }
 
         compression_caller(&mut self.h, &self.buffer, self.counter, true);
-
-        #[cfg(target_endian = "little")]
-        {
-            // Safety: [u64; 8] and [u8; 64] have identical size (64 bytes)
-            unsafe { core::mem::transmute::<[u64; STATE_VECTOR_LEN], [u8; OUTPUT_SIZE]>(self.h) }
-        }
-
-        #[cfg(target_endian = "big")]
-        {
-            let mut hash = [0u8; OUTPUT_SIZE];
-            for i in 0..STATE_VECTOR_LEN {
-                let bytes = self.h[i].to_le_bytes();
-                hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
-            }
-            hash
-        }
     }
 
     /// Computes BLAKE2b hash in one call.
@@ -477,6 +502,29 @@ pub(crate) unsafe fn blake2b_compress(_state: *mut u64, _message: *const u64) {
 #[cfg(all(test, feature = "host"))]
 mod digest_tests {
     use super::*;
+
+    /// A 32-byte hasher matches the `blake2` crate's 32-byte Blake2b, and a
+    /// clone taken mid-stream finishes the same hash.
+    #[test]
+    fn output_len_and_clone_match_blake2_crate() {
+        use blake2::digest::consts::U32;
+        use blake2::{Blake2b as ReferenceBlake2b, Digest as RefDigest};
+        let data: Vec<u8> = (0..300u32).map(|i| (i * 31 + 5) as u8).collect();
+        let expected = ReferenceBlake2b::<U32>::digest(&data);
+        for split in [0, 1, 127, 128, 129, 300] {
+            let mut hasher = Blake2b::new_with_output_len(32);
+            hasher.update(&data[..split]);
+            let mut forked = hasher.clone();
+            hasher.update(&data[split..]);
+            forked.update(&data[split..]);
+            let mut ours = [0u8; 32];
+            hasher.finalize_into(&mut ours);
+            let mut cloned = [0u8; 32];
+            forked.finalize_into(&mut cloned);
+            assert_eq!(ours.as_slice(), expected.as_slice(), "split {split}");
+            assert_eq!(ours, cloned, "split {split}");
+        }
+    }
 
     /// EIP-152 vectors 5 (final) and 6 (not final): 12 rounds, h = BLAKE2b-512
     /// IV with the parameter block, m = "abc" zero-padded, t = 3.

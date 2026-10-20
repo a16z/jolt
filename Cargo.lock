@@ -3434,6 +3434,7 @@ name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
  "blake2 0.11.0",
+ "digest 0.11.3",
  "jolt-inlines-sdk",
  "rand 0.8.7",
  "tracer",
