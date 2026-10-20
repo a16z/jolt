@@ -99,6 +99,9 @@
 //! Windowed prefix/suffix rounds fold each resident window on its owning GPU.
 //! Prefix accumulators are summed on the host; suffix folds are concatenated
 //! in window order and uploaded to the device running the round loop.
+//! Lookup suffixes evaluate masked bit strings with integer arithmetic on
+//! device, matching the optimized lookup tables' `u64` results. One thread
+//! handles each input; field promotion is left to the consuming sumcheck.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -107,6 +110,8 @@ use crate::{JoltBackend, ModeStreamingCommitment};
 
 mod common;
 mod dory;
+#[cfg(test)]
+mod instruction_read_raf;
 
 pub use common::context::{
     context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,

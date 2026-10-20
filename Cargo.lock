@@ -3586,6 +3586,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde_json",
+ "strum 0.28.0",
  "thiserror 2.0.20",
  "tracer",
  "tracing",

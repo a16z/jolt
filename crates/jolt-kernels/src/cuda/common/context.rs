@@ -63,6 +63,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     ra_gather: CudaFunction,
     #[cfg(test)]
+    sfx_eval_batch: CudaFunction,
+    #[cfg(test)]
     unr_mul_scatter: CudaFunction,
     #[cfg(test)]
     unr_reduce: CudaFunction,
@@ -226,6 +228,8 @@ impl CudaKernelContext {
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             #[cfg(test)]
             ra_gather: module.load_function("ra_gather_kernel")?,
+            #[cfg(test)]
+            sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
             #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             #[cfg(test)]
@@ -572,6 +576,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn ra_gather(&self) -> &CudaFunction {
         &self.ra_gather
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn sfx_eval_batch(&self) -> &CudaFunction {
+        &self.sfx_eval_batch
     }
 
     #[cfg(test)]
