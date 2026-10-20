@@ -59,4 +59,8 @@ required-features = ["whiteout-prover"]
 
 [[example]]
 name = "sigma_dudect"
-required-features = ["whiteout-prover"]
+required-features = ["whiteout-diagnostics"]
+
+[[example]]
+name = "sigma_timing"
+required-features = ["whiteout-diagnostics"]

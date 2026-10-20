@@ -2,65 +2,59 @@
 //! steps (W4 acceptance; an intentional diagnostic, not a CI test).
 //!
 //! ```text
-//! cargo run --release -p jolt-zk --features whiteout-prover --example sigma_dudect -- \
-//!     [measurements per test, default 10^5] [seeds, default 3]
+//! cargo run --release -p jolt-zk --features whiteout-diagnostics --example sigma_dudect -- \
+//!     [measurements per test, default 10^5] [seeds, default 2] [t_D measurements on seed 0, default = first]
 //! ```
 //!
-//! Each test is a Welch t-test on raw timings, repeated for every seed;
-//! `|t| < 4.5` is dudect's pass threshold. Run it on an idle machine. The
-//! Gaussian sampler and the rejection rule are covered by jolt-crypto's
-//! `sample_dudect`; this tool covers what the attempt adds around them:
+//! Each test is a Welch t-test on raw timings, fixed class vs random class,
+//! interleaved at random, every input of a chunk generated before the chunk
+//! is timed. As in dudect, the statistic is also computed on measurements
+//! cropped at ten percentiles (taken from a first batch); a test passes if
+//! every `|t| < 4.5`. Fixed classes are extremes: all zero, all `+B`, all
+//! `−B` for masks (`B = 2^20`); zero and `−1` for `V`; zero, all `+2` and
+//! all `−2` for `c`.
 //!
-//! - **Ajtai map** (`N·y`): `PreparedMatrix::apply_centered` on a fixed vs a
-//!   fresh Gaussian-range mask.
-//! - **Commitment to V** (`t_D`): `commit`, decomposition included, on a
-//!   fixed vs a fresh field vector.
-//! - **Challenge view** (the lift of y into F): `SegmentTable::challenge_view`
-//!   on a fixed vs a fresh mask.
-//! - **Shift** (`c·s`): `challenge_times_i64` with a fixed vs a fresh
-//!   challenge, `s` fixed.
-//! - **Challenge sampling**: `sample_challenge_ct` on fresh seeds, split by
-//!   the accepted challenge (whether position 0 is in its support). The
-//!   number of discarded candidates varies with the seed by design and is
-//!   independent of the accepted value, so the split tests that the whole
-//!   call is independent of the challenge it returns.
+//! Steps, at `D = 64` and at the stride case `D = 256`: the linear parts of y
+//! (the lift, witness-claim sums and dense forms), `Q_μ(0, y)`, the polar
+//! form, `N·y` with its gadget block, `L·y`, `t_D = A_D G⁻¹(V)`, the attempt
+//! fork seed, and the `z`/`v` assembly. The constant-time challenge sampler
+//! is tested conditioned on its candidate count, split by the challenge it
+//! returns. The Gaussian sampler and the rejection rule are covered by
+//! jolt-crypto's `sample_dudect`.
 //!
-//! Classes are interleaved at random, and every input of a chunk is
-//! generated before the chunk is timed.
+//! With `SIGMA_DUDECT_DIT` set (aarch64), every thread runs with the DIT
+//! bit, the architecture's data-independent-timing mode.
 
 #![expect(clippy::print_stdout, reason = "diagnostic tool reports to stdout")]
-#![expect(clippy::print_stderr, reason = "diagnostic tool reports errors")]
 #![expect(
     clippy::expect_used,
+    clippy::indexing_slicing,
     reason = "a diagnostic tool on fixed, valid shapes"
 )]
 
+use std::cell::RefCell;
 use std::hint::black_box;
+use std::ops::Range;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use jolt_algebra::{CyclotomicRing, Prime128OffsetA7F7};
-use jolt_crypto::challenge::sample_challenge_ct;
-use jolt_crypto::lattice::{
-    commit, derive_public_matrix_prefix, AjtaiLevel, GadgetDigits, MatrixShape, MatrixView,
-    PreparedMatrix, PublicMatrixSeed, CHALLENGE_RING_DIM,
-};
-use jolt_zk::whiteout::{
-    challenge_times_i64, DenseChallenge, Segment, SegmentMask, SegmentRole, SegmentShape,
-    SegmentTable,
-};
+use jolt_algebra::{CyclotomicRing, Prime128OffsetA7F7, Ring};
+use jolt_crypto::challenge::sample_challenge_ct_counted;
+use jolt_zk::whiteout::diagnostics::{AttemptHarness, RING};
+use jolt_zk::whiteout::DenseChallenge;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
+#[cfg(target_arch = "aarch64")]
+use rayon::ThreadPoolBuilder;
 
 type F = Prime128OffsetA7F7;
-const D: usize = 64;
-/// A Gaussian-range bound: the headline tail cut is about 2^28.
-const MASK_BOUND: u64 = 1 << 28;
+const MASK_BOUND: i64 = 1 << 20;
 const CHUNK: usize = 1_000;
 const THRESHOLD: f64 = 4.5;
+const CROPS: usize = 10;
 
 /// Welch's t over two samples of timings, by running moments.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Welch {
     n: [f64; 2],
     mean: [f64; 2],
@@ -81,187 +75,335 @@ impl Welch {
     }
 }
 
-fn report(name: &str, test: &Welch, failures: &mut usize) {
-    let t = test.t();
-    let pass = t.abs() < THRESHOLD;
+/// The raw test and tests cropped at dudect's percentiles
+/// `1 − 0.5^{10(k+1)/CROPS}`, thresholds from the first chunk.
+#[derive(Default)]
+struct Cropped {
+    raw: Welch,
+    thresholds: Vec<f64>,
+    crops: Vec<Welch>,
+}
+
+impl Cropped {
+    fn push(&mut self, class: usize, x: f64) {
+        self.raw.push(class, x);
+        for (threshold, test) in self.thresholds.iter().zip(&mut self.crops) {
+            if x < *threshold {
+                test.push(class, x);
+            }
+        }
+    }
+
+    fn set_thresholds(&mut self, first: &mut [f64]) {
+        first.sort_by(f64::total_cmp);
+        self.thresholds = (0..CROPS)
+            .map(|k| {
+                let q = 1.0 - 0.5f64.powf(10.0 * (k as f64 + 1.0) / CROPS as f64);
+                first[((first.len() - 1) as f64 * q) as usize]
+            })
+            .collect();
+        self.crops = vec![Welch::default(); CROPS];
+    }
+
+    /// The largest `|t|` over the raw and cropped tests, with its test
+    /// (`None` for the raw one, else the crop index).
+    fn max_t(&self) -> (f64, Option<usize>) {
+        std::iter::once((None, &self.raw))
+            .chain(
+                self.crops
+                    .iter()
+                    .enumerate()
+                    .map(|(k, test)| (Some(k), test)),
+            )
+            .filter(|(_, test)| test.n[0] > 100.0 && test.n[1] > 100.0)
+            .map(|(k, test)| (test.t().abs(), k))
+            .fold(
+                (0.0, None),
+                |best, next| if next.0 > best.0 { next } else { best },
+            )
+    }
+}
+
+fn report(name: &str, test: &Cropped, failures: &mut usize) {
+    let (t, crop) = test.max_t();
+    let pass = t < THRESHOLD;
     if !pass {
         *failures += 1;
     }
     println!(
-        "  {name}: n = {:.0} / {:.0}, mean {:.0} / {:.0} ns, t = {t:.2} {}",
-        test.n[0],
-        test.n[1],
-        test.mean[0],
-        test.mean[1],
+        "  {name}: n = {:.0} / {:.0}, mean {:.0} / {:.0} ns, raw |t| = {:.2}, max |t| = {t:.2} ({}) {}",
+        test.raw.n[0],
+        test.raw.n[1],
+        test.raw.mean[0],
+        test.raw.mean[1],
+        test.raw.t().abs(),
+        crop.map_or("raw".to_owned(), |k| format!("crop {k}")),
         if pass { "PASS" } else { "LEAK?" }
     );
 }
 
-fn centered(rng: &mut ChaCha20Rng, len: usize, bound: u64) -> Vec<i64> {
-    (0..len)
-        .map(|_| (rng.next_u64() % (2 * bound + 1)) as i64 - bound as i64)
-        .collect()
-}
-
-/// Times `run` on fixed vs fresh inputs from `fresh`, classes interleaved
-/// at random, inputs generated before each chunk is timed.
-fn fixed_vs_random<T: Clone>(
+/// Times `run` on a fixed input vs fresh inputs. Both classes are built by
+/// the same code path, so they reach memory the same way; a clone of one
+/// fixed input would not (a large `memcpy` leaves it out of cache).
+fn fixed_vs_random<T>(
     measurements: usize,
     rng: &mut ChaCha20Rng,
+    mut fixed: impl FnMut() -> T,
     mut fresh: impl FnMut(&mut ChaCha20Rng) -> T,
     mut run: impl FnMut(&T),
-) -> Welch {
-    let fixed = fresh(rng);
-    let mut test = Welch::default();
-    for _ in 0..measurements.div_ceil(CHUNK) {
+) -> Cropped {
+    let mut test = Cropped::default();
+    let mut first = Vec::new();
+    for chunk in 0..measurements.div_ceil(CHUNK) {
         let inputs: Vec<(usize, T)> = (0..CHUNK)
             .map(|_| {
                 let class = (rng.next_u32() & 1) as usize;
-                (
-                    class,
-                    if class == 0 {
-                        fixed.clone()
-                    } else {
-                        fresh(rng)
-                    },
-                )
+                (class, if class == 0 { fixed() } else { fresh(rng) })
             })
             .collect();
         for (class, input) in &inputs {
             let start = Instant::now();
             run(black_box(input));
-            test.push(*class, start.elapsed().as_nanos() as f64);
+            let elapsed = start.elapsed().as_nanos() as f64;
+            if chunk == 0 {
+                first.push(elapsed);
+            }
+            test.push(*class, elapsed);
+        }
+        if chunk == 0 {
+            test.set_thresholds(&mut first);
         }
     }
     test
 }
 
-fn prepared(rows: usize, width: usize, ring_dim: usize) -> PreparedMatrix<F, D> {
-    let shape = MatrixShape {
-        rows,
-        width,
-        ring_dim,
-    };
-    let data = derive_public_matrix_prefix(
-        shape.num_field_elements().expect("shape"),
-        &PublicMatrixSeed::shake256_paged_v1([7; 32]),
-    )
-    .expect("stream");
-    PreparedMatrix::new(&MatrixView::new(shape, &data).expect("view")).expect("matrix")
-}
-
-fn run(seed: u64, measurements: usize, failures: &mut usize) {
-    let mut rng = ChaCha20Rng::seed_from_u64(seed);
-
-    let ajtai = prepared(3, 16, D);
-    let test = fixed_vs_random(
-        measurements,
-        &mut rng,
-        |rng| centered(rng, 16 * D, MASK_BOUND),
-        |y| {
-            let _ = black_box(ajtai.apply_centered(y, MASK_BOUND as u32));
-        },
-    );
-    report("Ajtai map N·y, fixed vs random y", &test, failures);
-
-    let level = AjtaiLevel {
-        matrix: MatrixShape {
-            rows: 1,
-            width: 4 * 32,
-            ring_dim: D,
-        },
-        digits: GadgetDigits {
-            log_basis: 4,
-            levels: 32,
-        },
-        message_rings: 4,
-        randomness_columns: 0,
-    };
-    let v_matrix = prepared(1, 4 * 32, D);
-    let test = fixed_vs_random(
-        measurements,
-        &mut rng,
-        |rng| {
-            (0..4)
-                .map(|_| CyclotomicRing::<F, D>::random(rng))
-                .collect::<Vec<_>>()
-        },
-        |v| {
-            let _ = black_box(commit(&level, &v_matrix, v, &[]));
-        },
-    );
-    report(
-        "commitment t_D = A_D G⁻¹(V), fixed vs random V",
-        &test,
-        failures,
-    );
-
-    let table = SegmentTable::new(vec![Segment {
-        role: SegmentRole::Witness,
-        len: 16,
-        native_dim: 4 * CHALLENGE_RING_DIM,
-        log_basis: 4,
-        shape: SegmentShape::Dense,
-        mask: SegmentMask::Gaussian,
-    }])
-    .expect("table");
-    let test = fixed_vs_random(
-        measurements,
-        &mut rng,
-        |rng| centered(rng, table.num_coefficients(), MASK_BOUND),
-        |y| {
-            let _ = black_box(table.challenge_view::<F>(y));
-        },
-    );
-    report("challenge view of y, fixed vs random y", &test, failures);
-
-    let s = centered(&mut rng, 16 * CHALLENGE_RING_DIM, 8);
-    let test = fixed_vs_random(
-        measurements,
-        &mut rng,
-        |rng| -> DenseChallenge {
-            let mut seed = [0u8; 32];
-            rng.fill_bytes(&mut seed);
-            sample_challenge_ct(&seed)
-                .and_then(|c| c.to_dense_ct())
-                .expect("challenge")
-        },
-        |c| {
-            let _ = black_box(challenge_times_i64(c, CHALLENGE_RING_DIM, &s));
-        },
-    );
-    report("shift c·s, fixed vs random c", &test, failures);
-
-    let mut test = Welch::default();
-    let mut seeds = vec![[0u8; 32]; CHUNK];
-    for _ in 0..measurements.div_ceil(CHUNK) {
-        for seed in &mut seeds {
-            rng.fill_bytes(seed);
-        }
-        for seed in &seeds {
-            let start = Instant::now();
-            let challenge = black_box(sample_challenge_ct(black_box(seed))).expect("challenge");
-            let elapsed = start.elapsed().as_nanos() as f64;
-            test.push(usize::from(challenge.positions.contains(&0)), elapsed);
+/// A mask: Gaussian ranges filled, public coordinates zero.
+///
+/// Every class must reach memory the same way: the buffer starts nonzero
+/// so no store of 0 is elided onto the shared zero page, and callers pass
+/// a fixed value through `black_box` so it is stored element by element,
+/// like a random one, not by a bulk fill that may bypass the cache.
+fn mask(harness_len: usize, ranges: &[Range<usize>], value: impl Fn() -> i64) -> Vec<i64> {
+    let mut y = vec![1i64; harness_len];
+    y.fill(0);
+    for range in ranges {
+        for slot in &mut y[range.clone()] {
+            *slot = value();
         }
     }
-    report("challenge sampling, 0 ∈ support vs not", &test, failures);
+    y
+}
+
+fn run_dimension<const D: usize>(
+    seed: u64,
+    measurements: usize,
+    commit_measurements: usize,
+    failures: &mut usize,
+) {
+    println!(" D = {D}:");
+    let harness = AttemptHarness::<D>::new(seed).expect("harness");
+    let ranges = harness.gaussian_ranges();
+    let len = harness.len();
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let bound = MASK_BOUND as u32;
+    harness
+        .steps(|steps| {
+            let random = |rng: &mut ChaCha20Rng| {
+                let cell = RefCell::new(rng.clone());
+                let y = mask(len, &ranges, || {
+                    (cell.borrow_mut().next_u64() % (2 * MASK_BOUND as u64 + 1)) as i64 - MASK_BOUND
+                });
+                *rng = cell.into_inner();
+                y
+            };
+            for (label, value) in [("0", 0), ("+B", MASK_BOUND), ("−B", -MASK_BOUND)] {
+                let fixed = || mask(len, &ranges, || black_box(value));
+                let test = fixed_vs_random(measurements, &mut rng, fixed, random, |y| {
+                    let _ = black_box(steps.linear_parts(y));
+                });
+                report(
+                    &format!("linear parts of y, fixed {label}"),
+                    &test,
+                    failures,
+                );
+                let test = fixed_vs_random(measurements, &mut rng, fixed, random, |y| {
+                    let _ = black_box(steps.ajtai(y, bound));
+                });
+                report(&format!("N·y with gadget, fixed {label}"), &test, failures);
+                let test = fixed_vs_random(measurements, &mut rng, fixed, random, |y| {
+                    let _ = black_box(steps.l_row(y, bound));
+                });
+                report(&format!("L·y, fixed {label}"), &test, failures);
+            }
+            // Q_μ(0, y) and the polar form, on precomputed parts.
+            let parts: Vec<_> = (0..64)
+                .map(|_| steps.linear_parts(&random(&mut rng)))
+                .collect::<Result<_, _>>()?;
+            // As many separate copies of the fixed class, so both classes
+            // cycle through the same amount of memory.
+            let fixed_parts: Vec<_> = (0..64)
+                .map(|_| steps.linear_parts(&mask(len, &ranges, || black_box(MASK_BOUND))))
+                .collect::<Result<_, _>>()?;
+            let mut test = Cropped::default();
+            let mut first = Vec::new();
+            for index in 0..measurements {
+                let class = (rng.next_u32() & 1) as usize;
+                let input = if class == 0 {
+                    &fixed_parts[index % 64]
+                } else {
+                    &parts[index % 64]
+                };
+                let start = Instant::now();
+                let _ = black_box(steps.quadratic_at_zero(black_box(input)));
+                let _ = black_box(steps.polar(black_box(input)));
+                let elapsed = start.elapsed().as_nanos() as f64;
+                if index < CHUNK {
+                    first.push(elapsed);
+                    if index + 1 == CHUNK {
+                        test.set_thresholds(&mut first);
+                    }
+                }
+                test.push(class, elapsed);
+            }
+            report("Q_μ(0,y) and polar form, fixed +B", &test, failures);
+
+            let v_rings = harness.v_rings();
+            let random_v = |rng: &mut ChaCha20Rng| -> Vec<CyclotomicRing<F, RING>> {
+                (0..v_rings).map(|_| CyclotomicRing::random(rng)).collect()
+            };
+            for (label, value) in [("0", F::from_u64(0)), ("−1", -F::from_u64(1))] {
+                let fixed = || -> Vec<CyclotomicRing<F, RING>> {
+                    (0..v_rings)
+                        .map(|_| CyclotomicRing::from_coefficients([value; RING]))
+                        .collect()
+                };
+                let test = fixed_vs_random(commit_measurements, &mut rng, fixed, random_v, |v| {
+                    let _ = black_box(steps.commit_v(v));
+                });
+                report(&format!("t_D = A_D G⁻¹(V), fixed {label}"), &test, failures);
+            }
+
+            let t_d = steps.commit_v(&random_v(&mut rng))?;
+            let test = fixed_vs_random(
+                measurements,
+                &mut rng,
+                || [0u8; 32],
+                |rng| {
+                    let mut nonce = [0u8; 32];
+                    rng.fill_bytes(&mut nonce);
+                    nonce
+                },
+                |nonce| {
+                    let _ = black_box(steps.seed(nonce, &t_d));
+                },
+            );
+            report("attempt fork seed, fixed zero nonce", &test, failures);
+
+            let y = random(&mut rng);
+            let gaussian: usize = ranges.iter().map(|range| range.len()).sum();
+            let (mut z, mut v) = (vec![0i64; gaussian], vec![0i64; gaussian]);
+            let random_c = |rng: &mut ChaCha20Rng| -> DenseChallenge {
+                std::array::from_fn(|_| (rng.next_u32() % 5) as i8 - 2)
+            };
+            for (label, value) in [("0", 0i8), ("+2", 2), ("−2", -2)] {
+                let test = fixed_vs_random(
+                    measurements,
+                    &mut rng,
+                    || [value; 64],
+                    random_c,
+                    |c| {
+                        let _ = black_box(steps.assemble(c, &y, &mut z, &mut v));
+                    },
+                );
+                report(&format!("z/v assembly, fixed c = {label}"), &test, failures);
+            }
+            Ok(())
+        })
+        .expect("steps");
+}
+
+fn run_sampler(seed: u64, measurements: usize, failures: &mut usize) {
+    // Per candidate count, the accepted challenge's support splits the
+    // timings: 0 in the support or not.
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let mut tests: Vec<Cropped> = (0..4).map(|_| Cropped::default()).collect();
+    let mut first: Vec<Vec<f64>> = vec![Vec::new(); 4];
+    for _ in 0..measurements {
+        let mut sample_seed = [0u8; 32];
+        rng.fill_bytes(&mut sample_seed);
+        let start = Instant::now();
+        let (challenge, count) =
+            black_box(sample_challenge_ct_counted(black_box(&sample_seed))).expect("challenge");
+        let elapsed = start.elapsed().as_nanos() as f64;
+        if let Some(index) = count.checked_sub(1).filter(|&index| index < 4) {
+            let class = usize::from(challenge.positions.contains(&0));
+            if first[index].len() < CHUNK {
+                first[index].push(elapsed);
+                if first[index].len() == CHUNK {
+                    tests[index].set_thresholds(&mut first[index]);
+                }
+            }
+            tests[index].push(class, elapsed);
+        }
+    }
+    for (index, test) in tests.iter().enumerate() {
+        report(
+            &format!(
+                "challenge sampling, {} candidate(s), 0 ∈ support vs not",
+                index + 1
+            ),
+            test,
+            failures,
+        );
+    }
+}
+
+/// Sets the calling thread's DIT bit (FEAT_DIT, every Apple M-series core):
+/// without it the core may time instructions by their operands.
+#[cfg(target_arch = "aarch64")]
+fn enable_dit() {
+    // SAFETY: `msr DIT, #1` writes only PSTATE.DIT of this thread; it reads
+    // and writes no memory and leaves the stack untouched.
+    unsafe { std::arch::asm!(".inst 0xd503415f", options(nomem, nostack)) };
 }
 
 fn main() -> ExitCode {
+    if std::env::var_os("SIGMA_DUDECT_DIT").is_some() {
+        #[cfg(target_arch = "aarch64")]
+        {
+            enable_dit();
+            ThreadPoolBuilder::new()
+                .start_handler(|_| enable_dit())
+                .build_global()
+                .expect("global pool");
+            println!("DIT set on every thread");
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        println!("SIGMA_DUDECT_DIT ignored: not aarch64");
+    }
     let mut args = std::env::args().skip(1);
     let measurements: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(100_000);
-    let seeds: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(3);
+    let seeds: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(2);
+    let commit_measurements: usize = args
+        .next()
+        .and_then(|a| a.parse().ok())
+        .unwrap_or(measurements);
     let mut failures = 0;
     for seed in 0..seeds {
         println!("seed {seed}:");
-        run(seed, measurements, &mut failures);
+        let commit = if seed == 0 {
+            commit_measurements
+        } else {
+            measurements
+        };
+        run_dimension::<64>(seed, measurements, commit, &mut failures);
+        run_dimension::<256>(seed, measurements / 4, commit / 4, &mut failures);
+        run_sampler(seed, measurements, &mut failures);
     }
     println!("{failures} test(s) above |t| = {THRESHOLD}");
     if failures == 0 {
         ExitCode::SUCCESS
     } else {
-        eprintln!("sigma_dudect: timing differences found");
         ExitCode::FAILURE
     }
 }
