@@ -69,6 +69,20 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     ap_bind_lanes: CudaFunction,
     #[cfg(test)]
+    rwm_segment_flags: CudaFunction,
+    #[cfg(test)]
+    rwm_segment_bounds: CudaFunction,
+    #[cfg(test)]
+    rwm_count: CudaFunction,
+    #[cfg(test)]
+    rwm_merge: CudaFunction,
+    #[cfg(test)]
+    rwm_message: CudaFunction,
+    #[cfg(test)]
+    rwm_square_lut: CudaFunction,
+    #[cfg(test)]
+    rwm_deref_coeffs: CudaFunction,
+    #[cfg(test)]
     unr_mul_scatter: CudaFunction,
     #[cfg(test)]
     unr_reduce: CudaFunction,
@@ -239,6 +253,20 @@ impl CudaKernelContext {
             #[cfg(test)]
             ap_bind_lanes: module.load_function("ap_bind_lanes_kernel")?,
             #[cfg(test)]
+            rwm_segment_flags: module.load_function("rwm_segment_flags_kernel")?,
+            #[cfg(test)]
+            rwm_segment_bounds: module.load_function("rwm_segment_bounds_kernel")?,
+            #[cfg(test)]
+            rwm_count: module.load_function("rwm_count_kernel")?,
+            #[cfg(test)]
+            rwm_merge: module.load_function("rwm_merge_kernel")?,
+            #[cfg(test)]
+            rwm_message: module.load_function("rwm_message_kernel")?,
+            #[cfg(test)]
+            rwm_square_lut: module.load_function("rwm_square_lut_kernel")?,
+            #[cfg(test)]
+            rwm_deref_coeffs: module.load_function("rwm_deref_coeffs_kernel")?,
+            #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             #[cfg(test)]
             unr_reduce: module.load_function("unr_reduce_kernel")?,
@@ -393,6 +421,38 @@ impl CudaKernelContext {
     pub(crate) fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn upload_u16_slice(&self, values: &[u16]) -> Result<CudaSlice<u16>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn download_u16(&self, buffer: &CudaSlice<u16>) -> Result<Vec<u16>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u16>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn alloc_u16_unset(&self, len: usize) -> Result<CudaSlice<u16>, CudaError> {
+        self.alloc_unset::<u16>(len)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn download_u32_range(
+        &self,
+        buffer: &CudaSlice<u32>,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<u32>, CudaError> {
+        let view = buffer.slice(start..end);
+        xfer_stats::timed(Phase::D2h, (end - start) * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtoh(&view)?)
         })
     }
 
@@ -599,6 +659,41 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn ap_bind_lanes(&self) -> &CudaFunction {
         &self.ap_bind_lanes
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn rwm_segment_flags(&self) -> &CudaFunction {
+        &self.rwm_segment_flags
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn rwm_segment_bounds(&self) -> &CudaFunction {
+        &self.rwm_segment_bounds
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn rwm_count(&self) -> &CudaFunction {
+        &self.rwm_count
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn rwm_merge(&self) -> &CudaFunction {
+        &self.rwm_merge
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn rwm_message(&self) -> &CudaFunction {
+        &self.rwm_message
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn rwm_square_lut(&self) -> &CudaFunction {
+        &self.rwm_square_lut
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn rwm_deref_coeffs(&self) -> &CudaFunction {
+        &self.rwm_deref_coeffs
     }
 
     #[cfg(test)]

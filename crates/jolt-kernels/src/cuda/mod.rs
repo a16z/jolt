@@ -106,6 +106,12 @@
 //! optimized materializes only prefixes used by present lookup tables. CUDA
 //! uploads the phase tables, evaluates them at 0 and 2, and binds their rows
 //! in batched device launches before downloading the next phase's checkpoints.
+//! Sparse read/write matrices keep native value checkpoints and merge adjacent
+//! cycle rows on device. Coefficient lookup tables grow with each bind, as in
+//! optimized. CUDA writes merged rows to fresh arrays; optimized's indexed and
+//! direct stages compact existing entries in place.
+//! Cycle shards sum round coefficients on the host and gather their remaining
+//! rows on GPU 0 before binding the shard variables.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -116,6 +122,8 @@ mod common;
 mod dory;
 #[cfg(test)]
 mod instruction_read_raf;
+#[cfg(test)]
+mod registers_read_write;
 
 pub use common::context::{
     context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,

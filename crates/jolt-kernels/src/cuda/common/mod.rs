@@ -24,6 +24,8 @@ pub mod primitives;
 #[cfg(test)]
 pub(crate) mod ra_poly;
 #[cfg(test)]
+pub(crate) mod read_write_matrix;
+#[cfg(test)]
 pub(crate) mod split_eq;
 #[cfg(test)]
 pub(crate) mod sum_of_products;
