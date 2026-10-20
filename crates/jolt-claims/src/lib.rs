@@ -25,6 +25,7 @@ extern crate self as jolt_claims;
 
 mod claim_data;
 mod claims;
+mod factored;
 mod formula_error;
 pub mod lattice;
 mod ops;
@@ -39,6 +40,7 @@ pub use claim_data::{
     NoOutputs, OutputClaims, SumcheckChallenges,
 };
 pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
+pub use factored::{FactoredExpr, FactoredTerm};
 pub use jolt_claims_derive::{InputClaims, OutputClaims, SumcheckChallenges};
 pub use sumcheck::SumcheckDomain;
 pub use symbolic::SymbolicSumcheck;

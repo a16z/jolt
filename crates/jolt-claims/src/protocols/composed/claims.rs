@@ -7,7 +7,7 @@ use crate::protocols::field_inline::relations::{
 use crate::protocols::field_inline::FieldInlineOpeningId;
 use crate::protocols::jolt::relations::spartan as base;
 use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-use crate::{Expr, InputClaims, MapCells, MissingOpeningValue, OutputClaims};
+use crate::{Expr, FactoredExpr, InputClaims, MapCells, MissingOpeningValue, OutputClaims};
 use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
@@ -160,6 +160,8 @@ where
 }
 
 pub type ComposedExpr<F> = Expr<F, ComposedOpeningId, JoltDerivedId, JoltChallengeId>;
+pub type ComposedFactoredExpr<F> =
+    FactoredExpr<F, ComposedOpeningId, JoltDerivedId, JoltChallengeId>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 #[protocol(field_inline)]

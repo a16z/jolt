@@ -3,9 +3,10 @@ use jolt_openings::CommitmentGroupRole;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
-use crate::Expr;
+use crate::{Expr, FactoredExpr};
 
 pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
+pub type JoltFactoredExpr<F> = FactoredExpr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltRelationId {
