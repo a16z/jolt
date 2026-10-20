@@ -8,6 +8,10 @@ license = "MIT OR Apache-2.0"
 keywords = ["SNARK", "cryptography", "proofs", "fiat-shamir"]
 categories = ["cryptography", "no-std"]
 
+[package.metadata.cargo-machete]
+# Enabled only to select getrandom 0.4's `wasm_js` backend on wasm32.
+ignored = ["getrandom_v04"]
+
 [lints]
 workspace = true
 

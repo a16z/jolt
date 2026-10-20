@@ -42,7 +42,7 @@ jolt-transcript = { workspace = true, features = [
   "transcript-keccak",
 ] }
 num-traits = { workspace = true }
-rand_core = { workspace = true }
+rand_core = { workspace = true, features = ["getrandom"] }
 
 [[test]]
 name = "committed"
