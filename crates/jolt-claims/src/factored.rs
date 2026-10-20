@@ -7,6 +7,8 @@
 //! relation whose formula is a product of sums states it once here, and its
 //! [`Expr`] is the [`expand`](FactoredExpr::expand)ed form.
 
+use std::ops::Add;
+
 use jolt_field::Ring;
 
 use crate::{Expr, Source, Term};
@@ -117,7 +119,7 @@ impl<F: Ring, O, P, C> From<Expr<F, O, P, C>> for FactoredExpr<F, O, P, C> {
     }
 }
 
-impl<F, O, P, C> std::ops::Add for FactoredExpr<F, O, P, C> {
+impl<F, O, P, C> Add for FactoredExpr<F, O, P, C> {
     type Output = Self;
 
     fn add(mut self, mut rhs: Self) -> Self::Output {
