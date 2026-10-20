@@ -571,6 +571,62 @@ __device__ __forceinline__ int glv_sub_abs(const u64 *x, const u64 *y, int len, 
     return 1;
 }
 
+extern "C" __global__ void msm_glv_decompose_4d_kernel(
+    const u64 *__restrict__ scalars, const u64 *__restrict__ table,
+    const unsigned char *__restrict__ table_signs, unsigned int count,
+    u64 *__restrict__ out_scalars, unsigned char *__restrict__ out_signs) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    u64 k[LIMBS];
+    load4(scalars + (unsigned long long)i * LIMBS, k);
+
+    u64 acc[4][2];
+    for (int j = 0; j < 4; j++) {
+        acc[j][0] = 0;
+        acc[j][1] = 0;
+    }
+
+    for (int bit = 0; bit < 254; bit++) {
+        unsigned int limb = (unsigned int)(bit >> 6);
+        unsigned int shift = (unsigned int)(bit & 63);
+        if (((k[limb] >> shift) & 1ull) == 0ull) continue;
+        const u64 *row = table + (unsigned long long)bit * 8;
+        const unsigned char *row_signs = table_signs + (unsigned long long)bit * 4;
+        for (int j = 0; j < 4; j++) {
+            u64 lo = row[j * 2];
+            u64 hi = row[j * 2 + 1];
+            if (row_signs[j] != 0) {
+                u64 borrow = 0;
+                acc[j][0] = sbb(acc[j][0], lo, &borrow);
+                acc[j][1] = sbb(acc[j][1], hi, &borrow);
+            } else {
+                u64 carry = 0;
+                acc[j][0] = adc(acc[j][0], lo, &carry);
+                acc[j][1] = adc(acc[j][1], hi, &carry);
+            }
+        }
+    }
+
+    for (int j = 0; j < 4; j++) {
+        u64 magnitude[LIMBS];
+        unsigned char negative = (unsigned char)((acc[j][1] >> 63) & 1ull);
+        if (negative != 0) {
+            u64 borrow = 0;
+            magnitude[0] = sbb(0ull, acc[j][0], &borrow);
+            magnitude[1] = sbb(0ull, acc[j][1], &borrow);
+        } else {
+            magnitude[0] = acc[j][0];
+            magnitude[1] = acc[j][1];
+        }
+        magnitude[2] = 0;
+        magnitude[3] = 0;
+        unsigned long long slot = (unsigned long long)j * count + i;
+        store4(out_scalars + slot * LIMBS, magnitude);
+        out_signs[slot] = negative;
+    }
+}
+
 extern "C" __global__ void msm_glv_decompose_2d_kernel(const u64 *__restrict__ scalars,
                                                      const u64 *__restrict__ constants,
                                                      unsigned int count,

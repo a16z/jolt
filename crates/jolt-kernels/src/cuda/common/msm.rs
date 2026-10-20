@@ -12,6 +12,10 @@
 //! G2 points use Jacobian coordinates over Fq2, with 24 Montgomery limbs per
 //! point. Segmented sums keep medium segments on independent threads and let
 //! a warp cooperate on large segments; the index high bit encodes negation.
+//! Four-dimensional G2 decomposition sums power-of-two table entries with a
+//! signed 128-bit accumulator per component. Magnitudes stay on device in
+//! component-major order; sign bytes return to the host. CUDA uses `1` for
+//! negative components; the optimized CPU API uses `true` for positive ones.
 //!
 //! G1 doubling and addition keep Jacobian coordinates; mixed addition consumes
 //! affine addends with all-zero device coordinates representing infinity.
@@ -44,9 +48,21 @@
 //! Window folding combines each row's results from the most significant window
 //! down, with repeated doubling between windows.
 
-use std::sync::Arc;
+#[expect(
+    clippy::unreadable_literal,
+    clippy::type_complexity,
+    clippy::large_const_arrays,
+    reason = "BN254 G2 endomorphism decomposition constants uploaded to CUDA"
+)]
+mod glv4_table {
+    include!("glv4_table.rs");
+}
+
+use std::sync::{Arc, OnceLock};
 
 use jolt_field::Fr;
+
+use glv4_table::POWER_OF_2_DECOMPOSITIONS;
 
 use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, CudaView, LaunchConfig, PushKernelArg};
 
@@ -246,6 +262,28 @@ const GLV_CONSTANTS: [u64; 14] = [
 ];
 
 const GLV_SCALAR_BITS: usize = 128;
+
+const GLV4_SCALAR_BITS: usize = 101;
+
+fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
+    static TABLE: OnceLock<(Vec<u64>, Vec<u8>)> = OnceLock::new();
+    let (magnitudes, signs) = TABLE.get_or_init(|| {
+        let rows = POWER_OF_2_DECOMPOSITIONS;
+        let mut magnitudes = Vec::with_capacity(rows.len() * 8);
+        let mut signs = Vec::with_capacity(rows.len() * 4);
+        for (k0, k1, k2, k3, neg0, neg1, neg2, neg3) in rows {
+            for component in [k0, k1, k2, k3] {
+                magnitudes.push(component as u64);
+                magnitudes.push((component >> 64) as u64);
+            }
+            for negative in [neg0, neg1, neg2, neg3] {
+                signs.push(u8::from(negative));
+            }
+        }
+        (magnitudes, signs)
+    });
+    (magnitudes, signs)
+}
 
 const SHARED_WINDOW_BITS: usize = 4;
 
@@ -738,6 +776,45 @@ impl CudaKernelContext {
             });
         }
         Ok(())
+    }
+
+    fn glv_decompose_4d(
+        &self,
+        scalars: &CudaSlice<u64>,
+        count: usize,
+    ) -> Result<(CudaSlice<u64>, Vec<u8>), CudaError> {
+        let mut out = self.alloc_u64(4 * count.max(1) * FQ_LIMBS)?;
+        if count == 0 {
+            return Ok((out, Vec::new()));
+        }
+        if scalars.len() < count * FQ_LIMBS {
+            return Err(CudaError::LengthMismatch {
+                expected: count * FQ_LIMBS,
+                got: scalars.len(),
+            });
+        }
+        let (magnitudes, table_signs) = glv_4d_table();
+        let device_table = self.upload_u64_slice(magnitudes)?;
+        let device_table_signs = self.upload_u8_slice(table_signs)?;
+        let mut signs = self.upload_u8_slice(&vec![0u8; 4 * count])?;
+        let count_arg = Self::count_of(count)?;
+        let mut builder = self.stream().launch_builder(self.msm_glv_decompose_4d());
+        let _ = builder.arg(scalars);
+        let _ = builder.arg(&device_table);
+        let _ = builder.arg(&device_table_signs);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut out);
+        let _ = builder.arg(&mut signs);
+        // SAFETY: thread `i < count` reads only `scalars[i]` (4 limbs of a buffer
+        // holding at least `count * FQ_LIMBS`, checked above) and rows
+        // `0..254` of the two table buffers, whose lengths are `254 * 8` u64 and
+        // `254 * 4` u8 by construction in `glv_4d_table`. It writes elements
+        // `j * count + i` for `j < 4` of both a `4 * count * FQ_LIMBS` u64 output
+        // and a `4 * count` u8 sign array, so writes are four disjoint slots per
+        // thread in each and in bounds. Threads with `i >= count` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+        let hosted = self.download_u8(&signs)?;
+        Ok((out, hosted))
     }
 
     fn glv_decompose_2d(
@@ -2470,7 +2547,7 @@ mod tests {
     use ark_ec::scalar_mul::glv::GLVConfig;
     use ark_ec::scalar_mul::variable_base::msm_i128;
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
-    use ark_ff::BigInt;
+    use ark_ff::{BigInt, BigInteger};
     use ark_ff::{Field, PrimeField, Zero};
     use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
     use jolt_field::{Fr, Ring};
@@ -2483,7 +2560,7 @@ mod tests {
     };
     use super::{
         take_limbs, unflatten_jacobian, AffineLimbs, JacobianLimbs, OneHotMode, SegmentMode,
-        CLASS_FLOOR, COLD, FQ_LIMBS, ONE_HOT_SHARED_SLOTS, SMALL_SEGMENT_LIMIT,
+        CLASS_FLOOR, COLD, FQ_LIMBS, GLV4_SCALAR_BITS, ONE_HOT_SHARED_SLOTS, SMALL_SEGMENT_LIMIT,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
 
@@ -3761,6 +3838,10 @@ mod tests {
         ArkFr::from(u128::MAX) + ArkFr::ONE
     }
 
+    fn psi_eigenvalue() -> ArkFr {
+        ArkFr::from_le_bytes_mod_order(&BigInteger::to_bytes_le(&Fq::MODULUS))
+    }
+
     fn limbs_to_ark(limbs: &[u64]) -> ArkFr {
         ArkFr::from_bigint(BigInt(take_limbs(limbs))).expect("canonical limbs below Fr")
     }
@@ -3799,6 +3880,53 @@ mod tests {
                 assert_eq!(
                     divergence, None,
                     "endomorphism diverged at count {count}, offset {offset}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn glv_decompose_4d_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        let lambda = psi_eigenvalue();
+        let bound = ArkFr::from(1u128 << (GLV4_SCALAR_BITS - 1));
+        for count in GLV_LENS {
+            let scalars: Vec<Fr> = (0..count)
+                .map(|index| Fr::from_u64(index as u64 * 7_654_321 + 13))
+                .collect();
+            let uploaded = context.upload(&scalars).expect("upload scalars");
+            let canonical = context
+                .canonical_scalars(&uploaded)
+                .expect("canonical scalars");
+            let (split, signs) = context
+                .glv_decompose_4d(&canonical, count)
+                .expect("glv decompose 4d");
+            let raw = context.download_u64(&split).expect("download split");
+
+            assert_eq!(signs.len(), 4 * count, "sign count at {count}");
+            for index in 0..count {
+                let mut rebuilt = ArkFr::ZERO;
+                let mut power = ArkFr::ONE;
+                for step in 0..4usize {
+                    let slot = (step * count + index) * FQ_LIMBS;
+                    let magnitude = limbs_to_ark(&raw[slot..slot + FQ_LIMBS]);
+                    assert!(
+                        magnitude < bound,
+                        "4d component {step} exceeded the GLV4_SCALAR_BITS bound at scalar {index}, count {count}"
+                    );
+                    if signs[step * count + index] == 0 {
+                        rebuilt += magnitude * power;
+                    } else {
+                        rebuilt -= magnitude * power;
+                    }
+                    power *= lambda;
+                }
+                assert_eq!(
+                    rebuilt,
+                    ark_fr(scalars[index]),
+                    "4d split failed to rebuild scalar {index} at count {count}"
                 );
             }
         }

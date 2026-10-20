@@ -113,6 +113,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_glv_decompose_2d: CudaFunction,
     #[cfg(test)]
+    msm_glv_decompose_4d: CudaFunction,
+    #[cfg(test)]
     msm_g1_endomorphism: CudaFunction,
     #[cfg(test)]
     msm_shared_scalar_rows_glv: CudaFunction,
@@ -235,6 +237,8 @@ impl CudaKernelContext {
             msm_one_hot_complement: module.load_function("msm_one_hot_complement_kernel")?,
             #[cfg(test)]
             msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
+            #[cfg(test)]
+            msm_glv_decompose_4d: module.load_function("msm_glv_decompose_4d_kernel")?,
             #[cfg(test)]
             msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
             #[cfg(test)]
@@ -607,6 +611,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_glv_decompose_2d(&self) -> &CudaFunction {
         &self.msm_glv_decompose_2d
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_glv_decompose_4d(&self) -> &CudaFunction {
+        &self.msm_glv_decompose_4d
     }
 
     #[cfg(test)]
