@@ -2,6 +2,8 @@
 use std::sync::Arc;
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use jolt_verifier::config::MIN_PADDED_TRACE_LENGTH;
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_verifier::ProgramPreprocessing;
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -47,6 +49,19 @@ fn invalid_trace_length_rejects_now() {
         &base,
         |case| {
             case.proof.trace_length = 3;
+        },
+    );
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
+fn undersized_trace_length_rejects_now() {
+    let base = standard_muldiv_case();
+    tamper_manifest::assert_verifier_fixture_tamper_rejects(
+        tamper_manifest::required_target("proof.trace_length"),
+        &base,
+        |case| {
+            case.proof.trace_length = MIN_PADDED_TRACE_LENGTH / 2;
         },
     );
 }
