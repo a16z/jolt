@@ -26,8 +26,7 @@ impl OneHotFamilyContract {
 
     pub fn num_vars_range(self, num_polys: usize) -> (usize, usize) {
         let (base_min, max, profile) = match self {
-            Self::K16(profile) => (12, 40, profile),
-            Self::K256(profile) => (12, 43, profile),
+            Self::K16(profile) | Self::K256(profile) => (12, 44, profile),
         };
         // Two-polynomial rows have more live blocks for the two chunked levels.
         let min = match (profile.chunks, profile.levels, num_polys) {
@@ -57,7 +56,7 @@ mod tests {
             (AkitaChunkProfile::new(4, 2), 13, 12),
             (AkitaChunkProfile::new(8, 2), 14, 13),
         ] {
-            for (k, max) in [(16, 40), (256, 43)] {
+            for (k, max) in [(16, 44), (256, 44)] {
                 let contract = OneHotFamilyContract::from_parts(k, profile).unwrap();
                 assert_eq!(contract.num_vars_range(1), (one_poly_min, max));
                 assert_eq!(contract.num_vars_range(2), (two_poly_min, max));

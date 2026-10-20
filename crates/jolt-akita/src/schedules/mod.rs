@@ -36,15 +36,17 @@ pub mod emit {
     use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
     /// Admitted production trace exponents for K=16.
-    pub const K16_TRACE_LOG_T: (usize, usize) = (12, 30);
+    pub const K16_TRACE_LOG_T: (usize, usize) = (12, 31);
     pub const K16_NUM_VARS: (usize, usize) = (
         K16_TRACE_LOG_T.0 + K16_COLUMN_VARIABLES,
         K16_TRACE_LOG_T.1 + K16_COLUMN_VARIABLES,
     );
     /// One- and two-polynomial rows used by adapter and grouped-planner diagnostics.
     pub const ONE_HOT_SCALAR_NUM_POLYS: &[usize] = &[1, 2];
+    /// Trace exponents of the K=256 native fixtures at the narrowest and widest admitted widths.
+    pub const K256_LARGE_TRACE_LOG_T: [usize; 2] = [30, 31];
     /// Bounded-dense advice and committed-program byte objects.
-    pub const DENSE_NUM_VARS: (usize, usize) = (14, 34);
+    pub const DENSE_NUM_VARS: (usize, usize) = (14, 35);
 
     /// First logical trace exponent using setup offloading.
     pub const RECURSIVE_TRACE_LOG_T_CUTOVER: usize = 21;
@@ -121,6 +123,14 @@ pub mod emit {
                     .iter()
                     .map(|&(vars, polys)| PolynomialGroupLayout::new(vars, polys)),
             );
+            let widths = trace_widths(K256_COLUMN_VARIABLES)?;
+            for log_t in K256_LARGE_TRACE_LOG_T {
+                admitted.extend([widths.first(), widths.last()].into_iter().flatten().map(
+                    |&num_polys| {
+                        PolynomialGroupLayout::new(log_t + K256_COLUMN_VARIABLES, num_polys)
+                    },
+                ));
+            }
             admitted.sort_unstable_by_key(|key| (key.num_polynomials(), key.num_vars()));
             admitted.dedup();
             return Ok(admitted);
@@ -130,7 +140,25 @@ pub mod emit {
                 "unsupported one-hot K={one_hot_k}"
             )));
         }
-        let column_variables = K16_COLUMN_VARIABLES;
+        let widths = trace_widths(K16_COLUMN_VARIABLES)?;
+        admitted.extend(keys(&widths.into_iter().collect::<Vec<_>>(), K16_NUM_VARS));
+        let fixtures: &[(usize, usize)] = if profile == AkitaChunkProfile::new(1, 0) {
+            &[(12, 1), (12, 2), (16, 1), (25, 1)]
+        } else {
+            &[(16, 1)]
+        };
+        admitted.extend(
+            fixtures
+                .iter()
+                .map(|&(vars, polys)| PolynomialGroupLayout::new(vars, polys)),
+        );
+        admitted.sort_unstable_by_key(|key| (key.num_polynomials(), key.num_vars()));
+        admitted.dedup();
+        Ok(admitted)
+    }
+
+    /// Native `OneHotTrace` column counts reachable from RV64 programs.
+    fn trace_widths(column_variables: usize) -> Result<BTreeSet<usize>, AkitaError> {
         // RV64 lookup keys have two 64-bit operands. Bytecode PCs fit u32,
         // and remapped RAM addresses are u64 byte addresses divided by eight.
         let mut widths = BTreeSet::new();
@@ -156,20 +184,7 @@ pub mod emit {
                 }
             }
         }
-        admitted.extend(keys(&widths.into_iter().collect::<Vec<_>>(), K16_NUM_VARS));
-        let fixtures: &[(usize, usize)] = if profile == AkitaChunkProfile::new(1, 0) {
-            &[(12, 1), (12, 2), (16, 1), (25, 1)]
-        } else {
-            &[(16, 1)]
-        };
-        admitted.extend(
-            fixtures
-                .iter()
-                .map(|&(vars, polys)| PolynomialGroupLayout::new(vars, polys)),
-        );
-        admitted.sort_unstable_by_key(|key| (key.num_polynomials(), key.num_vars()));
-        admitted.dedup();
-        Ok(admitted)
+        Ok(widths)
     }
 
     /// Fixture inventory and its direct-planning cutoff, separate from runtime admission.
