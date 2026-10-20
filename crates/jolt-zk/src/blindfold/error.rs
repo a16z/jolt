@@ -5,6 +5,8 @@ use jolt_sumcheck::SumcheckError;
 use jolt_transcript::TranscriptError;
 use thiserror::Error as ThisError;
 
+use crate::masking::ZkError;
+
 #[derive(Clone, Debug, ThisError, PartialEq, Eq)]
 pub enum RelaxedError {
     #[error("{name} length mismatch: expected {expected}, got {actual}")]
@@ -106,4 +108,28 @@ pub enum VerificationError<F: JoltField> {
     OuterFinalClaimMismatch { expected: F, actual: F },
     #[error("inner final claim mismatch: expected {expected}, got {actual}")]
     InnerFinalClaimMismatch { expected: F, actual: F },
+}
+
+impl<F: JoltField + 'static> From<ProverError<F>> for ZkError {
+    fn from(error: ProverError<F>) -> Self {
+        Self::BlindFoldProver(Box::new(error))
+    }
+}
+
+/// Truncation inside the BlindFold proof surfaces as
+/// [`ZkError::Transcript`], as it does everywhere else in a proof.
+impl<F: JoltField + 'static> From<VerificationError<F>> for ZkError {
+    fn from(error: VerificationError<F>) -> Self {
+        if let VerificationError::Transcript(error)
+        | VerificationError::OuterSumcheck {
+            source: SumcheckError::Transcript(error),
+        }
+        | VerificationError::InnerSumcheck {
+            source: SumcheckError::Transcript(error),
+        } = error
+        {
+            return Self::Transcript(error);
+        }
+        Self::BlindFoldRejected(Box::new(error))
+    }
 }

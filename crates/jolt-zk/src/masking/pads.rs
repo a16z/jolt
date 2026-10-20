@@ -114,7 +114,8 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
         &self.opening
     }
 
-    /// Sends `values` masked by the next `values.len()` pads: m̂ = m + p.
+    /// Sends `values` masked by the next `values.len()` pads, m̂ = m + p, and
+    /// returns the masked values as sent.
     ///
     /// # Errors
     ///
@@ -123,7 +124,7 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
         &mut self,
         values: &[F],
         transcript: &mut ProverTranscript<H>,
-    ) -> Result<PadSlots, ZkError> {
+    ) -> Result<Vec<F>, ZkError> {
         let slots = self.cursor.take(values.len())?;
         let pads =
             self.pads
@@ -133,7 +134,7 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
                 })?;
         let mut masked: Vec<F> = values.iter().zip(pads).map(|(m, p)| *m + *p).collect();
         transcript.exchange_all(&mut masked)?;
-        Ok(slots)
+        Ok(masked)
     }
 
     /// The decoded value m̂ − p of a masked value at `pad`.

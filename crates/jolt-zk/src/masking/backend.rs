@@ -1,17 +1,26 @@
 //! The back-end seam: a zero-knowledge argument for the residual relation
 //! over pads committed before the first challenge.
 
+use std::error::Error;
+
 use jolt_field::Field;
 use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 use rand_core::{CryptoRng, RngCore};
 use thiserror::Error as ThisError;
 
+use crate::blindfold::RelaxedError;
+
 use super::{CommittedPads, CommittedPadsView, PadLayout, ResidualRelation};
+
+/// A field-generic source error (a sumcheck or BlindFold error), erased so
+/// that [`ZkError`] stays field-independent like the verifier's error type.
+/// Callers recover the typed error with `downcast_ref`.
+pub type ErasedSource = Box<dyn Error + Send + Sync + 'static>;
 
 /// Why masking or a back end failed. Every variant is an invariant violation
 /// or a rejected proof; none is retryable.
-#[derive(Clone, Debug, ThisError, PartialEq, Eq)]
+#[derive(Debug, ThisError)]
 pub enum ZkError {
     #[error("ZK transcript: {0}")]
     Transcript(#[from] TranscriptError),
@@ -23,28 +32,39 @@ pub enum ZkError {
     InvalidLayout { reason: &'static str },
     #[error("invalid residual relation: {reason}")]
     InvalidRelation { reason: &'static str },
-    #[error("masked sumcheck: {reason}")]
-    Sumcheck { reason: String },
-    #[error("{backend} back end: {reason}")]
-    Backend {
-        backend: &'static str,
-        reason: String,
-    },
+    /// A `SumcheckError<F>`.
+    #[error("masked sumcheck: {0}")]
+    Sumcheck(#[source] ErasedSource),
+    #[error("BlindFold relation shape: {0}")]
+    BlindFoldShape(#[from] RelaxedError),
+    /// A BlindFold `ProverError<F>`.
+    #[error("BlindFold prover: {0}")]
+    BlindFoldProver(#[source] ErasedSource),
+    /// A BlindFold `VerificationError<F>` other than a transcript failure.
+    #[error("BlindFold proof rejected: {0}")]
+    BlindFoldRejected(#[source] ErasedSource),
 }
 
-impl<F: Field> From<SumcheckError<F>> for ZkError {
+/// A transcript failure surfaces as [`ZkError::Transcript`], and a
+/// [`ZkError`] that crossed the sumcheck engine as
+/// [`SumcheckError::PrivateChannel`] comes back as itself.
+impl<F: Field + 'static> From<SumcheckError<F>> for ZkError {
     fn from(error: SumcheckError<F>) -> Self {
-        Self::Sumcheck {
-            reason: error.to_string(),
+        if let SumcheckError::Transcript(error) = error {
+            return Self::Transcript(error);
         }
+        if let SumcheckError::PrivateChannel(source) = error {
+            return source
+                .downcast::<Self>()
+                .map_or_else(Self::Sumcheck, |error| *error);
+        }
+        Self::Sumcheck(Box::new(error))
     }
 }
 
 impl<F: Field> From<ZkError> for SumcheckError<F> {
     fn from(error: ZkError) -> Self {
-        Self::PrivateChannel {
-            reason: error.to_string(),
-        }
+        Self::PrivateChannel(Box::new(error))
     }
 }
 

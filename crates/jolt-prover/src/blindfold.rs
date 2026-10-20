@@ -118,12 +118,7 @@ where
     let auxiliary = masked
         .residual
         .auxiliary_values(|operand| pads.decode(operand.masked, operand.pad))?;
-    let slots = pads.send(&auxiliary, transcript)?;
-    let masked_auxiliary = auxiliary
-        .iter()
-        .zip(pads.pads().get(slots.start..).unwrap_or_default())
-        .map(|(value, pad)| *value + *pad)
-        .collect::<Vec<_>>();
+    let masked_auxiliary = pads.send(&auxiliary, transcript)?;
     let relation = masked.relation(&masked_auxiliary)?;
 
     let vc_setup = preprocessing

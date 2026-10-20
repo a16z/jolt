@@ -156,8 +156,10 @@ impl From<ZkError> for VerifierError {
             | ZkError::PadCountMismatch { .. }
             | ZkError::InvalidLayout { .. }
             | ZkError::InvalidRelation { .. }
-            | ZkError::Sumcheck { .. }
-            | ZkError::Backend { .. } => Self::Masking(error),
+            | ZkError::Sumcheck(_)
+            | ZkError::BlindFoldShape(_)
+            | ZkError::BlindFoldProver(_)
+            | ZkError::BlindFoldRejected(_) => Self::Masking(error),
         }
     }
 }

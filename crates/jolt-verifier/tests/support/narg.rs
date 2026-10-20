@@ -31,7 +31,6 @@ use jolt_verifier::{
     jolt_protocol_id, JoltProof, JoltSponge, JoltVerifierPreprocessing, ProofHeader, VerifierError,
     JOLT_SESSION,
 };
-use jolt_zk::masking::ZkError;
 
 /// A Jolt protocol region, in transcript order. Each is entered by the
 /// verifier setting the matching [`jolt_verifier::sites`] site.
@@ -800,8 +799,7 @@ fn is_truncation(result: &Result<(), VerifierError>) -> bool {
             VerifierError::MalformedCommitment { reason }
             | VerifierError::FinalOpeningVerificationFailed { reason }
             | VerifierError::FinalOpeningBatchFailed { reason }
-            | VerifierError::StageClaimSumcheckFailed { reason, .. }
-            | VerifierError::Masking(ZkError::Backend { reason, .. } | ZkError::Sumcheck { reason }),
+            | VerifierError::StageClaimSumcheckFailed { reason, .. },
         ) => reason.contains(&truncated),
         _ => false,
     }

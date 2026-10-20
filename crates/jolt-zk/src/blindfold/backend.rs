@@ -38,19 +38,11 @@ impl<VC: VectorCommitment> BlindFold<VC> {
     fn row_len(setup: &VC::Setup) -> Result<usize, ZkError> {
         let row_len = VC::capacity(setup);
         if row_len == 0 || !row_len.is_power_of_two() {
-            return Err(ZkError::Backend {
-                backend: "BlindFold",
-                reason: format!("vector-commitment capacity {row_len} is not a power of two"),
+            return Err(ZkError::InvalidLayout {
+                reason: "vector-commitment capacity is not a non-zero power of two",
             });
         }
         Ok(row_len)
-    }
-}
-
-fn backend_error(error: impl ToString) -> ZkError {
-    ZkError::Backend {
-        backend: "BlindFold",
-        reason: error.to_string(),
     }
 }
 
@@ -129,8 +121,7 @@ where
             row_len,
             opening.row_commitments.clone(),
             *residual,
-        )
-        .map_err(backend_error)?;
+        )?;
 
         let dimensions = &protocol.dimensions;
         let mut rows: Vec<Vec<VC::Field>> = pads
@@ -169,7 +160,7 @@ where
             },
             rng,
         )
-        .map_err(backend_error)
+        .map_err(ZkError::from)
     }
 
     fn verify<H: Sponge>(
@@ -185,10 +176,9 @@ where
             Self::row_len(setup)?,
             pads.commitment().clone(),
             *residual,
-        )
-        .map_err(backend_error)?;
+        )?;
         protocol
             .verify::<VC, H>(setup, transcript)
-            .map_err(backend_error)
+            .map_err(ZkError::from)
     }
 }

@@ -20,7 +20,7 @@ mod residual;
 )]
 mod tests;
 
-pub use backend::{ZkBackend, ZkError};
+pub use backend::{ErasedSource, ZkBackend, ZkError};
 pub use lowering::{
     lower_factored, sumcheck_rows, ClaimDomain, RoundFormat, RowsDomain, ShapeDomain, ValuesDomain,
 };
