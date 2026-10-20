@@ -12,6 +12,8 @@
 //! Auxiliary slots form an acyclic chain: each is defined by exactly one
 //! product row or defining affine row whose inputs are earlier slots.
 
+use std::ops::Range;
+
 use jolt_algebra::Field;
 use jolt_claims::{Expr, FactoredExpr, Source};
 use jolt_sumcheck::{BooleanHypercube, MaskedRound, SumcheckDomain, SumcheckDomainSpec};
@@ -65,6 +67,75 @@ impl ShapeDomain {
                 reason: "auxiliary slot count overflows usize",
             })?;
         Ok(())
+    }
+}
+
+/// The pads of product operands, recorded before the pads are committed:
+/// the lattice back end commits them as constant digit polynomials (Whiteout
+/// §3.2). Openings resolve to their masked slots; auxiliary slots are
+/// numbered from the layout's auxiliary range, as [`RowsDomain`] numbers
+/// them, so `operands` lists every product row's operand pad in the order the
+/// rows are emitted, each once.
+#[derive(Debug)]
+pub struct OperandShapeDomain {
+    auxiliary: usize,
+    end: usize,
+    pub operands: Vec<PadIndex>,
+}
+
+impl OperandShapeDomain {
+    pub fn new(auxiliary: Range<usize>) -> Self {
+        Self {
+            auxiliary: auxiliary.start,
+            end: auxiliary.end,
+            operands: Vec::new(),
+        }
+    }
+
+    fn next_slot(&mut self) -> Result<Option<PadIndex>, ZkError> {
+        if self.auxiliary >= self.end {
+            return Err(ZkError::PadsExhausted {
+                requested: 1,
+                remaining: 0,
+            });
+        }
+        self.auxiliary += 1;
+        Ok(Some(PadIndex(self.auxiliary - 1)))
+    }
+}
+
+impl<F> ClaimDomain<F> for OperandShapeDomain {
+    /// The slot of a value that is exactly one masked slot.
+    type Value = Option<PadIndex>;
+
+    fn constant(&self, _value: F) -> Option<PadIndex> {
+        None
+    }
+
+    fn add(&self, _lhs: &Option<PadIndex>, _rhs: &Option<PadIndex>) -> Option<PadIndex> {
+        None
+    }
+
+    fn scale(&self, _value: &Option<PadIndex>, _scale: F) -> Option<PadIndex> {
+        None
+    }
+
+    fn define_auxiliary(&mut self, _value: Option<PadIndex>) -> Result<Option<PadIndex>, ZkError> {
+        self.next_slot()
+    }
+
+    fn product(
+        &mut self,
+        x: Option<PadIndex>,
+        _y: Option<PadIndex>,
+    ) -> Result<Option<PadIndex>, ZkError> {
+        let x = x.ok_or(ZkError::InvalidRelation {
+            reason: "product operand is not a single masked slot",
+        })?;
+        if !self.operands.contains(&x) {
+            self.operands.push(x);
+        }
+        self.next_slot()
     }
 }
 

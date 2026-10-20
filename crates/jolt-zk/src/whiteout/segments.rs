@@ -5,6 +5,7 @@
 //! `m`-tuple over the challenge ring `R = F[X]/(X^64 + 1)` by stride packing
 //! (native coefficient `m·i + k` is coefficient `i` of component `k`).
 
+use jolt_algebra::{CyclotomicRing, Field};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 
 use super::WhiteoutError;
@@ -142,6 +143,78 @@ impl SegmentTable {
         self.num_coefficients
     }
 
+    /// Number of challenge-ring elements of `s`.
+    pub fn num_rings(&self) -> usize {
+        self.num_coefficients / CHALLENGE_RING_DIM
+    }
+
+    /// For each segment, its first coefficient and its first
+    /// challenge-ring element.
+    pub fn starts(&self) -> Vec<(usize, usize)> {
+        let mut coefficient = 0;
+        self.segments
+            .iter()
+            .map(|segment| {
+                let start = (coefficient, coefficient / CHALLENGE_RING_DIM);
+                coefficient += segment.num_coefficients();
+                start
+            })
+            .collect()
+    }
+
+    /// The index of the only segment with `role`, if exactly one has it.
+    pub fn unique(&self, role: SegmentRole) -> Option<usize> {
+        let mut found = self
+            .segments
+            .iter()
+            .enumerate()
+            .filter(|(_, segment)| segment.role == role)
+            .map(|(index, _)| index);
+        match (found.next(), found.next()) {
+            (Some(index), None) => Some(index),
+            _ => None,
+        }
+    }
+
+    /// The challenge-ring view of native coefficients `coefficients`, laid
+    /// out like `s`: native element `e` of a segment with `native_dim = 64m`
+    /// becomes ring elements `m·e .. m·e + m`, component `k` holding native
+    /// coefficients `m·i + k`.
+    ///
+    /// Every coefficient is lifted into `F` from its magnitude and sign by
+    /// arithmetic, so the view of a secret vector is computed in constant
+    /// time.
+    pub fn challenge_view<F: Field>(
+        &self,
+        coefficients: &[i64],
+    ) -> Result<Vec<CyclotomicRing<F, CHALLENGE_RING_DIM>>, WhiteoutError> {
+        if coefficients.len() != self.num_coefficients {
+            return Err(WhiteoutError::WitnessLength {
+                expected: self.num_coefficients,
+                actual: coefficients.len(),
+            });
+        }
+        let mut view = Vec::with_capacity(self.num_rings());
+        let mut rest = coefficients;
+        for segment in &self.segments {
+            let (values, tail) = rest.split_at(segment.num_coefficients());
+            rest = tail;
+            let stride = segment.native_dim / CHALLENGE_RING_DIM;
+            for element in values.chunks_exact(segment.native_dim) {
+                for component in 0..stride {
+                    let ring: Vec<F> = element
+                        .iter()
+                        .skip(component)
+                        .step_by(stride)
+                        .map(|&value| lift_ct(value))
+                        .collect();
+                    view.push(CyclotomicRing::from_slice(&ring));
+                }
+            }
+        }
+        Ok(view)
+    }
+
     /// Release check that every coefficient of `s` lies in its segment's
     /// alphabet, and that constant-polynomial segments vanish off their
     /// constant positions.
@@ -187,4 +260,12 @@ impl SegmentTable {
             Ok(())
         }
     }
+}
+
+/// `x` as a field element, from its magnitude and sign by arithmetic: no
+/// branch on `x`, unlike `Field::from_i64`.
+pub(crate) fn lift_ct<F: Field>(x: i64) -> F {
+    let sign = x >> 63;
+    let magnitude = F::from_u64(((x ^ sign).wrapping_sub(sign)) as u64);
+    magnitude - (magnitude + magnitude) * F::from_u64((sign & 1) as u64)
 }

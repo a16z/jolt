@@ -52,3 +52,7 @@ required-features = ["whiteout-prover"]
 [[test]]
 name = "whiteout_params"
 required-features = ["whiteout-prover"]
+
+[[test]]
+name = "whiteout_sigma"
+required-features = ["whiteout-prover"]

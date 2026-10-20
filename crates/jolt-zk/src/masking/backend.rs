@@ -10,6 +10,8 @@ use rand_core::{CryptoRng, RngCore};
 use thiserror::Error as ThisError;
 
 use crate::blindfold::RelaxedError;
+#[cfg(feature = "whiteout")]
+use crate::whiteout::WhiteoutError;
 
 use super::{CommittedPads, CommittedPadsView, PadLayout, ResidualRelation};
 
@@ -43,6 +45,10 @@ pub enum ZkError {
     /// A BlindFold `VerificationError<F>` other than a transcript failure.
     #[error("BlindFold proof rejected: {0}")]
     BlindFoldRejected(#[source] ErasedSource),
+    /// A Whiteout failure.
+    #[cfg(feature = "whiteout")]
+    #[error(transparent)]
+    Whiteout(#[from] WhiteoutError),
 }
 
 /// A transcript failure surfaces as [`ZkError::Transcript`], and a
