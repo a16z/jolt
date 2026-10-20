@@ -164,13 +164,20 @@ y + r·y′ and ρ + r·ρ′ only; Dory's and BlindFold's simulators share y_co
 Pre-existing leakage is unchanged: the `ProofHeader` fields, and preprocessing
 commitments are ZK only relative to themselves.
 
-## Cost (muldiv, T = 2¹⁰, estimates)
+## Cost (muldiv, T = 2¹⁰, measured in release on M6c)
 
-Masked field messages (~600 coefficients, ≤512 claims) replace 243 G1;
-today's `FoldingCommitments` tail (~14 KB) becomes ~2 KB; factored lowering
-leaves ~100 auxiliary slots (~3 KB). Net ZK proof growth ≈ +15 KB. The
-BlindFold prover should get faster (dense witness, far fewer constraints).
-M6c measures and reports the real numbers.
+| | per-round Pedersen | masked |
+|---|---|---|
+| proof bytes | 65,599 | 113,951 |
+| bytes before the BlindFold tail | 44,959 | 102,143 |
+| BlindFold tail bytes | 20,640 | 11,808 |
+| BlindFold prover (replay, auxiliary block, fold, tail) | 262–272 ms | 195–196 ms |
+
+The layout is 2,073 pads: 1,965 base slots and 108 auxiliary slots. The
+relation has 16 affine rows and 106 product rows. Masked messages are the
+clear proof's field messages, so a masked proof is about a clear proof plus
+the pad commitment (65 rows), the auxiliary block and the tail: +48 KB over
+the per-round design at this size, growing with the round and claim count.
 
 ## Open questions
 
