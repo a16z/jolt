@@ -704,15 +704,15 @@ recorder indirection must stay monomorphized.
 
 ## Documentation
 
-The book's architecture page gets the target layout and the ownership rules. The
-`jolt-zk` module docs replace `specs/jolt-prover-blindfold.md`'s description of
-per-round Pedersen commitments once M6c lands.
+The book's architecture page gets the target layout and the ownership rules. M6c
+replaced `specs/jolt-prover-blindfold.md`'s per-round Pedersen design with
+`specs/whiteout-masking.md` and the `jolt-zk` module docs.
 
 ## References
 
 - Whiteout draft: `akita-paper/whiteout.tex`, §3 (residual relation) and §4
   (protocol).
-- `specs/jolt-transcript-narg.md` (M0), `specs/jolt-prover-blindfold.md`,
+- `specs/jolt-transcript-narg.md` (M0), `specs/whiteout-masking.md` (M6b, M6c),
   `specs/verifier-closure-lints.md`, `specs/consolidate-field-traits.md`.
 - Surveys behind the Summary table: the transcript-unification branches at jolt
   27267cdae and akita c521f8f1.
