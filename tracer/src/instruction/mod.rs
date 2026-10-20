@@ -1352,7 +1352,12 @@ impl Instruction {
                 } else if funct3 == FUNCT3_VIRTUAL_ASSERT_EQ {
                     Ok(VirtualAssertEQ::new(instr, address, true, compressed).into())
                 } else if funct3 == FUNCT3_VIRTUAL_HOST_IO {
-                    Ok(VirtualHostIO::new(instr, address, true, compressed).into())
+                    // VirtualHostIO writes no register; its encoding requires rd = 0
+                    if (instr >> 7) & 0x1f != 0 {
+                        Err("Invalid VirtualHostIO rd")
+                    } else {
+                        Ok(VirtualHostIO::new(instr, address, true, compressed).into())
+                    }
                 } else {
                     Err("Invalid custom/virtual instruction")
                 }
@@ -2522,6 +2527,7 @@ mod tests {
                 r_type(0, 2, 1, 0b011, 0, 0x5b),
                 "Invalid custom/virtual instruction",
             ),
+            (i_type(0, 0, 0b010, 5, 0x5b), "Invalid VirtualHostIO rd"),
             (0x0000_007f, "Unknown opcode"),
         ];
 
