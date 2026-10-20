@@ -150,7 +150,7 @@ path = "./src/main.rs"
 [dependencies]
 clap.workspace = true
 eyre.workspace = true
-rand.workspace = true
+rand = { workspace = true, features = ["std", "std_rng"] }
 sysinfo.workspace = true
 syn.workspace = true
 toml_edit.workspace = true
@@ -398,6 +398,7 @@ addr2line = "0.27.0"
 getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
+getrandom_v04 = { version = "0.4", package = "getrandom", default-features = false }
 
 # Build and Development
 ctor = { version = "0.6" }

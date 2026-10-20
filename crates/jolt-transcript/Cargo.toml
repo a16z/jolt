@@ -13,13 +13,14 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
-spongefish = ["dep:spongefish", "spongefish/getrandom", "spongefish/turboshake128"]
-digest = ["dep:digest"]
-bn254 = [
-  "dep:ark-bn254",
-  "dep:ark-ff",
-  "jolt-field/bn254",
+spongefish = [
+  "dep:spongefish",
+  "dep:getrandom_v04",
+  "spongefish/getrandom",
+  "spongefish/turboshake128",
 ]
+digest = ["dep:digest"]
+bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
 transcript-blake2b = ["spongefish", "digest", "dep:blake2"]
 transcript-keccak = ["spongefish", "spongefish/keccak"]
 transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
@@ -32,6 +33,11 @@ spongefish = { workspace = true, optional = true }
 blake2 = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
+
+# spongefish seeds the prover's private RNG from getrandom 0.4, which needs
+# an explicit backend on wasm32-unknown-unknown.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_v04 = { workspace = true, features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

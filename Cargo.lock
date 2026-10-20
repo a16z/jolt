@@ -2720,8 +2720,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3894,6 +3896,7 @@ dependencies = [
  "blake2 0.11.0",
  "criterion",
  "digest 0.11.3",
+ "getrandom 0.4.3",
  "jolt-field",
  "light-poseidon",
  "spongefish 0.8.0",
