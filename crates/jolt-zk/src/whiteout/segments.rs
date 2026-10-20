@@ -5,10 +5,9 @@
 //! `m`-tuple over the challenge ring `R = F[X]/(X^64 + 1)` by stride packing
 //! (native coefficient `m·i + k` is coefficient `i` of component `k`).
 
-use super::WhiteoutError;
+use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 
-/// Coefficients of one element of the challenge ring.
-pub const CHALLENGE_RING_DIM: usize = 64;
+use super::WhiteoutError;
 
 /// What a segment of `s` holds (Whiteout Def. `wo:def:residual`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

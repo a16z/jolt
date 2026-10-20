@@ -106,7 +106,7 @@ fn headline_parameters_match_the_closed_form() {
         .blocks()
         .iter()
         .all(|block| block.box_bound == 125_269_879));
-    assert_eq!(params.max_attempts(), 163);
+    assert_eq!(params.max_attempts(), Ok(163));
     let _rejection = params.rejection().unwrap();
 }
 
@@ -121,7 +121,7 @@ fn width_check_rejects_narrower_widths() {
         .collect::<Vec<_>>();
     assert!(matches!(
         SigmaParams::new(&table, &narrow),
-        Err(WhiteoutError::Parameters(_))
+        Err(WhiteoutError::WidthsTooNarrow)
     ));
 }
 
@@ -136,7 +136,10 @@ fn width_check_depends_on_the_constant_polynomial_shape() {
         .iter()
         .map(|block| block.width)
         .collect::<Vec<_>>();
-    assert!(SigmaParams::new(&headline(SegmentShape::Dense), &widths).is_err());
+    assert_eq!(
+        SigmaParams::new(&headline(SegmentShape::Dense), &widths),
+        Err(WhiteoutError::WidthsTooNarrow)
+    );
 }
 
 fn small_table() -> SegmentTable {
@@ -180,18 +183,27 @@ fn private_vector_check_accepts_the_declared_alphabets() {
 #[test]
 fn private_vector_check_rejects_alphabet_and_shape_violations() {
     let table = small_table();
-    let mut digit = honest_vector();
-    digit[3] = 8;
-    assert_eq!(
-        table.check_private_vector(&digit),
-        Err(WhiteoutError::WitnessOutsideAlphabet)
-    );
-    let mut constant = honest_vector();
-    constant[256 + 4] = 1;
-    assert_eq!(
-        table.check_private_vector(&constant),
-        Err(WhiteoutError::WitnessOutsideAlphabet)
-    );
+    // Above and below the radix-16 alphabet, the i64 extremes, a constant
+    // coefficient outside the radix-256 alphabet, and a nonzero coefficient
+    // off the constant positions.
+    for (index, value) in [
+        (3, 8),
+        (3, -9),
+        (3, i64::MIN),
+        (3, i64::MAX),
+        (256 + 2, 128),
+        (256 + 2, -129),
+        (256 + 4, 1),
+        (511, i64::MIN),
+    ] {
+        let mut s = honest_vector();
+        s[index] = value;
+        assert_eq!(
+            table.check_private_vector(&s),
+            Err(WhiteoutError::WitnessOutsideAlphabet),
+            "s[{index}] = {value}"
+        );
+    }
     assert!(matches!(
         table.check_private_vector(&honest_vector()[..511]),
         Err(WhiteoutError::WitnessLength { .. })
@@ -206,4 +218,39 @@ fn segments_must_hold_whole_native_elements() {
         SegmentTable::new(vec![bad]),
         Err(WhiteoutError::Segment { index: 0, .. })
     ));
+}
+
+#[test]
+fn widths_must_match_the_gaussian_segments() {
+    let table = small_table();
+    assert_eq!(
+        SigmaParams::new(&table, &[1 << 20]),
+        Err(WhiteoutError::WidthCount {
+            expected: 2,
+            actual: 1
+        })
+    );
+    assert_eq!(
+        SigmaParams::new(&table, &[0, 1 << 20]),
+        Err(WhiteoutError::WidthOutOfRange { width: 0 })
+    );
+    assert_eq!(
+        SigmaParams::new(&table, &[1 << 20, (1 << 31) + 1]),
+        Err(WhiteoutError::WidthOutOfRange {
+            width: (1 << 31) + 1
+        })
+    );
+}
+
+#[test]
+fn parameters_outside_the_rejection_arithmetic_are_rejected() {
+    // Three distinct widths near 2^31 make the product of the distinct k_b²
+    // exceed 2^126; the widths themselves are wide enough.
+    let table = SegmentTable::new((0..3).map(|_| small_table().segments()[0]).collect()).unwrap();
+    assert_eq!(
+        SigmaParams::new(&table, &[1 << 31, (1 << 31) - 1, (1 << 31) - 2]),
+        Err(WhiteoutError::RejectionArithmetic)
+    );
+    let accepted = SigmaParams::new(&table, &[1 << 31, 1 << 31, (1 << 31) - 1]).unwrap();
+    let _rejection = accepted.rejection().unwrap();
 }

@@ -20,6 +20,4 @@ pub use params::{GaussianBlock, SigmaParams, ALPHA, EPSILON_BITS, RESPONSE_LOG_B
 pub use ring::LiftedFunctional;
 #[cfg(feature = "whiteout-prover")]
 pub use sample::sample_zero_constant_term;
-pub use segments::{
-    Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable, CHALLENGE_RING_DIM,
-};
+pub use segments::{Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable};
