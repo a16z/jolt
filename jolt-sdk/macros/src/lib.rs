@@ -210,8 +210,9 @@ impl MacroBuilder {
                 __jolt_prove_closure
             }
 
-            /// The prover of the unbudgeted builder under `memory_budget`, returning
-            /// errors instead of panicking.
+            /// The prover of the unbudgeted builder under `memory_budget`. It returns
+            /// the errors of `jolt::compute_advice_tape` and `jolt::prove_program`
+            /// instead of panicking; serialization and output decoding still panic.
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_budgeted_prover_fn_name<__S: jolt::host::JoltProgramSource + ::core::marker::Send + ::core::marker::Sync + 'static>(
                 program: __S,
@@ -789,7 +790,9 @@ impl MacroBuilder {
             }
 
             /// The unbudgeted prover's proof under `__jolt_memory_budget`, or the
-            /// first error. The budget bounds the compute-advice run's named
+            /// first error `jolt::compute_advice_tape` or `jolt::prove_program`
+            /// returns; serialization and output decoding still panic.
+            /// The budget bounds the compute-advice run's named
             /// requests and routes and checks the proof's trace
             /// (`jolt::prove_program`). It does not cap process memory: argument
             /// serialization, program builds, caches, allocator overhead and

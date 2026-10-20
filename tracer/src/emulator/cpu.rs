@@ -1125,10 +1125,11 @@ impl Cpu {
         Ok(())
     }
 
-    /// Under an advice-write allowance, a write whose scratch or tape growth
-    /// the allowance or the allocator refuses copies and appends nothing. The
-    /// refusal stays on this CPU for the limited run to return, because
-    /// `VirtualHostIO` discards this result.
+    /// Under an advice-write allowance, a write that the allowance, a size
+    /// overflow or the allocator refuses appends nothing. Only the allocator's
+    /// refusal of the tape growth comes after the guest bytes are copied into
+    /// the scratch. The refusal stays on this CPU for the limited run to
+    /// return, because `VirtualHostIO` discards this result.
     pub fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
         // Pass-1 already appended these bytes; a replay append would corrupt
         // the worker's suffix-relative read offsets.
