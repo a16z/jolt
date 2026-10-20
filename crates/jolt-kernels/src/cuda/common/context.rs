@@ -50,9 +50,10 @@ pub struct CudaKernelContext {
     pub(super) scan_u32_block: CudaFunction,
     pub(super) scan_u32_add_offsets: CudaFunction,
     lt_reconstruct: CudaFunction,
+    pcr_round: CudaFunction,
+    pcr_place_row: CudaFunction,
     #[cfg(test)]
     dense_product_round: CudaFunction,
-    #[cfg(test)]
     lane_sum_total: CudaFunction,
     #[cfg(test)]
     sop_round: CudaFunction,
@@ -252,9 +253,10 @@ impl CudaKernelContext {
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
             lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
+            pcr_round: module.load_function("pcr_round_kernel")?,
+            pcr_place_row: module.load_function("pcr_place_row_kernel")?,
             #[cfg(test)]
             dense_product_round: module.load_function("dense_product_round_kernel")?,
-            #[cfg(test)]
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             #[cfg(test)]
             sop_round: module.load_function("sop_round_kernel")?,
@@ -652,12 +654,19 @@ impl CudaKernelContext {
         &self.hf_row_fold
     }
 
+    pub(crate) const fn pcr_round(&self) -> &CudaFunction {
+        &self.pcr_round
+    }
+
+    pub(crate) const fn pcr_place_row(&self) -> &CudaFunction {
+        &self.pcr_place_row
+    }
+
     #[cfg(test)]
     pub(crate) const fn dense_product_round(&self) -> &CudaFunction {
         &self.dense_product_round
     }
 
-    #[cfg(test)]
     pub(crate) const fn lane_sum_total(&self) -> &CudaFunction {
         &self.lane_sum_total
     }

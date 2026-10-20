@@ -1,8 +1,8 @@
-//! CUDA backend selection using optimized compute kernels and the host witness plane.
+//! CUDA advice reduction alongside optimized kernels and the host witness plane.
 //!
-//! [`JoltBackend::cuda`] uses the optimized registry. [`CudaDoryScheme`] selects
-//! the PCS independently and shares its proof and setup types with `DoryScheme`.
-//! Both entry points execute entirely on the CPU.
+//! [`JoltBackend::cuda`] replaces the trusted and untrusted advice cycle/address
+//! slots in the optimized registry. [`CudaDoryScheme`] selects the PCS separately
+//! and currently forwards to CPU Dory with shared proof and setup types.
 //!
 //! The shared CUDA runtime owns process-wide device contexts and compiled
 //! modules. [`DeviceFrVec`] stores BN254 Montgomery limbs on its owning stream;
@@ -117,12 +117,18 @@
 //! After the last address bind, dense cycle columns use split-eq reductions.
 //! CUDA uses this sparse matrix path for both RAM and registers; optimized
 //! registers instead scan compact access chunks with raw increment checkpoints.
+//! Advice reductions upload oracle values and permute their rows on device into
+//! the shared opening schedule. Inactive rounds halve the running scale; active
+//! rounds reduce the product at 0 and 2 and interpolate with the incoming claim.
+//! The cycle phase parks its device rows for the address phase; optimized parks
+//! host polynomial tables across that same boundary.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
-use crate::{JoltBackend, ModeStreamingCommitment};
+use crate::{JoltBackend, KernelError, ModeStreamingCommitment};
 
+mod advice_claim_reduction;
 mod common;
 mod dory;
 #[cfg(test)]
@@ -140,10 +146,21 @@ pub use common::lt_poly::DeviceLtPolynomial;
 pub use common::xfer_stats;
 pub use dory::CudaDoryScheme;
 
+/// Stateless slot provider; witness-dependent device state belongs to the
+/// bound proof session rather than the reusable backend registry.
+pub struct CudaBackend;
+
 /// Initializes the device pool on first use and reports whether its selected
 /// device has a usable kernel context.
 pub fn device_available() -> bool {
     shared_context().is_some()
+}
+
+pub(crate) fn require_context<F: JoltField>() -> Result<&'static CudaKernelContext, KernelError<F>>
+{
+    shared_context().ok_or(KernelError::Unsupported {
+        reason: "no CUDA device is present",
+    })
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
@@ -151,12 +168,19 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Select the optimized kernel slots through the CUDA backend entry point.
+    /// Replace the trusted and untrusted advice slots with CUDA implementations.
+    ///
+    /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
     where
         PCS: ModeStreamingCommitment,
     {
-        Self::optimized()
+        let mut backend = Self::optimized();
+        backend.trusted_advice_cycle = Box::new(CudaBackend);
+        backend.untrusted_advice_cycle = Box::new(CudaBackend);
+        backend.trusted_advice_address = Box::new(CudaBackend);
+        backend.untrusted_advice_address = Box::new(CudaBackend);
+        backend
     }
 }
 

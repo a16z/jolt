@@ -22,6 +22,7 @@ pub(crate) mod one_hot_fold;
 pub(crate) mod pack;
 #[cfg(test)]
 pub(crate) mod pairing;
+pub(crate) mod precommitted_reduction;
 #[cfg(test)]
 pub(crate) mod prefix_suffix;
 pub mod primitives;

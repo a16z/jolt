@@ -218,3 +218,48 @@ fn muldiv_committed_program_address_major() {
         TracePolynomialOrder::AddressMajor,
     );
 }
+
+#[test]
+fn advice_address_first() {
+    run(advice_case(), true, false);
+}
+
+fn advice_case() -> GuestCase {
+    GuestCase {
+        inputs: postcard::to_stdvec(&12u64).expect("input"),
+        untrusted_advice: postcard::to_stdvec(&5u64).expect("untrusted advice"),
+        trusted_advice: postcard::to_stdvec(&7u64).expect("trusted advice"),
+        expected_output: Some(postcard::to_stdvec(&26u64).expect("output")),
+        ..GuestCase::new("advice-consumer-guest")
+    }
+}
+
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn advice_committed_program() {
+    run(advice_case(), true, true);
+}
+
+#[test]
+fn trusted_advice_only() {
+    run(
+        GuestCase {
+            trusted_advice: postcard::to_stdvec(&7u64).expect("trusted advice"),
+            ..muldiv_case()
+        },
+        true,
+        false,
+    );
+}
+
+#[test]
+fn untrusted_advice_only() {
+    run(
+        GuestCase {
+            untrusted_advice: postcard::to_stdvec(&5u64).expect("untrusted advice"),
+            ..muldiv_case()
+        },
+        false,
+        false,
+    );
+}

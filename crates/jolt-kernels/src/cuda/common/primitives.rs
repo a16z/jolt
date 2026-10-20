@@ -3,15 +3,12 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, Ring};
 use jolt_poly::BindingOrder;
 
-#[cfg(test)]
 use super::context::BLOCK;
 use super::context::{CudaKernelContext, BLOCK as BLOCK_SIZE};
 use super::device::DeviceFrVec;
-#[cfg(test)]
 use super::device::LIMBS;
 use super::error::CudaError;
 
-#[cfg(test)]
 pub(crate) fn reduce_lanes(
     context: &CudaKernelContext,
     partials: DeviceFrVec,
@@ -199,7 +196,6 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    #[cfg(test)]
     pub fn bind_rows(
         &self,
         values: &DeviceFrVec,
