@@ -350,6 +350,97 @@ __device__ __forceinline__ int fq2_is_one(const u64 *a) {
     return fq_is_one(a) && fq_is_zero(a + LIMBS);
 }
 
+extern "C" __global__ void pairing_miller_kernel(const u64 *__restrict__ g1,
+                                                 const u64 *__restrict__ g2,
+                                                 const u64 *__restrict__ consts,
+                                                 const u64 *__restrict__ ate,
+                                                 unsigned int ate_len,
+                                                 const unsigned int *__restrict__ g1_offsets,
+                                                 const unsigned int *__restrict__ g2_offsets,
+                                                 unsigned int count, u64 *__restrict__ out) {
+    unsigned int pair = blockIdx.x * blockDim.x + threadIdx.x;
+    if (pair >= count) return;
+    unsigned int segment = blockIdx.y;
+    unsigned long long idx = (unsigned long long)segment * count + pair;
+
+    u64 f[FQ12_LIMBS];
+    fq12_set_one(f);
+
+    const u64 *p = g1 + ((unsigned long long)g1_offsets[segment] + pair) * 3 * LIMBS;
+    const u64 *q = g2 + ((unsigned long long)g2_offsets[segment] + pair) * 3 * FQ2_LIMBS;
+
+    if (jac_is_zero(p) || jac2_is_zero(q)) {
+        for (int i = 0; i < FQ12_LIMBS; i++) {
+            out[idx * FQ12_LIMBS + i] = f[i];
+        }
+        return;
+    }
+
+    u64 px[LIMBS], py[LIMBS], zinv[LIMBS], zinv2[LIMBS], t1[LIMBS];
+    if (fq_is_one(p + 2 * LIMBS)) {
+        fq_copy(p, px);
+        fq_copy(p + LIMBS, py);
+    } else {
+        fq_inverse(p + 2 * LIMBS, zinv);
+        fq_sqr(zinv, zinv2);
+        fq_mul(p, zinv2, px);
+        fq_mul(p + LIMBS, zinv2, t1);
+        fq_mul(t1, zinv, py);
+    }
+
+    u64 qx[FQ2_LIMBS], qy[FQ2_LIMBS], q2inv[FQ2_LIMBS], q2inv2[FQ2_LIMBS], s2[FQ2_LIMBS];
+    if (fq2_is_one(q + 2 * FQ2_LIMBS)) {
+        fq2_copy(q, qx);
+        fq2_copy(q + FQ2_LIMBS, qy);
+    } else {
+        fq2_inverse(q + 2 * FQ2_LIMBS, q2inv);
+        fq2_sqr(q2inv, q2inv2);
+        fq2_mul(q, q2inv2, qx);
+        fq2_mul(q + FQ2_LIMBS, q2inv2, s2);
+        fq2_mul(s2, q2inv, qy);
+    }
+
+    u64 rx[FQ2_LIMBS], ry[FQ2_LIMBS], rz[FQ2_LIMBS], coeff[3 * FQ2_LIMBS], neg_qy[FQ2_LIMBS];
+    fq2_copy(qx, rx);
+    fq2_copy(qy, ry);
+    fq2_set_one(rz);
+    fq2_neg(qy, neg_qy);
+
+    for (int i = (int)ate_len - 1; i >= 1; i--) {
+        if (i != (int)ate_len - 1) {
+            u64 squared[FQ12_LIMBS];
+            fq12_sqr(f, squared);
+            fq12_copy(squared, f);
+        }
+        g2_double_step(rx, ry, rz, consts, coeff);
+        ell(f, coeff, px, py);
+
+        u64 bit = ate[i - 1];
+        if (bit == 1ULL) {
+            g2_add_step(rx, ry, rz, qx, qy, coeff);
+            ell(f, coeff, px, py);
+        } else if (bit == 2ULL) {
+            g2_add_step(rx, ry, rz, qx, neg_qy, coeff);
+            ell(f, coeff, px, py);
+        }
+    }
+
+    u64 q1x[FQ2_LIMBS], q1y[FQ2_LIMBS], q2x[FQ2_LIMBS], q2y[FQ2_LIMBS];
+    g2_mul_by_char(qx, qy, consts, q1x, q1y);
+    g2_mul_by_char(q1x, q1y, consts, q2x, q2y);
+    fq2_neg(q2y, s2);
+    fq2_copy(s2, q2y);
+
+    g2_add_step(rx, ry, rz, q1x, q1y, coeff);
+    ell(f, coeff, px, py);
+    g2_add_step(rx, ry, rz, q2x, q2y, coeff);
+    ell(f, coeff, px, py);
+
+    for (int i = 0; i < FQ12_LIMBS; i++) {
+        out[idx * FQ12_LIMBS + i] = f[i];
+    }
+}
+
 #define MW_COEFFS 6
 #define MW_GROUPS 3
 #define MW_MASK 0xffffffffu

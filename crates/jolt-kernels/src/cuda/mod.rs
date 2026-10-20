@@ -85,6 +85,9 @@
 //! The warp Miller loop assigns one warp per G1/G2 pair. Lanes cooperate on
 //! the six Fq2 accumulator coefficients; normalization and loop steps stay on
 //! device, and identity pairs contribute one to the segment product.
+//! The block Miller loop assigns one pair per thread, keeping its full Fq12
+//! accumulator local. Batches with at most 256 total pairs use the warp loop;
+//! larger batches use the block loop.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;

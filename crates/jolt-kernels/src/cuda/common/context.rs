@@ -149,6 +149,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
     #[cfg(test)]
+    pairing_miller: CudaFunction,
+    #[cfg(test)]
     pairing_miller_warp: CudaFunction,
     #[cfg(test)]
     pairing_fq12_product: CudaFunction,
@@ -309,6 +311,8 @@ impl CudaKernelContext {
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             #[cfg(test)]
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
+            #[cfg(test)]
+            pairing_miller: module.load_function("pairing_miller_kernel")?,
             #[cfg(test)]
             pairing_miller_warp: module.load_function("pairing_miller_warp_kernel")?,
             #[cfg(test)]
@@ -775,6 +779,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_jacobian_to_affine(&self) -> &CudaFunction {
         &self.msm_jacobian_to_affine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn pairing_miller(&self) -> &CudaFunction {
+        &self.pairing_miller
     }
 
     #[cfg(test)]

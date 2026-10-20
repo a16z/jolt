@@ -235,6 +235,97 @@ impl CudaKernelContext {
         self.download_u64(&device_out)
     }
 
+    pub fn multi_miller_batch(
+        &self,
+        g1: &CudaSlice<u64>,
+        g2: &CudaSlice<u64>,
+        segments: &[(usize, usize)],
+        count: usize,
+    ) -> Result<Vec<u64>, CudaError> {
+        if segments.len().saturating_mul(count) <= MILLER_WARP_MAX_PAIRS {
+            return self.multi_miller_warp_batch(g1, g2, segments, count);
+        }
+        self.multi_miller_block_batch(g1, g2, segments, count)
+    }
+
+    pub fn multi_miller_block_batch(
+        &self,
+        g1: &CudaSlice<u64>,
+        g2: &CudaSlice<u64>,
+        segments: &[(usize, usize)],
+        count: usize,
+    ) -> Result<Vec<u64>, CudaError> {
+        if count == 0 || segments.is_empty() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a multi-Miller batch needs at least one segment and one pair",
+            });
+        }
+        let mut g1_offsets = Vec::with_capacity(segments.len());
+        let mut g2_offsets = Vec::with_capacity(segments.len());
+        for &(g1_offset, g2_offset) in segments {
+            if (g1_offset + count) * 3 * FQ_LIMBS > g1.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: g1.len(),
+                    got: (g1_offset + count) * 3 * FQ_LIMBS,
+                });
+            }
+            if (g2_offset + count) * 6 * FQ_LIMBS > g2.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: g2.len(),
+                    got: (g2_offset + count) * 6 * FQ_LIMBS,
+                });
+            }
+            g1_offsets.push(Self::count_of(g1_offset)?);
+            g2_offsets.push(Self::count_of(g2_offset)?);
+        }
+
+        let pairs = Self::count_of(count)?;
+        let lanes_of = Self::count_of(segments.len())?;
+        let device_g1_offsets = self.upload_u32_slice(&g1_offsets)?;
+        let device_g2_offsets = self.upload_u32_slice(&g2_offsets)?;
+
+        let lanes = self.with_pairing_constants(|constants| {
+            let ate_len = Self::count_of(constants.ate_len)?;
+            let lanes_len = segments
+                .len()
+                .checked_mul(count)
+                .and_then(|pairs| pairs.checked_mul(FQ12_LIMBS))
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a multi-Miller batch overflowed its lane buffer",
+                })?;
+            let mut lanes = self.alloc_u64_unset(lanes_len)?;
+            let mut builder = self.stream().launch_builder(self.pairing_miller());
+            let _ = builder.arg(g1);
+            let _ = builder.arg(g2);
+            let _ = builder.arg(&constants.values);
+            let _ = builder.arg(&constants.ate);
+            let _ = builder.arg(&ate_len);
+            let _ = builder.arg(&device_g1_offsets);
+            let _ = builder.arg(&device_g2_offsets);
+            let _ = builder.arg(&pairs);
+            let _ = builder.arg(&mut lanes);
+            // The grid is `(ceil(pairs / BLOCK), segments)`, so
+            // `blockIdx.y` indexes `g1_offsets`/`g2_offsets`, both uploaded with
+            // exactly `segments` entries. Thread `(segment, pair < pairs)` reads
+            // the `3 * FQ_LIMBS` limbs of G1 point `g1_offsets[segment] + pair`
+            // and the `6 * FQ_LIMBS` limbs of G2 point `g2_offsets[segment] +
+            // pair`, every such span checked above to end inside its buffer,
+            // plus the `PC_WORDS` constants and `ate_len` loop digits, whose
+            // lengths are fixed at upload. It writes only the `FQ12_LIMBS` limbs
+            // at `(segment * count + pair) * FQ12_LIMBS` of the freshly
+            // allocated `lanes`, which holds `segments * count` such slots and
+            // is distinct from every input, so no thread reads what another
+            // writes. Threads with `pair >= pairs` return first.
+            let mut config = Self::launch_config(pairs);
+            config.grid_dim.1 = lanes_of;
+            // SAFETY: as argued above.
+            let _ = unsafe { builder.launch(config) }?;
+            Ok(lanes)
+        })?;
+
+        self.fq12_product_batch(lanes, pairs, lanes_of)
+    }
+
     pub fn multi_miller_warp_batch(
         &self,
         g1: &CudaSlice<u64>,
@@ -375,6 +466,7 @@ impl CudaKernelContext {
 )]
 mod tests {
     use ark_bn254::{Bn254, Fq12, Fq6, G1Projective, G2Projective};
+    use ark_ec::pairing::MillerLoopOutput;
     use ark_ec::pairing::Pairing;
     use ark_ec::CurveGroup;
     use ark_ff::{BigInt, UniformRand};
@@ -420,6 +512,18 @@ mod tests {
         Fq12::new(fq6(&words[..6 * FQ_LIMBS]), fq6(&words[6 * FQ_LIMBS..]))
     }
 
+    fn device_miller(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
+        let context = shared_context().expect("a CUDA device");
+        let g1: Vec<u64> = ps.iter().flat_map(g1_words).collect();
+        let g2: Vec<u64> = qs.iter().flat_map(g2_words).collect();
+        let device_g1 = context.upload_raw_u64(&g1).unwrap();
+        let device_g2 = context.upload_raw_u64(&g2).unwrap();
+        let limbs = context
+            .multi_miller_batch(&device_g1, &device_g2, &[(0, 0)], ps.len())
+            .unwrap();
+        fq12(&limbs)
+    }
+
     fn device_miller_warp(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
         let context = shared_context().expect("a CUDA device");
         let g1: Vec<u64> = ps.iter().flat_map(g1_words).collect();
@@ -430,6 +534,37 @@ mod tests {
             .multi_miller_warp_batch(&device_g1, &device_g2, &[(0, 0)], ps.len())
             .unwrap();
         fq12(&limbs)
+    }
+
+    fn device_miller_block(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
+        let context = shared_context().expect("a CUDA device");
+        let g1: Vec<u64> = ps.iter().flat_map(g1_words).collect();
+        let g2: Vec<u64> = qs.iter().flat_map(g2_words).collect();
+        let device_g1 = context.upload_raw_u64(&g1).unwrap();
+        let device_g2 = context.upload_raw_u64(&g2).unwrap();
+        let limbs = context
+            .multi_miller_block_batch(&device_g1, &device_g2, &[(0, 0)], ps.len())
+            .unwrap();
+        fq12(&limbs)
+    }
+
+    fn device_miller_block_segments(
+        ps: &[G1Projective],
+        qs: &[G2Projective],
+        count: usize,
+    ) -> Vec<Fq12> {
+        let context = shared_context().expect("a CUDA device");
+        let g1: Vec<u64> = ps.iter().flat_map(g1_words).collect();
+        let g2: Vec<u64> = qs.iter().flat_map(g2_words).collect();
+        let device_g1 = context.upload_raw_u64(&g1).unwrap();
+        let device_g2 = context.upload_raw_u64(&g2).unwrap();
+        let segments: Vec<(usize, usize)> = (0..ps.len() / count)
+            .map(|segment| (segment * count, segment * count))
+            .collect();
+        let limbs = context
+            .multi_miller_block_batch(&device_g1, &device_g2, &segments, count)
+            .unwrap();
+        limbs.chunks_exact(FQ12_LIMBS).map(fq12).collect()
     }
 
     fn device_miller_warp_segments(
@@ -633,6 +768,37 @@ mod tests {
     }
 
     #[test]
+    fn device_pairing_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        for (index, (ps, qs)) in shapes(5_200).into_iter().enumerate() {
+            let expected = Bn254::multi_pairing(ps.clone(), qs.clone());
+            let got = Bn254::final_exponentiation(MillerLoopOutput(device_miller(&ps, &qs)))
+                .expect("the Miller output is non-degenerate");
+            assert_eq!(got, expected, "the pairing diverged for shape {index}");
+        }
+    }
+
+    #[test]
+    fn multi_miller_above_the_warp_threshold_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(5_600);
+        for count in [MILLER_WARP_MAX_PAIRS + 1, 2 * MILLER_WARP_MAX_PAIRS] {
+            let ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+            let qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller(&ps, &qs);
+            assert_eq!(
+                got, expected,
+                "the Miller loop diverged for {count} pairs, above the warp threshold"
+            );
+        }
+    }
+
+    #[test]
     fn multi_miller_warp_matches_arkworks_above_the_block_threshold() {
         if shared_context().is_none() {
             return;
@@ -646,6 +812,113 @@ mod tests {
             assert_eq!(
                 got, expected,
                 "the warp Miller loop diverged for {count} pairs, above the block threshold"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_block_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        for (index, (ps, qs)) in shapes(5_800).into_iter().enumerate() {
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller_block(&ps, &qs);
+            assert_eq!(
+                got,
+                expected,
+                "the block Miller loop diverged for shape {index} of {} pairs",
+                ps.len()
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_block_matches_arkworks_at_exactly_full_blocks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_600);
+        for count in [256usize, 512, 1024] {
+            let ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+            let qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller_block(&ps, &qs);
+            assert_eq!(
+                got, expected,
+                "the block Miller loop diverged for {count} pairs, an exact multiple of the block width"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_block_matches_arkworks_at_partially_filled_blocks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_800);
+        for count in [255usize, 257, 385, 513, 1023] {
+            let ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+            let qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller_block(&ps, &qs);
+            assert_eq!(
+                got, expected,
+                "the block Miller loop diverged for {count} pairs, a partially filled last block"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_block_matches_arkworks_on_degenerate_shapes_at_scale() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_000);
+        let count = MILLER_WARP_MAX_PAIRS + 44;
+        let mut ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+        let mut qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+        for slot in (0..count).step_by(37) {
+            ps[slot] = G1Projective::default();
+        }
+        for slot in (5..count).step_by(41) {
+            qs[slot] = G2Projective::default();
+        }
+        for slot in (1..count).step_by(17) {
+            ps[slot] = ps[slot].into_affine().into();
+            qs[slot] = qs[slot].into_affine().into();
+        }
+        let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+        let got = device_miller_block(&ps, &qs);
+        assert_eq!(
+            got, expected,
+            "the block Miller loop diverged on {count} pairs carrying identity and affine points"
+        );
+    }
+
+    #[test]
+    fn multi_miller_block_segments_match_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_200);
+        for (count, segments) in [(1usize, 2usize), (1, 4), (3, 3), (5, 2), (33, 2), (129, 3)] {
+            let ps: Vec<G1Projective> = (0..count * segments)
+                .map(|_| G1Projective::rand(&mut rng))
+                .collect();
+            let qs: Vec<G2Projective> = (0..count * segments)
+                .map(|_| G2Projective::rand(&mut rng))
+                .collect();
+            let expected: Vec<Fq12> = (0..segments)
+                .map(|segment| {
+                    let span = segment * count..(segment + 1) * count;
+                    Bn254::multi_miller_loop(ps[span.clone()].to_vec(), qs[span].to_vec()).0
+                })
+                .collect();
+            let got = device_miller_block_segments(&ps, &qs, count);
+            assert_eq!(
+                got, expected,
+                "the block Miller loop diverged for {segments} segments of {count} pairs"
             );
         }
     }
