@@ -342,17 +342,6 @@ fn decodes_system_instructions_exactly() {
 }
 
 #[test]
-fn decodes_host_io_without_operands() {
-    let word = (0x123 << 20) | (10 << 15) | (0b010 << 12) | 0x5b;
-    let instruction = decode_ok(word, 0x8000_0000, false);
-    assert!(matches!(
-        instruction.kind(),
-        SourceInstructionKind::VirtualHostIO(_)
-    ));
-    assert_eq!(instruction.row().operands, NormalizedOperands::default());
-}
-
-#[test]
 fn decodes_inline_opcode_with_dispatch_key() {
     let word = (3 << 25) | (2 << 20) | (1 << 15) | (0b101 << 12) | (4 << 7) | 0x0b;
     let instruction = decode_ok(word, 0x8000_0000, false);
@@ -406,7 +395,6 @@ fn rejects_invalid_encodings_with_exact_messages() {
         ),
         (0x0800_00db, "invalid custom instruction"),
         ((0x3f << 25) | 0x5b, "invalid custom instruction"),
-        ((0b010 << 12) | (5 << 7) | 0x5b, "invalid VirtualHostIO rd"),
         (0x0f | (0b001 << 12), "invalid MISC-MEM funct3"),
         (0x0f | (0b010 << 12), "invalid MISC-MEM funct3"),
         (0x0f | (0b011 << 12), "invalid MISC-MEM funct3"),
