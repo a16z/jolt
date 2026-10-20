@@ -5,6 +5,7 @@
 //! commitment map is a universal hash and the leftover hash lemma hides the
 //! image once the box has enough entropy.
 
+#[cfg(feature = "sample")]
 use rand_core::{CryptoRng, RngCore};
 
 use super::ajtai::field_bits;
@@ -20,6 +21,7 @@ pub const HIDING_SECURITY_BITS: usize = 128;
 ///
 /// Each digit is one masked byte of `rng` output: no rejection, no branch
 /// and no table, so the running time is independent of the digits.
+#[cfg(feature = "sample")]
 pub fn sample_box_digits<R: RngCore + CryptoRng>(
     rng: &mut R,
     len: usize,
@@ -55,6 +57,11 @@ pub fn required_randomness_columns<F: Field + CanonicalEncoding>(
     log_basis: u32,
     slack_bits: usize,
 ) -> Result<usize, CryptoError> {
+    if !(1..=8).contains(&log_basis) {
+        return Err(CryptoError::InvalidInput(format!(
+            "randomness digits need log_basis in 1..=8, got {log_basis}"
+        )));
+    }
     let overflow = || CryptoError::InvalidSetup("randomness size overflows usize".into());
     let field_bits = field_bits::<F>()? as usize;
     let needed = image_coeffs
@@ -66,8 +73,6 @@ pub fn required_randomness_columns<F: Field + CanonicalEncoding>(
     let per_column = ring_dim
         .checked_mul(log_basis as usize)
         .filter(|&bits| bits > 0)
-        .ok_or_else(|| {
-            CryptoError::InvalidInput("randomness columns need ring_dim, log_basis > 0".into())
-        })?;
+        .ok_or_else(|| CryptoError::InvalidInput("randomness columns need ring_dim > 0".into()))?;
     Ok(needed.div_ceil(per_column))
 }

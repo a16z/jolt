@@ -62,6 +62,14 @@ fn centered_input(len: usize, bound: u32, rng: &mut ChaCha20Rng) -> Vec<i64> {
         .collect()
 }
 
+fn hex(bytes: [u8; 32]) -> String {
+    bytes
+        .iter()
+        .flat_map(|byte| [byte >> 4, byte & 15])
+        .map(|nibble| char::from(b"0123456789abcdef"[usize::from(nibble)]))
+        .collect()
+}
+
 fn digest<const D: usize>(rings: &[CyclotomicRing<F, D>]) -> [u8; 32] {
     let mut xof = Shake256::default();
     let mut bytes = [0u8; 16];
@@ -74,7 +82,7 @@ fn digest<const D: usize>(rings: &[CyclotomicRing<F, D>]) -> [u8; 32] {
     out
 }
 
-fn check_apply_centered<const D: usize>(bound: u32) {
+fn check_apply_centered<const D: usize>(bound: u32) -> [u8; 32] {
     let shape = MatrixShape {
         rows: 3,
         width: 130,
@@ -84,51 +92,35 @@ fn check_apply_centered<const D: usize>(bound: u32) {
     let mut rng = ChaCha20Rng::seed_from_u64(D as u64 + u64::from(bound));
     let input = centered_input(shape.width * D, bound, &mut rng);
     let expected = schoolbook(shape, &data, &lift::<D>(&input));
-    assert_eq!(matrix.apply_centered(&input, bound).unwrap(), expected);
+    let actual = matrix.apply_centered(&input, bound).unwrap();
+    assert_eq!(actual, expected);
+    digest(&actual)
 }
 
+/// `apply_centered` against schoolbook products across chunk boundaries,
+/// with frozen digests: a change here changes the bytes of `N·y`.
 #[test]
 fn apply_centered_matches_schoolbook_across_chunks() {
-    check_apply_centered::<64>(1 << 28);
-    check_apply_centered::<64>(i32::MAX as u32);
-    check_apply_centered::<256>(1 << 28);
-    check_apply_centered::<256>(8);
-}
-
-#[test]
-fn apply_matches_schoolbook_on_field_columns() {
-    let shape = MatrixShape {
-        rows: 2,
-        width: 5,
-        ring_dim: 64,
-    };
-    let (data, matrix) = prepared::<64>(shape, 12);
-    let mut rng = ChaCha20Rng::seed_from_u64(5);
-    let columns = (0..shape.width)
-        .map(|_| {
-            CyclotomicRing::from_slice(&(0..64).map(|_| F::random(&mut rng)).collect::<Vec<_>>())
-        })
-        .collect::<Vec<CyclotomicRing<F, 64>>>();
-    assert_eq!(
-        matrix.apply(&columns).unwrap(),
-        schoolbook(shape, &data, &columns)
-    );
-}
-
-#[test]
-fn apply_centered_equals_apply_of_the_lift() {
-    let shape = MatrixShape {
-        rows: 2,
-        width: 4,
-        ring_dim: 256,
-    };
-    let (_, matrix) = prepared::<256>(shape, 13);
-    let mut rng = ChaCha20Rng::seed_from_u64(6);
-    let input = centered_input(shape.width * 256, 1 << 20, &mut rng);
-    assert_eq!(
-        matrix.apply_centered(&input, 1 << 20).unwrap(),
-        matrix.apply(&lift::<256>(&input)).unwrap()
-    );
+    for (digest, expected) in [
+        (
+            check_apply_centered::<64>(1 << 28),
+            "9c24c5494f15ec6403971f437bb2905d48f163cb9d69e1ff828977a7727ff9a5",
+        ),
+        (
+            check_apply_centered::<64>(i32::MAX as u32),
+            "3d17b525db1c7b4b5fac09f19b4155999d7c55b6ae1323444ca56b247a12c147",
+        ),
+        (
+            check_apply_centered::<256>(1 << 28),
+            "cbf8fca64e5f1bc15ae014162b6e3ce33980345b6402d714cc3ba8deeb43840a",
+        ),
+        (
+            check_apply_centered::<256>(8),
+            "5dd65520b7eb26f2f9ebdb291fe2e77408c707397e61f264a3c5d9c7e0d49da5",
+        ),
+    ] {
+        assert_eq!(hex(digest), expected);
+    }
 }
 
 #[test]
@@ -181,7 +173,9 @@ fn check_commit<const D: usize>(
             CyclotomicRing::from_slice(&(0..D).map(|_| F::random(&mut rng)).collect::<Vec<_>>())
         })
         .collect::<Vec<CyclotomicRing<F, D>>>();
-    let randomness = sample_box_digits(&mut rng, randomness_columns * D, 4).unwrap();
+    let randomness = (0..randomness_columns * D)
+        .map(|_| (rng.next_u32() % 16) as i8 - 8)
+        .collect::<Vec<_>>();
     let commitment = commit(&level, &matrix, &message, &randomness).unwrap();
 
     let params = BalancedDecomposePow2Params::<F>::new(levels, log_basis);
@@ -225,16 +219,9 @@ fn check_commit<const D: usize>(
 /// here changes commitment bytes.
 #[test]
 fn commit_digests_are_frozen() {
-    let hex = |bytes: [u8; 32]| {
-        bytes
-            .iter()
-            .flat_map(|byte| [byte >> 4, byte & 15])
-            .map(|nibble| char::from(b"0123456789abcdef"[usize::from(nibble)]))
-            .collect::<String>()
-    };
     assert_eq!(
         hex(check_commit::<64>(4, 32, 2)),
-        "310ebca88dbd3fe51d9c5eed0140036d211707d0b84fe0c871238d2af458eacc"
+        "2f053786aad127aa3023f93e4eaad5c855002ad8f4398a44c5120003bcbeb0fb"
     );
     assert_eq!(
         hex(check_commit::<256>(8, 16, 0)),
@@ -242,7 +229,7 @@ fn commit_digests_are_frozen() {
     );
     assert_eq!(
         hex(check_commit::<256>(4, 32, 1)),
-        "7becc5408f96577627857ff16ad0582183a2c6ee903381a3f5aa89b150efa8a6"
+        "74812bea54b3446061a0607cc2323c25fb99228cf62a61984fe55960aede6960"
     );
 }
 
@@ -293,6 +280,7 @@ fn randomness_columns_match_the_headline_sizes() {
     );
 }
 
+#[cfg(feature = "sample")]
 #[test]
 fn box_digits_cover_exactly_the_balanced_alphabet() {
     let mut rng = ChaCha20Rng::seed_from_u64(9);
@@ -304,7 +292,6 @@ fn box_digits_cover_exactly_the_balanced_alphabet() {
 
 fn headline_two_level(outer_dim: usize) -> TwoLevelLayout {
     let blocks = BlockGeometry {
-        live_rings: 45 * 1024,
         rings_per_block: 1024,
         live_blocks: 45,
     };
@@ -347,12 +334,15 @@ fn headline_two_level(outer_dim: usize) -> TwoLevelLayout {
 #[test]
 fn two_level_layout_checks_shape_and_module_structure() {
     let layout = headline_two_level(256);
-    layout.validate().unwrap();
+    layout.validate::<F>().unwrap();
     assert!(layout.is_module_over_challenge_ring());
     let split = headline_two_level(64);
-    split.validate().unwrap();
+    split.validate::<F>().unwrap();
     assert!(!split.is_module_over_challenge_ring());
     let mut bad = layout;
     bad.outer.message_rings += 1;
-    assert!(bad.validate().is_err());
+    assert!(bad.validate::<F>().is_err());
+    let mut wide = layout;
+    wide.outer.matrix.width += 1;
+    assert!(wide.validate::<F>().is_err());
 }

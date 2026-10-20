@@ -30,9 +30,6 @@ const CRT_PRIMES: usize = 6;
 /// Columns accumulated before one exact reconstruction, unless the CRT
 /// capacity allows fewer. Also the unit of parallel work.
 const COLUMN_CHUNK: usize = 64;
-/// Radix of the planes that [`PreparedMatrix::apply`] splits field inputs into.
-const FIELD_PLANE_LOG_BASIS: u32 = 8;
-const FIELD_PLANE_LEVELS: usize = 16;
 
 /// Balanced gadget digits: base `2^log_basis`, `levels` digits, digit 0 least
 /// significant, decomposed by jolt-algebra's branch-free balanced
@@ -163,6 +160,11 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
     /// Constant time in `x`: the bound is checked over all coefficients as
     /// one aggregate, which is the only value branched on, and every
     /// coefficient takes the same lift, transform, and accumulation.
+    ///
+    /// WARNING: `bound` must be a hard bound on every input the caller can
+    /// produce, such as the Gaussian sampler's tail cut, never a statistical
+    /// one. An input above `bound` returns an error, and for a secret input
+    /// that error is an abort correlated with the secret.
     pub fn apply_centered(
         &self,
         input: &[i64],
@@ -204,59 +206,6 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         for partial in partials {
             for (out, value) in output.iter_mut().zip(partial) {
                 *out += value;
-            }
-        }
-        Ok(output)
-    }
-
-    /// `M · x` for field columns `x`: each column is split into 16 balanced
-    /// radix-256 digit planes, each plane is applied as centered input, and
-    /// the results are recombined in `F`. Sixteen times the cost of
-    /// [`Self::apply_centered`].
-    pub fn apply(
-        &self,
-        input: &[CyclotomicRing<F, D>],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
-        if input.len() != self.shape.width {
-            return Err(CryptoError::InvalidSize {
-                expected: self.shape.width,
-                actual: input.len(),
-            });
-        }
-        let digits = GadgetDigits {
-            log_basis: FIELD_PLANE_LOG_BASIS,
-            levels: FIELD_PLANE_LEVELS,
-        };
-        digits.validate::<F>()?;
-        if !digits.covers_field::<F>()? {
-            return Err(CryptoError::InvalidSetup(
-                "radix-256 planes do not cover the field".into(),
-            ));
-        }
-        let params = digits.params::<F>();
-        let mut planes = vec![vec![0i64; input.len() * D]; FIELD_PLANE_LEVELS];
-        let mut ring_digits = vec![0i8; FIELD_PLANE_LEVELS * D];
-        for (column, ring) in input.iter().enumerate() {
-            balanced_decompose_coefficients_pow2_i8_into(
-                ring.coefficients(),
-                &mut ring_digits,
-                &params,
-            );
-            for (plane, digits) in planes.iter_mut().zip(ring_digits.chunks_exact(D)) {
-                let target = plane
-                    .get_mut(column * D..(column + 1) * D)
-                    .ok_or_else(|| CryptoError::Internal("digit plane is too short".into()))?;
-                for (dst, &digit) in target.iter_mut().zip(digits) {
-                    *dst = i64::from(digit);
-                }
-            }
-        }
-        let radix = F::from_u64(1 << FIELD_PLANE_LOG_BASIS);
-        let mut output = vec![CyclotomicRing::zero(); self.shape.rows];
-        for plane in planes.iter().rev() {
-            let partial = self.apply_centered(plane, 1 << (FIELD_PLANE_LOG_BASIS - 1))?;
-            for (out, value) in output.iter_mut().zip(partial) {
-                *out = out.scale(&radix) + value;
             }
         }
         Ok(output)

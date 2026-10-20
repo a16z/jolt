@@ -15,6 +15,8 @@
 //!   for zero randomness columns);
 //! - `u` the concatenation of the slice outputs.
 
+use jolt_field::{CanonicalEncoding, Field};
+
 use super::ajtai::AjtaiLevel;
 use crate::CryptoError;
 
@@ -24,8 +26,6 @@ pub const CHALLENGE_RING_DIM: usize = 64;
 /// How the committed source is cut into blocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockGeometry {
-    /// Live ring elements per polynomial.
-    pub live_rings: usize,
     /// Ring elements per block (`M`).
     pub rings_per_block: usize,
     /// Live blocks per polynomial.
@@ -71,10 +71,13 @@ impl TwoLevelLayout {
         self.blocks.live_blocks.div_ceil(self.slices.get())
     }
 
-    /// Checks the internal consistency of the layout: inner input is one
+    /// Checks the internal consistency of the layout: each level's width is
+    /// its decomposed message plus its randomness, the inner input is one
     /// block, the inner level is binding only, and the outer message is
     /// exactly the decomposed inner images of one slice.
-    pub fn validate(&self) -> Result<(), CryptoError> {
+    pub fn validate<F: Field + CanonicalEncoding>(&self) -> Result<(), CryptoError> {
+        self.inner.validate::<F>()?;
+        self.outer.validate::<F>()?;
         let inner_dim = self.inner.matrix.ring_dim;
         let outer_dim = self.outer.matrix.ring_dim;
         if self.inner.randomness_columns != 0 {

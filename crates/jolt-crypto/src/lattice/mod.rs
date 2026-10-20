@@ -18,7 +18,9 @@ pub use matrix::{
     check_public_matrix_prefix, derive_public_matrix_prefix, PublicMatrixDerivation,
     PublicMatrixSeed,
 };
-pub use randomness::{required_randomness_columns, sample_box_digits, HIDING_SECURITY_BITS};
+#[cfg(feature = "sample")]
+pub use randomness::sample_box_digits;
+pub use randomness::{required_randomness_columns, HIDING_SECURITY_BITS};
 pub use view::{MatrixShape, MatrixView};
 
 #[cfg(test)]
