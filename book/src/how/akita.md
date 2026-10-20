@@ -61,7 +61,7 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-The workspace pins Akita to `f15ab8518820886c4109ffa48835ca467fbff91c`.
+The workspace pins Akita to `dfdbd7674cab5cfbe95243e947d1b10a982f232b`.
 Jolt delegates to Akita's adaptive ring-dimension schedule configuration
 and uses the CPU backend for every fold.
 The checked-in schedule catalogs match this revision. The default K=16
@@ -71,7 +71,7 @@ Akita's planner admits a Module-SIS instance only when its ADPS16 quantum
 Core-SVP estimate is at least 169 bits, the cost of the ML-DSA-65 forgery
 attack (NIST security category 3). Fiat-Shamir grinding and the challenge
 spaces separately target 128 bits. Akita's
-[policy spec](https://github.com/LayerZero-Labs/akita/blob/f15ab8518820886c4109ffa48835ca467fbff91c/specs/sis-nist-level3-policy.md)
+[policy spec](https://github.com/LayerZero-Labs/akita/blob/dfdbd7674cab5cfbe95243e947d1b10a982f232b/specs/sis-nist-level3-policy.md)
 states both targets and their evidence.
 
 `ProverConfig::derive_from_dimensions` selects the single-chunk geometry
