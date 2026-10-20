@@ -152,22 +152,23 @@ pub struct AjtaiLevel {
 }
 ```
 
-Three functions, all generic over the ring dimension `D`; each checks
-`shape.ring_dim == D`:
+A view is prepared once as `PreparedMatrix<F, D>`, which checks
+`shape.ring_dim == D`. It offers three operations:
 
-- `apply_centered(view, x: &[i64]) -> Vec<CyclotomicRing<F, D>>`: the map
-  `M·x` on centered integer columns. This is the Σ-protocol's `N·y`, and the
-  core of the other two.
-- `apply(view, x: &[CyclotomicRing<F, D>])`: the same map on field columns.
-- `commit(level, view, x, r)`. It computes
-  `apply_centered(view, G⁻¹(x) ‖ r)`, where `r` is box digits.
+- `apply_centered(x: &[i64], bound) -> Vec<CyclotomicRing<F, D>>`: the map
+  `M·x` on centered integer columns with `|x| ≤ bound < 2^31`. This is the
+  Σ-protocol's `N·y`, and the core of the other two.
+- `apply(x: &[CyclotomicRing<F, D>])`: the same map on field columns. It
+  splits each column into 16 radix-256 planes, at 16 times the cost.
+- `commit(level, prepared, x, r)`. It computes
+  `apply_centered(G⁻¹(x) ‖ r, 128)`, where `r` is box digits.
 
 **Implementation, one path for all three.** The public matrix is prepared once
 in CRT-NTT form. It uses jolt-algebra's `CrtNttParamSet<i32, 6, D>` over the
 Q128 primes and `CyclotomicCrtNtt::from_ring`, which may branch because the
 matrix is public. Each input column is lifted into Montgomery residues by
 `NttPrime::from_canonical` on its centered value. That lift is a branch-free
-Montgomery product and is valid for `|x| < 2^30`. The column is then
+Montgomery product and is exact for every `i32`. The column is then
 transformed by the forward NTT and accumulated pointwise into each output row.
 
 - **Exactness.** Products are reconstructed exactly over Z and reduced mod q.
@@ -183,7 +184,7 @@ transformed by the forward NTT and accumulated pointwise into each output row.
   switch. The i8 path in Akita's `block_parallel.rs:28-64` indexes
   `DigitMontLut` by digit value, so it is not used for secrets. Neither is any
   other Akita kernel.
-- **Input bound.** The bound `|x| < 2^30` is checked over all inputs as one
+- **Input bound.** The bound `|x| ≤ bound` is checked over all inputs as one
   constant-time aggregate, and only the aggregate is branched on.
 
 `q ≡ 9 (mod 16)` gives no NTT over F_q for `X^256 + 1`. Schoolbook `N·y` would
@@ -667,7 +668,7 @@ g enters only through Q_μ's `u·g(s)` term.
 | digits D_b, D_pub | 7 for every Gaussian segment; 3 | derived | `L_b ≥` the box bound (below); `D_pub` covers `κ₁·B` |
 | box L_b | `7(16^{D_b}−1)/15`, the positive end of the certified range (A9) | derived | `Σ_b 64·len_b·2^{1−⌊L_b²/k_b²⌋} ≤ 10^{−3}`, which gives p_𝓑 ≥ 0.999 |
 | shift bound | `κ₁ · B_b` | derived | `JointRejection::accept` |
-| T_att | 163 | derived | smallest T with `(1 − (p_𝓑 − ε)/M)^T ≤ 2^−128`, in integers |
+| T_att | 163 | derived | smallest T with `(1 − (p_𝓑 − ε)/M)^T ≤ 2^−128`. It bounds only the prover's retries, so it is computed in `f64`, with the acceptance probability shaded down by 2^−40 |
 | ν | 256 | const | — |
 | ℓ | 14 | `RowLabels` | — |
 | A_a, [B_a\|B′_a], A_p ranks | 3 × R_256 each | Akita planner and SIS tables (rule 3), in the setup | Akita (SIS); W4 checks module structure and view lengths |
@@ -849,9 +850,19 @@ Moved out of W4:
   caller free to rerun.
 - **A15 (W5).** θ and e's logical layout stay in jolt-zk. W5 states its
   physical alignment needs before slice 8.
-- **A16, cost.** The per-attempt N·y time on CRT-NTT is measured in slice 1
-  (below). The paper's +4.7% prover overhead assumes a 10 ns Gaussian
-  sample and an Akita-speed N·y.
+- **A16, cost.** Measured on the headline shape: inner A (3 × 1,024 R_256)
+  on 45 blocks, [B|B′] (3 × 4,417), A_p (3 × 922), then A_D (1 × 18,144
+  R_64). The test machine was an Apple M4 Max, release build, with the
+  matrices prepared once in 0.20 s on one thread and 0.03 s on 16.
+
+  | Threads | N·y per attempt | N·y + A_D·G⁻¹(V) |
+  |---|---|---|
+  | 1 | 0.135 s | 0.143 s |
+  | 16 | 0.028 s | 0.030 s |
+
+  At 2.37 expected attempts, that is about 0.07 s per proof on 16 threads.
+  This is within the paper's +4.7% (1.15 s) budget, which also assumes a
+  10 ns Gaussian sample (M5a measured 0.5 µs on one thread).
 
 ## Not verified by this note
 
