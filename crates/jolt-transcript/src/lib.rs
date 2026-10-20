@@ -41,6 +41,8 @@ mod legacy;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 #[cfg(feature = "spongefish")]
+mod pow;
+#[cfg(feature = "spongefish")]
 mod prover;
 #[cfg(feature = "spongefish")]
 mod setup;
@@ -60,6 +62,10 @@ pub use legacy::{
     append_length_prefixed, AppendToTranscript, Label, LabelWithCount, Transcript, U64Word,
     MAX_LABEL_LEN,
 };
+#[cfg(feature = "spongefish")]
+pub use pow::MAX_POW_BITS;
+#[cfg(feature = "prover-grinding")]
+pub use pow::{MessageSearch, Probe};
 #[cfg(feature = "spongefish")]
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
 
