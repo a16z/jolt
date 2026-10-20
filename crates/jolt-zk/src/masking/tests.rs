@@ -194,7 +194,8 @@ fn receive(narg: &[u8]) -> Received {
 fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
     let mut relation = ResidualRelation::new(layout(), 0);
 
-    let uniskip_claim = AffineRow::masked(received.uniskip_claim.0, PadIndex(received.uniskip_claim.1));
+    let uniskip_claim =
+        AffineRow::masked(received.uniskip_claim.0, PadIndex(received.uniskip_claim.1));
     let reduced = sumcheck_rows(
         &mut relation,
         AffineRow::constant(uniskip_input()),
@@ -246,12 +247,14 @@ fn honest_masked_transcript_satisfies_its_rows() {
     assert_eq!(relation.first_violation(&proof.pads, &[]).unwrap(), None);
 }
 
+type Perturbation = Box<dyn Fn(&mut Received)>;
+
 #[test]
 fn changing_any_masked_value_breaks_a_row() {
     let proof = prove();
     let honest = receive(&proof.narg);
     let one = Fr::from_u64(1);
-    let mut perturbations: Vec<Box<dyn Fn(&mut Received)>> = Vec::new();
+    let mut perturbations: Vec<Perturbation> = Vec::new();
     for round in 0..NUM_VARS {
         for index in 0..DEGREE {
             perturbations.push(Box::new(move |r| r.rounds[round].wire[index] += one));
@@ -270,7 +273,10 @@ fn changing_any_masked_value_breaks_a_row() {
         let mut received = receive(&proof.narg);
         perturb(&mut received);
         let relation = relation(&received, proof.claimed_sum);
-        assert!(relation.first_violation(&proof.pads, &[]).unwrap().is_some());
+        assert!(relation
+            .first_violation(&proof.pads, &[])
+            .unwrap()
+            .is_some());
     }
 }
 
@@ -279,18 +285,22 @@ fn a_wrong_claimed_sum_breaks_a_row() {
     let proof = prove();
     let received = receive(&proof.narg);
     let relation = relation(&received, proof.claimed_sum + Fr::from_u64(1));
-    assert!(relation.first_violation(&proof.pads, &[]).unwrap().is_some());
+    assert!(relation
+        .first_violation(&proof.pads, &[])
+        .unwrap()
+        .is_some());
 }
 
 #[test]
 fn shape_and_values_domains_allocate_alike() {
-    let three_factors: FactoredExpr<Fr, Opening, (), ()> = FactoredExpr::product(vec![
-        opening(Opening::A),
-        opening(Opening::B) + opening(Opening::Uniskip),
-        opening(Opening::Uniskip),
-    ]) + FactoredExpr::from(opening::<Fr, Opening, (), ()>(Opening::A))
-        + FactoredExpr::product(vec![opening(Opening::A), opening(Opening::B)])
-            .scale(Fr::from_u64(0));
+    let three_factors: FactoredExpr<Fr, Opening, (), ()> =
+        FactoredExpr::product(vec![
+            opening(Opening::A),
+            opening(Opening::B) + opening(Opening::Uniskip),
+            opening(Opening::Uniskip),
+        ]) + FactoredExpr::from(opening::<Fr, Opening, (), ()>(Opening::A))
+            + FactoredExpr::product(vec![opening(Opening::A), opening(Opening::B)])
+                .scale(Fr::from_u64(0));
     let mut shape = ShapeDomain::default();
     lower_factored(&three_factors, &mut shape, &mut |_| Ok(()), &mut |_| {
         Ok(Fr::from_u64(0))

@@ -125,12 +125,12 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
         transcript: &mut ProverTranscript<H>,
     ) -> Result<PadSlots, ZkError> {
         let slots = self.cursor.take(values.len())?;
-        let pads = self
-            .pads
-            .get(slots.start..slots.start + slots.len)
-            .ok_or(ZkError::InvalidLayout {
-                reason: "pad slots outside the pad vector",
-            })?;
+        let pads =
+            self.pads
+                .get(slots.start..slots.start + slots.len)
+                .ok_or(ZkError::InvalidLayout {
+                    reason: "pad slots outside the pad vector",
+                })?;
         let mut masked: Vec<F> = values.iter().zip(pads).map(|(m, p)| *m + *p).collect();
         transcript.exchange_all(&mut masked)?;
         Ok(slots)
@@ -205,6 +205,29 @@ impl<C> CommittedPadsView<C> {
     }
 }
 
+impl CommittedPadsView<()> {
+    /// A view of an unbounded schedule with no commitment, for deriving a
+    /// layout: running the masked verifier over it counts the pads its
+    /// messages take ([`used`](Self::used)). It opens nothing, and no back end
+    /// accepts it.
+    pub fn counting() -> Self {
+        Self::new(
+            PadLayout {
+                num_pads: usize::MAX,
+                auxiliary: usize::MAX..usize::MAX,
+            },
+            (),
+        )
+    }
+}
+
+impl<C> CommittedPadsView<C> {
+    /// The number of pads the masked messages read so far took.
+    pub fn used(&self) -> usize {
+        self.cursor.next
+    }
+}
+
 /// The verifier's masked [`PrivateChannel`]: it reads m̂ in place of each
 /// private value and returns the pad slots the prover used. Derived claims
 /// bind nothing, since the masked messages they derive from already do.
@@ -241,7 +264,10 @@ impl<H: Sponge> Channel for MaskedVerifier<'_, '_, H> {
         self.transcript.exchange(value)
     }
 
-    fn exchange_all<A: CanonicalDecode>(&mut self, values: &mut [A]) -> Result<(), TranscriptError> {
+    fn exchange_all<A: CanonicalDecode>(
+        &mut self,
+        values: &mut [A],
+    ) -> Result<(), TranscriptError> {
         self.transcript.exchange_all(values)
     }
 

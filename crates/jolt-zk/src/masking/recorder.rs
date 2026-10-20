@@ -41,7 +41,9 @@ impl<F: Field + CanonicalEncoding, O> SumcheckRecorder<F> for MaskingRecorder<'_
         degree: usize,
         transcript: &mut ProverTranscript<H>,
     ) -> Result<F, SumcheckError<F>> {
-        let _ = self.pads.send(&compressed_wire(round_poly, degree)?, transcript)?;
+        let _ = self
+            .pads
+            .send(&compressed_wire(round_poly, degree)?, transcript)?;
         Ok(transcript.challenge_small())
     }
 

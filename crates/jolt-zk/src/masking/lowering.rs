@@ -14,7 +14,7 @@
 
 use jolt_claims::{Expr, FactoredExpr, Source};
 use jolt_field::Field;
-use jolt_sumcheck::{MaskedRound, SumcheckDomain, SumcheckDomainSpec};
+use jolt_sumcheck::{BooleanHypercube, MaskedRound, SumcheckDomain, SumcheckDomainSpec};
 
 use super::residual::{AffineRow, ProductRow, ResidualRelation};
 use super::{PadIndex, ZkError};
@@ -191,11 +191,9 @@ impl<F: Field> ClaimDomain<F> for RowsDomain<'_, F> {
             reason: "product operand is not a single masked slot",
         })?;
         let z = self.next_slot()?;
-        self.relation.products.push(ProductRow {
-            x,
-            y,
-            z: z.clone(),
-        });
+        self.relation
+            .products
+            .push(ProductRow { x, y, z: z.clone() });
         Ok(z)
     }
 }
@@ -379,7 +377,7 @@ pub fn sumcheck_rows<F: Field>(
         }
         let coefficients = match format {
             RoundFormat::Compressed => {
-                let weights = jolt_sumcheck::BooleanHypercube
+                let weights = BooleanHypercube
                     .round_sum_coefficients(degree.max(1))
                     .map_err(|_| ZkError::InvalidRelation {
                         reason: "round degree has no round-sum weights",
@@ -387,12 +385,11 @@ pub fn sumcheck_rows<F: Field>(
                 compressed_coefficients(&claim, sent, &weights)?
             }
             RoundFormat::Full(domain) => {
-                let weights =
-                    domain
-                        .round_sum_coefficients(degree)
-                        .map_err(|_| ZkError::InvalidRelation {
-                            reason: "round degree has no round-sum weights",
-                        })?;
+                let weights = domain.round_sum_coefficients(degree).map_err(|_| {
+                    ZkError::InvalidRelation {
+                        reason: "round degree has no round-sum weights",
+                    }
+                })?;
                 if weights.len() != sent.len() {
                     return Err(ZkError::InvalidRelation {
                         reason: "full round width differs from its weights",
