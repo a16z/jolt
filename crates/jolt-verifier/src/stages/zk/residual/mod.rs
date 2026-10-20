@@ -15,7 +15,8 @@
 //! Each stage file computes the stage's public values (eq/lt evaluations,
 //! challenges) and registers its members' factored formulas with
 //! [`ResidualBuilder`]. The claim lowering is one routine run in three value
-//! domains: [`ShapeDomain`] counts auxiliary slots for the pad layout,
+//! domains: [`OperandShapeDomain`] counts auxiliary slots and records the
+//! product operands for the pad layout,
 //! [`ValuesDomain`] computes the prover's auxiliary values, and
 //! [`RowsDomain`] builds the rows. Stage 8's row, which ties the PCS
 //! evaluation to the masked claims, belongs to the back end's PCS integration
@@ -84,8 +85,8 @@ use jolt_poly::{
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{BatchedMaskedRounds, MaskedRound, SumcheckDomainSpec};
 use jolt_zk::masking::{
-    lower_factored, sumcheck_rows, AffineRow, ClaimDomain, MaskedOperand, ResidualRelation,
-    ResidualRows, RoundFormat, RowsDomain, ShapeDomain, ValuesDomain, ZkError,
+    lower_factored, sumcheck_rows, AffineRow, ClaimDomain, MaskedOperand, OperandShapeDomain,
+    PadLayout, ResidualRelation, ResidualRows, RoundFormat, RowsDomain, ValuesDomain, ZkError,
 };
 use std::collections::BTreeMap;
 
@@ -307,15 +308,24 @@ impl<F: JoltField> JoltResidual<F> {
         Ok(self.opening(id)?.form())
     }
 
-    /// The number of auxiliary slots the relation's products take.
+    /// The pad layout of a schedule with `base` message slots: the
+    /// auxiliary slots the relation's products take, and their operand pads.
     ///
     /// # Errors
     ///
     /// [`VerifierError`] if a formula does not lower.
-    pub fn auxiliary_count(&self) -> Result<usize, VerifierError> {
-        let mut shape = ShapeDomain::default();
-        let _ = self.lower_claims(&mut shape, &mut |_| Ok(()))?;
-        Ok(shape.auxiliary)
+    pub fn pad_layout(&self, base: usize) -> Result<PadLayout, VerifierError> {
+        let mut shape = OperandShapeDomain::new(base);
+        let _ = self.lower_claims(&mut shape, &mut |id| {
+            Ok(Some(
+                self.opening(id)
+                    .map_err(|_| ZkError::InvalidRelation {
+                        reason: "a claim formula names an opening no stage received",
+                    })?
+                    .pad,
+            ))
+        })?;
+        Ok(shape.layout()?)
     }
 
     /// The prover's auxiliary values, in slot order, from the decoded

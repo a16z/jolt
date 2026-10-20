@@ -17,6 +17,14 @@ whiteout = ["jolt-algebra/solinas", "jolt-crypto/lattice"]
 # witness alphabet check, the rejection rule), kept out
 # of every verifier build.
 whiteout-prover = ["jolt-crypto/sample", "whiteout"]
+# Timing harness for examples/sigma_dudect.rs: exposes the Σ-protocol
+# attempt's steps on a synthetic instance. Diagnostics only.
+whiteout-diagnostics = [
+  "dep:rand_chacha",
+  "jolt-crypto/sample-diagnostics",
+  "jolt-transcript/transcript-blake2b",
+  "whiteout-prover",
+]
 
 [dependencies]
 jolt-claims.workspace = true
@@ -27,6 +35,7 @@ jolt-r1cs.workspace = true
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-utils.workspace = true
+rand_chacha = { workspace = true, optional = true }
 rand_core.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
@@ -52,3 +61,11 @@ required-features = ["whiteout-prover"]
 [[test]]
 name = "whiteout_params"
 required-features = ["whiteout-prover"]
+
+[[example]]
+name = "sigma_dudect"
+required-features = ["whiteout-diagnostics"]
+
+[[example]]
+name = "sigma_timing"
+required-features = ["whiteout-diagnostics"]

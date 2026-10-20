@@ -27,6 +27,8 @@ pub use config::{
 };
 #[cfg(feature = "sample")]
 pub use sampler::sample_challenge_ct;
+#[cfg(feature = "sample-diagnostics")]
+pub use sampler::sample_challenge_ct_counted;
 pub use sampler::sample_indexed_challenges_from_seed;
 pub use sparse::{
     SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions, INLINE_SPARSE_WEIGHT,

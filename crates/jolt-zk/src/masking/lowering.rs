@@ -5,7 +5,8 @@
 //! The allocation depends only on the formula's structure, never on values,
 //! so the same routine serves three domains:
 //!
-//! - [`ShapeDomain`] counts auxiliary slots for the pad layout;
+//! - [`OperandShapeDomain`] counts auxiliary slots and records the product
+//!   operands' pads, giving the pad layout;
 //! - [`RowsDomain`] builds the residual rows over (pads, witness);
 //! - [`ValuesDomain`] computes the prover's auxiliary values.
 //!
@@ -17,7 +18,7 @@ use jolt_claims::{Expr, FactoredExpr, Source};
 use jolt_sumcheck::{BooleanHypercube, MaskedRound, SumcheckDomain, SumcheckDomainSpec};
 
 use super::residual::{AffineRow, ProductRow, ResidualRelation};
-use super::{PadIndex, ZkError};
+use super::{PadIndex, PadLayout, ZkError};
 
 /// The values a claim formula lowers into.
 pub trait ClaimDomain<F> {
@@ -32,39 +33,100 @@ pub trait ClaimDomain<F> {
     fn product(&mut self, x: Self::Value, y: Self::Value) -> Result<Self::Value, ZkError>;
 }
 
-/// Counts auxiliary slots; carries no values.
-#[derive(Debug, Default)]
-pub struct ShapeDomain {
-    pub auxiliary: usize,
+/// The numbering of auxiliary slots: slot `k` of the block is pad
+/// `start + k`. [`RowsDomain`] and [`OperandShapeDomain`] both take slots
+/// through it, so the shape routine names the pads the rows use.
+#[derive(Clone, Copy, Debug)]
+struct AuxiliarySlots {
+    start: usize,
+    next: usize,
 }
 
-impl<F> ClaimDomain<F> for ShapeDomain {
-    type Value = ();
-
-    fn constant(&self, _value: F) {}
-
-    fn add(&self, _lhs: &(), _rhs: &()) {}
-
-    fn scale(&self, _value: &(), _scale: F) {}
-
-    fn define_auxiliary(&mut self, _value: ()) -> Result<(), ZkError> {
-        self.bump()
+impl AuxiliarySlots {
+    fn new(start: usize) -> Self {
+        Self { start, next: 0 }
     }
 
-    fn product(&mut self, _x: (), _y: ()) -> Result<(), ZkError> {
-        self.bump()
-    }
-}
-
-impl ShapeDomain {
-    fn bump(&mut self) -> Result<(), ZkError> {
-        self.auxiliary = self
-            .auxiliary
-            .checked_add(1)
-            .ok_or(ZkError::InvalidLayout {
-                reason: "auxiliary slot count overflows usize",
+    /// The next slot, below `end` if the range is bounded.
+    fn take(&mut self, end: Option<usize>) -> Result<PadIndex, ZkError> {
+        let pad = self
+            .start
+            .checked_add(self.next)
+            .filter(|&pad| end.is_none_or(|end| pad < end))
+            .ok_or(ZkError::PadsExhausted {
+                requested: 1,
+                remaining: 0,
             })?;
-        Ok(())
+        self.next += 1;
+        Ok(PadIndex(pad))
+    }
+}
+
+/// The shape routine: counts the auxiliary slots and records the pads of
+/// product operands, before the pads are committed. The lattice back end
+/// commits operand pads as constant digit polynomials (Whiteout §3.2).
+/// Openings resolve to their masked slots and auxiliary slots are numbered
+/// as [`RowsDomain`] numbers them, so the operands are every product row's
+/// operand pad, in the order the rows are emitted, each once.
+#[derive(Debug)]
+pub struct OperandShapeDomain {
+    slots: AuxiliarySlots,
+    operands: Vec<PadIndex>,
+}
+
+impl OperandShapeDomain {
+    /// The shape of a schedule with `base` message slots, whose auxiliary
+    /// block starts right after them.
+    pub fn new(base: usize) -> Self {
+        Self {
+            slots: AuxiliarySlots::new(base),
+            operands: Vec::new(),
+        }
+    }
+
+    /// The pad layout: `base` message slots, the auxiliary slots counted,
+    /// and the operand pads recorded.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::InvalidLayout`] if the total overflows `usize`.
+    pub fn layout(self) -> Result<PadLayout, ZkError> {
+        Ok(PadLayout::new(self.slots.start, self.slots.next)?.with_operand_pads(self.operands))
+    }
+}
+
+impl<F> ClaimDomain<F> for OperandShapeDomain {
+    /// The slot of a value that is exactly one masked slot.
+    type Value = Option<PadIndex>;
+
+    fn constant(&self, _value: F) -> Option<PadIndex> {
+        None
+    }
+
+    fn add(&self, _lhs: &Option<PadIndex>, _rhs: &Option<PadIndex>) -> Option<PadIndex> {
+        None
+    }
+
+    fn scale(&self, _value: &Option<PadIndex>, _scale: F) -> Option<PadIndex> {
+        None
+    }
+
+    fn define_auxiliary(&mut self, _value: Option<PadIndex>) -> Result<Option<PadIndex>, ZkError> {
+        Ok(Some(self.slots.take(None)?))
+    }
+
+    fn product(
+        &mut self,
+        x: Option<PadIndex>,
+        _y: Option<PadIndex>,
+    ) -> Result<Option<PadIndex>, ZkError> {
+        let x = x.ok_or(ZkError::InvalidRelation {
+            reason: "product operand is not a single masked slot",
+        })?;
+        if !self.operands.contains(&x) {
+            self.operands.push(x);
+        }
+        Ok(Some(self.slots.take(None)?))
     }
 }
 
@@ -107,15 +169,16 @@ impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
 pub struct RowsDomain<'r, F> {
     relation: &'r mut ResidualRelation<F>,
     masked_auxiliary: &'r [F],
-    next: usize,
+    slots: AuxiliarySlots,
 }
 
 impl<'r, F: Field> RowsDomain<'r, F> {
     pub fn new(relation: &'r mut ResidualRelation<F>, masked_auxiliary: &'r [F]) -> Self {
+        let slots = AuxiliarySlots::new(relation.layout.auxiliary.start);
         Self {
             relation,
             masked_auxiliary,
-            next: 0,
+            slots,
         }
     }
 
@@ -129,12 +192,12 @@ impl<'r, F: Field> RowsDomain<'r, F> {
     ///
     /// [`ZkError::PadCountMismatch`] otherwise.
     pub fn finish(&self) -> Result<(), ZkError> {
-        if self.next == self.masked_auxiliary.len() {
+        if self.slots.next == self.masked_auxiliary.len() {
             Ok(())
         } else {
             Err(ZkError::PadCountMismatch {
                 scheduled: self.masked_auxiliary.len(),
-                used: self.next,
+                used: self.slots.next,
             })
         }
     }
@@ -142,24 +205,13 @@ impl<'r, F: Field> RowsDomain<'r, F> {
     fn next_slot(&mut self) -> Result<AffineRow<F>, ZkError> {
         let masked = *self
             .masked_auxiliary
-            .get(self.next)
+            .get(self.slots.next)
             .ok_or(ZkError::PadsExhausted {
                 requested: 1,
                 remaining: 0,
             })?;
-        let pad = self
-            .relation
-            .layout
-            .auxiliary
-            .start
-            .checked_add(self.next)
-            .filter(|pad| self.relation.layout.auxiliary.contains(pad))
-            .ok_or(ZkError::PadsExhausted {
-                requested: 1,
-                remaining: 0,
-            })?;
-        self.next += 1;
-        Ok(AffineRow::masked(masked, PadIndex(pad)))
+        let pad = self.slots.take(Some(self.relation.layout.auxiliary.end))?;
+        Ok(AffineRow::masked(masked, pad))
     }
 }
 

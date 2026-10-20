@@ -18,9 +18,9 @@ use jolt_transcript::{
 };
 use jolt_zk::blindfold::{BlindFold, BlindFoldResidualWitness};
 use jolt_zk::masking::{
-    lower_factored, sumcheck_rows, AffineRow, CommittedPadsView, MaskingRecorder, PadIndex,
-    PadLayout, ResidualRelation, ResidualVar, RoundFormat, RowsDomain, ShapeDomain, ValuesDomain,
-    ZkBackend, ZkError,
+    lower_factored, sumcheck_rows, AffineRow, CommittedPadsView, MaskingRecorder,
+    OperandShapeDomain, PadIndex, PadLayout, ResidualRelation, ResidualVar, RoundFormat,
+    RowsDomain, ValuesDomain, ZkBackend, ZkError,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -53,9 +53,16 @@ fn setup() -> PedersenSetup<Bn254G1> {
 }
 
 fn layout() -> PadLayout {
-    let mut shape = ShapeDomain::default();
-    lower_factored(&product(), &mut shape, &mut |_| Ok(()), &mut |_| Ok(fr(0))).unwrap();
-    PadLayout::new(NUM_VARS * DEGREE + 2, shape.auxiliary).unwrap()
+    let base = NUM_VARS * DEGREE + 2;
+    let mut shape = OperandShapeDomain::new(base);
+    let _ = lower_factored(
+        &product(),
+        &mut shape,
+        &mut |id| Ok(Some(PadIndex(base - 2 + *id as usize))),
+        &mut |_| Ok(fr(0)),
+    )
+    .unwrap();
+    shape.layout().unwrap()
 }
 
 fn fold(table: &[Fr], r: Fr) -> Vec<Fr> {

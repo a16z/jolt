@@ -86,3 +86,8 @@ jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::exchange::exchange#0::self.tr
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::exchange_all::exchange_all#0::self.transcript.exchange_all(values)
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::exchange_private::exchange_all#0::self.transcript.exchange_all(values)
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::exchange_private_base::exchange_all#0::self.transcript.exchange_all(values)
+jolt-zk::whiteout/diagnostics.rs::AttemptHarness<D>::prove::send_all#0::transcript.send_all(ring.coefficients())
+jolt-zk::whiteout/sigma.rs::prover::prove_sigma_with::send_all#2::transcript.send_all(&flat)
+jolt-zk::whiteout/sigma.rs::prover::prove_sigma_with::send_bytes#3::transcript.send_bytes(&accepted.nonce)
+jolt-zk::whiteout/sigma.rs::verify_sigma::receive_bytes#3::transcript.receive_bytes(ATTEMPT_NONCE_LEN)
+jolt-zk::whiteout/sigma.rs::verify_sigma::receive_n#2::transcript.receive_n(setup.v_level.matrix.rows*CHALLENGE_RING_DIM)

@@ -303,7 +303,10 @@ The segment table therefore rejects a residual or pad layout in either case:
 - `d_A ≠ d_B`;
 - a ring dimension that is not a multiple of 64.
 
-The error is `ZkError::Setup(NotModuleOverChallengeRing)`. The headline
+`SigmaSetup::new` returns `WhiteoutError::InvalidRelation` (reaching
+callers as `ZkError::Whiteout`) when a segment's native dimension differs
+from the setup's `D`, and `SegmentTable` rejects a native dimension that is
+not a power-of-two multiple of 64 with `WhiteoutError::Segment`. The headline
 layouts use R_256 throughout and pass.
 
 ## 2. The Σ-protocol
@@ -459,9 +462,9 @@ two compressed 128-byte forms, until W5 adds compression (A12).
 | Event | Handling | Why |
 |---|---|---|
 | accept bit 0 | Internal retry with fresh y and n_i. | Step 4: Fiat–Shamir with aborts. |
-| all T_att attempts rejected | `ZkError::SigmaAttemptsExhausted`. The caller may rerun the whole proof with fresh randomness. | Probability ≤ 2^−128. H3 makes the event independent of the witness, and the simulator outputs ⊥ at the same rate (A14). |
-| `SampleError::ShiftOutOfRange` | `ZkError::InvariantViolation`, fatal. Never retried, never recorded. | Unreachable after check 1 of §2.1. |
-| other `SampleError`, layout errors | `ZkError::Setup(..)`, fatal. | Public parameters. |
+| all T_att attempts rejected | `WhiteoutError::AttemptsExhausted`. The caller may rerun the whole proof with fresh randomness. | Probability ≤ 2^−128. H3 makes the event independent of the witness, and the simulator outputs ⊥ at the same rate (A14). |
+| `SampleError::ShiftOutOfRange` | `WhiteoutError::InvariantViolation`, fatal. Never retried, never recorded. | Unreachable after check 1 of §2.1. |
+| other `SampleError`, layout errors | `WhiteoutError::Sample`, `Crypto` or `InvalidRelation`, fatal. | Public parameters. |
 | operator-norm budget exhausted | Fatal on both sides. | A public function of the oracle input, with probability about 2^−1580 at 4,096 tries. Conditioned on the budget not running out, c is uniform on the filtered family. Retrying on exhaustion would change nothing measurable, but it would add an attempt-dependent path, so it is fatal instead. |
 | `ZkError::FoldOverflow` (W2) | Whole-proof retry. | Outside the Σ-protocol. |
 
@@ -519,13 +522,72 @@ reveal them either.
 - the NEON and AVX butterflies and pointwise kernels;
 - the decomposition SIMD paths.
 
-Per-attempt buffers are allocated once and overwritten. No tracing span carries
-an attempt value. The attempt body is `#[inline(never)]`, so the review covers
-the production monomorphization.
+Per-attempt buffers have public sizes. No tracing span carries an attempt
+value. The attempt body is `#[inline(never)]`, so the review covers the
+production monomorphization.
 
-**Platform.** The argument assumes that integer multiply, add and compare take
-data-independent time. Neither arm64 DIT nor Intel DOITM is enabled, and this
-is recorded as an accepted assumption (A11).
+**Record (W4, 2026-10-20, Apple M4 Max).**
+
+- **dudect.** `crates/jolt-zk/examples/sigma_dudect.rs` (feature
+  `whiteout-diagnostics`) times each step against extreme fixed classes
+  (masks all 0, all +2^20, all −2^20; V all 0 or −1; c all 0, +2 or −2)
+  with dudect's ten percentile crops, at D = 64 and the stride case
+  D = 256. Both classes are built by the same store path: a cloned fixed
+  input, or one left on the zero page, reads faster from memory and gave
+  false positives before the harness was fixed. An A/A run (both classes
+  random) passes everywhere.
+
+  10⁵ measurements per test at D = 64 (2.5 · 10⁴ at D = 256), t_D at 10⁷
+  (2.5 · 10⁶), seed 0, no DIT:
+
+  | Step | D = 64 max \|t\| | D = 256 max \|t\| |
+  |---|---|---|
+  | linear parts of y (lift, claim sums, dense forms) | ≤ 1.1 | ≤ 1.2 |
+  | `Q_μ(0,y)` and `B_μ` | 3.3 | 1.9 |
+  | `N·y` with gadget, fixed ±B | ≤ 1.9 | ≤ 5.9 (crop) |
+  | `N·y` with gadget, fixed 0 | **17.1** (raw 14.6) | **190** (raw 29) |
+  | `L·y` | **10.6–14.4** (raw ≤ 5.3) | **5.9–47.8** (raw ≤ 18.3) |
+  | `t_D = A_D G⁻¹(V)` at 10⁷ / 2.5 · 10⁶ | 1.5 | 2.8 |
+  | attempt fork seed | 1.4 | 1.0 |
+  | `z`/`v` assembly | 1.5 | 2.1 |
+  | challenge sampler, per candidate count 1–4 | — | ≤ 3.3 |
+
+  Seed 1 reproduced the D = 64 rows before the run was stopped.
+
+  **Finding: the Ajtai map is not constant time on M4 without DIT.**
+  Micro-tests localize it to `CyclotomicCrtNtt::to_ring_ct`: a zero output
+  is 0.5% faster at D = 256 (|t| = 13, 2 · 10⁵ samples), while
+  `assign_centered_i32_ct`, `add_assign_pointwise_mul`, and `Fp128` mul/add
+  pass alone. Every one of those operations is branch-free in the source and
+  in the asm audited below, so this is operand-dependent timing in the core.
+  With the DIT bit set on every thread (`SIGMA_DUDECT_DIT=1`), `to_ring_ct`
+  passes (|t| ≤ 1.7) and `N·y` passes at D = 64. A residual remains at 10⁵
+  under DIT: `L·y` at |t| ≤ 15 in crops (raw ≤ 6.1, about 20–30 ns of
+  14 µs) and `N·y` fixed 0 at D = 256 in crop 1 (|t| = 20). These residuals
+  are not localized. Every other step passes under DIT too. See A11.
+
+- **asm, branch-free.** `Fp128` add, sub and mul have no conditional branch on
+  aarch64 or x86_64; add/sub compile to `csel` and `cmov`.
+- **asm, public branches only.** These branch only on loop counters and
+  public indices:
+  - `challenge_times_i64`;
+  - the challenge view;
+  - the constant-time sampler, apart from two kinds of allowed branch: the
+    `next_usize_mod` rejection on discarded bytes, and the per-candidate
+    accept bit.
+- **asm, decomposition.** The scalar kernel and the AVX2/AVX-512 remainder
+  loops of `BalancedDecomposePow2Params::biased` are branch-free on x86_64
+  after the W4 fix.
+- **Not audited line by line:**
+  - the NEON/AVX NTT butterflies and pointwise kernels, which the dudect
+    Ajtai test covers only empirically;
+  - `Fp128`'s canonical encoding in the attempt fork's absorb of t_D.
+
+  Both are open audit items for the W5 last-PR gate.
+
+**Platform.** The argument assumed that integer multiply, add and compare take
+data-independent time without DIT/DOITM. The dudect record above refutes this
+on Apple M4 for the CRT reconstruction (A11).
 
 ## 3. Response statement and `ResponseProver`
 
@@ -556,17 +618,19 @@ The statement follows the items of §4.3. The seed and the layouts come from
 the setup, and the statement does not duplicate them.
 
 ```rust
-pub struct ResponseStatement<F> {
-    pub challenge: SparseChallenge,            // c
-    pub rho: Vec<F>,                           // ρ; μ is derived by RowLabels
-    pub layout: ResponseLayout,                // segments of e, below
-    pub residual_image: Vec<F>,                // u_a (raw until W5 compresses it)
-    pub pad_image: Vec<F>,                     // t_p (raw)
-    pub v_image: Vec<F>,                       // t_D (raw)
-    pub ring_linear: RingLinearStatement,      // N: residual TwoLevelLayout, pad AjtaiLevel, segment table
-    pub quadratic: QuadraticStatement<F>,      // see below
+pub struct ResponseStatement<'a, F: JoltField, const D: usize> {
+    setup: &'a SigmaSetup<F, D>,        // N, its targets (u_a, t_p), L, A_D, segment table, params
+    relation: &'a LiftedRelation<F>,    // the lifted rows, labels and symbolic claims
+    challenge: SparseChallenge,         // c
+    rho: Vec<F>,                        // ρ; μ is derived by the relation's labels
+    v_image: Vec<ChallengeRing<F>>,     // t_D (raw)
 }
 ```
+
+The fields are crate-private; W5 reads them through `challenge()`, `rho()`,
+`v_image()` and `layout()`, and the setup and relation through their own
+accessors. The layout, `N`, `L` and the quadratic terms are derived from the
+setup and relation, never restated.
 
 - **`ResponseLayout`** lists e = (G_z⁻¹(z), G⁻¹(V), G⁻¹(θ)) as typed
   segments. Each segment carries a length, a radix, a digit count and an
@@ -597,7 +661,7 @@ jolt-zk computes all of it:
 - `G_z⁻¹(z)` and `G⁻¹(V)`, the latter already formed for t_D;
 - θ from (4), as the quotient of `Σ μ_i [X_i(c,z)][Y_i(c,z)] − [H_e]` by
   `X^64 + 1`. Its degree is below 63, and a nonzero remainder returns
-  `ZkError::InvariantViolation`.
+  `WhiteoutError::InvariantViolation`.
 
 At the headline shape, e has about 65.5M cells (§5), which is 65 MB as `i8`.
 
@@ -606,20 +670,23 @@ At the headline shape, e has about 65.5M cells (§5), which is 65 MB as `i8`.
 The trait is that of interfaces §5:
 
 ```rust
-pub trait ResponseProver<F> {
-    fn prove_response<H: Sponge>(&self, statement: &ResponseStatement<F>,
-        witness: &ResponseWitness<F>, transcript: &mut ProverTranscript<H>) -> Result<(), ZkError>;
-    fn verify_response<H: Sponge>(&self, statement: &ResponseStatement<F>,
+pub trait ResponseProver<F: JoltField, const D: usize> {
+    fn prove_response<H: Sponge>(&self, statement: &ResponseStatement<'_, F, D>,
+        witness: &ResponseWitness, transcript: &mut ProverTranscript<H>) -> Result<(), ZkError>;
+    fn verify_response<H: Sponge>(&self, statement: &ResponseStatement<'_, F, D>,
         transcript: &mut VerifierTranscript<'_, H>) -> Result<(), ZkError>;
 }
 ```
+
+(`D` is the setup's native dimension, A17.)
 
 Its contract:
 
 - The commitment to e is the first transcript event after n.
 - `verify_response` checks Items 1–5 over all of e, public z segments
   included.
-- Errors map to `ZkError::Response(..)`.
+- Errors are `ZkError`. A statement that does not hold is
+  `WhiteoutError::ResponseRejected`, carried as `ZkError::Whiteout`.
 
 W4's tests use `CheckingResponseProver`, test support that evaluates Items 1–5
 directly on the witness. It is the statement's own semantics, not a second
@@ -745,9 +812,10 @@ those widths fail the whole-element table at Σ = 1.003.
 ## 7. Test plan
 
 1. **Completeness at the predicted abort rate.**
-   - 2,000 honest proofs over `CheckingResponseProver` all verify.
-   - The mean attempt count lies within a 5σ binomial band of `M/p_𝓑`.
-   - A run at α = 10 (M ≈ 3.99) moves the rate measurably.
+   - Honest proofs over `CheckingResponseProver` verify at D = 64 and 256.
+   - Over 300 deterministic proofs each at α = 16 (`ALPHA`) and α = 10, the
+     mean attempt count lies within 4σ of the repetition rate M that α and
+     `EPSILON_BITS` predict (M ≈ 2.37 and 3.99).
 2. **Tamper rejection.**
    - Flipping a byte of t_D, of n, of t_p or of u_a is rejected.
    - Reordering ρ is rejected.
@@ -764,10 +832,11 @@ those widths fail the whole-element table at Σ = 1.003.
    - A χ² homogeneity test across two witnesses of equal shape passes.
    - Nonce bytes pass a χ² test.
 4. **Constant time.**
-   - `examples/sample_dudect.rs` gains the attempt body (fixed versus random
-     y-seed and c, s fixed), `apply_centered`, and the constant-time
-     challenge sampler (fixed versus random fork seeds). Each passes
-     |t| < 4.5.
+   - `examples/sigma_dudect.rs` (feature `whiteout-diagnostics`) times each
+     step of the attempt body on extreme fixed classes against random ones,
+     at D = 64 and 256, with dudect's percentile crops; the constant-time
+     challenge sampler is conditioned on its candidate count. Results are
+     in §2.8.
    - The `cargo asm` record covers the audit list of §2.8.
    - Both are a W4 slice, and they land before W5's last PR.
 5. **Ajtai.**
@@ -799,11 +868,11 @@ those widths fail the whole-element table at Σ = 1.003.
 | 2 | `jolt-transcript`: `Fork::attempt`, `is_fork_domain` for transcript audits, redacted `Debug` | — | done |
 | 3 | `jolt-zk::whiteout`: segment table, alphabet and shape check, `SigmaParams` with derived widths, the exact check and typed errors; `JointRejection::max_attempts` | M5a, M6d | done |
 | 4 | `jolt-crypto::challenge`: constant-time prover-side attempt sampler, byte-identical to the verifier's; `SparseChallenge::to_dense_ct` | M5b | done |
-| 5 | `RowLabels`, lifting, Q_μ/B_μ | **M6b** relation shapes | later |
-| 6 | `LatticePadCommitment` (raw output), `operand_pads` check | 1, 3; **M6b** | later |
-| 7 | Σ core, statistics tests | 2, 4, 5, 6 | later |
-| 8 | `ResponseStatement`/`ResponseWitness` (no ξ), trait, θ, `CheckingResponseProver`, completeness and tamper tests | 7; W5 alignment note (A15) | later |
-| 9 | dudect and asm record | 1, 4, 7 | later, before W5's last PR |
+| 5 | `RowLabels`, lifting, Q_μ/B_μ | **M6b** relation shapes | done |
+| 6 | `LatticePadCommitment` (raw output), `PadPlacement`, `OperandShapeDomain`, `operand_pads` check | 1, 3; **M6b** | done |
+| 7 | Σ core, statistics tests | 2, 4, 5, 6 | done |
+| 8 | `ResponseStatement`/`ResponseWitness` (no ξ), trait, θ, `CheckingResponseProver`, completeness and tamper tests | 7; W5 alignment note (A15) | done |
+| 9 | dudect and asm record | 1, 4, 7 | done (§2.8 record); remaining audit items before W5's last PR |
 
 Moved out of W4:
 
@@ -844,9 +913,15 @@ Moved out of W4:
   overlapping other roles at offset 0 is acceptable for H4 and H8. The LHL
   statement allows side information that depends on the matrix.
 - **A9, box (authors).** L_b is the full positive digit envelope.
-- **A11, platform.** DIT/DOITM are not enabled. W4 records this as an
-  accepted assumption; a follow-up needs a narrowly scoped `unsafe` wrapper
-  outside the verifier closure.
+- **A11, platform: open, decision needed.** DIT/DOITM are not enabled, and
+  the §2.8 record shows that this is not safe on M4. `to_ring_ct` leaks a
+  zero output (|t| up to 190 at D = 256), and DIT removes that leak. The
+  recommendation is to set PSTATE.DIT for the attempt on aarch64. That
+  needs an `unsafe` `msr DIT` on the attempt thread and on every rayon
+  worker it uses (a pool `start_handler`), in a crate outside jolt-zk's
+  `forbid(unsafe_code)` and outside the verifier closure. Intel DOITM needs
+  OS support. Even under DIT, `L·y` shows a small unexplained residual
+  (§2.8), which needs localization before W5's last PR.
 - **A12, compression (W5, authors).**
   - Akita caps a compression source at 8 KiB, i.e. 512 Fp128 coefficients
     (`akita-params/src/compression.rs:19`). t_p and u_a have 768
@@ -872,13 +947,75 @@ Moved out of W4:
   | 1 | 0.135 s | 0.143 s |
   | 16 | 0.028 s | 0.030 s |
 
-  At 2.37 expected attempts, that is about 0.07 s per proof on 16 threads.
-  This is within the paper's +4.7% (1.15 s) budget, which also assumes a
-  10 ns Gaussian sample (M5a measured 0.5 µs on one thread).
+  Whole attempts, measured by `examples/sigma_timing.rs` (feature
+  `whiteout-diagnostics`) on the test fixture over R_256 scaled to
+  538,368 and 2,111,232 Gaussian coefficients (800,512 and 3,159,808 in s),
+  16 threads, release, response proof (W5) excluded:
+
+  | Gaussian coefficients | per attempt | per proof (mean attempts) | fixed per proof |
+  |---|---|---|---|
+  | 538,368 | 0.227 s | 0.488 s (2.10) | 0.011 s |
+  | 2,111,232 | 0.909 s | 1.984 s (2.15) | 0.029 s |
+
+  One thread gives 0.238 s per attempt at the smaller shape: the attempt is
+  serial-bound. Instrumented, 0.221 s of the 0.227 s is M5a's Gaussian
+  `fill` (0.41 µs per coefficient, one RNG stream); the lift, `N·y`, `L·y`,
+  `Q_μ`, `B_μ`, `t_D`, the challenge, `c·s` and the rejection rule take
+  7 ms together (13 ns per coefficient).
+
+  Extrapolated to the headline (ΣN = 6,221,056 Gaussian cells, plus the
+  `N·y` above): about 2.6 s per attempt and 6.2 s per proof at
+  2.37 attempts, against the paper's +4.7% (1.15 s) budget, which assumes a
+  10 ns Gaussian sample. Closing the gap needs a parallel fill (independent
+  per-block RNG streams forked from the attempt's randomness) in M5a's
+  sampler; the Σ-protocol's own work is about 0.08 s per attempt.
+
+**Found in implementation (W4 slices 5–9):**
+
+- **A17, `ResponseProver` signature.** The trait is
+  `ResponseProver<F, const D: usize>`, because the statement references the
+  setup's native-dimension `N`. Interfaces §5 names `ResponseProver<F>`.
+- **A18, `Witness(j)` variable order.** `w̃(r_j)` is over the `Witness`
+  segments in table order and native coefficient order, zero-padded, with the
+  first point coordinate as the most significant index bit. This is
+  provisional until W3 pins Akita's MLE order and the stride permutation.
+- **A19, `operand_pads` at commit time.** Resolved. `PadLayout` carries
+  `operand_pads`, and the only production producer is
+  `OperandShapeDomain::layout`, the shape routine's own domain
+  (`with_operand_pads` is crate-private; the field, like `PadLayout`'s
+  others, stays public, so a caller can still build a layout by hand, which
+  the verifier's comparison rejects). Its production caller is the verifier's
+  `pad_layout` (jolt-verifier `stages/zk/residual`), which derives the layout
+  it compares against the committed one. `PadPlacement::new` reads the field,
+  and `check_relation` requires the relation's layout to equal the
+  placement's.
+- **A20, one native dimension.** `SigmaSetup` requires every segment, and so
+  every block of `N`, to share one native dimension `D`. That covers the
+  headline (R_256 for A, B and A_p). This is the check §1.7 describes; it
+  surfaces as `WhiteoutError::InvalidRelation`, not a separate
+  `NotModuleOverChallengeRing` variant.
+- **A21, per-proof setup cost.**
+  - `prove_sigma` rebuilds `JointRejection` and the samplers per proof. Their
+    320-bit constants cost about 10–20 ms.
+  - W6 should cache them alongside the setup.
+- **A22, shift independence is not testable.** At the derived widths,
+  `‖c s‖_σ ≤ 1/α` puts the shift's effect on z far below sampling error. The
+  statistics test therefore checks z's moments and the abort rate; M5a's
+  tests cover the rule on large shifts.
+- **Measured abort rate.**
+  - The mean attempt count was 2.394 over 10,000 proofs, against
+    M = 2.371 (standard error 0.018, so 1.3σ).
+  - The relation was synthetic: D = 64, 1 product, 2 affine rows, 1 public
+    segment.
+  - The permanent test runs 300 deterministic proofs at each of α = 16 and
+    α = 10 with a 4σ band.
 
 ## Not verified by this note
 
 - Akita's commitment semantics come from reading the code. W5's equivalence
   test checks the bytes.
 - The headline counts come from the cost script, not from runs of M6b or W3.
-- The constant-time audit list (§2.8) is pending slice 9.
+- The constant-time audit (§2.8) leaves two items open: the NEON/AVX NTT
+  kernels line by line, and the DIT decision (A11).
+- Secret buffers (y, rejected z, V, e) are dropped, not zeroized: `zeroize`
+  is not a workspace dependency. Open item for W6.

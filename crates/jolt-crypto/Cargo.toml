@@ -46,6 +46,9 @@ lattice = [
 # Whiteout's constant-time Gaussian sampler and joint rejection rule. Prover-only,
 # so separate from `lattice` and kept out of every verifier build.
 sample = ["dep:subtle", "dep:num-bigint"]
+# Exposes the constant-time challenge sampler's candidate count, which
+# jolt-zk's timing diagnostics condition on. Diagnostics only.
+sample-diagnostics = ["sample"]
 
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }

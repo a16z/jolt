@@ -10,6 +10,8 @@ use rand_core::{CryptoRng, RngCore};
 use thiserror::Error as ThisError;
 
 use crate::blindfold::RelaxedError;
+#[cfg(feature = "whiteout")]
+use crate::whiteout::WhiteoutError;
 
 use super::{CommittedPads, CommittedPadsView, PadLayout, ResidualRelation};
 
@@ -30,6 +32,10 @@ pub enum ZkError {
     PadCountMismatch { scheduled: usize, used: usize },
     #[error("invalid pad layout: {reason}")]
     InvalidLayout { reason: &'static str },
+    /// The schedule's product operand pads differ from the committed
+    /// layout's, with equal pad counts.
+    #[error("product operand pads differ from the committed layout")]
+    OperandPadsMismatch,
     #[error("invalid residual relation: {reason}")]
     InvalidRelation { reason: &'static str },
     /// A `SumcheckError<F>`.
@@ -43,6 +49,18 @@ pub enum ZkError {
     /// A BlindFold `VerificationError<F>` other than a transcript failure.
     #[error("BlindFold proof rejected: {0}")]
     BlindFoldRejected(#[source] ErasedSource),
+    /// A Whiteout `WhiteoutError`, erased so the variant exists whether or
+    /// not the `whiteout` feature is on (feature additivity: dependents match
+    /// `ZkError` exhaustively).
+    #[error("Whiteout: {0}")]
+    Whiteout(#[source] ErasedSource),
+}
+
+#[cfg(feature = "whiteout")]
+impl From<WhiteoutError> for ZkError {
+    fn from(error: WhiteoutError) -> Self {
+        Self::Whiteout(Box::new(error))
+    }
 }
 
 /// A transcript failure surfaces as [`ZkError::Transcript`], and a

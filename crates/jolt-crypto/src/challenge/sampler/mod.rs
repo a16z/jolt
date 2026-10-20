@@ -15,8 +15,8 @@ mod xof;
 
 #[cfg(feature = "sample")]
 pub use constant_time::sample_challenge_ct;
-#[cfg(feature = "sample")]
-pub(crate) use constant_time::scatter_ct;
+#[cfg(feature = "sample-diagnostics")]
+pub use constant_time::sample_challenge_ct_counted;
 use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::{IndexedXofPrefix, XofCursor};

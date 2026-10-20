@@ -1,5 +1,6 @@
 #[cfg(feature = "whiteout-prover")]
 use jolt_crypto::sample::SampleError;
+use jolt_crypto::CryptoError;
 use thiserror::Error as ThisError;
 
 /// Malformed inputs to the Whiteout building blocks.
@@ -36,12 +37,42 @@ pub enum WhiteoutError {
     /// shapes, breaking the joint rejection theorem's hypothesis.
     #[error("Gaussian widths too narrow for the segments' honest norms")]
     WidthsTooNarrow,
+    /// A response coefficient could exceed `2^31 − 1`, the Ajtai map's
+    /// exact lift: the table is too large for the derived widths.
+    #[error("response coefficients exceed the Ajtai map's i32 lift")]
+    ResponseBoundTooLarge,
     /// The parameters exceed the joint rejection rule's exact arithmetic.
     #[error("parameters exceed the rejection rule's arithmetic bounds")]
     RejectionArithmetic,
     /// Parameter arithmetic overflowed its integer range.
     #[error("Σ-protocol parameter arithmetic overflows")]
     Overflow,
+    /// The residual relation or its placement in `s` is malformed.
+    #[error("invalid Whiteout relation: {0}")]
+    InvalidRelation(&'static str),
+    /// The prover's witness violates residual row `row` (affine rows, then
+    /// scalarity rows, then product rows, then `ct(g) = 0`), checked before
+    /// any challenge. The proof must abort.
+    #[error("the residual witness violates row {row}")]
+    ResidualUnsatisfied { row: usize },
+    /// `N·s` differs from the commitment images. The proof must abort.
+    #[error("the private vector does not open the commitment images")]
+    ResidualOpeningMismatch,
+    /// Every one of the `T_att` Σ-protocol attempts was rejected. The event
+    /// is independent of the witness; the caller may rerun the whole proof
+    /// with fresh randomness.
+    #[error("every Σ-protocol attempt was rejected")]
+    AttemptsExhausted,
+    /// A release invariant failed: only a malformed witness or a bug
+    /// produces it. Never retried, never recorded in the transcript.
+    #[error("Whiteout invariant violated: {0}")]
+    InvariantViolation(&'static str),
+    /// The response statement does not hold.
+    #[error("response rejected: {0}")]
+    ResponseRejected(&'static str),
+    /// A lattice primitive rejected its arguments.
+    #[error(transparent)]
+    Crypto(#[from] CryptoError),
     /// The sampling layer rejected its parameters.
     #[cfg(feature = "whiteout-prover")]
     #[error(transparent)]

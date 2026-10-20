@@ -22,7 +22,8 @@ mod tests;
 
 pub use backend::{ErasedSource, ZkBackend, ZkError};
 pub use lowering::{
-    lower_factored, sumcheck_rows, ClaimDomain, RoundFormat, RowsDomain, ShapeDomain, ValuesDomain,
+    lower_factored, sumcheck_rows, ClaimDomain, OperandShapeDomain, RoundFormat, RowsDomain,
+    ValuesDomain,
 };
 pub use pads::{CommittedPads, CommittedPadsView, MaskedVerifier, PadIndex, PadLayout};
 pub use recorder::MaskingRecorder;

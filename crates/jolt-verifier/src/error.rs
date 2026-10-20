@@ -154,12 +154,14 @@ impl From<ZkError> for VerifierError {
             ZkError::Transcript(error) => Self::Transcript(error),
             ZkError::PadsExhausted { .. }
             | ZkError::PadCountMismatch { .. }
+            | ZkError::OperandPadsMismatch
             | ZkError::InvalidLayout { .. }
             | ZkError::InvalidRelation { .. }
             | ZkError::Sumcheck(_)
             | ZkError::BlindFoldShape(_)
             | ZkError::BlindFoldProver(_)
-            | ZkError::BlindFoldRejected(_) => Self::Masking(error),
+            | ZkError::BlindFoldRejected(_)
+            | ZkError::Whiteout(_) => Self::Masking(error),
         }
     }
 }
