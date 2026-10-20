@@ -25,8 +25,10 @@ use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
 use support::{f, layout, polynomial};
 
-const FINAL_NUM_VARS: usize = 16;
-/// Six variables above this one-column trace group.
+/// The smallest one-column K=16 Single arity whose scalar guide has a
+/// recursive child fold, which bounded grouped provisioning requires.
+const FINAL_NUM_VARS: usize = 18;
+/// Four variables above this one-column trace group.
 const ADVICE_NUM_VARS: usize = 22;
 const TRUSTED_ADVICE: CommitmentGroupRole =
     CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice");
