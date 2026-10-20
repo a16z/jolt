@@ -58,7 +58,7 @@ akita = [
 # Compile-time ZK mode: masking sumcheck recorders over committed pads, hiding
 # witness commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.
-zk = ["jolt-verifier/zk", "jolt-kernels/zk", "dep:rand_core"]
+zk = ["jolt-verifier/zk", "jolt-kernels/zk", "dep:jolt-zk", "dep:rand_core"]
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
   "dep:bincode",
@@ -108,7 +108,7 @@ jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
-jolt-zk.workspace = true
+jolt-zk = { workspace = true, optional = true }
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
@@ -135,6 +135,7 @@ jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 jolt-transcript = { workspace = true, features = ["transcript-keccak"] }
 jolt-platform.workspace = true
+jolt-zk.workspace = true
 sha2.workspace = true
 sha3.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
