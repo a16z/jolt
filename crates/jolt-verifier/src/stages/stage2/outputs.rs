@@ -284,7 +284,7 @@ mod tests {
     }
 
     /// Pins the batch's `draw_challenges` to the pre-port inline draw: the RAM read-write
-    /// gamma, the instruction claim-reduction gamma (each a single `challenge_scalar`), under
+    /// gamma, the instruction claim-reduction gamma (each a single `challenge()`), under
     /// `field-inline` the field-inline claim-reduction gamma (the spec's draw slot: after the
     /// instruction claim-reduction gamma, before the RAM output address challenges), then the
     /// RAM output-check address reference point — one raw `challenge()` per RAM address

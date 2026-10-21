@@ -12,9 +12,9 @@ use jolt_akita::{
 use jolt_host::Program;
 use jolt_prover::akita;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
-use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_prover::JoltBackend;
 use jolt_prover::ProverConfig;
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 
@@ -184,10 +184,10 @@ mod field_inline {
     use jolt_host::{JoltProgramSource, Program};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_prover::akita::preprocessing::{AkitaVc};
-    use jolt_transcript::{Keccak, ProverState, VerifierState};
+    use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_prover::JoltBackend;
     use jolt_prover::{akita, ProverConfig};
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 

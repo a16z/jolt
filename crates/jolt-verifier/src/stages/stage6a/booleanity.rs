@@ -106,10 +106,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
     /// squeezes exactly where the hand pre-batch block drew them — after the
     /// bytecode member's six gammas.
     ///
-    /// MUST stay `challenge_vector` + `challenge()` (not `challenge_scalar`):
-    /// both decode the same 16-byte squeeze, but differently, so switching
-    /// would silently change the reference/gamma values without changing the
-    /// transcript bytes.
+    /// The pad is one `challenge_vector` message and the gamma one
+    /// `challenge()` message; merging them would squeeze different bytes.
     fn draw_challenges<T: FieldTranscript<F>>(
         &self,
         transcript: &mut T,

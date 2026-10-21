@@ -71,7 +71,7 @@ fn run_check<H>(input: &Input) -> Result<(), CheckError>
 where
     H: DuplexSpongeInit<U = u8>,
 {
-    let mut prover = prover_transcript::<H>(SESSION, INSTANCE_DIGEST);
+    let mut prover = prover_transcript::<H>(SESSION, &INSTANCE_DIGEST);
     let mut prover_challenges: Vec<[u8; 32]> = Vec::new();
 
     for op in &input.ops {
@@ -88,7 +88,7 @@ where
     }
 
     let narg: Vec<u8> = prover.narg_string().to_vec();
-    let mut verifier = verifier_transcript::<H>(SESSION, INSTANCE_DIGEST, &narg);
+    let mut verifier = verifier_transcript::<H>(SESSION, &INSTANCE_DIGEST, &narg);
     let mut challenge_idx = 0usize;
 
     for (op_idx, op) in input.ops.iter().enumerate() {

@@ -166,7 +166,7 @@ where
 
     // Draw each relation's challenges in declaration order: the RAM read-write gamma, the
     // instruction claim-reduction gamma, under `field-inline` the field-inline claim-reduction
-    // gamma (each a single `challenge_scalar`), then the RAM output-check address reference
+    // gamma (each a single `challenge()`), then the RAM output-check address reference
     // point (the last member's `draw_challenges` override — one raw `challenge()` per RAM
     // address variable, landing after the gammas as the inline draw did). The drawn challenges
     // feed the input/output claims and populate the stage aggregate carried downstream.

@@ -453,7 +453,7 @@ mod tests {
         ProveRounds, SequentialRounds, SumcheckProof, SumcheckRecorder,
         OPENING_CLAIM_TRANSCRIPT_LABEL,
     };
-    use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
+    use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::VerifierError;
 
@@ -668,7 +668,7 @@ mod tests {
         assert_eq!(input_claim, claimed_sum);
         let mut recorder = ClearSumcheckRecorder::<Fr>::new();
         recorder.absorb_input_claims(&[input_claim], &mut prover_state);
-        let coefficient: Fr = prover_state.challenge()?;
+        let coefficient: Fr = prover_state.challenge().unwrap();
         let prelude = BatchPrelude::new(
             vec![BatchMember {
                 input_claim,
@@ -744,7 +744,7 @@ mod tests {
             .input_claim(&inputs, &verifier_challenges)
             .unwrap();
         append_sumcheck_claim(&mut verifier_transcript, &verifier_input_claim);
-        let verifier_coefficient: Fr = verifier_transcript.challenge()?;
+        let verifier_coefficient: Fr = verifier_transcript.challenge().unwrap();
         let reduction = SumcheckProof::<Fr, Fr>::from(recorded.proof)
             .verify_compressed_boolean(
                 ROUNDS,
@@ -784,7 +784,7 @@ mod tests {
         let derived_tables = derived_tables(&drifted_point);
         let claimed_sum = brute_force_sum(&opening_tables, &derived_tables, gamma);
 
-        let coefficient: Fr = transcript.challenge()?;
+        let coefficient: Fr = transcript.challenge().unwrap();
         let prelude = BatchPrelude::new(
             vec![BatchMember {
                 input_claim: claimed_sum,

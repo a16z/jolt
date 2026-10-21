@@ -321,10 +321,7 @@ impl Encoding for JoltStatement<'_> {
                 CommitmentConfig::Akita => 1,
             },
         );
-        word(
-            b"field_inline",
-            u64::from(protocol.field_inline.enabled),
-        );
+        word(b"field_inline", u64::from(protocol.field_inline.enabled));
         word(
             b"field_register_log_k",
             num::u64_from_usize(protocol.field_inline.field_register_log_k),
@@ -335,14 +332,8 @@ impl Encoding for JoltStatement<'_> {
                 FieldInlineRepresentation::NativeFieldElement => 0,
             },
         );
-        word(
-            b"max_input_size",
-            public_io.memory_layout.max_input_size,
-        );
-        word(
-            b"max_output_size",
-            public_io.memory_layout.max_output_size,
-        );
+        word(b"max_input_size", public_io.memory_layout.max_input_size);
+        word(b"max_output_size", public_io.memory_layout.max_output_size);
         word(b"heap_size", public_io.memory_layout.heap_size);
         word(b"panic", u64::from(public_io.panic));
         word(b"ram_K", num::u64_from_usize(checked.ram_K));
@@ -376,7 +367,10 @@ impl Encoding for JoltStatement<'_> {
             self.config.trace_polynomial_order.transcript_scalar(),
         );
         for (label, bytes) in [
-            (&b"preprocessing_digest"[..], &checked.preprocessing_digest[..]),
+            (
+                &b"preprocessing_digest"[..],
+                &checked.preprocessing_digest[..],
+            ),
             (b"inputs", &public_io.inputs),
             (b"outputs", &public_io.outputs),
         ] {
@@ -870,7 +864,8 @@ pub fn absorb_transcript_commitments<C, T>(
     C: Encoding,
     T: Transcript,
 {
-    let mut absorb_commitment = |commitment: &C| transcript.append_labeled(b"commitment", commitment);
+    let mut absorb_commitment =
+        |commitment: &C| transcript.append_labeled(b"commitment", commitment);
     absorb_commitment(&commitments.rd_inc);
     absorb_commitment(&commitments.ram_inc);
     for commitment in &commitments.instruction_ra {
@@ -1328,7 +1323,9 @@ mod tests {
             ("trace_length", |c, _| c.trace_length *= 2),
             ("ram_K", |c, _| c.ram_K *= 2),
             ("entry_address", |c, _| c.entry_address += 4),
-            ("preprocessing_digest", |c, _| c.preprocessing_digest[0] ^= 1),
+            ("preprocessing_digest", |c, _| {
+                c.preprocessing_digest[0] ^= 1;
+            }),
             ("ram_rw_phase1_num_rounds", |_, k| {
                 k.rw_config.ram_rw_phase1_num_rounds += 1;
             }),
@@ -1359,7 +1356,9 @@ mod tests {
         let unbound: &[(&str, Edit)] = &[
             // `validate_inputs` rejects a memory layout other than the
             // preprocessing's, and the preprocessing digest binds that one.
-            ("program_size", |c, _| c.public_io.memory_layout.program_size += 1),
+            ("program_size", |c, _| {
+                c.public_io.memory_layout.program_size += 1;
+            }),
             ("max_trusted_advice_size", |c, _| {
                 c.public_io.memory_layout.max_trusted_advice_size += 1;
             }),
@@ -1378,15 +1377,25 @@ mod tests {
             ("untrusted_advice_end", |c, _| {
                 c.public_io.memory_layout.untrusted_advice_end += 1;
             }),
-            ("input_start", |c, _| c.public_io.memory_layout.input_start += 1),
+            ("input_start", |c, _| {
+                c.public_io.memory_layout.input_start += 1;
+            }),
             ("input_end", |c, _| c.public_io.memory_layout.input_end += 1),
-            ("output_start", |c, _| c.public_io.memory_layout.output_start += 1),
-            ("output_end", |c, _| c.public_io.memory_layout.output_end += 1),
-            ("stack_size", |c, _| c.public_io.memory_layout.stack_size += 1),
+            ("output_start", |c, _| {
+                c.public_io.memory_layout.output_start += 1;
+            }),
+            ("output_end", |c, _| {
+                c.public_io.memory_layout.output_end += 1;
+            }),
+            ("stack_size", |c, _| {
+                c.public_io.memory_layout.stack_size += 1;
+            }),
             ("stack_end", |c, _| c.public_io.memory_layout.stack_end += 1),
             ("heap_end", |c, _| c.public_io.memory_layout.heap_end += 1),
             ("panic address", |c, _| c.public_io.memory_layout.panic += 1),
-            ("termination", |c, _| c.public_io.memory_layout.termination += 1),
+            ("termination", |c, _| {
+                c.public_io.memory_layout.termination += 1;
+            }),
             ("io_end", |c, _| c.public_io.memory_layout.io_end += 1),
             // The trusted-advice commitment is absorbed under its own label
             // right after the statement, so its presence is bound there.
@@ -1394,11 +1403,15 @@ mod tests {
                 c.trusted_advice_commitment_present = !c.trusted_advice_commitment_present;
             }),
             // The capacity of the verifier's own vector-commitment setup.
-            ("vc_capacity", |c, _| c.vc_capacity = Some(c.vc_capacity.unwrap_or(0) + 1)),
+            ("vc_capacity", |c, _| {
+                c.vc_capacity = Some(c.vc_capacity.unwrap_or(0) + 1);
+            }),
             // The advice bytes themselves: the verifier reads only their
             // commitments.
             ("trusted_advice", |c, _| c.public_io.trusted_advice.push(1)),
-            ("untrusted_advice", |c, _| c.public_io.untrusted_advice.push(1)),
+            ("untrusted_advice", |c, _| {
+                c.public_io.untrusted_advice.push(1);
+            }),
         ];
         for (field, edit) in unbound {
             assert_eq!(

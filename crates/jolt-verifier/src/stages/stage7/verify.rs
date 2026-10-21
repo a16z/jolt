@@ -91,7 +91,7 @@ where
         clear,
     )?;
 
-    // Draw the hamming-weight reduction's batching gamma (a single `challenge_scalar`,
+    // Draw the hamming-weight reduction's batching gamma (a single `challenge()`,
     // matching the relation's default `draw_challenges`) path-agnostically before the
     // ZK/clear branch; the advice and committed-program address phases draw nothing
     // (`NoChallenges`). BlindFold sources the gamma from

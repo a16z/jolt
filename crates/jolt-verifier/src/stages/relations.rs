@@ -137,11 +137,11 @@ where
     /// transcript, in the exact order the stage's inline draw uses. Batch-level
     /// coefficients and the shared binding vector are NOT drawn here.
     ///
-    /// The default draws one `challenge_scalar` per `Challenges` field, in
+    /// The default draws one `challenge()` per `Challenges` field, in
     /// declaration order, via [`SumcheckChallenges::from_transcript_values`]. This is
     /// the correct draw for the common case — a relation whose challenges are each a
-    /// single `challenge_scalar` (and for [`NoChallenges`](::jolt_claims::NoChallenges),
-    /// which has no fields, it draws nothing). A `challenge_scalar_powers(n)` draw
+    /// single `challenge()` (and for [`NoChallenges`](::jolt_claims::NoChallenges),
+    /// which has no fields, it draws nothing). A `challenge_powers(n)` draw
     /// reduces to this case: it performs exactly one squeeze and the relation keeps
     /// the degree-1 power, which equals that squeezed scalar. Only relations whose
     /// draw is genuinely different — an extra transcript append (a domain
@@ -553,8 +553,8 @@ pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierE
 #[cfg(test)]
 pub(crate) mod draw_recording {
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::{prover_transcript, Keccak, ProverState, ScriptedTranscript};
     pub(crate) use jolt_transcript::TranscriptEvent;
+    use jolt_transcript::{prover_transcript, Keccak, ProverState, ScriptedTranscript};
 
     /// A logging transcript whose `n`-th challenge is `Fr(n)`.
     pub(crate) type DrawRecordingTranscript = ScriptedTranscript<ProverState<Keccak>, Fr>;

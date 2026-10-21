@@ -243,10 +243,7 @@ mod tests {
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        assert_eq!(
-            draw_events,
-            vec![squeeze(1), squeeze(2)]
-        );
+        assert_eq!(draw_events, vec![squeeze(1), squeeze(2)]);
         assert_eq!(
             vec![
                 challenges.instruction_read_raf.gamma,

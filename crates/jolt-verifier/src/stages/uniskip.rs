@@ -90,7 +90,10 @@ impl UniskipParams {
 /// uni-skip round (the Spartan outer relation's cycle variables plus the two
 /// uni-skip-collapsed row variables). Both fronts call this, so the draw is
 /// single-sourced.
-pub fn draw_spartan_outer_tau<F, T>(transcript: &mut T, log_t: usize) -> Result<Vec<F>, VerifierError>
+pub fn draw_spartan_outer_tau<F, T>(
+    transcript: &mut T,
+    log_t: usize,
+) -> Result<Vec<F>, VerifierError>
 where
     F: JoltField,
     T: FieldTranscript<F>,

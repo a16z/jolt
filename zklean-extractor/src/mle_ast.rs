@@ -1272,6 +1272,15 @@ impl CanonicalBytes for MleAst {
     }
 }
 
+/// The canonical bytes, so a transcript absorbs the AST as it absorbs `Fr`.
+impl spongefish::Encoding for MleAst {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut bytes = [0u8; 32];
+        self.to_bytes_le(&mut bytes);
+        bytes
+    }
+}
+
 impl CanonicalEncoding for MleAst {
     const MODULUS_BITS: u32 = 254;
     /// Mirrors BN254 `Fr`, which this AST models.
