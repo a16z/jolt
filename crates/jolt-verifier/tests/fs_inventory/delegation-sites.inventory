@@ -260,7 +260,6 @@ jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs
 jolt-zk::blindfold/wire.rs::OuterClaims<F>::receive::receive_opening#3
 jolt-zk::blindfold/wire.rs::OuterClaims<F>::send::send_opening#1
 jolt-zk::masking/pads.rs::MaskedProver<'_,F,O,H>::record_fork_draw::.record_fork_draw#0
-jolt-zk::masking/pads.rs::MaskedProver<'_,P,O,H>::exchange_private_base::.send#0
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::record_fork_draw::.record_fork_draw#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_full_round::.send#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_round::.send#0
