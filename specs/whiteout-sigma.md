@@ -825,6 +825,125 @@ those widths fail the whole-element table at Σ = 1.003.
 - Porting the discrete search in exact arithmetic is possible later and
   would recover those cells. It is not needed now.
 
+### 5.1 Almost-never rejection (review decision, 2026-10-21)
+
+Review (Q. Dao) asked for a rejection probability that almost never
+rejects, accepting larger parameters for a predictable prover. This
+replaces the planned parallel Gaussian sampler as the answer to the
+prover's time budget (A16).
+
+**What sets the rejection probability.** One attempt is rejected with
+probability `1 − (p_𝓑 − ε')/M ≈ ln M + (1 − p_𝓑)`, where `ln M = t/α +
+1/(2α²)` and `t = √(2 ε_bits ln 2) = 13.78` at `ε = 2^{−137}`. The
+probability does not depend on the witness or the shift. Driving it to r
+needs `α ≈ t/r` and `1 − p_𝓑 ≪ r`. Every width `σ_b` scales with α, so each
+factor of 16 in α costs one radix-16 response digit.
+
+The cost that matters is the digit count D, not α:
+
+- the certified box 𝓑_cert is the D-digit envelope, so the collision radius
+  `4Γ_Δ B_M`, and with it the SIS ranks of A, [B|B′] and A_p, depend only
+  on D;
+- for a fixed D, the largest α whose box still fits the digit rule of §5 is
+  free.
+
+So each regime below is D digits with α near the largest that D allows.
+
+**One width.** At α ≥ 2^9 the two distinct widths of the closed form make
+the rejection rule's denominator `Q = Π k_b²` exceed its `2^126` bound. The
+widths are therefore one common width, `k = ⌈√(2 ln 2 · Γ²α² · Σ_b γ_b²)⌉
++ 1` (weights `ω_b = γ_b²/Σγ²`), so `Q = k²`. At the headline this widens
+the dense blocks by 2.9% and narrows the operand block by 49%; every block
+keeps its digit count at α = 16 (checked with `SigmaParams`' derivation
+on the headline table).
+
+**Candidates** (headline T = 2^24, k = 2, variant 1, `mqo+eroot`). Ranks,
+proof bytes and verifier scans come from `whiteout-costs.py` with ranks
+restricted to R_256 (W4 needs one native dimension, A20) and Akita's
+`sis_estimator_once` for the new radii; e counts are the script's envelope
+model; T_att makes all-rejected ≤ 2^−128.
+
+| per-attempt rejection r | D | α (M − 1) | \|z\| ≤ | e cells (2^ν) | ranks A / [B\|B′] / A_p (×R_256) | proof Δ | verifier scans Δ | T_att | E[attempts] | sampler bits ℓ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0.58 (today) | 7 | 16 (1.37) | 2^26.9 | 65.5M (2^26) | 3 / 3 / 3 | +7.28 KB | +0.7% | 163 | 2.37 | 51–53 |
+| 2^−9.7 | 9 | 1.15·10⁴ (1.2·10^−3) | 2^34.9 | 80.9M (2^27) | 4 / 5 / 4 | +9.63 KB | +17.2% | 14 | 1.001 | 70 |
+| **2^−13.2 (default)** | **10** | **2^17 (1.05·10^−4)** | **2^38.9** | **90.1M (2^27)** | **5 / 5 / 5** | **+9.66 KB** | **+23.0%** | **10** | **1.0001** | **77** |
+| 2^−21.2 | 12 | 2^25 (4.1·10^−7) | 2^46.9 | 106.7M (2^27) | 6 / 7 / 6 | +9.94 KB | +39.7% | 7 | 1 + 4·10^−7 | 93 |
+| 2^−40 | 17 | ≈ 2^44 | 2^66.9 | — | — | — | — | 4 | 1 | — |
+
+- **2^−40 is infeasible.** z exceeds i64 and the 15-digit cap of the
+  rejection arithmetic (box ≤ 2^62), and the collision bound (≈ 2^77)
+  is outside Akita's SIS estimator.
+- **The first extra digit is the cliff.** Any D ≥ 8 crosses e = 2^26, so
+  the response proof's domain doubles to 2^27. Above that, proof bytes grow
+  by a few hundred bytes, and verifier work grows with the ranks.
+- **Error budget.** With `Q_tot ≤ 2^64`, the zero-knowledge terms of Thm
+  `wo:thm:zk` are, for today / default / 2^−21.2:
+  - `T_att ε/M`: 2^−130.9 / 2^−133.7 / 2^−134.2;
+  - `(T_att Q_tot + T_att²)/2^256`: 2^−184.7 / 2^−188.7 / 2^−189.2;
+  - total with δ_LHL = 2^−129.2 and the sampler term: 2^−128.8 / 2^−129.1 /
+    2^−129.1.
+
+  ε stays at 2^−137: a smaller T_att would allow a larger ε, but that moves
+  α by under 1%.
+- **Prover time.** The attempt is dominated by the serial Gaussian `fill`,
+  whose cost per sample grows with ℓ = ⌈log₂ 27k²⌉, the length of its
+  constant-time exponential product. The measurement is in A16.
+
+**Default: D = 10, α = 2^17, box failure ≤ 2^−20.** Per-attempt rejection
+is at most 2^−13.2, so a proof takes a second attempt about once in 9,400
+proofs, and T_att = 10. Reasons:
+
+- It meets "one attempt almost always" at the smallest verifier cost that
+  does so. D = 9 retries once in 830 proofs for 6 points less verifier work.
+  D = 12 retries once in 2.4M proofs, but costs 17 more points of verifier
+  scans and a longer exponential product in the sampler.
+- α is the only constant. Moving to D = 12 is `ALPHA = 1 << 25` and
+  `BOX_FAILURE_INVERSE = 1 << 28`; the rejection arithmetic, the sampler,
+  the Ajtai map and the digit layout already admit it.
+
+**Rejection stays exact.** Smudging needs `y` wider than `cs` by about
+2^λ (statistical distance `‖cs‖/σ`), i.e. about 2^128 instead of 2^17 in
+α. That is 28 more digits and is infeasible; exact rejection stays.
+
+**Constant time stays; the orchestration does not change shape.** The rule
+of §2.8 binds every step computed before an attempt's accept bit. A rejected
+attempt still occurs with probability 2^−13.2 per attempt, and its
+(y, c, z) are correlated with the witness through the rejection event.
+Within the accepted attempt, `y = z − c·s` with z and c public, so a timing
+leak of y is a leak of s. Therefore:
+
+- DIT (A11), the isochronous sampler, the constant-time challenge sampler,
+  the constant-time `accept`, and `apply_centered`'s constant-time lift all
+  stay;
+- the attempt nonce and fork stay: H2 needs a fresh secret nonce for every
+  attempt that may be rejected, and T_att > 1;
+- the loop stays, bounded by T_att = 10 instead of 163. A single attempt
+  with whole-proof rerun on rejection would leave a completeness error of
+  2^−13 per proof, and it would move the loop into W6 rather than remove it.
+
+What does change is predictability: the attempt count is 1 except with
+probability 2^−13.2, so prover time is one attempt's time.
+
+#### Paper deltas
+
+Each item gives the paper's statement, ours, and why, for the authors to
+fold in.
+
+| Item | Paper | Here | Why |
+|---|---|---|---|
+| α, M | α = 16, M ≈ 2.37 (`02_preliminaries.tex:272`, `06_evaluation.tex:96`) | α = 2^17, M = 1 + 1.05·10^−4 | Almost-never rejection (review). α = 2^17 is the largest power of two whose box fits ten digits. |
+| Widths | per-block `σ_b = αΓγ_bω_b^{−1/2}`, optimized ω_b (`02_preliminaries.tex:273`, `06_evaluation.tex:97-100`) | one width `σ = αΓ√(Σγ_b²)`, i.e. `ω_b = γ_b²/Σγ²` | Keeps the exact rejection arithmetic's denominator `k²` below 2^126 at large α. It satisfies the same hypothesis `‖cs‖_σ ≤ 1/α`; no block changes digit count at α = 16. |
+| Box | `p_𝓑 ≥ 0.999` (`06_evaluation.tex:97`) | `p_𝓑 ≥ 1 − 2^−20` | The box failure must sit well below the rejection target; it costs no digit. |
+| Response digits, \|z\| | seven radix-16 digits, \|z\| ≈ 2^27 (`06_evaluation.tex:101-102`) | ten digits, \|z\| ≤ 2^38.9 | Width × 2^13. |
+| Per-attempt rejection | 1 − 1/2.37 ≈ 0.58 (implied, `06_evaluation.tex:104`) | ≤ 2^−13.2 | As above. |
+| T_att, E[attempts] | 163 and 2.37 (`06_evaluation.tex:103-104`) | 10 and 1.0001 | `(2^−13.2)^10 ≤ 2^−128`, the same completeness target (Thm `wo:thm:completeness`, `05_security.tex:128-141`). |
+| ZK error | about 2^−128.8 with rejection term 2^−130.9 (`06_evaluation.tex:105-107`) | about 2^−129.1 with rejection term 2^−133.7 | Thm `wo:thm:zk` (`05_security.tex:332-339`) unchanged; only T_att moves. |
+| Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (`06_evaluation.tex:121-133`) | radii up to about 2^48, ranks 5 / 5 / 5 over R_256 | The radius follows the ten-digit box. Ranks are the setup's (Akita planner), not W4's. |
+| e, ν, proof, verifier | e ≈ 65.5M (2^26); +7.28 KB; verifier scans +0.7% (`06_evaluation.tex:170-185`, `eval_table.tex`) | e ≈ 90M (2^27); +9.66 KB; scans +23% | Consequences of the digits and ranks (`whiteout-costs.py` at α = 2^17, R_256 only). |
+| Prover-time model | 2.37 attempts × 10 ns per sample (`06_evaluation.tex:250-253`) | one attempt; per-sample cost grows with ℓ = 77 bits | Measured in A16. |
+| Constant time | outside the model (H2 discussion, `05_security.tex:355-362`) | unchanged: §2.8's rule still applies | Rejected attempts still occur, and the accepted attempt's y reveals s. |
+
 ## 6. Soundness and zero knowledge, mapped to the paper
 
 | Implementation choice | Paper item it discharges |
