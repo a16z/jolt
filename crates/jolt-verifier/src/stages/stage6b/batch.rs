@@ -649,10 +649,9 @@ mod tests {
                     .map(|_| t.challenge().unwrap())
                     .collect::<Vec<Fr>>()
             });
-            let (draw_events, draws) =
-                record(|t| {
-                    Stage6bDraws::<Fr>::draw(t, &formula_dimensions, committed_bytecode).unwrap()
-                });
+            let (draw_events, draws) = record(|t| {
+                Stage6bDraws::<Fr>::draw(t, &formula_dimensions, committed_bytecode).unwrap()
+            });
 
             assert_eq!(draw_events, inline_events);
             assert_eq!(
