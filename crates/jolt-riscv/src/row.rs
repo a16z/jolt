@@ -106,9 +106,7 @@ impl JoltInstructionRow {
     /// Whether this row, having just jumped to its own address, jumps there
     /// again when re-run: the PC-stall fixed point at which tracers end a
     /// guest. Only a `Jalr` that overwrites its own base register can leave,
-    /// since its re-run targets `(link + imm) & !1`. The constraints follow
-    /// RISC-V and re-run it, so a tracer that stopped there would leave the
-    /// guest unprovable.
+    /// since its re-run targets `(link + imm) & !1`.
     pub fn self_jump_repeats(&self) -> bool {
         let JoltInstructionKind::Jalr(_) = self.instruction_kind else {
             return true;
