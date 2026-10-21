@@ -53,7 +53,8 @@ pub enum ResponseSegment {
 }
 
 impl ResponseSegment {
-    fn len(&self) -> usize {
+    /// The number of digits of `e` in this segment.
+    pub fn num_digits(&self) -> usize {
         match *self {
             Self::Response {
                 coefficients,
@@ -74,7 +75,7 @@ pub struct ResponseLayout {
 
 impl ResponseLayout {
     pub fn len(&self) -> usize {
-        self.segments.iter().map(ResponseSegment::len).sum()
+        self.segments.iter().map(ResponseSegment::num_digits).sum()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -423,7 +424,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         };
         let mut rest = digits;
         for segment in &layout.segments {
-            let (digits, tail) = rest.split_at(segment.len());
+            let (digits, tail) = rest.split_at(segment.num_digits());
             rest = tail;
             match *segment {
                 ResponseSegment::Response {
