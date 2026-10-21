@@ -1,6 +1,6 @@
 use jolt_field::JoltField;
 use jolt_poly::EvaluationClaim;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{Encoding, Label, LabelWithCount};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZkEvaluationClaim<'a, F, C> {
@@ -17,21 +17,22 @@ impl<'a, F, C> ZkEvaluationClaim<'a, F, C> {
     }
 }
 
-impl<F, C> AppendToTranscript for ZkEvaluationClaim<'_, F, C>
+impl<F, C> Encoding for ZkEvaluationClaim<'_, F, C>
 where
     F: JoltField,
-    C: AppendToTranscript,
+    C: Encoding,
 {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            b"zk_opening_point",
-            self.point.len() as u64,
-        ));
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = LabelWithCount(b"zk_opening_point", self.point.len() as u64)
+            .encode()
+            .as_ref()
+            .to_vec();
         for coordinate in self.point {
-            coordinate.append_to_transcript(transcript);
+            out.extend_from_slice(coordinate.encode().as_ref());
         }
-        transcript.append(&Label(b"zk_eval_commitment"));
-        self.hiding_commitment.append_to_transcript(transcript);
+        out.extend_from_slice(Label(b"zk_eval_commitment").encode().as_ref());
+        out.extend_from_slice(self.hiding_commitment.encode().as_ref());
+        out
     }
 }
 
@@ -43,14 +44,18 @@ pub struct VerifierOpeningClaim<F: JoltField, C> {
 
 pub(crate) struct VerifierRlcClaims<'a, F: JoltField, C>(pub &'a [VerifierOpeningClaim<F, C>]);
 
-impl<F, C> AppendToTranscript for VerifierRlcClaims<'_, F, C>
+impl<F, C> Encoding for VerifierRlcClaims<'_, F, C>
 where
     F: JoltField,
 {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(b"rlc_claims", self.0.len() as u64));
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = LabelWithCount(b"rlc_claims", self.0.len() as u64)
+            .encode()
+            .as_ref()
+            .to_vec();
         for claim in self.0 {
-            claim.evaluation.value.append_to_transcript(transcript);
+            out.extend_from_slice(claim.evaluation.value.encode().as_ref());
         }
+        out
     }
 }

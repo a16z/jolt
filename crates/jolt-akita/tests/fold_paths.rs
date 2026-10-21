@@ -16,7 +16,7 @@ use jolt_akita::{
     AkitaScheme,
 };
 use jolt_openings::{CommitmentScheme, OpeningsError};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use support::{f, layout, polynomial, setup_for};
 
 struct ProofFixture {
@@ -30,7 +30,7 @@ struct ProofFixture {
 
 impl ProofFixture {
     fn verify(&self, proof: &AkitaBatchProof) -> Result<(), OpeningsError> {
-        let mut transcript = Blake2bTranscript::new(self.label);
+        let mut transcript = prover_transcript::<Blake2b512>(self.label, b"");
         AkitaScheme::verify(
             &self.commitment,
             &self.point,
@@ -50,18 +50,18 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
     let (commitment, hint) =
         AkitaScheme::commit(&poly, &prover_setup).expect("dense commit should succeed");
 
-    let mut prover_transcript = Blake2bTranscript::new(label);
+    let mut prover_state = prover_transcript::<Blake2b512>(label, b"");
     let proof = AkitaScheme::open(
         &poly,
         &point,
         eval,
         &prover_setup,
         Some(hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .expect("fold-schedule proof should be produced");
 
-    let mut verifier_transcript = Blake2bTranscript::new(label);
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(label, b"");
     AkitaScheme::verify(
         &commitment,
         &point,
@@ -71,7 +71,10 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
         &mut verifier_transcript,
     )
     .expect("fold-schedule proof should verify");
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 
     ProofFixture {
         verifier_setup,
@@ -104,7 +107,7 @@ fn deep_recursive_fold_schedule_roundtrips() {
 
     let mut tampered_eval = fixture.eval;
     tampered_eval += f(1);
-    let mut transcript = Blake2bTranscript::new(fixture.label);
+    let mut transcript = prover_transcript::<Blake2b512>(fixture.label, b"");
     assert!(
         AkitaScheme::verify(
             &fixture.commitment,

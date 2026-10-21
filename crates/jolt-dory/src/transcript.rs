@@ -3,71 +3,50 @@
 //! Prover/verifier parity within `jolt-dory` is by construction: both sides
 //! traverse this adapter. The surrounding Jolt transcript is responsible for
 //! matching the core Fiat-Shamir byte layout before this adapter is entered.
+//!
+//! Dory's transcript trait draws challenges infallibly. A draw the Jolt
+//! transcript refuses is recorded and reported by
+//! [`JoltToDoryTranscript::finish`], which every caller checks once Dory
+//! returns.
 
 use dory::backends::arkworks::BN254;
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::transcript::Transcript as DoryTranscript;
 use dory::primitives::DorySerialize;
-use jolt_field::Fr;
-use jolt_transcript::domain::{Label, LabelWithCount};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_field::{Fr, Ring};
+use jolt_openings::OpeningsError;
+use jolt_transcript::{FieldTranscript, Label, LabelWithCount};
 
 use crate::scheme::{ark_to_jolt_fr, jolt_fr_to_ark, ArkFr};
 
-pub struct JoltToDoryTranscript<'a, T: Transcript<Challenge = Fr>> {
+pub struct JoltToDoryTranscript<'a, T: FieldTranscript<Fr>> {
     transcript: &'a mut T,
+    rejected: bool,
 }
 
-impl<'a, T: Transcript<Challenge = Fr>> JoltToDoryTranscript<'a, T> {
+impl<'a, T: FieldTranscript<Fr>> JoltToDoryTranscript<'a, T> {
     pub fn new(transcript: &'a mut T) -> Self {
-        Self { transcript }
+        Self {
+            transcript,
+            rejected: false,
+        }
+    }
+
+    /// Ends the adapter's use.
+    ///
+    /// # Errors
+    /// [`OpeningsError::TranscriptRejected`] if the transcript refused one of
+    /// Dory's challenge draws; the challenges Dory used after it are void.
+    pub fn finish(self) -> Result<(), OpeningsError> {
+        if self.rejected {
+            Err(OpeningsError::TranscriptRejected)
+        } else {
+            Ok(())
+        }
     }
 }
 
-/// The loss factor of each Dory challenge drawn as a short scalar, by the
-/// label dory-pcs 0.4.2 draws it under; `None` draws a full-width scalar.
-///
-/// The verifier multiplies group elements by `alpha`, `beta` and `d`
-/// directly, so a short challenge makes those multiplications cheaper. Its
-/// width comes from the loss ([`Transcript::challenge_short_scalar`]): a bad
-/// set of `L` values is hit with probability at most `2^-128`. The losses
-/// come from the verifier's checks, as Laurent polynomials in the challenge:
-///
-/// - `beta`: the round's checks span `beta^-1` to `beta`, so at most 2 values
-///   of `beta` make a false claim pass. `beta` is drawn alone. `L = 2`.
-/// - `alpha`: the fold spans `alpha^-1` to `alpha`, 2 values. The last
-///   round's `alpha` is drawn together with `gamma`, whose check spans
-///   `gamma^-1` to `gamma` (2 more values), so the width covers both.
-///   `L = 2 + 2 = 4`.
-/// - `d`: the final pairing check spans `d^-1` to `d^2`. `L = 3`.
-///
-/// `gamma` stays full width: the verifier only uses `-gamma` and
-/// `gamma^-1`, which are full width anyway. So do the zero-knowledge
-/// Sigma-protocol challenges, which the verifier squares or multiplies by
-/// other challenges.
-///
-/// These widths hold each burst of challenges to the `2^-128` error the rest
-/// of Jolt's transcript is priced to. For Dory that bound is round by round:
-/// a check that passes at a challenge outside its bad set yields a break of
-/// Dory's binding (an algebraic-group-model argument under SXDH), which the
-/// prover cannot do. A bound summed over all of Dory's challenges instead
-/// would need about 5 more bits.
-///
-/// The table depends on how dory-pcs uses each label and on its draw order,
-/// so the workspace pins dory-pcs to exactly 0.4.2, and
-/// `tests/challenge_bursts.rs` checks that each short draw follows an
-/// absorb and that only `gamma` follows the last `alpha` with no absorb in
-/// between. A label this table does not know draws full width.
-fn short_challenge_loss(label: &[u8]) -> Option<u64> {
-    match label {
-        b"beta" => Some(2),
-        b"alpha" => Some(4),
-        b"d" => Some(3),
-        _ => None,
-    }
-}
-
-impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, T> {
+impl<T: FieldTranscript<Fr>> DoryTranscript for JoltToDoryTranscript<'_, T> {
     type Curve = BN254;
 
     fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
@@ -79,7 +58,7 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
     fn append_field(&mut self, _label: &[u8], x: &ArkFr) {
         let jolt_scalar = ark_to_jolt_fr(x);
         self.transcript.append(&Label(b"dory_field"));
-        jolt_scalar.append_to_transcript(self.transcript);
+        self.transcript.append(&jolt_scalar);
     }
 
     #[expect(
@@ -108,18 +87,13 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
         self.transcript.append_bytes(&buffer);
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "the losses are constants whose widths fit BN254"
-    )]
-    fn challenge_scalar(&mut self, label: &[u8]) -> ArkFr {
-        let challenge: Fr = match short_challenge_loss(label) {
-            Some(loss) => self
-                .transcript
-                .challenge_short_scalar(loss)
-                .expect("short Dory challenges fit BN254"),
-            None => self.transcript.challenge_scalar(),
-        };
+    fn challenge_scalar(&mut self, _label: &[u8]) -> ArkFr {
+        // Dory cannot take an error here: a refused draw yields zero and
+        // fails `finish`.
+        let challenge: Fr = self.transcript.challenge().unwrap_or_else(|_| {
+            self.rejected = true;
+            Fr::from_u64(0)
+        });
         jolt_fr_to_ark(&challenge)
     }
 
@@ -142,14 +116,14 @@ mod tests {
     use ark_ec::PrimeGroup;
     use ark_serialize::CanonicalSerialize;
     use dory::backends::arkworks::{ArkFr as DoryArkFr, ArkG1};
-    use jolt_field::Ring;
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Blake2b512, ProverState, Transcript};
 
     // The framing words below are reconstructed from the documented layout
-    // (legacy.rs `Label` / `LabelWithCount`), NOT by calling those helpers:
-    // a `Label` is one 32-byte zero-padded word; a `LabelWithCount` packs the
-    // label into bytes 0..24 and the count big-endian into bytes 24..32. Each
-    // word and each payload is absorbed as its own `append_bytes` call.
+    // (`Label` / `LabelWithCount` in jolt-transcript's codec), NOT by calling
+    // those helpers: a `Label` is one 32-byte zero-padded word; a
+    // `LabelWithCount` packs the label into bytes 0..24 and the count
+    // big-endian into bytes 24..32. A word is absorbed as its 32 raw bytes, a
+    // byte payload through `append_bytes`, which prefixes its length.
 
     fn label_word(label: &[u8]) -> [u8; 32] {
         assert!(label.len() <= 32);
@@ -166,8 +140,8 @@ mod tests {
         word
     }
 
-    fn transcript() -> Blake2bTranscript {
-        Blake2bTranscript::new(b"dory-adapter-framing")
+    fn transcript() -> ProverState<Blake2b512> {
+        prover_transcript::<Blake2b512>(b"dory-adapter-framing", b"")
     }
 
     /// `ArkFr` in scope is a type alias, which cannot be used in constructor
@@ -184,24 +158,25 @@ mod tests {
         JoltToDoryTranscript::new(&mut actual).append_bytes(b"caller-label", &payload);
 
         let mut expected = transcript();
-        expected.append_bytes(&label_with_count_word(b"dory_bytes", 5));
+        expected.append(&label_with_count_word(b"dory_bytes", 5));
         expected.append_bytes(&payload);
-        assert_eq!(actual.state(), expected.state());
+        let actual = actual.verifier_message::<[u8; 32]>();
+        assert_eq!(actual, expected.verifier_message::<[u8; 32]>());
 
         // The count is load-bearing: the same payload under a wrong count
         // must diverge, otherwise the golden comparison proves nothing.
         let mut wrong_count = transcript();
-        wrong_count.append_bytes(&label_with_count_word(b"dory_bytes", 4));
+        wrong_count.append(&label_with_count_word(b"dory_bytes", 4));
         wrong_count.append_bytes(&payload);
-        assert_ne!(actual.state(), wrong_count.state());
+        assert_ne!(actual, wrong_count.verifier_message::<[u8; 32]>());
 
-        // Word and payload are separate absorptions, not one concatenated
-        // buffer (the sponge length-prefixes each `append_bytes` call).
+        // The payload is a length-prefixed message of its own, not part of a
+        // concatenated buffer with the word.
         let mut merged = transcript();
         let mut buffer = label_with_count_word(b"dory_bytes", 5).to_vec();
         buffer.extend_from_slice(&payload);
         merged.append_bytes(&buffer);
-        assert_ne!(actual.state(), merged.state());
+        assert_ne!(actual, merged.verifier_message::<[u8; 32]>());
     }
 
     #[test]
@@ -212,23 +187,24 @@ mod tests {
             &dory_ark_fr(ArkBn254Fr::from(0xdead_beefu64)),
         );
 
-        // Fr absorbs as its 32-byte big-endian canonical form: 24 zero bytes
-        // then the value, reconstructed here without CanonicalBytes.
-        let mut scalar_be = [0u8; 32];
-        scalar_be[24..].copy_from_slice(&0xdead_beefu64.to_be_bytes());
-
-        let mut expected = transcript();
-        expected.append_bytes(&label_word(b"dory_field"));
-        expected.append_bytes(&scalar_be);
-        assert_eq!(actual.state(), expected.state());
-
-        // Little-endian absorption would be an invisible-to-roundtrip bug.
-        let mut little_endian = transcript();
+        // Fr absorbs as its 32-byte little-endian canonical form: the value
+        // then 24 zero bytes, reconstructed here without CanonicalBytes.
         let mut scalar_le = [0u8; 32];
         scalar_le[..8].copy_from_slice(&0xdead_beefu64.to_le_bytes());
-        little_endian.append_bytes(&label_word(b"dory_field"));
-        little_endian.append_bytes(&scalar_le);
-        assert_ne!(actual.state(), little_endian.state());
+
+        let mut expected = transcript();
+        expected.append(&label_word(b"dory_field"));
+        expected.append(&scalar_le);
+        let actual = actual.verifier_message::<[u8; 32]>();
+        assert_eq!(actual, expected.verifier_message::<[u8; 32]>());
+
+        // Big-endian absorption would be an invisible-to-roundtrip bug.
+        let mut big_endian = transcript();
+        let mut scalar_be = [0u8; 32];
+        scalar_be[24..].copy_from_slice(&0xdead_beefu64.to_be_bytes());
+        big_endian.append(&label_word(b"dory_field"));
+        big_endian.append(&scalar_be);
+        assert_ne!(actual, big_endian.verifier_message::<[u8; 32]>());
     }
 
     #[test]
@@ -248,9 +224,12 @@ mod tests {
         assert_eq!(payload.len(), 32);
 
         let mut expected = transcript();
-        expected.append_bytes(&label_with_count_word(b"dory_group", payload.len() as u64));
+        expected.append(&label_with_count_word(b"dory_group", payload.len() as u64));
         expected.append_bytes(&payload);
-        assert_eq!(actual.state(), expected.state());
+        assert_eq!(
+            actual.verifier_message::<[u8; 32]>(),
+            expected.verifier_message::<[u8; 32]>()
+        );
     }
 
     #[test]
@@ -268,13 +247,16 @@ mod tests {
         assert_eq!(payload.len(), 32);
 
         let mut expected = transcript();
-        expected.append_bytes(&label_with_count_word(b"dory_serde", payload.len() as u64));
+        expected.append(&label_with_count_word(b"dory_serde", payload.len() as u64));
         expected.append_bytes(&payload);
-        assert_eq!(actual.state(), expected.state());
+        assert_eq!(
+            actual.verifier_message::<[u8; 32]>(),
+            expected.verifier_message::<[u8; 32]>()
+        );
     }
 
     /// Domain separation comes from the fixed `dory_*` labels; the caller's
-    /// dory-side label is never absorbed (it only picks a challenge's width).
+    /// dory-side label is deliberately dropped by the adapter.
     #[test]
     fn caller_labels_do_not_reach_the_transcript() {
         let payload = [1u8, 2, 3];
@@ -285,31 +267,9 @@ mod tests {
         let mut second = transcript();
         JoltToDoryTranscript::new(&mut second).append_bytes(b"label-two", &payload);
 
-        assert_eq!(first.state(), second.state());
-        assert_ne!(first.state(), transcript().state());
-    }
-
-    /// `alpha`, `beta` and `d` are the Jolt transcript's short scalars for
-    /// their losses, at 130, 129 and 130 bits; other labels stay full width.
-    #[test]
-    fn group_scalar_challenges_are_short() {
-        for (label, bits) in [(&b"alpha"[..], 130), (b"beta", 129), (b"d", 130)] {
-            let loss = short_challenge_loss(label).expect("short label");
-            assert_eq!(
-                jolt_transcript::challenge_bits_for_loss(loss, jolt_transcript::SECURITY_BITS),
-                Ok(bits)
-            );
-
-            let mut adapted = transcript();
-            let adapter_challenge = JoltToDoryTranscript::new(&mut adapted).challenge_scalar(label);
-            let mut direct = transcript();
-            let direct_challenge = direct.challenge_short_scalar(loss).expect("fits BN254");
-            assert_eq!(adapter_challenge, jolt_fr_to_ark(&direct_challenge));
-            assert_eq!(adapted.state(), direct.state());
-        }
-        for label in [&b"gamma"[..], b"sigma_c", b"sigma1_c", b"sigma2_c"] {
-            assert_eq!(short_challenge_loss(label), None);
-        }
+        let first = first.verifier_message::<[u8; 32]>();
+        assert_eq!(first, second.verifier_message::<[u8; 32]>());
+        assert_ne!(first, transcript().verifier_message::<[u8; 32]>());
     }
 
     /// The adapter's challenge is the Jolt transcript's scalar challenge,
@@ -322,15 +282,19 @@ mod tests {
         let mut adapter = JoltToDoryTranscript::new(&mut adapted);
         adapter.append_bytes(b"caller-label", b"shared-absorption");
         let adapter_challenge = adapter.challenge_scalar(b"caller-label");
+        adapter.finish().expect("the adapter draws a supported challenge");
 
         let mut direct = transcript();
-        direct.append_bytes(&label_with_count_word(b"dory_bytes", 17));
+        direct.append(&label_with_count_word(b"dory_bytes", 17));
         direct.append_bytes(b"shared-absorption");
-        let direct_challenge: Fr = direct.challenge_scalar();
+        let direct_challenge: Fr = direct.challenge().expect("Fr supports one challenge");
 
         assert_eq!(adapter_challenge, jolt_fr_to_ark(&direct_challenge));
         assert_ne!(adapter_challenge, dory_ark_fr(ArkBn254Fr::from(0u64)));
-        assert_eq!(adapted.state(), direct.state());
+        assert_eq!(
+            adapted.verifier_message::<[u8; 32]>(),
+            direct.verifier_message::<[u8; 32]>()
+        );
 
         // Fr conversion sanity: the transmute-based bridge is the identity on
         // canonical values.

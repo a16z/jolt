@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 
 use jolt_field::JoltField;
 use jolt_poly::{eq_index_msb, Point, HIGH_TO_LOW};
-use jolt_transcript::{Label, Transcript, U64Word};
+use jolt_transcript::{FieldTranscript, Label, U64Word};
 
 use crate::{EvaluationClaim, OpeningsError};
 
@@ -188,7 +188,7 @@ where
     ) -> Result<EvaluationClaim<F>, OpeningsError>
     where
         F: JoltField,
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F>,
     {
         if claims.point.len() != self.logical_num_vars {
             return Err(OpeningsError::InvalidBatch(format!(
@@ -213,7 +213,7 @@ where
         transcript.append_values(b"prefix_pack_point", claims.point.as_slice());
         transcript.append_values(b"prefix_pack_evals", &claims.evaluations);
 
-        let selector = transcript.challenge_vector(self.selector_num_vars);
+        let selector = transcript.challenge_vector(self.selector_num_vars)?;
         let point = self.pack_point(&selector, claims.point.as_slice())?;
         let evaluation = self.reduce_evaluations(&selector, &claims.evaluations)?;
         Ok(EvaluationClaim::new(point, evaluation))

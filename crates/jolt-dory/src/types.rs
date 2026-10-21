@@ -6,7 +6,7 @@ use dory::backends::arkworks::{
 };
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
 use jolt_field::Fr;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::Encoding;
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Caps the upstream `Vec::with_capacity(num_rounds)` allocation against
@@ -46,13 +46,9 @@ impl<'de> Deserialize<'de> for DoryCommitment {
     }
 }
 
-impl AppendToTranscript for DoryCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.0.append_to_transcript(transcript);
-    }
-
-    fn transcript_payload_len(&self) -> Option<u64> {
-        self.0.transcript_payload_len()
+impl Encoding for DoryCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.encode()
     }
 }
 
@@ -266,7 +262,7 @@ mod tests {
     use jolt_field::Field;
     use jolt_openings::CommitmentScheme;
     use jolt_poly::Polynomial;
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Blake2b512;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -308,7 +304,8 @@ mod tests {
         let (commitment, hint) =
             crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
+        let mut prove_transcript =
+            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-vs", b"");
         let proof = crate::DoryScheme::open(
             &poly,
             &point,
@@ -319,7 +316,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
+        let mut verify_transcript =
+            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-vs", b"");
         let result = crate::DoryScheme::verify(
             &commitment,
             &point,
@@ -379,7 +377,7 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
+        let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(b"serde-bp", b"");
         let proof =
             crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
                 .unwrap();
@@ -391,7 +389,8 @@ mod tests {
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
         let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
+        let mut verify_transcript =
+            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-bp", b"");
         let result = crate::DoryScheme::verify(
             &commitment,
             &point,
@@ -421,7 +420,8 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-trailing");
+        let mut transcript =
+            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-trailing", b"");
         let proof =
             crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
                 .unwrap();
@@ -447,7 +447,8 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-oversized");
+        let mut transcript =
+            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-oversized", b"");
         let proof =
             crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
                 .unwrap();

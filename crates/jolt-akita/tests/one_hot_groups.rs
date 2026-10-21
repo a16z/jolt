@@ -12,7 +12,7 @@ use jolt_akita::{
 };
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use support::{f, layout, native_statement};
 
 /// `log2(K) + 8`: the smallest K=16 one-hot dimension the folded-only
@@ -91,17 +91,17 @@ fn owned_group_opens_through_native_batching_and_verifies() {
         .collect();
     let statement = native_statement(commitment, &point, evaluations.iter().copied());
 
-    let mut prover_transcript = Blake2bTranscript::new(b"akita-owned-one-hot");
+    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-owned-one-hot", b"");
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
         witnesses.clone(),
         hint.clone(),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .expect("owned one-hot group should prove");
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"akita-owned-one-hot");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-owned-one-hot", b"");
     <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &statement,
@@ -109,11 +109,14 @@ fn owned_group_opens_through_native_batching_and_verifies() {
         &mut verifier_transcript,
     )
     .expect("owned one-hot group proof should verify");
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 
     let mut tampered = statement.clone();
     tampered[0].evaluation.value += f(1);
-    let mut verifier_transcript = Blake2bTranscript::new(b"akita-owned-one-hot");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-owned-one-hot", b"");
     assert!(
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
@@ -125,7 +128,7 @@ fn owned_group_opens_through_native_batching_and_verifies() {
         "tampered evaluation must reject"
     );
 
-    let mut transcript = Blake2bTranscript::new(b"akita-owned-one-hot");
+    let mut transcript = prover_transcript::<Blake2b512>(b"akita-owned-one-hot", b"");
     let err = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement[..1].to_vec(),

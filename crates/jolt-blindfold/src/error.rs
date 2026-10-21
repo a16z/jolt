@@ -153,6 +153,16 @@ pub enum ProverError<F: JoltField> {
     WitnessVariableReassigned { index: usize },
     #[error("product constraint {constraint} references unassigned operands")]
     UnsolvableProduct { constraint: usize },
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl<F: JoltField> From<jolt_transcript::VerificationError> for ProverError<F> {
+    fn from(_: jolt_transcript::VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }
 
 #[derive(Debug, ThisError)]
@@ -197,4 +207,14 @@ pub enum VerificationError<F: JoltField> {
     OuterFinalClaimMismatch { expected: F, actual: F },
     #[error("inner final claim mismatch: expected {expected}, got {actual}")]
     InnerFinalClaimMismatch { expected: F, actual: F },
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl<F: JoltField> From<jolt_transcript::VerificationError> for VerificationError<F> {
+    fn from(_: jolt_transcript::VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

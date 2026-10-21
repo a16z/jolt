@@ -15,7 +15,8 @@ jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
-jolt-transcript.workspace = true
+# The prover grinds its public proof-of-work nonces on a copy of the sponge.
+jolt-transcript = { workspace = true, features = ["prover-grinding"] }
 jolt-utils.workspace = true
 rand_core.workspace = true
 rayon.workspace = true

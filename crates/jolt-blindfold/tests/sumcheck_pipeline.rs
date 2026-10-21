@@ -4,7 +4,7 @@ mod support;
 
 use jolt_crypto::VectorCommitment;
 use jolt_sumcheck::RoundMessage;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
@@ -80,9 +80,9 @@ fn committed_round_blinding_is_empirically_independent_from_commitments_and_chal
     for _ in 0..SAMPLES {
         let blinding = rng_field(&mut rng);
         let round = commit_round_with_blinding(&setup, coefficients.clone(), blinding);
-        let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-independence");
+        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-r1cs-independence", b"");
         round.append_to_transcript(&mut transcript);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge().expect("challenge draw");
 
         assert!(VC::verify(
             &setup,
