@@ -353,6 +353,8 @@ pub(crate) use prover::take_rejected;
     feature = "whiteout-diagnostics"
 ))]
 pub(crate) use prover::{prove_sigma_with, SelfChecks};
+#[cfg(feature = "whiteout-diagnostics")]
+pub use prover::with_dit;
 
 #[cfg(feature = "whiteout-prover")]
 mod prover {
@@ -385,17 +387,20 @@ mod prover {
         Skip,
     }
 
+    /// Rejected attempts' `(t_D bytes, nonce)`, for substitution tests.
+    /// Process-wide, since attempts run on the DIT pool's workers; nextest
+    /// runs each test in its own process.
     #[cfg(test)]
-    thread_local! {
-        /// Rejected attempts' `(t_D bytes, nonce)`, for substitution tests.
-        static REJECTED: std::cell::RefCell<Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])>> =
-            const { std::cell::RefCell::new(Vec::new()) };
-    }
+    static REJECTED: std::sync::Mutex<Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])>> =
+        std::sync::Mutex::new(Vec::new());
 
-    /// The rejected attempts recorded on this thread, cleared.
+    /// The rejected attempts recorded so far, cleared.
     #[cfg(test)]
     pub(crate) fn take_rejected() -> Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])> {
-        REJECTED.with(|rejected| std::mem::take(&mut *rejected.borrow_mut()))
+        REJECTED
+            .lock()
+            .map(|mut rejected| std::mem::take(&mut *rejected))
+            .unwrap_or_default()
     }
 
     /// What an accepted attempt hands on.
@@ -444,8 +449,8 @@ mod prover {
     where
         F: JoltField,
         H: Sponge,
-        R: RngCore + CryptoRng,
-        P: ResponseProver<F, D>,
+        R: RngCore + CryptoRng + Send,
+        P: ResponseProver<F, D> + Sync,
     {
         let s = setup.private_vector(residual, pads)?;
         prove_sigma_with(
@@ -459,7 +464,32 @@ mod prover {
         )
     }
 
+    /// Runs `op` with DIT set on its thread and on every rayon worker it
+    /// uses (A11): the attempts' arithmetic is constant time only under DIT
+    /// on cores that time integer operations by their operands.
+    pub fn with_dit<T: Send>(op: impl FnOnce() -> T + Send) -> Result<T, WhiteoutError> {
+        jolt_dit::install(op).map_err(|_| WhiteoutError::DitPool)
+    }
+
     pub(crate) fn prove_sigma_with<F, const D: usize, H, R, P>(
+        setup: &SigmaSetup<F, D>,
+        relation: &LiftedRelation<F>,
+        s: &[i64],
+        transcript: &mut ProverTranscript<H>,
+        rng: &mut R,
+        response: &P,
+        checks: SelfChecks,
+    ) -> Result<usize, ZkError>
+    where
+        F: JoltField,
+        H: Sponge,
+        R: RngCore + CryptoRng + Send,
+        P: ResponseProver<F, D> + Sync,
+    {
+        with_dit(|| prove_under_dit(setup, relation, s, transcript, rng, response, checks))?
+    }
+
+    fn prove_under_dit<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
         s: &[i64],
@@ -662,15 +692,15 @@ mod prover {
             };
             if !bool::from(accept) {
                 #[cfg(test)]
-                REJECTED.with(|rejected| {
+                if let Ok(mut rejected) = REJECTED.lock() {
                     let mut bytes = vec![0u8; F::NUM_BYTES];
                     let mut flat = Vec::new();
                     for coefficient in t_d.iter().flat_map(|ring| ring.coefficients()) {
                         coefficient.to_bytes_le(&mut bytes);
                         flat.extend_from_slice(&bytes);
                     }
-                    rejected.borrow_mut().push((flat, nonce));
-                });
+                    rejected.push((flat, nonce));
+                }
                 return Ok(None);
             }
             Ok(Some(Accepted {

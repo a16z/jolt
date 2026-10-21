@@ -16,7 +16,7 @@ whiteout = ["jolt-algebra/solinas", "jolt-crypto/lattice"]
 # Whiteout's prover-only pieces (the zero-constant-term mask sampler, the
 # witness alphabet check, the rejection rule), kept out
 # of every verifier build.
-whiteout-prover = ["jolt-crypto/sample", "whiteout"]
+whiteout-prover = ["dep:jolt-dit", "jolt-crypto/sample", "whiteout"]
 # Timing harness for examples/sigma_dudect.rs: exposes the Σ-protocol
 # attempt's steps on a synthetic instance. Diagnostics only.
 whiteout-diagnostics = [
@@ -29,6 +29,7 @@ whiteout-diagnostics = [
 [dependencies]
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
+jolt-dit = { workspace = true, optional = true }
 jolt-algebra.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true

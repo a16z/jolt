@@ -22,8 +22,8 @@
 //! returns. The Gaussian sampler and the rejection rule are covered by
 //! jolt-crypto's `sample_dudect`.
 //!
-//! With `SIGMA_DUDECT_DIT` set (aarch64), every thread runs with the DIT
-//! bit, the architecture's data-independent-timing mode.
+//! Every step runs as the prover's attempts do: on the DIT pool of
+//! `whiteout::diagnostics::with_dit` (A11).
 
 #![expect(clippy::print_stdout, reason = "diagnostic tool reports to stdout")]
 #![expect(
@@ -40,12 +40,10 @@ use std::time::Instant;
 
 use jolt_algebra::{CyclotomicRing, Prime128OffsetA7F7, Ring};
 use jolt_crypto::challenge::sample_challenge_ct_counted;
-use jolt_zk::whiteout::diagnostics::{AttemptHarness, RING};
+use jolt_zk::whiteout::diagnostics::{with_dit, AttemptHarness, RING};
 use jolt_zk::whiteout::DenseChallenge;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
-#[cfg(target_arch = "aarch64")]
-use rayon::ThreadPoolBuilder;
 
 type F = Prime128OffsetA7F7;
 const MASK_BOUND: i64 = 1 << 20;
@@ -358,29 +356,12 @@ fn run_sampler(seed: u64, measurements: usize, failures: &mut usize) {
     }
 }
 
-/// Sets the calling thread's DIT bit (FEAT_DIT, every Apple M-series core):
-/// without it the core may time instructions by their operands.
-#[cfg(target_arch = "aarch64")]
-fn enable_dit() {
-    // SAFETY: `msr DIT, #1` writes only PSTATE.DIT of this thread; it reads
-    // and writes no memory and leaves the stack untouched.
-    unsafe { std::arch::asm!(".inst 0xd503415f", options(nomem, nostack)) };
-}
-
 fn main() -> ExitCode {
-    if std::env::var_os("SIGMA_DUDECT_DIT").is_some() {
-        #[cfg(target_arch = "aarch64")]
-        {
-            enable_dit();
-            ThreadPoolBuilder::new()
-                .start_handler(|_| enable_dit())
-                .build_global()
-                .expect("global pool");
-            println!("DIT set on every thread");
-        }
-        #[cfg(not(target_arch = "aarch64"))]
-        println!("SIGMA_DUDECT_DIT ignored: not aarch64");
-    }
+    println!(
+        "DIT: supported {}, set on the attempt pool {}",
+        jolt_dit::is_supported(),
+        with_dit(jolt_dit::is_enabled).expect("DIT pool")
+    );
     let mut args = std::env::args().skip(1);
     let measurements: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(100_000);
     let seeds: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(2);
@@ -398,7 +379,7 @@ fn main() -> ExitCode {
         };
         run_dimension::<64>(seed, measurements, commit, &mut failures);
         run_dimension::<256>(seed, measurements / 4, commit / 4, &mut failures);
-        run_sampler(seed, measurements, &mut failures);
+        with_dit(|| run_sampler(seed, measurements, &mut failures)).expect("DIT pool");
     }
     println!("{failures} test(s) above |t| = {THRESHOLD}");
     if failures == 0 {

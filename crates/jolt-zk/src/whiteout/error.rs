@@ -77,4 +77,8 @@ pub enum WhiteoutError {
     #[cfg(feature = "whiteout-prover")]
     #[error(transparent)]
     Sample(#[from] SampleError),
+    /// The DIT worker pool for the attempts could not be started.
+    #[cfg(feature = "whiteout-prover")]
+    #[error("could not start the Σ-protocol's DIT thread pool")]
+    DitPool,
 }

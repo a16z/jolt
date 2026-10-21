@@ -8,7 +8,7 @@
 //! - the pinned row `L`, algebraic properties, the abort rate at two α, the
 //!   response's moments, and tamper rejection.
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 use std::f64::consts::LN_2;
 
 use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
@@ -93,7 +93,7 @@ impl<const D: usize> ResponseProver<F, D> for SendingResponseProver {
 /// Records each accepted response's Gaussian-block coefficients.
 #[derive(Default)]
 struct CapturingResponseProver {
-    accepted: RefCell<Vec<Vec<i64>>>,
+    accepted: Mutex<Vec<Vec<i64>>>,
 }
 
 impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
@@ -123,7 +123,7 @@ impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
                 z.extend(values);
             }
         }
-        self.accepted.borrow_mut().push(z);
+        self.accepted.lock().unwrap().push(z);
         SendingResponseProver.prove_response(statement, witness, transcript)
     }
 
@@ -137,7 +137,7 @@ impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
 }
 
 /// Proves `instance` under `setup`, sending the images first.
-fn prove<const D: usize, P: ResponseProver<F, D>>(
+fn prove<const D: usize, P: ResponseProver<F, D> + Sync>(
     instance: &Instance<D>,
     setup: &SigmaSetup<F, D>,
     lifted: &LiftedRelation<F>,
@@ -639,7 +639,8 @@ fn accepted_responses_have_the_configured_moments() {
     let sigma = block.width as f64 / (2.0 * LN_2).sqrt();
     let samples: Vec<f64> = capture
         .accepted
-        .borrow()
+        .lock()
+        .unwrap()
         .iter()
         .flat_map(|z| {
             z[start..start + block.len]

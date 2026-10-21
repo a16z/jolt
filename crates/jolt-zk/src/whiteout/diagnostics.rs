@@ -19,6 +19,7 @@ use super::fixture::{Instance, F};
 use super::lift::{AggregatedRelation, ChallengeRing, ClaimTables, LiftedRelation, LinearParts};
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
 use super::sigma::{attempt_seed, prove_sigma_with, SelfChecks};
+pub use super::sigma::with_dit;
 use super::{SigmaSetup, WhiteoutError};
 use crate::masking::ZkError;
 
@@ -106,19 +107,22 @@ impl<const D: usize> AttemptHarness<D> {
         )
     }
 
-    pub fn steps<R>(
+    /// Runs `run` on the steps, under DIT as the prover's attempts are.
+    pub fn steps<R: Send>(
         &self,
-        run: impl FnOnce(&AttemptSteps<'_, D>) -> Result<R, WhiteoutError>,
+        run: impl FnOnce(&AttemptSteps<'_, D>) -> Result<R, WhiteoutError> + Send,
     ) -> Result<R, WhiteoutError> {
-        let aggregated = self.lifted.aggregate(&self.rho)?;
-        let tables = self.lifted.claim_tables()?;
-        let parts_s = aggregated.linear_parts(&tables, &self.instance.s, false)?;
-        run(&AttemptSteps {
-            harness: self,
-            aggregated,
-            tables,
-            parts_s,
-        })
+        with_dit(|| {
+            let aggregated = self.lifted.aggregate(&self.rho)?;
+            let tables = self.lifted.claim_tables()?;
+            let parts_s = aggregated.linear_parts(&tables, &self.instance.s, false)?;
+            run(&AttemptSteps {
+                harness: self,
+                aggregated,
+                tables,
+                parts_s,
+            })
+        })?
     }
 }
 

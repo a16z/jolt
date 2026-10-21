@@ -3247,6 +3247,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-dit"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
@@ -3922,6 +3929,7 @@ dependencies = [
  "jolt-algebra",
  "jolt-claims",
  "jolt-crypto",
+ "jolt-dit",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-sumcheck",
