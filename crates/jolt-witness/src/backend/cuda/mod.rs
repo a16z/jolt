@@ -12,6 +12,7 @@
 //! a fixed CUDA ABI rather than Rust enum discriminants or field elements.
 
 use cudarc::driver::CudaSlice;
+use cudarc::driver::CudaView;
 use jolt_riscv::CircuitFlags;
 use jolt_riscv::InstructionFlags;
 #[cfg(not(feature = "field-inline"))]
@@ -115,6 +116,17 @@ pub fn instruction_flag_bit(flag: InstructionFlags) -> Option<u32> {
         .iter()
         .position(|&entry| entry == flag)?;
     Some(FLAG_BIT_INSTRUCTION_BASE + slot as u32)
+}
+
+pub struct NarrowColumn {
+    pub column: CudaSlice<u32>,
+    pub span: usize,
+    pub first: u64,
+}
+
+pub enum HotSource<'a> {
+    Interleaved(CudaView<'a, u64>),
+    Word(CudaView<'a, u32>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

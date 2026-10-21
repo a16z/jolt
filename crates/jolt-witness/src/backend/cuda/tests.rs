@@ -21,9 +21,9 @@ use crate::backend::ProgramSource;
 mod fixtures;
 use crate::witnesses::{
     BytecodePc, InstructionFlag, InstructionRafFlag, LeftInstructionInput, LeftLookupOperand,
-    LookupIndex, LookupOutput, NextIsNoop, OpFlag, Product, RamHammingWeight, RamInc, RdInc,
-    RemappedRamAddress, RightInstructionInput, RightLookupOperand, ShouldBranch, ShouldJump,
-    TableIndex,
+    LookupIndex, LookupOutput, NextIsNoop, OpFlag, Product, RaChunkSelector, RamHammingWeight,
+    RamInc, RdInc, RemappedRamAddress, RightInstructionInput, RightLookupOperand, ShouldBranch,
+    ShouldJump, TableIndex,
 };
 use crate::{collect_bundles, WitnessBundle};
 use fixtures::{all_kinds_backend, supported_jolt_kinds};
@@ -233,6 +233,78 @@ impl Fixture {
 
     fn unsigned_wide(limbs: &[u64], index: usize) -> u128 {
         u128::from(limbs[2 * index]) | (u128::from(limbs[2 * index + 1]) << 64)
+    }
+}
+
+#[test]
+fn hot_chunk_spans_cover_partial_warps_and_cold_cycles() {
+    let Some(fixture) = fixture(19) else {
+        return;
+    };
+    let limb_selector = RaChunkSelector::new(15, 32, 4).expect("upper limb nibble");
+    let word_selector = RaChunkSelector::new(0, 4, 4).expect("word nibble");
+    for cycles in [1, 31, 32, 33, 255, 256, 257]
+        .into_iter()
+        .filter(|&n| n <= fixture.cycles)
+    {
+        let mut hot: Vec<u32> = (0..cycles).map(|i| (i % 15) as u32).collect();
+        hot[cycles - 1] = 15;
+        let mut words: Vec<u32> = hot
+            .iter()
+            .enumerate()
+            .map(|(i, &hot)| {
+                if i % 3 == 0 {
+                    COLD
+                } else {
+                    0xFACE_0000 | (hot << 12) | 0xA5A
+                }
+            })
+            .collect();
+        words[cycles - 1] = 15 << 12;
+        let limbs: Vec<u64> = hot
+            .iter()
+            .flat_map(|&hot| [u64::MAX, 0x5A50 | u64::from(hot)])
+            .collect();
+        let cold = vec![COLD; cycles];
+        let device_words = fixture.stream.clone_htod(&words).expect("words");
+        let device_limbs = fixture.stream.clone_htod(&limbs).expect("limbs");
+        let device_cold = fixture.stream.clone_htod(&cold).expect("cold");
+        let columns = fixture
+            .trace
+            .hot_chunk_columns(
+                &[
+                    (
+                        HotSource::Interleaved(device_limbs.slice(..)),
+                        limb_selector,
+                    ),
+                    (HotSource::Word(device_words.slice(..)), word_selector),
+                    (HotSource::Word(device_cold.slice(..)), word_selector),
+                ],
+                16,
+                cycles,
+            )
+            .expect("hot chunks");
+        let expected_words: Vec<u32> = words
+            .iter()
+            .zip(&hot)
+            .map(|(&word, &hot)| if word == COLD { COLD } else { hot })
+            .collect();
+        for ((column, span), (expected, expected_span)) in
+            columns
+                .iter()
+                .zip([(hot, 16), (expected_words, 16), (cold, 0)])
+        {
+            assert_eq!(fixture.u32s(column), expected);
+            assert_eq!(*span, expected_span);
+        }
+        assert!(fixture
+            .trace
+            .hot_chunk_columns(
+                &[(HotSource::Word(device_words.slice(..)), word_selector),],
+                15,
+                cycles
+            )
+            .is_err());
     }
 }
 

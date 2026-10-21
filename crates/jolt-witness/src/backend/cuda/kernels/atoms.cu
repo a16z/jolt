@@ -425,3 +425,85 @@ extern "C" __global__ void flag_bit_column_kernel(
   }
   out[index] = (u64)((flags[index] >> bit) & 1u);
 }
+
+__device__ __forceinline__ void hot_chunk_span(u64 *span, u32 value) {
+#if __CUDA_ARCH__ >= 800
+  value = __reduce_max_sync(0xFFFFFFFFu, value);
+#else
+#pragma unroll
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    value = max(value, __shfl_down_sync(0xFFFFFFFFu, value, offset));
+  }
+#endif
+  if ((threadIdx.x & 31u) == 0 && value != 0) {
+    atomicMax(span, (u64)value);
+  }
+}
+
+extern "C" __global__ void hot_chunk_limbs_kernel(
+    const u64 *limbs,
+    u32 shift,
+    u64 mask,
+    u32 *out,
+    u64 *spans,
+    u32 slot,
+    u32 cycles) {
+  u32 index = blockIdx.x * blockDim.x + threadIdx.x;
+  u32 span = 0;
+  if (index < cycles) {
+    u128 value = (u128)limbs[(size_t)index * 2] | ((u128)limbs[(size_t)index * 2 + 1] << 64);
+    u32 chunk = (u32)((value >> shift) & (u128)mask);
+    out[index] = chunk;
+    span = chunk + 1u;
+  }
+  hot_chunk_span(spans + slot, span);
+}
+
+extern "C" __global__ void hot_chunk_words_kernel(
+    const u32 *words,
+    u32 shift,
+    u64 mask,
+    u32 *out,
+    u64 *spans,
+    u32 slot,
+    u32 cycles) {
+  u32 index = blockIdx.x * blockDim.x + threadIdx.x;
+  u32 span = 0;
+  if (index < cycles) {
+    u32 word = words[index];
+    if (word == COLD) {
+      out[index] = COLD;
+    } else {
+      u32 chunk = (u32)(((u64)word >> shift) & mask);
+      out[index] = chunk;
+      span = chunk + 1u;
+    }
+  }
+  hot_chunk_span(spans + slot, span);
+}
+
+#define NARROW_REJECTED 0
+#define NARROW_SPAN 1
+#define NARROW_FIRST 2
+
+extern "C" __global__ void narrow_u64_kernel(
+    const u64 *source,
+    u64 bound,
+    u32 *out,
+    u64 *facts,
+    u32 cycles) {
+  u32 index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= cycles) {
+    return;
+  }
+  u64 value = source[index];
+  if (index == 0u) {
+    facts[NARROW_FIRST] = value;
+  }
+  if (value >= bound) {
+    atomicMin(facts + NARROW_REJECTED, value);
+    return;
+  }
+  out[index] = (u32)value;
+  atomicMax(facts + NARROW_SPAN, value + 1ull);
+}

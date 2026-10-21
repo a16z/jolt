@@ -19,7 +19,8 @@ use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::packed::{PackedTrace, EXTRA_WORDS as PACKED_EXTRA_WORDS};
 use super::tables::kind_tables;
-use super::{DeviceAtomColumns, DeviceTraceColumn};
+use super::{DeviceAtomColumns, DeviceTraceColumn, HotSource, NarrowColumn};
+use crate::witnesses::RaChunkSelector;
 use crate::{RowSource, WitnessError, JOLT_VM_LABEL};
 
 pub const COLD: u32 = u32::MAX;
@@ -41,6 +42,9 @@ struct ExtractFunctions {
     flag_bit: CudaFunction,
     extra_word: CudaFunction,
     flag_bit_bytes: CudaFunction,
+    narrow_u64: CudaFunction,
+    hot_chunk_limbs: CudaFunction,
+    hot_chunk_words: CudaFunction,
 }
 
 fn extract_ptx() -> Result<&'static Ptx, &'static String> {
@@ -89,6 +93,9 @@ fn load_extract_functions(stream: &CudaStream) -> Result<ExtractFunctions, Strin
         flag_bit: function("flag_bit_column_kernel")?,
         extra_word: function("extra_word_column_kernel")?,
         flag_bit_bytes: function("flag_bit_bytes_kernel")?,
+        narrow_u64: function("narrow_u64_kernel")?,
+        hot_chunk_limbs: function("hot_chunk_limbs_kernel")?,
+        hot_chunk_words: function("hot_chunk_words_kernel")?,
     })
 }
 
@@ -537,6 +544,159 @@ impl DeviceTrace {
         // `cycles`-element allocation. The two are distinct allocations.
         let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
         Ok(out)
+    }
+
+    pub fn narrow_u64_column(
+        &self,
+        source: &CudaSlice<u64>,
+        bound: u64,
+    ) -> Result<NarrowColumn, WitnessError> {
+        if source.len() < self.cycles {
+            return Err(device_error(format!(
+                "the narrow source holds {} entries for {} cycles",
+                source.len(),
+                self.cycles
+            )));
+        }
+        let count = self.count()?;
+        let mut out = self
+            .stream
+            .alloc_zeros::<u32>(self.cycles)
+            .map_err(device_error)?;
+        let mut facts = self
+            .stream
+            .clone_htod(&[NO_REJECTION, 0u64, 0u64])
+            .map_err(device_error)?;
+
+        let mut builder = self.stream.launch_builder(&self.functions.narrow_u64);
+        let _ = builder.arg(source);
+        let _ = builder.arg(&bound);
+        let _ = builder.arg(&mut out);
+        let _ = builder.arg(&mut facts);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads only `source[i]`, checked above to hold
+        // at least `cycles >= count` entries, and writes only `out[i]` of a
+        // `cycles`-element allocation. `facts` holds three words: index 0 and 1
+        // are mutated only through `atomicMin`/`atomicMax`, and index 2 is
+        // written only by thread 0. Every buffer is a distinct allocation.
+        let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
+        self.stream.synchronize().map_err(device_error)?;
+
+        let facts = self.stream.clone_dtoh(&facts).map_err(device_error)?;
+        let &[rejected, span, first] = facts.as_slice() else {
+            return Err(device_error("the narrow column facts were not read back"));
+        };
+        if rejected != NO_REJECTION {
+            return Err(device_error(format!(
+                "the column value {rejected} does not fit the {bound}-bound 32-bit word"
+            )));
+        }
+        Ok(NarrowColumn {
+            column: out,
+            span: usize::try_from(span)
+                .map_err(|_| device_error("a narrowed column span exceeds the host word"))?,
+            first,
+        })
+    }
+
+    #[tracing::instrument(skip_all, name = "cuda_witness_hot_chunks", fields(requests = requests.len(), cycles))]
+    pub fn hot_chunk_columns(
+        &self,
+        requests: &[(HotSource<'_>, RaChunkSelector)],
+        addresses: usize,
+        cycles: usize,
+    ) -> Result<Vec<(CudaSlice<u32>, usize)>, WitnessError> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        if cycles == 0 || cycles > self.cycles {
+            return Err(device_error(format!(
+                "a committed chunk range of {cycles} cycles does not fit this {}-cycle residency",
+                self.cycles
+            )));
+        }
+        let count = u32::try_from(cycles)
+            .map_err(|_| device_error(format!("{cycles} cycles exceed a 32-bit grid")))?;
+        let mut spans = self
+            .stream
+            .alloc_zeros::<u64>(requests.len())
+            .map_err(device_error)?;
+        let mut columns = Vec::with_capacity(requests.len());
+        for (slot, (source, selector)) in requests.iter().enumerate() {
+            let selector = *selector;
+            let mask = selector.mask();
+            if mask >= u128::from(COLD) {
+                return Err(device_error(format!(
+                    "a {}-bit committed chunk does not fit the 32-bit word reserving {COLD} for a \
+                     cold cycle",
+                    mask.count_ones()
+                )));
+            }
+            let shift = u32::try_from(selector.shift())
+                .map_err(|_| device_error("a committed chunk shift exceeds 32 bits"))?;
+            let mask = mask as u64;
+            let slot = u32::try_from(slot)
+                .map_err(|_| device_error("a committed chunk batch exceeds a 32-bit slot"))?;
+            let (function, expected, source_len) = match source {
+                HotSource::Interleaved(limbs) => {
+                    (&self.functions.hot_chunk_limbs, cycles * 2, limbs.len())
+                }
+                HotSource::Word(words) => (&self.functions.hot_chunk_words, cycles, words.len()),
+            };
+            if source_len < expected {
+                return Err(device_error(format!(
+                    "the chunk source holds {source_len} entries for {cycles} cycles"
+                )));
+            }
+            let mut out = self
+                .stream
+                .alloc_zeros::<u32>(cycles)
+                .map_err(device_error)?;
+
+            let mut builder = self.stream.launch_builder(function);
+            match source {
+                HotSource::Interleaved(limbs) => {
+                    let _ = builder.arg(limbs);
+                }
+                HotSource::Word(words) => {
+                    let _ = builder.arg(words);
+                }
+            }
+            let _ = builder.arg(&shift);
+            let _ = builder.arg(&mask);
+            let _ = builder.arg(&mut out);
+            let _ = builder.arg(&mut spans);
+            let _ = builder.arg(&slot);
+            let _ = builder.arg(&count);
+            // SAFETY: thread `i < count` reads `limbs[2i]`/`limbs[2i + 1]` or
+            // `words[i]` of the caller's view — the view was checked above to hold
+            // at least `cycles * 2` or `cycles` entries from its own base — and
+            // writes only `out[i]` of a
+            // fresh `cycles`-element allocation. `spans[slot]` is one element of
+            // a `requests.len()`-element buffer, `slot` is this request's index,
+            // and warp leaders update it only through `atomicMax`. All threads
+            // reach the warp reduction, including cold/out-of-range lanes with
+            // value zero; BLOCK is a multiple of 32. The checked mask is below
+            // COLD, so chunk + 1 fits u32. Every buffer is a distinct allocation.
+            let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
+            columns.push(out);
+        }
+
+        self.stream.synchronize().map_err(device_error)?;
+        let spans = self.stream.clone_dtoh(&spans).map_err(device_error)?;
+        let mut chunked = Vec::with_capacity(columns.len());
+        for (column, &span) in columns.into_iter().zip(&spans) {
+            let span = usize::try_from(span)
+                .map_err(|_| device_error("a committed chunk span exceeds the host word"))?;
+            if span > addresses {
+                return Err(device_error(format!(
+                    "a committed one-hot column reaches address {} of a {addresses}-address chunk",
+                    span - 1
+                )));
+            }
+            chunked.push((column, span));
+        }
+        Ok(chunked)
     }
 
     pub fn u32_column(&self, column: DeviceTraceColumn) -> Result<CudaSlice<u32>, WitnessError> {
