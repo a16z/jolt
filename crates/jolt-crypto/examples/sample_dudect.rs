@@ -15,7 +15,7 @@
 //!   `k = 1`, where `z = 0` is common: `z = 0` vs `z ≠ 0`. Isochrony means
 //!   the whole call, retries included, is independent of the returned value.
 //! - **Parallel fill.** `GaussianSampler::fill_parallel` of two chunks
-//!   (`2^15` outputs) at the production width `k = 57,033,704,728`, one call
+//!   (`2^15` outputs) at the production width `k = 58,642,511,897`, one call
 //!   per measurement, `measurements / 1000` calls, split by the secret
 //!   output: more or fewer than the expected share of `|z| ≥ σ`, and the sign
 //!   of the sum. The work split is public, so the whole call must be
@@ -43,7 +43,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
 const HEADLINE_K: u64 = 16_080_468;
-const PRODUCTION_K: u64 = 57_033_704_728;
+const PRODUCTION_K: u64 = 58_642_511_897;
 const FILL_LEN: usize = 1 << 15;
 const BOX_BOUND: u64 = 93_120_000;
 const SHIFT_BOUND: u64 = 1 << 13;
