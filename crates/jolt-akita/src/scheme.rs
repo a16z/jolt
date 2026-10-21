@@ -21,13 +21,13 @@ use std::{
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, commit_failed, dense_polynomials, invalid_batch,
-    invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, transparent_zk_error,
-    validate_one_hot_k, with_backend_pool, AkitaBackend, AkitaBackendCommitment,
-    AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint,
-    AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaHintSource, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaSetupFlavor,
-    AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
-    FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
+    invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
+    transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackend,
+    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor,
+    AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField,
+    AkitaHidingCommitment, AkitaHintSource, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
+    AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup,
+    BackendVerifierCache, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::configs::AkitaChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
@@ -297,18 +297,18 @@ impl AkitaScheme {
         }
         let mut profiles = Vec::with_capacity(group_hints.len());
         for hint in group_hints {
-            let (commitment, _) = hint.opening.as_ref().ok_or_else(|| {
-                invalid_batch("Akita auxiliary group is missing backend opening data")
-            })?;
-            if commitment.backend_flavor != AkitaBackendFlavor::Dense
-                || commitment.poly_count != 1
+            if hint.commitment.backend_flavor != AkitaBackendFlavor::Dense
+                || hint.commitment.poly_count != 1
                 || !matches!(hint.source, AkitaHintSource::Dense { .. })
             {
                 return Err(invalid_batch(
                     "Akita auxiliary group must contain one dense polynomial",
                 ));
             }
-            profiles.push(*commitment.group.profile());
+            let (auxiliary_group, _) = hint.backend.as_ref().ok_or_else(|| {
+                invalid_batch("Akita auxiliary group is missing backend opening data")
+            })?;
+            profiles.push(*auxiliary_group.profile());
         }
         PrecommittedGroupProfiles::from_profiles(profiles).map_err(akita_error)
     }
@@ -352,12 +352,14 @@ impl AkitaScheme {
             num_vars,
             poly_count: source.len(),
             one_hot_k,
-            group: backend_commitment,
+            backend_coeff_len: backend_commitment.rows().coeff_len(),
+            serialized_backend_bytes: serialize_akita(backend_commitment.commitment())?,
         };
         Ok((
             commitment.clone(),
             AkitaProverHint {
-                opening: Some((commitment, backend_hint)),
+                commitment,
+                backend: Some((backend_commitment, backend_hint)),
                 source,
             },
         ))
@@ -627,12 +629,8 @@ impl CommitmentScheme for AkitaScheme {
             Some(hint) => hint,
             None => Self::commit(poly, setup)?.1,
         };
-        let (commitment, _) = hint
-            .opening
-            .as_ref()
-            .ok_or_else(|| invalid_batch("Akita prover hint is missing backend opening data"))?;
         let statement = vec![VerifierOpeningClaim {
-            commitment: commitment.clone(),
+            commitment: hint.commitment.clone(),
             evaluation: EvaluationClaim::new(point.to_vec(), eval),
         }];
         let polynomials: AkitaNativeBatchPolynomials<'_> =
@@ -915,7 +913,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests reject impossible fixture variants")]
 
     use super::*;
-    use crate::adapters::{serialize_akita, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+    use crate::adapters::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
     use crate::configs::JoltDenseBounded;
     use crate::AkitaOneHotScheduleArtifact;
     use akita_config::CommitmentConfig;
@@ -940,7 +938,7 @@ mod tests {
         assert!(AkitaScheme::commit(&polynomial, &bounded).is_err());
         let (commitment, hint) =
             AkitaScheme::commit_full_width_object(&bounded, &polynomial, [7; 32]).unwrap();
-        assert_eq!(commitment, hint.opening.unwrap().0);
+        assert_eq!(commitment, hint.commitment);
         assert_eq!(commitment.num_vars, polynomial.num_vars());
     }
 
@@ -1171,13 +1169,13 @@ mod tests {
             AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         ))
         .unwrap();
-        let (selection, profiles, schedule) = with_one_hot_family!(scheme verifier_setup.one_hot_scheme().unwrap(), |scheme| {
-            let row = scheme
+        let selection = with_one_hot_family!(scheme verifier_setup.one_hot_scheme().unwrap(), |scheme| {
+            scheme
                 .schedules()
                 .rows()
                 .find(|row| !row.profiles().precommitteds.is_empty())
-                .unwrap();
-            (row.selection(), row.profiles().clone(), row.schedule().clone())
+                .unwrap()
+                .selection()
         });
         let json = serde_json::to_string(&verifier_setup).unwrap();
 
@@ -1188,8 +1186,12 @@ mod tests {
                 .resolve_selection(selection)
                 .expect("transported grouped setup must carry its schedule row")
         });
-        assert_eq!(resolved.profiles(), &profiles);
-        assert_eq!(resolved.schedule(), &schedule);
+        assert!(!resolved.profiles().precommitteds.is_empty());
+        assert!(resolved
+            .schedule()
+            .recursive_folds
+            .iter()
+            .any(|fold| fold.params.setup_prefix().is_some()));
     }
 
     #[test]

@@ -18,14 +18,15 @@ use akita_pcs::{
 };
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
-    AkitaVerifierSetup as BackendVerifierSetup, CommittedGroup as AkitaBackendCommittedGroup,
+    AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
+    CommittedGroup as AkitaBackendCommittedGroup,
 };
 use jolt_field::Zero;
 use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{BytesMsg, Encoding, Label, LabelWithCount, U64Word};
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use serde::{ser::Error as _, Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{
@@ -50,6 +51,7 @@ pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtFie
 
 pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
+pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
 pub(crate) type AkitaBackendHint = CommitmentHandle<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendVerifierSetup = BackendVerifierSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
@@ -682,63 +684,18 @@ impl AkitaBackendFlavor {
     }
 }
 
-/// A commitment object: Jolt's metadata for it and the Akita committed group.
-///
-/// The group carries its profile, its rows and its 32-byte digest. Jolt's
-/// transcript absorbs the metadata and the digest, never the rows.
-/// Deserialization decodes the group under full validation, which recomputes
-/// the digest; no input supplies it.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "AkitaCommitmentWire")]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaCommitment {
     pub(crate) backend_flavor: AkitaBackendFlavor,
     pub(crate) layout_digest: AkitaLayoutDigest,
     pub(crate) num_vars: usize,
     pub(crate) poly_count: usize,
     pub(crate) one_hot_k: usize,
-    pub(crate) group: AkitaBackendCommitment,
-}
-
-/// The serialized form of [`AkitaCommitment`].
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AkitaCommitmentWire {
-    backend_flavor: AkitaBackendFlavor,
-    layout_digest: AkitaLayoutDigest,
-    num_vars: usize,
-    poly_count: usize,
-    one_hot_k: usize,
-    /// The group's canonical bytes: its profile header, then its rows.
-    group: Vec<u8>,
-}
-
-impl TryFrom<AkitaCommitmentWire> for AkitaCommitment {
-    type Error = OpeningsError;
-
-    fn try_from(wire: AkitaCommitmentWire) -> Result<Self, OpeningsError> {
-        Ok(Self {
-            backend_flavor: wire.backend_flavor,
-            layout_digest: wire.layout_digest,
-            num_vars: wire.num_vars,
-            poly_count: wire.poly_count,
-            one_hot_k: wire.one_hot_k,
-            group: deserialize_akita(&wire.group, &())?,
-        })
-    }
-}
-
-impl Serialize for AkitaCommitment {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        AkitaCommitmentWire {
-            backend_flavor: self.backend_flavor,
-            layout_digest: self.layout_digest,
-            num_vars: self.num_vars,
-            poly_count: self.poly_count,
-            one_hot_k: self.one_hot_k,
-            group: serialize_akita(&self.group).map_err(S::Error::custom)?,
-        }
-        .serialize(serializer)
-    }
+    /// Field-coefficient count of the serialized backend commitment — the
+    /// deserialization context [`akita_types::Commitment`] requires.
+    pub(crate) backend_coeff_len: usize,
+    pub(crate) serialized_backend_bytes: Vec<u8>,
 }
 
 impl jolt_openings::GroupCommitmentMetadata for AkitaCommitment {
@@ -854,12 +811,23 @@ impl Encoding for AkitaCommitment {
                 .as_ref(),
         );
         out.extend_from_slice(BytesMsg(&self.layout_digest).encode().as_ref());
-        for word in [self.num_vars, self.poly_count, self.one_hot_k] {
+        for word in [
+            self.num_vars,
+            self.poly_count,
+            self.one_hot_k,
+            self.backend_coeff_len,
+        ] {
             out.extend_from_slice(U64Word(word as u64).encode().as_ref());
         }
-        // The digest covers the group's profile and rows, so the transcript
-        // binds the whole group in 32 bytes.
-        out.extend_from_slice(self.group.digest().as_bytes());
+        out.extend_from_slice(
+            LabelWithCount(
+                b"akita_commitment_bytes",
+                self.serialized_backend_bytes.len() as u64,
+            )
+            .encode()
+            .as_ref(),
+        );
+        out.extend_from_slice(BytesMsg(&self.serialized_backend_bytes).encode().as_ref());
         out
     }
 }
@@ -927,9 +895,10 @@ impl Encoding for AkitaHidingCommitment {
 
 #[derive(Clone, Debug, Default)]
 pub struct AkitaProverHint {
-    /// The public commitment and the backend handle retaining its exact
+    pub(crate) commitment: AkitaCommitment,
+    /// The public committed group and the backend handle retaining its exact
     /// source, produced at commit time and consumed when opening.
-    pub(crate) opening: Option<(AkitaCommitment, AkitaBackendHint)>,
+    pub(crate) backend: Option<(AkitaBackendCommitment, AkitaBackendHint)>,
     pub(crate) source: AkitaHintSource,
 }
 
@@ -1205,7 +1174,7 @@ mod tests {
     )]
 
     use super::*;
-    use akita_types::{Commitment, RingVec};
+    use akita_types::RingVec;
     use jolt_field::Ring;
 
     fn af(value: u64) -> AkitaField {
@@ -1345,17 +1314,17 @@ mod tests {
     #[test]
     fn deserialize_akita_rejects_trailing_bytes() {
         // The wire form carries coefficients only, so the fixture stays D-free.
-        let payload = Commitment::<AkitaField>::new(RingVec::from_coeffs(
+        let payload = AkitaBackendCommitmentPayload::new(RingVec::from_coeffs(
             (1..=64).map(AkitaField::from_u64).collect(),
         ));
         let coeff_len = payload.rows().coeff_len();
         let mut bytes = serialize_akita(&payload).expect("payload serializes");
-        let roundtrip: Commitment<AkitaField> =
+        let roundtrip: AkitaBackendCommitmentPayload =
             deserialize_akita(&bytes, &coeff_len).expect("exact bytes deserialize");
         assert_eq!(roundtrip, payload);
 
         bytes.push(0);
-        let err = deserialize_akita::<Commitment<AkitaField>>(&bytes, &coeff_len)
+        let err = deserialize_akita::<AkitaBackendCommitmentPayload>(&bytes, &coeff_len)
             .expect_err("trailing bytes must be rejected");
         assert!(
             matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")),

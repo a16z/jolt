@@ -41,11 +41,11 @@ This behavior is provided by
 The canonical layout checks column order and dimensions. Akita runs inside
 Jolt's Fiat-Shamir transcript: its messages go into Jolt's proof bytes and its
 challenges come from Jolt's sponge. At stage 0, Jolt absorbs each commitment's
-metadata and the 32-byte digest of its committed group. Before deriving
-batching challenges, Akita absorbs an instance descriptor, each group's
-opening point, and the ordered evaluations. The streaming witness
-uses a `u64` mask to distinguish selected address zero from an empty row, so
-the layout rejects more than 64 trace columns.
+metadata and its committed rows. Before deriving batching challenges, Akita
+absorbs an instance descriptor, each group's opening point, and the ordered
+evaluations. The streaming witness uses a `u64` mask to distinguish selected
+address zero from an empty row, so the layout rejects more than 64 trace
+columns.
 
 At stage 8, the trace group joins the advice and committed-program groups in
 one native Akita opening proof. Each group can have its own evaluation point
