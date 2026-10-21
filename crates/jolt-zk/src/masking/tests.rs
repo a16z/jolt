@@ -209,7 +209,7 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
         AffineRow::constant(uniskip_input()),
         &received.uniskip,
         &DegreeSchedule::uniform(1, DEGREE),
-        RoundFormat::Full(SumcheckDomainSpec::centered_integer(UNISKIP_DOMAIN)),
+        &RoundFormat::Full(SumcheckDomainSpec::centered_integer(UNISKIP_DOMAIN)),
     )
     .unwrap();
     relation
@@ -221,7 +221,7 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
         AffineRow::constant(claimed_sum),
         &received.rounds,
         &DegreeSchedule::uniform(NUM_VARS, DEGREE),
-        RoundFormat::Compressed,
+        &RoundFormat::Compressed,
     )
     .unwrap();
     let [(a, slot_a), (b, slot_b)] = received.claims;
@@ -316,7 +316,7 @@ fn rounds_off_their_degree_schedule_are_rejected() {
             input.clone(),
             &received.rounds,
             &schedule,
-            RoundFormat::Compressed,
+            &RoundFormat::Compressed,
         ),
         Err(ZkError::RoundWidthMismatch {
             round: 1,
@@ -330,7 +330,7 @@ fn rounds_off_their_degree_schedule_are_rejected() {
             input,
             &received.rounds,
             &DegreeSchedule::uniform(NUM_VARS - 1, DEGREE),
-            RoundFormat::Compressed,
+            &RoundFormat::Compressed,
         ),
         Err(ZkError::RoundCountMismatch {
             expected: 2,
@@ -504,4 +504,395 @@ fn pad_exhaustion_is_an_error() {
         committed.send(&[fr(1), fr(2)], &mut transcript),
         Err(ZkError::PadsExhausted { .. })
     ));
+}
+
+mod claim_checks {
+    //! `product_into` and `check_zero` in every domain, on Akita's stage-1
+    //! leaf check as Akita `specs/whiteout-akita.md` §4.4 lowers it:
+    //! `u = r·r`, then `u·(c₄u + c₃r + c₂) = claim − c₁r − c₀` lands on the
+    //! claim with no slot of its own.
+
+    use jolt_transcript::{ClaimDomain, ClaimMismatch};
+
+    use super::*;
+
+    fn leaf<D: ClaimDomain<Fr, Error = ZkError>>(
+        domain: &mut D,
+        r: D::Value,
+        c: [Fr; 5],
+        claim: D::Value,
+    ) -> Result<(), ZkError> {
+        let u = domain.product(r.clone(), r.clone())?;
+        let y = domain.add(
+            &domain.add(&domain.scale(&u, c[4]), &domain.scale(&r, c[3])),
+            &domain.constant(c[2]),
+        );
+        let target = domain.add(
+            &claim,
+            &domain.add(&domain.scale(&r, -c[1]), &domain.constant(-c[0])),
+        );
+        domain.product_into(u, y, target)?;
+        domain.check_zero(domain.add(&claim, &domain.scale(&claim, -fr(1))))
+    }
+
+    /// Pads 0 and 1 hold r and the claim; the leaf takes one auxiliary slot.
+    #[test]
+    fn domains_agree_on_product_into_and_check_zero() {
+        let c = [3, 5, 7, 11, 13].map(fr);
+        let r = fr(17);
+        let claim = c.iter().rev().fold(fr(0), |sum, &c| sum * r + c);
+
+        let mut shape = OperandShapeDomain::new(2);
+        leaf(&mut shape, Some(PadIndex(0)), c, Some(PadIndex(1))).unwrap();
+        let layout = shape.layout().unwrap();
+        assert_eq!((layout.num_pads, layout.auxiliary.len()), (3, 1));
+        assert_eq!(layout.operand_pads, vec![PadIndex(0), PadIndex(2)]);
+
+        let mut values = ValuesDomain::default();
+        leaf(&mut values, r, c, claim).unwrap();
+        assert_eq!(values.auxiliary, vec![r * r]);
+        assert!(matches!(
+            leaf(&mut ValuesDomain::default(), r, c, claim + fr(1)),
+            Err(ZkError::ClaimMismatch(ClaimMismatch))
+        ));
+
+        let pads = [fr(101), fr(103), fr(107)];
+        let rows_for = |claim: Fr| {
+            let masked_auxiliary = [r * r + pads[2]];
+            let mut relation = ResidualRelation::new(layout.clone(), 0);
+            let mut rows = RowsDomain::new(&mut relation, &masked_auxiliary);
+            leaf(
+                &mut rows,
+                AffineRow::masked(r + pads[0], PadIndex(0)),
+                c,
+                AffineRow::masked(claim + pads[1], PadIndex(1)),
+            )
+            .unwrap();
+            rows.finish().unwrap();
+            relation
+        };
+        let honest = rows_for(claim);
+        assert_eq!((honest.products.len(), honest.affine.len()), (2, 1));
+        assert_eq!(honest.first_violation(&pads, &[]).unwrap(), None);
+        assert!(rows_for(claim + fr(1))
+            .first_violation(&pads, &[])
+            .unwrap()
+            .is_some());
+    }
+}
+
+mod single_instance {
+    //! A masked single-instance sumcheck as Akita's masked levels run one
+    //! (Akita `specs/whiteout-akita.md` §4.5): `prove_single` over the
+    //! prover's masked channel, `receive_masked_single` over the verifier's,
+    //! each challenge drawn through the round context, and the rounds lowered
+    //! by `sumcheck_rows`. The output claims a(r), b(r) are masked messages
+    //! whose product lands on the running claim.
+
+    use jolt_algebra::{Ext2, ExtField, Prime128Offset275 as Fp};
+    use jolt_poly::{Point, UnivariatePoly};
+    use jolt_sumcheck::{
+        prove_single, receive_masked_single, ProveRounds, ProverRoundContext, SingleFormat,
+        SingleInstance, SumcheckError, SumcheckSite, VerifierRoundContext,
+    };
+    use jolt_transcript::{Channel, ClaimDomain, SiteId};
+
+    use super::*;
+
+    type H = Blake2b512;
+    const ROUNDS: usize = 3;
+    const DEGREE: usize = 2;
+
+    fn fp(value: u64) -> Fp {
+        Fp::from_u64(value)
+    }
+
+    fn site(site: SumcheckSite) -> SiteId {
+        let mut id = [0u8; 32];
+        id[..4].copy_from_slice(&site.round.to_le_bytes());
+        id[4..8].copy_from_slice(&(site.role as u32).to_le_bytes());
+        SiteId(id)
+    }
+
+    /// Draws exactly uniform challenges, which `receive_masked_rounds`'
+    /// `challenge_small` would not reproduce.
+    struct Prover<'a>(MaskedProver<'a, Fp, (), H>);
+
+    impl<'a> ProverRoundContext<Fp> for Prover<'a> {
+        type Channel = MaskedProver<'a, Fp, (), H>;
+        type Error = SumcheckError<Fp>;
+
+        fn channel_mut(&mut self) -> &mut Self::Channel {
+            &mut self.0
+        }
+
+        fn site(&self, sumcheck_site: SumcheckSite) -> Option<SiteId> {
+            Some(site(sumcheck_site))
+        }
+
+        fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<Fp, SumcheckError<Fp>> {
+            self.0.site(site(sumcheck_site));
+            Ok(self.0.challenge())
+        }
+    }
+
+    struct Verifier<'a, 'p>(MaskedVerifier<'a, 'p, H>);
+
+    impl<'a, 'p> VerifierRoundContext<Fp> for Verifier<'a, 'p> {
+        type Channel = MaskedVerifier<'a, 'p, H>;
+        type Error = SumcheckError<Fp>;
+
+        fn channel_mut(&mut self) -> &mut Self::Channel {
+            &mut self.0
+        }
+
+        fn site(&self, sumcheck_site: SumcheckSite) -> Option<SiteId> {
+            Some(site(sumcheck_site))
+        }
+
+        fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<Fp, SumcheckError<Fp>> {
+            self.0.site(site(sumcheck_site));
+            Ok(self.0.challenge())
+        }
+    }
+
+    /// `Σ_x w(x) a(x) b(x)`, binding the lowest bit first; with `tau`,
+    /// `w = eq(tau, ·)` and each round returns the full `q`.
+    struct Kernel {
+        a: Vec<Fp>,
+        b: Vec<Fp>,
+        tau: Option<Vec<Fp>>,
+    }
+
+    fn eq(point: &[Fp], x: usize) -> Fp {
+        point
+            .iter()
+            .enumerate()
+            .map(|(k, &p)| if x >> k & 1 == 1 { p } else { fp(1) - p })
+            .product()
+    }
+
+    fn bind(table: &mut Vec<Fp>, r: Fp) {
+        let half = table.len() / 2;
+        for j in 0..half {
+            table[j] = table[2 * j] + r * (table[2 * j + 1] - table[2 * j]);
+        }
+        table.truncate(half);
+    }
+
+    impl Kernel {
+        fn new(eq_factored: bool) -> Self {
+            Self {
+                a: (1..=8).map(fp).collect(),
+                b: (21..=28).map(fp).collect(),
+                tau: eq_factored.then(|| vec![fp(5), fp(7), fp(9)]),
+            }
+        }
+
+        fn instance(&self) -> SingleInstance<Fp> {
+            let weight = |x| self.tau.as_ref().map_or(fp(1), |tau| eq(tau, x));
+            SingleInstance {
+                input_claim: (0..self.a.len())
+                    .map(|x| weight(x) * self.a[x] * self.b[x])
+                    .sum(),
+                rounds: ROUNDS,
+                degree: DEGREE,
+                format: self.tau.clone().map_or(SingleFormat::Compressed, |tau| {
+                    SingleFormat::EqFactored {
+                        equality_point: Point::low_to_high(tau),
+                    }
+                }),
+                invocation: 0,
+            }
+        }
+    }
+
+    impl ProveRounds<Fp> for Kernel {
+        fn num_rounds(&self) -> usize {
+            ROUNDS
+        }
+
+        fn prove_round(
+            &mut self,
+            bind_challenge: Option<Fp>,
+            round: usize,
+            _previous_claim: Fp,
+        ) -> Result<UnivariatePoly<Fp>, SumcheckError<Fp>> {
+            if let Some(r) = bind_challenge {
+                bind(&mut self.a, r);
+                bind(&mut self.b, r);
+            }
+            let mut coefficients = vec![fp(0); DEGREE + 1];
+            for j in 0..self.a.len() / 2 {
+                let weight = self
+                    .tau
+                    .as_ref()
+                    .map_or(fp(1), |tau| eq(&tau[round + 1..], j));
+                let (a0, a1) = (self.a[2 * j], self.a[2 * j + 1] - self.a[2 * j]);
+                let (b0, b1) = (self.b[2 * j], self.b[2 * j + 1] - self.b[2 * j]);
+                coefficients[0] += weight * a0 * b0;
+                coefficients[1] += weight * (a0 * b1 + a1 * b0);
+                coefficients[2] += weight * a1 * b1;
+            }
+            Ok(UnivariatePoly::new(coefficients))
+        }
+
+        fn finish_rounds(&mut self, bind_challenge: Fp) -> Result<(), SumcheckError<Fp>> {
+            bind(&mut self.a, bind_challenge);
+            bind(&mut self.b, bind_challenge);
+            Ok(())
+        }
+    }
+
+    fn layout() -> PadLayout {
+        PadLayout::new(ROUNDS * DEGREE + 2, 0).unwrap()
+    }
+
+    fn pads() -> Vec<Fp> {
+        (0..layout().num_pads)
+            .map(|i| fp(1000 + i as u64))
+            .collect()
+    }
+
+    fn prove(eq_factored: bool) -> Vec<u8> {
+        let mut kernel = Kernel::new(eq_factored);
+        let instance = kernel.instance();
+        let mut committed = CommittedPads::new(layout(), pads(), ()).unwrap();
+        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
+        let mut context = Prover(committed.channel(&mut transcript));
+        let _ = prove_single::<Fp, Fp, _, _>(&mut kernel, &instance, &mut context).unwrap();
+        let mut claims = [kernel.a[0], kernel.b[0]];
+        let _ = context.0.exchange_private_base(&mut claims).unwrap();
+        ValuesDomain::default()
+            .product_into(claims[0], claims[1], claims[0] * claims[1])
+            .unwrap();
+        committed.finish().unwrap();
+        transcript.finish()
+    }
+
+    /// The relation over the received transcript, from the clear input claim.
+    fn relation(narg: &[u8], eq_factored: bool, input_claim: Fp) -> ResidualRelation<Fp> {
+        let instance = Kernel::new(eq_factored).instance();
+        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, narg);
+        let mut view = CommittedPadsView::new(layout(), ());
+        let mut context = Verifier(view.channel(&mut transcript));
+        let rounds = receive_masked_single::<Fp, Fp, _, _>(&instance, &mut context).unwrap();
+        let mut claims = [fp(0); 2];
+        let slots = context.0.exchange_private_base(&mut claims).unwrap();
+        view.finish().unwrap();
+        transcript.finish().unwrap();
+
+        let format = match instance.format {
+            SingleFormat::Compressed => RoundFormat::Compressed,
+            SingleFormat::EqFactored { equality_point } => {
+                RoundFormat::EqFactored { equality_point }
+            }
+        };
+        let mut relation = ResidualRelation::new(layout(), 0);
+        let running = sumcheck_rows(
+            &mut relation,
+            AffineRow::constant(input_claim),
+            &rounds,
+            &DegreeSchedule::uniform(ROUNDS, DEGREE),
+            &format,
+        )
+        .unwrap();
+        let mut rows = RowsDomain::new(&mut relation, &[]);
+        rows.product_into(
+            AffineRow::masked(claims[0], PadIndex(slots.start)),
+            AffineRow::masked(claims[1], PadIndex(slots.start + 1)),
+            running,
+        )
+        .unwrap();
+        rows.finish().unwrap();
+        relation
+    }
+
+    #[test]
+    fn masked_single_instance_satisfies_its_rows() {
+        for eq_factored in [false, true] {
+            let narg = prove(eq_factored);
+            let claim = Kernel::new(eq_factored).instance().input_claim;
+            let honest = relation(&narg, eq_factored, claim);
+            assert_eq!((honest.affine.len(), honest.products.len()), (0, 1));
+            assert_eq!(honest.first_violation(&pads(), &[]).unwrap(), None);
+            let wrong = relation(&narg, eq_factored, claim + fp(1));
+            assert!(wrong.first_violation(&pads(), &[]).unwrap().is_some());
+        }
+    }
+
+    /// An extension element takes one pad per base coordinate, in the order
+    /// the verifier's channel takes them.
+    #[test]
+    fn extension_messages_mask_each_coordinate() {
+        type E = Ext2<Fp>;
+        let value = E::from_base_fn(|index| fp(3 + index as u64));
+        let layout = PadLayout::new(2, 0).unwrap();
+        let pads = vec![fp(11), fp(13)];
+        let mut committed = CommittedPads::new(layout.clone(), pads.clone(), ()).unwrap();
+        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
+        let slots = committed
+            .channel(&mut transcript)
+            .exchange_private::<Fp, E>(&mut [value])
+            .unwrap();
+        committed.finish().unwrap();
+        let narg = transcript.finish();
+
+        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, &narg);
+        let mut view = CommittedPadsView::new(layout, ());
+        let mut received = [E::default()];
+        assert_eq!(
+            view.channel(&mut transcript)
+                .exchange_private::<Fp, E>(&mut received)
+                .unwrap(),
+            slots
+        );
+        view.finish().unwrap();
+        for index in 0..2 {
+            assert_eq!(
+                received[0].base_coefficient(index) - pads[index],
+                value.base_coefficient(index)
+            );
+        }
+    }
+
+    #[test]
+    fn messages_of_another_field_are_rejected() {
+        let mut committed = CommittedPads::new(layout(), pads(), ()).unwrap();
+        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
+        assert!(matches!(
+            committed
+                .channel(&mut transcript)
+                .exchange_private_base(&mut [fr(1)]),
+            Err(ZkError::MessageFieldMismatch)
+        ));
+    }
+
+    #[test]
+    fn eq_factored_rounds_need_one_coordinate_each() {
+        let narg = prove(true);
+        let instance = Kernel::new(true).instance();
+        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, &narg);
+        let mut view = CommittedPadsView::new(layout(), ());
+        let rounds = receive_masked_single::<Fp, Fp, _, _>(
+            &instance,
+            &mut Verifier(view.channel(&mut transcript)),
+        )
+        .unwrap();
+        assert!(matches!(
+            sumcheck_rows(
+                &mut ResidualRelation::new(layout(), 0),
+                AffineRow::constant(instance.input_claim),
+                &rounds,
+                &DegreeSchedule::uniform(ROUNDS, DEGREE),
+                &RoundFormat::EqFactored {
+                    equality_point: Point::low_to_high(vec![fp(5), fp(7)]),
+                },
+            ),
+            Err(ZkError::RoundCountMismatch {
+                expected: 3,
+                got: 2
+            })
+        ));
+    }
 }

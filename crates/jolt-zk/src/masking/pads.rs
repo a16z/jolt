@@ -1,6 +1,7 @@
 //! The pad schedule: the public layout, the prover's committed pads and the
 //! verifier's view of their commitment.
 
+use std::any::Any;
 use std::ops::Range;
 
 use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, ExtField, Field};
@@ -139,6 +140,13 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
         values: &[F],
         transcript: &mut ProverTranscript<H>,
     ) -> Result<Vec<F>, ZkError> {
+        let (_, mut masked) = self.mask(values)?;
+        transcript.exchange_all(&mut masked)?;
+        Ok(masked)
+    }
+
+    /// `values` masked by the next `values.len()` pads, and their slots.
+    fn mask(&mut self, values: &[F]) -> Result<(PadSlots, Vec<F>), ZkError> {
         let slots = self.cursor.take(values.len())?;
         let pads =
             self.pads
@@ -146,9 +154,21 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
                 .ok_or(ZkError::InvalidLayout {
                     reason: "pad slots outside the pad vector",
                 })?;
-        let mut masked: Vec<F> = values.iter().zip(pads).map(|(m, p)| *m + *p).collect();
-        transcript.exchange_all(&mut masked)?;
-        Ok(masked)
+        Ok((
+            slots,
+            values.iter().zip(pads).map(|(m, p)| *m + *p).collect(),
+        ))
+    }
+
+    /// The prover's masked [`PrivateChannel`] over `transcript`.
+    pub fn channel<'a, H: Sponge>(
+        &'a mut self,
+        transcript: &'a mut ProverTranscript<H>,
+    ) -> MaskedProver<'a, F, O, H> {
+        MaskedProver {
+            pads: self,
+            transcript,
+        }
     }
 
     /// The decoded value m̂ − p of a masked value at `pad`.
@@ -332,6 +352,144 @@ impl<H: Sponge> PrivateChannel for MaskedVerifier<'_, '_, H> {
     {
         self.transcript.exchange_all(values)?;
         self.cursor.take(values.len())
+    }
+
+    fn bind_derived_base<F>(&mut self, _claim: &F) -> Result<(), ZkError>
+    where
+        F: Field + CanonicalEncoding,
+    {
+        Ok(())
+    }
+}
+
+/// The prover's masked [`PrivateChannel`], for protocols written once over
+/// both roles' channels, such as Akita's masked levels and `prove_single`
+/// (Akita `specs/whiteout-akita.md` §4.5). Each private value goes out as
+/// m̂ = m + p through [`CommittedPads::send`]'s masking, one pad per base
+/// coordinate in the order [`MaskedVerifier`] takes them; derived claims bind
+/// nothing.
+///
+/// The channel's methods are generic over the message field; a release check
+/// fails with [`ZkError::MessageFieldMismatch`] unless it is the pad field `F`.
+pub struct MaskedProver<'a, F, O, H: Sponge> {
+    pads: &'a mut CommittedPads<F, O>,
+    transcript: &'a mut ProverTranscript<H>,
+}
+
+/// `value` as a `T`, if `S` is `T`.
+fn same_field<S: Copy + 'static, T: Copy + 'static>(value: S) -> Result<T, ZkError> {
+    (&value as &dyn Any)
+        .downcast_ref::<T>()
+        .copied()
+        .ok_or(ZkError::MessageFieldMismatch)
+}
+
+/// Public messages and challenges pass through to the transcript.
+impl<F, O, H: Sponge> Channel for MaskedProver<'_, F, O, H> {
+    type Sponge = H;
+
+    fn site(&mut self, site: SiteId) {
+        self.transcript.site(site);
+    }
+
+    fn record_fork_draw(&mut self, absorbed: usize, squeezed: usize) {
+        self.transcript.record_fork_draw(absorbed, squeezed);
+    }
+
+    fn public<A: CanonicalBytes>(&mut self, value: &A) {
+        self.transcript.public(value);
+    }
+
+    fn public_all<A: CanonicalBytes>(&mut self, values: &[A]) {
+        self.transcript.public_all(values);
+    }
+
+    fn public_bytes(&mut self, bytes: &[u8]) {
+        self.transcript.public_bytes(bytes);
+    }
+
+    fn exchange<A: CanonicalDecode>(&mut self, value: &mut A) -> Result<(), TranscriptError> {
+        self.transcript.exchange(value)
+    }
+
+    fn exchange_all<A: CanonicalDecode>(
+        &mut self,
+        values: &mut [A],
+    ) -> Result<(), TranscriptError> {
+        self.transcript.exchange_all(values)
+    }
+
+    fn challenge<C: Field>(&mut self) -> C {
+        self.transcript.challenge()
+    }
+
+    fn challenge_small<C: CanonicalEncoding>(&mut self) -> C {
+        self.transcript.challenge_small()
+    }
+
+    fn challenge_bytes<const N: usize>(&mut self) -> [u8; N] {
+        self.transcript.challenge_bytes()
+    }
+}
+
+impl<P, O, H> PrivateChannel for MaskedProver<'_, P, O, H>
+where
+    P: Field + CanonicalEncoding,
+    H: Sponge,
+{
+    type Error = ZkError;
+
+    /// Masks each base coordinate of each value and sends the masked
+    /// elements, so the bytes are `E`'s encoding, as the verifier reads them.
+    fn exchange_private<F, E>(&mut self, values: &mut [E]) -> Result<PadSlots, ZkError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + CanonicalDecode,
+    {
+        let coordinates = values
+            .iter()
+            .flat_map(|value| (0..E::DEGREE).map(|index| value.base_coefficient(index)))
+            .map(same_field::<F, P>)
+            .collect::<Result<Vec<P>, ZkError>>()?;
+        let (slots, masked) = self.pads.mask(&coordinates)?;
+        let masked = masked
+            .into_iter()
+            .map(same_field::<P, F>)
+            .collect::<Result<Vec<F>, ZkError>>()?;
+        let mut masked: Vec<E> = masked
+            .chunks_exact(E::DEGREE)
+            .map(|chunk| {
+                let mut coordinates = chunk.iter().copied();
+                E::from_base_fn(|_| coordinates.next().unwrap_or_else(F::zero))
+            })
+            .collect();
+        self.transcript.exchange_all(&mut masked)?;
+        Ok(slots)
+    }
+
+    fn bind_derived<F, E>(&mut self, _claim: &E) -> Result<(), ZkError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + CanonicalDecode,
+    {
+        Ok(())
+    }
+
+    fn exchange_private_base<F>(&mut self, values: &mut [F]) -> Result<PadSlots, ZkError>
+    where
+        F: Field + CanonicalEncoding,
+    {
+        let values = values
+            .iter()
+            .copied()
+            .map(same_field::<F, P>)
+            .collect::<Result<Vec<P>, ZkError>>()?;
+        let start = self.pads.cursor.next;
+        let _ = self.pads.send(&values, self.transcript)?;
+        Ok(PadSlots {
+            start,
+            len: values.len(),
+        })
     }
 
     fn bind_derived_base<F>(&mut self, _claim: &F) -> Result<(), ZkError>

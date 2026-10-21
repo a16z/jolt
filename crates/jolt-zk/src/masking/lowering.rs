@@ -1,7 +1,8 @@
 //! Lowering verifier checks on masked messages.
 //!
 //! [`lower_factored`] turns a factored claim formula into a value of a
-//! [`ClaimDomain`], allocating one auxiliary slot per intermediate product.
+//! [`ClaimDomain`] (`jolt-transcript`'s, shared with Akita's stage checks),
+//! allocating one auxiliary slot per intermediate product.
 //! The allocation depends only on the formula's structure, never on values,
 //! so the same routine serves three domains:
 //!
@@ -15,25 +16,15 @@
 
 use jolt_algebra::Field;
 use jolt_claims::{Expr, FactoredExpr, Source};
+use jolt_poly::{Point, LOW_TO_HIGH};
 use jolt_sumcheck::{
-    BooleanHypercube, DegreeSchedule, MaskedRound, RoundWire, SumcheckDomain, SumcheckDomainSpec,
+    BooleanHypercube, DegreeSchedule, EqFactoredRound, MaskedRound, RoundWire, SumcheckDomain,
+    SumcheckDomainSpec,
 };
+use jolt_transcript::{ClaimDomain, ClearDomain};
 
 use super::residual::{AffineRow, ProductRow, ResidualRelation};
 use super::{PadIndex, PadLayout, ZkError};
-
-/// The values a claim formula lowers into.
-pub trait ClaimDomain<F> {
-    type Value: Clone;
-
-    fn constant(&self, value: F) -> Self::Value;
-    fn add(&self, lhs: &Self::Value, rhs: &Self::Value) -> Self::Value;
-    fn scale(&self, value: &Self::Value, scale: F) -> Self::Value;
-    /// A new auxiliary slot defined by the affine `value`; returns the slot.
-    fn define_auxiliary(&mut self, value: Self::Value) -> Result<Self::Value, ZkError>;
-    /// A new auxiliary slot holding `x · y`, where `x` is a masked slot.
-    fn product(&mut self, x: Self::Value, y: Self::Value) -> Result<Self::Value, ZkError>;
-}
 
 /// The numbering of auxiliary slots: slot `k` of the block is pad
 /// `start + k`. [`RowsDomain`] and [`OperandShapeDomain`] both take slots
@@ -95,11 +86,23 @@ impl OperandShapeDomain {
     pub fn layout(self) -> Result<PadLayout, ZkError> {
         Ok(PadLayout::new(self.slots.start, self.slots.next)?.with_operand_pads(self.operands))
     }
+
+    /// Records the pad of a product's operand `x`, each pad once.
+    fn record_operand(&mut self, x: Option<PadIndex>) -> Result<(), ZkError> {
+        let x = x.ok_or(ZkError::InvalidRelation {
+            reason: "product operand is not a single masked slot",
+        })?;
+        if !self.operands.contains(&x) {
+            self.operands.push(x);
+        }
+        Ok(())
+    }
 }
 
 impl<F> ClaimDomain<F> for OperandShapeDomain {
     /// The slot of a value that is exactly one masked slot.
     type Value = Option<PadIndex>;
+    type Error = ZkError;
 
     fn constant(&self, _value: F) -> Option<PadIndex> {
         None
@@ -122,17 +125,26 @@ impl<F> ClaimDomain<F> for OperandShapeDomain {
         x: Option<PadIndex>,
         _y: Option<PadIndex>,
     ) -> Result<Option<PadIndex>, ZkError> {
-        let x = x.ok_or(ZkError::InvalidRelation {
-            reason: "product operand is not a single masked slot",
-        })?;
-        if !self.operands.contains(&x) {
-            self.operands.push(x);
-        }
+        self.record_operand(x)?;
         Ok(Some(self.slots.take(None)?))
+    }
+
+    fn product_into(
+        &mut self,
+        x: Option<PadIndex>,
+        _y: Option<PadIndex>,
+        _target: Option<PadIndex>,
+    ) -> Result<(), ZkError> {
+        self.record_operand(x)
+    }
+
+    fn check_zero(&mut self, _value: Option<PadIndex>) -> Result<(), ZkError> {
+        Ok(())
     }
 }
 
 /// The prover's decoded values; records each auxiliary value in slot order.
+/// Checks compare as [`ClearDomain`] does.
 #[derive(Debug, Default)]
 pub struct ValuesDomain<F> {
     pub auxiliary: Vec<F>,
@@ -140,6 +152,7 @@ pub struct ValuesDomain<F> {
 
 impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
     type Value = F;
+    type Error = ZkError;
 
     fn constant(&self, value: F) -> F {
         value
@@ -159,9 +172,17 @@ impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
     }
 
     fn product(&mut self, x: F, y: F) -> Result<F, ZkError> {
-        let z = x * y;
+        let z = ClearDomain.product(x, y)?;
         self.auxiliary.push(z);
         Ok(z)
+    }
+
+    fn product_into(&mut self, x: F, y: F, target: F) -> Result<(), ZkError> {
+        Ok(ClearDomain.product_into(x, y, target)?)
+    }
+
+    fn check_zero(&mut self, value: F) -> Result<(), ZkError> {
+        Ok(ClaimDomain::<F>::check_zero(&mut ClearDomain, value)?)
     }
 }
 
@@ -219,6 +240,7 @@ impl<'r, F: Field> RowsDomain<'r, F> {
 
 impl<F: Field> ClaimDomain<F> for RowsDomain<'_, F> {
     type Value = AffineRow<F>;
+    type Error = ZkError;
 
     fn constant(&self, value: F) -> AffineRow<F> {
         AffineRow::constant(value)
@@ -241,14 +263,27 @@ impl<F: Field> ClaimDomain<F> for RowsDomain<'_, F> {
     }
 
     fn product(&mut self, x: AffineRow<F>, y: AffineRow<F>) -> Result<AffineRow<F>, ZkError> {
+        let z = self.next_slot()?;
+        self.product_into(x, y, z.clone())?;
+        Ok(z)
+    }
+
+    fn product_into(
+        &mut self,
+        x: AffineRow<F>,
+        y: AffineRow<F>,
+        target: AffineRow<F>,
+    ) -> Result<(), ZkError> {
         let x = x.as_masked_operand().ok_or(ZkError::InvalidRelation {
             reason: "product operand is not a single masked slot",
         })?;
-        let z = self.next_slot()?;
-        self.relation
-            .products
-            .push(ProductRow { x, y, z: z.clone() });
-        Ok(z)
+        self.relation.products.push(ProductRow { x, y, z: target });
+        Ok(())
+    }
+
+    fn check_zero(&mut self, value: AffineRow<F>) -> Result<(), ZkError> {
+        self.relation.affine.push(value);
+        Ok(())
     }
 }
 
@@ -307,7 +342,7 @@ pub fn lower_factored<F, O, P, C, D>(
 ) -> Result<D::Value, ZkError>
 where
     F: Field,
-    D: ClaimDomain<F>,
+    D: ClaimDomain<F, Error = ZkError>,
 {
     let mut sum = domain.constant(F::zero());
     for term in &expr.terms {
@@ -367,7 +402,7 @@ fn evaluate_affine<F, O, P, C, D>(
 ) -> Result<(D::Value, F), ZkError>
 where
     F: Field,
-    D: ClaimDomain<F>,
+    D: ClaimDomain<F, Error = ZkError>,
 {
     let mut value = domain.constant(F::zero());
     let mut scalar = F::zero();
@@ -391,20 +426,30 @@ where
 }
 
 /// The wire format of a run of masked rounds.
-#[derive(Clone, Copy, Debug)]
-pub enum RoundFormat {
+#[derive(Clone, Debug)]
+pub enum RoundFormat<F> {
     /// The compressed Boolean-hypercube format: the linear coefficient is
     /// omitted and solved from the running claim, so the round check adds no
     /// row.
     Compressed,
+    /// `jolt-sumcheck`'s `SingleFormat::EqFactored`: round `i` sends
+    /// `[q1, …, qd]` of `s(X) = eq(τ_i, X) · q(X)`, with
+    /// `τ_i = equality_point[i]`; `q0` is solved from
+    /// `(1 − τ_i) q(0) + τ_i q(1) = claim`, so the round check adds no row, and
+    /// the running claim is the normalized `q(r_i)`. Akita's masked stage 1
+    /// (Akita `specs/whiteout-akita.md` §4.5).
+    EqFactored {
+        equality_point: Point<LOW_TO_HIGH, F>,
+    },
     /// Every coefficient sent: the round check is an explicit row.
     Full(SumcheckDomainSpec),
 }
 
-impl RoundFormat {
-    fn wire(self) -> RoundWire {
+impl<F> RoundFormat<F> {
+    /// Both one-omitted formats send `degree` values per round.
+    fn wire(&self) -> RoundWire {
         match self {
-            Self::Compressed => RoundWire::Compressed,
+            Self::Compressed | Self::EqFactored { .. } => RoundWire::Compressed,
             Self::Full(_) => RoundWire::Full,
         }
     }
@@ -416,7 +461,8 @@ impl RoundFormat {
 ///
 /// # Errors
 ///
-/// [`ZkError::RoundCountMismatch`] if the rounds and schedule differ in count;
+/// [`ZkError::RoundCountMismatch`] if the rounds, the schedule or an
+/// equality point differ in count;
 /// [`ZkError::RoundWidthMismatch`] if a round's wire length differs from its
 /// scheduled width; [`ZkError::InvalidRelation`] on another malformed round.
 pub fn sumcheck_rows<F: Field>(
@@ -424,13 +470,21 @@ pub fn sumcheck_rows<F: Field>(
     input: AffineRow<F>,
     rounds: &[MaskedRound<F>],
     degrees: &DegreeSchedule,
-    format: RoundFormat,
+    format: &RoundFormat<F>,
 ) -> Result<AffineRow<F>, ZkError> {
     if rounds.len() != degrees.num_rounds() {
         return Err(ZkError::RoundCountMismatch {
             expected: degrees.num_rounds(),
             got: rounds.len(),
         });
+    }
+    if let RoundFormat::EqFactored { equality_point } = format {
+        if equality_point.len() != rounds.len() {
+            return Err(ZkError::RoundCountMismatch {
+                expected: rounds.len(),
+                got: equality_point.len(),
+            });
+        }
     }
     let mut claim = input;
     for (index, (round, &degree)) in rounds.iter().zip(degrees.degrees()).enumerate() {
@@ -467,7 +521,22 @@ pub fn sumcheck_rows<F: Field>(
                     .map_err(|_| ZkError::InvalidRelation {
                         reason: "round degree has no round-sum weights",
                     })?;
-                compressed_coefficients(&claim, sent, &weights)?
+                omitted_coefficient(&claim, sent, &weights, 1)?
+            }
+            RoundFormat::EqFactored { equality_point } => {
+                let tau =
+                    *equality_point
+                        .as_slice()
+                        .get(index)
+                        .ok_or(ZkError::InvalidRelation {
+                            reason: "equality point has no coordinate for the round",
+                        })?;
+                let weights = EqFactoredRound { tau }
+                    .round_sum_coefficients(degree)
+                    .map_err(|_| ZkError::InvalidRelation {
+                        reason: "round degree has no round-sum weights",
+                    })?;
+                omitted_coefficient(&claim, sent, &weights, 0)?
             }
             RoundFormat::Full(domain) => {
                 let weights = domain.round_sum_coefficients(degree).map_err(|_| {
@@ -500,40 +569,48 @@ pub fn sumcheck_rows<F: Field>(
     Ok(claim)
 }
 
-/// Rebuilds `[c0, c1, c2, …]` from the wire `[c0, c2, …]`, solving the
-/// omitted c1 from Σ_j w_j c_j = claim.
-fn compressed_coefficients<F: Field>(
+/// Rebuilds every coefficient from a wire that omits the one at `omitted`
+/// (`[c0, c2, …]` for 1, `[c1, c2, …]` for 0), solving it from
+/// Σ_j w_j c_j = claim.
+fn omitted_coefficient<F: Field>(
     claim: &AffineRow<F>,
     sent: Vec<AffineRow<F>>,
     weights: &[F],
+    omitted: usize,
 ) -> Result<Vec<AffineRow<F>>, ZkError> {
-    let mut sent = sent.into_iter();
-    let c0 = sent.next().ok_or(ZkError::InvalidRelation {
-        reason: "compressed round has no constant coefficient",
-    })?;
-    let rest: Vec<AffineRow<F>> = sent.collect();
-    let (&w0, tail) = weights.split_first().ok_or(ZkError::InvalidRelation {
-        reason: "round weights are empty",
-    })?;
-    let (&w1, higher) = tail.split_first().ok_or(ZkError::InvalidRelation {
-        reason: "round weights have no linear weight",
-    })?;
-    let inverse = w1.inverse().ok_or(ZkError::InvalidRelation {
-        reason: "linear round weight is zero",
-    })?;
-    if higher.len() != rest.len() {
+    if weights.len() != sent.len() + 1 || omitted > sent.len() {
         return Err(ZkError::InvalidRelation {
-            reason: "compressed round width differs from its weights",
+            reason: "round width differs from its weights",
         });
     }
-    let mut known = c0.scale(w0);
-    for (coefficient, &weight) in rest.iter().zip(higher) {
-        known = known.add_scaled(coefficient, weight);
+    let mut known = AffineRow::constant(F::zero());
+    let mut omitted_weight = None;
+    let mut sent = sent.into_iter();
+    let mut coefficients = Vec::with_capacity(weights.len());
+    for (index, &weight) in weights.iter().enumerate() {
+        if index == omitted {
+            omitted_weight = Some(weight);
+            coefficients.push(AffineRow::constant(F::zero()));
+        } else {
+            let coefficient = sent.next().ok_or(ZkError::InvalidRelation {
+                reason: "round width differs from its weights",
+            })?;
+            known = known.add_scaled(&coefficient, weight);
+            coefficients.push(coefficient);
+        }
     }
-    let c1 = claim.add_scaled(&known, -F::one()).scale(inverse);
-    let mut coefficients = Vec::with_capacity(rest.len() + 2);
-    coefficients.push(c0);
-    coefficients.push(c1);
-    coefficients.extend(rest);
+    let inverse =
+        omitted_weight
+            .and_then(|weight| weight.inverse())
+            .ok_or(ZkError::InvalidRelation {
+                reason: "omitted round weight is zero",
+            })?;
+    let solved = claim.add_scaled(&known, -F::one()).scale(inverse);
+    let slot = coefficients
+        .get_mut(omitted)
+        .ok_or(ZkError::InvalidRelation {
+            reason: "round width differs from its weights",
+        })?;
+    *slot = solved;
     Ok(coefficients)
 }

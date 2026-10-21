@@ -5,7 +5,9 @@ use std::error::Error;
 
 use jolt_algebra::Field;
 use jolt_sumcheck::SumcheckError;
-use jolt_transcript::{ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
+use jolt_transcript::{
+    ClaimMismatch, ProverTranscript, Sponge, TranscriptError, VerifierTranscript,
+};
 use rand_core::{CryptoRng, RngCore};
 use thiserror::Error as ThisError;
 
@@ -38,6 +40,13 @@ pub enum ZkError {
     OperandPadsMismatch,
     #[error("invalid residual relation: {reason}")]
     InvalidRelation { reason: &'static str },
+    /// The prover's decoded values fail a check its lowering states.
+    #[error("decoded values: {0}")]
+    ClaimMismatch(#[from] ClaimMismatch),
+    /// A private message's field is not the pad field: a pad vector of one
+    /// field masks only messages of that field.
+    #[error("private message field is not the pad field")]
+    MessageFieldMismatch,
     /// A masked round's wire length differs from its degree schedule.
     #[error("masked round {round} has {got} values, its schedule {expected}")]
     RoundWidthMismatch {
