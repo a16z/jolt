@@ -7,7 +7,7 @@ use crate::protocols::jolt::geometry::claim_reductions::instruction::{
 };
 use crate::protocols::jolt::geometry::instruction::{
     eq_table_value, instruction_ra_factors, instruction_raf_flag, lookup_table_flag,
-    InstructionReadRafDimensions, READ_RAF_BASE_DEGREE,
+    InstructionReadRafDimensions, READ_RAF_ADDRESS_ROUND_DEGREE, READ_RAF_BASE_DEGREE,
 };
 use crate::protocols::jolt::{
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltExpr, JoltFactoredExpr,
@@ -83,6 +83,18 @@ impl SymbolicSumcheck for ReadRaf {
         self.shape.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
     }
 
+    /// The address rounds come first (see
+    /// [`InstructionReadRafDimensions::opening_point`]) at degree
+    /// [`READ_RAF_ADDRESS_ROUND_DEGREE`]; the cycle rounds multiply in the
+    /// `num_virtual_ra_polys` `ra` chunks.
+    fn round_degree(&self, round: usize) -> usize {
+        if round < self.shape.instruction_address_bits() {
+            READ_RAF_ADDRESS_ROUND_DEGREE
+        } else {
+            self.degree()
+        }
+    }
+
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(InstructionReadRafChallenge::Gamma);
         opening(lookup_output_reduced())
@@ -124,6 +136,16 @@ mod tests {
     fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
         InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))
             .unwrap_or_else(|err| panic!("test read-RAF dimensions should be nonzero: {err}"))
+    }
+
+    #[test]
+    fn address_rounds_are_quadratic_and_cycle_rounds_carry_every_ra_chunk() {
+        let relation = ReadRaf::new(read_raf_dimensions(8));
+        let degrees: Vec<_> = (0..relation.rounds())
+            .map(|round| relation.round_degree(round))
+            .collect();
+        assert_eq!(degrees, [vec![2; 128], vec![10; 5]].concat());
+        assert_eq!(relation.degree(), 10);
     }
 
     #[test]

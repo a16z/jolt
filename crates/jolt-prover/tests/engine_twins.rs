@@ -18,8 +18,7 @@ use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearSumcheckRecorder, ProveRounds,
-    SequentialRounds, SumcheckClaim, SumcheckDomain, SumcheckError, SumcheckRecorder,
-    SumcheckVerifier,
+    SequentialRounds, SumcheckDomain, SumcheckError, SumcheckRecorder, SumcheckVerifier,
 };
 use jolt_transcript::{
     Blake2b512, Channel as _, ProtocolId, ProverTranscript, Sponge, VerifierTranscript,
@@ -221,12 +220,9 @@ fn clear_engine_twin_matches_generated_verify_clear() {
             &mut verifier_transcript,
         )
         .unwrap();
-    let reduction = SumcheckVerifier::verify_compressed(
-        &SumcheckClaim::new(
-            verifier_batch.max_num_vars,
-            verifier_batch.max_degree,
-            verifier_batch.claimed_sum,
-        ),
+    let reduction = SumcheckVerifier::verify_compressed_scheduled(
+        verifier_batch.claimed_sum,
+        &verifier_batch.degrees,
         &mut verifier_transcript,
     )
     .unwrap();
@@ -341,8 +337,7 @@ fn masked_engine_twin_matches_generated_verify_masked() {
             prover_coefficients.registers_val_evaluation,
         ],
     );
-    assert_eq!(verified.rounds.max_num_vars, batch.max_num_vars);
-    assert_eq!(verified.rounds.max_degree, batch.max_degree);
+    assert_eq!(verified.rounds.degrees, batch.degrees);
     let decoded: Vec<Fr> = verified
         .output_claims
         .received

@@ -35,6 +35,7 @@
 //! | [`single`] | [`prove_single`] / [`verify_single`] — one unbatched instance, compressed or eq-factored, under a round context |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | [`round_proof`] | Round polynomials on the wire: fixed-width full and compressed forms |
+//! | [`schedule`] | [`DegreeSchedule`] — the public per-round degree bounds that fix each round's width |
 //! | [`masked`] | Masked rounds, as the ZK verifier records them |
 //! | [`error`] | [`SumcheckError`] variants |
 //!
@@ -57,7 +58,8 @@
 //! masked) into a [`ProverTranscript`](jolt_transcript::ProverTranscript)
 //! through a [`SumcheckRecorder`]; [`SumcheckVerifier`] reads them back from a
 //! [`VerifierTranscript`](jolt_transcript::VerifierTranscript). Every round is
-//! sent at its public degree bound, so no length or label travels with it.
+//! sent at its public degree bound from the [`DegreeSchedule`], so no length
+//! or label travels with it.
 //!
 //! # Dependency position
 //!
@@ -98,6 +100,7 @@ pub mod masked;
 pub mod prover;
 pub mod recorder;
 pub mod round_proof;
+pub mod schedule;
 pub mod single;
 pub mod verifier;
 
@@ -122,6 +125,7 @@ pub use round_proof::{
     compressed_wire, padded_coefficients, receive_compressed_round, receive_full_round,
     receive_private_value, send_compressed_round, send_full_round, send_private_value,
 };
+pub use schedule::{DegreeSchedule, MemberDegrees};
 pub use single::{
     prove_single, verify_single, ProverRoundContext, SingleFormat, SingleInstance, SingleReduction,
     SumcheckRole, SumcheckSite, VerifierRoundContext,

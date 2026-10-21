@@ -17,7 +17,7 @@
 //! round and output claim through the recorder's full-round hook.
 
 use jolt_algebra::{CanonicalEncoding, Field};
-use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_poly::UnivariatePoly;
 use jolt_transcript::{ProverTranscript, Sponge};
 
 use crate::batch::{BatchPrelude, PaddingRule};
@@ -168,14 +168,16 @@ pub struct ProvedBatch<F> {
 /// stage-side, so the stage computes its canonical opening values and calls
 /// `recorder.finish` itself.
 ///
-/// Returns [`SumcheckError::ZeroBatchDegree`] if `prelude.max_degree == 0` and
-/// the batch has rounds to prove — a sumcheck round polynomial must have
-/// degree at least 1 (the same invariant `SumcheckClaim::new` enforces on the
-/// verify side).
+/// Each round is combined and sent at its degree in `prelude.degrees`. Returns
+/// [`SumcheckError::ZeroBatchDegree`] if the schedule gives a round degree 0 —
+/// a sumcheck round polynomial must have degree at least 1 (the same
+/// invariant `SumcheckClaim::new` enforces on the verify side) — and
+/// [`SumcheckError::RoundDegreeBoundExceeded`] when a member's polynomial
+/// exceeds its round's degree, before that round reaches the transcript.
 #[tracing::instrument(
     skip_all,
     name = "prove_batch",
-    fields(num_rounds = prelude.max_num_vars, members = members.len())
+    fields(num_rounds = prelude.max_num_vars(), members = members.len())
 )]
 pub fn prove_batch<F, R, H>(
     prelude: &BatchPrelude<F>,
@@ -205,9 +207,8 @@ where
         }
     }
     prelude.validate()?;
-    let max_num_vars = prelude.max_num_vars;
+    let max_num_vars = prelude.max_num_vars();
 
-    let coefficient_count = prelude.max_degree + 1;
     let mut running_claim = prelude.claimed_sum;
     let mut challenges = Vec::with_capacity(max_num_vars);
     // Each active member's not-yet-delivered previous-round challenge: filled
@@ -231,10 +232,10 @@ where
         })
         .collect();
 
-    for round in 0..max_num_vars {
+    for (round, &degree) in prelude.degrees.degrees().iter().enumerate() {
         let _round_span = tracing::info_span!("sumcheck_round", round).entered();
 
-        let mut batched_coefficients = vec![F::zero(); coefficient_count];
+        let mut batched_coefficients = vec![F::zero(); degree + 1];
         let mut work: Vec<MemberRound<'_, F>> = Vec::with_capacity(members.len());
         for (index, ((member, described), (claim, pending_bind))) in members
             .iter_mut()
@@ -278,11 +279,19 @@ where
                 .message
                 .as_ref()
                 .ok_or(SumcheckError::MissingRoundMessage { member: item.index })?;
-            let poly_degree = UnivariatePolynomial::degree(poly);
-            if poly_degree > prelude.max_degree {
-                return Err(SumcheckError::DegreeBoundExceeded {
+            // Kernels may sample a phase's polynomial at more points than its
+            // degree needs, leaving zero leading coefficients.
+            let poly_degree = poly
+                .coefficients()
+                .iter()
+                .rposition(|coefficient| !coefficient.is_zero())
+                .unwrap_or(0);
+            if poly_degree > degree {
+                return Err(SumcheckError::RoundDegreeBoundExceeded {
+                    round,
+                    member: item.index,
                     got: poly_degree,
-                    max: prelude.max_degree,
+                    max: degree,
                 });
             }
             let out_of_range = || SumcheckError::RoundMemberIndexOutOfRange {
@@ -307,7 +316,7 @@ where
             });
         }
 
-        let challenge = recorder.absorb_round(&batched_poly, prelude.max_degree, transcript)?;
+        let challenge = recorder.absorb_round(&batched_poly, degree, transcript)?;
         running_claim = batched_poly.evaluate(challenge);
         challenges.push(challenge);
 

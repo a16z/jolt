@@ -146,7 +146,8 @@ jolt-sumcheck::single.rs::prove_single::mark#2
 jolt-sumcheck::single.rs::verify_single::mark#0
 jolt-sumcheck::single.rs::verify_single::mark#2
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::receive_full_round#0
-jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::receive_compressed_round#0
+jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::Self::verify_compressed_scheduled#0
+jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed_scheduled::receive_compressed_round#0
 jolt-verifier::proof.rs::JoltProof::header::ProofHeader::receive#0
 jolt-verifier::proof.rs::ProofHeader::receive::receive_u64#0
 jolt-verifier::proof.rs::ProofHeader::receive::receive_u64#1

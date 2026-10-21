@@ -15,6 +15,7 @@ use crate::prover::{
     prove_batch, MemberFinish, MemberRound, ProveRounds, RoundScheduler, SequentialRounds,
 };
 use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+use crate::schedule::DegreeSchedule;
 use crate::tests::{fingerprint, prover, DenseMember};
 
 type F = Fr;
@@ -82,8 +83,7 @@ fn traversal_fixture() -> (
                 offset: 2,
             },
         ],
-        3,
-        1,
+        DegreeSchedule::uniform(3, 1),
     );
     (long, short, prelude, transcript, recorder)
 }

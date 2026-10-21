@@ -51,8 +51,17 @@ pub trait SymbolicSumcheck {
     /// The sumcheck round count, derived from [`Shape`](Self::Shape).
     fn rounds(&self) -> usize;
 
-    /// The per-round degree bound, derived from [`Shape`](Self::Shape).
+    /// The largest round degree bound, derived from [`Shape`](Self::Shape).
     fn degree(&self) -> usize;
+
+    /// The degree bound of the relation's own round `round` (`0..rounds()`),
+    /// at most [`degree`](Self::degree). A batch sends each round at the
+    /// largest bound its active members declare for it
+    /// (`jolt_sumcheck::DegreeSchedule::batched`), so a relation whose phases
+    /// have lower degree states them here. Defaults to `degree()`.
+    fn round_degree(&self, _round: usize) -> usize {
+        self.degree()
+    }
 
     fn input_expression<F: Ring>(
         &self,

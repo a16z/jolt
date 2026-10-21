@@ -117,6 +117,13 @@ where
         self.symbolic().degree()
     }
 
+    /// The instance's declared degree bound for each of its own rounds.
+    fn round_degrees(&self) -> Vec<usize> {
+        (0..self.rounds())
+            .map(|round| self.symbolic().round_degree(round))
+            .collect()
+    }
+
     /// Draw this instance's own (instance-private) Fiat-Shamir challenges from the
     /// transcript, in the exact order the stage's inline draw uses. Batch-level
     /// coefficients and the shared binding vector are NOT drawn here.
@@ -1338,7 +1345,7 @@ mod begin_batch_tests {
                 },
             ],
         );
-        assert_eq!(batch.max_num_vars, max_num_vars);
+        assert_eq!(batch.max_num_vars(), max_num_vars);
         assert_eq!(
             batch.claimed_sum,
             instruction_coeff * instruction_sum.mul_pow_2(max_num_vars - instruction_rounds)
@@ -1378,8 +1385,24 @@ mod begin_batch_tests {
         let (batch, coefficients) = head.unwrap();
 
         assert_eq!(batch.members.len(), 1);
-        assert_eq!(batch.max_num_vars, sumchecks.instruction_read_raf.rounds());
+        assert_eq!(
+            batch.max_num_vars(),
+            sumchecks.instruction_read_raf.rounds()
+        );
         assert_eq!(coefficients.instruction_read_raf, instruction_coeff);
         assert_eq!(coefficients.registers_val_evaluation, None);
+    }
+
+    /// The fixture's instruction read-RAF (128 address bits, `log_T = 5`,
+    /// three `ra` chunks) declares quadratic address rounds and degree-5 cycle
+    /// rounds; the tail-aligned registers member (degree below 5) never raises
+    /// a round.
+    #[test]
+    fn degree_schedule_follows_declared_round_degrees() {
+        let expected = [vec![2; 128], vec![5; 5]].concat();
+        for registers in [false, true] {
+            let schedule = fixture(registers).degree_schedule().unwrap();
+            assert_eq!(schedule.degrees(), expected.as_slice());
+        }
     }
 }

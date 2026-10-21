@@ -65,7 +65,7 @@ fn zk_muldiv_masked_shape_matches_golden() {
         .expect("auxiliary block");
     let relation = masked.relation(&auxiliary).expect("residual relation");
     let layout = masked.pads.layout();
-    assert_eq!(layout.num_pads, 2073);
+    assert_eq!(layout.num_pads, 1049);
     assert_eq!(layout.auxiliary.len(), 108);
     assert_eq!(relation.affine.len(), 16);
     assert_eq!(relation.products.len(), 106);

@@ -9,8 +9,8 @@ use jolt_algebra::{
 };
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds, SequentialRounds,
-    SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
+    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, DegreeSchedule, ProveRounds,
+    SequentialRounds, SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
 };
 use jolt_transcript::{Channel, Keccak, ProtocolId, ProverTranscript, VerifierTranscript};
 use num_traits::{One, Zero};
@@ -284,8 +284,7 @@ fn external_field_runs_stock_clear_prover_and_verifier() {
             rounds: 1,
             offset: 0,
         }],
-        1,
-        1,
+        DegreeSchedule::uniform(1, 1),
     )
     .unwrap();
     let mut round = LinearRound;

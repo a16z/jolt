@@ -21,8 +21,8 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
 };
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_sumcheck::{
-    receive_masked_rounds, receive_private_value, CenteredIntegerDomain, MaskedRound, RoundWire,
-    SumcheckClaim, SumcheckError, SumcheckStatement, SumcheckVerifier,
+    receive_masked_rounds, receive_private_value, CenteredIntegerDomain, DegreeSchedule,
+    MaskedRound, RoundWire, SumcheckClaim, SumcheckError, SumcheckVerifier,
 };
 use jolt_transcript::{Channel, PrivateChannel, Sponge, TranscriptError, VerifierTranscript};
 
@@ -185,7 +185,7 @@ where
     VerifierError: From<C::Error>,
 {
     let rounds = receive_masked_rounds::<F, C>(
-        SumcheckStatement::new(UNISKIP_ROUNDS, params.degree),
+        &DegreeSchedule::uniform(UNISKIP_ROUNDS, params.degree),
         RoundWire::Full,
         channel,
     )?;

@@ -15,7 +15,9 @@
 
 use jolt_algebra::Field;
 use jolt_claims::{Expr, FactoredExpr, Source};
-use jolt_sumcheck::{BooleanHypercube, MaskedRound, SumcheckDomain, SumcheckDomainSpec};
+use jolt_sumcheck::{
+    BooleanHypercube, DegreeSchedule, MaskedRound, RoundWire, SumcheckDomain, SumcheckDomainSpec,
+};
 
 use super::residual::{AffineRow, ProductRow, ResidualRelation};
 use super::{PadIndex, PadLayout, ZkError};
@@ -399,21 +401,52 @@ pub enum RoundFormat {
     Full(SumcheckDomainSpec),
 }
 
+impl RoundFormat {
+    fn wire(self) -> RoundWire {
+        match self {
+            Self::Compressed => RoundWire::Compressed,
+            Self::Full(_) => RoundWire::Full,
+        }
+    }
+}
+
 /// The running claim after `rounds`, as an affine form over the pads, from
-/// `input`. Full rounds push their round-check rows into `relation`.
+/// `input`; round `j` is read at `degrees`' degree `j`. Full rounds push their
+/// round-check rows into `relation`.
 ///
 /// # Errors
 ///
-/// [`ZkError::InvalidRelation`] on a malformed round.
+/// [`ZkError::RoundWidthMismatch`] if a round's wire length differs from its
+/// scheduled width or the rounds and schedule differ in count;
+/// [`ZkError::InvalidRelation`] on another malformed round.
 pub fn sumcheck_rows<F: Field>(
     relation: &mut ResidualRelation<F>,
     input: AffineRow<F>,
     rounds: &[MaskedRound<F>],
-    degree: usize,
+    degrees: &DegreeSchedule,
     format: RoundFormat,
 ) -> Result<AffineRow<F>, ZkError> {
+    if rounds.len() != degrees.num_rounds() {
+        return Err(ZkError::RoundCountMismatch {
+            expected: degrees.num_rounds(),
+            got: rounds.len(),
+        });
+    }
     let mut claim = input;
-    for round in rounds {
+    for (index, (round, &degree)) in rounds.iter().zip(degrees.degrees()).enumerate() {
+        let width = format
+            .wire()
+            .width::<F>(degree)
+            .map_err(|_| ZkError::InvalidRelation {
+                reason: "round degree has no wire width",
+            })?;
+        if round.wire.len() != width {
+            return Err(ZkError::RoundWidthMismatch {
+                round: index,
+                expected: width,
+                got: round.wire.len(),
+            });
+        }
         let sent = round
             .wire
             .iter()

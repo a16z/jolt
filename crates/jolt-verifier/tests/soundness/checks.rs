@@ -37,6 +37,40 @@ pub fn message_sweep<C: TracedCase>(case: &C, budget: Option<usize>) {
     assert!(report.tampers > 0, "the sweep exercised no tamper");
 }
 
+/// Checks Stage 5's first round messages are `widths` field elements long,
+/// then pads the first round with zero coefficients to the largest width and
+/// requires Stage 5 to reject it.
+pub fn stage5_round_widths<C: TracedCase>(case: &C, widths: &[usize]) {
+    let rounds: Vec<_> = case
+        .honest_trace()
+        .messages()
+        .into_iter()
+        .filter(|message| message.region == Region::Stage5)
+        .take(widths.len())
+        .collect();
+    let sent: Vec<usize> = rounds
+        .iter()
+        .map(|message| message.range.len() / C::FIELD_BYTES)
+        .collect();
+    assert_eq!(sent, widths);
+
+    let first = rounds.first().expect("Stage 5 sends rounds");
+    let max_width = widths.iter().copied().max().expect("Stage 5 has rounds");
+    let mut narg = case.proof().narg.clone();
+    let padding = (max_width - first.range.len() / C::FIELD_BYTES) * C::FIELD_BYTES;
+    drop(narg.splice(first.range.end..first.range.end, vec![0; padding]));
+    let trace = case.trace(&narg);
+    assert!(
+        matches!(
+            trace.result,
+            Err(VerifierError::StageClaimOutputMismatch { stage: 5 })
+        ),
+        "a round padded past its scheduled width must fail Stage 5: {:?}",
+        trace.result
+    );
+    assert_eq!(trace.stop_region(), Region::Stage5);
+}
+
 /// Truncation at message boundaries, trailing bytes, an empty argument
 /// string, and a mismatched protocol field.
 pub fn structural_tampers<C: TracedCase>(case: &C, truncation_budget: Option<usize>) {
