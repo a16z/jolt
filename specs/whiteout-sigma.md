@@ -532,13 +532,17 @@ production monomorphization.
   `whiteout-diagnostics`) times each step against extreme fixed classes
   (masks all 0, all +2^20, all −2^20; V all 0 or −1; c all 0, +2 or −2)
   with dudect's ten percentile crops, at D = 64 and the stride case
-  D = 256. Both classes are built by the same store path: a cloned fixed
-  input, or one left on the zero page, reads faster from memory and gave
-  false positives before the harness was fixed. An A/A run (both classes
-  random) passes everywhere.
+  D = 256. Both classes are written into slots allocated once, by one path
+  that draws the same randomness for either class. A cloned fixed input,
+  one left on the zero page, or inputs allocated afresh per measurement
+  reach memory differently and gave false positives (the last one under
+  DIT, see below). An A/A run (both classes random) passed everywhere on
+  the old harness, and again on the slot harness under DIT (3 · 10⁴
+  measurements, seed 0, all 30 slot tests, max |t| = 3.8).
 
-  10⁵ measurements per test at D = 64 (2.5 · 10⁴ at D = 256), t_D at 10⁷
-  (2.5 · 10⁶), seed 0, no DIT:
+  First record, without DIT and with per-measurement allocation: 10⁵
+  measurements per test at D = 64 (2.5 · 10⁴ at D = 256), t_D at 10⁷
+  (2.5 · 10⁶), seed 0:
 
   | Step | D = 64 max \|t\| | D = 256 max \|t\| |
   |---|---|---|
@@ -560,11 +564,47 @@ production monomorphization.
   `assign_centered_i32_ct`, `add_assign_pointwise_mul`, and `Fp128` mul/add
   pass alone. Every one of those operations is branch-free in the source and
   in the asm audited below, so this is operand-dependent timing in the core.
-  With the DIT bit set on every thread (`SIGMA_DUDECT_DIT=1`), `to_ring_ct`
-  passes (|t| ≤ 1.7) and `N·y` passes at D = 64. A residual remains at 10⁵
-  under DIT: `L·y` at |t| ≤ 15 in crops (raw ≤ 6.1, about 20–30 ns of
-  14 µs) and `N·y` fixed 0 at D = 256 in crop 1 (|t| = 20). These residuals
-  are not localized. Every other step passes under DIT too. See A11.
+  With the DIT bit set on every thread, `to_ring_ct` passes (|t| ≤ 1.7).
+  The prover now sets DIT for the attempts (A11).
+
+  **Record under DIT (A11, 2026-10-20, Apple M4 Max).** The harness runs
+  every step and the sampler on the prover's own DIT pool
+  (`diagnostics::with_dit`); 10⁵ measurements, t_D at 10⁵ (2.5 · 10⁴ at
+  D = 256), seed 0. The machine was shared and loaded (load average 7–57),
+  which widens the noise; the positive controls below ran under the same
+  load.
+
+  | Step | D = 64 max \|t\| | D = 256 max \|t\| |
+  |---|---|---|
+  | linear parts of y | ≤ 1.8 | ≤ 2.1 |
+  | `Q_μ(0,y)` and `B_μ` | 2.0 | 2.4 |
+  | `N·y` with gadget, fixed 0 / ±B | ≤ 1.5 | ≤ 2.3 |
+  | `L·y`, fixed 0 / ±B | ≤ 1.8 | ≤ 3.1 |
+  | `t_D = A_D G⁻¹(V)` | 1.9 | 2.3 |
+  | attempt fork seed | 0.9 | 1.0 |
+  | `z`/`v` assembly | 1.5 | 1.3 |
+  | challenge sampler, per candidate count 1–4 | — | ≤ 2.0 |
+
+  **The DIT residual was the harness.** With per-measurement allocation,
+  DIT left `L·y` at |t| ≤ 11.2 in crops (raw ≤ 3.2) and `N·y` fixed 0 at
+  D = 256 at |t| = 10.7 in crop 1, reproducing the earlier residual. Micro
+  tests on `L·y` at D = 64 separate the input's value from its memory:
+  - a fixed random mask, built by the random class's own path, passes
+    (|t| = 1.4); a copy of a random mask, built by a different allocation
+    path, fails at |t| = 16 in crop 7. Both have the same value
+    distribution, so the signal is placement, not data;
+  - with fixed slots and one write path, `L·y` passes for fixed 0, +B and
+    a fixed random mask at 10⁵ on seeds 0 and 1 and at 4 · 10⁵ on seed 2
+    (|t| ≤ 2.8), and `N·y` at D = 256 passes for the same classes at
+    2.5 · 10⁴ and 10⁵ (|t| ≤ 2.4);
+  - positive controls on the slot harness: a delay injected into the fixed
+    class is found at 17 ns on `L·y` at 4 · 10⁵ (|t| = 12.9) and at 38 ns
+    at 10⁵ (|t| = 27); with DIT cleared on the pool, `N·y` fixed 0 at
+    D = 256 fails at 2.5 · 10⁴ (|t| = 9.8) while the same run under DIT
+    passes (|t| = 2.0).
+
+  So under DIT no step shows a leak at or above about 17 ns on `L·y` (of
+  12 µs), and the harness detects the M4 leak DIT removes.
 
 - **asm, branch-free.** `Fp128` add, sub and mul have no conditional branch on
   aarch64 or x86_64; add/sub compile to `csel` and `cmov`.
@@ -587,7 +627,8 @@ production monomorphization.
 
 **Platform.** The argument assumed that integer multiply, add and compare take
 data-independent time without DIT/DOITM. The dudect record above refutes this
-on Apple M4 for the CRT reconstruction (A11).
+on Apple M4 for the CRT reconstruction, so the prover sets DIT for the
+attempts (A11).
 
 ## 3. Response statement and `ResponseProver`
 
@@ -913,15 +954,54 @@ Moved out of W4:
   overlapping other roles at offset 0 is acceptable for H4 and H8. The LHL
   statement allows side information that depends on the matrix.
 - **A9, box (authors).** L_b is the full positive digit envelope.
-- **A11, platform: open, decision needed.** DIT/DOITM are not enabled, and
-  the §2.8 record shows that this is not safe on M4. `to_ring_ct` leaks a
-  zero output (|t| up to 190 at D = 256), and DIT removes that leak. The
-  recommendation is to set PSTATE.DIT for the attempt on aarch64. That
-  needs an `unsafe` `msr DIT` on the attempt thread and on every rayon
-  worker it uses (a pool `start_handler`), in a crate outside jolt-zk's
-  `forbid(unsafe_code)` and outside the verifier closure. Intel DOITM needs
-  OS support. Even under DIT, `L·y` shows a small unexplained residual
-  (§2.8), which needs localization before W5's last PR.
+- **A11, platform: resolved, DIT set for the attempts and the pad
+  commitment.** The §2.8 record shows `to_ring_ct` leaks a zero output on
+  M4 without DIT (|t| up to 190 at D = 256), and DIT removes that leak.
+  - **Mechanism.** `crates/jolt-dit` owns the `unsafe` and sits outside
+    the verifier closure; only `jolt-zk/whiteout-prover` depends on it, and
+    jolt-zk keeps `forbid(unsafe_code)`. `DitGuard` sets PSTATE.DIT on the
+    current thread (`msr DIT, #1`) and restores the state it read
+    (`mrs DIT`) on drop, so guards nest. `jolt_dit::install` runs a closure
+    on a fresh rayon pool of `rayon::current_num_threads()` workers, each
+    holding a guard from its start handler for its whole life. DIT is per
+    thread, so a guard on the caller alone would leave the rayon workers
+    unprotected.
+  - **Scope.** Two prover entry points run inside such a pool
+    (`whiteout::dit::with_dit`):
+    - `prove_sigma`, entirely: building s from the residual and pad
+      openings, the attempts, every rayon job they spawn, and the response
+      proof;
+    - `LatticePadCommitment::commit`: the pads' decomposition and the Ajtai
+      map on them.
+
+    Everything upstream is outside DIT: whatever computes the residual
+    opening, the pads, g and the commitment randomness before these calls.
+    `prove_sigma` now needs `R: Send` and `P: Sync`.
+  - **Cost.** One pool per call. Measured on a loaded 16-thread M4 Max
+    (load average about 51), 100 calls per sample: `install` of an empty
+    closure 0.6–0.8 ms, which returns before every worker has started;
+    `install` plus a `rayon::broadcast`, which starts all 16 workers as a
+    proof does, 8.5–10.3 ms. A second measurement on a loaded machine gave
+    4.0 ms for the latter. So 4–10 ms per call, about 1–2% of a 0.49 s proof
+    (A16).
+  - **Detection.** FEAT_DIT is detected at run time
+    (`is_aarch64_feature_detected!("dit")`). A jolt-dit test asserts it is
+    detected on aarch64 macOS, so a broken detection cannot silently turn
+    the guard into a no-op there. Without FEAT_DIT, and on every other
+    target, the guard is a no-op and no error is raised. Intel DOITM is an
+    MSR only the kernel can set, out of scope here.
+  - **DMP.** The GoFetch authors report that DIT disables the
+    data-memory-dependent prefetcher on M3 but not on M1 or M2
+    (gofetch.fail). This note has not checked that against Apple's
+    documentation, nor measured it on M4. On M1 and M2, DIT is not a DMP
+    mitigation.
+  - **Residual.** None detected above about 17 ns on `L·y` (seed 2,
+    4 · 10⁵ measurements) or about 38 ns at 10⁵, the sizes of the positive
+    controls the slot harness found (§2.8). The residual seen under DIT on
+    `L·y` and `N·y` at D = 256 was the old harness's per-measurement
+    allocation, not the arithmetic. Not covered: work these entry points
+    send to another pool or a `std::thread` (none today), and operations
+    the attempt uses that DIT does not cover on a given core.
 - **A12, compression (W5, authors).**
   - Akita caps a compression source at 8 KiB, i.e. 512 Fp128 coefficients
     (`akita-params/src/compression.rs:19`). t_p and u_a have 768
@@ -1015,7 +1095,8 @@ Moved out of W4:
 - Akita's commitment semantics come from reading the code. W5's equivalence
   test checks the bytes.
 - The headline counts come from the cost script, not from runs of M6b or W3.
-- The constant-time audit (§2.8) leaves two items open: the NEON/AVX NTT
-  kernels line by line, and the DIT decision (A11).
+- The constant-time audit (§2.8) leaves the NEON/AVX NTT kernels line by
+  line open. The dudect record under DIT is from one seed on a loaded
+  machine; x86 runs without DOITM (A11).
 - Secret buffers (y, rejected z, V, e) are dropped, not zeroized: `zeroize`
   is not a workspace dependency. Open item for W6.

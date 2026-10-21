@@ -29,6 +29,7 @@ members = [
   "crates/jolt-akita",
   "crates/jolt-zk",
   "crates/jolt-crypto",
+  "crates/jolt-dit",
   "crates/jolt-program",
   "crates/jolt-lean-gen",
   "crates/jolt-poly",
@@ -463,6 +464,7 @@ jolt-zk = { path = "./crates/jolt-zk" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
+jolt-dit = { path = "./crates/jolt-dit" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-spartan-verifier = { path = "./crates/jolt-spartan-verifier" }

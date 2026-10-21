@@ -13,6 +13,8 @@
 mod challenge;
 #[cfg(feature = "whiteout-diagnostics")]
 pub mod diagnostics;
+#[cfg(feature = "whiteout-prover")]
+mod dit;
 mod error;
 #[cfg(any(
     all(test, feature = "whiteout-prover"),

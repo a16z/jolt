@@ -366,6 +366,7 @@ mod prover {
     use rand_core::{CryptoRng, RngCore};
 
     use super::super::challenge::{challenge_ring, challenge_times_i64_into};
+    use super::super::dit::with_dit;
     use super::super::lift::{
         constant_ring, AggregatedRelation, ChallengeRing, ClaimTables, LiftedRelation, LinearParts,
     };
@@ -385,17 +386,36 @@ mod prover {
         Skip,
     }
 
+    /// A rejected attempt's `t_D` bytes and nonce, for substitution tests.
+    #[cfg(test)]
+    type Rejected = (Vec<u8>, [u8; ATTEMPT_NONCE_LEN]);
+
+    /// Rejected attempts, keyed by the thread that called
+    /// `prove_sigma_with`: the attempts run on the DIT pool's workers, and
+    /// tests may share the process.
+    #[cfg(test)]
+    static REJECTED: std::sync::Mutex<Vec<(std::thread::ThreadId, Rejected)>> =
+        std::sync::Mutex::new(Vec::new());
+
     #[cfg(test)]
     thread_local! {
-        /// Rejected attempts' `(t_D bytes, nonce)`, for substitution tests.
-        static REJECTED: std::cell::RefCell<Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])>> =
-            const { std::cell::RefCell::new(Vec::new()) };
+        /// On the worker running a proof: the thread that called it.
+        static CALLER: std::cell::Cell<Option<std::thread::ThreadId>> =
+            const { std::cell::Cell::new(None) };
     }
 
-    /// The rejected attempts recorded on this thread, cleared.
+    /// The rejected attempts of this thread's proofs, cleared.
     #[cfg(test)]
-    pub(crate) fn take_rejected() -> Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])> {
-        REJECTED.with(|rejected| std::mem::take(&mut *rejected.borrow_mut()))
+    pub(crate) fn take_rejected() -> Vec<Rejected> {
+        let caller = std::thread::current().id();
+        let Ok(mut rejected) = REJECTED.lock() else {
+            return Vec::new();
+        };
+        let (mine, others) = std::mem::take(&mut *rejected)
+            .into_iter()
+            .partition::<Vec<_>, _>(|(thread, _)| *thread == caller);
+        *rejected = others;
+        mine.into_iter().map(|(_, attempt)| attempt).collect()
     }
 
     /// What an accepted attempt hands on.
@@ -432,6 +452,7 @@ mod prover {
     /// Proves the residual relation for the residual opening `residual` and
     /// the pad opening `pads`, returning the number of attempts (independent
     /// of the witness; the only attempt-dependent value that may leave).
+    /// Runs on a fresh rayon pool whose workers all have DIT set (A11).
     pub fn prove_sigma<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
@@ -444,22 +465,49 @@ mod prover {
     where
         F: JoltField,
         H: Sponge,
-        R: RngCore + CryptoRng,
-        P: ResponseProver<F, D>,
+        R: RngCore + CryptoRng + Send,
+        P: ResponseProver<F, D> + Sync,
     {
-        let s = setup.private_vector(residual, pads)?;
-        prove_sigma_with(
-            setup,
-            relation,
-            &s,
-            transcript,
-            rng,
-            response,
-            SelfChecks::Run,
-        )
+        with_dit(|| {
+            let s = setup.private_vector(residual, pads)?;
+            prove_under_dit(
+                setup,
+                relation,
+                &s,
+                transcript,
+                rng,
+                response,
+                SelfChecks::Run,
+            )
+        })?
     }
 
+    #[cfg(any(test, feature = "whiteout-diagnostics"))]
     pub(crate) fn prove_sigma_with<F, const D: usize, H, R, P>(
+        setup: &SigmaSetup<F, D>,
+        relation: &LiftedRelation<F>,
+        s: &[i64],
+        transcript: &mut ProverTranscript<H>,
+        rng: &mut R,
+        response: &P,
+        checks: SelfChecks,
+    ) -> Result<usize, ZkError>
+    where
+        F: JoltField,
+        H: Sponge,
+        R: RngCore + CryptoRng + Send,
+        P: ResponseProver<F, D> + Sync,
+    {
+        #[cfg(test)]
+        let caller = std::thread::current().id();
+        with_dit(|| {
+            #[cfg(test)]
+            CALLER.set(Some(caller));
+            prove_under_dit(setup, relation, s, transcript, rng, response, checks)
+        })?
+    }
+
+    fn prove_under_dit<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
         s: &[i64],
@@ -662,15 +710,15 @@ mod prover {
             };
             if !bool::from(accept) {
                 #[cfg(test)]
-                REJECTED.with(|rejected| {
+                if let (Some(caller), Ok(mut rejected)) = (CALLER.get(), REJECTED.lock()) {
                     let mut bytes = vec![0u8; F::NUM_BYTES];
                     let mut flat = Vec::new();
                     for coefficient in t_d.iter().flat_map(|ring| ring.coefficients()) {
                         coefficient.to_bytes_le(&mut bytes);
                         flat.extend_from_slice(&bytes);
                     }
-                    rejected.borrow_mut().push((flat, nonce));
-                });
+                    rejected.push((caller, (flat, nonce)));
+                }
                 return Ok(None);
             }
             Ok(Some(Accepted {
