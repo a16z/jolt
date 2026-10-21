@@ -592,8 +592,8 @@ mod single_instance {
     use jolt_algebra::{Ext2, ExtField, Prime128Offset275 as Fp};
     use jolt_poly::{Point, UnivariatePoly};
     use jolt_sumcheck::{
-        prove_single, receive_masked_single, ProveRounds, ProverRoundContext, SingleFormat,
-        SingleInstance, SumcheckError, SumcheckSite, VerifierRoundContext,
+        prove_single, receive_masked_single, verify_single, ProveRounds, ProverRoundContext,
+        SingleFormat, SingleInstance, SumcheckError, SumcheckSite, VerifierRoundContext,
     };
     use jolt_transcript::{Channel, ClaimDomain, SiteId};
 
@@ -819,6 +819,20 @@ mod single_instance {
             let wrong = relation(&narg, eq_factored, claim + fp(1));
             assert!(wrong.first_violation(&pads(), &[]).unwrap().is_some());
         }
+    }
+
+    /// A clear replay over a masked channel would fold m̂ as clear values;
+    /// `verify_single` rejects the first masked round instead.
+    #[test]
+    fn verify_single_rejects_a_masked_channel() {
+        let narg = prove(false);
+        let instance = Kernel::new(false).instance();
+        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, &narg);
+        let mut view = CommittedPadsView::new(layout(), ());
+        assert!(matches!(
+            verify_single::<Fp, Fp, _, _>(&instance, &mut Verifier(view.channel(&mut transcript))),
+            Err(SumcheckError::MaskedRoundInClearReplay { round: 0 })
+        ));
     }
 
     /// An extension element takes one pad per base coordinate, in the order

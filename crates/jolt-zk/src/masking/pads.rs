@@ -456,12 +456,13 @@ where
             .into_iter()
             .map(same_field::<P, F>)
             .collect::<Result<Vec<F>, ZkError>>()?;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "each chunk holds E::DEGREE coordinates and from_base_fn asks for 0..E::DEGREE"
+        )]
         let mut masked: Vec<E> = masked
             .chunks_exact(E::DEGREE)
-            .map(|chunk| {
-                let mut coordinates = chunk.iter().copied();
-                E::from_base_fn(|_| coordinates.next().unwrap_or_else(F::zero))
-            })
+            .map(|chunk| E::from_base_fn(|index| chunk[index]))
             .collect();
         self.transcript.exchange_all(&mut masked)?;
         Ok(slots)
@@ -484,12 +485,9 @@ where
             .copied()
             .map(same_field::<F, P>)
             .collect::<Result<Vec<P>, ZkError>>()?;
-        let start = self.pads.cursor.next;
-        let _ = self.pads.send(&values, self.transcript)?;
-        Ok(PadSlots {
-            start,
-            len: values.len(),
-        })
+        let (slots, mut masked) = self.pads.mask(&values)?;
+        self.transcript.exchange_all(&mut masked)?;
+        Ok(slots)
     }
 
     fn bind_derived_base<F>(&mut self, _claim: &F) -> Result<(), ZkError>
