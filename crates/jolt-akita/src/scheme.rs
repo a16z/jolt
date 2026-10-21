@@ -1199,17 +1199,20 @@ mod tests {
         use crate::schedule_registry::{GroupedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
         use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
-        let final_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + K16_COLUMN_VARIABLES;
+        // The narrowest production trace at the cutover; one-column scalar
+        // rows at this arity stay direct.
+        let final_group =
+            PolynomialGroupLayout::new(RECURSIVE_TRACE_LOG_T_CUTOVER + K16_COLUMN_VARIABLES, 51);
         let grouped_schedule = GroupedScheduleParams::new(
             None,
             Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
             Vec::new(),
-            PolynomialGroupLayout::new(final_num_vars, 1),
+            final_group,
         );
         let (_, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
-            final_num_vars,
-            1,
-            2,
+            final_group.num_vars(),
+            final_group.num_polynomials(),
+            final_group.num_polynomials() + 1,
             [3; 32],
             AKITA_ONE_HOT_K16,
             Some(grouped_schedule),
