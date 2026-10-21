@@ -366,15 +366,6 @@ pub enum Node {
     /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
     /// Used by transcript append_scalar which reverses bytes for EVM compatibility.
     ByteReverse(Edge),
-    /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
-    /// Used for challenge_scalar_optimized which produces F::Challenge (MontU128Challenge).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes -> multiply by 2^128.
-    /// The 2^128 shift matches MontU128Challenge internal layout.
-    Truncate128Reverse(Edge),
-    /// Truncate to 128 bits and byte-reverse WITHOUT shifting.
-    /// Used for challenge_scalar which produces F (raw field element).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
-    Truncate128(Edge),
     /// Transform for transcript append_u64.
     ///
     /// Computes: bswap64(x) * 2^192
@@ -494,30 +485,6 @@ impl MleAst {
         }
     }
 
-    /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
-    /// Used for challenge_scalar_optimized (produces MontU128Challenge).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes -> multiply by 2^128.
-    pub fn truncate_128_reverse(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::Truncate128Reverse(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
-        }
-    }
-
-    /// Truncate to 128 bits and byte-reverse WITHOUT shifting.
-    /// Used for challenge_scalar (produces raw F field element).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
-    pub fn truncate_128(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::Truncate128(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
-        }
-    }
-
     /// Transform for PoseidonTranscript::append_u64.
     ///
     /// Computes: bswap64(x) * 2^192
@@ -562,11 +529,7 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
                     .inverse()
                     .expect("symbolic division evaluated with a zero denominator")
         }
-        Node::TranscriptHash(_, _, _)
-        | Node::ByteReverse(_)
-        | Node::Truncate128Reverse(_)
-        | Node::Truncate128(_)
-        | Node::AppendU64Transform(_) => {
+        Node::TranscriptHash(_, _, _) | Node::ByteReverse(_) | Node::AppendU64Transform(_) => {
             unreachable!("Hash/transform nodes should not appear in zklean-extractor tests")
         }
     }
@@ -678,16 +641,6 @@ fn fmt_node(
             fmt_edge(f, fmt_data, edge, false)?;
             write!(f, ")")
         }
-        Node::Truncate128Reverse(edge) => {
-            write!(f, "truncate_128_reverse(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
-        }
-        Node::Truncate128(edge) => {
-            write!(f, "truncate_128(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
-        }
         Node::AppendU64Transform(edge) => {
             write!(f, "append_u64_transform(")?;
             fmt_edge(f, fmt_data, edge, false)?;
@@ -711,12 +664,9 @@ fn node_depth(node: &Node) -> usize {
     }
     match node {
         Node::Atom(_) => 0,
-        Node::Neg(e)
-        | Node::Inv(e)
-        | Node::ByteReverse(e)
-        | Node::Truncate128Reverse(e)
-        | Node::Truncate128(e)
-        | Node::AppendU64Transform(e) => 1 + edge_depth(*e),
+        Node::Neg(e) | Node::Inv(e) | Node::ByteReverse(e) | Node::AppendU64Transform(e) => {
+            1 + edge_depth(*e)
+        }
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
             1 + max(edge_depth(*e1), edge_depth(*e2))
         }
@@ -814,11 +764,7 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
             }
             // Transpilation-only nodes: used by challenge derivation and Blake/Keccak transcripts.
             // Lean4 extraction never encounters them.
-            Node::TranscriptHash(..)
-            | Node::ByteReverse(..)
-            | Node::Truncate128Reverse(..)
-            | Node::Truncate128(..)
-            | Node::AppendU64Transform(..) => {
+            Node::TranscriptHash(..) | Node::ByteReverse(..) | Node::AppendU64Transform(..) => {
                 unreachable!(
                     "Transpilation-only node {:?} should never appear in Lean4 CSE",
                     node

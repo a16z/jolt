@@ -82,19 +82,20 @@ fn multi_chunk_draw_concatenates_successive_squeezes() {
     );
 }
 
-/// A challenge squeezes `Fr::CHALLENGE_BYTES = 54` bytes, two chunks, and
-/// reduces them modulo `r` as a little-endian integer. The value was computed
-/// independently (Python `int.from_bytes(.., "little") % r`).
+/// The first challenge after an absorb squeezes `Fr::challenge_width(1) = 52`
+/// bytes, two chunks, and reduces them modulo `r` as a little-endian integer.
+/// The value was computed independently (Python
+/// `int.from_bytes(.., "little") % r`).
 #[test]
-fn challenge_reduces_fifty_four_squeezed_bytes() {
+fn challenge_reduces_fifty_two_squeezed_bytes() {
     const SQUEEZED: &str = "25a496912b5b75d6504cbc204a25b13d6121e6266ac056589689c43dc06f9142\
-                            66bf5655d23fb7f4e92e96ea1f0df9727d7f0e9a8bc4";
-    const REDUCED: &str = "bb853f47ada345918da9d364bb1f609650e36705132c743cd9116cd029f2be2a";
-    assert_eq!(Fr::CHALLENGE_BYTES, 54);
+                            66bf5655d23fb7f4e92e96ea1f0df9727d7f0e9a";
+    const REDUCED: &str = "71854c4909f4c3e785ab8e719f895fdb6a0ea3df7952cabbe4595baa5d355d1f";
+    assert_eq!(Fr::challenge_width(1), 52);
 
     let mut probe = T::new(KAT_LABEL);
     probe.append_bytes(b"jolt says hello");
-    let mut squeezed = [0u8; 54];
+    let mut squeezed = [0u8; 52];
     probe.challenge_bytes(&mut squeezed);
     assert_eq!(hex(&squeezed), SQUEEZED.replace(' ', ""));
 
@@ -105,6 +106,27 @@ fn challenge_reduces_fifty_four_squeezed_bytes() {
         assert_eq!(hex(&challenge.to_bytes_le_vec()), REDUCED);
         assert_eq!(transcript.state(), probe.state());
     }
+}
+
+/// Each draw since the last absorb is wider than the one before it may be
+/// (52 bytes for draws 1–2, 53 for draws 3–32), and an absorb starts over.
+#[test]
+fn challenge_width_grows_with_draws_and_resets_on_absorb() {
+    let mut transcript = T::new(KAT_LABEL);
+    let mut probe = T::new(KAT_LABEL);
+    let check = |transcript: &mut T, probe: &mut T, widths: &[usize]| {
+        for (draw, &width) in widths.iter().enumerate() {
+            assert_eq!(Fr::challenge_width(draw as u64 + 1), width);
+            let mut bytes = vec![0u8; width];
+            probe.challenge_bytes(&mut bytes);
+            let challenge: Fr = transcript.challenge();
+            assert_eq!(challenge, Fr::from_bytes_le_reduced(&bytes), "draw {draw}");
+        }
+    };
+    check(&mut transcript, &mut probe, &[52, 52, 53, 53, 53]);
+    transcript.append_bytes(b"next message");
+    probe.append_bytes(b"next message");
+    check(&mut transcript, &mut probe, &[52, 52, 53]);
 }
 
 #[test]

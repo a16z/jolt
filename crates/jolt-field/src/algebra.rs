@@ -286,22 +286,13 @@ pub trait CanonicalEncoding:
     /// Bit length of the field order `|F|` (for prime fields, the modulus).
     const MODULUS_BITS: u32;
 
-    /// Number of transcript bytes squeezed for one challenge and decoded by
-    /// [`from_challenge_bytes`](Self::from_challenge_bytes).
-    ///
-    /// The default reduces `8 · CHALLENGE_BYTES ≥ MODULUS_BITS + 178` uniform
-    /// bits modulo the field order `p`. The result is within statistical
-    /// distance `p / 2^(8 · CHALLENGE_BYTES + 2) < 2^-180` of uniform, so a
-    /// message followed by up to `2^19` challenges stays within `2^-161`.
-    const CHALLENGE_BYTES: usize = (Self::MODULUS_BITS as usize + 178).div_ceil(8);
-
     /// Size of the set [`from_challenge_bytes`](Self::from_challenge_bytes)
-    /// draws from on [`CHALLENGE_BYTES`](Self::CHALLENGE_BYTES) uniform bytes,
-    /// as little-endian 64-bit limbs. Either no challenge has probability
-    /// above one over this size, or the draw is within statistical
-    /// distance `2^-180` of uniform on a set of this size, as the field order
-    /// is for the default wide reduction. Proof-of-work difficulty is priced
-    /// from it; that distance is charged separately.
+    /// draws from, as little-endian 64-bit limbs. Either no challenge has
+    /// probability above one over this size, or the draws that follow one
+    /// absorbed message are jointly within total variation `2^-161` of
+    /// uniform on a set of this size, as the field order is for the default
+    /// [`challenge_width`](Self::challenge_width). Proof-of-work difficulty
+    /// is priced from it; that distance is charged separately.
     const CHALLENGE_SET_LIMBS: [u64; 4];
 
     /// Decodes little-endian bytes of any length by reducing into the field.
@@ -354,12 +345,39 @@ pub trait CanonicalEncoding:
     /// Zero is considered to have zero significant bits.
     fn num_bits(&self) -> u32;
 
-    /// Decodes one challenge from [`CHALLENGE_BYTES`](Self::CHALLENGE_BYTES)
-    /// transcript bytes. Every challenge, scalar or not, uses this decoder.
+    /// Number of transcript bytes squeezed for the `draw`-th challenge since
+    /// the transcript last absorbed, counting from 1, and decoded by
+    /// [`from_challenge_bytes`](Self::from_challenge_bytes).
+    ///
+    /// The default reduces [`reduction_width`]`(MODULUS_BITS, 1 + 2⌈log₂ draw⌉)`
+    /// bytes modulo the field order. Draw `k` is then within total variation
+    /// `2^-162 / k²` of uniform, so any number of draws after one message are
+    /// jointly within `2^-162 · π²/6 < 2^-161`, with no bound on their count.
+    #[inline]
+    fn challenge_width(draw: u64) -> usize {
+        let log_draw = u64::BITS - draw.saturating_sub(1).leading_zeros();
+        reduction_width(Self::MODULUS_BITS, 1 + 2 * log_draw)
+    }
+
+    /// Decodes one challenge from the bytes [`challenge_width`](Self::challenge_width)
+    /// gives. Every challenge, scalar or not, uses this decoder.
     #[inline]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         Self::from_bytes_le_reduced(bytes)
     }
+}
+
+/// Bytes per element so that `2^share_bits` elements, each reduced modulo a
+/// `modulus_bits`-bit order from its own uniform bytes, are jointly within
+/// total variation `2^-161` of uniform.
+///
+/// Reducing `M = 2^(8w)` uniform values modulo `p` is within
+/// `r(p − r)/(pM) ≤ p/(4M)` of uniform, where `r = M mod p`. With
+/// `8w ≥ modulus_bits + 159 + share_bits` each element is within
+/// `2^-(161 + share_bits)`, and `2^share_bits` of them within `2^-161`.
+#[must_use]
+pub const fn reduction_width(modulus_bits: u32, share_bits: u32) -> usize {
+    (modulus_bits as usize + 159 + share_bits as usize).div_ceil(8)
 }
 
 /// Accumulates sums and products with potentially deferred modular reduction.

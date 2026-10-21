@@ -58,7 +58,8 @@ fn appends_and_challenges_follow_the_legacy_hash_chain() {
         "an empty append must still advance the round counter"
     );
 
-    // A challenge squeezes `Fr::CHALLENGE_BYTES = 54` bytes: two chunks.
+    // The first two challenges after an absorb squeeze
+    // `Fr::challenge_width(1) = Fr::challenge_width(2) = 52` bytes: two chunks.
     for (draw, round) in [
         (LegacyB2b::challenge as fn(&mut LegacyB2b) -> Fr, 2),
         (LegacyB2b::challenge_scalar, 4),
@@ -67,11 +68,11 @@ fn appends_and_challenges_follow_the_legacy_hash_chain() {
         let first = manual_step(&expected, round, &[]);
         expected = manual_step(&first, round + 1, &[]);
         assert_eq!(transcript.state(), expected, "challenge must chain state");
-        let squeezed = [first.as_slice(), &expected[..22]].concat();
+        let squeezed = [first.as_slice(), &expected[..20]].concat();
         assert_eq!(
             challenge,
             Fr::from_bytes_le_reduced(&squeezed),
-            "challenge must reduce the 54 squeezed bytes"
+            "challenge must reduce the 52 squeezed bytes"
         );
     }
 }

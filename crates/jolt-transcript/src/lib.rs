@@ -3,7 +3,7 @@
 //! Two surfaces:
 //!
 //! - **Split spongefish-native traits** ([`ProverTranscript`],
-//!   [`VerifierTranscript`], [`OptimizedChallenge`]) — implemented directly
+//!   [`VerifierTranscript`]) — implemented directly
 //!   on `spongefish::ProverState` / `spongefish::VerifierState`. Use these
 //!   for new code.
 //! - **Source-compatible facade** ([`Transcript`], [`AppendToTranscript`],
@@ -84,8 +84,6 @@ pub mod domain {
 
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
-#[cfg(all(feature = "bn254", feature = "spongefish"))]
-pub use prover::OptimizedChallenge;
 #[cfg(feature = "spongefish")]
 pub use prover::ProverTranscript;
 #[cfg(feature = "spongefish")]

@@ -175,9 +175,10 @@ fn transcript_surface_matches() {
             (v.bits() <= 64).then(|| v.to_u64_digits().first().copied().unwrap_or(0));
         assert_eq!(t.to_u64_checked(), expected_u64);
 
-        let challenge: Vec<u8> = (0..<two::Fr as CanonicalEncoding>::CHALLENGE_BYTES)
-            .map(|_| rng.gen())
-            .collect();
+        let challenge: Vec<u8> =
+            (0..<two::Fr as CanonicalEncoding>::challenge_width(rng.gen_range(1..=64)))
+                .map(|_| rng.gen())
+                .collect();
         assert_val(
             &<two::Fr as CanonicalEncoding>::from_challenge_bytes(&challenge),
             &(BigUint::from_bytes_le(&challenge) % &p),
@@ -263,9 +264,10 @@ fn fq_matches() {
         let v: u64 = rng.gen();
         assert_val(&two::Fq::from_u64(v), &BigUint::from(v));
 
-        let challenge: Vec<u8> = (0..<two::Fq as CanonicalEncoding>::CHALLENGE_BYTES)
-            .map(|_| rng.gen())
-            .collect();
+        let challenge: Vec<u8> =
+            (0..<two::Fq as CanonicalEncoding>::challenge_width(rng.gen_range(1..=64)))
+                .map(|_| rng.gen())
+                .collect();
         assert_val(
             &<two::Fq as CanonicalEncoding>::from_challenge_bytes(&challenge),
             &(BigUint::from_bytes_le(&challenge) % &p),

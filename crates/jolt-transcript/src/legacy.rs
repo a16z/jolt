@@ -316,6 +316,8 @@ where
     F: CanonicalEncoding,
 {
     sponge: H,
+    /// Challenges drawn since the last absorb; sets the next one's width.
+    draws: u64,
     _field: PhantomData<F>,
 }
 
@@ -328,6 +330,7 @@ where
     fn clone(&self) -> Self {
         Self {
             sponge: self.sponge.clone(),
+            draws: self.draws,
             _field: PhantomData,
         }
     }
@@ -372,6 +375,7 @@ where
         let _ = sponge.absorb(BytesMsg(label.to_vec()).encode().as_ref());
         Self {
             sponge,
+            draws: 0,
             _field: PhantomData,
         }
     }
@@ -392,6 +396,7 @@ where
         buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
         buf.extend_from_slice(bytes);
         let _ = self.sponge.absorb(&buf);
+        self.draws = 0;
     }
 
     fn challenge(&mut self) -> F {
@@ -402,7 +407,8 @@ where
         // (jolt-sumcheck, jolt-openings, jolt-crypto). Once those migrate to
         // the split-trait surface this facade goes away and the
         // inconsistency with it.
-        let mut buf = vec![0u8; F::CHALLENGE_BYTES];
+        self.draws = self.draws.saturating_add(1);
+        let mut buf = vec![0u8; F::challenge_width(self.draws)];
         let _ = self.sponge.squeeze(&mut buf);
         F::from_challenge_bytes(&buf)
     }
