@@ -100,13 +100,9 @@ impl<const D: usize> SyntheticSigma<D> {
         }
     }
 
-    /// Coefficients of the private vector `s`.
-    pub fn len(&self) -> usize {
-        self.instance.s.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.instance.s.is_empty()
+    /// The length of `e`, the response statement's committed vector.
+    pub fn response_len(&self) -> usize {
+        self.instance.setup().response_layout().len()
     }
 
     /// The images, then the Σ-protocol with `response` proving the
