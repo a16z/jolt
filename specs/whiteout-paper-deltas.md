@@ -4,7 +4,7 @@
 | ------- | ----- |
 | Status  | living log; append new entries at the end, keep the summary table in sync |
 | Created | 2026-10-21 |
-| Siblings | `specs/whiteout-sigma.md` (W4, A1–A23), `specs/whiteout-masking.md` (M6b/M6c), `specs/whiteout-interfaces.md`, `specs/whiteout-gaussian.md` (M5a), Akita `specs/whiteout-akita.md` (RP4, A24–A30, Q1–Q6) |
+| Siblings | `specs/whiteout-sigma.md` (W4, A1–A23), `specs/whiteout-masking.md` (M6b/M6c), `specs/whiteout-interfaces.md`, `specs/whiteout-gaussian.md` (M5a), `specs/whiteout-jolt-integration.md` (W6), Akita `specs/whiteout-akita.md` (RP4, A24–A30, Q1–Q6) |
 
 Every place where the implementation departs from the Whiteout paper, extends
 it, or fixes a parameter the paper leaves open. Each entry states the argument,
@@ -40,7 +40,7 @@ so the authors can fold it into the paper.
 | D7 | Shared stage checks over `ClaimDomain`; stage-2 row has no constant term; Q3 answered | clarification | implemented |
 | D8 | BlindFold stays curve-based, over pads committed up front | alternative back end | implemented |
 | D9 | Images u_a, t_p, t_D sent raw until W5c; compression in RP4 | temporary departure | in progress |
-| D10 | Akita #255: operator-norm families retry the fold-response nonce | placeholder | in progress |
+| D10 | Akita #255: public retry of the fold-response nonce at operator-norm masked levels (Lemmas 2.5a/2.5b) | extension, fix (Q7) | argued, under independent review; implementation at the port |
 | D11 | Uni-skip rounds send every coefficient plus an explicit sum row | departure | implemented |
 | D12 | One auxiliary slot per intermediate product; auxiliary block after the base protocol | departure | implemented |
 | D13 | Σ oracle input is (σ, t_D, n) with σ a squeeze of τ; full transcript order | clarification | implemented |
@@ -51,7 +51,11 @@ so the authors can fold it into the paper.
 | D18 | Masked-level structural constraints (Linf route, E = F, one chunk, d_A = d_B) | clarification | implemented / specified |
 | D19 | Headline fold shapes: level 1 uses d = 512 challenges (η² = 19), not d = 64 (η² = 71) | evaluation input | verified in tests, unexplained |
 | D20 | Setup offloading of the response root is conditional (W5b) | evaluation config | proposed |
-| D21 | Open author questions Q1, Q2 (A7, A8, A9, A14), Q4, Q6 | open | open |
+| D21 | Open author questions Q1, Q2 (A7, A8, A9, A14), Q4, Q6, Q7, W6-Q5 | open | open |
+| D22 | Q7: the 1/p clause of Lemma `wo:lem:fold-overflow` holds only for the whole challenge tuple | paper fix | open (authors) |
+| D23 | Bounded rerun (≤ 3 runs) on FoldOverflow or exhausted Σ attempts, where the paper aborts | departure | specified (W6) |
+| D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | open; W6 rejects them under ZK |
+| D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
 
 ## D1. Constant-time Σ attempt
 
@@ -302,7 +306,9 @@ programs are not protected (`03_setting.tex:167-173`). Def.
   unchanged.
 - The terminal check is Def. `wo:def:source-cutoff`'s condition, enforced in
   release with the reason stated.
-- Precommitted groups carry zero randomness, which matches §3.1's exclusion.
+- Precommitted groups carry zero randomness. That matches §3.1's exclusion
+  only for trusted advice and committed programs; see D24 for the groups it
+  does not cover.
 - The one-chunk restriction is a simplification. It keeps one randomness vector
   per slice image.
 
@@ -504,20 +510,73 @@ Lemma `wo:lem:compressed-binding`.
 **For the paper.** See Q4: the cost model's `FCHAIN_MAX_IMAGE = 884`
 disagrees with Akita's 512 cap. Price the split chain.
 
-## D10. Akita #255: operator-norm fold-response nonce retry (placeholder)
+## D10. Akita #255: public retry of the fold-response nonce
 
-**Paper says.** Lemma `wo:lem:fold-overflow` multiplies the bound by 1/p for
-challenges drawn conditioned on a public filter (`04_protocol.tex:117-118`).
-It says nothing about exhaustion of the filter's candidate pool.
+Source: Akita `specs/whiteout-akita.md` §2.5 at commit `900ed6db4` (§2.5.1–2.5.6).
 
-**Implementation.** Akita #255 makes operator-norm challenge families retry
-the fold-response nonce when the candidate pool runs out. This interacts with
-D3's `nonce_bits = 0` runs. The ZK argument is being written separately:
-Akita `specs/whiteout-akita.md` §(TBD).
+**Paper says.** Fold responses are never retried; the prover aborts on
+overflow (`04_protocol.tex:97-104`, `05_security.tex:57-58,70`). The paper
+does not consider a challenge filter whose candidate pool can run out.
 
-**Status.** In progress.
+**Implementation (as argued).**
 
-**For the paper.** TBD, after that section exists.
+- **Setting.** Akita #255 (protocol v9) draws each fold group's challenges
+  from one squeezed message. For the two operator-norm families a message can
+  run out of accepted candidates (event E), and the clear prover then moves to
+  the next fold-response nonce. #255's clear loop retries on E ∨ R, where R is
+  a rejected response probe, and R reads the witness.
+- **`PublicRetry`** (§2.5.2). At an operator-norm masked level, try counters
+  in order and skip a counter only on E. Decode every group of a candidate
+  before probing any response. Probe once at the first counter n* where all
+  groups decode; on R, abort with `FoldOverflow` and never retry. Unfiltered
+  masked levels keep `nonce_bits = 0` (D3). No transcript byte, domain or
+  verifier rule changes; an operator-norm masked level sends a 1–2 byte nonce.
+- **Lemma 2.5a** (public retry is simulatable). E is a deterministic function
+  of the public sponge state, the counter and the oracle, so n*, the grind
+  nonce and the challenges are a public function F(σ, H). Theorem `wo:thm:zk`
+  holds with δ_fold replaced by δ'_fold (Lemma 2.5b) and Q_tot replaced by
+  Q_tot + ΔQ. In H1 the accepted challenges at n* are uniform on the filtered
+  family, given the history; the simulator evaluates F on its own state.
+- **Lemma 2.5b** (one-shot overflow under an operator-norm family).
+  δ' = min(δ_H, δ_B):
+  - tuple form δ_H: the paper's lemma with 1/p^ℓ, since all ℓ challenges must
+    pass the filter (D22);
+  - Bernstein form δ_B: variance proxy ℓη²β²/p and bound κ₁β per term. It
+    uses the filtered family's symmetry under c ↦ −c and
+    E_f[Z_i²] ≤ E_S[Z_i²]/p.
+- **Costs** (§2.5.2–2.5.3, marked inference there, not sized on any
+  schedule).
+  - Range: about +½·log₂(1/p) bits from the Bernstein form, +1.47 bits for D64
+    (certified p = 0.1305) and +0.72 bits for D128 (p = 0.3694). That is at
+    most one more radix-16 digit.
+  - ΔQ ≤ 2·2^12·(2^17 + 2^8) < 2^30.1, so the added query term is
+    T_att·ΔQ/2^256 ≈ 2^−218.5.
+  - The one-shot target and T_att are unchanged. PoolExhausted (≤ q^N) is a
+    completeness loss that the simulator reproduces, not a ZK term.
+- **Soundness** (§2.5.4). The verifier is #255's, unchanged. Each candidate
+  is charged by the fold proof of work, so the query-counted bound of
+  `wo:lem:randomized-base` is unchanged.
+
+**Why.** It lets an operator-norm family be used at a masked level without
+leaking the witness through the accepted counter.
+
+**Argument / security impact.** As above. ZK error grows by about 2^−218.5
+plus the δ' − δ difference, which is absorbed by the unchanged 2^−136 target.
+This log recomputed the headline total with the ΔQ term at about 2^−128.8.
+
+**Relevance.** The spec states that the headline masked levels use the
+unfiltered family, so they never run out. D19 questions that for level 1
+(d = 512 challenges); if that family is filtered, this entry applies at the
+headline.
+
+**Status.** Argued, under independent review. The implementation lands at
+the port onto #255 (§2.5.5), with tests W2-e … W2-h (§2.5.6). Until then
+`ZkOpeningSchedule::new` rejects an operator-norm family at a masked level.
+
+**For the paper.** In §4.1 "Fold responses", say that a retry is allowed
+when its trigger is a public function of the transcript and the oracle, and
+that a retry on the response is not. Add Lemma 2.5b, or fix the 1/p clause
+(D22). Add ΔQ to the query count in Theorem `wo:thm:zk`.
 
 ## D11. Uni-skip rounds sent in full
 
@@ -721,7 +780,8 @@ what the prover returns.
   probability about 2^−1580) is fatal on both sides, never retried.
 - **After T_att.** `WhiteoutError::AttemptsExhausted` is returned after T_att
   rejections (`jolt:crates/jolt-zk/src/whiteout/sigma.rs:604-628`). The caller
-  may rerun the whole proof with fresh randomness.
+  may rerun the whole proof with fresh randomness. W6 bounds this rerun at
+  3 runs inside `jolt-prover` (D23).
 
 **Argument / security impact.**
 
@@ -836,3 +896,136 @@ Unresolved unless marked.
   The removed W2 test assumed 2^100, giving a term of about 2^−148.6. The D2
   draft assumes 2^64. **Unresolved**: the evaluation should state the assumed
   bound.
+- **Q7, the 1/p clause.** See D22. **Unresolved.**
+- **W6-Q5, bounded rerun.** Is the rerun delta acceptable as argued? See D23.
+  **Unresolved.**
+
+## D22. Q7: the 1/p clause of the fold-overflow lemma
+
+**Paper says.** "If the challenges are drawn conditioned on a public event of
+probability at least p, such as an operator-norm filter, the bound is
+multiplied by 1/p" (`04_protocol.tex:117-118`).
+
+**Issue.** Akita `specs/whiteout-akita.md` §2.5.2 ("Paper wording") and §11
+Q7 (commit `900ed6db4`) point out a problem. The clause is correct only when p
+is the probability of the event on the whole tuple (c_1, …, c_ℓ). With a
+per-challenge filter of rate p, the tuple event has probability p^ℓ, so the
+bound must be multiplied by p^{−ℓ}. That costs ℓ·log₂(1/p) bits in the
+exponent: 2.94 bits per challenge for D64 and 1.44 for D128.
+
+**Fix offered.** The Bernstein form of Lemma 2.5b (D10) costs only about
+½·log₂(1/p) bits of range for any ℓ, and it wins for large ℓ.
+
+**Security impact.** None on the paper's parameters: its masked folds are
+unfiltered. D19 asks whether the current headline level 1 still is.
+
+**Status.** Open, for the authors.
+
+**For the paper.** Replace "an operator-norm filter" by "an event on the
+whole challenge tuple", note that a per-challenge filter gives p^ℓ, and
+optionally add the Bernstein variant.
+
+## D23. Bounded rerun instead of abort (W6)
+
+**Paper says.** On fold overflow the prover aborts (`04_protocol.tex:100-104`;
+`05_security.tex:70`). H1 charges δ_fold (`05_security.tex:344-350`). After
+T_att rejected Σ attempts the prover outputs ⊥ (D17).
+
+**Implementation** (`jolt:specs/whiteout-jolt-integration.md` §6 and "Paper
+deltas", commit `9d93a7034`).
+
+- **Triggers.** `jolt-prover`'s ZK entry retries on exactly two errors:
+  `ZkError::FoldOverflow` and Σ's `AttemptsExhausted`.
+- **Rerun.** The whole proof is rerun from stage 0 with fresh hiding
+  commitments, pads, g, r_p and Σ coins, drawn from the same `CryptoRng`
+  stream with no reseed or counter. Only the trace and witness are reused.
+- **Bound.** At most 3 runs, then the error is returned.
+- **Disposal.** Aborted runs are dropped and never serialized.
+- **Owner.** The loop lives inside `jolt-prover`, not the caller, so that a
+  caller cannot reuse an RNG seed (W6 "Tradeoffs").
+
+**Argument / security impact** (W6 "Paper deltas").
+
+- Each rerun is a fresh, independent execution, and only the accepted run is
+  output. The output distribution is the real prover's conditioned on no
+  abort in that run, which is within 3·δ_fold of the H1 prover's distribution.
+- The Σ-exhaustion trigger is witness-independent by H3, so it adds nothing.
+- Soundness is unaffected: reruns only discard executions
+  (`05_security.tex:111-112`).
+- At the D3 target δ_fold ≤ 2^−136, 3·δ_fold ≤ 2^−134.4. This log's recomputed
+  total, with this term added to the 2δ_fold of Theorem `wo:thm:zk`, is
+  2^−128.76.
+- No proof was checked here. W6's text says both "reruns at most twice" and
+  "at most 3 attempts"; these agree, since the count is 3 runs in total.
+
+**Status.** Specified (W6), not implemented.
+
+**For the paper.** State the prover's behaviour on abort as a bounded
+whole-proof rerun with all randomness fresh, and add r·δ_fold for r runs to
+Theorem `wo:thm:zk`. Alternatively, keep "abort" and note that a rerun costs
+r·δ_fold.
+
+## D24. Precommitted groups that carry witness data
+
+**Paper says.** Advice committed during proving is witness data. Only
+precommitted, trusted advice and committed programs are outside Whiteout's
+protection (`03_setting.tex:167-173`).
+
+**Implementation.**
+
+- Akita W1 gives every precommitted group zero randomness
+  (`akita:crates/akita-params/src/zk.rs:146-190`, "gives a precommitted
+  group"; Akita spec §3.1).
+- Jolt's per-proof auxiliary groups, **untrusted advice and `FieldInc`**, enter
+  Akita as precommitted groups but carry witness data
+  (`J8:crates/jolt-prover/src/akita/stage8.rs:1-4`, per
+  `jolt:specs/whiteout-jolt-integration.md` Q1).
+- Their outer images would therefore be published without hiding.
+
+**Why it is a gap.** "Precommitted" in Akita is a layout notion: a group
+committed before the opening. The paper's exclusion is a trust notion: data
+committed outside the proof. The two coincide for trusted advice and committed
+programs, but not for these groups.
+
+**Security impact.** It would leak, since their images are deterministic
+functions of witness data. No ZK claim holds for proofs that contain them.
+
+**Status.** Open. An Akita W1 follow-up will give these groups hiding
+randomness. Until then W6 rejects ZK proofs that contain them, with a typed
+`Unsupported` (R6).
+
+**For the paper.** In §3.1 "Advice and committed programs", state the rule
+by provenance: every group committed during proving gets randomness,
+whatever its place in the PCS's batch layout.
+
+## D25. Statement binding under ZK (#254)
+
+**Paper says.** The transcript binds the statement and the schedule (Def.
+`wo:def:algebraic-verifier`); the claims passed to Akita are masked affine
+forms (`06_evaluation.tex:78-83`).
+
+**Implementation** (`jolt:specs/whiteout-jolt-integration.md` §8). Akita #254
+argues that Akita's soundness "does not depend on what the caller absorbed",
+because the root absorbs the claimed values. Under ZK the values go through
+`bind_derived_base`, which absorbs nothing, so W6 replaces the argument:
+
+- each claim is an affine form y = Σ aᵢ(m̂ᵢ − pᵢ) + b;
+- its m̂ᵢ were absorbed before any challenge that depends on y;
+- the aᵢ and b are functions of the statement, the commitments and earlier
+  challenges;
+- p is fixed by t_p, absorbed before the first challenge.
+
+So a second claim vector that verifies under the same challenges either
+changes an absorbed message, which changes the challenges, or opens t_p to a
+different p, which breaks A_p's binding (Lemma `wo:lem:residual-correct`).
+Digests, points and the descriptor stay absorbed, and the zk bit binds the
+mode on both sides. #254's caller contract gains one item: in ZK mode Akita's
+root runs only after t_p and every masked slot its claims reference.
+`MaskedGroupClaim` enforces this by type.
+
+**Status.** Specified (W6). This log did not check the argument.
+
+**For the paper.** None required; the paper already binds claims through
+the masked messages and the pad commitment. A sentence in §4.1 that the PCS
+receives claims as affine forms over committed pads, never as absorbed values,
+would make it explicit.
