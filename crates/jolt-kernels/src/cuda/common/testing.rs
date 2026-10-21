@@ -291,6 +291,153 @@ pub fn with_ram_witness<R>(
     body(&backend)
 }
 
+const R1CS_FIXTURE_STRIDE: usize = 5;
+
+const R1CS_FIXTURE_SEQUENCE: u16 = 3;
+
+fn r1cs_bytecode() -> Vec<JoltInstructionRow> {
+    let kinds = [
+        JoltInstructionKind::XOR,
+        JoltInstructionKind::ADD,
+        JoltInstructionKind::SUB,
+        JoltInstructionKind::MUL,
+        JoltInstructionKind::LD,
+        JoltInstructionKind::SD,
+        JoltInstructionKind::JAL,
+        JoltInstructionKind::BEQ,
+        JoltInstructionKind::ADDI,
+        JoltInstructionKind::LUI,
+        JoltInstructionKind::VirtualAssertEQ,
+        JoltInstruction::VirtualAdvice(VirtualAdvice(())),
+        JoltInstructionKind::VirtualMULI,
+        JoltInstructionKind::VirtualMovsign,
+    ];
+
+    kinds
+        .iter()
+        .enumerate()
+        .map(|(slot, &instruction_kind)| JoltInstructionRow {
+            instruction_kind,
+            address: 0x8000_0000 + 4 * slot.min(10),
+            operands: r1cs_fixture_operands(instruction_kind, slot),
+            virtual_sequence_remaining: r1cs_fixture_sequence(slot),
+            is_first_in_sequence: r1cs_fixture_sequence(slot) == Some(R1CS_FIXTURE_SEQUENCE),
+            is_compressed: slot % 5 == 4,
+        })
+        .collect()
+}
+
+const fn r1cs_fixture_sequence(slot: usize) -> Option<u16> {
+    let kinds = 14;
+    if slot + 4 < kinds {
+        None
+    } else {
+        Some((kinds - 1 - slot) as u16)
+    }
+}
+
+fn r1cs_rows(
+    bytecode: &[JoltInstructionRow],
+    log_t: usize,
+    layout: &MemoryLayout,
+    ram_k: usize,
+    seed: u64,
+) -> Vec<TraceRow> {
+    let cycles = 1usize << log_t;
+    let lowest = layout.get_lowest_address();
+    let mut rows = Vec::with_capacity(cycles);
+
+    for cycle in 0..cycles {
+        if cycle + 1 == cycles {
+            rows.push(TraceRow::default());
+            continue;
+        }
+
+        let mix = seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(cycle as u64 + 1);
+        let rs1 = mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29);
+        let rs2 = mix.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (mix >> 31);
+        let rd = mix.wrapping_mul(0x2545_F491_4F6C_DD1D) ^ (mix >> 23);
+        let address = lowest + 8 * (rs1 % ram_k as u64);
+        let value = 900 + cycle as u64;
+
+        let instruction = bytecode[cycle.wrapping_mul(R1CS_FIXTURE_STRIDE) % bytecode.len()];
+        let access = match instruction.instruction_kind {
+            JoltInstructionKind::LD => RamAccess::Read(RamRead { address, value }),
+            JoltInstructionKind::SD => RamAccess::Write(RamWrite {
+                address,
+                pre_value: value,
+                post_value: value + 7,
+            }),
+            _ => RamAccess::NoOp,
+        };
+
+        let rs2 = if (cycle / bytecode.len()).is_multiple_of(2) {
+            rs1
+        } else {
+            rs2
+        };
+
+        let registers = RegisterState {
+            rs1: Some(RegisterRead {
+                register: 2,
+                value: rs1,
+            }),
+            rs2: Some(RegisterRead {
+                register: 3,
+                value: rs2,
+            }),
+            rd: Some(RegisterWrite {
+                register: 1,
+                pre_value: rd,
+                post_value: rd ^ 0x5555,
+            }),
+        };
+        rows.push(synthetic_row(
+            instruction,
+            registers,
+            access,
+            (cycle.wrapping_mul(R1CS_FIXTURE_STRIDE) % bytecode.len() + 1) as u32,
+        ));
+    }
+    rows
+}
+
+pub fn with_r1cs_witness<R>(
+    log_t: usize,
+    ram_k: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend) -> R,
+) -> R {
+    let bytecode = r1cs_bytecode();
+    let entry_address = bytecode[0].address as u64;
+    let memory_layout = MemoryLayout::new(&MemoryConfig {
+        program_size: Some(1 << 12),
+        ..MemoryConfig::default()
+    });
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(bytecode.clone(), entry_address, RV64IMAC_JOLT)
+            .expect("r1cs bytecode fixture"),
+        ram: RAMPreprocessing::default(),
+        memory_layout: memory_layout.clone(),
+        max_padded_trace_length: 1usize << log_t,
+    });
+    let program = Arc::new(JoltProgram::default());
+    let trace = TraceOutput::new(
+        TraceData::new(r1cs_rows(&bytecode, log_t, &memory_layout, ram_k, seed)),
+        Default::default(),
+        None,
+        None,
+    );
+    let backend = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, ram_k, one_hot),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+    );
+    body(&backend)
+}
+
 pub struct FixedPlane {
     columns: FixedBackend<Fr>,
     program: JoltProgramPreprocessing,

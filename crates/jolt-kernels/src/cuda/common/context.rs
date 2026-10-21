@@ -2,17 +2,17 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use cudarc::driver::DevicePtr;
 use cudarc::driver::{
     CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
 #[cfg(test)]
-use cudarc::driver::{DevicePtr, DevicePtrMut, DeviceRepr};
+use cudarc::driver::{DevicePtrMut, DeviceRepr};
 use cudarc::nvrtc::Ptx;
 use jolt_field::Fr;
 
 use super::device::{fill_staging, DeviceFrVec, LIMBS};
 use super::error::CudaError;
-#[cfg(test)]
 use super::half_fold::FoldColumn;
 use super::xfer_stats::{self, Phase};
 
@@ -57,7 +57,6 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     dense_product_round: CudaFunction,
     lane_sum_total: CudaFunction,
-    #[cfg(test)]
     sop_round: CudaFunction,
     #[cfg(test)]
     sopg_round: CudaFunction,
@@ -222,9 +221,7 @@ pub struct CudaKernelContext {
     pub(super) g2_add_step_probe: CudaFunction,
     #[cfg(test)]
     pub(super) g2_mul_by_char_probe: CudaFunction,
-    #[cfg(test)]
     hf_half_fold: CudaFunction,
-    #[cfg(test)]
     hf_row_fold: CudaFunction,
 }
 
@@ -263,7 +260,6 @@ impl CudaKernelContext {
             #[cfg(test)]
             dense_product_round: module.load_function("dense_product_round_kernel")?,
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
-            #[cfg(test)]
             sop_round: module.load_function("sop_round_kernel")?,
             #[cfg(test)]
             sopg_round: module.load_function("sopg_round_kernel")?,
@@ -431,9 +427,7 @@ impl CudaKernelContext {
             g2_add_step_probe: module.load_function("g2_add_step_probe")?,
             #[cfg(test)]
             g2_mul_by_char_probe: module.load_function("g2_mul_by_char_probe")?,
-            #[cfg(test)]
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
-            #[cfg(test)]
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
         })
     }
@@ -650,12 +644,10 @@ impl CudaKernelContext {
         &self.lt_reconstruct
     }
 
-    #[cfg(test)]
     pub(crate) const fn hf_half_fold(&self) -> &CudaFunction {
         &self.hf_half_fold
     }
 
-    #[cfg(test)]
     pub(crate) const fn hf_row_fold(&self) -> &CudaFunction {
         &self.hf_row_fold
     }
@@ -685,7 +677,6 @@ impl CudaKernelContext {
         &self.lane_sum_total
     }
 
-    #[cfg(test)]
     pub(crate) const fn sop_round(&self) -> &CudaFunction {
         &self.sop_round
     }
@@ -1044,7 +1035,6 @@ impl CudaKernelContext {
         &self.pairing_fq12_product
     }
 
-    #[cfg(test)]
     pub(crate) fn device_columns(
         &self,
         columns: &[FoldColumn<'_>],

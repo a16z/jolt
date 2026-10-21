@@ -22,35 +22,49 @@ impl SummedHalf {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NarrowKind {
+    #[cfg(test)]
     U64,
+    #[cfg(test)]
     U128,
     TwosI128,
+    #[cfg(test)]
     U32,
+    #[cfg(test)]
     Bit(u32),
 }
 
 impl NarrowKind {
     const fn words(self) -> usize {
         match self {
+            #[cfg(test)]
             Self::U64 | Self::U32 | Self::Bit(_) => 1,
-            Self::U128 | Self::TwosI128 => 2,
+            #[cfg(test)]
+            Self::U128 => 2,
+            Self::TwosI128 => 2,
         }
     }
 
     const fn code(self) -> u32 {
         match self {
+            #[cfg(test)]
             Self::U64 => 0,
+            #[cfg(test)]
             Self::U128 => 1,
             Self::TwosI128 => 2,
+            #[cfg(test)]
             Self::U32 => 4,
+            #[cfg(test)]
             Self::Bit(_) => 5,
         }
     }
 
     const fn bit(self) -> u32 {
         match self {
+            #[cfg(test)]
             Self::Bit(bit) => bit,
-            Self::U64 | Self::U128 | Self::TwosI128 | Self::U32 => 0,
+            #[cfg(test)]
+            Self::U64 | Self::U128 | Self::U32 => 0,
+            Self::TwosI128 => 0,
         }
     }
 }

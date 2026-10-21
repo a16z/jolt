@@ -3,10 +3,13 @@
 //! As in optimized's shift and claim-reduction kernels, prefix rounds bind
 //! square-root-sized `P` and `Q` tables. At the phase boundary, an eq-weighted
 //! fold of the original columns regenerates the suffix tables and their final
-//! opening claims.
+//! opening claims. Narrow device columns stay in native integer form until
+//! those folds require field values.
 //!
-//! CUDA folds resident windows in parallel, combines their prefix accumulators
-//! on the host, and assembles the suffix folds on the coordinating device.
+//! With multiple devices, the full-column folds run on resident windows;
+//! their smaller results are assembled on GPU 0 for the round loop.
+
+use std::sync::Arc;
 
 use jolt_field::JoltField;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
@@ -18,7 +21,7 @@ use super::context::{context_for, CudaKernelContext};
 use super::device::{require_fr_slice, DeviceFrVec};
 use super::devices::{fan_out, DeviceTask};
 use super::error::CudaError;
-use super::half_fold::{half_fold, half_fold_into, FoldColumn, SummedHalf};
+use super::half_fold::{half_fold, half_fold_into, FoldColumn, NarrowColumn, SummedHalf};
 use super::sum_of_products::{DeviceSumOfProducts, SumOfProducts};
 
 #[derive(Clone, Debug)]
@@ -34,6 +37,13 @@ pub struct PrefixSuffixGroup<F: JoltField> {
     pub constant: F,
 }
 
+pub const fn prefix_rounds_floor(log_t: usize) -> Option<usize> {
+    if log_t < 2 {
+        return None;
+    }
+    Some(log_t / 2)
+}
+
 pub fn eq_pair<F: JoltField>(
     point: &[F],
     prefix_rounds: usize,
@@ -45,6 +55,7 @@ pub fn eq_pair<F: JoltField>(
     })
 }
 
+#[cfg(test)]
 pub fn eq_plus_one_pairs<F: JoltField>(
     point: &[F],
     prefix_rounds: usize,
@@ -66,6 +77,7 @@ pub fn eq_plus_one_pairs<F: JoltField>(
     ])
 }
 
+#[cfg(test)]
 fn shifted<F: JoltField>(table: &[F]) -> Vec<F> {
     let mut out = vec![F::zero(); table.len()];
     out[1..].copy_from_slice(&table[..table.len() - 1]);
@@ -138,20 +150,36 @@ enum Phase {
     Two(PhaseTwo),
 }
 
+pub trait NarrowColumns: Send + Sync {
+    fn count(&self) -> usize;
+
+    fn entries(&self) -> usize;
+
+    fn column(&self, index: usize) -> Option<NarrowColumn<'_>>;
+
+    #[cfg(feature = "allocative")]
+    fn device_bytes(&self) -> usize {
+        0
+    }
+}
+
 pub enum ColumnSet {
     Field(Vec<DeviceFrVec>),
+    Narrow(Arc<dyn NarrowColumns>),
 }
 
 impl ColumnSet {
     pub fn count(&self) -> usize {
         match self {
             Self::Field(columns) => columns.len(),
+            Self::Narrow(columns) => columns.count(),
         }
     }
 
     pub fn entries(&self) -> usize {
         match self {
             Self::Field(columns) => columns.first().map_or(0, DeviceFrVec::len),
+            Self::Narrow(columns) => columns.entries(),
         }
     }
 
@@ -161,6 +189,10 @@ impl ColumnSet {
         };
         match self {
             Self::Field(columns) => columns.get(index).map(FoldColumn::Field).ok_or_else(absent),
+            Self::Narrow(columns) => columns
+                .column(index)
+                .map(FoldColumn::Narrow)
+                .ok_or_else(absent),
         }
     }
 
@@ -170,11 +202,20 @@ impl ColumnSet {
                 let entries = self.entries();
                 columns.iter().all(|column| column.len() == entries)
             }
+            Self::Narrow(_) => true,
         }
     }
 
     fn release(&mut self) {
         *self = Self::Field(Vec::new());
+    }
+
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        match self {
+            Self::Field(columns) => columns.iter().map(DeviceFrVec::device_bytes).sum(),
+            Self::Narrow(columns) => columns.device_bytes(),
+        }
     }
 }
 
@@ -198,6 +239,16 @@ pub struct PrefixSuffixRounds<F: JoltField> {
 }
 
 impl<F: JoltField> PrefixSuffixRounds<F> {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        self.columns.device_bytes()
+            + self
+                .windows
+                .iter()
+                .map(|window| window.columns.device_bytes())
+                .sum::<usize>()
+    }
+
     pub fn new(
         context: &'static CudaKernelContext,
         columns: ColumnSet,

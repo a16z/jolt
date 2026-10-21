@@ -1,7 +1,8 @@
-//! CUDA precommitted claim reduction and RAM hamming-weight booleanity kernels.
+//! CUDA precommitted and increment reductions and RAM hamming-weight booleanity.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
-//! cycle/address slots and RAM hamming-weight booleanity in the optimized registry.
+//! cycle/address slots, RAM/register increment reduction and RAM hamming-weight
+//! booleanity in the optimized registry.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
 //! with shared proof and setup types.
 //!
@@ -143,6 +144,7 @@ mod advice_claim_reduction;
 mod bytecode_claim_reduction;
 mod common;
 mod dory;
+mod inc_claim_reduction;
 #[cfg(test)]
 mod instruction_read_raf;
 mod program_image_claim_reduction;
@@ -183,7 +185,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Replace precommitted reductions and RAM hamming booleanity with CUDA kernels.
+    /// Replace supported claim reductions and RAM hamming booleanity with CUDA kernels.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -200,6 +202,7 @@ where
         backend.bytecode_reduction_address = Box::new(CudaBackend);
         backend.program_image_reduction_address = Box::new(CudaBackend);
         backend.ram_hamming_booleanity = Box::new(CudaBackend);
+        backend.inc_claim_reduction = Box::new(CudaBackend);
         backend
     }
 }
