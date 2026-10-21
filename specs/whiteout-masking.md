@@ -352,11 +352,28 @@ w_k are hidden by the same row blinds and folding as the y and ρ rows.
 Whiteout's response proof is ZK in e for any entry count. Fewer masked
 slots means fewer one-time pads, never a revealed value.
 
-**Bytes.** Clear proofs and Akita fixtures are byte-identical. ZK proofs,
-the pad count, the auxiliary block and BlindFold's auxiliary row count all
-change. The expected auxiliary slot counts on muldiv are 108, then 94
-(change 1), 28 (change 2) and 26 (change 3). The muldiv golden test pins the
-measured values.
+**Bytes.** Clear proofs and Akita fixtures are byte-identical: the clear
+muldiv fixture regenerated before and after the three changes has the same
+SHA-1. ZK proofs, the pad count, the auxiliary block and BlindFold's
+auxiliary row count change. Measured on muldiv at T = 2¹⁰ (the golden test
+pins the shape):
+
+| | pads | auxiliary | rows (affine / product / pairs) | ZK proof | BlindFold tail |
+|---|---|---|---|---|---|
+| before | 1,049 | 108 | 16 / 106 / 106 | 79,071 B | 7,264 B |
+| 1. merged products | 1,035 | 94 | 16 / 92 / 92 | 78,623 B | 7,264 B |
+| 2. multi-pair rows | 969 | 28 | 10 / 32 / 92 | 76,511 B | 7,328 B |
+| 3. affine operands | 967 | 26 | 8 / 32 / 92 | 76,447 B | 7,328 B |
+
+Each auxiliary slot is one 32-byte masked value plus one pad, and every 32
+pads take one 32-byte pad-row commitment. Change 2 adds 60 BlindFold
+intermediates, which take two witness rows; the tail grows by 64 B. In all,
+the masked proof shrinks by 2,624 B (3.3%). Stages 2–6 each land their
+output products on one row, with 4, 4, 5, 2 and 50 pairs. The 26 remaining
+slots are the inner products of terms with three or more hidden factors:
+the instruction read-RAF RA chain (7), the bytecode RA product (1), the
+instruction RA virtualization chunks (8 × 2) and one four-factor stage-6
+term (2).
 
 ## Open questions
 

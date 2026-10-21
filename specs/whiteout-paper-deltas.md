@@ -56,7 +56,7 @@ so the authors can fold it into the paper.
 | D23 | Bounded rerun (≤ 3 runs) on FoldOverflow or exhausted Σ attempts, where the paper aborts | departure | specified (W6) |
 | D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | open; W6 rejects them under ZK |
 | D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
-| D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | in progress (`wo/multipair`) |
+| D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
 
 ## D1. Constant-time Σ attempt
 
@@ -640,8 +640,9 @@ slots cost bytes, not security.
 
 - Count *unverified* at T = 2^24 for the Whiteout path: the muldiv count is at
   T = 2^10 on BlindFold.
-- The gap between the paper's 32 and jolt's ~108 is *not explained* by this log;
-  it may be the "existing slot" reuse the paper assumes.
+- The gap between the paper's 32 and jolt's 108 comes from the "existing
+  slot" reuse and from shared repeated products. Both are implemented in D26,
+  which brings muldiv to 26 slots on BlindFold.
 
 **For the paper.** Either state that a gate's output reuses the stage's
 running claim where possible, so the paper's count is a lower bound that the
@@ -1071,8 +1072,13 @@ decoded multi-pair row is the clear verifier's own stage check, so
 Lemma `wo:lem:residual-correct`'s decoding argument is unchanged. ZK: the row
 shape is public, and fewer pads reveal nothing more.
 
-**Status.** In progress on `wo/multipair`. Measured counts are recorded in
-`whiteout-masking.md`.
+**Status.** Implemented on `wo/multipair`. On muldiv at T = 2^10 the
+auxiliary slots drop from 108 to 26, and the masked proof drops from
+79,071 B to 76,447 B. The lattice path keeps the 2 defining slots, for 28.
+The full table is in `whiteout-masking.md`. On the lattice path the count
+matches the paper's accounting: 26 product values plus 2 affine operands,
+against the paper's 28 + 2 at T = 2^24 (`06_evaluation.tex:83-88`). The
+product count at T = 2^24 has not been measured.
 
 **For the paper.**
 
