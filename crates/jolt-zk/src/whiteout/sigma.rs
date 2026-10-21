@@ -437,6 +437,7 @@ mod prover {
     /// Proves the residual relation for the residual opening `residual` and
     /// the pad opening `pads`, returning the number of attempts (independent
     /// of the witness; the only attempt-dependent value that may leave).
+    /// Runs on a fresh rayon pool whose workers all have DIT set (A11).
     pub fn prove_sigma<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
