@@ -14,7 +14,9 @@ and BlindFold proves an R1CS with one variable block per round. M6b adds
 `jolt-zk::masking`: every private field message is sent as m̂ = m + p with p
 committed before the first challenge (Whiteout §3.2, §4.1). M6c makes
 BlindFold the first `ZkBackend`, proving the residual relation over (pads,
-residual witness) with the existing Nova fold. M6b and M6c land as one stack.
+residual witness) with the existing Nova fold. BlindFold stays curve-based
+(Pedersen and Dory, as today); only its input changes, from per-round
+commitments to pads committed up front. The lattice path is Akita's (RP4). M6b and M6c land as one stack.
 Clear proofs, clear fixtures and Akita fixtures are byte-identical.
 
 ## Pad accounting
