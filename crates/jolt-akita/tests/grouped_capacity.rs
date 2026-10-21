@@ -118,6 +118,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     )
     .expect("grouped opening should prove");
     let narg = prover_state.narg_string().to_vec();
+    let prover_tail = prover_state.verifier_message::<[u8; 32]>();
 
     let transported: AkitaVerifierSetup = serde_json::from_str(
         &serde_json::to_string(&verifier_setup).expect("verifier setup should serialize"),
@@ -133,6 +134,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
             &mut verifier_state,
         )
         .expect("grouped opening should verify");
+        assert_eq!(prover_tail, verifier_state.verifier_message::<[u8; 32]>());
         AkitaScheme::check_eof(pending, verifier_state).expect("the argument is read whole");
     }
 

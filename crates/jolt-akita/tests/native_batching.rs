@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use akita_params::PolynomialGroupLayout;
 use jolt_akita::{
-    AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
+    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
     GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
@@ -98,17 +98,43 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
     )
     .expect("streamed trace batch should prove");
     let narg = prover_state.narg_string().to_vec();
+    let prover_tail = prover_state.verifier_message::<[u8; 32]>();
+    let verify_proof = |setup: &AkitaVerifierSetup,
+                        statement: &GroupOpeningClaim<_, _>,
+                        proof: &AkitaBatchProof,
+                        narg: &[u8]| {
+        let mut verifier_state = verifier_transcript::<Keccak>(session, b"", narg);
+        let pending = AkitaScheme::verify_batch(setup, &[], statement, proof, &mut verifier_state)?;
+        let tail = verifier_state.verifier_message::<[u8; 32]>();
+        AkitaScheme::check_eof(pending, verifier_state).map(|()| tail)
+    };
     let verify_under =
         |setup: &AkitaVerifierSetup, statement: &GroupOpeningClaim<_, _>, narg: &[u8]| {
-            let mut verifier_state = verifier_transcript::<Keccak>(session, b"", narg);
-            let pending =
-                AkitaScheme::verify_batch(setup, &[], statement, &proof, &mut verifier_state)?;
-            AkitaScheme::check_eof(pending, verifier_state)
+            verify_proof(setup, statement, &proof, narg)
         };
     let verify = |statement: &GroupOpeningClaim<_, _>, narg: &[u8]| {
         verify_under(&verifier_setup, statement, narg)
     };
-    verify(&statement, &narg).expect("original streamed trace evaluations must verify");
+    assert_eq!(
+        verify(&statement, &narg).expect("original streamed trace evaluations must verify"),
+        prover_tail,
+        "prover and verifier sponges must agree after the opening"
+    );
+
+    // The trace batch's argument lives in Jolt's string, so a proof that also
+    // carries a backend proof must reject.
+    let mut carrying = serde_json::to_value(&proof).expect("proof should serialize");
+    *carrying
+        .get_mut("backend_proof")
+        .expect("proof should expose backend_proof") = serde_json::json!([0]);
+    let carrying: AkitaBatchProof =
+        serde_json::from_value(carrying).expect("changed proof should deserialize");
+    let err = verify_proof(&verifier_setup, &statement, &carrying, &narg)
+        .expect_err("a non-empty backend proof must reject");
+    assert!(
+        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("standalone argument")),
+        "expected the embedded-argument rejection, got: {err}"
+    );
 
     // The embedded opening absorbs no setup bytes of its own. Akita's
     // descriptor binds the backend setup and the selected schedule, and the
