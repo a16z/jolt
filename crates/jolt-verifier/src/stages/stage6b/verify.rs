@@ -7,7 +7,7 @@ use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(not(feature = "akita"))]
 use super::committed_reduction_cycle_phase::{
@@ -87,7 +87,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     // The bytecode fold gamma shares stage 6a's squeeze; it and the booleanity
     // gamma ride on the stage-6a output as typed upstream values. The post-6a
@@ -107,7 +107,7 @@ where
         transcript,
         formula_dimensions,
         bytecode_reduction_layout.is_some(),
-    );
+    )?;
 
     let sumchecks = Stage6bSumchecks::build(
         checked,
@@ -582,7 +582,7 @@ fn append_opening_claims<F, T>(
     booleanity_point: &[F],
 ) where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
     // Single-sourced with the prover-curation order: both fronts absorb the
     // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
@@ -608,7 +608,7 @@ mod tests {
     use super::super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
-    use crate::stages::relations::append_recording::RecordingTranscript;
+    use crate::stages::relations::draw_recording::recorder;
     use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
@@ -870,15 +870,15 @@ mod tests {
     fn append_opening_claims_follows_canonical_order() {
         let (claims, last) = sample_claims();
 
-        let mut got = RecordingTranscript::default();
+        let mut got = recorder();
         append_opening_claims(&mut got, &claims, &[], &[]);
 
-        let mut want = RecordingTranscript::default();
+        let mut want = recorder();
         for value in (1..=last).map(fr) {
             want.append_labeled(b"opening_claim", &value);
         }
 
-        assert_eq!(got.chunks, want.chunks);
+        assert_eq!(got.absorbed(), want.absorbed());
     }
 
     #[test]

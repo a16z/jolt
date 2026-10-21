@@ -13,8 +13,10 @@ use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
-use jolt_verifier::stages::pow::{grind_pow, PowSite};
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
+
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
@@ -43,7 +45,7 @@ fn reduce_precommitted<F, T>(
 ) -> Result<EvaluationClaim<F>, ProverError<F>>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let claims = object_leaf_claims(plan, leaves).map_err(ProverError::Verifier)?;
     let semantic = plan.packed_claims(&claims).map_err(batch_failed::<F>)?;
@@ -73,9 +75,9 @@ pub fn prove_stage8<F, PCS, VC, T>(
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + Encoding,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let chunk_width = config.one_hot_config.committed_chunk_bits();
@@ -98,7 +100,7 @@ where
     let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)
         .map_err(ProverError::Verifier)?;
 
-    let pow_nonce = grind_pow(
+    let pow_nonce = grind_pow::<F, _>(
         PowSite::Stage8,
         selector_loss(
             [untrusted_advice, trusted_advice]

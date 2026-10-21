@@ -227,7 +227,7 @@ impl<F: JoltField, C> Stage2Output<F, C> {
 )]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::draw_recording::{record, squeeze};
     use crate::stages::relations::ConcreteSumcheck;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     #[cfg(feature = "field-inline")]
@@ -301,9 +301,11 @@ mod tests {
         let (inline_events, (inline_gammas, inline_output_address)) = record(|t| {
             (
                 (0..gamma_draws)
-                    .map(|_| t.challenge_scalar())
+                    .map(|_| t.challenge().unwrap())
                     .collect::<Vec<Fr>>(),
-                (0..log_k).map(|_| t.challenge()).collect::<Vec<Fr>>(),
+                (0..log_k)
+                    .map(|_| t.challenge().unwrap())
+                    .collect::<Vec<Fr>>(),
             )
         });
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
@@ -312,7 +314,7 @@ mod tests {
         assert_eq!(
             draw_events,
             (1..=(gamma_draws + log_k) as u64)
-                .map(DrawEvent::Squeeze)
+                .map(squeeze)
                 .collect::<Vec<_>>()
         );
         #[cfg(not(feature = "field-inline"))]

@@ -2,7 +2,7 @@
 
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{Leb128, MessageSearch, SpongePow};
-use crate::Transcript;
+use crate::{prover_transcript, Transcript};
 #[cfg(feature = "prover-grinding")]
 use spongefish::VerificationError;
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState};
@@ -11,7 +11,7 @@ use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState}
 /// and the proof-of-work nonce searches.
 pub trait ProverTranscript: Transcript {
     /// The duplex sponge behind the transcript.
-    type Sponge: DuplexSpongeInterface<U = u8>;
+    type Sponge: DuplexSpongeInterface<U = u8> + Sync;
 
     /// Absorbs `msg` and appends its NARG-serialized form for verifier replay.
     fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M);
@@ -73,6 +73,23 @@ pub trait ProverTranscript: Transcript {
     /// As [`grind`](Self::grind).
     #[cfg(feature = "prover-grinding")]
     fn public_grind(&mut self, bits: u32) -> Result<Option<u32>, VerificationError>;
+}
+
+/// A prover transcript that a prover builds itself, bound to the same
+/// instance its verifier binds: from the session and the public statement, as
+/// [`prover_transcript`] does.
+pub trait ProverInit: ProverTranscript + Sized {
+    /// The transcript bound to `session` and `statement`.
+    fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self;
+}
+
+impl<H> ProverInit for ProverState<H>
+where
+    H: DuplexSpongeInit<U = u8> + Sync,
+{
+    fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
+        prover_transcript::<H>(session, statement)
+    }
 }
 
 impl<H, R> ProverTranscript for ProverState<H, R>

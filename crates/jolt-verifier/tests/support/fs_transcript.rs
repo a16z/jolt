@@ -222,12 +222,12 @@ where
     }
 
     fn challenge(&mut self) -> Self::Challenge {
-        draw(ChallengeKind::Challenge, || vec![self.inner.challenge()])[0]
+        draw(ChallengeKind::Challenge, || vec![self.inner.challenge().unwrap()])[0]
     }
 
     fn challenge_scalar(&mut self) -> Self::Challenge {
         draw(ChallengeKind::Scalar, || {
-            vec![self.inner.challenge_scalar()]
+            vec![self.inner.challenge().unwrap()]
         })[0]
     }
 
@@ -238,7 +238,7 @@ where
         (0..len)
             .map(|index| {
                 draw(ChallengeKind::VectorElement { len, index }, || {
-                    vec![self.inner.challenge()]
+                    vec![self.inner.challenge().unwrap()]
                 })[0]
             })
             .collect()
@@ -246,7 +246,7 @@ where
 
     fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge> {
         let base = draw(ChallengeKind::PowersBase { len }, || {
-            vec![self.inner.challenge_scalar()]
+            vec![self.inner.challenge().unwrap()]
         })[0];
         let mut powers = vec![Self::Challenge::from_u64(1); len];
         for index in 1..len {

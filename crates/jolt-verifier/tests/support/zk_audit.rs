@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, Transcript};
 
 use jolt_verifier::{
     preprocessing::JoltVerifierPreprocessing,
@@ -53,14 +53,14 @@ pub fn audit_zk_blindfold_protocol_shape<F, PCS, VC, T, ZkProof>(
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<ZkBlindFoldProtocolShape, VerifierError>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: Encoding + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F>,
 {
     let (checked, mut transcript) =
         jolt_verifier::validate_and_seed_transcript::<PCS, VC, T, ZkProof>(

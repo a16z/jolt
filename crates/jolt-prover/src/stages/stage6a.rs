@@ -25,8 +25,10 @@ use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
-use jolt_verifier::stages::pow::{grind_pow, PowSite};
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
+
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
@@ -78,7 +80,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let formula_dimensions = super::formula_dimensions(
         checked,
@@ -114,7 +116,7 @@ where
     // then the booleanity member's override (the reference-address pad draw
     // and the gamma). The 6a verifier only carries the booleanity values; this
     // prover's booleanity kernel consumes them off the challenge aggregate.
-    let pow_nonce = grind_pow(PowSite::Stage6a, sumchecks.challenge_loss(), transcript)?;
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage6a, sumchecks.challenge_loss(), transcript)?;
     let address_challenges = sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -196,7 +198,7 @@ mod field_inline_round_trip {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
+    use jolt_transcript::{prover_transcript, Keccak, ProverState, Transcript};
 
     use super::*;
     use crate::recorder::ProofMode;
@@ -216,7 +218,7 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage6a-field-inline");
+        let mut prover_state = prover_transcript::<Keccak>(b"stage6a-field-inline", b"");
         let (((stage1, stage2, stage3), stage4), stage5) = FixtureProver {
             backend: &mut context,
             mode: &mode,
@@ -224,10 +226,10 @@ mod field_inline_round_trip {
             public_io: &public_io,
             checked: &checked,
             preprocessing: &preprocessing,
-            transcript: &mut prover_transcript,
+            transcript: &mut prover_state,
         }
         .through_stage5();
-        let out = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let out = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
             &checked,
@@ -238,7 +240,7 @@ mod field_inline_round_trip {
             &stage3.clear_output,
             &stage4.clear_output,
             &stage5.clear_output,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
 
@@ -253,7 +255,7 @@ mod field_inline_round_trip {
         let zero = Fr::from_u64(0);
         assert!(appendage.rd_wa_read_write != zero);
 
-        let mut transcript = Blake2bTranscript::new(b"stage6a-field-inline");
+        let mut transcript = prover_transcript::<Keccak>(b"stage6a-field-inline", b"");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
@@ -288,6 +290,9 @@ mod field_inline_round_trip {
             &out,
         );
 
-        assert_eq!(transcript.state(), prover_transcript.state());
+        assert_eq!(
+        transcript.verifier_message::<[u8; 32]>(),
+        prover_state.verifier_message::<[u8; 32]>()
+    );
     }
 }

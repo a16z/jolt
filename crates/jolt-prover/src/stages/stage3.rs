@@ -16,8 +16,10 @@ use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
-use jolt_verifier::stages::pow::{grind_pow, PowSite};
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
+
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::{
@@ -56,7 +58,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let log_t = config.trace_length.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);
@@ -72,7 +74,7 @@ where
         instruction_input: InstructionInput::new(trace_dimensions, product_remainder_point),
         registers_claim_reduction: RegistersClaimReduction::new(trace_dimensions, product_tau_low),
     };
-    let pow_nonce = grind_pow(PowSite::Stage3, sumchecks.challenge_loss(), transcript)?;
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage3, sumchecks.challenge_loss(), transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
     let input_points = sumchecks.empty_input_points();
     let inputs = stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);

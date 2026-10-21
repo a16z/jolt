@@ -1,8 +1,9 @@
 //! Verifier-only operations on `spongefish::VerifierState`.
 
-use crate::{pow::SpongePow, Transcript};
+use crate::{pow::SpongePow, verifier_transcript, Transcript};
 use spongefish::{
-    DuplexSpongeInterface, Encoding, FromNarg, Transcript as _, VerificationError, VerifierState,
+    DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, Transcript as _,
+    VerificationError, VerifierState,
 };
 
 /// The verifier's side of a [`Transcript`]: messages read from the NARG
@@ -63,6 +64,20 @@ pub trait VerifierTranscript: Transcript {
     ///
     /// Returns `Err` if the NARG has unread bytes or the state is poisoned.
     fn check_eof(self) -> Result<(), VerificationError>;
+}
+
+/// A verifier transcript that a verifier builds itself, so that it binds the
+/// instance it checks: from the session, the public statement and the
+/// proof's NARG string, as [`verifier_transcript`] does.
+pub trait VerifierInit<'a>: VerifierTranscript + Sized {
+    /// The transcript bound to `session` and `statement` over `narg`.
+    fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self;
+}
+
+impl<'a, H: DuplexSpongeInit<U = u8>> VerifierInit<'a> for VerifierState<'a, H> {
+    fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self {
+        verifier_transcript::<H>(session, statement, narg)
+    }
 }
 
 impl<H> VerifierTranscript for VerifierState<'_, H>

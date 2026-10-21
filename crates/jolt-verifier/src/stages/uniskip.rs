@@ -21,7 +21,7 @@ use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
     SumcheckStatement, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 
 use crate::num::u64_from_usize;
 use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
@@ -90,16 +90,16 @@ impl UniskipParams {
 /// uni-skip round (the Spartan outer relation's cycle variables plus the two
 /// uni-skip-collapsed row variables). Both fronts call this, so the draw is
 /// single-sourced.
-pub fn draw_spartan_outer_tau<F, T>(transcript: &mut T, log_t: usize) -> Vec<F>
+pub fn draw_spartan_outer_tau<F, T>(transcript: &mut T, log_t: usize) -> Result<Vec<F>, VerifierError>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "log_t is an ilog2 result (< 64); log_t + 2 cannot overflow usize"
     )]
-    transcript.challenge_vector(log_t + 2)
+    Ok(transcript.challenge_vector(log_t + 2)?)
 }
 
 /// Proof-of-work loss of [`draw_spartan_outer_tau`]. A false outer claim
@@ -120,16 +120,13 @@ pub fn spartan_product_tau_high_loss() -> u64 {
 }
 
 /// The stage-2 product tau_high, drawn before the product uni-skip round.
-/// Both fronts call this, so the draw is single-sourced. MUST stay the raw
-/// `challenge()` (not `challenge_scalar()`): both decode the same 16-byte
-/// squeeze, but differently, so switching would silently change the value
-/// without changing the transcript bytes.
-pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> F
+/// Both fronts call this, so the draw is single-sourced.
+pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> Result<F, VerifierError>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
-    transcript.challenge()
+    Ok(transcript.challenge()?)
 }
 
 /// The ZK uni-skip step's outputs: the committed round consistency and output
@@ -160,7 +157,7 @@ pub fn verify_clear<F, C, T>(
 ) -> Result<F, VerifierError>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
     let reduction = proof
         .verify(
@@ -198,8 +195,8 @@ pub fn verify_zk<F, C, T>(
 ) -> Result<UniskipZk<F, C>, VerifierError>
 where
     F: JoltField,
-    C: Clone + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    C: Clone + Encoding,
+    T: FieldTranscript<F>,
 {
     let consistency = proof
         .verify_committed_consistency(

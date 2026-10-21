@@ -46,7 +46,9 @@ use jolt_openings::{
 use jolt_poly::Point;
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::LabelWithCount;
-use jolt_transcript::{AppendToTranscript, Transcript};
+#[cfg(feature = "akita")]
+use jolt_transcript::Encoding;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
@@ -87,7 +89,7 @@ where
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
     PCS::Output: Clone + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
@@ -171,7 +173,7 @@ where
     let opening_ids: Vec<ComposedOpeningId> = entries.iter().map(|entry| entry.id).collect();
 
     if checked.zk {
-        let gamma_powers = transcript.challenge_scalar_powers(entries.len());
+        let gamma_powers = transcript.challenge_powers(entries.len())?;
         let commitments: Vec<PCS::Output> = entries
             .iter()
             .map(|entry| entry.commitment.clone())
@@ -193,8 +195,10 @@ where
         .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
         })?;
-        ZkEvaluationClaim::new(pcs_opening_point.as_slice(), &hiding_evaluation_commitment)
-            .append_to_transcript(transcript);
+        transcript.append(&ZkEvaluationClaim::new(
+            pcs_opening_point.as_slice(),
+            &hiding_evaluation_commitment,
+        ));
 
         return Ok(Stage8Output::Zk(Stage8ZkOutput {
             opening_ids,
@@ -229,9 +233,9 @@ where
         crate::num::u64_from_usize(opening_claims.len()),
     ));
     for claim in &opening_claims {
-        claim.evaluation.value.append_to_transcript(transcript);
+        transcript.append(&claim.evaluation.value);
     }
-    let gamma_powers = transcript.challenge_scalar_powers(opening_claims.len());
+    let gamma_powers = transcript.challenge_powers(opening_claims.len())?;
 
     let joint_claim = gamma_powers
         .iter()
@@ -261,7 +265,7 @@ where
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
-    EvaluationClaim::new(pcs_opening_point.clone(), joint_claim).append_to_transcript(transcript);
+    transcript.append(&EvaluationClaim::new(pcs_opening_point.clone(), joint_claim));
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
         opening_claims,
@@ -680,10 +684,10 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + AppendToTranscript + super::OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + super::OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: super::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
     super::akita::verify(
         formula_dimensions,

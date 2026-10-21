@@ -1,6 +1,6 @@
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use crate::stages::relations::{OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -105,7 +105,7 @@ impl<F: JoltField> Stage4OutputClaims<F> {
 
     /// Append every produced opening to the transcript in canonical order, each
     /// under the `b"opening_claim"` label, matching the prover's commitment order.
-    pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
+    pub fn append_to_transcript<T: FieldTranscript<F>>(&self, transcript: &mut T) {
         for value in self.opening_values() {
             transcript.append_labeled(b"opening_claim", &value);
         }
@@ -193,7 +193,7 @@ impl<F: JoltField, C> Stage4Output<F, C> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::draw_recording::{record, squeeze, TranscriptEvent};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::geometry::dimensions::{
@@ -307,7 +307,7 @@ mod tests {
         let leading_gamma_draws = 2usize;
         let (inline_events, (inline_gammas, inline_ram_gamma)) = record(|t| {
             let gammas = (0..leading_gamma_draws)
-                .map(|_| t.challenge_scalar())
+                .map(|_| t.challenge().unwrap())
                 .collect::<Vec<Fr>>();
             let ram = sumchecks.ram_val_check.draw_challenges(t).unwrap();
             (gammas, ram.gamma)
@@ -315,10 +315,10 @@ mod tests {
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        assert!(matches!(draw_events.first(), Some(DrawEvent::Squeeze(1))));
+        assert_eq!(draw_events.first(), Some(&squeeze(1)));
         assert!(draw_events
             .iter()
-            .any(|event| matches!(event, DrawEvent::Append(_))));
+            .any(|event| matches!(event, TranscriptEvent::Absorb(_))));
         #[cfg(not(feature = "field-inline"))]
         let drawn_gammas = vec![challenges.registers_read_write.gamma];
         #[cfg(feature = "field-inline")]
