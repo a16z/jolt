@@ -115,7 +115,7 @@ fn residual(
         AffineRow::constant(claimed_sum),
         &rounds,
         &DegreeSchedule::uniform(NUM_VARS, DEGREE),
-        RoundFormat::Compressed,
+        &RoundFormat::Compressed,
     )
     .unwrap();
     let a = AffineRow::masked(claims[0], PadIndex(slots.start));

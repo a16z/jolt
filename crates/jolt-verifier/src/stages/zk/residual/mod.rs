@@ -84,9 +84,10 @@ use jolt_poly::{
 };
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDomainSpec};
+use jolt_transcript::ClaimDomain;
 use jolt_zk::masking::{
-    lower_factored, sumcheck_rows, AffineRow, ClaimDomain, MaskedOperand, OperandShapeDomain,
-    PadLayout, ResidualRelation, ResidualRows, RoundFormat, RowsDomain, ValuesDomain, ZkError,
+    lower_factored, sumcheck_rows, AffineRow, MaskedOperand, OperandShapeDomain, PadLayout,
+    ResidualRelation, ResidualRows, RoundFormat, RowsDomain, ValuesDomain, ZkError,
 };
 use std::collections::BTreeMap;
 
@@ -208,7 +209,7 @@ struct Member<F: JoltField> {
 /// One masked sumcheck of the residual relation.
 struct Stage<F: JoltField> {
     name: &'static str,
-    format: RoundFormat,
+    format: RoundFormat<F>,
     degrees: DegreeSchedule,
     rounds: Vec<MaskedRound<F>>,
     members: Vec<Member<F>>,
@@ -357,7 +358,7 @@ impl<F: JoltField> JoltResidual<F> {
     /// Each stage's batched input and output claims, in one fixed order
     /// (stage by stage; inputs, then outputs, member by member) so every
     /// domain allocates the same auxiliary slots.
-    fn lower_claims<D: ClaimDomain<F>>(
+    fn lower_claims<D: ClaimDomain<F, Error = ZkError>>(
         &self,
         domain: &mut D,
         opening: &mut impl FnMut(&ComposedOpeningId) -> Result<D::Value, ZkError>,
@@ -425,18 +426,22 @@ impl<F: JoltField> ResidualRows<F> for JoltResidualRows<'_, F> {
                 })
         })?;
         rows.finish()?;
-        let relation = rows.relation();
         for (stage, StageClaims { input, output }) in residual.stages.iter().zip(claims) {
-            let running =
-                sumcheck_rows(relation, input, &stage.rounds, &stage.degrees, stage.format)?;
-            relation.affine.push(running.add_scaled(&output, -F::one()));
+            let running = sumcheck_rows(
+                rows.relation(),
+                input,
+                &stage.rounds,
+                &stage.degrees,
+                &stage.format,
+            )?;
+            rows.check_zero(running.add_scaled(&output, -F::one()))?;
         }
         for (cell, source) in &residual.equalities {
-            relation.affine.push(
+            rows.check_zero(
                 residual
                     .opening_form(cell)?
                     .add_scaled(&residual.opening_form(source)?, -F::one()),
-            );
+            )?;
         }
         Ok(())
     }
@@ -532,7 +537,7 @@ fn add_uniskip_stage<F: JoltField>(
 
 /// The round wire of a stage: uni-skip rounds send every coefficient, batched
 /// rounds the compressed Boolean-hypercube form.
-fn round_format(domain: SumcheckDomain, full: bool) -> RoundFormat {
+fn round_format<F>(domain: SumcheckDomain, full: bool) -> RoundFormat<F> {
     if full {
         RoundFormat::Full(domain_spec(domain))
     } else {
