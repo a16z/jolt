@@ -848,9 +848,9 @@ mod single_instance {
             slots
         );
         view.finish().unwrap();
-        for index in 0..2 {
+        for (index, pad) in pads.iter().enumerate() {
             assert_eq!(
-                received[0].base_coefficient(index) - pads[index],
+                received[0].base_coefficient(index) - *pad,
                 value.base_coefficient(index)
             );
         }
