@@ -43,9 +43,9 @@ pub trait Script<F> {
     /// proof-of-work check, and may replace them. By default it keeps them.
     fn check_bytes(&mut self, _bytes: &mut [u8]) {}
 
-    /// Sees the encoding of a message about to be absorbed, a public message
-    /// or a prover message the verifier reads, and may replace the bytes the
-    /// sponge absorbs. A prover's own messages are not offered. By default it
+    /// Sees the encoding of a message about to be absorbed, the statement at
+    /// initialization, a public message or a prover message the verifier
+    /// reads, and may replace the bytes the sponge absorbs. A prover's own messages are not offered. By default it
     /// keeps them.
     fn absorb_bytes(&mut self, _bytes: &mut Vec<u8>) {}
 }
@@ -271,15 +271,30 @@ where
     S: Script<F> + Default,
 {
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self {
+        let mut script = S::default();
+        let statement = scripted_statement(&mut script, statement);
         Self::scripted_by(
-            <VerifierState<'a, H> as VerifierInit<'a>>::init(session, statement, narg),
-            S::default(),
+            <VerifierState<'a, H> as VerifierInit<'a>>::init(session, &Absorbed(&statement), narg),
+            script,
         )
     }
 }
 
 impl<T: ProverInit, F, S: Script<F> + Default> ProverInit for ScriptedTranscript<T, F, S> {
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
-        Self::scripted_by(T::init(session, statement), S::default())
+        let mut script = S::default();
+        let statement = scripted_statement(&mut script, statement);
+        Self::scripted_by(T::init(session, &Absorbed(&statement)), script)
     }
+}
+
+/// The statement's encoding after `script` has seen it, as it is absorbed
+/// at initialization.
+fn scripted_statement<F>(
+    script: &mut impl Script<F>,
+    statement: &(impl Encoding + ?Sized),
+) -> Vec<u8> {
+    let mut bytes = statement.encode().as_ref().to_vec();
+    script.absorb_bytes(&mut bytes);
+    bytes
 }
