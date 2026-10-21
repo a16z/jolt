@@ -65,10 +65,13 @@ fn zk_muldiv_masked_shape_matches_golden() {
         .expect("auxiliary block");
     let relation = masked.relation(&auxiliary).expect("residual relation");
     let layout = masked.pads.layout();
-    assert_eq!(layout.num_pads, 1049);
-    assert_eq!(layout.auxiliary.len(), 108);
+    // Auxiliary slots: one per product row, plus the defining slots of
+    // Spartan's outer and product remainders (2). The bytecode read-RAF
+    // cycle output (Σ_t c_t)·ra₀ra₁ra₂ takes 2 product rows.
+    assert_eq!(layout.num_pads, 1035);
+    assert_eq!(layout.auxiliary.len(), 94);
     assert_eq!(relation.affine.len(), 16);
-    assert_eq!(relation.products.len(), 106);
+    assert_eq!(relation.products.len(), 92);
 }
 
 /// Every pad slot of the muldiv fixture's layout, base and auxiliary, has a
