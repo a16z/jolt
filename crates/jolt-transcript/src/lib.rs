@@ -55,7 +55,7 @@ pub use grinding::{
     MAX_GRINDING_BITS,
 };
 pub use nonce::Nonce;
-pub use private::{PadSlots, PrivateChannel};
+pub use private::{ClaimDomain, ClaimMismatch, ClearDomain, PadSlots, PrivateChannel};
 pub use protocol::ProtocolId;
 pub use prover::ProverTranscript;
 #[cfg(feature = "logging")]

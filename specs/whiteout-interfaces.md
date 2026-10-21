@@ -227,6 +227,14 @@ Messages that stay public: commitments, grinding nonces, setup-offloading
 claims. Akita's fold-selection retry nonce is witness-dependent; W2 removes it,
 and until then ZK mode cannot be selected.
 
+Checks on private messages are written once over `ClaimDomain<F>`, next to
+`PrivateChannel` (Akita `specs/whiteout-akita.md` §4.4): `constant`, `add`,
+`scale`, `define_auxiliary`, `product` (a new auxiliary slot), `product_into`
+(x · y = an existing target, no slot) and `check_zero`, with an associated
+`Error`. `ClearDomain` evaluates them on field elements and fails with
+`ClaimMismatch`; jolt-zk's shape, rows and values domains implement the same
+trait with `Error = ZkError` (§4).
+
 Messages after the cut point are not masked: they are replaced by the response
 proof. That covers the terminal `e_folded`, the Golomb-Rice `z` payload, and
 `response_l2_sq` if it falls after fold k. W3 confirms on which side of the cut
