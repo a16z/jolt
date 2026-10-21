@@ -160,5 +160,38 @@ macro_rules! transcript_tests {
                 vec![Fr::from(1u64), gamma, gamma * gamma, gamma * gamma * gamma]
             );
         }
+
+        /// A short challenge is the squeezed little-endian integer with the
+        /// bits above its width cleared, and it squeezes nothing more. The
+        /// verifier draws the same value.
+        #[test]
+        fn test_challenge_short_scalar() {
+            use jolt_field::CanonicalEncoding;
+
+            for (loss, bits) in [(1u64, 128u32), (2, 129), (3, 130), (4, 130)] {
+                let mut widest = 0;
+                for round in 0..64u32 {
+                    let statement = round.to_be_bytes();
+                    let mut short = transcript(&statement);
+                    let mut manual = transcript(&statement);
+                    let value: Fr = short.challenge_short_scalar(loss).unwrap();
+
+                    let len = bits.div_ceil(8) as usize;
+                    let mut bytes = manual.verifier_message_as(len, <[u8]>::to_vec);
+                    let excess = 8 * len as u32 - bits;
+                    *bytes.last_mut().unwrap() &= u8::MAX >> excess;
+                    assert_eq!(value, Fr::from_bytes_le_reduced(&bytes));
+                    let next: Fr = short.challenge().unwrap();
+                    assert_eq!(next, manual.challenge().unwrap());
+
+                    let mut verifier = verifier_transcript::<$sponge>(SESSION, &statement, &[]);
+                    let verified: Fr = verifier.challenge_short_scalar(loss).unwrap();
+                    assert_eq!(verified, value);
+                    widest = widest.max(value.num_bits());
+                }
+                // The top bit is set with probability 1/2 per draw.
+                assert_eq!(widest, bits, "loss={loss}");
+            }
+        }
     };
 }

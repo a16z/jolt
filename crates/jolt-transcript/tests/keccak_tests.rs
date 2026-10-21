@@ -9,20 +9,24 @@ use jolt_transcript::Keccak;
 transcript_tests!(Keccak);
 
 /// A field without room for the short width is refused before anything is
-/// squeezed: loss 1 needs 128 bits, the whole bit length of this field.
+/// squeezed, and the verifier is poisoned: loss 1 needs 128 bits, the whole
+/// bit length of this field.
 #[cfg(feature = "solinas")]
 #[test]
 fn short_scalar_refuses_a_field_without_room() {
     use jolt_field::Prime128Offset275;
-    use jolt_transcript::{GrindBitsError, Transcript};
 
-    let mut short = KeccakTranscript::<Prime128Offset275>::new(b"narrow");
-    let untouched = short.clone();
-    assert_eq!(
-        short.challenge_short_scalar(1),
-        Err(GrindBitsError::FieldTooSmall)
+    let mut refused = transcript(b"narw");
+    let mut untouched = transcript(b"narw");
+    assert!(FieldTranscript::<Prime128Offset275>::challenge_short_scalar(&mut refused, 1).is_err());
+    let next: Fr = refused.challenge().unwrap();
+    assert_eq!(next, untouched.challenge().unwrap());
+
+    let mut verifier = verifier_transcript::<Keccak>(SESSION, b"narw", &[]);
+    assert!(
+        FieldTranscript::<Prime128Offset275>::challenge_short_scalar(&mut verifier, 1).is_err()
     );
-    assert_eq!(short.state(), untouched.state());
+    assert!(verifier.check_eof().is_err());
 }
 
 #[test]

@@ -19,7 +19,7 @@
 //! width, or of a length fixed by bound data, or carries its own count, as
 //! [`append_values`](Transcript::append_values) and [`BytesMsg`] do.
 
-use jolt_field::Ring;
+use jolt_field::{CanonicalEncoding, Ring};
 use spongefish::{
     DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState, Transcript as _,
     VerificationError, VerifierState,
@@ -28,7 +28,9 @@ use spongefish::{
 use crate::challenge::message_bytes;
 use crate::codec::{BytesMsg, Label, LabelWithCount};
 use crate::pow::{Leb128, SpongePow};
-use crate::{ChallengeCodec, ChallengeSetSize, UniformBytes};
+use crate::{
+    challenge_bits_for_loss, ChallengeCodec, ChallengeSetSize, UniformBytes, SECURITY_BITS,
+};
 use sealed::Sealed;
 
 pub(crate) mod sealed {
@@ -148,6 +150,26 @@ pub trait FieldTranscript<F>: Transcript {
         self.challenge_vector(1)?.pop().ok_or(VerificationError)
     }
 
+    /// Draws one challenge on the integers `[0, 2^b)`, for a step whose bad
+    /// set holds at most `loss_factor` challenges: `b` is
+    /// [`challenge_bits_for_loss`] at [`SECURITY_BITS`], the narrowest width
+    /// that needs no proof of work. A group scalar this short costs about
+    /// half as much as a full-width BN254 element.
+    ///
+    /// It squeezes `ceil(b / 8)` bytes, clears the bits above `b`, and
+    /// decodes the little-endian integer. As `b` is below the bit length of
+    /// the field order, distinct integers decode to distinct elements. The
+    /// sponge's bytes are uniform ([`UniformBytes`]), so the integer is too.
+    ///
+    /// # Errors
+    /// `VerificationError`, before any sponge operation, when
+    /// [`challenge_bits_for_loss`] rejects `loss_factor` or `b` is not below
+    /// the bit length of the field order. The verifier's state is poisoned
+    /// then, so `check_eof` fails too.
+    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>
+    where
+        F: CanonicalEncoding;
+
     /// Draws one challenge `gamma` and returns `[1, gamma, ..., gamma^(len-1)]`.
     /// `gamma` is drawn even for `len == 0`.
     ///
@@ -187,6 +209,40 @@ where
     let challenges = transcript.squeeze(bytes, |tape| F::decode_challenges(tape, len));
     transcript.require(challenges.is_some())?;
     challenges.ok_or(VerificationError)
+}
+
+/// One short challenge of [`challenge_short_scalar`]: the single
+/// implementation behind every [`FieldTranscript`].
+///
+/// [`challenge_short_scalar`]: FieldTranscript::challenge_short_scalar
+pub(crate) fn draw_short_scalar<T, F>(
+    transcript: &mut T,
+    loss_factor: u64,
+) -> Result<F, VerificationError>
+where
+    T: Sealed + ?Sized,
+    F: CanonicalEncoding,
+{
+    // A width that does not fit poisons the verifier too, so a caller that
+    // drops the error still fails `check_eof`.
+    let bits = challenge_bits_for_loss(loss_factor, SECURITY_BITS)
+        .ok()
+        .filter(|&bits| bits < F::MODULUS_BITS);
+    transcript.require(bits.is_some())?;
+    let bits = bits.ok_or(VerificationError)?;
+    // `bits < MODULUS_BITS <= 256`, so the bytes fit one 32-byte word.
+    let len = bits.div_ceil(8) as usize;
+    let excess = 8 * len as u32 - bits;
+    Ok(transcript.squeeze(len, |tape| {
+        let mut word = [0u8; 32];
+        if let Some(bytes) = word.get_mut(..tape.len()) {
+            bytes.copy_from_slice(tape);
+        }
+        if let Some(top) = word.get_mut(len.saturating_sub(1)) {
+            *top &= u8::MAX >> excess;
+        }
+        F::from_bytes_le_reduced(word.get(..len).unwrap_or(&word))
+    }))
 }
 
 impl<H, R> Sealed for ProverState<H, R>
@@ -239,6 +295,13 @@ where
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         draw_challenges(self, len)
     }
+
+    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>
+    where
+        F: CanonicalEncoding,
+    {
+        draw_short_scalar(self, loss_factor)
+    }
 }
 
 impl<H, F> FieldTranscript<F> for VerifierState<'_, H>
@@ -250,5 +313,12 @@ where
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         draw_challenges(self, len)
+    }
+
+    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>
+    where
+        F: CanonicalEncoding,
+    {
+        draw_short_scalar(self, loss_factor)
     }
 }

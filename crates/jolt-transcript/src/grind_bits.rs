@@ -219,9 +219,6 @@ pub enum GrindBitsError {
     InvalidFieldOrder,
     /// Even [`MAX_POW_BITS`] bits of proof of work fall short.
     Unattainable,
-    /// The field has fewer than `2^b` elements, too few for a `b`-bit short
-    /// challenge.
-    FieldTooSmall,
 }
 
 impl Display for GrindBitsError {
@@ -233,7 +230,6 @@ impl Display for GrindBitsError {
             Self::Unattainable => {
                 "security target needs more than MAX_POW_BITS bits of proof of work"
             }
-            Self::FieldTooSmall => "field is too small for the short challenge width",
         })
     }
 }
