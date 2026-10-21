@@ -268,18 +268,17 @@ fn run_dimension<const D: usize>(
             let v_rings = harness.v_rings();
             let zero_v = || vec![CyclotomicRing::<F, RING>::zero(); v_rings];
             for (label, value) in [("0", F::from_u64(0)), ("−1", -F::from_u64(1))] {
-                let fill = |v: &mut Vec<CyclotomicRing<F, RING>>,
-                            fixed: bool,
-                            rng: &mut ChaCha20Rng| {
-                    for ring in v.iter_mut() {
-                        let random = CyclotomicRing::random(rng);
-                        *ring = if fixed {
-                            CyclotomicRing::from_coefficients([value; RING])
-                        } else {
-                            random
-                        };
-                    }
-                };
+                let fill =
+                    |v: &mut Vec<CyclotomicRing<F, RING>>, fixed: bool, rng: &mut ChaCha20Rng| {
+                        for ring in v.iter_mut() {
+                            let random = CyclotomicRing::random(rng);
+                            *ring = if fixed {
+                                CyclotomicRing::from_coefficients([value; RING])
+                            } else {
+                                random
+                            };
+                        }
+                    };
                 let test = fixed_vs_random(commit_measurements, &mut rng, zero_v, fill, |v| {
                     let _ = black_box(steps.commit_v(v));
                 });
