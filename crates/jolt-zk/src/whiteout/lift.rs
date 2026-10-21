@@ -183,6 +183,32 @@ impl<F: JoltField> Form<F> {
     }
 }
 
+impl<F: JoltField> Form<F> {
+    /// Adds to `out` (laid out like `s`) the weights of `⟨ω, linear(x)⟩`:
+    /// the transpose of multiplication by `m` is multiplication by `σ(m)`
+    /// under `σ`, so a dense ring `k` takes `ω·ℓ̂_k` and claim `j` takes
+    /// `ω·Ê_j` on `S_j`.
+    fn adjoint(
+        &self,
+        table: &SegmentTable,
+        tables: &ClaimTables<F>,
+        weight: &ChallengeRing<F>,
+        out: &mut [F],
+    ) -> Result<(), WhiteoutError> {
+        for (ring, hat, _) in &self.dense {
+            table.scatter_ring(
+                out,
+                *ring,
+                &(*weight * CyclotomicRing::from_coefficients(*hat)),
+            )?;
+        }
+        for (claim, coefficient) in &self.claims {
+            tables.adjoint(*claim, &weight.scale(coefficient), out)?;
+        }
+        Ok(())
+    }
+}
+
 /// `Σ_j scale_j · s_{k_j}`: an `R`-linear reconstruction, such as `P_x` or g.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Reconstruction<F> {
@@ -201,6 +227,19 @@ impl<F: JoltField> Reconstruction<F> {
             })
             .collect();
         Self { terms }
+    }
+
+    /// Adds to `out` the weights of `⟨ω, evaluate(x)⟩`.
+    fn adjoint(
+        &self,
+        table: &SegmentTable,
+        weight: &ChallengeRing<F>,
+        out: &mut [F],
+    ) -> Result<(), WhiteoutError> {
+        for (ring, scale) in &self.terms {
+            table.scatter_ring(out, *ring, &weight.scale(scale))?;
+        }
+        Ok(())
     }
 
     fn evaluate(&self, table: &SegmentTable, x: &[i64]) -> Result<ChallengeRing<F>, WhiteoutError> {
@@ -347,6 +386,10 @@ impl<F: JoltField> LiftedRelation<F> {
             ),
             claims: claims.clone(),
         })
+    }
+
+    pub(crate) fn num_products(&self) -> usize {
+        self.products.len()
     }
 
     pub(crate) fn labels(&self) -> &RowLabels {
@@ -591,6 +634,51 @@ impl<F: JoltField> ClaimTables<F> {
             .collect()
     }
 
+    /// Adds to `out` (laid out like `s`) the weights of `⟨ω, σ(Ê_j)·S_j(x)⟩`
+    /// for claim `j`, given `weight = ω·Ê_j`.
+    fn adjoint(
+        &self,
+        claim: usize,
+        weight: &ChallengeRing<F>,
+        out: &mut [F],
+    ) -> Result<(), WhiteoutError> {
+        let table = self
+            .tables
+            .get(claim)
+            .ok_or(WhiteoutError::InvalidRelation("claim outside the relation"))?;
+        let weight = *weight * CyclotomicRing::from_coefficients(table.position);
+        let stride = self.witness.native_dim / CHALLENGE_RING_DIM;
+        let mut element_offset = 0usize;
+        for placed in &self.witness.segments {
+            let elements = placed.segment.num_coefficients() / self.witness.native_dim;
+            let targets = out
+                .get_mut(placed.coefficients())
+                .ok_or(WhiteoutError::InvalidRelation("witness outside s"))?;
+            let outer = table
+                .element
+                .get(element_offset..element_offset + elements)
+                .ok_or(WhiteoutError::InvalidRelation("claim shorter than w"))?;
+            targets
+                .par_chunks_exact_mut(self.witness.native_dim)
+                .zip(outer.par_iter())
+                .for_each(|(element, &outer)| {
+                    for (k, &inner) in table.component.iter().enumerate() {
+                        let scale = outer * inner;
+                        for (dst, w) in element
+                            .iter_mut()
+                            .skip(k)
+                            .step_by(stride)
+                            .zip(weight.coefficients())
+                        {
+                            *dst += scale * *w;
+                        }
+                    }
+                });
+            element_offset += elements;
+        }
+        Ok(())
+    }
+
     /// The claim terms `T_j = σ(Ê_j)·S_j(x)`.
     fn terms(&self, x: &[i64], skip_public: bool) -> Result<Vec<ChallengeRing<F>>, WhiteoutError> {
         Ok(self
@@ -611,6 +699,13 @@ impl<F: JoltField> ClaimTables<F> {
             .map(|(sum, table)| sum.iter().zip(&table.position).map(|(a, b)| *a * *b).sum())
             .collect())
     }
+}
+
+/// Ring weights for [`AggregatedRelation::product_adjoint`].
+pub(crate) struct ProductAdjointWeights<'a, F: JoltField> {
+    pub target: ChallengeRing<F>,
+    pub x: &'a [ChallengeRing<F>],
+    pub y: &'a [ChallengeRing<F>],
 }
 
 /// `Q_μ` and its pieces.
@@ -715,6 +810,28 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
         out
     }
 
+    /// `(μ_i X_i(u, ·), Y_i(u, ·))` for every product, the factors of
+    /// Whiteout's product-lift equation (4).
+    pub(crate) fn product_operands(
+        &self,
+        u: &ChallengeRing<F>,
+        parts: &LinearParts<F>,
+    ) -> Vec<(ChallengeRing<F>, ChallengeRing<F>)> {
+        self.relation
+            .products
+            .iter()
+            .zip(&self.product_weights)
+            .zip(&parts.x)
+            .zip(&parts.y)
+            .map(|(((product, weight), x), y)| {
+                (
+                    (u.scale(&product.masked) + *x).scale(weight),
+                    u.scale(&product.y.constant) + *y,
+                )
+            })
+            .collect()
+    }
+
     /// `Σ_i μ_i [X_i(u, ·)]·[Y_i(u, ·)]` as a polynomial of degree at most
     /// 126 over `F`, before reduction modulo `X^64 + 1` (the left side of
     /// Whiteout's product-lift equation (4)).
@@ -724,24 +841,55 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
         parts: &LinearParts<F>,
     ) -> Vec<F> {
         let mut out = vec![F::zero(); 2 * CHALLENGE_RING_DIM - 1];
-        for (((product, weight), x), y) in self
-            .relation
-            .products
-            .iter()
-            .zip(&self.product_weights)
-            .zip(&parts.x)
-            .zip(&parts.y)
-        {
-            let x = u.scale(&product.masked) + *x;
-            let y = u.scale(&product.y.constant) + *y;
+        for (x, y) in self.product_operands(u, parts) {
             for (i, a) in x.coefficients().iter().enumerate() {
-                let scaled = *a * *weight;
                 for (dst, b) in out.iter_mut().skip(i).zip(y.coefficients()) {
-                    *dst += scaled * *b;
+                    *dst += *a * *b;
                 }
             }
         }
         out
+    }
+
+    /// Adds to `out` (laid out like `s`) the weights of the `s`-linear part
+    /// of `⟨ω_H, reduce(Σ μ_i X_i Y_i) − Q_μ(u, ·)⟩ + Σ_i ⟨ω_X,i, μ_i X_i⟩ +
+    /// Σ_i ⟨ω_Y,i, Y_i⟩`. The first term is `Σ μ_i u Z_i − u(λ + g)`; the
+    /// quadratic parts cancel.
+    pub(crate) fn product_adjoint(
+        &self,
+        tables: &ClaimTables<F>,
+        u: &ChallengeRing<F>,
+        weights: &ProductAdjointWeights<'_, F>,
+        out: &mut [F],
+    ) -> Result<(), WhiteoutError> {
+        let table = &self.relation.table;
+        if weights.x.len() != self.relation.products.len()
+            || weights.y.len() != self.relation.products.len()
+        {
+            return Err(WhiteoutError::InvalidRelation(
+                "product weights differ from the products",
+            ));
+        }
+        // ω ↦ σ(σ(ω)·u), the transpose of multiplication by u.
+        let times_u = (weights.target.sigma_m1() * *u).sigma_m1();
+        for (((product, mu), x), y) in self
+            .relation
+            .products
+            .iter()
+            .zip(&self.product_weights)
+            .zip(weights.x)
+            .zip(weights.y)
+        {
+            product
+                .z_form
+                .adjoint(table, tables, &times_u.scale(mu), out)?;
+            self.relation
+                .operand(product.operand)?
+                .adjoint(table, &(-x.scale(mu)), out)?;
+            product.y_form.adjoint(table, tables, y, out)?;
+        }
+        self.lambda.adjoint(table, tables, &(-times_u), out)?;
+        self.relation.g.adjoint(table, &(-times_u), out)
     }
 }
 

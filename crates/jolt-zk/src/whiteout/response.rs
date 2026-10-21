@@ -24,7 +24,7 @@ use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 
 use super::challenge::{challenge_ring, challenge_times_ring};
-use super::lift::{ChallengeRing, LiftedRelation};
+use super::lift::{ChallengeRing, LiftedRelation, ProductAdjointWeights};
 use super::params::RESPONSE_LOG_BASIS;
 use super::segments::balanced_range;
 use super::sigma::SigmaSetup;
@@ -136,55 +136,14 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 
     /// Whether `witness` satisfies items 1–5: the statement's definition.
     pub fn check_witness(&self, witness: &ResponseWitness) -> Result<(), WhiteoutError> {
-        let layout = self.layout();
-        if witness.digits.len() != layout.len() {
-            return Err(WhiteoutError::ResponseRejected("response length"));
-        }
-        // Item 1.
-        let (min, max) = balanced_range(RESPONSE_LOG_BASIS, 1)
-            .ok_or(WhiteoutError::ResponseRejected("digit alphabet"))?;
-        if witness
-            .digits
-            .iter()
-            .any(|&digit| !(min..=max).contains(&i128::from(digit)))
-        {
-            return Err(WhiteoutError::ResponseRejected(
-                "digit outside its alphabet",
-            ));
-        }
-        let table = self.setup.table();
-        let mut z = Vec::with_capacity(table.num_coefficients());
-        let mut v = Vec::new();
-        let mut v_digits: Vec<i64> = Vec::new();
-        let mut theta = Vec::new();
-        let mut rest = witness.digits.as_slice();
-        for segment in &layout.segments {
-            let (digits, tail) = rest.split_at(segment.len());
-            rest = tail;
-            match *segment {
-                ResponseSegment::Response {
-                    coefficients,
-                    digits: levels,
-                    ..
-                } => z.extend(integers_from_digits(digits, coefficients, levels)),
-                ResponseSegment::V { coefficients } => {
-                    for ring in digits.chunks_exact(FIELD_LEVELS * CHALLENGE_RING_DIM) {
-                        v.extend(field_from_planes::<F>(ring, CHALLENGE_RING_DIM));
-                    }
-                    v.truncate(coefficients);
-                    v_digits = digits.iter().map(|&digit| i64::from(digit)).collect();
-                }
-                ResponseSegment::Theta => {
-                    theta = field_from_planes::<F>(digits, THETA_COEFFICIENTS);
-                }
-            }
-        }
+        let decoded = self.decode(&witness.digits)?;
+        let (z, v) = (&decoded.z, &decoded.v);
 
         // Item 2: t_D = A_D G⁻¹(V), A_D applied to e's V digits as given.
         let t_d = self
             .setup
             .v_matrix()
-            .apply_centered(&v_digits, max.unsigned_abs().max(min.unsigned_abs()) as u32)?;
+            .apply_centered(&decoded.v_digits, RESPONSE_DIGIT_BOUND)?;
         if t_d != self.v_image {
             return Err(WhiteoutError::ResponseRejected("V commitment"));
         }
@@ -192,7 +151,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         // Item 3: N z = f + c t.
         let c = self.challenge.to_dense_ct()?;
         let bound = self.setup.params().response_bound();
-        let nz = self.setup.linear().apply(&z, bound)?;
+        let nz = self.setup.linear().apply(z, bound)?;
         let f = v.chunks_exact(D).map(CyclotomicRing::<F, D>::from_slice);
         for ((nz, f), t) in nz.iter().zip(f).zip(self.setup.linear().targets()) {
             if *nz != f + challenge_times_ring(&c, t) {
@@ -201,31 +160,395 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         }
 
         // Items 4 and 5.
-        let tail = v
-            .get(self.setup.linear().num_outputs() * D..)
-            .ok_or(WhiteoutError::ResponseRejected("V too short"))?;
-        let [e0, e1, h] = [0, 1, 2].map(|index| {
-            CyclotomicRing::from_slice(
-                tail.get(index * CHALLENGE_RING_DIM..(index + 1) * CHALLENGE_RING_DIM)
-                    .unwrap_or_default(),
-            )
-        });
+        let [e0, e1, h] = self.v_tail(v)?;
         if !h.constant_term().is_zero() {
             return Err(WhiteoutError::ResponseRejected("ct(h)"));
         }
         let c_ring: ChallengeRing<F> = challenge_ring(&c);
         let aggregated = self.relation.aggregate(&self.rho)?;
         let tables = self.relation.claim_tables()?;
-        let parts = aggregated.linear_parts(&tables, &z, false)?;
-        let lhs = aggregated.quadratic(&c_ring, &parts) + self.setup.l_row().apply(&z, bound)?;
+        let parts = aggregated.linear_parts(&tables, z, false)?;
+        let lhs = aggregated.quadratic(&c_ring, &parts) + self.setup.l_row().apply(z, bound)?;
         if lhs != e0 + c_ring * e1 + c_ring * c_ring * h {
             return Err(WhiteoutError::ResponseRejected("ring-quadratic identity"));
         }
         let product = aggregated.product_polynomial(&c_ring, &parts);
-        if product.get(CHALLENGE_RING_DIM..) != Some(theta.as_slice()) {
+        if product.get(CHALLENGE_RING_DIM..) != Some(decoded.theta.as_slice()) {
             return Err(WhiteoutError::ResponseRejected("product quotient θ"));
         }
         Ok(())
+    }
+
+    /// The number of rows of each kind, as [`ResponseRows`] holds them.
+    pub fn row_shape(&self) -> ResponseRowShape {
+        ResponseRowShape {
+            v_image: self.setup.v_matrix().shape().rows * CHALLENGE_RING_DIM,
+            linear: self.setup.linear().num_outputs() * D,
+            products: self.relation.num_products(),
+        }
+    }
+
+    /// The value of every affine row of Items 2–5 on `digits` (`e` in
+    /// layout order, every digit in the radix-16 alphabet), with Item 4
+    /// reduced at `alpha` (Whiteout §4.3, "Reducing the products"). Items 2,
+    /// 3 and 5 vanish exactly when they hold. For Item 4, `product_target`
+    /// is `[H_e](α) + (α^64 + 1)θ(α)`, which equals `Σ_i U_i W_i` exactly
+    /// when the product lift (4) holds at `α`.
+    pub fn rows(&self, digits: &[i8], alpha: F) -> Result<ResponseRows<F>, WhiteoutError> {
+        let decoded = self.decode(digits)?;
+        let (z, v) = (&decoded.z, &decoded.v);
+        let flat = |rings: Vec<CyclotomicRing<F, D>>| -> Vec<F> {
+            rings
+                .iter()
+                .flat_map(|ring| ring.coefficients().iter().copied())
+                .collect()
+        };
+        let mut v_image = self
+            .setup
+            .v_matrix()
+            .apply_centered(&decoded.v_digits, RESPONSE_DIGIT_BOUND)?
+            .iter()
+            .flat_map(|ring| ring.coefficients().iter().copied())
+            .collect::<Vec<F>>();
+        for (value, target) in v_image
+            .iter_mut()
+            .zip(self.v_image.iter().flat_map(|ring| ring.coefficients()))
+        {
+            *value -= *target;
+        }
+
+        let c = self.challenge.to_dense_ct()?;
+        let bound = self.setup.params().response_bound();
+        let mut linear = flat(self.setup.linear().apply(z, bound)?);
+        let shifts = self
+            .setup
+            .linear()
+            .targets()
+            .map(|t| challenge_times_ring(&c, t))
+            .collect();
+        for ((value, f), shift) in linear.iter_mut().zip(v).zip(flat(shifts)) {
+            *value -= *f + shift;
+        }
+
+        let [e0, e1, h] = self.v_tail(v)?;
+        let c_ring: ChallengeRing<F> = challenge_ring(&c);
+        let aggregated = self.relation.aggregate(&self.rho)?;
+        let tables = self.relation.claim_tables()?;
+        let parts = aggregated.linear_parts(&tables, z, false)?;
+        let operands = aggregated.product_operands(&c_ring, &parts);
+        let reduced = operands
+            .iter()
+            .fold(ChallengeRing::<F>::zero(), |sum, (x, y)| sum + *x * *y);
+        let h_e = reduced
+            - (aggregated.quadratic(&c_ring, &parts) + self.setup.l_row().apply(z, bound)?)
+            + e0
+            + c_ring * e1
+            + c_ring * c_ring * h;
+        let powers = alpha_powers(alpha);
+        let theta = decoded
+            .theta
+            .iter()
+            .zip(powers.coefficients())
+            .fold(F::zero(), |sum, (theta, power)| sum + *theta * *power);
+        Ok(ResponseRows {
+            v_image,
+            linear,
+            ct_h: h.constant_term(),
+            product_target: h_e.coefficient_inner_product(&powers)
+                + (alpha_pow_ring_dim(alpha) + F::one()) * theta,
+            product_x: operands
+                .iter()
+                .map(|(x, _)| x.coefficient_inner_product(&powers))
+                .collect(),
+            product_y: operands
+                .iter()
+                .map(|(_, y)| y.coefficient_inner_product(&powers))
+                .collect(),
+        })
+    }
+
+    /// The batched row `Σ_l w_l · row_l(e) = ⟨a, e⟩ + b` for row weights
+    /// `weights`: returns `a`, one coefficient per digit of `e` in layout
+    /// order, and `b = Σ_l w_l · row_l(0)`. `a` is the transpose of the rows'
+    /// maps applied to `weights`, so the response matrix `H` is never built
+    /// (Whiteout §4.3, "Evaluating the public weights").
+    pub fn weigh(&self, weights: &ResponseRows<F>, alpha: F) -> Result<(Vec<F>, F), WhiteoutError> {
+        if weights.shape() != self.row_shape() {
+            return Err(WhiteoutError::InvalidRelation(
+                "row weights differ from the statement's rows",
+            ));
+        }
+        let layout = self.layout();
+        let c = self.challenge.to_dense_ct()?;
+        let c_ring: ChallengeRing<F> = challenge_ring(&c);
+        let n_out = self.setup.linear().num_outputs() * D;
+        let mut z = vec![F::zero(); self.setup.table().num_coefficients()];
+        let mut v = vec![F::zero(); n_out + 3 * CHALLENGE_RING_DIM];
+        let mut theta = vec![F::zero(); THETA_COEFFICIENTS];
+
+        // Item 2 acts on V's digits directly.
+        let v_rows: Vec<ChallengeRing<F>> = weights
+            .v_image
+            .chunks_exact(CHALLENGE_RING_DIM)
+            .map(CyclotomicRing::from_slice)
+            .collect();
+        let v_digit_columns = self.setup.v_matrix().apply_transposed(
+            &v_rows
+                .iter()
+                .map(CyclotomicRing::sigma_m1)
+                .collect::<Vec<_>>(),
+        )?;
+
+        // Item 3: N z − f.
+        self.setup.linear().adjoint(&weights.linear, &mut z)?;
+        for (dst, weight) in v.iter_mut().zip(&weights.linear) {
+            *dst -= *weight;
+        }
+
+        // Item 5.
+        let tail = |index: usize| n_out + index * CHALLENGE_RING_DIM;
+        if let Some(dst) = v.get_mut(tail(2)) {
+            *dst += weights.ct_h;
+        }
+
+        // Item 4: [H_e](α) + (α^64 + 1)θ(α) and the product factors.
+        let powers = alpha_powers(alpha);
+        let target = powers.scale(&weights.product_target);
+        let times =
+            |ring: &ChallengeRing<F>, by: &ChallengeRing<F>| (ring.sigma_m1() * *by).sigma_m1();
+        let through_c = times(&target, &c_ring);
+        for (index, ring) in [target, through_c, times(&through_c, &c_ring)]
+            .into_iter()
+            .enumerate()
+        {
+            let range = tail(index)..tail(index + 1);
+            for (dst, w) in v
+                .get_mut(range)
+                .ok_or(WhiteoutError::InvalidRelation("V too short"))?
+                .iter_mut()
+                .zip(ring.coefficients())
+            {
+                *dst += *w;
+            }
+        }
+        let theta_scale = (alpha_pow_ring_dim(alpha) + F::one()) * weights.product_target;
+        for (dst, power) in theta.iter_mut().zip(powers.coefficients()) {
+            *dst += theta_scale * *power;
+        }
+        self.setup.l_row().adjoint(&(-target), &mut z)?;
+        let aggregated = self.relation.aggregate(&self.rho)?;
+        let tables = self.relation.claim_tables()?;
+        let x: Vec<ChallengeRing<F>> = weights.product_x.iter().map(|w| powers.scale(w)).collect();
+        let y: Vec<ChallengeRing<F>> = weights.product_y.iter().map(|w| powers.scale(w)).collect();
+        aggregated.product_adjoint(
+            &tables,
+            &c_ring,
+            &ProductAdjointWeights {
+                target,
+                x: &x,
+                y: &y,
+            },
+            &mut z,
+        )?;
+
+        // Back through the digit reconstruction to e.
+        let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
+        let mut a = Vec::with_capacity(layout.len());
+        let mut z_rest = z.as_slice();
+        for segment in &layout.segments {
+            match *segment {
+                ResponseSegment::Response {
+                    coefficients,
+                    digits,
+                    ..
+                } => {
+                    let (values, tail) = z_rest.split_at(coefficients.min(z_rest.len()));
+                    z_rest = tail;
+                    push_planes(&mut a, values, digits, radix);
+                }
+                ResponseSegment::V { coefficients } => {
+                    let start = a.len();
+                    for ring in v
+                        .get(..coefficients)
+                        .ok_or(WhiteoutError::InvalidRelation("V weights too short"))?
+                        .chunks_exact(CHALLENGE_RING_DIM)
+                    {
+                        push_planes(&mut a, ring, FIELD_LEVELS, radix);
+                    }
+                    let columns = a
+                        .get_mut(start..)
+                        .ok_or(WhiteoutError::InvalidRelation("V weights too short"))?;
+                    for (column, dst) in v_digit_columns
+                        .iter()
+                        .zip(columns.chunks_exact_mut(CHALLENGE_RING_DIM))
+                    {
+                        for (dst, w) in dst.iter_mut().zip(column.sigma_m1().coefficients()) {
+                            *dst += *w;
+                        }
+                    }
+                }
+                ResponseSegment::Theta => push_planes(&mut a, &theta, FIELD_LEVELS, radix),
+            }
+        }
+        if a.len() != layout.len() {
+            return Err(WhiteoutError::InvariantViolation("row weights length"));
+        }
+        let constant = weights.dot(&self.rows(&vec![0; layout.len()], alpha)?)?;
+        Ok((a, constant))
+    }
+
+    /// `e`'s decoded parts: `z`, `V` as field coefficients and as digits,
+    /// and `θ`. Checks the length and Item 1.
+    fn decode(&self, digits: &[i8]) -> Result<Decoded<F>, WhiteoutError> {
+        let layout = self.layout();
+        if digits.len() != layout.len() {
+            return Err(WhiteoutError::ResponseRejected("response length"));
+        }
+        // Item 1.
+        let (min, max) = balanced_range(RESPONSE_LOG_BASIS, 1)
+            .ok_or(WhiteoutError::ResponseRejected("digit alphabet"))?;
+        if digits
+            .iter()
+            .any(|&digit| !(min..=max).contains(&i128::from(digit)))
+        {
+            return Err(WhiteoutError::ResponseRejected(
+                "digit outside its alphabet",
+            ));
+        }
+        let mut decoded = Decoded {
+            z: Vec::with_capacity(self.setup.table().num_coefficients()),
+            v: Vec::new(),
+            v_digits: Vec::new(),
+            theta: Vec::new(),
+        };
+        let mut rest = digits;
+        for segment in &layout.segments {
+            let (digits, tail) = rest.split_at(segment.len());
+            rest = tail;
+            match *segment {
+                ResponseSegment::Response {
+                    coefficients,
+                    digits: levels,
+                    ..
+                } => decoded
+                    .z
+                    .extend(integers_from_digits(digits, coefficients, levels)),
+                ResponseSegment::V { coefficients } => {
+                    for ring in digits.chunks_exact(FIELD_LEVELS * CHALLENGE_RING_DIM) {
+                        decoded
+                            .v
+                            .extend(field_from_planes::<F>(ring, CHALLENGE_RING_DIM));
+                    }
+                    decoded.v.truncate(coefficients);
+                    decoded.v_digits = digits.iter().map(|&digit| i64::from(digit)).collect();
+                }
+                ResponseSegment::Theta => {
+                    decoded.theta = field_from_planes::<F>(digits, THETA_COEFFICIENTS);
+                }
+            }
+        }
+        Ok(decoded)
+    }
+
+    /// `(E_0, E_1, h)`, the last three challenge-ring elements of `V`.
+    fn v_tail(&self, v: &[F]) -> Result<[ChallengeRing<F>; 3], WhiteoutError> {
+        let tail = v
+            .get(self.setup.linear().num_outputs() * D..)
+            .ok_or(WhiteoutError::ResponseRejected("V too short"))?;
+        Ok([0, 1, 2].map(|index| {
+            CyclotomicRing::from_slice(
+                tail.get(index * CHALLENGE_RING_DIM..(index + 1) * CHALLENGE_RING_DIM)
+                    .unwrap_or_default(),
+            )
+        }))
+    }
+}
+
+/// The largest digit magnitude of the radix-16 alphabet: the bound of the
+/// Ajtai map on `V`'s digits.
+const RESPONSE_DIGIT_BOUND: u32 = 1 << (RESPONSE_LOG_BASIS - 1);
+
+/// `e`'s decoded parts.
+struct Decoded<F> {
+    z: Vec<i64>,
+    v: Vec<F>,
+    v_digits: Vec<i64>,
+    theta: Vec<F>,
+}
+
+/// The row counts of a [`ResponseStatement`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResponseRowShape {
+    pub v_image: usize,
+    pub linear: usize,
+    pub products: usize,
+}
+
+/// One value (or one weight) per affine row of the response statement, in
+/// this order: Item 2 per coefficient of `t_D`, Item 3 per coefficient of
+/// `N`'s outputs, Item 5, then Item 4's three product terms at `α`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResponseRows<F> {
+    /// `A_D G⁻¹(V) − t_D`.
+    pub v_image: Vec<F>,
+    /// `N z − f − c t`.
+    pub linear: Vec<F>,
+    /// `ct(h)`.
+    pub ct_h: F,
+    /// `[H_e](α) + (α^64 + 1)θ(α)`.
+    pub product_target: F,
+    /// `U_i = μ_i [X_i(c, z)](α)`.
+    pub product_x: Vec<F>,
+    /// `W_i = [Y_i(c, z)](α)`.
+    pub product_y: Vec<F>,
+}
+
+impl<F: JoltField> ResponseRows<F> {
+    pub fn shape(&self) -> ResponseRowShape {
+        ResponseRowShape {
+            v_image: self.v_image.len(),
+            linear: self.linear.len(),
+            products: self.product_x.len(),
+        }
+    }
+
+    /// `Σ_l self_l · other_l`.
+    pub fn dot(&self, other: &Self) -> Result<F, WhiteoutError> {
+        if self.shape() != other.shape() || self.product_y.len() != other.product_y.len() {
+            return Err(WhiteoutError::InvalidRelation("row shapes differ"));
+        }
+        let dot = |a: &[F], b: &[F]| a.iter().zip(b).fold(F::zero(), |sum, (a, b)| sum + *a * *b);
+        Ok(dot(&self.v_image, &other.v_image)
+            + dot(&self.linear, &other.linear)
+            + self.ct_h * other.ct_h
+            + self.product_target * other.product_target
+            + dot(&self.product_x, &other.product_x)
+            + dot(&self.product_y, &other.product_y))
+    }
+}
+
+/// `(1, α, …, α^63)` as a challenge-ring element: `[r](α) = ⟨r, powers⟩`.
+fn alpha_powers<F: JoltField>(alpha: F) -> ChallengeRing<F> {
+    let mut power = F::one();
+    CyclotomicRing::from_coefficients(std::array::from_fn(|_| {
+        let current = power;
+        power *= alpha;
+        current
+    }))
+}
+
+/// `α^64`.
+fn alpha_pow_ring_dim<F: JoltField>(alpha: F) -> F {
+    (0..CHALLENGE_RING_DIM).fold(F::one(), |power, _| power * alpha)
+}
+
+/// Appends the digit weights of `values` reconstructed from `levels`
+/// radix planes, plane-major: plane `j` of value `k` takes `radix^j · w_k`.
+fn push_planes<F: JoltField>(out: &mut Vec<F>, values: &[F], levels: usize, radix: F) {
+    let mut power = F::one();
+    for _ in 0..levels {
+        out.extend(values.iter().map(|value| *value * power));
+        power *= radix;
     }
 }
 

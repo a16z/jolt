@@ -17,6 +17,13 @@ whiteout = ["jolt-algebra/solinas", "jolt-crypto/lattice"]
 # witness alphabet check, the rejection rule), kept out
 # of every verifier build.
 whiteout-prover = ["dep:jolt-dit", "jolt-crypto/sample", "whiteout"]
+# Synthetic Σ-protocol statements and the statement-checking response
+# prover, for response provers' tests (Akita's W5). Test support only.
+whiteout-test-support = [
+  "dep:rand_chacha",
+  "jolt-transcript/transcript-blake2b",
+  "whiteout-prover",
+]
 # Timing harness for examples/sigma_dudect.rs: exposes the Σ-protocol
 # attempt's steps on a synthetic instance. Diagnostics only.
 whiteout-diagnostics = [

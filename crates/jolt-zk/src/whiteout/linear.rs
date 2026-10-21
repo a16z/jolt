@@ -123,6 +123,42 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         Ok(out)
     }
 
+    /// Adds to `out` (laid out like `s`) the weights of `⟨ω, N·x⟩` for output
+    /// weights `weights`, `D` per output ring in [`Self::apply`]'s order.
+    pub fn adjoint(&self, weights: &[F], out: &mut [F]) -> Result<(), WhiteoutError> {
+        if weights.len() != self.num_outputs() * D {
+            return Err(WhiteoutError::InvalidRelation(
+                "linear weights differ from N's outputs",
+            ));
+        }
+        let mut rest = weights;
+        for block in &self.blocks {
+            let (block_weights, tail) = rest.split_at(block.target.len() * D);
+            rest = tail;
+            let rows: Vec<CyclotomicRing<F, D>> = block_weights
+                .chunks_exact(D)
+                .map(CyclotomicRing::from_slice)
+                .collect();
+            matrix_adjoint(&block.matrix, &rows, block.input.clone(), out)?;
+            if let Some(gadget) = &block.gadget {
+                let targets = out
+                    .get_mut(gadget.input.clone())
+                    .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
+                let radix = F::from_u64(1 << gadget.log_basis);
+                for (row, planes) in rows.iter().zip(targets.chunks_exact_mut(gadget.levels * D)) {
+                    let mut power = F::one();
+                    for plane in planes.chunks_exact_mut(D) {
+                        for (dst, weight) in plane.iter_mut().zip(row.coefficients()) {
+                            *dst -= *weight * power;
+                        }
+                        power *= radix;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The targets `t`, block by block.
     pub fn targets(&self) -> impl Iterator<Item = &CyclotomicRing<F, D>> {
         self.blocks.iter().flat_map(|block| block.target.iter())
@@ -162,4 +198,45 @@ impl<F: Field + CanonicalEncoding, const D: usize> LRow<F, D> {
             .collect();
         Ok(CyclotomicRing::from_slice(&component))
     }
+
+    /// Adds to `out` (laid out like `s`) the weights of `⟨ω, L·x⟩`.
+    pub fn adjoint(
+        &self,
+        weight: &CyclotomicRing<F, CHALLENGE_RING_DIM>,
+        out: &mut [F],
+    ) -> Result<(), WhiteoutError> {
+        let stride = (D / CHALLENGE_RING_DIM).max(1);
+        let mut native = CyclotomicRing::<F, D>::zero();
+        for (dst, w) in native
+            .coefficients_mut()
+            .iter_mut()
+            .step_by(stride)
+            .zip(weight.coefficients())
+        {
+            *dst = *w;
+        }
+        matrix_adjoint(&self.matrix, &[native], self.input.clone(), out)
+    }
+}
+
+/// Adds to `out[input]` the weights of `⟨ω, M·x[input]⟩`, `ω` one ring per
+/// row: column `j` takes `σ(Σ_r σ(ω_r)·M[r][j])`, since
+/// `⟨ω, m·x⟩ = ct(σ(ω)·m·x)`.
+fn matrix_adjoint<F: Field + CanonicalEncoding, const D: usize>(
+    matrix: &PreparedMatrix<F, D>,
+    weights: &[CyclotomicRing<F, D>],
+    input: Range<usize>,
+    out: &mut [F],
+) -> Result<(), WhiteoutError> {
+    let sigma: Vec<CyclotomicRing<F, D>> = weights.iter().map(CyclotomicRing::sigma_m1).collect();
+    let columns = matrix.apply_transposed(&sigma)?;
+    let targets = out
+        .get_mut(input)
+        .ok_or(WhiteoutError::InvalidRelation("matrix reads outside s"))?;
+    for (column, dst) in columns.iter().zip(targets.chunks_exact_mut(D)) {
+        for (dst, w) in dst.iter_mut().zip(column.sigma_m1().coefficients()) {
+            *dst += *w;
+        }
+    }
+    Ok(())
 }

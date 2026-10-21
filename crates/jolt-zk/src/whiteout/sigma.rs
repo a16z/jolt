@@ -350,7 +350,8 @@ pub use prover::prove_sigma;
 pub(crate) use prover::take_rejected;
 #[cfg(any(
     all(test, feature = "whiteout-prover"),
-    feature = "whiteout-diagnostics"
+    feature = "whiteout-diagnostics",
+    feature = "whiteout-test-support"
 ))]
 pub(crate) use prover::{prove_sigma_with, SelfChecks};
 
@@ -382,7 +383,7 @@ mod prover {
         Run,
         /// Test-only: skip the per-row, opening and alphabet checks, so
         /// tests can show the verifier rejects what they catch.
-        #[cfg(test)]
+        #[cfg(any(test, feature = "whiteout-test-support"))]
         Skip,
     }
 
@@ -482,7 +483,11 @@ mod prover {
         })?
     }
 
-    #[cfg(any(test, feature = "whiteout-diagnostics"))]
+    #[cfg(any(
+        test,
+        feature = "whiteout-diagnostics",
+        feature = "whiteout-test-support"
+    ))]
     pub(crate) fn prove_sigma_with<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,

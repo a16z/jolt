@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
 use jolt_crypto::lattice::{MatrixShape, MatrixView, CHALLENGE_RING_DIM};
 use jolt_poly::EqPolynomial;
-use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -29,65 +29,34 @@ use super::params::{ALPHA, EPSILON_BITS};
 use super::placement::{PadPlace, PadPlacement, OPERAND_LEVELS, PAD_LEVELS};
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
 use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
-use super::sigma::{prove_sigma_with, take_rejected, SelfChecks};
-use super::{
-    verify_sigma, LiftedRelation, ResidualBlock, ResponseSegment, SegmentTable, SigmaParams,
-    SigmaSetup, WhiteoutError,
+use super::sigma::{take_rejected, SelfChecks};
+use super::test_support::{
+    prove_instance as prove, verify_instance, CheckingResponseProver, SendingResponseProver,
 };
+use super::{ResidualBlock, ResponseSegment, SegmentTable, SigmaParams, SigmaSetup, WhiteoutError};
 use crate::masking::{AffineRow, PadIndex, ResidualRelation, ResidualVar, ZkError};
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-sigma");
-const LABEL: &[u8] = b"whiteout-sigma";
-
-/// Sends `e` in the clear; the verifier checks the statement directly.
-struct CheckingResponseProver;
-
-impl<const D: usize> ResponseProver<F, D> for CheckingResponseProver {
-    fn prove_response<H: Sponge>(
-        &self,
-        statement: &ResponseStatement<'_, F, D>,
-        witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), ZkError> {
-        statement.check_witness(witness)?;
-        SendingResponseProver.prove_response(statement, witness, transcript)
-    }
-
-    fn verify_response<H: Sponge>(
-        &self,
-        statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<(), ZkError> {
-        let bytes = transcript.receive_bytes(statement.layout().len())?;
-        let witness = ResponseWitness {
-            digits: bytes.iter().map(|&byte| byte as i8).collect(),
-        };
-        Ok(statement.check_witness(&witness)?)
-    }
+/// Verifies a proof of `relation` with the statement's own checker.
+fn verify<const D: usize>(
+    instance: &Instance<D>,
+    relation: &ResidualRelation<F>,
+    proof: &[u8],
+) -> Result<(), ZkError> {
+    verify_instance(instance, relation, proof, &CheckingResponseProver)
 }
 
-/// Sends `e` without checking it, so the verifier's check is what rejects.
-struct SendingResponseProver;
-
-impl<const D: usize> ResponseProver<F, D> for SendingResponseProver {
-    fn prove_response<H: Sponge>(
-        &self,
-        _statement: &ResponseStatement<'_, F, D>,
-        witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), ZkError> {
-        let bytes: Vec<u8> = witness.digits.iter().map(|&digit| digit as u8).collect();
-        transcript.send_bytes(&bytes);
-        Ok(())
-    }
-
-    fn verify_response<H: Sponge>(
-        &self,
-        statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<(), ZkError> {
-        CheckingResponseProver.verify_response(statement, transcript)
-    }
+fn prove_checked<const D: usize>(instance: &Instance<D>, seed: u64) -> Result<Vec<u8>, ZkError> {
+    let setup = instance.setup();
+    let lifted = setup.lift(&instance.relation, &instance.claims)?;
+    prove(
+        instance,
+        &setup,
+        &lifted,
+        &CheckingResponseProver,
+        SelfChecks::Run,
+        seed,
+    )
+    .map(|(proof, _)| proof)
 }
 
 /// Records each accepted response's Gaussian-block coefficients.
@@ -134,72 +103,6 @@ impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
     ) -> Result<(), ZkError> {
         CheckingResponseProver.verify_response(statement, transcript)
     }
-}
-
-/// Proves `instance` under `setup`, sending the images first.
-fn prove<const D: usize, P: ResponseProver<F, D> + Sync>(
-    instance: &Instance<D>,
-    setup: &SigmaSetup<F, D>,
-    lifted: &LiftedRelation<F>,
-    response: &P,
-    checks: SelfChecks,
-    seed: u64,
-) -> Result<(Vec<u8>, usize), ZkError> {
-    let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, LABEL);
-    for ring in instance.u.iter().chain(&instance.t_p) {
-        transcript.send_all(ring.coefficients());
-    }
-    let mut rng = ChaCha20Rng::seed_from_u64(seed);
-    let attempts = prove_sigma_with(
-        setup,
-        lifted,
-        &instance.s,
-        &mut transcript,
-        &mut rng,
-        response,
-        checks,
-    )?;
-    Ok((transcript.finish(), attempts))
-}
-
-fn prove_checked<const D: usize>(instance: &Instance<D>, seed: u64) -> Result<Vec<u8>, ZkError> {
-    let setup = instance.setup();
-    let lifted = setup.lift(&instance.relation, &instance.claims)?;
-    prove(
-        instance,
-        &setup,
-        &lifted,
-        &CheckingResponseProver,
-        SelfChecks::Run,
-        seed,
-    )
-    .map(|(proof, _)| proof)
-}
-
-/// Verifies a proof of `relation`, reading the images from the proof.
-fn verify<const D: usize>(
-    instance: &Instance<D>,
-    relation: &ResidualRelation<F>,
-    proof: &[u8],
-) -> Result<(), ZkError> {
-    let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, proof);
-    let mut receive = |count: usize| -> Result<Vec<CyclotomicRing<F, D>>, ZkError> {
-        (0..count)
-            .map(|_| Ok(CyclotomicRing::from_slice(&transcript.receive_n::<F>(D)?)))
-            .collect()
-    };
-    let received = Instance {
-        relation: relation.clone(),
-        claims: instance.claims.clone(),
-        s: Vec::new(),
-        u: receive(instance.u.len())?,
-        t_p: receive(instance.t_p.len())?,
-        scale: instance.scale,
-    };
-    let setup = received.setup();
-    let lifted = setup.lift(relation, &instance.claims)?;
-    verify_sigma(&setup, &lifted, &mut transcript, &CheckingResponseProver)?;
-    Ok(transcript.finish()?)
 }
 
 fn whiteout_error(error: &ZkError) -> Option<&WhiteoutError> {
@@ -749,4 +652,87 @@ fn oversized_tables_are_rejected_before_the_lift_overflows() {
         SigmaParams::derive(&big),
         Err(WhiteoutError::ResponseBoundTooLarge)
     );
+}
+
+/// Checks the response rows on the accepted witness: Items 2, 3 and 5
+/// vanish, Item 4's target is `Σ U_i W_i`, and the transposed rows agree
+/// with the rows on the witness and on arbitrary digits.
+struct RowCheckingResponseProver;
+
+impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
+    #[expect(clippy::panic_in_result_fn, reason = "the checks are the test")]
+    fn prove_response<H: Sponge>(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        witness: &ResponseWitness,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), ZkError> {
+        let mut rng = ChaCha20Rng::seed_from_u64(41);
+        let alpha = F::random(&mut rng);
+        let rows = statement.rows(&witness.digits, alpha)?;
+        assert!(rows.v_image.iter().chain(&rows.linear).all(F::is_zero));
+        assert!(rows.ct_h.is_zero());
+        let products: F = rows
+            .product_x
+            .iter()
+            .zip(&rows.product_y)
+            .map(|(x, y)| *x * *y)
+            .sum();
+        assert_eq!(rows.product_target, products);
+
+        let shape = statement.row_shape();
+        let mut random = |len: usize| (0..len).map(|_| F::random(&mut rng)).collect::<Vec<F>>();
+        let weights = super::ResponseRows {
+            v_image: random(shape.v_image),
+            linear: random(shape.linear),
+            ct_h: random(1)[0],
+            product_target: random(1)[0],
+            product_x: random(shape.products),
+            product_y: random(shape.products),
+        };
+        let (a, b) = statement.weigh(&weights, alpha)?;
+        let arbitrary: Vec<i8> = digits(&mut rng, witness.digits.len())
+            .into_iter()
+            .map(|digit| digit as i8)
+            .collect();
+        for e in [&witness.digits, &arbitrary] {
+            let contracted: F = a
+                .iter()
+                .zip(e)
+                .map(|(a, &digit)| *a * F::from_i64(i64::from(digit)))
+                .sum::<F>()
+                + b;
+            assert_eq!(contracted, weights.dot(&statement.rows(e, alpha)?).unwrap());
+        }
+        SendingResponseProver.prove_response(statement, witness, transcript)
+    }
+
+    fn verify_response<H: Sponge>(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<(), ZkError> {
+        CheckingResponseProver.verify_response(statement, transcript)
+    }
+}
+
+#[test]
+fn response_rows_vanish_on_the_witness_and_transpose_exactly() {
+    fn check<const D: usize>(seed: u64) {
+        let instance = Instance::<D>::new(seed);
+        let setup = instance.setup();
+        let lifted = setup.lift(&instance.relation, &instance.claims).unwrap();
+        let (proof, _) = prove(
+            &instance,
+            &setup,
+            &lifted,
+            &RowCheckingResponseProver,
+            SelfChecks::Run,
+            seed + 1,
+        )
+        .unwrap();
+        verify(&instance, &instance.relation, &proof).unwrap();
+    }
+    check::<64>(50);
+    check::<256>(51);
 }

@@ -32,7 +32,7 @@ use crate::masking::{
     AffineRow, MaskedOperand, PadIndex, PadLayout, ProductRow, ResidualRelation, ResidualVar,
 };
 
-pub(crate) type F = Prime128OffsetA7F7;
+pub type F = Prime128OffsetA7F7;
 pub(crate) const BASE_PADS: usize = 5;
 pub(crate) const PAD_RANK: usize = 2;
 pub(crate) const PAD_RANDOMNESS_COLUMNS: usize = 2;

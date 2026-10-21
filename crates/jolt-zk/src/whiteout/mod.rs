@@ -18,7 +18,8 @@ mod dit;
 mod error;
 #[cfg(any(
     all(test, feature = "whiteout-prover"),
-    feature = "whiteout-diagnostics"
+    feature = "whiteout-diagnostics",
+    feature = "whiteout-test-support"
 ))]
 mod fixture;
 mod labels;
@@ -33,6 +34,11 @@ mod ring;
 mod sample;
 mod segments;
 mod sigma;
+#[cfg(any(
+    all(test, feature = "whiteout-prover"),
+    feature = "whiteout-test-support"
+))]
+pub mod test_support;
 
 pub use challenge::{challenge_times_i64, DenseChallenge};
 pub use error::WhiteoutError;
@@ -46,8 +52,8 @@ pub use placement::{
     PadPlace, PadPlacement, OPERAND_LEVELS, OPERAND_LOG_BASIS, PAD_LEVELS, PAD_LOG_BASIS,
 };
 pub use response::{
-    ResponseLayout, ResponseProver, ResponseSegment, ResponseStatement, ResponseWitness,
-    FIELD_LEVELS,
+    ResponseLayout, ResponseProver, ResponseRowShape, ResponseRows, ResponseSegment,
+    ResponseStatement, ResponseWitness, FIELD_LEVELS,
 };
 pub use ring::LiftedFunctional;
 #[cfg(feature = "whiteout-prover")]
