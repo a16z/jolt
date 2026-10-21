@@ -19,8 +19,6 @@ use jolt_dory::{DoryCommitment, DoryScheme};
 use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
 #[cfg(feature = "host")]
 use jolt_prover::{JoltProverPreprocessing as GenericJoltProverPreprocessing, ProverConfig};
-#[cfg(any(feature = "host", feature = "guest-verifier"))]
-use jolt_transcript::{ProverState, VerifierState};
 #[cfg(feature = "host")]
 use jolt_verifier::ProgramPreprocessing as GenericProgramPreprocessing;
 #[cfg(feature = "host")]
@@ -43,7 +41,7 @@ pub type ProtocolSponge = jolt_transcript::Keccak;
 ))]
 pub type ProtocolSponge = jolt_transcript::Blake2b512;
 #[cfg(feature = "host")]
-pub type ProofTranscript = ProverState<ProtocolSponge>;
+pub type ProofTranscript = jolt_transcript::ProverState<ProtocolSponge>;
 #[cfg(feature = "host")]
 pub use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 #[cfg(feature = "host")]
@@ -74,7 +72,7 @@ pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(feature = "host")]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(feature = "host")]
-pub type VerifierTranscript<'a> = VerifierState<'a, ProtocolSponge>;
+pub type VerifierTranscript<'a> = jolt_transcript::VerifierState<'a, ProtocolSponge>;
 #[cfg(feature = "host")]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
@@ -159,7 +157,7 @@ pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierTranscript<'a> = VerifierState<'a, ProtocolSponge>;
+pub type VerifierTranscript<'a> = jolt_transcript::VerifierState<'a, ProtocolSponge>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;

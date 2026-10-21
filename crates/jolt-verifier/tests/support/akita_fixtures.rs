@@ -187,7 +187,7 @@ mod field_inline {
     use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_prover::JoltBackend;
     use jolt_prover::{akita, ProverConfig};
-    use jolt_transcript::{Keccak, ProverState, VerifierState};
+    use jolt_transcript::{Keccak, ProverState};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
