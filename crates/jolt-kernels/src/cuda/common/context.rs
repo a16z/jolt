@@ -107,6 +107,12 @@ pub struct CudaKernelContext {
     sp_gather: CudaFunction,
     #[cfg(all(test, not(feature = "field-inline")))]
     sp_matrix: CudaFunction,
+    #[cfg(all(test, not(feature = "field-inline")))]
+    sp_factors: CudaFunction,
+    #[cfg(all(test, not(feature = "field-inline")))]
+    sp_claims: CudaFunction,
+    #[cfg(all(test, not(feature = "field-inline")))]
+    gruen_pair_message: CudaFunction,
     roc_message: CudaFunction,
     #[cfg(test)]
     unr_mul_scatter: CudaFunction,
@@ -316,6 +322,12 @@ impl CudaKernelContext {
             sp_gather: module.load_function("sp_gather_kernel")?,
             #[cfg(all(test, not(feature = "field-inline")))]
             sp_matrix: module.load_function("sp_matrix_kernel")?,
+            #[cfg(all(test, not(feature = "field-inline")))]
+            sp_factors: module.load_function("sp_factors_kernel")?,
+            #[cfg(all(test, not(feature = "field-inline")))]
+            sp_claims: module.load_function("sp_claims_kernel")?,
+            #[cfg(all(test, not(feature = "field-inline")))]
+            gruen_pair_message: module.load_function("gruen_pair_message_kernel")?,
             roc_message: module.load_function("roc_message_kernel")?,
             #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
@@ -711,6 +723,21 @@ impl CudaKernelContext {
     #[cfg(all(test, not(feature = "field-inline")))]
     pub(crate) const fn sp_matrix(&self) -> &CudaFunction {
         &self.sp_matrix
+    }
+
+    #[cfg(all(test, not(feature = "field-inline")))]
+    pub(crate) const fn sp_factors(&self) -> &CudaFunction {
+        &self.sp_factors
+    }
+
+    #[cfg(all(test, not(feature = "field-inline")))]
+    pub(crate) const fn sp_claims(&self) -> &CudaFunction {
+        &self.sp_claims
+    }
+
+    #[cfg(all(test, not(feature = "field-inline")))]
+    pub(crate) const fn gruen_pair_message(&self) -> &CudaFunction {
+        &self.gruen_pair_message
     }
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {

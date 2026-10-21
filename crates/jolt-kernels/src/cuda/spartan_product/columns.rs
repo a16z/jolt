@@ -3,6 +3,7 @@ use jolt_riscv::{CircuitFlags, InstructionFlags as InstructionFlagKind};
 use jolt_witness::backend::cuda::{
     circuit_flag_bit, instruction_flag_bit, DeviceAtomColumns, FLAG_BIT_NEXT_IS_NOOP,
 };
+use witness::CLAIM_LAYOUT;
 use witness::SIGN_BIT_BASE;
 
 #[cfg(test)]
@@ -15,6 +16,7 @@ pub struct DeviceProductColumns {
     narrow: CudaSlice<u64>,
     wide: CudaSlice<u64>,
     flags: CudaSlice<u32>,
+    layout: CudaSlice<u32>,
     cycles: usize,
 }
 
@@ -58,6 +60,7 @@ impl DeviceProductColumns {
             narrow,
             wide,
             flags,
+            layout: context.upload_u32_slice(&CLAIM_LAYOUT)?,
             cycles,
         })
     }
@@ -90,6 +93,7 @@ impl DeviceProductColumns {
             narrow: context.upload_u64_slice(&packed.narrow)?,
             wide: context.upload_u64_slice(&packed.wide)?,
             flags: context.upload_u32_slice(&packed.flags)?,
+            layout: context.upload_u32_slice(&CLAIM_LAYOUT)?,
             cycles,
         })
     }
@@ -108,6 +112,10 @@ impl DeviceProductColumns {
 
     pub const fn flags(&self) -> &CudaSlice<u32> {
         &self.flags
+    }
+
+    pub const fn layout(&self) -> &CudaSlice<u32> {
+        &self.layout
     }
 }
 

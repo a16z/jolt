@@ -31,3 +31,57 @@ __device__ __forceinline__ void so_block_reduce(u64 *scratch, unsigned int lanes
         __syncthreads();
     }
 }
+
+extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
+                                             const u64 *__restrict__ bz,
+                                             const u64 *__restrict__ e_in,
+                                             const u64 *__restrict__ e_out, unsigned int e_in_len,
+                                             unsigned int in_bits, unsigned int half,
+                                             unsigned int strip, u64 *__restrict__ partials) {
+    extern __shared__ u64 scratch[];
+    unsigned long long base =
+        ((unsigned long long)blockIdx.x * blockDim.x + threadIdx.x) * (unsigned long long)strip;
+
+    u64 acc[3][LIMBS];
+    for (int lane = 0; lane < 3; lane++)
+        for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
+
+    for (unsigned int step = 0; step < strip; step++) {
+        unsigned long long pair = base + step;
+        if (pair >= half) break;
+
+        u64 az0[LIMBS], az1[LIMBS], bz0[LIMBS], bz1[LIMBS];
+        load4(az + (2 * pair) * LIMBS, az0);
+        load4(az + (2 * pair + 1) * LIMBS, az1);
+        load4(bz + (2 * pair) * LIMBS, bz0);
+        load4(bz + (2 * pair + 1) * LIMBS, bz1);
+
+        u64 weight[LIMBS];
+        if (e_in_len <= 1) {
+            load4(e_out + pair * LIMBS, weight);
+        } else {
+            so_split_eq(e_in, e_out, in_bits, pair, weight);
+        }
+
+        u64 product[LIMBS], weighted[LIMBS], sum[LIMBS];
+        fr_mul(az0, bz0, product);
+        fr_mul(product, weight, weighted);
+        fr_add(acc[0], weighted, sum);
+        for (int l = 0; l < LIMBS; l++) acc[0][l] = sum[l];
+
+        fr_mul(az1, bz1, product);
+        fr_mul(product, weight, weighted);
+        fr_add(acc[2], weighted, sum);
+        for (int l = 0; l < LIMBS; l++) acc[2][l] = sum[l];
+
+        u64 az_inf[LIMBS], bz_inf[LIMBS];
+        fr_sub(az1, az0, az_inf);
+        fr_sub(bz1, bz0, bz_inf);
+        fr_mul(az_inf, bz_inf, product);
+        fr_mul(product, weight, weighted);
+        fr_add(acc[1], weighted, sum);
+        for (int l = 0; l < LIMBS; l++) acc[1][l] = sum[l];
+    }
+
+    so_block_reduce(scratch, 3, acc, partials);
+}

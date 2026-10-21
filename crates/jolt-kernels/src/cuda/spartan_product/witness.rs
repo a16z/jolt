@@ -24,6 +24,27 @@ pub const BRANCH_BIT: u32 = 3;
 pub const NEXT_IS_NOOP_BIT: u32 = 4;
 pub const SIGN_BIT_BASE: u32 = 24;
 
+pub const KIND_NARROW: u32 = 0;
+pub const KIND_WIDE: u32 = 1;
+pub const KIND_FLAG: u32 = 2;
+
+pub const CLAIM_COLUMNS: usize = 8;
+
+const fn code(kind: u32, slot: u32) -> u32 {
+    (kind << 8) | slot
+}
+
+pub const CLAIM_LAYOUT: [u32; CLAIM_COLUMNS] = [
+    code(KIND_NARROW, LEFT_INSTRUCTION_INPUT_SLOT as u32),
+    code(KIND_WIDE, RIGHT_INSTRUCTION_INPUT_SLOT as u32),
+    code(KIND_FLAG, JUMP_BIT),
+    code(KIND_FLAG, WRITE_LOOKUP_OUTPUT_TO_RD_BIT),
+    code(KIND_NARROW, LOOKUP_OUTPUT_SLOT as u32),
+    code(KIND_FLAG, BRANCH_BIT),
+    code(KIND_FLAG, NEXT_IS_NOOP_BIT),
+    code(KIND_FLAG, VIRTUAL_INSTRUCTION_BIT),
+];
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct SpartanProductWitness {
