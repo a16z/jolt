@@ -12,6 +12,12 @@
 //! from that structure as a public message; spongefish absorbs the same bytes
 //! for a public message and for a prover message, so the challenges are those
 //! of the same protocol with the field sent through the NARG string.
+//!
+//! The sponge absorbs a message's bytes with no length or separator, so the
+//! messages absorbed between two squeezes must decode uniquely from their
+//! concatenation. Every [`Encoding`] a protocol absorbs is therefore of fixed
+//! width, or of a length fixed by bound data, or carries its own count, as
+//! [`append_values`](Transcript::append_values) and [`BytesMsg`] do.
 
 use jolt_field::Ring;
 use spongefish::{
@@ -23,6 +29,7 @@ use crate::challenge::message_bytes;
 use crate::codec::{BytesMsg, Label, LabelWithCount};
 use crate::pow::{Leb128, SpongePow};
 use crate::{ChallengeCodec, ChallengeSetSize, UniformBytes};
+use sealed::Sealed;
 
 pub(crate) mod sealed {
     use spongefish::{Encoding, VerificationError};
@@ -45,7 +52,7 @@ pub(crate) mod sealed {
 ///
 /// Every method is provided once and runs the same sponge operations on both
 /// sides.
-pub trait Transcript: sealed::Sealed {
+pub trait Transcript: Sealed {
     /// Absorbs `message` as a public message.
     fn append<M: Encoding + ?Sized>(&mut self, message: &M) {
         self.absorb(message);
@@ -110,7 +117,7 @@ pub trait Transcript: sealed::Sealed {
     }
 }
 
-impl<T: sealed::Sealed + ?Sized> Transcript for T {}
+impl<T: Sealed + ?Sized> Transcript for T {}
 
 /// A transcript that draws challenges in `F`.
 pub trait FieldTranscript<F>: Transcript {
@@ -166,7 +173,7 @@ pub(crate) fn draw_challenges<T, F>(
     len: usize,
 ) -> Result<Vec<F>, VerificationError>
 where
-    T: sealed::Sealed + ?Sized,
+    T: Sealed + ?Sized,
     F: ChallengeCodec,
 {
     // A length the codec rejects poisons the verifier too, so a caller that
@@ -182,7 +189,7 @@ where
     challenges.ok_or(VerificationError)
 }
 
-impl<H, R> sealed::Sealed for ProverState<H, R>
+impl<H, R> Sealed for ProverState<H, R>
 where
     H: DuplexSpongeInterface<U = u8>,
     R: DuplexSpongeInit<U = u8>,
@@ -204,7 +211,7 @@ where
     }
 }
 
-impl<H> sealed::Sealed for VerifierState<'_, H>
+impl<H> Sealed for VerifierState<'_, H>
 where
     H: DuplexSpongeInterface<U = u8>,
 {

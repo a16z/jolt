@@ -20,6 +20,9 @@ use jolt_transcript::{
 
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(feature = "akita")]
+use crate::stages::stage8::OneHotTraceCommitmentMetadata;
+use crate::stages::stage8::Stage8Output;
 use crate::{
     config::{
         validate_proof_config, CommitmentConfig, JoltProtocolConfig, ZkConfig,
@@ -164,7 +167,7 @@ where
                 reason: error.to_string(),
             })?;
     } else {
-        let stage8::Stage8Output::Clear(_) = stage8 else {
+        let Stage8Output::Clear(_) = stage8 else {
             return Err(VerifierError::ExpectedClearProof { field: "stage8" });
         };
     }
@@ -187,7 +190,7 @@ pub fn verify<'a, F, PCS, VC, T>(
 where
     F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + Encoding + stage8::OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: stage8::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + Encoding,
@@ -275,7 +278,7 @@ where
         &stage7,
     )?;
 
-    let stage8::Stage8Output::Clear = stage8 else {
+    let Stage8Output::Clear = stage8 else {
         return Err(VerifierError::ExpectedClearProof { field: "stage8" });
     };
 
@@ -1190,7 +1193,7 @@ mod tests {
         }
     }
 
-    impl jolt_transcript::Encoding for TestCommitment {
+    impl Encoding for TestCommitment {
         fn encode(&self) -> impl AsRef<[u8]> {
             [0u8; 0]
         }
@@ -1412,8 +1415,31 @@ mod tests {
             ("untrusted_advice", |c, _| {
                 c.public_io.untrusted_advice.push(1);
             }),
+            // Derived during validation from the trace order, trace length,
+            // chunk bits and advice presence, which are bound, and from the
+            // committed program, which the preprocessing digest binds.
+            ("precommitted", |c, _| {
+                c.precommitted = PrecommittedSchedule::new(
+                    TracePolynomialOrder::CycleMajor,
+                    4,
+                    4,
+                    #[cfg(not(feature = "akita"))]
+                    None,
+                    #[cfg(not(feature = "akita"))]
+                    None,
+                    Some(CommittedProgramSchedule {
+                        bytecode_len: 16,
+                        program_image_len_words: 16,
+                        program_image_start_index: 0,
+                    }),
+                )
+                .unwrap();
+            }),
         ];
         for (field, edit) in unbound {
+            let (mut edited, mut edited_config) = (checked.clone(), config);
+            edit(&mut edited, &mut edited_config);
+            assert_ne!(edited, checked, "the {field} edit changes nothing");
             assert_eq!(
                 encode(*edit),
                 honest,

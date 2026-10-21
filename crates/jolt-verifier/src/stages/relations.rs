@@ -1373,7 +1373,7 @@ mod begin_batch_tests {
         assert_eq!(
             events
                 .iter()
-                .filter(|event| matches!(event, TranscriptEvent::Squeeze(_)))
+                .filter(|event| matches!(event, TranscriptEvent::Challenges(_)))
                 .count(),
             1,
         );

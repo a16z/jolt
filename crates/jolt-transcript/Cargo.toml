@@ -18,7 +18,9 @@ workspace = true
 [features]
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 # The prover's proof-of-work nonce search. It copies the sponge state, which
-# spongefish 0.8.0 exposes only under `yolocrypto`; verifier builds leave it off.
+# spongefish 0.8.0 exposes only under `yolocrypto`. Crates that hold both sides
+# enable it in verifier builds too; `yolocrypto` changes visibility only, not
+# the bytes absorbed or squeezed.
 prover-grinding = ["spongefish/yolocrypto"]
 # Searches proof-of-work nonces on all threads; the nonce found is the same.
 parallel = ["prover-grinding", "dep:rayon"]

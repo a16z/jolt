@@ -457,7 +457,7 @@ fn clear_round_verifier_with_label_absorbs_label() {
 }
 
 #[test]
-fn clear_round_verifier_no_label() {
+fn clear_round_verifier_no_label_absorbs_a_sumcheck_round() {
     let poly = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(3)]);
 
     let mut t1 = prover_transcript::<Blake2b512>(b"sumcheck-test", b"");
@@ -465,12 +465,29 @@ fn clear_round_verifier_no_label() {
     let c1: F = t1.challenge().unwrap();
 
     let mut t2 = prover_transcript::<Blake2b512>(b"sumcheck-test", b"");
+    t2.append(&LabelWithCount(SUMCHECK_ROUND_TRANSCRIPT_LABEL, 2));
     for coeff in poly.coefficients() {
         t2.append(&coeff);
     }
     let c2: F = t2.challenge().unwrap();
 
-    assert_eq!(c1, c2, "unlabeled absorption must match manual absorption");
+    assert_eq!(
+        c1, c2,
+        "an unlabelled round must absorb as a sum-check round"
+    );
+}
+
+#[test]
+fn clear_round_verifier_no_label_binds_the_coefficient_count() {
+    let short = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(3)]);
+    let long = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(3), F::from_u64(0)]);
+    let draw = |poly: &UnivariatePoly<F>| -> F {
+        let mut transcript = prover_transcript::<Blake2b512>(b"sumcheck-test", b"");
+        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(poly, &mut transcript);
+        transcript.challenge().unwrap()
+    };
+
+    assert_ne!(draw(&short), draw(&long));
 }
 
 #[test]

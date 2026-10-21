@@ -22,15 +22,15 @@ pub trait ClearRound<F: Field>: RoundMessage {
     }
 }
 
+/// An unlabelled round polynomial absorbs as a sum-check round: the count word
+/// keeps a longer polynomial from absorbing like a shorter one.
 impl<F: Field + Encoding> RoundMessage for UnivariatePoly<F> {
     fn degree(&self) -> usize {
         UnivariatePolynomial::degree(self)
     }
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        for coeff in self.coefficients() {
-            transcript.append(coeff);
-        }
+        LabeledRoundPoly::sumcheck(self).append_to_transcript(transcript);
     }
 }
 
