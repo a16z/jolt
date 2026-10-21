@@ -59,7 +59,8 @@ pub use codec::BytesMsg;
 #[cfg(feature = "digest")]
 pub use digest::DigestTranscript;
 pub use grind_bits::{
-    grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS, SECURITY_BITS,
+    challenge_bits_for_loss, grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS,
+    SECURITY_BITS,
 };
 #[cfg(feature = "spongefish")]
 pub use legacy::SpongeTranscript;

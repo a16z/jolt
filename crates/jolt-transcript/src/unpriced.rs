@@ -1,8 +1,8 @@
 //! A transcript wrapper that declares no proof of work, for tests only.
 
-use jolt_field::Ring;
+use jolt_field::{CanonicalEncoding, Ring};
 
-use crate::{ChallengeSetSize, Transcript};
+use crate::{ChallengeSetSize, GrindBitsError, Transcript};
 
 /// `T` with its challenge set declared as `2^256`, so every difficulty from
 /// [`grind_bits_for_loss`](crate::grind_bits_for_loss) is 0: proofs carry no
@@ -46,6 +46,16 @@ impl<T: Transcript> Transcript for UnpricedTranscript<T> {
         Self::Challenge: Ring,
     {
         self.0.challenge_scalar_powers(len)
+    }
+
+    fn challenge_short_scalar(
+        &mut self,
+        loss_factor: u64,
+    ) -> Result<Self::Challenge, GrindBitsError>
+    where
+        Self::Challenge: CanonicalEncoding,
+    {
+        self.0.challenge_short_scalar(loss_factor)
     }
 
     fn challenge_bytes(&mut self, out: &mut [u8]) {

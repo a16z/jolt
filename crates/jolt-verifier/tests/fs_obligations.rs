@@ -554,7 +554,11 @@ fn prover_only_name(name: &str) -> bool {
 fn is_challenge_call(name: &str) -> bool {
     matches!(
         name,
-        "challenge" | "challenge_scalar" | "challenge_vector" | "challenge_scalar_powers"
+        "challenge"
+            | "challenge_scalar"
+            | "challenge_vector"
+            | "challenge_scalar_powers"
+            | "challenge_short_scalar"
     )
 }
 

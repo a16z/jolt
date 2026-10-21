@@ -8,9 +8,7 @@
 #[cfg(feature = "spongefish")]
 use std::marker::PhantomData;
 
-#[cfg(feature = "spongefish")]
-use jolt_field::CanonicalEncoding;
-use jolt_field::{CanonicalBytes, Ring};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Ring};
 #[cfg(feature = "spongefish")]
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding};
 
@@ -19,7 +17,7 @@ use crate::codec::BytesMsg;
 use crate::pow::{Leb128, Probe, ProofOfWorkError, SpongePow};
 #[cfg(feature = "spongefish")]
 use crate::setup::session_id;
-use crate::ChallengeSetSize;
+use crate::{challenge_bits_for_loss, ChallengeSetSize, GrindBitsError, SECURITY_BITS};
 
 /// Maximum label length in bytes accepted by [`Transcript::new`] and the
 /// label helpers below.
@@ -111,10 +109,57 @@ pub trait Transcript: Clone + Default + Sync + Send + 'static {
             .collect()
     }
 
+    /// Squeezes a scalar challenge on the integers `[0, 2^b)`, for a
+    /// step whose bad set holds at most `loss_factor` challenges: `b` is
+    /// [`challenge_bits_for_loss`] at [`SECURITY_BITS`], the narrowest width
+    /// that needs no proof of work. A group scalar this short costs about
+    /// half as much as a full-width field element in BN254.
+    ///
+    /// It squeezes `⌈b / 8⌉` bytes, clears the bits above `b`, and decodes
+    /// the little-endian integer. As `b` is below the bit length of the field
+    /// order, distinct integers decode to distinct elements. Nothing about
+    /// the field challenges drawn after it changes.
+    ///
+    /// The integer is uniform on the byte sponges (Keccak, Blake2b). On
+    /// Poseidon the bytes are the low bits of a field element, so each value
+    /// has probability at most `2^-b (1 + 2^b / p)` when the draw follows an
+    /// absorb and so starts a fresh element; a draw that starts mid-element
+    /// can read the element's top byte and lose a few bits. Callers draw
+    /// short scalars right after an absorb.
+    ///
+    /// # Errors
+    /// [`GrindBitsError`] from [`challenge_bits_for_loss`], or
+    /// [`GrindBitsError::FieldTooSmall`] if `b` is not below the bit length
+    /// of the field order. Nothing is squeezed on error.
+    fn challenge_short_scalar(
+        &mut self,
+        loss_factor: u64,
+    ) -> Result<Self::Challenge, GrindBitsError>
+    where
+        Self::Challenge: CanonicalEncoding,
+    {
+        let bits = challenge_bits_for_loss(loss_factor, SECURITY_BITS)?;
+        if bits >= Self::Challenge::MODULUS_BITS {
+            return Err(GrindBitsError::FieldTooSmall);
+        }
+        // `bits ≤ 256`, so the bytes fit one 32-byte word.
+        let len = bits.div_ceil(8);
+        let mut word = [0u8; 32];
+        let bytes = word
+            .get_mut(..len as usize)
+            .ok_or(GrindBitsError::FieldTooSmall)?;
+        self.challenge_bytes(bytes);
+        if let Some(top) = bytes.last_mut() {
+            *top &= u8::MAX >> (8 * len - bits);
+        }
+        Ok(Self::Challenge::from_bytes_le_reduced(bytes))
+    }
+
     /// Squeezes `out.len()` raw bytes.
     ///
     /// Protocol challenges come from the decoding methods above; this one
-    /// backs the proof-of-work check of [`check_grind`](Self::check_grind).
+    /// backs [`challenge_short_scalar`](Self::challenge_short_scalar) and the
+    /// proof-of-work check of [`check_grind`](Self::check_grind).
     fn challenge_bytes(&mut self, out: &mut [u8]);
 
     /// A proof of work of `bits` bits, for the prover. Returns the nonce the

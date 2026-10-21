@@ -6,8 +6,8 @@
 
 use std::{any::Any, cell::RefCell, collections::BTreeMap, sync::Arc};
 
-use jolt_field::{Field, Ring};
-use jolt_transcript::{ChallengeSetSize, Transcript};
+use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_transcript::{ChallengeSetSize, GrindBitsError, Transcript};
 use jolt_verifier::fs_audit::{self, FsScope};
 
 /// The transcript API used to derive a challenge.
@@ -26,6 +26,7 @@ pub enum ChallengeKind {
     Scalar,
     VectorElement { len: usize, index: usize },
     PowersBase { len: usize },
+    ShortScalar { loss_factor: u64 },
 }
 
 /// A challenge's verifier scope and ordinal within that scope.
@@ -254,8 +255,19 @@ where
         powers
     }
 
-    // Only the provided `check_grind` squeezes raw bytes, so these are
-    // proof-of-work check words.
+    fn challenge_short_scalar(
+        &mut self,
+        loss_factor: u64,
+    ) -> Result<Self::Challenge, GrindBitsError>
+    where
+        Self::Challenge: CanonicalEncoding,
+    {
+        let value = self.inner.challenge_short_scalar(loss_factor)?;
+        Ok(draw(ChallengeKind::ShortScalar { loss_factor }, || vec![value])[0])
+    }
+
+    // Short scalars squeeze through `inner` above, so the only raw squeezes
+    // left are the provided `check_grind`'s proof-of-work check words.
     fn challenge_bytes(&mut self, out: &mut [u8]) {
         self.inner.challenge_bytes(out);
         pow_check(out);
