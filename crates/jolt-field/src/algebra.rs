@@ -14,6 +14,8 @@ use allocative::Allocative;
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use serde::{de::DeserializeOwned, Serialize};
+#[cfg(feature = "spongefish")]
+use spongefish::Encoding;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::iter::{Product, Sum};
@@ -523,9 +525,9 @@ impl<T: ?Sized> MaybeAllocative for T {}
 /// Every field in this crate encodes as its canonical little-endian bytes, so
 /// `F: JoltField` can be absorbed into a transcript without a bound of its own.
 #[cfg(feature = "spongefish")]
-pub trait MaybeEncoding: spongefish::Encoding {}
+pub trait MaybeEncoding: Encoding {}
 #[cfg(feature = "spongefish")]
-impl<T: spongefish::Encoding + ?Sized> MaybeEncoding for T {}
+impl<T: Encoding + ?Sized> MaybeEncoding for T {}
 /// spongefish's `Encoding` when the `spongefish` feature is on, vacuous
 /// otherwise.
 #[cfg(not(feature = "spongefish"))]

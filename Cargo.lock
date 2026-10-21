@@ -8087,6 +8087,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "spongefish 0.8.0",
  "strum 0.28.0",
  "tracer",
 ]

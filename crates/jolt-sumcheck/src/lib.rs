@@ -121,6 +121,8 @@ mod round_scheduler_tests;
 #[cfg(all(test, feature = "committed"))]
 mod tests;
 
+use jolt_transcript::Encoding;
+
 /// Transcript label used for ordinary sumcheck round polynomials.
 pub const SUMCHECK_ROUND_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_poly";
 /// Transcript label used for univariate-skip round polynomials.
@@ -133,7 +135,7 @@ pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
 /// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
 pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
 where
-    A: jolt_transcript::Encoding,
+    A: Encoding,
     T: jolt_transcript::Transcript,
 {
     transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);

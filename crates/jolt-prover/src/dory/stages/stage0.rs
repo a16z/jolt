@@ -26,8 +26,7 @@ use jolt_verifier::proof::JoltCommitments;
 use jolt_verifier::proof::{FieldInlineCommitments, FieldRegistersCommitments};
 use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
-    validate_inputs_from_parts, CheckedInputs, JoltStatement, ProofTranscriptConfig,
-    JOLT_SESSION,
+    validate_inputs_from_parts, CheckedInputs, JoltStatement, ProofTranscriptConfig, JOLT_SESSION,
 };
 use jolt_witness::WitnessBundle;
 
@@ -494,7 +493,8 @@ mod field_inline_tests {
             None,
             &mut verifier_transcript,
         );
-        let first = |transcript: &mut ProverState<Keccak>| -> Fr { transcript.challenge().unwrap() };
+        let first =
+            |transcript: &mut ProverState<Keccak>| -> Fr { transcript.challenge().unwrap() };
         let expected = first(&mut prover_state);
         assert_eq!(expected, first(&mut verifier_transcript));
 

@@ -1,5 +1,6 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_riscv::JoltInstructionKind;
+use jolt_transcript::VerificationError;
 
 use crate::config::JoltProtocolConfig;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
@@ -154,8 +155,8 @@ pub enum VerifierError {
     NargNotConsumed,
 }
 
-impl From<jolt_transcript::VerificationError> for VerifierError {
-    fn from(_: jolt_transcript::VerificationError) -> Self {
+impl From<VerificationError> for VerifierError {
+    fn from(_: VerificationError) -> Self {
         Self::TranscriptRejected
     }
 }

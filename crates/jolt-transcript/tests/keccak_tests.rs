@@ -4,7 +4,9 @@
 
 mod common;
 
-transcript_tests!(jolt_transcript::Keccak);
+use jolt_transcript::Keccak;
+
+transcript_tests!(Keccak);
 
 #[test]
 fn test_keccak_known_vector() {
@@ -21,7 +23,7 @@ fn test_keccak_known_vector() {
 
 #[test]
 fn public_message_after_challenge_agrees_including_empty() {
-    use jolt_transcript::{BytesMsg, Keccak};
+    use jolt_transcript::BytesMsg;
 
     for public in [b"public after squeeze".as_slice(), &[]] {
         let mut prover = prover_transcript::<Keccak>(b"keccak-public", &[0u8; 32]);

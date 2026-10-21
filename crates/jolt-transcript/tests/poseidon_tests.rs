@@ -3,11 +3,13 @@
 //! Poseidon's squeezed bytes are not uniform, so it draws no field
 //! challenges; these tests exercise it as a byte sponge.
 
-use jolt_transcript::{prover_transcript, verifier_transcript, PoseidonSponge, Transcript};
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, PoseidonSponge, ProverState, Transcript,
+};
 
 const SESSION: &[u8] = b"jolt-transcript/tests";
 
-fn squeeze_after<F: FnOnce(&mut jolt_transcript::ProverState<PoseidonSponge>)>(f: F) -> [u8; 32] {
+fn squeeze_after<F: FnOnce(&mut ProverState<PoseidonSponge>)>(f: F) -> [u8; 32] {
     let mut transcript = prover_transcript::<PoseidonSponge>(SESSION, b"Jolt");
     f(&mut transcript);
     transcript.verifier_message::<[u8; 32]>()

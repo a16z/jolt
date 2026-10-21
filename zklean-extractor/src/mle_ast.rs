@@ -10,6 +10,7 @@ use ark_std::{One, Zero};
 use num_bigint::BigUint;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
+use spongefish::Encoding;
 
 #[cfg(test)]
 use jolt_field::JoltField;
@@ -1273,7 +1274,7 @@ impl CanonicalBytes for MleAst {
 }
 
 /// The canonical bytes, so a transcript absorbs the AST as it absorbs `Fr`.
-impl spongefish::Encoding for MleAst {
+impl Encoding for MleAst {
     fn encode(&self) -> impl AsRef<[u8]> {
         let mut bytes = [0u8; 32];
         self.to_bytes_le(&mut bytes);

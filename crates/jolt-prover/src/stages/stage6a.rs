@@ -291,8 +291,8 @@ mod field_inline_round_trip {
         );
 
         assert_eq!(
-        transcript.verifier_message::<[u8; 32]>(),
-        prover_state.verifier_message::<[u8; 32]>()
-    );
+            transcript.verifier_message::<[u8; 32]>(),
+            prover_state.verifier_message::<[u8; 32]>()
+        );
     }
 }

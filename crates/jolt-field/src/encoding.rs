@@ -7,6 +7,12 @@
 use spongefish::Encoding;
 
 use crate::CanonicalBytes;
+#[cfg(feature = "solinas")]
+use crate::{Ext2Config, Field, Fp128, Fp32, Fp64, FpExt2, FpExt4, PseudoMersenne};
+#[cfg(feature = "bn254")]
+use crate::{Fq, Fr};
+#[cfg(feature = "binary")]
+use crate::{F128, F192, F64, F8};
 
 /// The `N` canonical bytes of `value`; `N` is its `NUM_BYTES`.
 fn fixed<const N: usize, T: CanonicalBytes>(value: &T) -> [u8; N] {
@@ -26,32 +32,32 @@ macro_rules! fixed_width {
 }
 
 #[cfg(feature = "bn254")]
-fixed_width!([] crate::Fr => 32, [] crate::Fq => 32);
+fixed_width!([] Fr => 32, [] Fq => 32);
 
 #[cfg(feature = "solinas")]
 fixed_width!(
-    [const P: u32] crate::Fp32<P> => 4,
-    [const P: u64] crate::Fp64<P> => 8,
-    [const P: u128] crate::Fp128<P> => 16,
+    [const P: u32] Fp32<P> => 4,
+    [const P: u64] Fp64<P> => 8,
+    [const P: u128] Fp128<P> => 16,
 );
 
 #[cfg(feature = "binary")]
 fixed_width!(
-    [] crate::F8 => 1,
-    [] crate::F64 => 8,
-    [] crate::F128 => 16,
-    [] crate::F192 => 24,
+    [] F8 => 1,
+    [] F64 => 8,
+    [] F128 => 16,
+    [] F192 => 24,
 );
 
 #[cfg(feature = "solinas")]
-impl<F: crate::Field + CanonicalBytes, C: crate::Ext2Config<F>> Encoding for crate::FpExt2<F, C> {
+impl<F: Field + CanonicalBytes, C: Ext2Config<F>> Encoding for FpExt2<F, C> {
     fn encode(&self) -> impl AsRef<[u8]> {
         self.to_bytes_le_vec()
     }
 }
 
 #[cfg(feature = "solinas")]
-impl<F: crate::PseudoMersenne> Encoding for crate::FpExt4<F> {
+impl<F: PseudoMersenne> Encoding for FpExt4<F> {
     fn encode(&self) -> impl AsRef<[u8]> {
         self.to_bytes_le_vec()
     }
@@ -70,22 +76,22 @@ mod tests {
     fn encodings_are_the_canonical_bytes() {
         #[cfg(feature = "bn254")]
         {
-            use crate::Ring;
-            matches_canonical_bytes(&crate::Fr::from_u64(0x0102_0304));
-            matches_canonical_bytes(&crate::Fq::from_u64(7));
+            use crate::{Fq, Fr, Ring};
+            matches_canonical_bytes(&Fr::from_u64(0x0102_0304));
+            matches_canonical_bytes(&Fq::from_u64(7));
         }
         #[cfg(feature = "solinas")]
         {
-            use crate::Ring;
-            matches_canonical_bytes(&crate::Prime31Offset19::from_u64(5));
-            matches_canonical_bytes(&crate::Prime64Offset59::from_u64(5));
-            matches_canonical_bytes(&crate::Prime128OffsetA7F7::from_u64(5));
+            use crate::{Prime128OffsetA7F7, Prime31Offset19, Prime64Offset59, Ring};
+            matches_canonical_bytes(&Prime31Offset19::from_u64(5));
+            matches_canonical_bytes(&Prime64Offset59::from_u64(5));
+            matches_canonical_bytes(&Prime128OffsetA7F7::from_u64(5));
         }
         #[cfg(feature = "binary")]
         {
-            use crate::Ring;
-            matches_canonical_bytes(&crate::F8::from_u64(3));
-            matches_canonical_bytes(&crate::F192::from_u64(3));
+            use crate::{Ring, F192, F8};
+            matches_canonical_bytes(&F8::from_u64(3));
+            matches_canonical_bytes(&F192::from_u64(3));
         }
     }
 }

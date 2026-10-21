@@ -796,9 +796,9 @@ mod twin_tests {
         sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
 
         assert_eq!(
-        prover_state.verifier_message::<[u8; 32]>(),
-        verifier_transcript.verifier_message::<[u8; 32]>()
-    );
+            prover_state.verifier_message::<[u8; 32]>(),
+            verifier_transcript.verifier_message::<[u8; 32]>()
+        );
 
         let calls = context
             .session()
@@ -907,9 +907,9 @@ mod twin_tests {
         sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
 
         assert_eq!(
-        prover_state.verifier_message::<[u8; 32]>(),
-        verifier_transcript.verifier_message::<[u8; 32]>()
-    );
+            prover_state.verifier_message::<[u8; 32]>(),
+            verifier_transcript.verifier_message::<[u8; 32]>()
+        );
         assert_eq!(verified_points, proved.output_points);
         assert_eq!(
             proved.output_points.delta.value.as_slice(),

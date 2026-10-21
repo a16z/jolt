@@ -3,6 +3,7 @@ use jolt_crypto::VectorOpeningError;
 use jolt_field::JoltField;
 use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::{SumcheckError, SumcheckR1csError};
+use jolt_transcript::VerificationError as TranscriptVerificationError;
 use thiserror::Error as ThisError;
 
 #[derive(Clone, Debug, ThisError, PartialEq, Eq)]
@@ -159,8 +160,8 @@ pub enum ProverError<F: JoltField> {
     TranscriptRejected,
 }
 
-impl<F: JoltField> From<jolt_transcript::VerificationError> for ProverError<F> {
-    fn from(_: jolt_transcript::VerificationError) -> Self {
+impl<F: JoltField> From<TranscriptVerificationError> for ProverError<F> {
+    fn from(_: TranscriptVerificationError) -> Self {
         Self::TranscriptRejected
     }
 }
@@ -213,8 +214,8 @@ pub enum VerificationError<F: JoltField> {
     TranscriptRejected,
 }
 
-impl<F: JoltField> From<jolt_transcript::VerificationError> for VerificationError<F> {
-    fn from(_: jolt_transcript::VerificationError) -> Self {
+impl<F: JoltField> From<TranscriptVerificationError> for VerificationError<F> {
+    fn from(_: TranscriptVerificationError) -> Self {
         Self::TranscriptRejected
     }
 }

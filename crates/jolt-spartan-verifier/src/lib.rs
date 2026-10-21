@@ -29,7 +29,7 @@ use jolt_sumcheck::{
     BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckError,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{Encoding, FieldTranscript};
+use jolt_transcript::{Encoding, FieldTranscript, VerificationError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -92,8 +92,8 @@ pub enum SpartanError<F: JoltField> {
     TranscriptRejected,
 }
 
-impl<F: JoltField> From<jolt_transcript::VerificationError> for SpartanError<F> {
-    fn from(_: jolt_transcript::VerificationError) -> Self {
+impl<F: JoltField> From<VerificationError> for SpartanError<F> {
+    fn from(_: VerificationError) -> Self {
         Self::TranscriptRejected
     }
 }

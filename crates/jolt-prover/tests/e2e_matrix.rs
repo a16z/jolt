@@ -323,9 +323,9 @@ mod matrix {
         use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_prover::akita;
         use jolt_prover::akita::preprocessing::{self, AkitaVc};
-        use jolt_transcript::{Keccak, ProverState, VerifierState};
         use jolt_prover::JoltBackend;
         use jolt_prover::ProverConfig;
+        use jolt_transcript::{Keccak, ProverState, VerifierState};
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
         use crate::support::{self, GuestCase};
