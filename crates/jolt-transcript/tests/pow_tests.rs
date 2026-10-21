@@ -194,7 +194,7 @@ fn verify_nonce<H: DuplexSpongeInit<U: SpongeUnit> + Sync>(
     let narg = [prefix, nonce, suffix].concat();
     let mut verifier = sponge_verifier::<H>(&narg);
     let passed = VerifierTranscript::check_grind(&mut verifier, bits).is_ok();
-    let next = verifier.verifier_message_as(4, <[H::U]>::to_vec);
+    let next = verifier.verifier_message_as(16, <[H::U]>::to_vec);
     let rest = VerifierTranscript::prover_message::<BytesMsg>(&mut verifier)
         .is_ok_and(|message| message.0 == b"after")
         && verifier.check_eof().is_ok();
@@ -223,7 +223,7 @@ fn sponge_checks<H: DuplexSpongeInit<U: SpongeUnit + Debug> + Sync>() {
         let nonce = prover.narg_string()[prefix.len()..].to_vec();
         let value = decode(&nonce);
         assert_eq!(nonce, leb128(value));
-        let challenge = prover.verifier_message_as(4, <[H::U]>::to_vec);
+        let challenge = prover.verifier_message_as(16, <[H::U]>::to_vec);
 
         let mut sent = sponge_prover::<H>();
         for byte in &nonce {
@@ -233,7 +233,7 @@ fn sponge_checks<H: DuplexSpongeInit<U: SpongeUnit + Debug> + Sync>() {
         search.probe(&nonce, &mut probed);
         assert_eq!(sent.verifier_message_as(40, <[H::U]>::to_vec), probed);
         assert!(check_passes(bits, &probed[..check_len]));
-        assert_eq!(probed[check_len..check_len + 4], challenge[..]);
+        assert_eq!(probed[check_len..check_len + 16], challenge[..]);
 
         assert_eq!(
             verify_nonce::<H>(&prefix, &nonce, bits),

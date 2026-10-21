@@ -146,6 +146,8 @@ fn draw_after(
 /// A different message, session or instance changes the challenges. Each
 /// message is packed on its own, so splitting raw bytes across messages, or
 /// appending a zero byte, does too, even without a length in the encoding.
+/// The same messages give the same challenges, and swapping two messages
+/// changes them.
 #[test]
 fn challenges_bind_messages_session_and_instance() {
     let base = draw_after(SESSION, INSTANCE, |t| t.append(&[1u8, 2]));
@@ -162,6 +164,15 @@ fn challenges_bind_messages_session_and_instance() {
     for other in others {
         assert_ne!(base, other);
     }
+
+    let in_order = |first: u8, second: u8| {
+        draw_after(SESSION, INSTANCE, |t| {
+            t.append(&[first]);
+            t.append(&[second]);
+        })
+    };
+    assert_eq!(in_order(1, 2), in_order(1, 2));
+    assert_ne!(in_order(1, 2), in_order(2, 1));
 }
 
 /// A truncated message is rejected and poisons the verifier, so later draws
