@@ -276,6 +276,13 @@ where
 /// [`prove_single`] sends, through [`receive_masked_single`]; the omitted
 /// coefficient of each round is defined by its check, so the check holds by
 /// construction and the oracle check carries soundness.
+///
+/// # Errors
+///
+/// As [`receive_masked_single`], and
+/// [`SumcheckError::MaskedRoundInClearReplay`] if the context's channel is
+/// masked: its rounds carry pad slots, and folding m̂ as clear values would
+/// check nothing.
 #[tracing::instrument(skip_all, name = "verify_single", fields(rounds = instance.rounds))]
 pub fn verify_single<F, E, Err, C>(
     instance: &SingleInstance<E>,
@@ -293,10 +300,15 @@ where
     for (
         round,
         MaskedRound {
-            wire, challenge, ..
+            wire,
+            slots,
+            challenge,
         },
     ) in rounds.into_iter().enumerate()
     {
+        if slots.len != 0 {
+            return Err(SumcheckError::MaskedRoundInClearReplay { round }.into());
+        }
         claim = instance.next_claim(round, claim, wire, challenge)?;
         challenges.push(challenge);
     }

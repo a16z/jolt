@@ -250,4 +250,9 @@ pub enum SumcheckError<F: Field> {
     /// An equality-factored instance declared no rounds.
     #[error("equality-factored sumcheck needs at least one round")]
     EqFactoredZeroRounds,
+
+    /// A clear replay read a round through a masked channel: its values are
+    /// m̂ = m + p, which only a residual lowering may use.
+    #[error("round {round} arrived masked in a clear replay")]
+    MaskedRoundInClearReplay { round: usize },
 }
