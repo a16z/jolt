@@ -245,9 +245,7 @@ where
     let claim_site = context.site(instance.site(0, SumcheckRole::Claim));
     let channel = context.channel_mut();
     mark(channel, claim_site);
-    channel
-        .bind_derived::<F, E>(&claim)
-        .map_err(Into::into)?;
+    channel.bind_derived::<F, E>(&claim).map_err(Into::into)?;
 
     let mut challenges: Vec<E> = Vec::with_capacity(instance.rounds);
     for (round, round_id) in (0..instance.rounds).zip(0u32..) {
