@@ -105,11 +105,12 @@ unsatisfiable), never dropped.
   factors. `output_expression` is derived from it by expansion, so each
   relation has one formula and clear bytes are unchanged. Spartan outer,
   instruction read-RAF and the Spartan product remainder are ported; monomial
-  relations factor trivially. A term with factors f₁…f_d becomes a chain:
-  a factor that is not a single masked slot gets an auxiliary slot and a
-  defining affine row; then d−2 `ProductRow`s with x a masked slot and z a new
-  auxiliary slot, and the last product stays pending as a pair of the stage's
-  check row (below). Slots are allocated per symbolic factor and term, never
+  relations factor trivially. A term with factors f₁…f_d becomes a chain.
+  Under the lattice back end's operand rule, a factor that is not a single
+  masked slot first gets an auxiliary slot and a defining affine row;
+  BlindFold takes it as an affine operand. Then come d−2 `ProductRow`s, each
+  with x the operand and z a new auxiliary slot, and the last product stays
+  pending as a pair of the stage's check row (below). Slots are allocated per symbolic factor and term, never
   skipped because a coefficient happens to be zero.
 - **Stage 8** belongs to the back end's PCS integration in `jolt-prover` /
   `jolt-verifier`, not to the stage-agnostic lowering: for Dory,
@@ -302,13 +303,23 @@ row has at least one pair; each back end enforces this with a release check.
   pairs of each row.
 
 **3. Affine operands (BlindFold only).** An R1CS A-row accepts any linear
-combination, so BlindFold needs no defining slot. `ZkBackend` gains
-`const OPERANDS: OperandRule`: `MaskedSlot` (lattice) or `Affine` (curve).
-`ProductPair.x` becomes the enum `ProductOperand { Masked(MaskedOperand),
-Affine(AffineRow) }`. The lowering emits `Affine` only under
-`OperandRule::Affine`. The lattice lift rejects `Affine` with a release
-check. `pad_layout`, `auxiliary_values` and `rows` take the rule from the
-back end type, so both roles derive the same layout.
+combination, so BlindFold needs no defining slot.
+
+- `ZkBackend` gains `const OPERANDS: OperandRule`: `MaskedSlot` for the
+  lattice back end, `Affine` for the curve back end. BlindFold also states
+  the rule as an inherent const, so jolt-verifier names it without the
+  commitment bounds.
+- `ProductPair.x` becomes `ProductOperand { Masked(MaskedOperand),
+  Affine(AffineRow) }`.
+- The three lowering domains implement `LoweringDomain`, which states the
+  rule. Their constructors default to `MaskedSlot`, so Akita's uses are
+  unchanged; `with_operands` selects a rule.
+- `lower_factored` reads the rule from its domain, so one lowering has one
+  rule. `JoltResidual` carries the rule from `ResidualInputs.operands` into
+  the layout, the values and the rows.
+- Under `Affine`, rows emit `Affine` only for an operand that is not a
+  single slot, and the shape records no operand pads.
+- The lattice placement and lift reject `Affine` with a release check.
 
 **Σ-statement impact (W5a).** The public surface does not change. On
 `whiteout/dev`, `ResponseStatement::{layout, challenge, rho, v_image,

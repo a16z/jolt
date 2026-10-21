@@ -15,7 +15,7 @@ use crate::blindfold::RelaxedError;
 #[cfg(feature = "whiteout")]
 use crate::whiteout::WhiteoutError;
 
-use super::{CommittedPads, CommittedPadsView, PadLayout, ResidualRelation};
+use super::{CommittedPads, CommittedPadsView, OperandRule, PadLayout, ResidualRelation};
 
 /// A field-generic source error (a sumcheck or BlindFold error), erased so
 /// that [`ZkError`] stays field-independent like the verifier's error type.
@@ -111,6 +111,10 @@ impl<F: Field> From<ZkError> for SumcheckError<F> {
 /// with `R` reached through `Setup`, since `ResponseProver` is not
 /// dyn-compatible.
 pub trait ZkBackend<F> {
+    /// What the back end accepts as a product's operand; the masking
+    /// lowering allocates its slots by it.
+    const OPERANDS: OperandRule;
+
     type Setup;
     /// What the verifier holds after the pad commitment is sent.
     type PadCommitment;

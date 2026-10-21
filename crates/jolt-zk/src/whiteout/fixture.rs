@@ -29,8 +29,8 @@ use super::{
     ResidualGadget, SigmaSetup, FIELD_LEVELS,
 };
 use crate::masking::{
-    AffineRow, MaskedOperand, PadIndex, PadLayout, ProductPair, ProductRow, ResidualRelation,
-    ResidualVar,
+    AffineRow, MaskedOperand, PadIndex, PadLayout, ProductOperand, ProductPair, ProductRow,
+    ResidualRelation, ResidualVar,
 };
 
 pub(crate) type F = Prime128OffsetA7F7;
@@ -184,10 +184,10 @@ impl<const D: usize> Instance<D> {
             .affine
             .push(AffineRow::variable(ResidualVar::Witness(0)).add_scaled(&slot(4), -F::one()));
         let pair = |x: usize, y: usize| ProductPair {
-            x: MaskedOperand {
+            x: ProductOperand::Masked(MaskedOperand {
                 masked: masked[x],
                 pad: PadIndex(x),
-            },
+            }),
             y: slot(y),
         };
         relation.products.push(ProductRow {

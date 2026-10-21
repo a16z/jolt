@@ -25,8 +25,23 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::{ClaimDomain, ClearDomain};
 
-use super::residual::{AffineRow, ProductPair, ProductRow, ResidualRelation};
+use super::residual::{
+    AffineRow, OperandRule, ProductOperand, ProductPair, ProductRow, ResidualRelation,
+};
 use super::{PadIndex, PadLayout, ZkError};
+
+/// A [`ClaimDomain`] the masking lowering runs in: it states the
+/// [`OperandRule`] of its back end, which decides whether
+/// [`lower_factored`] gives a product without a single-opening factor a
+/// defining slot. Every domain of one lowering must state the same rule, so
+/// they allocate the same slots.
+pub trait LoweringDomain<F>: ClaimDomain<F> {
+    fn operands(&self) -> OperandRule;
+}
+
+const NOT_A_MASKED_SLOT: ZkError = ZkError::InvalidRelation {
+    reason: "product operand is not a single masked slot",
+};
 
 const EMPTY_PRODUCT_ROW: ZkError = ZkError::InvalidRelation {
     reason: "a product row has no pair",
@@ -70,6 +85,7 @@ impl AuxiliarySlots {
 #[derive(Debug)]
 pub struct OperandShapeDomain {
     slots: AuxiliarySlots,
+    rule: OperandRule,
     operands: Vec<PadIndex>,
 }
 
@@ -79,8 +95,15 @@ impl OperandShapeDomain {
     pub fn new(base: usize) -> Self {
         Self {
             slots: AuxiliarySlots::new(base),
+            rule: OperandRule::MaskedSlot,
             operands: Vec::new(),
         }
+    }
+
+    /// The same shape under `rule`. Under [`OperandRule::Affine`] no
+    /// operand pad is recorded.
+    pub fn with_operands(self, rule: OperandRule) -> Self {
+        Self { rule, ..self }
     }
 
     /// The pad layout: `base` message slots, the auxiliary slots counted,
@@ -93,15 +116,23 @@ impl OperandShapeDomain {
         Ok(PadLayout::new(self.slots.start, self.slots.next)?.with_operand_pads(self.operands))
     }
 
-    /// Records the pad of a product's operand `x`, each pad once.
+    /// Records the pad of a product's operand `x`, each pad once, under
+    /// [`OperandRule::MaskedSlot`].
     fn record_operand(&mut self, x: Option<PadIndex>) -> Result<(), ZkError> {
-        let x = x.ok_or(ZkError::InvalidRelation {
-            reason: "product operand is not a single masked slot",
-        })?;
+        if self.rule == OperandRule::Affine {
+            return Ok(());
+        }
+        let x = x.ok_or(NOT_A_MASKED_SLOT)?;
         if !self.operands.contains(&x) {
             self.operands.push(x);
         }
         Ok(())
+    }
+}
+
+impl<F> LoweringDomain<F> for OperandShapeDomain {
+    fn operands(&self) -> OperandRule {
+        self.rule
     }
 }
 
@@ -158,6 +189,23 @@ impl<F> ClaimDomain<F> for OperandShapeDomain {
 #[derive(Debug, Default)]
 pub struct ValuesDomain<F> {
     pub auxiliary: Vec<F>,
+    rule: OperandRule,
+}
+
+impl<F> ValuesDomain<F> {
+    /// An empty domain under `rule`.
+    pub fn with_operands(rule: OperandRule) -> Self {
+        Self {
+            auxiliary: Vec::new(),
+            rule,
+        }
+    }
+}
+
+impl<F: Field> LoweringDomain<F> for ValuesDomain<F> {
+    fn operands(&self) -> OperandRule {
+        self.rule
+    }
 }
 
 impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
@@ -206,6 +254,7 @@ pub struct RowsDomain<'r, F> {
     relation: &'r mut ResidualRelation<F>,
     masked_auxiliary: &'r [F],
     slots: AuxiliarySlots,
+    rule: OperandRule,
 }
 
 impl<'r, F: Field> RowsDomain<'r, F> {
@@ -215,6 +264,21 @@ impl<'r, F: Field> RowsDomain<'r, F> {
             relation,
             masked_auxiliary,
             slots,
+            rule: OperandRule::MaskedSlot,
+        }
+    }
+
+    /// The same rows under `rule`.
+    pub fn with_operands(self, rule: OperandRule) -> Self {
+        Self { rule, ..self }
+    }
+
+    /// `x` as a product operand under the rule.
+    fn operand(&self, x: AffineRow<F>) -> Result<ProductOperand<F>, ZkError> {
+        match (x.as_masked_operand(), self.rule) {
+            (Some(operand), _) => Ok(ProductOperand::Masked(operand)),
+            (None, OperandRule::Affine) => Ok(ProductOperand::Affine(x)),
+            (None, OperandRule::MaskedSlot) => Err(NOT_A_MASKED_SLOT),
         }
     }
 
@@ -248,6 +312,12 @@ impl<'r, F: Field> RowsDomain<'r, F> {
             })?;
         let pad = self.slots.take(Some(self.relation.layout.auxiliary.end))?;
         Ok(AffineRow::masked(masked, pad))
+    }
+}
+
+impl<F: Field> LoweringDomain<F> for RowsDomain<'_, F> {
+    fn operands(&self) -> OperandRule {
+        self.rule
     }
 }
 
@@ -292,10 +362,10 @@ impl<F: Field> ClaimDomain<F> for RowsDomain<'_, F> {
         let pairs = pairs
             .into_iter()
             .map(|(x, y)| {
-                let x = x.as_masked_operand().ok_or(ZkError::InvalidRelation {
-                    reason: "product operand is not a single masked slot",
-                })?;
-                Ok(ProductPair { x, y })
+                Ok(ProductPair {
+                    x: self.operand(x)?,
+                    y,
+                })
             })
             .collect::<Result<Vec<_>, ZkError>>()?;
         self.relation.products.push(ProductRow { pairs, z: target });
@@ -423,8 +493,9 @@ impl<V: Clone> ProductSum<V> {
 
 /// Lowers `expr` into `domain`. Openings resolve to domain values; challenges
 /// and derived ids resolve to public scalars. Auxiliary slots are allocated
-/// per term from its structure alone: a term with h ≥ 2 hidden factors takes
-/// h − 2 product slots and leaves its last product pending, plus one defining
+/// per term from its structure and the domain's [`OperandRule`] alone: a term
+/// with h ≥ 2 hidden factors takes h − 2 product slots and leaves its last
+/// product pending, plus, under [`OperandRule::MaskedSlot`], one defining
 /// slot when none of its factors is a single opening. No term is skipped,
 /// whatever its coefficient.
 ///
@@ -440,7 +511,7 @@ pub fn lower_factored<F, O, P, C, D>(
 ) -> Result<ProductSum<D::Value>, ZkError>
 where
     F: Field,
-    D: ClaimDomain<F, Error = ZkError>,
+    D: LoweringDomain<F, Error = ZkError>,
 {
     let mut sum = ProductSum::zero(domain);
     for term in &expr.terms {
@@ -482,9 +553,10 @@ where
                 affine: hidden.swap_remove(0),
             },
             _ => {
-                let mut product = match operand {
-                    Some(index) => hidden.remove(index),
-                    None => domain.define_auxiliary(hidden.remove(0))?,
+                let mut product = match (operand, domain.operands()) {
+                    (Some(index), _) => hidden.remove(index),
+                    (None, OperandRule::Affine) => hidden.remove(0),
+                    (None, OperandRule::MaskedSlot) => domain.define_auxiliary(hidden.remove(0))?,
                 };
                 let last = hidden.pop().ok_or(ZkError::InvalidRelation {
                     reason: "a product term lost its last factor",

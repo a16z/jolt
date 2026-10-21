@@ -310,10 +310,11 @@ impl<F: JoltField> LiftedRelation<F> {
         for (index, row) in relation.products.iter().enumerate() {
             let z = context.weights(&row.z)?;
             for (k, pair) in row.pairs.iter().enumerate() {
-                let PadPlace::Operand(operand) = placement.place(pair.x.pad)? else {
-                    return Err(WhiteoutError::InvalidRelation(
-                        "a product's operand is not an operand pad",
-                    ));
+                let not_an_operand =
+                    WhiteoutError::InvalidRelation("a product's operand is not an operand pad");
+                let x = pair.x.masked().ok_or(not_an_operand.clone())?;
+                let PadPlace::Operand(operand) = placement.place(x.pad)? else {
+                    return Err(not_an_operand);
                 };
                 let y = context.weights(&pair.y)?;
                 let z = if k == 0 {
@@ -323,7 +324,7 @@ impl<F: JoltField> LiftedRelation<F> {
                 };
                 products.push(LiftedProduct {
                     row: index,
-                    masked: pair.x.masked,
+                    masked: x.masked,
                     operand,
                     y_form: y.form(),
                     z_form: z.form(),

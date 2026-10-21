@@ -87,8 +87,9 @@ use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDomainSpec};
 use jolt_transcript::ClaimDomain;
 use jolt_zk::masking::{
-    lower_factored, sumcheck_rows, AffineRow, MaskedOperand, OperandShapeDomain, PadLayout,
-    ProductSum, ResidualRelation, ResidualRows, RoundFormat, RowsDomain, ValuesDomain, ZkError,
+    lower_factored, sumcheck_rows, AffineRow, LoweringDomain, MaskedOperand, OperandRule,
+    OperandShapeDomain, PadLayout, ProductSum, ResidualRelation, ResidualRows, RoundFormat,
+    RowsDomain, ValuesDomain, ZkError,
 };
 use std::collections::BTreeMap;
 
@@ -196,6 +197,9 @@ where
     pub stage6a: &'a Stage6aZkOutput<PCS::Field>,
     pub stage6b: &'a Stage6bZkOutput<PCS::Field>,
     pub stage7: &'a Stage7ZkOutput<PCS::Field>,
+    /// The back end's operand rule, which every lowering of the relation
+    /// allocates its slots by.
+    pub operands: OperandRule,
 }
 
 /// One batch member: its round count and its factored input and output
@@ -252,6 +256,7 @@ pub struct JoltResidual<F: JoltField> {
     aliases: BTreeMap<ComposedOpeningId, ComposedOpeningId>,
     equalities: Vec<(ComposedOpeningId, ComposedOpeningId)>,
     publics: SourceValues<F>,
+    operands: OperandRule,
 }
 
 impl<F: JoltField> JoltResidual<F> {
@@ -284,6 +289,7 @@ impl<F: JoltField> JoltResidual<F> {
             aliases: builder.aliases,
             equalities: builder.equalities,
             publics: values,
+            operands: input.operands,
         })
     }
 
@@ -316,7 +322,7 @@ impl<F: JoltField> JoltResidual<F> {
     ///
     /// [`VerifierError`] if a formula does not lower.
     pub fn pad_layout(&self, base: usize) -> Result<PadLayout, VerifierError> {
-        let mut shape = OperandShapeDomain::new(base);
+        let mut shape = OperandShapeDomain::new(base).with_operands(self.operands);
         let claims = self.lower_claims(&mut shape, &mut |id| {
             Ok(Some(
                 self.opening(id)
@@ -340,7 +346,7 @@ impl<F: JoltField> JoltResidual<F> {
         &self,
         decode: impl Fn(MaskedOperand<F>) -> Result<F, ZkError>,
     ) -> Result<Vec<F>, VerifierError> {
-        let mut values = ValuesDomain::default();
+        let mut values = ValuesDomain::with_operands(self.operands);
         let _ = self.lower_claims(&mut values, &mut |id| {
             decode(self.opening(id).map_err(|_| ZkError::InvalidRelation {
                 reason: "a claim formula names an opening no stage received",
@@ -360,7 +366,7 @@ impl<F: JoltField> JoltResidual<F> {
     /// Each stage's batched input and output claims, in one fixed order
     /// (stage by stage; inputs, then outputs, member by member) so every
     /// domain allocates the same auxiliary slots.
-    fn lower_claims<D: ClaimDomain<F, Error = ZkError>>(
+    fn lower_claims<D: LoweringDomain<F, Error = ZkError>>(
         &self,
         domain: &mut D,
         opening: &mut impl FnMut(&ComposedOpeningId) -> Result<D::Value, ZkError>,
@@ -437,7 +443,8 @@ impl<F: JoltField> ResidualRows<F> for JoltResidualRows<'_, F> {
 
     fn append_rows(&self, relation: &mut ResidualRelation<F>) -> Result<(), VerifierError> {
         let residual = self.residual;
-        let mut rows = RowsDomain::new(relation, self.masked_auxiliary);
+        let mut rows =
+            RowsDomain::new(relation, self.masked_auxiliary).with_operands(residual.operands);
         let claims = residual.lower_claims(&mut rows, &mut |id| {
             residual
                 .opening_form(id)

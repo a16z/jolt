@@ -34,7 +34,10 @@ use super::{
     verify_sigma, LiftedRelation, ResidualBlock, ResponseSegment, SegmentTable, SigmaParams,
     SigmaSetup, WhiteoutError,
 };
-use crate::masking::{AffineRow, PadIndex, ResidualRelation, ResidualVar, ZkError};
+use crate::masking::{
+    AffineRow, MaskedOperand, PadIndex, ProductOperand, ProductPair, ResidualRelation, ResidualVar,
+    ZkError,
+};
 
 const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-sigma");
 const LABEL: &[u8] = b"whiteout-sigma";
@@ -203,6 +206,15 @@ fn verify<const D: usize>(
     Ok(transcript.finish()?)
 }
 
+/// A pair's operand, which the fixture states as a masked slot.
+#[expect(clippy::panic, reason = "tests fail loudly")]
+fn masked(pair: &mut ProductPair<F>) -> &mut MaskedOperand<F> {
+    match &mut pair.x {
+        ProductOperand::Masked(operand) => operand,
+        ProductOperand::Affine(_) => panic!("the fixture's operands are masked slots"),
+    }
+}
+
 fn whiteout_error(error: &ZkError) -> Option<&WhiteoutError> {
     if let ZkError::Whiteout(source) = error {
         source.downcast_ref::<WhiteoutError>()
@@ -231,7 +243,7 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
         }),
         ("product row", {
             let mut instance = Instance::new(21);
-            instance.relation.products[0].pairs[1].x.masked += F::one();
+            masked(&mut instance.relation.products[0].pairs[1]).masked += F::one();
             instance
         }),
         ("scalarity row", {
@@ -286,8 +298,8 @@ fn compensated_pairs_are_caught_where_their_operands_are_pinned() {
         let delta = F::from_u64(7);
         let epsilon = -delta * m[1] * m[3].inverse().unwrap();
         let row = &mut instance.relation.products[0];
-        row.pairs[0].x.masked += delta;
-        row.pairs[1].x.masked += epsilon;
+        masked(&mut row.pairs[0]).masked += delta;
+        masked(&mut row.pairs[1]).masked += epsilon;
         if consistent {
             instance.relation.affine[0].constant += epsilon;
         }
@@ -329,7 +341,7 @@ fn each_self_check_fires_on_its_own_case() {
     );
 
     let mut product = Instance::<64>::new(12);
-    product.relation.products[0].pairs[1].x.masked += F::one();
+    masked(&mut product.relation.products[0].pairs[1]).masked += F::one();
     check(
         &product,
         WhiteoutError::ResidualUnsatisfied {
@@ -498,12 +510,12 @@ fn check_quadratic_against_decoding<const D: usize>(seed: u64) {
             let operand = layout()
                 .operand_pads
                 .iter()
-                .position(|pad| *pad == pair.x.pad)
+                .position(|pad| *pad == pair.x.masked().unwrap().pad)
                 .unwrap();
             let p_x = operand_poly(operand);
             let y = lift_ring(&pair.y);
             let difference: F = (1..64).map(|r| p_x[r] * y[64 - r]).sum();
-            term += (pair.x.masked - p_x[0]) * row_value(&pair.y) + difference;
+            term += (pair.x.masked().unwrap().masked - p_x[0]) * row_value(&pair.y) + difference;
         }
         expected += weight(labels.product(index)) * term;
     }

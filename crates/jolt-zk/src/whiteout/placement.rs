@@ -78,7 +78,10 @@ impl PadPlacement {
     /// Release check that `relation` has this placement's layout, that every
     /// product row has a pair, and that every pair's operand is an operand
     /// pad.
-    pub fn check_relation<F>(&self, relation: &ResidualRelation<F>) -> Result<(), WhiteoutError> {
+    pub fn check_relation<F: Copy>(
+        &self,
+        relation: &ResidualRelation<F>,
+    ) -> Result<(), WhiteoutError> {
         if relation.layout != self.layout {
             return Err(WhiteoutError::InvalidRelation(
                 "relation and placement have different pad layouts",
@@ -91,7 +94,11 @@ impl PadPlacement {
             .products
             .iter()
             .flat_map(|row| &row.pairs)
-            .all(|pair| self.layout.operand_pads.contains(&pair.x.pad))
+            .all(|pair| {
+                pair.x
+                    .masked()
+                    .is_some_and(|x| self.layout.operand_pads.contains(&x.pad))
+            })
         {
             Ok(())
         } else {

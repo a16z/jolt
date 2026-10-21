@@ -125,10 +125,50 @@ impl<F: Field> MaskedOperand<F> {
     }
 }
 
+/// What a back end accepts as a product's operand `x`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OperandRule {
+    /// A single masked slot, whose pad a lattice back end commits as a
+    /// constant digit polynomial (Whiteout §3.2). A product with no
+    /// single-opening factor first gives one factor a defining slot.
+    #[default]
+    MaskedSlot,
+    /// Any affine form: an R1CS constraint's A side is a linear combination,
+    /// so a curve back end needs no defining slot.
+    Affine,
+}
+
+/// A product's operand `x`: a single masked slot, or, under
+/// [`OperandRule::Affine`], an affine form that is not one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProductOperand<F> {
+    Masked(MaskedOperand<F>),
+    Affine(AffineRow<F>),
+}
+
+impl<F: Field> ProductOperand<F> {
+    pub fn form(&self) -> AffineRow<F> {
+        match self {
+            Self::Masked(operand) => operand.form(),
+            Self::Affine(form) => form.clone(),
+        }
+    }
+}
+
+impl<F: Copy> ProductOperand<F> {
+    /// The operand as a single masked slot, if it is one.
+    pub fn masked(&self) -> Option<MaskedOperand<F>> {
+        match self {
+            Self::Masked(operand) => Some(*operand),
+            Self::Affine(_) => None,
+        }
+    }
+}
+
 /// One product `x · y` of a [`ProductRow`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProductPair<F> {
-    pub x: MaskedOperand<F>,
+    pub x: ProductOperand<F>,
     pub y: AffineRow<F>,
 }
 

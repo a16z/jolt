@@ -11,7 +11,7 @@ use rand_core::{CryptoRng, RngCore};
 use super::protocol::{pad_row_count, product_intermediates};
 use super::{prove, BlindFoldProtocol, BlindFoldWitness};
 use crate::masking::{
-    CommittedPads, CommittedPadsView, PadLayout, ResidualRelation, ZkBackend, ZkError,
+    CommittedPads, CommittedPadsView, OperandRule, PadLayout, ResidualRelation, ZkBackend, ZkError,
 };
 
 /// The curve back end over the vector commitment `VC`.
@@ -33,6 +33,12 @@ pub struct BlindFoldResidualWitness<F> {
     pub blind: F,
 }
 
+impl<VC> BlindFold<VC> {
+    /// An R1CS constraint's A side is any linear combination. Inherent, so
+    /// callers name it without the back end's commitment bounds.
+    pub const OPERANDS: OperandRule = OperandRule::Affine;
+}
+
 impl<VC: VectorCommitment> BlindFold<VC> {
     /// The pad-row length: the setup's capacity, a power of two.
     fn row_len(setup: &VC::Setup) -> Result<usize, ZkError> {
@@ -51,6 +57,8 @@ where
     VC: VectorCommitment,
     VC::Output: Copy + HomomorphicCommitment<VC::Field> + CanonicalDecode,
 {
+    const OPERANDS: OperandRule = Self::OPERANDS;
+
     type Setup = VC::Setup;
     type PadCommitment = Vec<VC::Output>;
     type PadOpening = BlindFoldPadOpening<VC::Field, VC::Output>;

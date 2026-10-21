@@ -22,14 +22,14 @@ mod tests;
 
 pub use backend::{ErasedSource, ZkBackend, ZkError};
 pub use lowering::{
-    lower_factored, sumcheck_rows, OperandShapeDomain, ProductSum, RoundFormat, RowsDomain,
-    ValuesDomain,
+    lower_factored, sumcheck_rows, LoweringDomain, OperandShapeDomain, ProductSum, RoundFormat,
+    RowsDomain, ValuesDomain,
 };
 pub use pads::{
     CommittedPads, CommittedPadsView, MaskedProver, MaskedVerifier, PadIndex, PadLayout,
 };
 pub use recorder::MaskingRecorder;
 pub use residual::{
-    AffineRow, MaskedOperand, ProductPair, ProductRow, ResidualRelation, ResidualRows, ResidualVar,
-    Row,
+    AffineRow, MaskedOperand, OperandRule, ProductOperand, ProductPair, ProductRow,
+    ResidualRelation, ResidualRows, ResidualVar, Row,
 };

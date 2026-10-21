@@ -40,7 +40,7 @@ mod zk {
         jolt_protocol_id, verify_stages, MaskedStages, VerifiedStages, JOLT_SESSION,
     };
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
-    use jolt_zk::masking::{PadIndex, ProductRow, ResidualRelation, ResidualVar};
+    use jolt_zk::masking::{AffineRow, PadIndex, ProductRow, ResidualRelation, ResidualVar};
     use std::collections::BTreeMap;
 
     use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
@@ -316,20 +316,25 @@ mod zk {
             let witness = [cheater.secrets.joint_evaluation];
             let honest = cheater.relation(pads);
             let base = cheater.masked.pads.layout().auxiliary.start;
-            // Per multi-pair row, its base operands that the row reads only as
-            // operands, with the sum of their cofactors y.
+            // Per multi-pair row, its masked base operands that the row reads
+            // only as operands, with the sum of their cofactors y.
             let operands = |row: &ProductRow<Fr>| -> Vec<(usize, Fr)> {
                 let reads = |pad: usize| {
-                    row.pairs
-                        .iter()
-                        .flat_map(|pair| &pair.y.terms)
-                        .chain(&row.z.terms)
-                        .any(|(variable, _)| *variable == ResidualVar::Pad(PadIndex(pad)))
+                    let read = |form: &AffineRow<Fr>| {
+                        form.terms
+                            .iter()
+                            .any(|(variable, _)| *variable == ResidualVar::Pad(PadIndex(pad)))
+                    };
+                    read(&row.z)
+                        || row.pairs.iter().any(|pair| {
+                            read(&pair.y) || (pair.x.masked().is_none() && read(&pair.x.form()))
+                        })
                 };
                 let mut cofactors: BTreeMap<usize, Fr> = BTreeMap::new();
                 for pair in &row.pairs {
+                    let Some(x) = pair.x.masked() else { continue };
                     let y = pair.y.evaluate(pads, &witness).expect("evaluate y");
-                    *cofactors.entry(pair.x.pad.0).or_insert_with(Fr::zero) += y;
+                    *cofactors.entry(x.pad.0).or_insert_with(Fr::zero) += y;
                 }
                 cofactors
                     .into_iter()
