@@ -86,9 +86,9 @@ impl TracerBackend {
     /// memory or whether a proof of the trace fits, and a rejected trace's
     /// guest effects are discarded, not rolled back. A limit below the setup
     /// requests, which exceed 1 GiB with the default `R0`, fails before setup,
-    /// and the output keeps the row capacity it reserved: exactly its rows when
-    /// it converts its cycles once, at the end, and at least `R0` rows when it
-    /// converts in batches.
+    /// and the output keeps its rows' observed capacity: a run holding every
+    /// cycle to the end requests exactly its rows; a batched run keeps at least
+    /// `R0` rows, even when it converts only at the end.
     ///
     /// Under the limit, `TRACER_PARALLEL` of 2 or more and
     /// [`ChunkedExecutionBackend::execute`] fail with
@@ -250,10 +250,10 @@ impl TracerBackend {
             if trace.cycles.len() >= batch_rows {
                 let tape = emulator.get_cpu().advice_tape.capacity();
                 trace.convert_pending(&bytecode, tape)?;
-                if planned {
-                    batch_rows = trace.plan_batch(tape)?;
-                }
                 let cpu = emulator.get_mut_cpu();
+                if planned {
+                    batch_rows = trace.plan_batch(cpu, prev_pc)?;
+                }
                 cpu.set_advice_write_allowance(trace.advice_write_allowance(0));
             }
         }
@@ -396,6 +396,18 @@ const TICK_BOUND: Emission = Emission {
     rows: MAX_EXPANDED_ROWS_PER_SOURCE,
     field_events: MAX_EXPANDED_ROWS_PER_SOURCE,
 };
+
+/// What the next tick emits: nothing at a PC stall, while the CPU waits for
+/// an interrupt or where its fetch traps, else its instruction's emission.
+fn next_emission(cpu: &mut Cpu, prev_pc: u64) -> Result<Emission, TraceError> {
+    if prev_pc == cpu.read_pc() {
+        return Ok(Emission::default());
+    }
+    match cpu.peek_instruction() {
+        Some(instruction) => instruction.emission(cpu),
+        None => Ok(Emission::default()),
+    }
+}
 
 /// The parallel slices, or one serial slice, a conversion of `pending` cycles
 /// fills: one converted chunk each.
@@ -851,8 +863,7 @@ impl LimitedTrace {
     /// `events` field events: its cycles fit the buffer, grown by
     /// [`growth_target`] if they must, and converting every cycle after it
     /// fits beside the buffer. [`TICK_BOUND`] admits it without a peek where
-    /// no growth is needed; else its emission is `peeked` or peeked now, and
-    /// nothing at a PC stall or a wait for an interrupt.
+    /// no growth is needed; else its emission is `peeked` or [`next_emission`].
     fn next_tick(
         &self,
         cpu: &mut Cpu,
@@ -878,14 +889,7 @@ impl LimitedTrace {
                         reserved,
                     }));
                 }
-                if prev_pc == cpu.read_pc() {
-                    Emission::default()
-                } else {
-                    match cpu.peek_instruction() {
-                        Some(instruction) => instruction.emission(cpu)?,
-                        None => Emission::default(),
-                    }
-                }
+                next_emission(cpu, prev_pc)?
             }
         };
         let phase = TraceAllocationPhase::CycleBuffer;
@@ -1030,8 +1034,10 @@ impl LimitedTrace {
     /// window less one tick: the longest window up to
     /// `pending_window(SERIAL_BATCH_ROWS)` whose cycles, field events and
     /// metadata fit beside every other buffer with the rows grown for it; else
-    /// the longest within the rows' capacity; else one tick.
-    fn plan_batch(&mut self, tape: usize) -> Result<usize, TraceError> {
+    /// the longest within the rows' capacity; else one tick, for which rows
+    /// that [`next_emission`] overruns grow while no window is live.
+    fn plan_batch(&mut self, cpu: &mut Cpu, prev_pc: u64) -> Result<usize, TraceError> {
+        let tape = cpu.advice_tape.capacity();
         let phase = TraceAllocationPhase::CycleBuffer;
         let full = pending_window(SERIAL_BATCH_ROWS)
             .ok_or(TraceAllocationError::SizeOverflow { phase })?;
@@ -1057,7 +1063,13 @@ impl LimitedTrace {
         if window < MAX_EXPANDED_ROWS_PER_SOURCE {
             window = full.min(capacity - converted).min(window_for(capacity));
         }
-        let window = window.max(MAX_EXPANDED_ROWS_PER_SOURCE);
+        if window < MAX_EXPANDED_ROWS_PER_SOURCE {
+            window = MAX_EXPANDED_ROWS_PER_SOURCE;
+            if let Some(rows) = self.row_target(next_emission(cpu, prev_pc)?.rows)? {
+                self.cycles = Vec::new();
+                self.grow_rows(rows, tape)?;
+            }
+        }
         self.replace_window(window, tape)?;
         Ok(window - MAX_EXPANDED_ROWS_PER_SOURCE + 1)
     }

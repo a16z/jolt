@@ -692,22 +692,42 @@ fn uncounted_cycles_fail_the_run() {
 #[test]
 fn planned_windows_hold_their_batch_and_one_tick() {
     let bytecode = BytecodePCMapper::try_new(&[]).unwrap();
+    let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
     let mut trace = storage(usize::MAX, vec![Cycle::NoOp; 100], Vec::new());
     trace.start_batches(&bytecode, 0, 1 << 18, 0).unwrap();
     assert_eq!((trace.rows.len(), trace.rows.capacity()), (100, 1 << 18));
     assert_eq!(trace.cycles.capacity(), MAX_EXPANDED_ROWS_PER_SOURCE);
     let held = heap_bytes(&trace.rows) + heap_bytes(&trace.chunks);
     trace.limit = held + ((size_of::<Cycle>() + FIELD_EVENT_BYTES) << 17);
-    let batch = trace.plan_batch(0).unwrap();
+    let batch = trace.plan_batch(&mut cpu, 0).unwrap();
     assert!(1 < batch && batch < SERIAL_BATCH_ROWS, "{batch}");
     assert_eq!(trace.cycles.capacity(), pending_window(batch).unwrap());
     assert!(trace.rows.len() + trace.cycles.capacity() <= trace.rows.capacity());
     let window = MAX_EXPANDED_ROWS_PER_SOURCE * size_of::<Cycle>();
     trace.limit = held + window - 1;
     assert_eq!(
-        rejection(trace.plan_batch(0)),
+        rejection(trace.plan_batch(&mut cpu, 0)),
         Some((TraceAllocationPhase::CycleBuffer, held + window))
     );
+}
+
+/// Rows that a one-tick batch overruns grow before its window, not beside it.
+/// With a one-cycle reserve, a longest inline converts into rows anchored at
+/// 2^16 before the first addi, which fills them; the second addi needs them
+/// doubled. The limit holds the doubled rows beside the old rows or beside
+/// the window, but not beside both.
+#[test]
+fn one_tick_rows_grow_before_its_window() {
+    reserve_rows(1);
+    let (program, inputs) = guest(&[LONGEST_INLINE_WORD, ADDI, ADDI, STALL]);
+    let original = TracerBackend::new()
+        .trace(&program, inputs.clone())
+        .unwrap();
+    let window = MAX_EXPANDED_ROWS_PER_SOURCE * size_of::<Cycle>();
+    let limit = setup_bytes(&program, &inputs) + (10 << 20) + window;
+    let output = limited(limit).trace(&program, inputs).unwrap();
+    assert_eq!(output.trace.rows(), original.trace.rows());
+    assert_eq!(row_capacity(&output), 1 << 17);
 }
 
 /// An accumulated trace ends image first, as the original trace does, where
