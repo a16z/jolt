@@ -126,45 +126,56 @@ pub struct Stage6bDraws<F> {
 impl<F: JoltField> Stage6bDraws<F> {
     pub fn draw<T: Transcript<Challenge = F>>(
         transcript: &mut T,
+        formula_dimensions: &JoltFormulaDimensions,
         committed_bytecode: bool,
     ) -> Self {
-        // Field order is draw order: the struct literal evaluates in
-        // declaration order.
-        Self {
-            instruction_ra_gamma: transcript.challenge_scalar(),
-            #[cfg(not(feature = "akita"))]
-            inc_gamma: transcript.challenge_scalar(),
-            #[cfg(feature = "field-inline")]
-            field_registers_inc_gamma: transcript.challenge_scalar(),
-            eta: committed_bytecode.then(|| transcript.challenge_scalar()),
-        }
+        Self::sequence(formula_dimensions, committed_bytecode, |_| {
+            transcript.challenge_scalar()
+        })
     }
 
     /// The loss of the burst [`draw`](Self::draw) opens, including the batching
-    /// coefficients that follow it. Each draw folds its member's input claims
-    /// with powers up to one less than the claim count: the instruction RA
-    /// claims, the four base increment claims, the two field-register increment
-    /// claims, and the staged bytecode Val claims.
+    /// coefficients that follow it. It runs the same
+    /// [`sequence`](Self::sequence) as `draw`, summing losses instead of
+    /// squeezing, so the price cannot drift from the draws.
     pub fn challenge_loss(
         formula_dimensions: &JoltFormulaDimensions,
         committed_bytecode: bool,
     ) -> u64 {
-        let instruction_ra = u64_from_usize(
-            formula_dimensions
-                .instruction_ra_virtualization
-                .num_virtual_ra_polys()
-                .saturating_sub(1),
-        );
-        let inc = if cfg!(feature = "akita") { 0 } else { 3 };
-        let field_registers_inc = u64::from(cfg!(feature = "field-inline"));
-        let bytecode = if committed_bytecode {
-            u64_from_usize(NUM_BYTECODE_VAL_STAGES.saturating_sub(1))
-        } else {
-            0
-        };
-        [inc, field_registers_inc, bytecode, BATCH_COEFFICIENT_LOSS]
-            .into_iter()
-            .fold(instruction_ra, u64::saturating_add)
+        let mut loss = BATCH_COEFFICIENT_LOSS;
+        let _ = Self::sequence(formula_dimensions, committed_bytecode, |draw_loss| {
+            loss = loss.saturating_add(draw_loss);
+            F::from_u64(0)
+        });
+        loss
+    }
+
+    /// The burst's draws in squeeze order. `scalar` receives each draw's loss
+    /// and returns its value. Each draw folds its member's input claims with
+    /// powers up to one less than the claim count: the instruction RA claims,
+    /// the four base increment claims, the two field-register increment
+    /// claims, and the staged bytecode Val claims.
+    fn sequence(
+        formula_dimensions: &JoltFormulaDimensions,
+        committed_bytecode: bool,
+        mut scalar: impl FnMut(u64) -> F,
+    ) -> Self {
+        // Field order is draw order: the struct literal evaluates in
+        // declaration order.
+        Self {
+            instruction_ra_gamma: scalar(u64_from_usize(
+                formula_dimensions
+                    .instruction_ra_virtualization
+                    .num_virtual_ra_polys()
+                    .saturating_sub(1),
+            )),
+            #[cfg(not(feature = "akita"))]
+            inc_gamma: scalar(3),
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_gamma: scalar(1),
+            eta: committed_bytecode
+                .then(|| scalar(u64_from_usize(NUM_BYTECODE_VAL_STAGES.saturating_sub(1)))),
+        }
     }
 }
 
@@ -593,7 +604,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 #[cfg(test)]
 #[expect(
     clippy::as_conversions,
-    reason = "tests use plain arithmetic on fixture data"
+    clippy::unwrap_used,
+    reason = "tests use plain arithmetic and unwrap on fixture data"
 )]
 mod tests {
     use super::*;
@@ -606,6 +618,17 @@ mod tests {
     /// then the committed bytecode eta exactly when the bytecode layout is committed.
     #[test]
     fn stage6b_draws_follow_member_declaration_order() {
+        let formula_dimensions = JoltFormulaDimensions::try_from(
+            jolt_claims::protocols::jolt::geometry::dimensions::JoltOneHotDimensions {
+                log_t: 8,
+                instruction_address_bits: 128,
+                bytecode_k: 1024,
+                ram_k: 4096,
+                committed_chunk_bits: 8,
+                lookup_virtual_chunk_bits: 32,
+            },
+        )
+        .unwrap();
         for committed_bytecode in [false, true] {
             let mut expected_squeezes = 1usize;
             #[cfg(not(feature = "akita"))]
@@ -623,7 +646,8 @@ mod tests {
                     .map(|_| t.challenge_scalar())
                     .collect::<Vec<Fr>>()
             });
-            let (draw_events, draws) = record(|t| Stage6bDraws::<Fr>::draw(t, committed_bytecode));
+            let (draw_events, draws) =
+                record(|t| Stage6bDraws::<Fr>::draw(t, &formula_dimensions, committed_bytecode));
 
             assert_eq!(draw_events, inline_events);
             assert_eq!(

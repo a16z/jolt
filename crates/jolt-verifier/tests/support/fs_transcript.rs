@@ -47,6 +47,10 @@ pub struct ChallengeRecord<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeTape<F> {
     pub records: Vec<ChallengeRecord<F>>,
+    /// Proof-of-work check bytes, in squeeze order. They are not challenges,
+    /// but a replay must freeze them too: otherwise a mutated transcript
+    /// fails the proof of work before reaching the binding under test.
+    pub pow_checks: Vec<Vec<u8>>,
 }
 
 impl<F: PartialEq> ChallengeTape<F> {
@@ -86,11 +90,14 @@ enum Session {
     Record {
         records: Vec<ErasedRecord>,
         counters: BTreeMap<FsScope, usize>,
+        pow_checks: Vec<Vec<u8>>,
     },
     Replay {
         records: Vec<ErasedRecord>,
         counters: BTreeMap<FsScope, usize>,
         cursor: usize,
+        pow_checks: Vec<Vec<u8>>,
+        pow_cursor: usize,
     },
 }
 
@@ -121,7 +128,9 @@ where
             return actual;
         };
         match session {
-            Session::Record { records, counters } => {
+            Session::Record {
+                records, counters, ..
+            } => {
                 let id = next_id(counters, kind);
                 records.push(ErasedRecord {
                     id,
@@ -133,6 +142,7 @@ where
                 records,
                 counters,
                 cursor,
+                ..
             } => {
                 let id = next_id(counters, kind);
                 let expected = records
@@ -151,6 +161,31 @@ where
             }
         }
     })
+}
+
+/// Records or replays one proof-of-work check squeeze. `out` already holds
+/// the live squeeze; a replay overwrites it with the recorded bytes.
+fn pow_check(out: &mut [u8]) {
+    SESSION.with(|slot| match slot.borrow_mut().as_mut() {
+        None => {}
+        Some(Session::Record { pow_checks, .. }) => pow_checks.push(out.to_vec()),
+        Some(Session::Replay {
+            pow_checks,
+            pow_cursor,
+            ..
+        }) => {
+            let expected = pow_checks
+                .get(*pow_cursor)
+                .unwrap_or_else(|| panic!("proof-of-work replay exhausted at {pow_cursor}"));
+            assert_eq!(
+                expected.len(),
+                out.len(),
+                "proof-of-work replay width diverged at check {pow_cursor}"
+            );
+            out.copy_from_slice(expected);
+            *pow_cursor += 1;
+        }
+    });
 }
 
 /// Transcript wrapper that records or replays challenge calls for the active session.
@@ -219,10 +254,11 @@ where
         powers
     }
 
-    // Proof-of-work check bytes are not challenges; they pass through
-    // unrecorded, so a replay recomputes them from the replayed transcript.
+    // Only the provided `check_grind` squeezes raw bytes, so these are
+    // proof-of-work check words.
     fn challenge_bytes(&mut self, out: &mut [u8]) {
         self.inner.challenge_bytes(out);
+        pow_check(out);
     }
 
     fn state(&self) -> [u8; 32] {
@@ -243,12 +279,17 @@ where
         *slot.borrow_mut() = Some(Session::Record {
             records: Vec::new(),
             counters: BTreeMap::new(),
+            pow_checks: Vec::new(),
         });
     });
 
     let result = verify();
-    let records = SESSION.with(|slot| match slot.borrow_mut().take() {
-        Some(Session::Record { records, .. }) => records,
+    let (records, pow_checks) = SESSION.with(|slot| match slot.borrow_mut().take() {
+        Some(Session::Record {
+            records,
+            pow_checks,
+            ..
+        }) => (records, pow_checks),
         Some(Session::Replay { .. }) => panic!("recording session changed to replay"),
         None => panic!("recording session disappeared"),
     });
@@ -263,10 +304,17 @@ where
                 .clone(),
         })
         .collect();
-    (result, ChallengeTape { records })
+    (
+        result,
+        ChallengeTape {
+            records,
+            pow_checks,
+        },
+    )
 }
 
-/// Result of verifying with a frozen challenge tape.
+/// Result of verifying with a frozen challenge tape. The counts cover
+/// challenge records and proof-of-work checks together.
 pub struct ReplayResult<R> {
     pub output: R,
     pub consumed: usize,
@@ -298,14 +346,20 @@ where
             records,
             counters: BTreeMap::new(),
             cursor: 0,
+            pow_checks: tape.pow_checks.clone(),
+            pow_cursor: 0,
         });
     });
 
     let output = verify();
     let (consumed, expected) = SESSION.with(|slot| match slot.borrow_mut().take() {
         Some(Session::Replay {
-            records, cursor, ..
-        }) => (cursor, records.len()),
+            records,
+            cursor,
+            pow_checks,
+            pow_cursor,
+            ..
+        }) => (cursor + pow_cursor, records.len() + pow_checks.len()),
         Some(Session::Record { .. }) => panic!("replay session changed to recording"),
         None => panic!("replay session disappeared"),
     });

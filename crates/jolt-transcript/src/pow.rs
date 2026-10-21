@@ -29,6 +29,7 @@
 
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "prover-grinding")]
 use spongefish::DuplexSpongeInterface;
@@ -96,6 +97,11 @@ impl<H: DuplexSpongeInterface<U = u8> + Sync> Probe for MessageSearch<H> {
     }
 }
 
+/// Difficulties up to this many bits search on the calling thread: their
+/// expected `2^bits` probes cost less than waking the thread pool.
+#[cfg(feature = "parallel")]
+const SEQUENTIAL_POW_BITS: u32 = 6;
+
 /// The layout of one proof-of-work step at a difficulty of `1..=MAX_POW_BITS`.
 #[derive(Clone, Copy)]
 pub(crate) struct SpongePow {
@@ -118,6 +124,7 @@ impl SpongePow {
     }
 
     /// `ceil((bits + 7) / 7)` bytes encode every nonce, at most 5.
+    #[cfg(feature = "spongefish")]
     pub(crate) const fn max_nonce_len(self) -> usize {
         (self.bits as usize + 13) / 7
     }
@@ -141,6 +148,7 @@ impl SpongePow {
     /// Reads a nonce byte by byte through `next`. Returns `None` unless its
     /// encoding is canonical LEB128 and it is at most `last_nonce`; read
     /// errors pass through.
+    #[cfg(feature = "spongefish")]
     pub(crate) fn read_nonce<E>(
         self,
         mut next: impl FnMut() -> Result<u8, E>,
@@ -170,43 +178,46 @@ impl SpongePow {
         self.accepts(out)
     }
 
-    /// The least accepted nonce.
-    #[cfg(not(feature = "parallel"))]
+    /// The least accepted nonce. Builds without `parallel`, and difficulties
+    /// up to [`SEQUENTIAL_POW_BITS`] bits, scan on the calling thread; larger
+    /// ones scan on every thread of the current pool. Either way the result
+    /// is the least accepted nonce, so the proof does not depend on the
+    /// thread count.
     pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
-        self.search_sequential(probe)
-    }
-
-    /// The least accepted nonce, scanned in increasing order.
-    #[cfg(any(test, not(feature = "parallel")))]
-    fn search_sequential(self, probe: &impl Probe) -> Option<u32> {
-        (0..=self.last_nonce()).find(|&nonce| self.accepts_nonce(probe, nonce))
-    }
-
-    /// The least accepted nonce, searched on all threads. The result equals
-    /// the sequential search.
-    #[cfg(feature = "parallel")]
-    pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-
         // `u64::MAX` is no nonce, so it marks "not found".
         let least = AtomicU64::new(u64::MAX);
-        drop(rayon::broadcast(|ctx| {
-            // Each thread scans its own residue class in increasing order and
-            // stops once it cannot beat the least nonce found so far.
-            let nonces = (ctx.index() as u64..=u64::from(self.last_nonce()))
-                .step_by(ctx.num_threads())
-                .filter_map(|nonce| u32::try_from(nonce).ok());
-            for nonce in nonces {
-                if u64::from(nonce) >= least.load(Ordering::Relaxed) {
-                    break;
-                }
-                if self.accepts_nonce(probe, nonce) {
-                    let _ = least.fetch_min(u64::from(nonce), Ordering::SeqCst);
-                    break;
-                }
-            }
-        }));
+        #[cfg(feature = "parallel")]
+        let on_pool = self.bits > SEQUENTIAL_POW_BITS;
+        #[cfg(not(feature = "parallel"))]
+        let on_pool = false;
+        if on_pool {
+            // Each thread scans its own residue class.
+            #[cfg(feature = "parallel")]
+            drop(rayon::broadcast(|ctx| {
+                self.scan(probe, ctx.index(), ctx.num_threads(), &least);
+            }));
+        } else {
+            self.scan(probe, 0, 1, &least);
+        }
         u32::try_from(least.into_inner()).ok()
+    }
+
+    /// Scans the nonces `first, first + stride, ...` in increasing order and
+    /// lowers `least` to the first one accepted. Stops once it cannot beat
+    /// `least`, which other scans may lower meanwhile.
+    fn scan(self, probe: &impl Probe, first: usize, stride: usize, least: &AtomicU64) {
+        let nonces = (first as u64..=u64::from(self.last_nonce()))
+            .step_by(stride)
+            .filter_map(|nonce| u32::try_from(nonce).ok());
+        for nonce in nonces {
+            if u64::from(nonce) >= least.load(Ordering::Relaxed) {
+                break;
+            }
+            if self.accepts_nonce(probe, nonce) {
+                let _ = least.fetch_min(u64::from(nonce), Ordering::SeqCst);
+                break;
+            }
+        }
     }
 }
 
@@ -251,6 +262,7 @@ mod tests {
         assert!(SpongePow::new(MAX_POW_BITS + 1).is_none());
     }
 
+    #[cfg(feature = "spongefish")]
     #[test]
     fn layout() {
         let layout = |bits| {
@@ -263,6 +275,7 @@ mod tests {
         assert_eq!(layout(25), (u32::MAX, 5, 4));
     }
 
+    #[cfg(feature = "spongefish")]
     #[test]
     fn read_nonce_accepts_only_canonical_nonces_in_range() {
         let read = |bits, bytes: &[u8]| {
@@ -290,7 +303,9 @@ mod tests {
     }
 
     mod search {
-        use super::super::{Leb128, Probe, SpongePow, MAX_POW_BITS};
+        #[cfg(feature = "spongefish")]
+        use super::super::MAX_POW_BITS;
+        use super::super::{Leb128, Probe, SpongePow};
 
         #[test]
         fn leb128_is_canonical() {
@@ -300,6 +315,7 @@ mod tests {
             assert_eq!(encode(128), [0x80, 0x01]);
             assert_eq!(encode(300), [0xac, 0x02]);
             assert_eq!(encode(u32::MAX), [0xff, 0xff, 0xff, 0xff, 0x0f]);
+            #[cfg(feature = "spongefish")]
             for bits in 1..=MAX_POW_BITS {
                 let pow = SpongePow::new(bits).unwrap();
                 let longest = Leb128::new(pow.last_nonce());
@@ -310,6 +326,11 @@ mod tests {
                     Ok(Some(pow.last_nonce()))
                 );
             }
+        }
+
+        /// The least accepted nonce, by a plain scan.
+        fn least_accepted(pow: SpongePow, probe: &impl Probe) -> Option<u32> {
+            (0..=pow.last_nonce()).find(|&nonce| pow.accepts_nonce(probe, nonce))
         }
 
         /// A probe that accepts exactly the nonce `target`, or none.
@@ -331,7 +352,7 @@ mod tests {
                 let last = pow.last_nonce();
                 for target in [None, Some(0), Some(1), Some(last / 2), Some(last)] {
                     let probe = AcceptOnly(target);
-                    assert_eq!(pow.search_sequential(&probe), target);
+                    assert_eq!(least_accepted(pow, &probe), target);
                     assert_eq!(pow.search(&probe), target);
                 }
             }
@@ -366,8 +387,30 @@ mod tests {
                 ] {
                     let least = targets.iter().min().copied();
                     let probe = AcceptAny(targets);
-                    assert_eq!(pow.search_sequential(&probe), least);
+                    assert_eq!(least_accepted(pow, &probe), least);
                     assert_eq!(pow.search(&probe), least);
+                }
+            }
+        }
+
+        /// On either side of the calling-thread cutoff and on any number of
+        /// threads, the search returns the same, least accepted nonce, so
+        /// proofs do not depend on the thread count.
+        #[cfg(feature = "parallel")]
+        #[test]
+        fn search_is_independent_of_the_thread_count() {
+            use super::super::SEQUENTIAL_POW_BITS;
+
+            for bits in [SEQUENTIAL_POW_BITS, SEQUENTIAL_POW_BITS + 1, 9] {
+                let pow = SpongePow::new(bits).unwrap();
+                let last = pow.last_nonce();
+                let probe = AcceptAny(vec![last, last / 2, last / 3 + 1]);
+                for threads in [1, 2, 3, 8] {
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(threads)
+                        .build()
+                        .unwrap();
+                    assert_eq!(pool.install(|| pow.search(&probe)), Some(last / 3 + 1));
                 }
             }
         }

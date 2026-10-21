@@ -81,6 +81,7 @@ jolt-verifier::proof.rs::JoltProof.trace_polynomial_order
 jolt-verifier::proof.rs::JoltProof.untrusted_advice_commitment
 jolt-verifier::proof.rs::JoltProofClaims::Clear.0
 jolt-verifier::proof.rs::JoltProofClaims::Zk.blindfold_proof
+jolt-verifier::proof.rs::JoltStageProofs.pow_nonces
 jolt-verifier::proof.rs::JoltStageProofs.stage1_sumcheck_proof
 jolt-verifier::proof.rs::JoltStageProofs.stage1_uni_skip_first_round_proof
 jolt-verifier::proof.rs::JoltStageProofs.stage2_sumcheck_proof

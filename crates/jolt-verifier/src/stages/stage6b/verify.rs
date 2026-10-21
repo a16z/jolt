@@ -103,7 +103,11 @@ where
         &proof.stages.pow_nonces(),
         transcript,
     )?;
-    let draws = Stage6bDraws::draw(transcript, bytecode_reduction_layout.is_some());
+    let draws = Stage6bDraws::draw(
+        transcript,
+        formula_dimensions,
+        bytecode_reduction_layout.is_some(),
+    );
 
     let sumchecks = Stage6bSumchecks::build(
         checked,
