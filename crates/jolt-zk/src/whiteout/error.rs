@@ -37,7 +37,9 @@ pub enum WhiteoutError {
     /// shapes, breaking the joint rejection theorem's hypothesis.
     #[error("Gaussian width too narrow for the segments' honest norms")]
     WidthTooNarrow,
-    /// The parameters exceed the joint rejection rule's exact arithmetic.
+    /// The parameters exceed the joint rejection rule's exact arithmetic:
+    /// the verifier's mirror of `JointRejection::new`'s bound on the
+    /// worst-case exponent numerator.
     #[error("parameters exceed the rejection rule's arithmetic bounds")]
     RejectionArithmetic,
     /// Parameter arithmetic overflowed its integer range.

@@ -411,6 +411,59 @@ mod tests {
         }
     }
 
+    /// mpmath `⌊2^{192}/M⌋` at Whiteout's almost-never rejection
+    /// (`α = 2^{17}`, `ε = 2^{−137}`), and `⌊2^{192}·2^{−2^i/Q}⌋` for its one
+    /// width `k = 58,642,511,897`, `Q = k²`.
+    #[test]
+    fn almost_never_rejection_constants_match_mpmath() {
+        assert_eq!(
+            inverse_repetition_rate(1 << 17, EPSILON_BITS),
+            Fix192([
+                0x36d0_1081_12d9_269b,
+                0xe689_0634_de3d_0ad4,
+                0xfff9_1c18_3ccf_8be4
+            ])
+        );
+        let k = 58_642_511_897;
+        let block = BlockParams {
+            width: width(k),
+            box_bound: 1 << 39,
+            shift_bound: 1 << 13,
+            len: 1 << 22,
+        };
+        let rule = JointRejection::new(vec![block, block], 1 << 17, EPSILON_BITS).unwrap();
+        assert_eq!(rule.denominator, u128::from(k) * u128::from(k));
+        assert_eq!(rule.exp_table.len(), 72);
+        for (i, limbs) in [
+            (
+                0,
+                [
+                    0x4671_40e3_ad7a_dc4a,
+                    0xff0c_54c7_4d90_a59d,
+                    0xffff_ffff_ffff_ffff,
+                ],
+            ),
+            (
+                40,
+                [
+                    0xa622_eb9d_fdc0_6123,
+                    0x049c_dd5a_112c_4a2b,
+                    0xffff_ffff_0c54_c74e,
+                ],
+            ),
+            (
+                71,
+                [
+                    0xf7c4_7c70_bce1_4998,
+                    0x0b73_4f05_da5a_dddb,
+                    0x9f0e_8e6d_ba42_2883,
+                ],
+            ),
+        ] {
+            assert_eq!(rule.exp_table[i], Fix192(limbs), "i = {i}");
+        }
+    }
+
     #[test]
     fn acceptance_probability_matches_definition() {
         for alpha in [ALPHA, ALPHA_NEAR_BOUND] {
@@ -600,8 +653,11 @@ mod tests {
 
     /// `T_att` against the completeness bound in `f64` with the exact `M`:
     /// 163 at the paper's parameters (§6.2), 10 at Whiteout's almost-never
-    /// rejection (`α = 2^{17}`, box failure `2^{−20}`), and the same rule at
-    /// the near-bound `α`.
+    /// rejection, and the same rule at the near-bound `α`. The `(2^{17},
+    /// 2^{20}, 10)` case repeats jolt-zk's `ALPHA` and `BOX_FAILURE_INVERSE`
+    /// on purpose: jolt-crypto cannot read them, and this pins the rule at
+    /// the parameters Whiteout runs (jolt-zk's headline test pins the same
+    /// `T_att` through its own constants).
     #[test]
     fn max_attempts_meets_the_completeness_bound() {
         for (alpha, box_failure_inverse, expected) in [

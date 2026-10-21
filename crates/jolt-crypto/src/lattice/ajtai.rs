@@ -200,23 +200,31 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         if let Some(bound) = u32::try_from(bound).ok().filter(|&b| b <= i32::MAX as u32) {
             return self.apply_i32(input, bound);
         }
-        let mut rest = input.to_vec();
+        // Balanced base-2^30 digits: with `h_j = 2^29·(2^{30j} − 1)/(2^30 − 1)`,
+        // `rest_j = ⌊(x + h_j)/2^{30j}⌋`, limb `j` is `rest_j`'s low 30 bits
+        // sign-extended, and the top limb is `rest_j` itself. Each pass
+        // recomputes its limb from `input` into one scratch buffer.
         let mut limb = vec![0i64; input.len()];
         let mut output = vec![CyclotomicRing::zero(); self.shape.rows];
         let mut weight = F::one();
         let radix = F::from_u64(1 << LIMB_BITS);
+        let (mut offset, mut shift) = (0i128, 0u32);
         let mut remaining = bound;
         while remaining > i32::MAX as u64 {
-            for (low, value) in limb.iter_mut().zip(rest.iter_mut()) {
-                // Sign-extend the low LIMB_BITS bits: low ∈ [−2^29, 2^29).
-                *low = (*value << (64 - LIMB_BITS)) >> (64 - LIMB_BITS);
-                *value = (*value - *low) >> LIMB_BITS;
+            for (dst, &value) in limb.iter_mut().zip(input) {
+                let rest = ((i128::from(value) + offset) >> shift) as i64;
+                *dst = (rest << (64 - LIMB_BITS)) >> (64 - LIMB_BITS);
             }
             self.accumulate(&limb, 1 << (LIMB_BITS - 1), weight, &mut output)?;
             weight *= radix;
+            offset += 1 << (LIMB_BITS - 1 + shift);
+            shift += LIMB_BITS;
             remaining = (remaining >> LIMB_BITS) + 1;
         }
-        self.accumulate(&rest, remaining as u32, weight, &mut output)?;
+        for (dst, &value) in limb.iter_mut().zip(input) {
+            *dst = ((i128::from(value) + offset) >> shift) as i64;
+        }
+        self.accumulate(&limb, remaining as u32, weight, &mut output)?;
         Ok(output)
     }
 

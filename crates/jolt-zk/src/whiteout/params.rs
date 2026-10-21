@@ -17,7 +17,7 @@
 use jolt_crypto::challenge::{
     OperatorNormRejection, D64_SELECTIVE_L2_CHALLENGE_CONFIG, MIN_FOLD_CHALLENGE_ENTROPY_BITS,
 };
-use jolt_crypto::lattice::CHALLENGE_RING_DIM;
+use jolt_crypto::lattice::{CHALLENGE_RING_DIM, MAX_CENTERED_BOUND};
 #[cfg(feature = "whiteout-prover")]
 use jolt_crypto::sample::{BlockParams, GaussianWidth, JointRejection};
 
@@ -39,8 +39,15 @@ const BOX_FAILURE_INVERSE: u64 = 1 << 20;
 const ALL_REJECTED_BITS: u32 = 128;
 /// `⌈2^64 · ln 2⌉`.
 const LN2_CEIL_2_64: u128 = 12_786_308_645_202_655_660;
-/// Largest digit count whose box stays below the rejection rule's `2^62`.
+/// Largest response digit count. Its whole balanced range stays within the
+/// rejection rule's `2^62` box bound and the Ajtai map's input bound,
+/// checked at compile time below.
 const MAX_RESPONSE_DIGITS: usize = 15;
+/// `8·(16^15 − 1)/15`, the negative end of fifteen balanced radix-16 digits.
+const MAX_RESPONSE_MAGNITUDE: u128 = 8 * ((1 << (4 * MAX_RESPONSE_DIGITS)) - 1) / 15;
+const _: () = assert!(MAX_RESPONSE_MAGNITUDE <= MAX_REJECTION_BOUND);
+const _: () = assert!(MAX_RESPONSE_MAGNITUDE <= MAX_CENTERED_BOUND as u128);
+
 /// The sampler's largest width multiplier, mirrored so that the verifier,
 /// which does not build the sampler, rejects a width the prover could not
 /// sample.
@@ -171,7 +178,7 @@ impl SigmaParams {
             });
         }
         check_rejection_arithmetic(&blocks)?;
-        // At most fifteen digits: below the Ajtai map's 2^62 input bound.
+        // At most MAX_RESPONSE_MAGNITUDE, within the Ajtai map's input bound.
         let response_bound = response_digits
             .iter()
             .map(|&digits| {
@@ -257,14 +264,17 @@ fn gaussian_l2_sq(table: &SegmentTable) -> Result<u128, WhiteoutError> {
         .ok_or(WhiteoutError::Overflow)
 }
 
-/// Mirrors the parameter bounds of `JointRejection::new` for one common
-/// width (denominator `k² < 2^{117}`): every box and shift bound at most
-/// `2^62`, and the worst-case exponent numerator
-/// `Σ_b (2 L_b V_b + V_b²) · len_b` below `2^126`.
+/// The verifier's mirror of `JointRejection::new`'s one remaining runtime
+/// bound, so that both roles reject a table the prover could not run: the
+/// worst-case exponent numerator `Σ_b (2 L_b V_b + V_b²) · len_b` below
+/// `2^126`, and shift bounds at most `2^62`. With one width the denominator
+/// is `k² < 2^{117}`, and boxes are below `2^62` by the compile-time checks
+/// above. At the production α the width check fails first on any table the
+/// numerator bound would reject; at α = 16 it can bind.
 fn check_rejection_arithmetic(blocks: &[GaussianBlock]) -> Result<(), WhiteoutError> {
     let worst = blocks.iter().try_fold(0u128, |acc, block| {
         let (box_bound, shift) = (u128::from(block.box_bound), u128::from(block.shift_bound));
-        if box_bound > MAX_REJECTION_BOUND || shift > MAX_REJECTION_BOUND {
+        if shift > MAX_REJECTION_BOUND {
             return None;
         }
         let per_coordinate = box_bound

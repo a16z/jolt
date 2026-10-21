@@ -2,6 +2,8 @@
 
 #![expect(clippy::unwrap_used, reason = "tests unwrap well-formed inputs")]
 
+use jolt_algebra::Prime128OffsetA7F7;
+use jolt_crypto::lattice::required_randomness_columns;
 use jolt_zk::whiteout::{
     Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable, SigmaParams, WhiteoutError,
 };
@@ -23,8 +25,26 @@ fn segment(
     }
 }
 
+/// Rank over R_256 of the residual commitment's A and [B|B′] and of the pad
+/// commitment at the headline: a setup input (Akita's planner sizes it for
+/// the ten-digit collision radius, `specs/whiteout-sigma.md` §5.1), owned
+/// here for the whole table.
+const RANK: usize = 5;
+/// Inner-digit R_64 elements per unit of A's rank: Gaussian and public.
+const INNER_DIGITS_PER_RANK: [usize; 2] = [2_688, 3_072];
+
+/// R_64 elements of hiding randomness for an image of `RANK` R_256 elements
+/// plus `extra` coefficients, at the radix-16 digits and 8 bits of slack of
+/// `whiteout-sigma.md` §1.5.
+fn randomness_len(extra: usize) -> usize {
+    let columns =
+        required_randomness_columns::<Prime128OffsetA7F7>(RANK * 256, extra, 256, 4, 8).unwrap();
+    columns * 4
+}
+
 /// The headline residual vector at T = 2^24, k = 2 (`scripts/whiteout-costs.py`),
-/// each segment rounded up to whole R_256 elements.
+/// each segment rounded up to whole R_256 elements, at commitment rank
+/// [`RANK`].
 fn headline(operand_shape: SegmentShape) -> SegmentTable {
     SegmentTable::new(vec![
         segment(
@@ -43,21 +63,21 @@ fn headline(operand_shape: SegmentShape) -> SegmentTable {
         ),
         segment(
             SegmentRole::InnerDigits,
-            9_216,
+            INNER_DIGITS_PER_RANK[1] * RANK,
             4,
             SegmentShape::Dense,
             SegmentMask::Public,
         ),
         segment(
             SegmentRole::InnerDigits,
-            8_064,
+            INNER_DIGITS_PER_RANK[0] * RANK,
             4,
             SegmentShape::Dense,
             SegmentMask::Gaussian,
         ),
         segment(
             SegmentRole::ResidualRandomness,
-            388,
+            randomness_len(0),
             4,
             SegmentShape::Dense,
             SegmentMask::Gaussian,
@@ -78,7 +98,8 @@ fn headline(operand_shape: SegmentShape) -> SegmentTable {
         ),
         segment(
             SegmentRole::PadRandomness,
-            420,
+            // The pad commitment's randomness also hides the row L.
+            randomness_len(64),
             4,
             SegmentShape::Dense,
             SegmentMask::Gaussian,
@@ -103,7 +124,7 @@ fn headline_parameters_match_the_closed_form() {
 }
 
 /// The headline's derived width multiplier.
-const WIDTH: u64 = 57_033_704_728;
+const WIDTH: u64 = 58_642_511_897;
 
 #[test]
 fn width_check_rejects_narrower_widths() {

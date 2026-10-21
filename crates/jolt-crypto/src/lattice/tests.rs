@@ -144,6 +144,40 @@ fn apply_centered_splits_wide_inputs_into_limbs() {
         .is_err());
 }
 
+/// Limb edges against schoolbook: the smallest bound that takes the limb
+/// path (2^31), and inputs whose low limb is exactly −2^29 or 2^29 − 1, with
+/// carries into the next limb.
+#[test]
+fn apply_centered_limb_edges() {
+    let shape = MatrixShape {
+        rows: 2,
+        width: 1,
+        ring_dim: 64,
+    };
+    let (data, matrix) = prepared::<64>(shape, 16);
+    let low = 1i64 << 29;
+    for (bound, top) in [(1u64 << 31, 1i64 << 31), (MAX_CENTERED_BOUND, 1 << 62)] {
+        let edges = [
+            -low,
+            low - 1,
+            -low + (1 << 30),
+            low - 1 + (1 << 30),
+            -low - (1 << 30),
+            top,
+            -top,
+            top - low,
+            -top + low,
+            0,
+        ];
+        let input: Vec<i64> = (0..64).map(|i| edges[i % edges.len()]).collect();
+        assert_eq!(
+            matrix.apply_centered(&input, bound).unwrap(),
+            schoolbook(shape, &data, &lift::<64>(&input)),
+            "bound {bound}"
+        );
+    }
+}
+
 #[test]
 fn apply_centered_rejects_inputs_above_the_bound() {
     let shape = MatrixShape {
