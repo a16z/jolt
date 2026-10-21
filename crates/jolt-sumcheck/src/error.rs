@@ -36,13 +36,27 @@ pub enum SumcheckError<F: Field> {
         max: usize,
     },
 
-    /// A batch with rounds to prove declared a maximum degree of zero. A
+    /// A batch member's round polynomial exceeded the round's scheduled
+    /// degree bound.
+    #[error("round {round}: batch member {member} sent degree {got}, schedule allows {max}")]
+    RoundDegreeBoundExceeded {
+        round: usize,
+        member: usize,
+        /// Degree of the member's polynomial, ignoring zero leading
+        /// coefficients.
+        got: usize,
+        max: usize,
+    },
+
+    /// A batch's degree schedule gives one of its rounds degree zero. A
     /// sumcheck round polynomial must have degree at least 1 — the same
     /// invariant `SumcheckClaim::new` enforces on the verify side.
-    #[error("batch declares max degree 0 with {max_num_vars} rounds to prove")]
+    #[error("batch schedules round {round} of its {max_num_vars} at degree 0")]
     ZeroBatchDegree {
         /// Number of rounds that would need round polynomials.
         max_num_vars: usize,
+        /// The first round scheduled at degree 0.
+        round: usize,
     },
 
     /// A batch member declared more rounds than the batch contains.

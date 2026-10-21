@@ -25,6 +25,7 @@ use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
 use crate::round_proof::{
     receive_compressed_round, receive_full_round, send_compressed_round, send_full_round,
 };
+use crate::schedule::{DegreeSchedule, MemberDegrees};
 use crate::verifier::SumcheckVerifier;
 use jolt_poly::EvaluationClaim;
 
@@ -219,8 +220,7 @@ fn batched_rounds_with_challenges(challenges: &[F], max_num_vars: usize) -> Batc
             })
             .collect(),
         batching_coefficients: vec![F::from_u64(7)],
-        max_num_vars,
-        max_degree: 1,
+        degrees: DegreeSchedule::uniform(max_num_vars, 1),
     }
 }
 
@@ -552,8 +552,7 @@ fn prelude(members: &[(F, F, usize, usize)], max_num_vars: usize) -> BatchPrelud
                 offset,
             })
             .collect(),
-        max_num_vars,
-        1,
+        DegreeSchedule::uniform(max_num_vars, 1),
     )
 }
 
@@ -598,8 +597,8 @@ fn fused_bind_eval_member_byte_matches_separate_passes() {
     assert_eq!(separate_state, fused_state);
 }
 
-/// A batch that declares `max_degree == 0` while having rounds to prove must
-/// be rejected with `ZeroBatchDegree`, not proved (a degree-0 round polynomial
+/// A batch that schedules a round at degree 0 must be rejected with
+/// `ZeroBatchDegree`, not proved (a degree-0 round polynomial
 /// cannot carry a sumcheck round) and not panic.
 #[test]
 fn prove_batch_rejects_zero_max_degree() {
@@ -613,8 +612,7 @@ fn prove_batch_rejects_zero_max_degree() {
             offset: 0,
         }],
         claimed_sum: sum,
-        max_num_vars: 2,
-        max_degree: 0,
+        degrees: DegreeSchedule::uniform(2, 0),
     };
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
     let mut transcript = prover(b"zero-degree-batch");
@@ -628,7 +626,10 @@ fn prove_batch_rejects_zero_max_degree() {
     );
     assert!(matches!(
         result,
-        Err(SumcheckError::ZeroBatchDegree { max_num_vars: 2 })
+        Err(SumcheckError::ZeroBatchDegree {
+            max_num_vars: 2,
+            round: 0
+        })
     ));
 }
 
@@ -795,4 +796,170 @@ fn prove_uniskip_rejects_a_round_off_the_domain_sum_before_writing() {
         Err(SumcheckError::RoundCheckFailed { round: 0, .. })
     ));
     assert!(transcript.finish().is_empty());
+}
+
+/// A member whose every round polynomial is the quadratic
+/// `x + (claim − 2x − 1)·X + X²`.
+struct QuadraticMember {
+    rounds: usize,
+}
+
+impl ProveRounds<F> for QuadraticMember {
+    fn num_rounds(&self) -> usize {
+        self.rounds
+    }
+
+    fn prove_round(
+        &mut self,
+        _bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let x = F::from_u64(3);
+        Ok(UnivariatePoly::new(vec![
+            x,
+            previous_claim - x - x - F::from_u64(1),
+            F::from_u64(1),
+        ]))
+    }
+
+    fn finish_rounds(&mut self, _bind: F) -> Result<(), SumcheckError<F>> {
+        Ok(())
+    }
+}
+
+/// Proves a 3-round multilinear member under `degrees`, returning the proof,
+/// the batch's claimed sum, and the member's final claim.
+fn scheduled_proof(degrees: &DegreeSchedule) -> (Vec<u8>, F) {
+    let input_claim = F::from_u64(1234);
+    let mut member = DenseMember::with_sum(3, input_claim, 5);
+    let mut transcript = prover(b"degree-schedule");
+    let mut recorder = ClearSumcheckRecorder::<F>::new();
+    let prelude = BatchPrelude::new(
+        vec![BatchMember {
+            input_claim,
+            coefficient: F::from_u64(1),
+            rounds: 3,
+            offset: 0,
+        }],
+        degrees.clone(),
+    );
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
+    let proved = prove_batch(
+        &prelude,
+        &mut members,
+        &mut SequentialRounds,
+        &mut recorder,
+        &mut transcript,
+    )
+    .unwrap();
+    recorder
+        .finish(&proved.member_claims, &mut transcript)
+        .unwrap();
+    (transcript.finish(), prelude.claimed_sum)
+}
+
+/// Verifies a [`scheduled_proof`] end to end: the rounds at `degrees`, the
+/// member claim against the reduced value, and exact consumption.
+fn verify_scheduled_proof(
+    narg: &[u8],
+    claimed_sum: F,
+    degrees: &DegreeSchedule,
+) -> Result<(), SumcheckError<F>> {
+    let mut transcript = verifier(b"degree-schedule", narg);
+    let reduction =
+        SumcheckVerifier::verify_compressed_scheduled(claimed_sum, degrees, &mut transcript)?;
+    let member_claim: F = transcript.receive()?;
+    if member_claim != reduction.value {
+        return Err(SumcheckError::RoundCheckFailed {
+            round: degrees.num_rounds(),
+            expected: reduction.value,
+            actual: member_claim,
+        });
+    }
+    transcript.finish()?;
+    Ok(())
+}
+
+#[test]
+fn rounds_are_sent_at_their_scheduled_widths() {
+    let degrees = DegreeSchedule::batched::<F>(
+        3,
+        [MemberDegrees {
+            offset: 0,
+            round_degrees: vec![1, 3, 2],
+        }],
+    )
+    .unwrap();
+    let (narg, claimed_sum) = scheduled_proof(&degrees);
+    assert_eq!(narg.len(), (1 + 3 + 2 + 1) * F::NUM_BYTES);
+    verify_scheduled_proof(&narg, claimed_sum, &degrees).unwrap();
+}
+
+/// A round sent longer or shorter than its schedule shifts every later read:
+/// the verifier rejects instead of reinterpreting the bytes.
+#[test]
+fn rounds_off_their_scheduled_width_are_rejected() {
+    let degrees = DegreeSchedule::batched::<F>(
+        3,
+        [MemberDegrees {
+            offset: 0,
+            round_degrees: vec![1, 3, 2],
+        }],
+    )
+    .unwrap();
+    let (narg, claimed_sum) = scheduled_proof(&degrees);
+    let width = F::NUM_BYTES;
+
+    let mut padded = narg.clone();
+    drop(padded.splice(width..width, vec![0; width]));
+    assert!(verify_scheduled_proof(&padded, claimed_sum, &degrees).is_err());
+
+    let mut trimmed = narg.clone();
+    drop(trimmed.drain(3 * width..4 * width));
+    assert!(verify_scheduled_proof(&trimmed, claimed_sum, &degrees).is_err());
+
+    // The old uniform max-degree wire reads past the scheduled rounds.
+    assert!(verify_scheduled_proof(&narg, claimed_sum, &DegreeSchedule::uniform(3, 3)).is_err());
+}
+
+#[test]
+fn member_above_its_round_degree_is_rejected_before_the_transcript() {
+    let input_claim = F::from_u64(9);
+    let mut member = QuadraticMember { rounds: 2 };
+    let prelude = BatchPrelude::new(
+        vec![BatchMember {
+            input_claim,
+            coefficient: F::from_u64(1),
+            rounds: 2,
+            offset: 0,
+        }],
+        DegreeSchedule::batched::<F>(
+            2,
+            [MemberDegrees {
+                offset: 0,
+                round_degrees: vec![2, 1],
+            }],
+        )
+        .unwrap(),
+    );
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
+    let mut transcript = prover(b"degree-schedule-bound");
+    let result = prove_batch(
+        &prelude,
+        &mut members,
+        &mut SequentialRounds,
+        &mut ClearSumcheckRecorder::<F>::new(),
+        &mut transcript,
+    );
+    assert!(matches!(
+        result,
+        Err(SumcheckError::RoundDegreeBoundExceeded {
+            round: 1,
+            member: 0,
+            got: 2,
+            max: 1
+        })
+    ));
+    assert_eq!(transcript.finish().len(), 2 * F::NUM_BYTES);
 }

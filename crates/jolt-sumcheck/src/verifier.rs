@@ -8,6 +8,7 @@ use crate::claim::{EvaluationClaim, SumcheckClaim};
 use crate::domain::SumcheckDomain;
 use crate::error::SumcheckError;
 use crate::round_proof::{receive_compressed_round, receive_full_round};
+use crate::schedule::DegreeSchedule;
 
 pub struct SumcheckVerifier;
 
@@ -63,10 +64,29 @@ impl SumcheckVerifier {
         F: Field + CanonicalEncoding,
         H: Sponge,
     {
-        let mut running_sum = claim.claimed_sum;
-        let mut challenges = Vec::with_capacity(claim.num_vars);
-        for _ in 0..claim.num_vars {
-            let round_poly = receive_compressed_round(claim.degree, transcript)?;
+        Self::verify_compressed_scheduled(
+            claim.claimed_sum,
+            &DegreeSchedule::uniform(claim.num_vars, claim.degree),
+            transcript,
+        )
+    }
+
+    /// [`verify_compressed`](Self::verify_compressed) with each round read at
+    /// its own degree from `degrees`: round `j` receives `degrees[j]`
+    /// coefficients, so a round is never longer than its schedule allows.
+    pub fn verify_compressed_scheduled<F, H>(
+        claimed_sum: F,
+        degrees: &DegreeSchedule,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: Field + CanonicalEncoding,
+        H: Sponge,
+    {
+        let mut running_sum = claimed_sum;
+        let mut challenges = Vec::with_capacity(degrees.num_rounds());
+        for &degree in degrees.degrees() {
+            let round_poly = receive_compressed_round(degree, transcript)?;
             let r: F = transcript.challenge_small();
             running_sum = round_poly.evaluate_with_hint(running_sum, r);
             challenges.push(r);

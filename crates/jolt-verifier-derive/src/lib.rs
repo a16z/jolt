@@ -60,14 +60,18 @@
 //!   `jolt-prover`'s `impl_stage_prover` expands the prove-side stage-driver
 //!   impls (`StageProver`/`KernelSource`), so no stage's member list, order,
 //!   or presence is ever restated. See `specs/prover-stage-drivers.md`.
+//! - `degree_schedule` — the batch's public per-round degree schedule,
+//!   `jolt_sumcheck::DegreeSchedule::batched` over the present members' offsets
+//!   and declared round degrees; the clear head and the masked driver both read it.
 //! - `verify_clear` — the composed clear-path driver: `begin_batch` with a clear
-//!   recorder, read the combined claim's compressed rounds through
-//!   `jolt_sumcheck::SumcheckVerifier::verify_compressed`, receive the output
+//!   recorder, read the combined claim's compressed rounds at the batch's degree
+//!   schedule through
+//!   `jolt_sumcheck::SumcheckVerifier::verify_compressed_scheduled`, receive the output
 //!   claims (`receive_output_claims`), `derive_opening_points` at the reduced
 //!   point, then the `expected_final_claim` equality check. The batching lives
 //!   in the generated head; `jolt-sumcheck` provides only the single-instance
 //!   verifier. Returns the stage's produced `OutputPoints` and `OutputClaims`.
-//! - `verify_masked` — the ZK-path driver: fold the members' dimensions, draw
+//! - `verify_masked` — the ZK-path driver: take the degree schedule, draw
 //!   the batching coefficients, read the masked rounds through
 //!   `jolt_sumcheck::receive_masked_rounds`, and read the masked output claims
 //!   on the masked routes. Nothing hidden is checked: every check becomes a
@@ -370,22 +374,55 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: self.#id.draw_challenges(transcript)?)
         }
     });
-    // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
-    // max_degree)` — the front-loaded batching layout's combined dimensions. Reused
-    // by both the clear and ZK drivers, so it is a closure re-invoked per block (a
-    // `quote!` interpolation consumes its iterator).
-    let max_fold = || {
-        plans.iter().map(|plan| {
+    // The batch's public degree schedule: the round count is the members' largest,
+    // and each round's degree comes from `jolt_sumcheck::DegreeSchedule::batched`
+    // over the present members' offsets and declared round degrees. Both the
+    // clear head and the masked driver read it from this one method.
+    let degree_schedule_method = {
+        let rounds_fold = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            per_member(
+                plan.is_option,
+                &[(&member_ident, quote!(self.#id))],
+                quote!(__max_num_vars = ::core::cmp::max(__max_num_vars, __member.rounds());),
+            )
+        });
+        let member_degrees = plans.iter().map(|plan| {
             let id = &plan.ident;
             per_member(
                 plan.is_option,
                 &[(&member_ident, quote!(self.#id))],
                 quote! {
-                    __max_num_vars = ::core::cmp::max(__max_num_vars, __member.rounds());
-                    __max_degree = ::core::cmp::max(__max_degree, __member.degree());
+                    __members.push(::jolt_sumcheck::MemberDegrees {
+                        offset: __member.instance_point_offset(__max_num_vars)?,
+                        round_degrees: __member.round_degrees(),
+                    });
                 },
             )
-        })
+        });
+        quote! {
+            /// The batch's public per-round degree schedule: one round per
+            /// round of the longest present member, each at the largest
+            /// degree a member active in it declares.
+            pub fn degree_schedule(
+                &self,
+            ) -> ::core::result::Result<::jolt_sumcheck::DegreeSchedule, #krate::VerifierError> {
+                use #relations::ConcreteSumcheck as _;
+
+                let mut __max_num_vars = 0usize;
+                #(#rounds_fold)*
+                let mut __members = ::std::vec::Vec::new();
+                #(#member_degrees)*
+                ::jolt_sumcheck::DegreeSchedule::batched(__max_num_vars, __members).map_err(
+                    |error: ::jolt_sumcheck::SumcheckError<#f>| {
+                        #krate::VerifierError::StageClaimSumcheckFailed {
+                            stage: #base_lit.to_string(),
+                            reason: error.to_string(),
+                        }
+                    },
+                )
+            }
+        }
     };
 
     // The batched-sumcheck head, shared by the clear verify driver and the
@@ -395,7 +432,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // random-linear-combine the padded sums. Every Fiat-Shamir-ordered step of
     // the head lives here, so the two sides cannot drift on it.
     let begin_batch_method = {
-        let max_fold = max_fold();
         let sum_idents = plans
             .iter()
             .map(|plan| format_ident!("__sum_{}", plan.ident))
@@ -548,9 +584,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
                 #(#sum_bindings)*
 
-                let mut __max_num_vars = 0usize;
-                let mut __max_degree = 0usize;
-                #(#max_fold)*
+                let __degrees = self.degree_schedule()?;
+                let __max_num_vars = __degrees.num_rounds();
 
                 let mut __input_claims = ::std::vec::Vec::new();
                 #(#sum_collects)*
@@ -570,7 +605,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #(#member_pushes)*
 
                 ::core::result::Result::Ok((
-                    ::jolt_sumcheck::BatchPrelude::new(__members, __max_num_vars, __max_degree),
+                    ::jolt_sumcheck::BatchPrelude::new(__members, __degrees),
                     __coefficients,
                 ))
             }
@@ -658,12 +693,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             let (__batch, __coefficients) =
                 self.begin_batch(inputs, challenges, &mut __recorder, transcript)?;
 
-            let __reduction = ::jolt_sumcheck::SumcheckVerifier::verify_compressed(
-                &::jolt_sumcheck::SumcheckClaim::new(
-                    __batch.max_num_vars,
-                    __batch.max_degree,
-                    __batch.claimed_sum,
-                ),
+            let __reduction = ::jolt_sumcheck::SumcheckVerifier::verify_compressed_scheduled(
+                __batch.claimed_sum,
+                &__batch.degrees,
                 transcript,
             )
             .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
@@ -697,8 +729,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // the residual relation states every check. The coefficient draws match
     // `begin_batch` under a masking recorder, whose input-claim absorb is empty.
     let verify_masked_method = {
-        let max_fold = max_fold();
-
         let coeff_draws_masked = plans.iter().map(|plan| {
             let id = &plan.ident;
             if plan.is_option {
@@ -733,23 +763,20 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             {
                 use #relations::ConcreteSumcheck as _;
 
-                let mut __max_num_vars = 0usize;
-                let mut __max_degree = 0usize;
-                #(#max_fold)*
+                let __degrees = self.degree_schedule()?;
 
                 let mut __batching_coefficients = ::std::vec::Vec::new();
                 #(#coeff_draws_masked)*
 
                 let __rounds = ::jolt_sumcheck::receive_masked_rounds::<#f, __C>(
-                    ::jolt_sumcheck::SumcheckStatement::new(__max_num_vars, __max_degree),
+                    &__degrees,
                     ::jolt_sumcheck::RoundWire::Compressed,
                     channel,
                 )?;
                 let __rounds = ::jolt_sumcheck::BatchedMaskedRounds {
                     rounds: __rounds,
                     batching_coefficients: __batching_coefficients,
-                    max_num_vars: __max_num_vars,
-                    max_degree: __max_degree,
+                    degrees: __degrees,
                 };
                 let __output_points =
                     self.derive_opening_points(&__rounds.challenges(), input_points)?;
@@ -1201,6 +1228,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let driver_impl = quote! {
         impl<#f: ::jolt_algebra::JoltField> #name<#f> {
             #draw_challenges_method
+
+            #degree_schedule_method
 
             #begin_batch_method
             #verify_clear_method

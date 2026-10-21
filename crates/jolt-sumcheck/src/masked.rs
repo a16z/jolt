@@ -5,8 +5,8 @@
 use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_transcript::{Channel, PadSlots, PrivateChannel, TranscriptError};
 
-use crate::claim::SumcheckStatement;
 use crate::error::SumcheckError;
+use crate::schedule::DegreeSchedule;
 
 /// One masked round as the verifier received it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,8 +44,8 @@ impl RoundWire {
     }
 }
 
-/// A batched masked sumcheck: its rounds and the batching data the residual
-/// lowering folds them against.
+/// A batched masked sumcheck: its rounds, the degree schedule they were read
+/// at, and the batching data the residual lowering folds them against.
 ///
 /// A shorter member is active only inside its window. Tail-aligned members
 /// (the default) have their challenge suffix begin at
@@ -55,13 +55,17 @@ impl RoundWire {
 pub struct BatchedMaskedRounds<F> {
     pub rounds: Vec<MaskedRound<F>>,
     pub batching_coefficients: Vec<F>,
-    pub max_num_vars: usize,
-    pub max_degree: usize,
+    pub degrees: DegreeSchedule,
 }
 
 impl<F: Field> BatchedMaskedRounds<F> {
     pub fn challenges(&self) -> Vec<F> {
         self.rounds.iter().map(|round| round.challenge).collect()
+    }
+
+    /// The batch's round count.
+    pub fn max_num_vars(&self) -> usize {
+        self.degrees.num_rounds()
     }
 
     /// The tail-aligned offset `max_num_vars - num_vars`.
@@ -71,7 +75,7 @@ impl<F: Field> BatchedMaskedRounds<F> {
     /// [`SumcheckError::BatchedPointOutOfRange`] if `num_vars` exceeds the
     /// batch.
     pub fn try_round_offset(&self, num_vars: usize) -> Result<usize, SumcheckError<F>> {
-        self.max_num_vars
+        self.max_num_vars()
             .checked_sub(num_vars)
             .ok_or(SumcheckError::BatchedPointOutOfRange {
                 offset: 0,
@@ -114,16 +118,16 @@ impl<F: Field> BatchedMaskedRounds<F> {
     }
 }
 
-/// Reads `statement.num_vars` masked rounds of degree bound
-/// `statement.degree` in the `wire` format, each followed by its challenge.
-/// Masked proofs reveal no claim scalar, so nothing is checked here: the
-/// round checks become residual rows.
+/// Reads one masked round per entry of `degrees`, at that degree's width in
+/// the `wire` format, each followed by its challenge. Masked proofs reveal no
+/// claim scalar, so nothing is checked here: the round checks become
+/// residual rows.
 ///
 /// # Errors
 ///
 /// The channel's error on a truncated proof or an exhausted pad schedule.
 pub fn receive_masked_rounds<F, C>(
-    statement: SumcheckStatement,
+    degrees: &DegreeSchedule,
     wire: RoundWire,
     channel: &mut C,
 ) -> Result<Vec<MaskedRound<F>>, C::Error>
@@ -132,10 +136,9 @@ where
     C: Channel + PrivateChannel,
     C::Error: From<TranscriptError> + From<SumcheckError<F>>,
 {
-    let width = wire.width::<F>(statement.degree)?;
-    let mut rounds = Vec::with_capacity(statement.num_vars);
-    for _ in 0..statement.num_vars {
-        let mut values = vec![F::zero(); width];
+    let mut rounds = Vec::with_capacity(degrees.num_rounds());
+    for &degree in degrees.degrees() {
+        let mut values = vec![F::zero(); wire.width::<F>(degree)?];
         let slots = channel.exchange_private_base(&mut values)?;
         rounds.push(MaskedRound {
             wire: values,

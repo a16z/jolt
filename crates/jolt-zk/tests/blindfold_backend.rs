@@ -12,7 +12,7 @@ use jolt_algebra::{Field, Fr, Ring};
 use jolt_claims::{opening, FactoredExpr, Source};
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{receive_masked_rounds, RoundWire, SumcheckRecorder, SumcheckStatement};
+use jolt_sumcheck::{receive_masked_rounds, DegreeSchedule, RoundWire, SumcheckRecorder};
 use jolt_transcript::{
     Blake2b512, PrivateChannel, ProtocolId, ProverTranscript, VerifierTranscript,
 };
@@ -99,7 +99,7 @@ fn residual(
     let auxiliary_len = view.layout().auxiliary.len();
     let mut channel = view.channel(transcript);
     let rounds = receive_masked_rounds::<Fr, _>(
-        SumcheckStatement::new(NUM_VARS, DEGREE),
+        &DegreeSchedule::uniform(NUM_VARS, DEGREE),
         RoundWire::Compressed,
         &mut channel,
     )
@@ -114,7 +114,7 @@ fn residual(
         &mut relation,
         AffineRow::constant(claimed_sum),
         &rounds,
-        DEGREE,
+        &DegreeSchedule::uniform(NUM_VARS, DEGREE),
         RoundFormat::Compressed,
     )
     .unwrap();
@@ -225,7 +225,7 @@ fn honest_residual_commitment() -> Bn254G1 {
     let mut view = Backend::receive_pad_commitment(&setup, &layout(), &mut transcript).unwrap();
     let mut channel = view.channel(&mut transcript);
     let rounds = receive_masked_rounds::<Fr, _>(
-        SumcheckStatement::new(NUM_VARS, DEGREE),
+        &DegreeSchedule::uniform(NUM_VARS, DEGREE),
         RoundWire::Compressed,
         &mut channel,
     )

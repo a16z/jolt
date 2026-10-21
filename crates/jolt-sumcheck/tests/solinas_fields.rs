@@ -11,8 +11,8 @@ use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset275, Prime32Offset99,
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, CenteredIntegerDomain,
-    ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError,
-    SumcheckRecorder, SumcheckVerifier,
+    ClearSumcheckRecorder, DegreeSchedule, ProveRounds, SequentialRounds, SumcheckClaim,
+    SumcheckError, SumcheckRecorder, SumcheckVerifier,
 };
 use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};
 
@@ -122,8 +122,7 @@ fn run_batched_roundtrip<F: Field + CanonicalEncoding>(
             rounds: 2,
             offset: 0,
         }],
-        2,
-        2,
+        DegreeSchedule::uniform(2, 2),
     )
     .unwrap();
     let mut product = ProductOfAffines::new(left, right);

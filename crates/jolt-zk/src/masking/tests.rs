@@ -7,8 +7,8 @@ use jolt_algebra::{Field, Fr, Ring};
 use jolt_claims::{challenge, constant, opening, Expr, FactoredExpr, Source};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    receive_masked_rounds, MaskedRound, RoundWire, SumcheckDomain, SumcheckDomainSpec,
-    SumcheckRecorder, SumcheckStatement,
+    receive_masked_rounds, DegreeSchedule, MaskedRound, MemberDegrees, RoundWire, SumcheckDomain,
+    SumcheckDomainSpec, SumcheckRecorder,
 };
 use jolt_transcript::{
     Blake2b512, PrivateChannel, ProtocolId, ProverTranscript, VerifierTranscript,
@@ -172,7 +172,7 @@ fn receive(narg: &[u8]) -> Received {
     let mut view = CommittedPadsView::new(layout, ());
     let mut channel = view.channel(&mut transcript);
     let uniskip = receive_masked_rounds::<Fr, _>(
-        SumcheckStatement::new(1, DEGREE),
+        &DegreeSchedule::uniform(1, DEGREE),
         RoundWire::Full,
         &mut channel,
     )
@@ -180,7 +180,7 @@ fn receive(narg: &[u8]) -> Received {
     let mut uniskip_claim = [Fr::from_u64(0)];
     let uniskip_slot = channel.exchange_private_base(&mut uniskip_claim).unwrap();
     let rounds = receive_masked_rounds::<Fr, _>(
-        SumcheckStatement::new(NUM_VARS, DEGREE),
+        &DegreeSchedule::uniform(NUM_VARS, DEGREE),
         RoundWire::Compressed,
         &mut channel,
     )
@@ -208,7 +208,7 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
         &mut relation,
         AffineRow::constant(uniskip_input()),
         &received.uniskip,
-        DEGREE,
+        &DegreeSchedule::uniform(1, DEGREE),
         RoundFormat::Full(SumcheckDomainSpec::centered_integer(UNISKIP_DOMAIN)),
     )
     .unwrap();
@@ -220,7 +220,7 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
         &mut relation,
         AffineRow::constant(claimed_sum),
         &received.rounds,
-        DEGREE,
+        &DegreeSchedule::uniform(NUM_VARS, DEGREE),
         RoundFormat::Compressed,
     )
     .unwrap();
@@ -291,6 +291,52 @@ fn changing_any_masked_value_breaks_a_row() {
             .unwrap()
             .is_some());
     }
+}
+
+/// The lowering reads each round at its scheduled width: a round sent wider
+/// or narrower than its degree, or a schedule of another length, is a typed
+/// error at that round, not a row.
+#[test]
+fn rounds_off_their_degree_schedule_are_rejected() {
+    let proof = prove();
+    let received = receive(&proof.narg);
+    let mut relation = ResidualRelation::new(layout(), 0);
+    let input = AffineRow::constant(proof.claimed_sum);
+    let schedule = DegreeSchedule::batched::<Fr>(
+        NUM_VARS,
+        [MemberDegrees {
+            offset: 0,
+            round_degrees: vec![DEGREE, DEGREE + 1, DEGREE],
+        }],
+    )
+    .unwrap();
+    assert!(matches!(
+        sumcheck_rows(
+            &mut relation,
+            input.clone(),
+            &received.rounds,
+            &schedule,
+            RoundFormat::Compressed,
+        ),
+        Err(ZkError::RoundWidthMismatch {
+            round: 1,
+            expected: 3,
+            got: 2
+        })
+    ));
+    assert!(matches!(
+        sumcheck_rows(
+            &mut relation,
+            input,
+            &received.rounds,
+            &DegreeSchedule::uniform(NUM_VARS - 1, DEGREE),
+            RoundFormat::Compressed,
+        ),
+        Err(ZkError::RoundCountMismatch {
+            expected: 2,
+            got: 3
+        })
+    ));
 }
 
 #[test]

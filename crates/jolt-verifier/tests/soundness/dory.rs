@@ -23,6 +23,19 @@ mod base {
         checks::structural_tampers(&standard_muldiv_case(), None);
     }
 
+    /// Stage 5's rounds travel at the batch's degree schedule: the
+    /// instruction read-RAF's 128 address rounds at degree 2, then its
+    /// `log_T = 10` cycle rounds at `8 ra chunks + 2`. Re-padding the first
+    /// round to the cycle degree, as a uniform-degree prover would send it,
+    /// is rejected by Stage 5's output check.
+    #[test]
+    fn standard_muldiv_stage5_rounds_follow_the_degree_schedule() {
+        checks::stage5_round_widths(
+            &standard_muldiv_case(),
+            &[vec![2; 128], vec![10; 10]].concat(),
+        );
+    }
+
     #[test]
     fn standard_muldiv_statement_tampers() {
         let case = standard_muldiv_case();

@@ -29,8 +29,9 @@ use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 // Bumped whenever a cached section's encoding changes: proofs are NARG
-// argument strings (`JoltProof { protocol, narg }`) since JVCF0006.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0006";
+// argument strings (`JoltProof { protocol, narg }`) since JVCF0006; rounds
+// follow the per-round degree schedule since JVCF0007.
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0007";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 

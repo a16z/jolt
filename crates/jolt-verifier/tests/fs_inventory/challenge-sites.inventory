@@ -18,7 +18,7 @@ jolt-sumcheck::masked.rs::receive_masked_rounds::challenge_small#1
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_full_round::challenge_small#1
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_round::challenge_small#1
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::challenge_small#1
-jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::challenge_small#1
+jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed_scheduled::challenge_small#1
 jolt-verifier::stages/relations.rs::ConcreteSumcheck::draw_challenges::challenge#0
 jolt-verifier::stages/stage1/outputs.rs::Stage1BatchSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage2/outputs.rs::Stage2BatchSumchecks::<generated>::batching_coefficient[*]

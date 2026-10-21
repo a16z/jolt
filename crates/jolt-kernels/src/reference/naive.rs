@@ -449,7 +449,7 @@ mod tests {
     };
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
-        prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds,
+        prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, DegreeSchedule, ProveRounds,
         SequentialRounds, SumcheckClaim, SumcheckRecorder, SumcheckVerifier,
     };
     use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};
@@ -673,8 +673,7 @@ mod tests {
                 rounds: ROUNDS,
                 offset: 0,
             }],
-            ROUNDS,
-            relation.degree(),
+            DegreeSchedule::uniform(ROUNDS, relation.degree()),
         );
 
         let mut naive = NaiveSumcheckProver::new(
@@ -795,8 +794,7 @@ mod tests {
                 rounds: ROUNDS,
                 offset: 0,
             }],
-            ROUNDS,
-            relation.degree(),
+            DegreeSchedule::uniform(ROUNDS, relation.degree()),
         );
         let mut recorder = ClearSumcheckRecorder::<Fr>::new();
         let inputs = ToyInputs {

@@ -1,8 +1,8 @@
 use jolt_algebra::{Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds, SequentialRounds,
-    SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
+    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, DegreeSchedule, ProveRounds,
+    SequentialRounds, SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
 };
 use jolt_transcript::{Channel, Keccak, ProtocolId, ProverTranscript, VerifierTranscript};
 
@@ -49,8 +49,7 @@ fn main() -> Result<(), SumcheckError<F>> {
             rounds: 1,
             offset: 0,
         }],
-        1,
-        1,
+        DegreeSchedule::uniform(1, 1),
     )?;
     let mut member = LinearRound;
     let mut members: [&mut dyn ProveRounds<F>; 1] = [&mut member];

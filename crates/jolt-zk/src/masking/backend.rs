@@ -38,6 +38,16 @@ pub enum ZkError {
     OperandPadsMismatch,
     #[error("invalid residual relation: {reason}")]
     InvalidRelation { reason: &'static str },
+    /// A masked round's wire length differs from its degree schedule.
+    #[error("masked round {round} has {got} values, its schedule {expected}")]
+    RoundWidthMismatch {
+        round: usize,
+        expected: usize,
+        got: usize,
+    },
+    /// A masked sumcheck has a different round count than its schedule.
+    #[error("masked sumcheck has {got} rounds, its schedule {expected}")]
+    RoundCountMismatch { expected: usize, got: usize },
     /// A `SumcheckError<F>`.
     #[error("masked sumcheck: {0}")]
     Sumcheck(#[source] ErasedSource),

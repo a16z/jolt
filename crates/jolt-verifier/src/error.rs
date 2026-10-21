@@ -157,6 +157,8 @@ impl From<ZkError> for VerifierError {
             | ZkError::OperandPadsMismatch
             | ZkError::InvalidLayout { .. }
             | ZkError::InvalidRelation { .. }
+            | ZkError::RoundWidthMismatch { .. }
+            | ZkError::RoundCountMismatch { .. }
             | ZkError::Sumcheck(_)
             | ZkError::BlindFoldShape(_)
             | ZkError::BlindFoldProver(_)

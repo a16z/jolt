@@ -10,8 +10,8 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_spartan_verifier::{inner_relation, SpartanError, SpartanKey, INNER_DEGREE, OUTER_DEGREE};
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds, SequentialRounds,
-    SumcheckRecorder,
+    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, DegreeSchedule, ProveRounds,
+    SequentialRounds, SumcheckRecorder,
 };
 use jolt_transcript::{ProverTranscript, Sponge};
 
@@ -102,8 +102,7 @@ fn prove_rounds<F: JoltField, H: Sponge>(
             rounds: member.num_rounds(),
             offset: 0,
         }],
-        member.num_rounds(),
-        degree,
+        DegreeSchedule::uniform(member.num_rounds(), degree),
     )?;
     let mut recorder = ClearSumcheckRecorder::<F>::new();
     let result = prove_batch(

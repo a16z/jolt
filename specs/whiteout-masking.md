@@ -208,10 +208,20 @@ the masked stages themselves are cheaper than the per-round Pedersen
 checks. The prover derives the layout once and reuses it in its relation
 replay.
 
+Rounds follow a public per-round degree schedule
+(`jolt_sumcheck::DegreeSchedule`): each batch round is sent at the largest
+degree its active members declare for that round
+(`SymbolicSumcheck::round_degree`), so stage 5's 128 instruction read-RAF
+address rounds go at degree 2 instead of 10. The table above predates it.
+With it, muldiv proofs are 64,895 B clear (−32,768) and 79,071 B masked
+(−34,880: the masked coefficients plus fewer pad-commitment rows), and the
+layout is 1,049 pads. Stage 2's RAM read-write address rounds (3
+coefficients) and stage 6a's bytecode address phase (20 coefficients) still
+send zero high coefficients on muldiv; declaring their phase degrees would
+save about 0.7 KB more.
+
 Open size reductions, not implemented:
 
-- A public per-round degree schedule, so rounds send only the coefficients
-  their member degrees need: about 33.5 KB.
 - Taking the y row commitment to be Dory's hiding evaluation commitment
   instead of a separate row: about 2.3 KB.
 - Carrying the auxiliary products as BlindFold witness instead of masked

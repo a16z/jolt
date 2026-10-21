@@ -83,7 +83,7 @@ use jolt_poly::{
     OperandPolynomial, OperandSide,
 };
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_sumcheck::{BatchedMaskedRounds, MaskedRound, SumcheckDomainSpec};
+use jolt_sumcheck::{BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDomainSpec};
 use jolt_zk::masking::{
     lower_factored, sumcheck_rows, AffineRow, ClaimDomain, MaskedOperand, OperandShapeDomain,
     PadLayout, ResidualRelation, ResidualRows, RoundFormat, RowsDomain, ValuesDomain, ZkError,
@@ -209,8 +209,7 @@ struct Member<F: JoltField> {
 struct Stage<F: JoltField> {
     name: &'static str,
     format: RoundFormat,
-    max_num_vars: usize,
-    degree: usize,
+    degrees: DegreeSchedule,
     rounds: Vec<MaskedRound<F>>,
     members: Vec<Member<F>>,
 }
@@ -375,16 +374,14 @@ impl<F: JoltField> JoltResidual<F> {
         let mut claims = Vec::with_capacity(self.stages.len());
         for stage in &self.stages {
             let mut input = domain.constant(F::zero());
+            let max_num_vars = stage.degrees.num_rounds();
             for member in &stage.members {
-                let extra = stage
-                    .max_num_vars
-                    .checked_sub(member.rounds)
-                    .ok_or_else(|| {
-                        residual_error(format!(
-                            "{}: member rounds {} exceed the batch's {}",
-                            stage.name, member.rounds, stage.max_num_vars
-                        ))
-                    })?;
+                let extra = max_num_vars.checked_sub(member.rounds).ok_or_else(|| {
+                    residual_error(format!(
+                        "{}: member rounds {} exceed the batch's {max_num_vars}",
+                        stage.name, member.rounds
+                    ))
+                })?;
                 let value = lower_factored(&member.input, domain, opening, &mut public)?;
                 input = domain.add(
                     &input,
@@ -431,7 +428,7 @@ impl<F: JoltField> ResidualRows<F> for JoltResidualRows<'_, F> {
         let relation = rows.relation();
         for (stage, StageClaims { input, output }) in residual.stages.iter().zip(claims) {
             let running =
-                sumcheck_rows(relation, input, &stage.rounds, stage.degree, stage.format)?;
+                sumcheck_rows(relation, input, &stage.rounds, &stage.degrees, stage.format)?;
             relation.affine.push(running.add_scaled(&output, -F::one()));
         }
         for (cell, source) in &residual.equalities {
@@ -485,8 +482,7 @@ fn add_batched_stage<F: JoltField>(
     builder.stages.push(Stage {
         name,
         format: round_format(batch_domain, false),
-        max_num_vars: rounds.max_num_vars,
-        degree: rounds.max_degree,
+        degrees: rounds.degrees.clone(),
         rounds: rounds.rounds.clone(),
         members,
     });
@@ -522,8 +518,7 @@ fn add_uniskip_stage<F: JoltField>(
     builder.stages.push(Stage {
         name,
         format: round_format(domain, true),
-        max_num_vars: claim.rounds,
-        degree,
+        degrees: DegreeSchedule::uniform(claim.rounds, degree),
         rounds: rounds.to_vec(),
         members: vec![Member {
             rounds: claim.rounds,
@@ -1733,8 +1728,7 @@ mod field_inline_relation_parity {
                 let batch = BatchedMaskedRounds {
                     rounds,
                     batching_coefficients: vec![fr(1)],
-                    max_num_vars: log_t + 2,
-                    max_degree: 3,
+                    degrees: DegreeSchedule::uniform(log_t + 2, 3),
                 };
                 let _ = field_inline::stage2_claim_reduction(
                     &mut publics,
