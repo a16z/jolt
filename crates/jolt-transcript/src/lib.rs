@@ -8,8 +8,8 @@
 //! [`prover_transcript`] and [`verifier_transcript`] bind the session and the
 //! public statement before the first message.
 //!
-//! Three sponges are feature-gated: `transcript-blake2b` (spongefish
-//! `Blake2b512`), `transcript-keccak` (spongefish `Keccak`) and
+//! Three sponges are feature-gated: `transcript-keccak` (spongefish `Keccak`,
+//! the default), `transcript-blake2b` (spongefish `Blake2b512`) and
 //! `transcript-poseidon` (a Circom-compatible BN254 [`PoseidonSponge`]).
 //! Field challenges need uniform squeezed bytes ([`UniformBytes`]), which
 //! Poseidon does not give, so a Poseidon transcript cannot draw them.

@@ -10,31 +10,41 @@
 //!
 //! The generated `begin_batch` drivers (`#[derive(SumcheckBatch)]` in
 //! `jolt-verifier`) call [`absorb_input_claims`](SumcheckRecorder::absorb_input_claims);
-//! the prove-side round loop calls [`absorb_round`](SumcheckRecorder::absorb_round)
-//! per round and [`finish`](SumcheckRecorder::finish) once. The clear verifier
-//! also runs `begin_batch` (with [`ClearSumcheckRecorder`]) so the two sides
-//! share the head's Fiat-Shamir sequence structurally.
+//! the prove-side round loop calls `absorb_round` per round and `finish` once.
+//! The clear verifier also runs `begin_batch` (with [`ClearSumcheckRecorder`])
+//! so the two sides share the head's Fiat-Shamir sequence structurally.
+//! Without the `prover` feature only that head remains: `absorb_round`,
+//! `finish` and the committed recorder belong to the prover.
 
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 use jolt_field::JoltField;
-use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript, Transcript};
-#[cfg(feature = "committed")]
+use jolt_poly::CompressedPoly;
+#[cfg(feature = "prover")]
+use jolt_poly::UnivariatePoly;
+use jolt_transcript::{Encoding, Transcript};
+#[cfg(feature = "prover")]
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+#[cfg(all(feature = "committed", feature = "prover"))]
 use rand_core::RngCore;
 
-#[cfg(feature = "committed")]
+use crate::append_sumcheck_claim;
+#[cfg(all(feature = "committed", feature = "prover"))]
 use crate::committed::CommittedSumcheckBuilder;
 use crate::committed::CommittedSumcheckWitness;
+#[cfg(feature = "prover")]
 use crate::error::SumcheckError;
+#[cfg(feature = "prover")]
 use crate::pow::grind_round;
 use crate::proof::CompressedSumcheckProof;
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 use crate::proof::SumcheckProof;
+#[cfg(feature = "prover")]
 use crate::round_proof::{CompressedLabeledRoundPoly, RoundMessage};
-use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+#[cfg(feature = "prover")]
+use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
 
 /// Records one sumcheck's proof material, abstracting over clear vs. committed
 /// (ZK) recording: `absorb_input_claims` once (from `begin_batch`),
@@ -56,6 +66,7 @@ pub trait SumcheckRecorder<F: Field> {
     /// verifier prices the round at), and squeeze the round challenge. Clear:
     /// appended compressed under `b"sumcheck_poly"`. Committed: Pedersen
     /// commitment appended.
+    #[cfg(feature = "prover")]
     fn absorb_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
@@ -69,6 +80,7 @@ pub trait SumcheckRecorder<F: Field> {
     /// assemble the proof. Clear: each value appended under
     /// `b"opening_claim"`. Committed: values are row-committed and only the
     /// commitments are absorbed.
+    #[cfg(feature = "prover")]
     fn finish<T>(
         self,
         output_claim_values: &[F],
@@ -91,6 +103,10 @@ pub struct RecordedSumcheck<F: Field, P> {
 /// transcript in the clear and collects the rounds into a
 /// [`CompressedSumcheckProof`]. Its transcript writes are byte-identical to
 /// what the clear verifier reads back.
+#[cfg_attr(
+    not(feature = "prover"),
+    expect(dead_code, reason = "a verifier build absorbs only the input claims")
+)]
 pub struct ClearSumcheckRecorder<F: Field> {
     round_polynomials: Vec<CompressedPoly<F>>,
     pow_nonces: Vec<u32>,
@@ -120,6 +136,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
         }
     }
 
+    #[cfg(feature = "prover")]
     fn absorb_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
@@ -141,6 +158,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
         Ok(challenge)
     }
 
+    #[cfg(feature = "prover")]
     fn finish<T>(
         self,
         output_claim_values: &[F],
@@ -168,7 +186,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
 /// claims' commitments were already absorbed by the stage that produced them.
 /// The retained witness (coefficients, rows, blindings) is returned by
 /// [`finish`](SumcheckRecorder::finish) for BlindFold.
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub struct CommittedSumcheckRecorder<'a, F, VC, R>
 where
     F: JoltField,
@@ -178,7 +196,7 @@ where
     builder: CommittedSumcheckBuilder<'a, F, VC, R>,
 }
 
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 impl<'a, F, VC, R> CommittedSumcheckRecorder<'a, F, VC, R>
 where
     F: JoltField,
@@ -192,7 +210,7 @@ where
     }
 }
 
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 impl<F, VC, R> SumcheckRecorder<F> for CommittedSumcheckRecorder<'_, F, VC, R>
 where
     F: JoltField,

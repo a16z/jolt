@@ -19,7 +19,9 @@ use std::fmt::{Formatter, Result as FmtResult};
 use std::marker::PhantomData;
 
 use jolt_field::Field;
-use jolt_transcript::{grind_bits_for_loss, FieldTranscript, ProverTranscript, SECURITY_BITS};
+#[cfg(feature = "prover")]
+use jolt_transcript::ProverTranscript;
+use jolt_transcript::{grind_bits_for_loss, FieldTranscript, SECURITY_BITS};
 use serde::de::{Error as _, SeqAccess, Visitor};
 use serde::ser::{Error as _, SerializeTuple};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -81,6 +83,7 @@ impl<'a> RoundNonces<'a> {
 /// Grinds round `round`'s nonce after the round message is absorbed and before
 /// the round challenge is drawn, appending it to `nonces` when the difficulty
 /// is positive.
+#[cfg(feature = "prover")]
 pub fn grind_round<F: Field, T: FieldTranscript<F> + ProverTranscript>(
     degree: usize,
     round: usize,

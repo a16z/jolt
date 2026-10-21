@@ -15,7 +15,9 @@ jolt-field = { path = "../../../jolt-field", default-features = false, features 
   "solinas",
 ] }
 jolt-poly = { path = "../../../jolt-poly", default-features = false }
-jolt-sumcheck = { path = "../..", default-features = false }
+jolt-sumcheck = { path = "../..", default-features = false, features = [
+  "prover",
+] }
 jolt-transcript = { path = "../../../jolt-transcript", default-features = false, features = [
   "solinas",
   "transcript-keccak",

@@ -52,6 +52,7 @@ jolt-sumcheck = { path = ".." }
 jolt-transcript = { path = "../../jolt-transcript", features = [
   "bn254",
   "transcript-blake2b",
+  "prover-grinding",
 ] }
 
 [[bin]]
