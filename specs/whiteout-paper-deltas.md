@@ -56,6 +56,7 @@ so the authors can fold it into the paper.
 | D23 | Bounded rerun (≤ 3 runs) on FoldOverflow or exhausted Σ attempts, where the paper aborts | departure | specified (W6) |
 | D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | open; W6 rejects them under ZK |
 | D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
+| D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | in progress (`wo/multipair`) |
 
 ## D1. Constant-time Σ attempt
 
@@ -1029,3 +1030,54 @@ root runs only after t_p and every masked slot its claims reference.
 the masked messages and the pad commitment. A sentence in §4.1 that the PCS
 receives claims as affine forms over committed pads, never as absorbed values,
 would make it explicit.
+
+## D26. Multi-pair product rows and merged products
+
+**Paper says.** A product row is ct(X_i·Y_i − Z_i) with one pair per row
+(Def. `wo:def:residual`, `03_setting.tex:236-247`). Each multiplication
+gate's output is an existing slot or a new masked value (`:194-205`).
+The evaluation counts 28 product values and 2 affine operands at
+T = 2^24 (`06_evaluation.tex:83-88`).
+
+**Gap.** The count of 28 assumes two things the relation cannot express with
+single-pair rows:
+
+- every term's last product lands in its stage check, Σ_m β_m · output_m =
+  running claim, which is a *sum* of products;
+- repeated products are shared.
+
+Landing several products on one claim needs a row Σ_k X_k Y_k − Z. The Σ
+product reduction (`04_protocol.tex:340-390`) already handles it, since it
+sums μ_i X_i Y_i over an index set, but the text never states it.
+
+**Implementation** (`whiteout-masking.md`, "Multi-pair product rows and
+merged products").
+
+- Product rows carry pairs: Σ_k x_k·y_k = z, with every x_k a constant
+  operand.
+- The Σ lift flattens pairs into product entries that share their row's μ.
+- BlindFold splits a row into n constraints with n − 1 witness-only
+  intermediates.
+- jolt-claims factors the bytecode read-RAF cycle output as
+  (Σ_t c_t)·ra₀ra₁ra₂.
+- BlindFold takes affine operands directly; the lattice path keeps the 2
+  defining slots.
+
+**Argument.** Lemma `wo:lem:ct-lift` applies pair by pair: a constant X_k
+gives ct(X_k Y_k) = x_k ct(Y_k), so the row lifts exactly. The μ-aggregation
+is a combination of rows with distinct labels, unchanged. The product
+sumcheck's soundness does not depend on how its entries group into rows. The
+decoded multi-pair row is the clear verifier's own stage check, so
+Lemma `wo:lem:residual-correct`'s decoding argument is unchanged. ZK: the row
+shape is public, and fewer pads reveal nothing more.
+
+**Status.** In progress on `wo/multipair`. Measured counts are recorded in
+`whiteout-masking.md`.
+
+**For the paper.**
+
+- State the product rows as ct(Σ_{k∈K_i} X_k Y_k − Z_i), with U indexed by
+  pairs and U_e = μ_{row(e)}[X_e](α).
+- Say that a stage's last products land in its claim check.
+- Say that the 28 assumes merged repeated products.
+

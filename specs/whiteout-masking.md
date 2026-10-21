@@ -242,6 +242,110 @@ Open size reductions, not implemented:
 - Carrying the auxiliary products as BlindFold witness instead of masked
   messages: about 3.3 KB.
 
+## Multi-pair product rows and merged products
+
+Muldiv's layout has 108 auxiliary slots: 106 product slots and 2 defining
+slots. The count does not depend on T, and it grows with the number of
+one-hot chunks. The paper's count of 32 (`06_evaluation.tex:83-88`) rests on
+two assumptions:
+
+- the last product of every term lands in its stage check without a slot;
+- a product that repeats across terms is computed once.
+
+Three changes realize both assumptions. They land as separate commits, in
+this order.
+
+**1. Merged products (jolt-claims).** The bytecode read-RAF cycle output is
+Σ_t c_t · ra₀ra₁ra₂, where each c_t is public (the γ-weighted stage values,
+the two RAFs and the entry). Its factored form becomes
+`product([Σ_t c_t, ra₀, ra₁, ra₂])`, and `output_expression` is defined as the
+expansion of that form, following the `outer_remainder` pattern. One formula
+keeps one owner. Clear proofs are unchanged, because the expansion has the
+same value. The lowering takes 2 slots for this output instead of 16.
+
+**2. Multi-pair rows.** A product row becomes
+
+    ProductRow { pairs: Vec<ProductPair>, z }   ProductPair { x: MaskedOperand, y: AffineRow }
+
+with the check Σ_k x_k·y_k = z. A row with one pair is the old row. Every
+row has at least one pair; each back end enforces this with a release check.
+
+- *ClaimDomain op.* `jolt_transcript::ClaimDomain` gains
+  `products_into(pairs, target)`, the check Σ x_k·y_k = target with no new
+  slot. `product_into` becomes a provided method, `products_into(vec![(x, y)],
+  target)`. The change is additive: Akita only calls these methods.
+  `ClearDomain` and `ValuesDomain` compare, `RowsDomain` emits one
+  `ProductRow`, and `OperandShapeDomain` records each pair's operand pad.
+- *Lowering.* `lower_factored` returns `ProductSum { pairs, affine }`. A
+  term with h ≥ 2 hidden factors takes h − 2 product slots, plus a defining
+  slot when it has no single-opening factor. Its last product stays pending as
+  the pair (x, scale·y). `add` and `scale` act on both parts.
+  `ProductSum::into_value` materializes the pending pairs through `product`.
+  Input claims use it; on Jolt they are affine, so it takes no slot.
+- *Stage check.* Each stage emits one row,
+  `products_into(β-scaled output pairs, running − output.affine)`, through a
+  single `StageClaims::check`. The pad layout (shape domain) and the rows
+  both call it, so the operand pads and the rows have one owner.
+- *BlindFold.* A row with n pairs lowers to n R1CS constraints:
+  x_k·y_k = w_k for k < n, and x_n·y_n = z − Σ w_k. The w_k are witness-only
+  variables. They occupy extra auxiliary witness rows after the y and ρ rows,
+  so they are committed, randomized and folded with those rows. Their number
+  follows from the relation's shape. The prover computes the w_k from the
+  decoded values.
+- *Whiteout Σ.* The lift flattens pairs into product entries, each tagged
+  with its row. Entry (i, k) carries (x̂_ik, P_x, Y_ik). Only the row's first
+  entry carries Z_i; the other entries carry zero. Every entry is weighted by
+  its row's μ_i, so Q_μ = Σ_i μ_i(Σ_k X_ik Y_ik − u Z_i) + u(λ + g). Labels
+  count rows. The product sumcheck runs over entries, with
+  U_e = μ_{row(e)}[X_e](α) and W_e = [Y_e](α). `first_violation` sums the
+  pairs of each row.
+
+**3. Affine operands (BlindFold only).** An R1CS A-row accepts any linear
+combination, so BlindFold needs no defining slot. `ZkBackend` gains
+`const OPERANDS: OperandRule`: `MaskedSlot` (lattice) or `Affine` (curve).
+`ProductPair.x` becomes the enum `ProductOperand { Masked(MaskedOperand),
+Affine(AffineRow) }`. The lowering emits `Affine` only under
+`OperandRule::Affine`. The lattice lift rejects `Affine` with a release
+check. `pad_layout`, `auxiliary_values` and `rows` take the rule from the
+back end type, so both roles derive the same layout.
+
+**Σ-statement impact (W5a).** The public surface does not change. On
+`whiteout/dev`, `ResponseStatement::{layout, challenge, rho, v_image,
+check_witness}` keep their signatures and meaning. `ResponseLayout` is
+unchanged, since θ still has 63 coefficients. On W5a,
+`row_shape().products` and the lengths of `product_x` and `product_y` now
+count product entries (pairs), not rows. `U_e` carries its row's μ, and Z
+appears once per row inside `weigh`'s adjoint. `rho().len()` is ℓ for the
+smaller row count. A `ResponseProver` that treats products as an opaque list
+of pairs needs no change. The edits are internal to `lift.rs`:
+`LiftedProduct` gains a row index, `product_weights` holds one weight per
+entry, and `first_violation` groups entries by row. `CheckingResponseProver`
+is unchanged.
+
+**Security.** *Soundness.* By Lemma `wo:lem:ct-lift`, a constant operand
+gives ct(X·Y) = x·ct(Y). The lift of Σ_k X_k Y_k − uZ is therefore exact pair
+by pair and linear in the sum: ct(Σ_k X_k Y_k − Z) = Σ_k x_k y_k − z. The
+aggregation is unchanged: Q_μ is Σ over rows of μ_i·row_i, with distinct
+multilinear labels, so a nonzero row survives with probability at least
+1 − ℓ/|F|. The product sumcheck proves Σ_e U_e W_e for any entry list.
+Several entries sharing one μ does not affect its soundness. Scalarity rows
+still pin every pair's operand pad. The decoded relation is the clear
+verifier's own stage check, Σ_m β_m output_m = running claim, which also
+checks only the sum. Clear Jolt soundness applies to the decoded transcript
+as before. In particular, moving value between two pairs of one row changes
+an opening or a slot that another row pins: a later stage's input claim,
+stage 8's evaluation row, or a slot's defining row. *Zero knowledge.* The
+shape (rows, pairs, labels) is public and fixed by the schedule. BlindFold's
+w_k are hidden by the same row blinds and folding as the y and ρ rows.
+Whiteout's response proof is ZK in e for any entry count. Fewer masked
+slots means fewer one-time pads, never a revealed value.
+
+**Bytes.** Clear proofs and Akita fixtures are byte-identical. ZK proofs,
+the pad count, the auxiliary block and BlindFold's auxiliary row count all
+change. The expected auxiliary slot counts on muldiv are 108, then 94
+(change 1), 28 (change 2) and 26 (change 3). The muldiv golden test pins the
+measured values.
+
 ## Open questions
 
 - Pinning L independently of the setup: `MAX_BLINDFOLD_GENERATORS`' uni-skip
