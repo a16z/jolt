@@ -1278,6 +1278,137 @@ mod tests {
         ));
     }
 
+    /// The statement the transcript is bound to changes with every field of
+    /// it the verifier reads, except the fields the verifier binds another
+    /// way. Proof-body fields are absorbed as messages where they are read.
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn statement_binds_each_field_the_verifier_reads() {
+        type Edit = fn(&mut CheckedInputs, &mut ProofTranscriptConfig);
+
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            inputs: vec![1, 2],
+            outputs: vec![3],
+            ..JoltDevice::default()
+        };
+        let is_zk = JOLT_VERIFIER_CONFIG.zk == ZkConfig::BlindFold;
+        let proof = proof_with_zk(is_zk, if is_zk { zk_claims() } else { clear_claims() });
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false).unwrap();
+        let config = ProofTranscriptConfig {
+            rw_config: proof.rw_config,
+            one_hot_config: proof.one_hot_config,
+            trace_polynomial_order: proof.trace_polynomial_order,
+        };
+        let encode = |edit: Edit| {
+            let (mut checked, mut config) = (checked.clone(), config);
+            edit(&mut checked, &mut config);
+            let statement = JoltStatement {
+                checked: &checked,
+                config,
+            };
+            let bytes = statement.encode().as_ref().to_vec();
+            bytes
+        };
+        let honest = encode(|_, _| {});
+
+        let bound: &[(&str, Edit)] = &[
+            ("zk", |c, _| c.zk = !c.zk),
+            ("max_input_size", |c, _| {
+                c.public_io.memory_layout.max_input_size += 1;
+            }),
+            ("max_output_size", |c, _| {
+                c.public_io.memory_layout.max_output_size += 1;
+            }),
+            ("heap_size", |c, _| c.public_io.memory_layout.heap_size += 1),
+            ("panic", |c, _| c.public_io.panic = !c.public_io.panic),
+            ("inputs", |c, _| c.public_io.inputs.push(0)),
+            ("outputs", |c, _| c.public_io.outputs.push(1)),
+            ("trace_length", |c, _| c.trace_length *= 2),
+            ("ram_K", |c, _| c.ram_K *= 2),
+            ("entry_address", |c, _| c.entry_address += 4),
+            ("preprocessing_digest", |c, _| c.preprocessing_digest[0] ^= 1),
+            ("ram_rw_phase1_num_rounds", |_, k| {
+                k.rw_config.ram_rw_phase1_num_rounds += 1;
+            }),
+            ("ram_rw_phase2_num_rounds", |_, k| {
+                k.rw_config.ram_rw_phase2_num_rounds += 1;
+            }),
+            ("registers_rw_phase1_num_rounds", |_, k| {
+                k.rw_config.registers_rw_phase1_num_rounds += 1;
+            }),
+            ("registers_rw_phase2_num_rounds", |_, k| {
+                k.rw_config.registers_rw_phase2_num_rounds += 1;
+            }),
+            ("log_k_chunk", |_, k| k.one_hot_config.log_k_chunk += 1),
+            ("lookups_ra_virtual_log_k_chunk", |_, k| {
+                k.one_hot_config.lookups_ra_virtual_log_k_chunk += 1;
+            }),
+            ("trace_polynomial_order", |_, k| {
+                k.trace_polynomial_order = match k.trace_polynomial_order {
+                    TracePolynomialOrder::CycleMajor => TracePolynomialOrder::AddressMajor,
+                    TracePolynomialOrder::AddressMajor => TracePolynomialOrder::CycleMajor,
+                };
+            }),
+        ];
+        for (field, edit) in bound {
+            assert_ne!(encode(*edit), honest, "the statement does not bind {field}");
+        }
+
+        let unbound: &[(&str, Edit)] = &[
+            // `validate_inputs` rejects a memory layout other than the
+            // preprocessing's, and the preprocessing digest binds that one.
+            ("program_size", |c, _| c.public_io.memory_layout.program_size += 1),
+            ("max_trusted_advice_size", |c, _| {
+                c.public_io.memory_layout.max_trusted_advice_size += 1;
+            }),
+            ("trusted_advice_start", |c, _| {
+                c.public_io.memory_layout.trusted_advice_start += 1;
+            }),
+            ("trusted_advice_end", |c, _| {
+                c.public_io.memory_layout.trusted_advice_end += 1;
+            }),
+            ("max_untrusted_advice_size", |c, _| {
+                c.public_io.memory_layout.max_untrusted_advice_size += 1;
+            }),
+            ("untrusted_advice_start", |c, _| {
+                c.public_io.memory_layout.untrusted_advice_start += 1;
+            }),
+            ("untrusted_advice_end", |c, _| {
+                c.public_io.memory_layout.untrusted_advice_end += 1;
+            }),
+            ("input_start", |c, _| c.public_io.memory_layout.input_start += 1),
+            ("input_end", |c, _| c.public_io.memory_layout.input_end += 1),
+            ("output_start", |c, _| c.public_io.memory_layout.output_start += 1),
+            ("output_end", |c, _| c.public_io.memory_layout.output_end += 1),
+            ("stack_size", |c, _| c.public_io.memory_layout.stack_size += 1),
+            ("stack_end", |c, _| c.public_io.memory_layout.stack_end += 1),
+            ("heap_end", |c, _| c.public_io.memory_layout.heap_end += 1),
+            ("panic address", |c, _| c.public_io.memory_layout.panic += 1),
+            ("termination", |c, _| c.public_io.memory_layout.termination += 1),
+            ("io_end", |c, _| c.public_io.memory_layout.io_end += 1),
+            // The trusted-advice commitment is absorbed under its own label
+            // right after the statement, so its presence is bound there.
+            ("trusted_advice_commitment_present", |c, _| {
+                c.trusted_advice_commitment_present = !c.trusted_advice_commitment_present;
+            }),
+            // The capacity of the verifier's own vector-commitment setup.
+            ("vc_capacity", |c, _| c.vc_capacity = Some(c.vc_capacity.unwrap_or(0) + 1)),
+            // The advice bytes themselves: the verifier reads only their
+            // commitments.
+            ("trusted_advice", |c, _| c.public_io.trusted_advice.push(1)),
+            ("untrusted_advice", |c, _| c.public_io.untrusted_advice.push(1)),
+        ];
+        for (field, edit) in unbound {
+            assert_eq!(
+                encode(*edit),
+                honest,
+                "the statement now binds {field}; move it to the bound list"
+            );
+        }
+    }
+
     #[test]
     #[expect(clippy::unwrap_used)]
     fn validate_inputs_normalizes_public_output() {
