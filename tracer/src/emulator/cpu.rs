@@ -1590,6 +1590,59 @@ mod test_cpu {
         assert_eq!(1, cpu.read_register(1));
     }
 
+    /// Places `code` at `DRAM_BASE` and ticks until the PC-stall stop,
+    /// returning the rows traced.
+    fn run_until_stalled(cpu: &mut Cpu, code: &[u8]) -> usize {
+        cpu.get_mut_mmu().init_memory(1 << 16);
+        for (i, byte) in code.iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        cpu.update_pc(DRAM_BASE);
+        let mut rows = Vec::new();
+        for _ in 0..4 {
+            if cpu.has_stalled() {
+                break;
+            }
+            cpu.tick(Some(&mut rows));
+        }
+        assert!(cpu.has_stalled(), "no PC stall");
+        rows.len()
+    }
+
+    #[test]
+    fn jalr_overwriting_its_base_runs_again() {
+        // jalr x5, 0(x5); beq x0, x0, 0. The second run targets the link.
+        let mut cpu = create_cpu();
+        cpu.x[5] = DRAM_BASE as i64;
+        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0x02, 0x00, 0x63, 0, 0, 0]);
+        assert_eq!(
+            (rows, cpu.read_pc(), cpu.x[5] as u64),
+            (3, DRAM_BASE + 4, DRAM_BASE + 4)
+        );
+
+        // c.jalr ra; beq x0, x0, 0
+        let mut cpu = create_cpu();
+        cpu.x[1] = DRAM_BASE as i64;
+        let rows = run_until_stalled(&mut cpu, &[0x82, 0x90, 0x63, 0, 0, 0]);
+        assert_eq!(
+            (rows, cpu.read_pc(), cpu.x[1] as u64),
+            (3, DRAM_BASE + 2, DRAM_BASE + 2)
+        );
+    }
+
+    #[test]
+    fn jalr_at_its_fixed_point_stops_after_one_run() {
+        // jalr x5, -4(x5); beq x0, x0, 0. The link it writes leads back to
+        // DRAM_BASE.
+        let mut cpu = create_cpu();
+        cpu.x[5] = (DRAM_BASE + 4) as i64;
+        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0xc2, 0xff, 0x63, 0, 0, 0]);
+        assert_eq!(
+            (rows, cpu.read_pc(), cpu.x[5] as u64),
+            (1, DRAM_BASE, DRAM_BASE + 4)
+        );
+    }
+
     #[test]
     fn advice_tape_reads_back_little_endian_in_fifo_order() {
         let mut tape = AdviceTape::new();
