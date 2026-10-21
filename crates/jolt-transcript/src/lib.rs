@@ -38,10 +38,10 @@ mod grind_bits;
 mod poseidon;
 mod pow;
 mod prover;
+#[cfg(feature = "test-utils")]
+mod scripted;
 mod setup;
 mod transcript;
-#[cfg(feature = "test-utils")]
-mod unpriced;
 mod verifier;
 
 pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
@@ -55,11 +55,11 @@ pub use poseidon::PoseidonSponge;
 #[cfg(feature = "prover-grinding")]
 pub use pow::{MessageSearch, Probe};
 pub use prover::ProverTranscript;
+#[cfg(feature = "test-utils")]
+pub use scripted::{ScriptedTranscript, TranscriptEvent};
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
 pub use spongefish::{Encoding, ProverState, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};
-#[cfg(feature = "test-utils")]
-pub use unpriced::UnpricedTranscript;
 pub use verifier::VerifierTranscript;
 
 #[cfg(feature = "transcript-blake2b")]

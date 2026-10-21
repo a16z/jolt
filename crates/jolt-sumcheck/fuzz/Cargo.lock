@@ -438,6 +438,7 @@ dependencies = [
  "num-traits",
  "rand_core",
  "serde",
+ "spongefish",
  "thiserror 2.0.19",
 ]
 
@@ -486,7 +487,6 @@ dependencies = [
  "ark-bn254",
  "ark-ff",
  "blake2",
- "digest 0.11.3",
  "getrandom",
  "jolt-field",
  "light-poseidon",

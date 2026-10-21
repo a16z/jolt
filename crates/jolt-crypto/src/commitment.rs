@@ -6,7 +6,7 @@ use std::{
 
 use jolt_field::{Accumulator, CanonicalBytes, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
-use jolt_transcript::AppendToTranscript;
+use jolt_transcript::Encoding;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[cfg(feature = "parallel")]
@@ -53,6 +53,13 @@ impl CanonicalBytes for NoCommitment {
     const NUM_BYTES: usize = 0;
 
     fn to_bytes_le(&self, _out: &mut [u8]) {}
+}
+
+/// Absorbs nothing: a transparent protocol never sends one.
+impl Encoding for NoCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        []
+    }
 }
 
 impl<F: JoltField> HomomorphicCommitment<F> for NoCommitment {
@@ -105,7 +112,7 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 /// elements with a blinding factor. Uses `Self::Output` from the supertrait
 /// as the commitment value type.
 pub trait VectorCommitment:
-    Commitment<Output: Copy + AppendToTranscript + Serialize + DeserializeOwned>
+    Commitment<Output: Copy + Encoding + Serialize + DeserializeOwned>
 {
     type Field: JoltField;
 

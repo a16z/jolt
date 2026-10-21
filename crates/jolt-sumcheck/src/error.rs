@@ -247,4 +247,15 @@ pub enum SumcheckError<F: Field> {
     /// Consecutive integer domain points have colliding images in the field.
     #[error("integer sumcheck domain of size {domain_size} is not distinct in the field")]
     IntegerDomainNotDistinct { domain_size: usize },
+
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl<F: Field> From<jolt_transcript::VerificationError> for SumcheckError<F> {
+    fn from(_: jolt_transcript::VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

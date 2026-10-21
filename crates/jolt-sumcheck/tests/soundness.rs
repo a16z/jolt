@@ -9,7 +9,10 @@ use jolt_sumcheck::round_proof::RoundMessage;
 use jolt_sumcheck::{
     round_pow_bits, BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, LabelWithCount, ProverState, ProverTranscript,
+    Transcript,
+};
 
 type F = Fr;
 
@@ -29,18 +32,18 @@ impl From<SumcheckError<F>> for OracleCheckError {
     }
 }
 
-fn new_transcript() -> Blake2bTranscript<F> {
-    Blake2bTranscript::new(b"soundness-test")
+fn new_transcript() -> ProverState<Blake2b512> {
+    prover_transcript::<Blake2b512>(b"soundness-test", b"")
 }
 
 fn pow_bits(degree: usize) -> u32 {
-    round_pow_bits::<F, Blake2bTranscript<F>>(degree).unwrap()
+    round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap()
 }
 
 fn honest_prove(
     evals: &[F],
     num_vars: usize,
-    transcript: &mut Blake2bTranscript<F>,
+    transcript: &mut ProverState<Blake2b512>,
 ) -> ClearSumcheckProof<F> {
     let mut buf = evals.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);
@@ -56,8 +59,8 @@ fn honest_prove(
         }
         let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
         <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
-        pow_nonces.extend(transcript.grind(pow_bits(1)).unwrap());
-        let r: F = transcript.challenge();
+        pow_nonces.extend(transcript.public_grind(pow_bits(1)).unwrap());
+        let r: F = transcript.challenge().unwrap();
         round_polys.push(round_poly);
         for i in 0..half {
             buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
@@ -250,7 +253,7 @@ fn verifier_transcript_desync_rejected() {
     };
 
     let mut vt = new_transcript();
-    F::from_u64(0xdead).append_to_transcript(&mut vt);
+    vt.append(&F::from_u64(0xdead));
 
     let result = SumcheckVerifier::verify(
         &claim,
@@ -290,14 +293,14 @@ fn num_vars_zero_accepts_any_claimed_sum() {
 
 /// Absorbs one compressed round exactly the way `verify_compressed` replays
 /// it: `LabelWithCount(label, degree)` then the stored coefficients `[c0, c2]`.
-fn absorb_compressed_round(round: &CompressedPoly<F>, transcript: &mut Blake2bTranscript) {
+fn absorb_compressed_round(round: &CompressedPoly<F>, transcript: &mut ProverState<Blake2b512>) {
     let coeffs = round.coeffs_except_linear_term();
     transcript.append(&LabelWithCount(
         SUMCHECK_ROUND_TRANSCRIPT_LABEL,
         coeffs.len() as u64,
     ));
     for coeff in coeffs {
-        coeff.append_to_transcript(transcript);
+        transcript.append(coeff);
     }
 }
 
@@ -308,8 +311,8 @@ fn grind_compressed_nonces(rounds: &[CompressedPoly<F>], degree: usize) -> Vec<u
         .iter()
         .filter_map(|round| {
             absorb_compressed_round(round, &mut transcript);
-            let nonce = transcript.grind(pow_bits(degree)).unwrap();
-            let _challenge: F = transcript.challenge();
+            let nonce = transcript.public_grind(pow_bits(degree)).unwrap();
+            let _challenge: F = transcript.challenge().unwrap();
             nonce
         })
         .collect()
@@ -322,7 +325,7 @@ fn honest_prove_product_compressed(
     g_evals: &[F],
     h_evals: &[F],
     num_vars: usize,
-    transcript: &mut Blake2bTranscript,
+    transcript: &mut ProverState<Blake2b512>,
 ) -> CompressedSumcheckProof<F> {
     let mut g = g_evals.to_vec();
     let mut h = h_evals.to_vec();
@@ -344,8 +347,8 @@ fn honest_prove_product_compressed(
         let compressed = UnivariatePoly::new(vec![c0, c1, c2]).compress();
 
         absorb_compressed_round(&compressed, transcript);
-        pow_nonces.extend(transcript.grind(pow_bits(2)).unwrap());
-        let r: F = transcript.challenge();
+        pow_nonces.extend(transcript.public_grind(pow_bits(2)).unwrap());
+        let r: F = transcript.challenge().unwrap();
 
         for i in 0..half {
             g[i] = g[i] + r * (g[i + half] - g[i]);

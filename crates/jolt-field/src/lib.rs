@@ -103,7 +103,10 @@ mod algebra;
 mod binary;
 #[cfg(feature = "bn254")]
 mod bn254;
-#[cfg(feature = "spongefish")]
+#[cfg(all(
+    feature = "spongefish",
+    any(feature = "bn254", feature = "solinas", feature = "binary")
+))]
 mod encoding;
 mod extension;
 #[cfg(feature = "solinas")]
