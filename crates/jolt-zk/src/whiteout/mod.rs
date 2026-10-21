@@ -1,8 +1,8 @@
 //! Whiteout, the lattice zero-knowledge back end.
 //!
-//! This module holds the ring-level building blocks moved from Akita `dev`'s
-//! `akita-zk-verifier` and `akita-zk-prover` crates (LayerZero-Labs/akita#120),
-//! and the Σ-protocol of `specs/whiteout-sigma.md`: the lattice pad
+//! This module holds the ring-level building blocks (the constant-term lift
+//! and the zero-constant-term sampler, first written in Akita for
+//! LayerZero-Labs/akita#120), and the Σ-protocol of `specs/whiteout-sigma.md`: the lattice pad
 //! commitment, the constant-term lift of the residual relation, the prover
 //! and verifier, and the response statement. It exposes no zero-knowledge
 //! mode yet (`ZkBackend for Whiteout` is W6). The verifier-side pieces build
