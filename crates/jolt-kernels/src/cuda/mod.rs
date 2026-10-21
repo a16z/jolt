@@ -1,11 +1,13 @@
 //! CUDA precommitted, increment, register and instruction claim reductions.
 //! Also provides instruction-input and RAM output checking, and RAM
-//! hamming-weight booleanity.
+//! hamming-weight booleanity and Spartan product virtualization.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
 //! reduction, instruction operand reduction, instruction-input checking and
 //! RAM output checking and hamming-weight booleanity in the optimized registry.
+//! Spartan product uni-skip and remainder slots use CUDA for RV64; field-inline
+//! retains the optimized implementations.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
 //! with shared proof and setup types.
 //!
@@ -158,7 +160,7 @@ mod ram_output_check;
 mod registers_claim_reduction;
 #[cfg(test)]
 mod registers_read_write;
-#[cfg(all(test, not(feature = "field-inline")))]
+#[cfg(not(feature = "field-inline"))]
 mod spartan_product;
 mod witness;
 
@@ -195,7 +197,8 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     /// Replace supported claim reductions, instruction-input and RAM output
-    /// checking, and RAM hamming booleanity with CUDA kernels.
+    /// checking, RAM hamming booleanity and RV64 Spartan product virtualization
+    /// with CUDA kernels.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -217,6 +220,11 @@ where
         backend.instruction_claim_reduction = Box::new(CudaBackend);
         backend.instruction_input = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
+        #[cfg(not(feature = "field-inline"))]
+        {
+            backend.spartan_product_uniskip = Box::new(CudaBackend);
+            backend.spartan_product_remainder = Box::new(CudaBackend);
+        }
         backend
     }
 }

@@ -103,15 +103,15 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     amm_lift: CudaFunction,
     brc_message_dense: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     sp_gather: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     sp_matrix: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     sp_factors: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     sp_claims: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     gruen_pair_message: CudaFunction,
     roc_message: CudaFunction,
     #[cfg(test)]
@@ -318,15 +318,15 @@ impl CudaKernelContext {
             #[cfg(test)]
             amm_lift: module.load_function("amm_lift_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             sp_gather: module.load_function("sp_gather_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             sp_matrix: module.load_function("sp_matrix_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             sp_factors: module.load_function("sp_factors_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             sp_claims: module.load_function("sp_claims_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             gruen_pair_message: module.load_function("gruen_pair_message_kernel")?,
             roc_message: module.load_function("roc_message_kernel")?,
             #[cfg(test)]
@@ -715,27 +715,27 @@ impl CudaKernelContext {
         &self.ii_flag_words
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn sp_gather(&self) -> &CudaFunction {
         &self.sp_gather
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn sp_matrix(&self) -> &CudaFunction {
         &self.sp_matrix
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn sp_factors(&self) -> &CudaFunction {
         &self.sp_factors
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn sp_claims(&self) -> &CudaFunction {
         &self.sp_claims
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn gruen_pair_message(&self) -> &CudaFunction {
         &self.gruen_pair_message
     }

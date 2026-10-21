@@ -1,6 +1,8 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_field::JoltField;
+use jolt_poly::lagrange::{centered_lagrange_evals, interpolate_to_coeffs, poly_mul};
+use jolt_poly::UnivariatePoly;
 
 use super::columns::DeviceProductColumns;
 use super::witness::{BRANCH_BIT, JUMP_BIT, NEXT_IS_NOOP_BIT, SIGN_BIT_BASE};
@@ -15,7 +17,17 @@ pub const LANES: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
 
 pub const MATRIX_LANES: usize = LANES * LANES;
 
+pub const EXTENDED_SIZE: usize = 2 * PRODUCT_UNISKIP_DOMAIN_SIZE - 1;
+
 pub const STRIP: usize = 4;
+
+pub fn node_field<F: JoltField>(node: i64) -> F {
+    if node >= 0 {
+        F::from_u64(node as u64)
+    } else {
+        -F::from_u64(node.unsigned_abs())
+    }
+}
 
 pub fn product_matrix_windows<F: JoltField>(
     columns: &[(usize, DeviceProductColumns)],
@@ -118,6 +130,46 @@ pub fn product_matrix<F: JoltField>(
         })?);
     }
     Ok(matrix)
+}
+
+pub fn first_round_poly<F: JoltField>(
+    matrix: &[F],
+    tau_high: F,
+) -> Result<UnivariatePoly<F>, CudaError> {
+    if matrix.len() != MATRIX_LANES {
+        return Err(CudaError::LengthMismatch {
+            expected: MATRIX_LANES,
+            got: matrix.len(),
+        });
+    }
+    let domain_start = -((PRODUCT_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
+    let extended_start = -((EXTENDED_SIZE as i64 - 1) / 2);
+    let invalid_domain = || CudaError::InvariantViolation {
+        reason: "the Spartan product uni-skip domain is not a valid centered integer domain",
+    };
+
+    let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
+    for (position, value) in t1_values.iter_mut().enumerate() {
+        let node = node_field::<F>(extended_start + position as i64);
+        let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, node)
+            .map_err(|_| invalid_domain())?;
+        let mut sum = F::zero();
+        for (left, &left_weight) in weights.iter().enumerate() {
+            for (right, &right_weight) in weights.iter().enumerate() {
+                sum += left_weight * right_weight * matrix[left * LANES + right];
+            }
+        }
+        *value = sum;
+    }
+
+    let kernel_values = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high)
+        .map_err(|_| invalid_domain())?;
+    let kernel_coefficients = interpolate_to_coeffs(domain_start, &kernel_values);
+    let t1_coefficients = interpolate_to_coeffs(extended_start, &t1_values);
+    Ok(UnivariatePoly::new(poly_mul(
+        &kernel_coefficients,
+        &t1_coefficients,
+    )))
 }
 
 #[cfg(test)]

@@ -1,18 +1,30 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
-    next_is_noop_product, right_instruction_input_product,
+    next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
+    write_lookup_output_to_rd_product,
 };
+use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::{Fr, JoltField};
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel};
-use jolt_poly::BindingOrder;
+use jolt_poly::{BindingOrder, UnivariatePoly};
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use std::collections::BTreeMap;
+use witness::CLAIM_COLUMNS as WitnessClaimColumns;
 
 use super::columns::DeviceProductColumns;
-use super::witness::{BRANCH_BIT, CLAIM_COLUMNS, JUMP_BIT, NEXT_IS_NOOP_BIT, SIGN_BIT_BASE};
+use super::witness::{self, BRANCH_BIT, CLAIM_COLUMNS, JUMP_BIT, NEXT_IS_NOOP_BIT, SIGN_BIT_BASE};
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
+use crate::cuda::common::error::backend;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::{split_eq_tables_window, DeviceSplitEq};
@@ -22,6 +34,19 @@ pub const CLAIM_LANES: usize = 4;
 pub const MESSAGE_STRIP: usize = 1;
 
 pub const CLAIM_STRIP: usize = 16;
+
+pub fn claim_openings() -> [JoltOpeningId; CLAIM_COLUMNS] {
+    [
+        left_instruction_input_product(),
+        right_instruction_input_product(),
+        jump_flag_product(),
+        write_lookup_output_to_rd_product(),
+        lookup_output_product(),
+        branch_flag_product(),
+        next_is_noop_product(),
+        virtual_instruction_product(),
+    ]
+}
 
 pub(crate) struct ProductShard<F: JoltField> {
     pub(crate) ordinal: usize,
@@ -35,6 +60,7 @@ pub struct DeviceProductRemainder<F: JoltField> {
     shards: Vec<ProductShard<F>>,
     collapsed: Option<(DeviceFrVec, DeviceFrVec)>,
     eq: DeviceSplitEq<F>,
+    log_t: usize,
     local_rounds: usize,
     challenges: Vec<F>,
 }
@@ -108,6 +134,7 @@ impl<F: JoltField> DeviceProductRemainder<F> {
             shards,
             collapsed: None,
             eq,
+            log_t,
             local_rounds: log_t - tail_rounds,
             challenges: Vec::with_capacity(log_t),
         })
@@ -143,6 +170,14 @@ impl<F: JoltField> DeviceProductRemainder<F> {
         // fresh and distinct.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
         Ok((left, right))
+    }
+
+    pub const fn rounds(&self) -> usize {
+        self.log_t
+    }
+
+    pub fn bound_rounds(&self) -> usize {
+        self.challenges.len()
     }
 
     fn bind(&mut self, context: &CudaKernelContext, challenge: F) -> Result<(), CudaError> {
@@ -424,11 +459,129 @@ impl<F: JoltField> DeviceProductRemainder<F> {
             })?;
         Ok((window.left.to_host()?, window.right.to_host()?))
     }
+
+    pub fn opening_values(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<BTreeMap<JoltOpeningId, F>, CudaError> {
+        let claims = self.claims(context)?;
+        if claims.len() != WitnessClaimColumns {
+            return Err(CudaError::LengthMismatch {
+                expected: WitnessClaimColumns,
+                got: claims.len(),
+            });
+        }
+        Ok(claim_openings().into_iter().zip(claims).collect())
+    }
 }
 
 const fn absent() -> CudaError {
     CudaError::InvariantViolation {
         reason: "a Spartan product remainder window names an absent device",
+    }
+}
+
+pub struct SpartanProductRemainderKernel<F: JoltField> {
+    context: &'static CudaKernelContext,
+    state: DeviceProductRemainder<F>,
+    degree: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: JoltField> Allocative for SpartanProductRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        let state = &self.state;
+        visitor.visit_simple(
+            Key::new("columns"),
+            state
+                .shards
+                .iter()
+                .map(|shard| shard.columns.device_bytes())
+                .sum(),
+        );
+        visitor.visit_simple(
+            Key::new("left_right"),
+            state
+                .shards
+                .iter()
+                .map(|shard| shard.left.device_bytes() + shard.right.device_bytes())
+                .sum::<usize>()
+                + state.collapsed.as_ref().map_or(0, |(left, right)| {
+                    left.device_bytes() + right.device_bytes()
+                }),
+        );
+        visitor.visit_simple(
+            Key::new("eq"),
+            state.eq.device_bytes()
+                + state
+                    .shards
+                    .iter()
+                    .map(|shard| shard.eq.as_ref().map_or(0, DeviceSplitEq::device_bytes))
+                    .sum::<usize>(),
+        );
+        visitor.exit();
+    }
+}
+
+impl<F: JoltField> SpartanProductRemainderKernel<F> {
+    pub const fn new(
+        context: &'static CudaKernelContext,
+        state: DeviceProductRemainder<F>,
+        degree: usize,
+    ) -> Self {
+        Self {
+            context,
+            state,
+            degree,
+        }
+    }
+
+    pub fn openings(&self) -> Result<BTreeMap<JoltOpeningId, F>, CudaError> {
+        self.state.opening_values(self.context)
+    }
+
+    pub fn bound_rounds(&self) -> usize {
+        self.state.bound_rounds()
+    }
+}
+
+impl<F: JoltField> ProveRounds<F> for SpartanProductRemainderKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.state.rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.state
+                .bind(self.context, challenge)
+                .map_err(backend("cuda Spartan product remainder"))?;
+        }
+        let [q0, q2, q1] = self
+            .state
+            .endpoints(self.context)
+            .map_err(backend("cuda Spartan product remainder"))?;
+        let mut coefficients = self
+            .state
+            .eq
+            .gruen_poly_deg_3(q0, q2, previous_claim, q1)
+            .map_err(backend("CUDA quotient interpolation"))?
+            .into_coefficients();
+        coefficients.resize(self.degree + 1, F::zero());
+        Ok(UnivariatePoly::new(coefficients))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.state
+            .bind(self.context, bind)
+            .map_err(|_| SumcheckError::MissingEvaluationSource {
+                kind: "cuda Spartan product remainder",
+            })
     }
 }
 

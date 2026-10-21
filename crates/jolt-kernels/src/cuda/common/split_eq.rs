@@ -24,7 +24,7 @@ pub struct DeviceSplitEq<F: JoltField> {
     out_shards: usize,
 }
 
-#[cfg(all(test, not(feature = "field-inline")))]
+#[cfg(not(feature = "field-inline"))]
 pub fn split_eq_tables_window<F: JoltField>(
     context: &CudaKernelContext,
     point: &[F],
@@ -102,7 +102,7 @@ impl<F: JoltField> DeviceSplitEq<F> {
         )
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub fn new_with_scaling(
         context: &CudaKernelContext,
         point: &[F],
@@ -121,7 +121,7 @@ impl<F: JoltField> DeviceSplitEq<F> {
         )
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub fn new_window_with_scaling(
         context: &CudaKernelContext,
         point: &[F],
