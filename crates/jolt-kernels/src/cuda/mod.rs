@@ -1,8 +1,9 @@
-//! CUDA precommitted and increment reductions and RAM hamming-weight booleanity.
+//! CUDA precommitted, increment and register-value claim reductions.
+//! Also provides RAM hamming-weight booleanity.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
-//! cycle/address slots, RAM/register increment reduction and RAM hamming-weight
-//! booleanity in the optimized registry.
+//! cycle/address slots, RAM/register increment reduction, register-value reduction
+//! and RAM hamming-weight booleanity in the optimized registry.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
 //! with shared proof and setup types.
 //!
@@ -149,6 +150,7 @@ mod inc_claim_reduction;
 mod instruction_read_raf;
 mod program_image_claim_reduction;
 mod ram_hamming_booleanity;
+mod registers_claim_reduction;
 #[cfg(test)]
 mod registers_read_write;
 mod witness;
@@ -203,6 +205,7 @@ where
         backend.program_image_reduction_address = Box::new(CudaBackend);
         backend.ram_hamming_booleanity = Box::new(CudaBackend);
         backend.inc_claim_reduction = Box::new(CudaBackend);
+        backend.registers_claim_reduction = Box::new(CudaBackend);
         backend
     }
 }

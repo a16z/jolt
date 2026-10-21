@@ -37,6 +37,13 @@ pub struct PrefixSuffixGroup<F: JoltField> {
     pub constant: F,
 }
 
+pub const fn prefix_rounds_ceil(log_t: usize) -> Option<usize> {
+    if log_t < 2 {
+        return None;
+    }
+    Some(log_t - log_t / 2)
+}
+
 pub const fn prefix_rounds_floor(log_t: usize) -> Option<usize> {
     if log_t < 2 {
         return None;
