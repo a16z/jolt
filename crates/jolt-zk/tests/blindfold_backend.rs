@@ -42,8 +42,11 @@ fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
+/// `a·b`, as `3·a·b − 2·a·b`: two terms whose products land on one
+/// two-pair row, so BlindFold lowers it with one intermediate.
 fn product() -> FactoredExpr<Fr, Opening, (), ()> {
-    FactoredExpr::product(vec![opening(Opening::A), opening(Opening::B)])
+    let ab = || FactoredExpr::product(vec![opening(Opening::A), opening(Opening::B)]);
+    ab().scale(fr(3)) + ab().scale(-fr(2))
 }
 
 fn setup() -> PedersenSetup<Bn254G1> {
@@ -55,12 +58,14 @@ fn setup() -> PedersenSetup<Bn254G1> {
 fn layout() -> PadLayout {
     let base = NUM_VARS * DEGREE + 2;
     let mut shape = OperandShapeDomain::new(base);
-    let _ = lower_factored(
+    lower_factored(
         &product(),
         &mut shape,
         &mut |id| Ok(Some(PadIndex(base - 2 + *id as usize))),
         &mut |_| Ok(fr(0)),
     )
+    .unwrap()
+    .check_equals::<Fr, _>(None, &mut shape)
     .unwrap();
     shape.layout().unwrap()
 }
@@ -133,8 +138,9 @@ fn residual(
         &mut |_: &Source<Opening, (), ()>| -> Result<Fr, ZkError> { unreachable!() },
     )
     .unwrap();
+    output.check_equals(running, &mut rows).unwrap();
     rows.finish().unwrap();
-    relation.affine.push(running.add_scaled(&output, -fr(1)));
+    assert_eq!(relation.products[0].pairs.len(), 2);
     relation.affine.push(
         AffineRow::variable(ResidualVar::Witness(0))
             .add_scaled(&a, -fr(1))

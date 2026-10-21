@@ -8,7 +8,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 use rand_core::{CryptoRng, RngCore};
 
-use super::protocol::pad_row_count;
+use super::protocol::{pad_row_count, product_intermediates};
 use super::{prove, BlindFoldProtocol, BlindFoldWitness};
 use crate::masking::{
     CommittedPads, CommittedPadsView, PadLayout, ResidualRelation, ZkBackend, ZkError,
@@ -141,6 +141,18 @@ where
             }
             rows.push(row);
             blindings.push(VC::Field::random(rng));
+        }
+        let intermediates = product_intermediates(relation, pads.pads(), &[witness.evaluation])?;
+        for chunk in intermediates.chunks(row_len) {
+            let mut row = chunk.to_vec();
+            row.resize(row_len, VC::Field::zero());
+            rows.push(row);
+            blindings.push(VC::Field::random(rng));
+        }
+        if rows.len() != dimensions.witness_rows.products.end {
+            return Err(ZkError::InvalidRelation {
+                reason: "product intermediates differ from the BlindFold layout",
+            });
         }
         rows.resize(
             dimensions.witness.row_count,

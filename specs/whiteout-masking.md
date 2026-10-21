@@ -107,8 +107,9 @@ unsatisfiable), never dropped.
   instruction read-RAF and the Spartan product remainder are ported; monomial
   relations factor trivially. A term with factors f₁…f_d becomes a chain:
   a factor that is not a single masked slot gets an auxiliary slot and a
-  defining affine row; then d−1 `ProductRow`s with x a masked slot and z a new
-  auxiliary slot. Slots are allocated per symbolic factor and term, never
+  defining affine row; then d−2 `ProductRow`s with x a masked slot and z a new
+  auxiliary slot, and the last product stays pending as a pair of the stage's
+  check row (below). Slots are allocated per symbolic factor and term, never
   skipped because a coefficient happens to be zero.
 - **Stage 8** belongs to the back end's PCS integration in `jolt-prover` /
   `jolt-verifier`, not to the stage-agnostic lowering: for Dory,
@@ -118,12 +119,12 @@ The lowering is generic over its value domain, `jolt_transcript::ClaimDomain`
 (shared with Akita's stage checks, whose clear verifier uses its
 `ClearDomain`): symbolic shape (layout), affine forms (verifier rows), decoded
 values (prover auxiliary values). Its checks are `check_zero` (an affine row)
-and `product_into` (a product row whose z is an existing value, so no
-auxiliary slot); Jolt's stage rows (running claim against the batched output,
-alias equalities) go through `check_zero`. Jolt keeps one auxiliary slot per
-intermediate product: landing a stage's last product on its running claim
-would drop slots and change every ZK proof. The
-prover never restates it. **A1:** the auxiliary block comes after stage 8.
+and `products_into` (a product row Σ_k x_k·y_k = z whose z is an existing
+value, so no auxiliary slot; `product_into` is its one-pair case). Each
+stage's check, running claim against the batched output, is one
+`products_into` row whose pairs are the output terms' last products, or an
+affine row when the outputs are affine; alias equalities go through
+`check_zero`. The prover never restates it. **A1:** the auxiliary block comes after stage 8.
 This is sound because auxiliary slots form an acyclic chain, each defined by
 exactly one product row or defining affine row whose inputs are earlier
 slots, and no base-protocol challenge depends on them.

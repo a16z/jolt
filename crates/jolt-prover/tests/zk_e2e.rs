@@ -24,7 +24,7 @@ mod zk {
     extern crate jolt_inlines_keccak256;
 
     use common::jolt_device::JoltDevice;
-    use jolt_algebra::{Fr, Ring, Zero};
+    use jolt_algebra::{Field, Fr, Ring, Zero};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_prover::dory::DoryProverPreprocessing;
@@ -40,7 +40,8 @@ mod zk {
         jolt_protocol_id, verify_stages, MaskedStages, VerifiedStages, JOLT_SESSION,
     };
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
-    use jolt_zk::masking::{ResidualRelation, ResidualVar};
+    use jolt_zk::masking::{PadIndex, ProductRow, ResidualRelation, ResidualVar};
+    use std::collections::BTreeMap;
 
     use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
 
@@ -299,6 +300,62 @@ mod zk {
                 .expect("evaluate the equality row")
                 .is_zero());
             assert!(cheater.violation(&pads).is_some());
+        });
+    }
+
+    /// A multi-pair stage row holds when one pair's change is offset by
+    /// another's: shifting the decoded operand x_a of one pair by δ and x_b
+    /// of another by −δ·y_a/y_b keeps the row. The two openings are pinned
+    /// elsewhere (a later stage's input claim or stage 8's evaluation row),
+    /// so another row breaks.
+    #[test]
+    fn zk_muldiv_compensated_pairs_break_another_row() {
+        with_zk_stack(|| {
+            let cheater = CheatingProver::new();
+            let pads = &cheater.secrets.pads;
+            let witness = [cheater.secrets.joint_evaluation];
+            let honest = cheater.relation(pads);
+            let base = cheater.masked.pads.layout().auxiliary.start;
+            // Per multi-pair row, its base operands that the row reads only as
+            // operands, with the sum of their cofactors y.
+            let operands = |row: &ProductRow<Fr>| -> Vec<(usize, Fr)> {
+                let reads = |pad: usize| {
+                    row.pairs
+                        .iter()
+                        .flat_map(|pair| &pair.y.terms)
+                        .chain(&row.z.terms)
+                        .any(|(variable, _)| *variable == ResidualVar::Pad(PadIndex(pad)))
+                };
+                let mut cofactors: BTreeMap<usize, Fr> = BTreeMap::new();
+                for pair in &row.pairs {
+                    let y = pair.y.evaluate(pads, &witness).expect("evaluate y");
+                    *cofactors.entry(pair.x.pad.0).or_insert_with(Fr::zero) += y;
+                }
+                cofactors
+                    .into_iter()
+                    .filter(|&(pad, y)| pad < base && !reads(pad) && !y.is_zero())
+                    .collect()
+            };
+            let (index, a, y_a, b, y_b) = honest
+                .products
+                .iter()
+                .enumerate()
+                .find_map(|(index, row)| match operands(row)[..] {
+                    [(a, y_a), (b, y_b), ..] => Some((index, a, y_a, b, y_b)),
+                    _ => None,
+                })
+                .expect("muldiv has a multi-pair row with two independent operands");
+            let delta = Fr::from_u64(7);
+            let epsilon = -delta * y_a * y_b.inverse().expect("y_b is nonzero");
+
+            let shifted = cheater.shifted(&[(a, delta), (b, epsilon)]);
+            let relation = cheater.relation(&shifted);
+            assert!(relation.products[index]
+                .evaluate(&shifted, &witness)
+                .expect("evaluate the multi-pair row")
+                .is_zero());
+            let violation = cheater.violation(&shifted).expect("another row breaks");
+            assert_ne!(violation, relation.affine.len() + index);
         });
     }
 

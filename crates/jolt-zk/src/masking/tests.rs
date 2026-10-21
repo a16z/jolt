@@ -82,7 +82,7 @@ fn layout() -> PadLayout {
     let base = DEGREE + 1 + 1 + NUM_VARS * DEGREE + 2;
     // The two output claims take the last base slots.
     let mut shape = OperandShapeDomain::new(base);
-    let _ = lower_factored(
+    lower_factored(
         &product(),
         &mut shape,
         &mut |id| {
@@ -94,6 +94,8 @@ fn layout() -> PadLayout {
         },
         &mut |_| Ok(Fr::from_u64(0)),
     )
+    .unwrap()
+    .check_equals::<Fr, _>(None, &mut shape)
     .unwrap();
     shape.layout().unwrap()
 }
@@ -239,10 +241,8 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
         &mut |_: &Source<Opening, (), ()>| -> Result<Fr, ZkError> { unreachable!() },
     )
     .unwrap();
+    output.check_equals(running, &mut rows).unwrap();
     rows.finish().unwrap();
-    relation
-        .affine
-        .push(running.add_scaled(&output, -Fr::from_u64(1)));
     relation
 }
 
@@ -383,10 +383,20 @@ fn shape_and_values_domains_allocate_alike() {
         &mut |_| Ok(Fr::from_u64(0)),
     )
     .unwrap();
-    // A zero coefficient still allocates its product slot.
-    assert_eq!(shape.auxiliary.len(), 3);
-    assert_eq!(values.auxiliary, vec![fr(16), fr(80), fr(6)]);
-    assert_eq!(value, fr(80) + fr(2));
+    // A·(B + U) takes a slot and its product with U stays pending, as does
+    // the zero-coefficient A·B.
+    assert_eq!(shape.auxiliary.len(), 1);
+    assert_eq!(values.auxiliary, vec![fr(16)]);
+    assert_eq!(value.pairs, vec![(fr(16), fr(5)), (fr(2), fr(0))]);
+    assert_eq!(evaluate(&value), fr(80) + fr(2));
+}
+
+/// `Σ_k x_k · y_k + affine`.
+fn evaluate(value: &ProductSum<Fr>) -> Fr {
+    value
+        .pairs
+        .iter()
+        .fold(value.affine, |sum, (x, y)| sum + *x * *y)
 }
 
 type RandomExpr = Expr<Fr, usize, (), usize>;
@@ -452,12 +462,14 @@ fn lowering_domains_agree_on_random_formulas() {
         );
 
         let mut shape = OperandShapeDomain::new(RANDOM_OPENINGS);
-        let _ = lower_factored(
+        lower_factored(
             &expr,
             &mut shape,
             &mut |id| Ok(Some(PadIndex(*id))),
             &mut public.clone(),
         )
+        .unwrap()
+        .check_equals::<Fr, _>(None, &mut shape)
         .unwrap();
         let layout = shape.layout().unwrap();
 
@@ -469,7 +481,7 @@ fn lowering_domains_agree_on_random_formulas() {
             &mut public.clone(),
         )
         .unwrap();
-        assert_eq!(value, expected);
+        assert_eq!(evaluate(&value), expected);
         assert_eq!(values.auxiliary.len(), layout.auxiliary.len());
         let pads: Vec<Fr> = (0..layout.num_pads).map(|_| Fr::random(&mut rng)).collect();
         let masked_auxiliary: Vec<Fr> = values
@@ -487,10 +499,18 @@ fn lowering_domains_agree_on_random_formulas() {
             &mut public.clone(),
         )
         .unwrap();
+        output
+            .check_equals(AffineRow::constant(expected), &mut rows)
+            .unwrap();
         rows.finish().unwrap();
-        relation
-            .affine
-            .push(output.add_scaled(&AffineRow::constant(expected), -Fr::from_u64(1)));
+        let pinned: Vec<PadIndex> = relation
+            .products
+            .iter()
+            .flat_map(|row| row.pairs.iter().map(|pair| pair.x.pad))
+            .collect();
+        assert!(pinned
+            .iter()
+            .all(|pad| relation.layout.operand_pads.contains(pad)));
         assert_eq!(relation.first_violation(&pads, &[]).unwrap(), None);
     }
 }

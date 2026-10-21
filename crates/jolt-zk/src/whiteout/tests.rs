@@ -191,6 +191,7 @@ fn verify<const D: usize>(
     let received = Instance {
         relation: relation.clone(),
         claims: instance.claims.clone(),
+        messages: Vec::new(),
         s: Vec::new(),
         u: receive(instance.u.len())?,
         t_p: receive(instance.t_p.len())?,
@@ -230,7 +231,7 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
         }),
         ("product row", {
             let mut instance = Instance::new(21);
-            instance.relation.products[0].x.masked += F::one();
+            instance.relation.products[0].pairs[1].x.masked += F::one();
             instance
         }),
         ("scalarity row", {
@@ -274,11 +275,40 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
     }
 }
 
+/// The two-pair row alone does not pin its pairs: shifting m0 by δ and m2
+/// by −δ·m1/m3 keeps `m0·m1 + m2·m3 = aux`. A transcript carries one m2, so
+/// the shift also reaches the affine row `m2 + m3 = sum`, which rejects it.
+#[test]
+fn compensated_pairs_are_caught_where_their_operands_are_pinned() {
+    let shifted = |seed: u64, consistent: bool| {
+        let mut instance = Instance::<64>::new(seed);
+        let m = &instance.messages;
+        let delta = F::from_u64(7);
+        let epsilon = -delta * m[1] * m[3].inverse().unwrap();
+        let row = &mut instance.relation.products[0];
+        row.pairs[0].x.masked += delta;
+        row.pairs[1].x.masked += epsilon;
+        if consistent {
+            instance.relation.affine[0].constant += epsilon;
+        }
+        instance
+    };
+    // With m2 shifted in the product row only, every row holds.
+    let inconsistent = shifted(16, false);
+    let proof = prove_checked(&inconsistent, 17).unwrap();
+    verify(&inconsistent, &inconsistent.relation, &proof).unwrap();
+    let error = prove_checked(&shifted(16, true), 17).unwrap_err();
+    assert_eq!(
+        whiteout_error(&error),
+        Some(&WhiteoutError::ResidualUnsatisfied { row: 0 })
+    );
+}
+
 /// Each self-check fires on its own case, with the exact row or variant.
 #[test]
 fn each_self_check_fires_on_its_own_case() {
     let affine_rows = 2;
-    let scalarity_rows = 63;
+    let scalarity_rows = 2 * 63;
     let check = |instance: &Instance<64>, expected: WhiteoutError| {
         let error = prove_checked(instance, 9).unwrap_err();
         assert_eq!(whiteout_error(&error), Some(&expected), "{error:?}");
@@ -299,7 +329,7 @@ fn each_self_check_fires_on_its_own_case() {
     );
 
     let mut product = Instance::<64>::new(12);
-    product.relation.products[0].x.masked += F::one();
+    product.relation.products[0].pairs[1].x.masked += F::one();
     check(
         &product,
         WhiteoutError::ResidualUnsatisfied {
@@ -457,15 +487,24 @@ fn check_quadratic_against_decoding<const D: usize>(seed: u64) {
     for (index, row) in instance.relation.affine.iter().enumerate() {
         expected += weight(labels.affine(index)) * row_value(row);
     }
-    let p_x = operand_poly(0);
-    for (r, coefficient) in p_x.iter().enumerate().skip(1) {
-        expected += weight(RowLabels::scalarity(0, r)) * *coefficient;
+    for operand in 0..2 {
+        for (r, coefficient) in operand_poly(operand).iter().enumerate().skip(1) {
+            expected += weight(RowLabels::scalarity(operand, r)) * *coefficient;
+        }
     }
     for (index, product) in instance.relation.products.iter().enumerate() {
-        let x = product.x.masked - p_x[0];
-        let y = lift_ring(&product.y);
-        let difference: F = (1..64).map(|r| p_x[r] * y[64 - r]).sum();
-        let term = x * row_value(&product.y) - row_value(&product.z) + difference;
+        let mut term = -row_value(&product.z);
+        for pair in &product.pairs {
+            let operand = layout()
+                .operand_pads
+                .iter()
+                .position(|pad| *pad == pair.x.pad)
+                .unwrap();
+            let p_x = operand_poly(operand);
+            let y = lift_ring(&pair.y);
+            let difference: F = (1..64).map(|r| p_x[r] * y[64 - r]).sum();
+            term += (pair.x.masked - p_x[0]) * row_value(&pair.y) + difference;
+        }
         expected += weight(labels.product(index)) * term;
     }
     expected += (0..PAD_LEVELS).rev().fold(F::zero(), |acc, level| {

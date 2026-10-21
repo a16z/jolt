@@ -125,12 +125,38 @@ impl<F: Field> MaskedOperand<F> {
     }
 }
 
-/// x · y = z.
+/// One product `x · y` of a [`ProductRow`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProductRow<F> {
+pub struct ProductPair<F> {
     pub x: MaskedOperand<F>,
     pub y: AffineRow<F>,
+}
+
+/// `Σ_k x_k · y_k = z`. Every row has at least one pair; a back end rejects
+/// one without. With one pair it is the paper's `x · y = z`; several pairs
+/// land several products on one claim, such as a stage's running claim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductRow<F> {
+    pub pairs: Vec<ProductPair<F>>,
     pub z: AffineRow<F>,
+}
+
+impl<F: Field> ProductRow<F> {
+    /// `Σ_k x_k · y_k − z` under an assignment.
+    ///
+    /// # Errors
+    ///
+    /// As [`ResidualVar::value`].
+    pub fn evaluate(&self, pads: &[F], witness: &[F]) -> Result<F, ZkError> {
+        self.pairs
+            .iter()
+            .try_fold(-self.z.evaluate(pads, witness)?, |sum, pair| {
+                Ok(
+                    sum + pair.x.form().evaluate(pads, witness)?
+                        * pair.y.evaluate(pads, witness)?,
+                )
+            })
+    }
 }
 
 /// The rows a masked transcript must satisfy. Rows are never dropped: one
@@ -178,10 +204,7 @@ impl<F: Field> ResidualRelation<F> {
         for (index, row) in self.rows().enumerate() {
             let satisfied = match row {
                 Row::Affine(row) => row.evaluate(pads, witness)?.is_zero(),
-                Row::Product(row) => {
-                    row.x.form().evaluate(pads, witness)? * row.y.evaluate(pads, witness)?
-                        == row.z.evaluate(pads, witness)?
-                }
+                Row::Product(row) => row.evaluate(pads, witness)?.is_zero(),
             };
             if !satisfied {
                 return Ok(Some(index));
