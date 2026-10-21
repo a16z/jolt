@@ -167,7 +167,7 @@ pub struct BytecodeReadRafAddressPhaseChallenges<F> {
 impl<F: jolt_field::JoltField> BytecodeReadRafAddressPhaseChallenges<F> {
     /// Expand the five drawn per-stage scalars into the gamma-power vectors the
     /// bytecode folds consume (`[1, γ, γ², …]` — the recurrence the prover's
-    /// `challenge_scalar_powers` applies to its single squeezed scalar), sized
+    /// `challenge_powers` applies to its single squeezed scalar), sized
     /// by [`BYTECODE_STAGE_GAMMA_COUNTS`].
     pub fn stage_gamma_powers(&self) -> [Vec<F>; 5] {
         let stage_gammas = [

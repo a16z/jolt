@@ -1,6 +1,6 @@
 use jolt_crypto::{Bn254G1, Bn254G2, JoltGroup};
 use jolt_field::Fr;
-use jolt_transcript::{Transcript, U64Word};
+use jolt_transcript::{FieldTranscript, U64Word};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -66,7 +66,7 @@ impl HyperKZGVerifierSetup {
         commitment: &Bn254G1,
         point: &[Fr],
         evaluation: Fr,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) {
         transcript.append_labeled(b"hyperkzg-binary-bn254-v1", &U64Word(self.num_powers));
         transcript.append_bytes(&self.setup_id);
@@ -105,6 +105,16 @@ pub enum HyperKZGError {
     Folding,
     #[error("KZG pairing equation failed")]
     Pairing,
+    /// The transcript refused a challenge draw: the codec does not support the
+    /// request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl From<jolt_transcript::VerificationError> for HyperKZGError {
+    fn from(_: jolt_transcript::VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }
 
 #[cfg(test)]
@@ -115,7 +125,7 @@ pub enum HyperKZGError {
 mod tests {
     use jolt_crypto::Bn254;
     use jolt_field::{One, Ring, Zero};
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Blake2b512};
 
     use super::*;
     use crate::HyperKZGScheme;
@@ -141,7 +151,7 @@ mod tests {
                 Fr::zero(),
                 &proof,
                 key,
-                &mut Blake2bTranscript::new(b"decoded-key"),
+                &mut prover_transcript::<Blake2b512>(b"decoded-key", b""),
             )
         };
         verify(&valid).unwrap();

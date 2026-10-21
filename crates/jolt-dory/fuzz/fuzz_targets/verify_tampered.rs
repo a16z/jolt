@@ -16,7 +16,7 @@ use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field, Fr};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -44,11 +44,11 @@ fn fixture() -> &'static Fixture {
         let (commitment, hint) =
             DoryScheme::commit(poly.evaluations(), &prover_setup).expect("fixture commit");
 
-        let mut pt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+        let mut pt = prover_transcript::<Blake2b512>(TRANSCRIPT_LABEL, b"");
         let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt)
             .expect("fixture open");
 
-        let mut vt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+        let mut vt = prover_transcript::<Blake2b512>(TRANSCRIPT_LABEL, b"");
         DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt)
             .expect("fixture proof must verify before tampering");
 
@@ -146,7 +146,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let mut transcript = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+    let mut transcript = prover_transcript::<Blake2b512>(TRANSCRIPT_LABEL, b"");
     let result = DoryScheme::verify(
         &fix.commitment,
         &fix.point,

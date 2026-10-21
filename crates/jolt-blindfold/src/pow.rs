@@ -1,12 +1,12 @@
 //! Proof of work before BlindFold's Fiat-Shamir draws outside its sumchecks.
 //!
-//! Each draw is a full `Transcript::challenge` draw, so it is priced against
-//! `T::CHALLENGE_SET`. The loss of a draw is the most values that can make a
+//! Each draw is a full `FieldTranscript::challenge` draw, so it is priced
+//! against `T::CHALLENGE_SET`. The loss of a draw is the most values that can make a
 //! false statement pass it, by Schwartz-Zippel over the draw. The folded
 //! sumcheck rounds grind inside `jolt_sumcheck` instead.
 
 use jolt_field::JoltField;
-use jolt_transcript::{grind_bits_for_loss, Transcript, SECURITY_BITS};
+use jolt_transcript::{grind_bits_for_loss, FieldTranscript, SECURITY_BITS};
 
 use crate::error::VerificationError;
 
@@ -36,7 +36,7 @@ impl PowSite {
 
     /// Grinding bits for this draw, or `None` when the transcript's challenge
     /// set cannot reach the target within the proof-of-work bound.
-    pub(crate) fn bits<T: Transcript>(self) -> Option<u32> {
+    pub(crate) fn bits<F, T: FieldTranscript<F>>(self) -> Option<u32> {
         let loss = match self {
             Self::Fold => 2,
             Self::OuterPoint { num_vars } => u64::try_from(num_vars).ok()?,
@@ -64,13 +64,13 @@ impl<'a> PowNonces<'a> {
     /// # Errors
     /// [`VerificationError::ProofOfWorkRejected`] if the difficulty is out of
     /// reach, the nonce is missing, or it fails the check.
-    pub(crate) fn check<F: JoltField, T: Transcript>(
+    pub(crate) fn check<F: JoltField, T: FieldTranscript<F>>(
         &mut self,
         site: PowSite,
         transcript: &mut T,
     ) -> Result<(), VerificationError<F>> {
         let rejected = || VerificationError::ProofOfWorkRejected { site: site.name() };
-        let bits = site.bits::<T>().ok_or_else(rejected)?;
+        let bits = site.bits::<F, T>().ok_or_else(rejected)?;
         let nonce = if bits == 0 {
             None
         } else {
@@ -78,7 +78,9 @@ impl<'a> PowNonces<'a> {
             self.next += 1;
             Some(nonce)
         };
-        transcript.check_grind(bits, nonce).map_err(|_| rejected())
+        transcript
+            .check_public_grind(bits, nonce)
+            .map_err(|_| rejected())
     }
 
     /// Rejects nonces left over after the last site.
@@ -103,7 +105,7 @@ impl<'a> PowNonces<'a> {
 mod tests {
     use super::*;
     use jolt_field::{Fr, Prime128OffsetA7F7};
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Blake2b512, ProverState, ProverTranscript};
 
     const SITES: [PowSite; 3] = [
         PowSite::Fold,
@@ -113,7 +115,7 @@ mod tests {
 
     #[test]
     fn bn254_sites_read_no_nonces() {
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-pow");
+        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-pow", b"");
         let mut nonces = PowNonces::new(&[]);
         for site in SITES {
             nonces
@@ -140,36 +142,42 @@ mod tests {
     #[test]
     fn akita_field_sites_read_one_nonce_each_in_order() {
         type P = Prime128OffsetA7F7;
-        type T = Blake2bTranscript<P>;
-        assert_eq!(SITES.map(PowSite::bits::<T>), [Some(2), Some(4), Some(1)]);
+        type T = ProverState<Blake2b512>;
+        assert_eq!(
+            SITES.map(PowSite::bits::<P, T>),
+            [Some(2), Some(4), Some(1)]
+        );
 
-        let mut prover = T::new(b"blindfold-pow");
+        let mut prover = prover_transcript::<Blake2b512>(b"blindfold-pow", b"");
         let ground = SITES.map(|site| {
             let nonce = prover
-                .grind(site.bits::<T>().expect("difficulty in reach"))
+                .public_grind(site.bits::<P, T>().expect("difficulty in reach"))
                 .expect("grinding succeeds")
                 .expect("positive difficulty takes a nonce");
-            let _challenge: P = prover.challenge();
+            let _challenge: P = prover.challenge().expect("P supports one challenge");
             nonce
         });
 
-        let mut verifier = T::new(b"blindfold-pow");
+        let mut verifier = prover_transcript::<Blake2b512>(b"blindfold-pow", b"");
         let mut nonces = PowNonces::new(&ground);
         for site in SITES {
             nonces
                 .check::<P, _>(site, &mut verifier)
                 .expect("site check passes");
-            let _challenge: P = verifier.challenge();
+            let _challenge: P = verifier.challenge().expect("P supports one challenge");
         }
         assert!(nonces.finish::<P>().is_ok());
-        assert_eq!(verifier.state(), prover.state());
+        assert_eq!(
+            verifier.verifier_message::<[u8; 32]>(),
+            prover.verifier_message::<[u8; 32]>()
+        );
 
-        let mut verifier = T::new(b"blindfold-pow");
+        let mut verifier = prover_transcript::<Blake2b512>(b"blindfold-pow", b"");
         let mut nonces = PowNonces::new(&ground[..1]);
         nonces
             .check::<P, _>(SITES[0], &mut verifier)
             .expect("site check passes");
-        let _challenge: P = verifier.challenge();
+        let _challenge: P = verifier.challenge().expect("P supports one challenge");
         assert!(matches!(
             nonces.check::<P, _>(SITES[1], &mut verifier),
             Err(VerificationError::ProofOfWorkRejected {
