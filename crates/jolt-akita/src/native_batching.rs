@@ -16,13 +16,14 @@
 //! Jolt's own Fiat-Shamir sponge: Akita absorbs its statement and writes its
 //! messages into Jolt's argument string. The generic [`BatchOpeningScheme`]
 //! and single-polynomial paths run Akita standalone (see
-//! [`STANDALONE_SESSION`]).
+//! [`standalone_session`]).
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
 use akita_transcript::{ProverChannel, VerifierChannel};
 use akita_types::{GroupBatchStatement, OpeningClaims, PendingEof, PolynomialGroupClaims};
+use jolt_field::CanonicalBytes;
 use jolt_openings::{
     BatchOpeningScheme, GroupOpeningClaim, GroupOpeningWithHint, OpeningsError,
     TaggedGroupOpeningClaim, VerifierOpeningClaim,
@@ -45,13 +46,45 @@ use crate::scheme::validate_group_order;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AkitaNativeBatching;
 
+/// Domain label of an opening that runs outside Jolt's sponge; see
+/// [`standalone_session`].
+const STANDALONE_SESSION: &[u8] = b"jolt-akita/batch";
+
 /// Akita session for an opening that runs outside Jolt's sponge.
 ///
 /// Such an opening is a standalone argument: Akita's own transcript binds its
-/// setup, schedule selection, points, evaluations and commitment digests. It
-/// neither reads nor advances the caller's transcript. Jolt's trace batch
-/// never takes this path.
-const STANDALONE_SESSION: &[u8] = b"jolt-akita/batch";
+/// setup, schedule selection, points, evaluations and commitment digest. The
+/// session adds what Akita does not see: Jolt's layout digests of the
+/// commitment and of the setup default, the trusted catalog's digest, and one
+/// challenge from the caller's transcript, which binds the opening to the
+/// caller's state. Every part has a fixed length. Jolt's trace batch never
+/// takes this path.
+fn standalone_session<T>(
+    transcript: &mut T,
+    setup: &AkitaVerifierSetup,
+    commitment: &AkitaCommitment,
+) -> Result<Vec<u8>, OpeningsError>
+where
+    T: FieldTranscript<AkitaField>,
+{
+    let catalog_digest = match commitment.backend_flavor {
+        AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog_digest(),
+        AkitaBackendFlavor::OneHot => {
+            with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| scheme
+                .schedules()
+                .catalog_digest())
+        }
+    };
+    let bridge = transcript.challenge()?.to_bytes_le_vec();
+    Ok([
+        STANDALONE_SESSION,
+        &commitment.layout_digest,
+        &setup.default_layout_digest,
+        &catalog_digest,
+        &bridge,
+    ]
+    .concat())
+}
 
 type AkitaOpening<'a> =
     SelectedProverOpeningData<'a, AkitaBackendExtField, AkitaBackendHint, AkitaField>;
@@ -167,6 +200,7 @@ fn validate_trace_batch_statement(
 fn prove_one_hot_opening(
     setup: &AkitaProverSetup,
     opening: AkitaOpening<'_>,
+    session: &[u8],
 ) -> Result<Vec<u8>, OpeningsError> {
     let (backend_prover_setup, backend) = setup.one_hot_backend()?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
@@ -176,7 +210,7 @@ fn prove_one_hot_opening(
             backend_prover_setup,
             opening,
             backend,
-            STANDALONE_SESSION,
+            session,
             BasisMode::Lagrange,
         ))?;
         let _ = backend.trim_caches()?;
@@ -189,12 +223,13 @@ fn verify_one_hot_statement(
     setup: &AkitaVerifierSetup,
     proof: &AkitaBatchProof,
     statement: GroupBatchStatement<'_, AkitaBackendExtField, AkitaField>,
+    session: &[u8],
 ) -> Result<(), OpeningsError> {
     let verifier = setup.one_hot_verifier()?;
     let verified = with_backend_pool(|| {
         with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify(
             &proof.backend_proof,
-            STANDALONE_SESSION,
+            session,
             statement,
             BasisMode::Lagrange,
         ))
@@ -497,6 +532,7 @@ fn prove_one_hot(
     evaluations: &[AkitaField],
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
+    session: &[u8],
 ) -> Result<(OpeningScheduleSelection, Vec<u8>), OpeningsError> {
     let backend_point = reverse_point(point);
     let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
@@ -510,7 +546,7 @@ fn prove_one_hot(
     })
     .map_err(akita_error)?;
     let selection = opening.selection();
-    let proof = prove_one_hot_opening(setup, opening)?;
+    let proof = prove_one_hot_opening(setup, opening, session)?;
     Ok((selection, proof))
 }
 
@@ -526,14 +562,13 @@ impl BatchOpeningScheme for AkitaNativeBatching {
     type Hints = AkitaProverHint;
     type Proof = AkitaBatchProof;
 
-    /// Runs Akita standalone under [`STANDALONE_SESSION`]; `_transcript` is
-    /// untouched.
+    /// Runs Akita standalone under [`standalone_session`].
     fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         statement: Self::Statement,
         polynomials: Self::Polynomials<'a>,
         hint: Self::Hints,
-        _transcript: &mut T,
+        transcript: &mut T,
     ) -> Result<Self::Proof, OpeningsError>
     where
         Self: 'a,
@@ -554,6 +589,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         )
         .entered();
         validate_witness(&hint, commitment, &polynomials)?;
+        let session = standalone_session(transcript, &setup.verifier, commitment)?;
         let backend_commitment = commitment.group.clone();
         let source = hint.source;
         let (_, backend_hint) = hint
@@ -583,7 +619,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                         backend_prover_setup,
                         opening,
                         backend,
-                        STANDALONE_SESSION,
+                        &session,
                         BasisMode::Lagrange,
                     )?;
                     let _ = backend.trim_caches()?;
@@ -592,20 +628,24 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 .map_err(prove_failed)?;
                 (selection, proof)
             }
-            AkitaHintSource::OneHot { .. } | AkitaHintSource::TraceOneHot { .. } => {
-                prove_one_hot(setup, point, &evaluations, backend_commitment, backend_hint)?
-            }
+            AkitaHintSource::OneHot { .. } | AkitaHintSource::TraceOneHot { .. } => prove_one_hot(
+                setup,
+                point,
+                &evaluations,
+                backend_commitment,
+                backend_hint,
+                &session,
+            )?,
         };
         Ok(AkitaBatchProof::new(selection, backend_proof))
     }
 
-    /// Verifies a standalone Akita argument under [`STANDALONE_SESSION`];
-    /// `_transcript` is untouched.
+    /// Verifies a standalone Akita argument under [`standalone_session`].
     fn verify_batch<T>(
         setup: &Self::VerifierSetup,
         statement: &Self::Statement,
         proof: &Self::Proof,
-        _transcript: &mut T,
+        transcript: &mut T,
     ) -> Result<(), OpeningsError>
     where
         T: FieldTranscript<Self::Field>,
@@ -616,6 +656,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.max_num_polys_per_commitment_group,
             setup.one_hot_k,
         )?;
+        let session = standalone_session(transcript, setup, commitment)?;
         let backend_point = match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => point.to_vec(),
             AkitaBackendFlavor::OneHot => reverse_point(point),
@@ -635,14 +676,16 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 with_backend_pool(|| {
                     verifier.batched_verify(
                         &proof.backend_proof,
-                        STANDALONE_SESSION,
+                        &session,
                         batch_statement,
                         BasisMode::Lagrange,
                     )
                 })
                 .map_err(|_| OpeningsError::VerificationFailed)
             }
-            AkitaBackendFlavor::OneHot => verify_one_hot_statement(setup, proof, batch_statement),
+            AkitaBackendFlavor::OneHot => {
+                verify_one_hot_statement(setup, proof, batch_statement, &session)
+            }
         }
     }
 }
@@ -802,5 +845,57 @@ mod tests {
         assert!(validate_trace_batch_statement(&setup, &auxiliary_groups, &main).is_ok());
         setup.max_total_batch_polys = 259;
         assert!(validate_trace_batch_statement(&setup, &auxiliary_groups, &main).is_err());
+    }
+
+    #[test]
+    fn standalone_session_binds_jolt_metadata_and_the_caller_state() {
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let setup = AkitaVerifierSetup {
+            max_num_vars: 14,
+            max_num_polys_per_commitment_group: 1,
+            max_total_batch_polys: 1,
+            default_layout_digest: [7; 32],
+            one_hot_k: AKITA_ONE_HOT_K256,
+            schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
+                dense_profile: artifacts.dense_profile(),
+                profile: AkitaChunkProfile::default(),
+                dense: artifacts
+                    .dense_catalog()
+                    .unwrap()
+                    .to_artifact_bytes()
+                    .unwrap(),
+                one_hot: artifacts
+                    .one_hot_catalog(AKITA_ONE_HOT_K256)
+                    .unwrap()
+                    .to_artifact_bytes()
+                    .unwrap(),
+            },
+            backend_cache: Default::default(),
+        };
+        let dense = commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);
+        let session = |domain: &[u8], setup: &AkitaVerifierSetup, commitment: &AkitaCommitment| {
+            let mut transcript = prover_transcript::<Blake2b512>(domain, b"");
+            standalone_session(&mut transcript, setup, commitment).unwrap()
+        };
+        let baseline = session(b"standalone-session", &setup, &dense);
+        assert_eq!(baseline, session(b"standalone-session", &setup, &dense));
+
+        assert_ne!(baseline, session(b"another-caller", &setup, &dense));
+        let mut changed_layout = dense.clone();
+        changed_layout.layout_digest = [8; 32];
+        assert_ne!(
+            baseline,
+            session(b"standalone-session", &setup, &changed_layout)
+        );
+        let mut changed_default = setup.clone();
+        changed_default.default_layout_digest = [8; 32];
+        assert_ne!(
+            baseline,
+            session(b"standalone-session", &changed_default, &dense)
+        );
+        // The flavor selects the catalog whose digest the session binds.
+        let one_hot = commitment(AkitaBackendFlavor::OneHot, 14, [7; 32], AKITA_ONE_HOT_K256);
+        assert_ne!(baseline, session(b"standalone-session", &setup, &one_hot));
     }
 }

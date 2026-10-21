@@ -1218,7 +1218,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_row_binds_the_proof_independently_of_the_rest_of_the_catalog() {
+    fn catalog_digest_prevents_cross_verification_with_the_same_selected_row() {
         let artifacts =
             AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
@@ -1252,74 +1252,65 @@ mod tests {
 
         let selected = proof.selection();
         let full_catalog = artifacts.dense_catalog().unwrap();
-        let catalog_without = |omitted| {
-            ValidatedScheduleCatalog::try_new(
-                JoltDenseBounded::schedule_family_name(),
-                full_catalog
-                    .rows()
-                    .filter(|row| row.selection() != omitted)
-                    .map(|row| (row.profiles().clone(), row.schedule().clone())),
-                full_catalog.policy(),
-                JoltDenseBounded::ring_challenge_config,
-            )
-            .unwrap()
-        };
-        let verify_under =
-            |catalog: &ValidatedScheduleCatalog| {
-                let alternate_artifacts = Arc::new(
-                    AkitaScheduleArtifacts::new(
-                        artifacts.dense_profile(),
-                        catalog.to_artifact_bytes().unwrap(),
-                        artifacts
-                            .full_dense_catalog()
-                            .unwrap()
-                            .to_artifact_bytes()
-                            .unwrap(),
-                        [AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256]
-                            .into_iter()
-                            .map(|k| AkitaOneHotScheduleArtifact {
-                                k,
-                                profile: AkitaChunkProfile::default(),
-                                bytes: artifacts
-                                    .one_hot_catalog(k)
-                                    .unwrap()
-                                    .to_artifact_bytes()
-                                    .unwrap(),
-                            })
-                            .collect(),
-                    )
-                    .unwrap(),
-                );
-                // A setup that refuses the catalog also rejects the proof.
-                let (_, alternate_verifier_setup) = AkitaScheme::setup(
-                    AkitaSetupParams::dense_only(14, 1, [7; 32], alternate_artifacts),
-                )?;
-                let mut verifier_transcript =
-                    prover_transcript::<Blake2b512>(b"catalog-replay", b"");
-                <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-                    &alternate_verifier_setup,
-                    &statement,
-                    &proof,
-                    &mut verifier_transcript,
-                )
-            };
-
-        // Akita's instance descriptor binds the selected row's schedule, not
-        // the catalog as a whole: a catalog that keeps the row accepts the
-        // proof, and one that drops it rejects.
-        let unused = full_catalog
+        let omitted = full_catalog
             .rows()
             .find(|row| row.selection() != selected)
             .expect("the base catalog must contain an unused row")
             .selection();
-        let reduced_catalog = catalog_without(unused);
+        let reduced_catalog = ValidatedScheduleCatalog::try_new(
+            JoltDenseBounded::schedule_family_name(),
+            full_catalog
+                .rows()
+                .filter(|row| row.selection() != omitted)
+                .map(|row| (row.profiles().clone(), row.schedule().clone())),
+            full_catalog.policy(),
+            JoltDenseBounded::ring_challenge_config,
+        )
+        .unwrap();
+        assert!(reduced_catalog.resolve_selection(selected).is_ok());
         assert_ne!(
             full_catalog.catalog_digest(),
             reduced_catalog.catalog_digest()
         );
-        verify_under(&reduced_catalog).expect("the selected row alone binds the proof");
-        let _ = verify_under(&catalog_without(selected))
-            .expect_err("a catalog without the selected row must reject");
+        let alternate_artifacts = Arc::new(
+            AkitaScheduleArtifacts::new(
+                artifacts.dense_profile(),
+                reduced_catalog.to_artifact_bytes().unwrap(),
+                artifacts
+                    .full_dense_catalog()
+                    .unwrap()
+                    .to_artifact_bytes()
+                    .unwrap(),
+                [AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256]
+                    .into_iter()
+                    .map(|k| AkitaOneHotScheduleArtifact {
+                        k,
+                        profile: AkitaChunkProfile::default(),
+                        bytes: artifacts
+                            .one_hot_catalog(k)
+                            .unwrap()
+                            .to_artifact_bytes()
+                            .unwrap(),
+                    })
+                    .collect(),
+            )
+            .unwrap(),
+        );
+        let (_, alternate_verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
+            14,
+            1,
+            [7; 32],
+            alternate_artifacts,
+        ))
+        .unwrap();
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"catalog-replay", b"");
+        let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &alternate_verifier_setup,
+            &statement,
+            &proof,
+            &mut verifier_transcript,
+        )
+        .expect_err("a proof must not replay across catalogs with different digests");
 
         let mut original_transcript = prover_transcript::<Blake2b512>(b"catalog-replay", b"");
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
@@ -1331,13 +1322,8 @@ mod tests {
         .unwrap();
     }
 
-    /// A direct commitment opens under its own layout digest. The digest is
-    /// Jolt metadata, not part of the opening relation: Jolt's stage 0 absorbs
-    /// it, the verifier's commitment sweep checks that a changed digest
-    /// rejects, and stage 8 checks the setup default against the canonical
-    /// layout.
     #[test]
-    fn direct_opening_verifies_under_its_own_layout_digest() {
+    fn direct_opening_requires_statement_commitment_layout_digest() {
         let artifacts =
             AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let setup_params = AkitaSetupParams::new(14, 1, [7; 32], artifacts);
@@ -1385,5 +1371,27 @@ mod tests {
             prover_state.verifier_message::<[u8; 32]>(),
             verifier_transcript.verifier_message::<[u8; 32]>()
         );
+
+        let mut changed_commitment_statement = statement.clone();
+        changed_commitment_statement[0].commitment.layout_digest = [15; 32];
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-direct-layout", b"");
+        let _error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &changed_commitment_statement,
+            &proof,
+            &mut verifier_transcript,
+        )
+        .expect_err("changed direct commitment digest should reject");
+
+        let mut changed_setup = verifier_setup;
+        changed_setup.default_layout_digest = commitment_digest;
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-direct-layout", b"");
+        let _error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &changed_setup,
+            &statement,
+            &proof,
+            &mut verifier_transcript,
+        )
+        .expect_err("direct commitment layout must not be accepted through setup default");
     }
 }

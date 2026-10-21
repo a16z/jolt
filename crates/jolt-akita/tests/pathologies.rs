@@ -142,9 +142,13 @@ fn akita_commitment_rejects_non_canonical_group_bytes() {
             .expect("commitment should carry its group bytes")
             .clone()
     };
+    // The wire carries no ring dimension, so compare the re-encoded bytes.
     let roundtrip: AkitaCommitment =
         serde_json::from_value(serialized.clone()).expect("exact group bytes deserialize");
-    assert_eq!(roundtrip, statement[0].commitment);
+    assert_eq!(
+        serde_json::to_value(&roundtrip).expect("decoded commitment should serialize"),
+        serialized
+    );
 
     // A truncated or extended group must not decode: the group's header fixes
     // its row count, and decoding consumes the bytes exactly.
