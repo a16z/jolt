@@ -35,6 +35,10 @@ pub trait Script<F> {
     /// Sees the challenges the wrapped transcript drew for one draw, and may
     /// replace them.
     fn draw(&mut self, challenges: &mut [F]);
+
+    /// Sees the bytes of a squeeze outside a challenge draw, such as a
+    /// proof-of-work check, and may replace them. By default it keeps them.
+    fn check_bytes(&mut self, _bytes: &mut [u8]) {}
 }
 
 /// A queue of challenges that replace the drawn ones, in order, while it
@@ -61,6 +65,9 @@ impl<F> Script<F> for VecDeque<F> {
 /// makes every difficulty from
 /// [`grind_bits_for_loss`](crate::grind_bits_for_loss) 0, so proofs carry no
 /// nonces.
+///
+/// The script also sees the bytes of every other squeeze, such as a
+/// proof-of-work check, and may replace them.
 ///
 /// Tests use it to choose challenges, to compare absorb orders, to record and
 /// replay challenge tapes, and to reach checks that a hand-built proof would
@@ -118,7 +125,7 @@ impl<T, F, S> ScriptedTranscript<T, F, S> {
     }
 }
 
-impl<T: Sealed, F, S> Sealed for ScriptedTranscript<T, F, S> {
+impl<T: Sealed, F, S: Script<F>> Sealed for ScriptedTranscript<T, F, S> {
     fn absorb<M: Encoding + ?Sized>(&mut self, message: &M) {
         self.events
             .push(TranscriptEvent::Absorb(message.encode().as_ref().to_vec()));
@@ -127,7 +134,12 @@ impl<T: Sealed, F, S> Sealed for ScriptedTranscript<T, F, S> {
 
     fn squeeze<U>(&mut self, len: usize, decode: impl FnOnce(&[u8]) -> U) -> U {
         self.events.push(TranscriptEvent::Squeeze(len));
-        self.inner.squeeze(len, decode)
+        let script = &mut self.script;
+        self.inner.squeeze(len, |bytes| {
+            let mut bytes = bytes.to_vec();
+            script.check_bytes(&mut bytes);
+            decode(&bytes)
+        })
     }
 
     fn require(&mut self, ok: bool) -> Result<(), VerificationError> {
@@ -156,7 +168,7 @@ where
     }
 }
 
-impl<T: ProverTranscript, F, S> ProverTranscript for ScriptedTranscript<T, F, S> {
+impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscript<T, F, S> {
     type Sponge = T::Sponge;
 
     fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M) {
@@ -185,7 +197,7 @@ impl<T: ProverTranscript, F, S> ProverTranscript for ScriptedTranscript<T, F, S>
     }
 }
 
-impl<T: VerifierTranscript, F, S> VerifierTranscript for ScriptedTranscript<T, F, S> {
+impl<T: VerifierTranscript, F, S: Script<F>> VerifierTranscript for ScriptedTranscript<T, F, S> {
     fn prover_message<M: Encoding + FromNarg>(&mut self) -> Result<M, VerificationError> {
         let message = self.inner.prover_message::<M>()?;
         self.events
@@ -202,13 +214,15 @@ impl<T: VerifierTranscript, F, S> VerifierTranscript for ScriptedTranscript<T, F
     }
 }
 
-impl<'a, T: VerifierInit<'a>, F, S: Default> VerifierInit<'a> for ScriptedTranscript<T, F, S> {
+impl<'a, T: VerifierInit<'a>, F, S: Script<F> + Default> VerifierInit<'a>
+    for ScriptedTranscript<T, F, S>
+{
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self {
         Self::scripted_by(T::init(session, statement, narg), S::default())
     }
 }
 
-impl<T: ProverInit, F, S: Default> ProverInit for ScriptedTranscript<T, F, S> {
+impl<T: ProverInit, F, S: Script<F> + Default> ProverInit for ScriptedTranscript<T, F, S> {
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
         Self::scripted_by(T::init(session, statement), S::default())
     }

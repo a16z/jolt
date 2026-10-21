@@ -557,7 +557,7 @@ mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, TranscriptEvent};
     use jolt_field::Fr;
-    use jolt_transcript::Encoding;
+    use jolt_transcript::{Encoding, Transcript};
 
     // Overrides the default to absorb the `b"ram_val_check_gamma"` domain
     // separator label before the gamma draw; the label is part of the

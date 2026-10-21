@@ -202,7 +202,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::{prover_transcript, Keccak, ScriptedTranscript};
+    use jolt_transcript::{prover_transcript, Keccak, ScriptedTranscript, Transcript};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

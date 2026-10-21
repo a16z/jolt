@@ -198,7 +198,7 @@ mod field_inline_round_trip {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::{prover_transcript, Keccak, ProverState, Transcript};
+    use jolt_transcript::{prover_transcript, Keccak, ProverState};
 
     use super::*;
     use crate::recorder::ProofMode;

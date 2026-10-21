@@ -296,7 +296,7 @@ mod field_inline_zk {
             },
         };
         let mut transcript = prover_transcript::<Keccak>(b"stage1-field-inline-zk", b"");
-        let tau = draw_spartan_outer_tau(&mut transcript, LOG_T);
+        let tau = draw_spartan_outer_tau(&mut transcript, LOG_T).unwrap();
         let uniskip_step = uniskip::verify_zk(
             &checked,
             &out.uniskip_proof,

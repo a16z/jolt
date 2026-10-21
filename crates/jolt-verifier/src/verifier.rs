@@ -1134,7 +1134,7 @@ mod tests {
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
-    use jolt_transcript::{FieldTranscript, Transcript};
+    use jolt_transcript::FieldTranscript;
     use num_traits::Zero;
 
     use crate::preprocessing::ProgramPreprocessing;
@@ -1196,7 +1196,9 @@ mod tests {
     }
 
     impl jolt_transcript::Encoding for TestCommitment {
-        fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
+        fn encode(&self) -> impl AsRef<[u8]> {
+            [0u8; 0]
+        }
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
@@ -1237,7 +1239,7 @@ mod tests {
     fn protocol_and_payload_reject_before_preprocessing_validation() {
         #[cfg(feature = "field-inline")]
         use jolt_riscv::JoltInstructionKind;
-        use jolt_transcript::LegacyBlake2bTranscript;
+        use jolt_transcript::{verifier_transcript, Keccak};
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut preprocessing = test_preprocessing();
         #[cfg(feature = "field-inline")]
@@ -1257,23 +1259,17 @@ mod tests {
         };
         let public_io = JoltDevice::default();
         assert!(matches!(
-            validate_and_seed_transcript::<_, _, LegacyBlake2bTranscript, _>(
-                &preprocessing,
-                &public_io,
-                &proof,
-                None
-            ),
+            validate_and_seed_transcript(&preprocessing, &public_io, &proof, None, |statement| {
+                verifier_transcript::<Keccak>(JOLT_SESSION, statement, &[])
+            }),
             Err(VerifierError::ProtocolConfigMismatch { .. })
         ));
         proof.protocol = JOLT_VERIFIER_CONFIG;
         proof.stages.stage1_sumcheck_proof = sumcheck_proof(!is_zk);
         assert!(matches!(
-            validate_and_seed_transcript::<_, _, LegacyBlake2bTranscript, _>(
-                &preprocessing,
-                &public_io,
-                &proof,
-                None
-            ),
+            validate_and_seed_transcript(&preprocessing, &public_io, &proof, None, |statement| {
+                verifier_transcript::<Keccak>(JOLT_SESSION, statement, &[])
+            }),
             Err(VerifierError::ExpectedClearProof {
                 field: "stage1_sumcheck_proof"
             } | VerifierError::ExpectedCommittedProof {

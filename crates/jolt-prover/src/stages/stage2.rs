@@ -364,7 +364,7 @@ mod field_inline_zk {
         };
         let mut transcript = prover_transcript::<Keccak>(b"stage2-field-inline-zk", b"");
         {
-            let tau = uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T);
+            let tau = uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T).unwrap();
             let uniskip_step = uniskip::verify_zk(
                 &checked,
                 &stage1.uniskip_proof,
@@ -390,7 +390,7 @@ mod field_inline_zk {
         let product_dimensions = SpartanProductDimensions::new(log_t);
         let raf_dimensions = RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap();
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
-        let tau_high: Fr = draw_spartan_product_tau_high(&mut transcript);
+        let tau_high: Fr = draw_spartan_product_tau_high(&mut transcript).unwrap();
         let product_uniskip_step = uniskip::verify_zk(
             &checked,
             &out.uniskip_proof,

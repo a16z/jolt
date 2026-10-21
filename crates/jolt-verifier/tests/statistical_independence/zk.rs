@@ -18,7 +18,7 @@ use jolt_field::{CanonicalBytes, Fr};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_transcript::{prover_transcript, Blake2b512, Encoding, LegacyBlake2bTranscript as ProverState<Blake2b512>, Transcript};
+use jolt_transcript::{prover_transcript, Encoding, FieldTranscript, Keccak, Transcript};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
@@ -506,9 +506,9 @@ impl BucketTracker {
 
     fn record_append<A: Encoding>(&mut self, name: impl Into<String>, value: &A) {
         let name = name.into();
-        let mut transcript = prover_transcript::<Blake2b512>(b"jolt-zk-stat", b"");
+        let mut transcript = prover_transcript::<Keccak>(b"jolt-zk-stat", b"");
         transcript.append_bytes(name.as_bytes());
-        value.append_to_transcript(&mut transcript);
+        transcript.append(value);
         self.record_projected(name, field_low_u64(transcript.challenge().unwrap()));
     }
 
@@ -555,7 +555,7 @@ impl BucketTracker {
     }
 
     fn record_bytes(&mut self, name: String, bytes: &[u8]) {
-        let mut transcript = prover_transcript::<Blake2b512>(b"jolt-zk-stat", b"");
+        let mut transcript = prover_transcript::<Keccak>(b"jolt-zk-stat", b"");
         transcript.append_bytes(name.as_bytes());
         transcript.append_bytes(bytes);
         self.record_projected(name, field_low_u64(transcript.challenge().unwrap()));
