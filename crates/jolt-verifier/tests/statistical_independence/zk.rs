@@ -509,7 +509,14 @@ impl BucketTracker {
         let mut transcript = prover_transcript::<Keccak>(b"jolt-zk-stat", b"");
         transcript.append_bytes(name.as_bytes());
         transcript.append(value);
-        self.record_projected(name, field_low_u64(transcript.challenge().unwrap()));
+        self.record_projected(
+            name,
+            field_low_u64(
+                transcript
+                    .challenge()
+                    .expect("one Fr challenge is within the codec bound"),
+            ),
+        );
     }
 
     fn record_append_positions<A: Encoding>(&mut self, prefix: &str, values: &[A]) {
@@ -558,7 +565,14 @@ impl BucketTracker {
         let mut transcript = prover_transcript::<Keccak>(b"jolt-zk-stat", b"");
         transcript.append_bytes(name.as_bytes());
         transcript.append_bytes(bytes);
-        self.record_projected(name, field_low_u64(transcript.challenge().unwrap()));
+        self.record_projected(
+            name,
+            field_low_u64(
+                transcript
+                    .challenge()
+                    .expect("one Fr challenge is within the codec bound"),
+            ),
+        );
     }
 
     fn record_projected(&mut self, name: String, value: u64) {
