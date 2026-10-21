@@ -305,7 +305,9 @@ pub struct ProfileArgs {
     /// below it, once through the limited serial trace, which rejects parallel
     /// tracing (`TRACER_PARALLEL`), fails at the first covered request the
     /// budget cannot hold (its setup alone requests over 1 GiB by default) and
-    /// keeps its row reserve in the trace output the checks below count. A run
+    /// keeps the row capacity it reserved in the trace output the checks below
+    /// count: exactly the rows of a run converted once, at the end, and at
+    /// least its row reserve for a run converted in batches. A run
     /// much shorter than the domain can take the limited trace although the
     /// original would fit, and a budget just above the proxy keeps an original
     /// trace whose unpriced requests can exceed it. A budget below the

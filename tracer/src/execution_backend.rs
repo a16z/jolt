@@ -15,16 +15,16 @@ use rayon::prelude::*;
 
 use common::jolt_device::{JoltDevice, MemoryLayout};
 
-use crate::emulator::cpu::AdviceTape;
+use crate::emulator::cpu::{AdviceTape, Cpu};
 use crate::emulator::decode_cache::DecodeCache;
-use crate::emulator::memory::{flat_doublewords, Memory};
+use crate::emulator::memory::{flat_doublewords, FlatImage, Memory};
 use crate::emulator::{Emulator, TEST_MEMORY_CAPACITY};
-use crate::instruction::Cycle;
 #[cfg(feature = "field-inline")]
 use crate::instruction::RISCVCycle;
+use crate::instruction::{Cycle, Emission};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 use crate::trace_allocation::{
-    bytes_of, growth_target, reserve_exact, sum_bytes, TraceAllocationAllowance,
+    bytes_of, doubling_target, growth_target, reserve_exact, sum_bytes, TraceAllocationAllowance,
 };
 use crate::trace_row::cycle_to_trace_row;
 
@@ -75,7 +75,7 @@ impl TracerBackend {
     /// `limit_bytes`; otherwise it returns [`TraceError::TraceAllocation`] and
     /// no output. Covered: the bytecode PC map, flat guest memory, the ELF copy
     /// made during emulator setup, the caller's input and advice buffers and
-    /// the device's copies, the output reserve, the `R0`-row reserve and its
+    /// the device's copies, the output reserve, the cycles and rows and their
     /// growth, a pending window of one full tick past the batch, converted-chunk
     /// metadata and field events and their merge, the advice tape and each host
     /// advice write's guest-copy scratch and tape growth, and the final memory
@@ -86,7 +86,9 @@ impl TracerBackend {
     /// memory or whether a proof of the trace fits, and a rejected trace's
     /// guest effects are discarded, not rolled back. A limit below the setup
     /// requests, which exceed 1 GiB with the default `R0`, fails before setup,
-    /// and the output keeps the reserved row capacity.
+    /// and the output keeps the row capacity it reserved: exactly its rows when
+    /// it converts its cycles once, at the end, and at least `R0` rows when it
+    /// converts in batches.
     ///
     /// Under the limit, `TRACER_PARALLEL` of 2 or more and
     /// [`ChunkedExecutionBackend::execute`] fail with
@@ -135,9 +137,14 @@ impl TracerBackend {
         })
     }
 
-    /// [`ExecutionBackend::trace`] under `limit`, serially: after every tick
-    /// that leaves at least `batch_rows` cycles pending, and at the end, the
-    /// pending cycles are converted into the resident rows.
+    /// [`ExecutionBackend::trace`] under `limit`, serially. While converting
+    /// every cycle after the next tick fits beside them, the run keeps its
+    /// cycles in one buffer, `R0` at first and grown by [`growth_target`], and
+    /// converts them once, at the end. Before a tick for which that or the
+    /// growth does not fit, it converts them and batches, replanning its window
+    /// after each conversion. When the setup or the first tick cannot hold `R0`
+    /// cycles, it batches from the start: the pending cycles become rows after
+    /// each tick that leaves at least `batch_rows` of them, and at the end.
     #[tracing::instrument(skip_all, name = "trace")]
     fn trace_limited(
         &self,
@@ -150,18 +157,29 @@ impl TracerBackend {
             return Err(TraceError::UnsupportedTraceAllocationMode);
         }
         let phase = TraceAllocationPhase::Initial;
-        let rows = crate::trace_capacity_reserve();
+        let initial = crate::trace_capacity_reserve();
         let window =
             pending_window(batch_rows).ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let pc_map = BytecodePCMapper::required_allocation_bytes(&program.expanded_bytecode)?;
         let storage = sum_bytes(
             [
-                BytecodePCMapper::required_allocation_bytes(&program.expanded_bytecode)?,
-                bytes_of::<JoltTraceRow>(rows, phase)?,
+                pc_map,
+                bytes_of::<JoltTraceRow>(initial, phase)?,
                 bytes_of::<Cycle>(window, phase)?,
             ],
             phase,
         )?;
-        let setup = LimitedSetup::admit(limit, program, &inputs, storage)?;
+        // Both admissions precede setup, which moves the caller's advice tape
+        // they count.
+        let batched = LimitedSetup::admit(limit, program, &inputs, storage);
+        let accumulating = bytes_of::<Cycle>(initial, phase)
+            .and_then(|cycles| sum_bytes([pc_map, cycles], phase))
+            .map_err(TraceError::from)
+            .and_then(|storage| LimitedSetup::admit(limit, program, &inputs, storage));
+        let (setup, batched) = match accumulating {
+            Ok(setup) => (setup, Some(batched)),
+            Err(_) => (batched?, None),
+        };
         let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
@@ -178,11 +196,48 @@ impl TracerBackend {
         let resident = setup
             .reserve_device(&mut emulator)?
             .saturating_add(bytecode.heap_bytes());
-        let mut trace = LimitedTrace::reserve(limit, resident, rows, window)?;
-        let cpu = emulator.get_mut_cpu();
-        cpu.set_advice_write_allowance(trace.advice_write_allowance());
         let mut prev_pc = 0;
-        loop {
+        let accumulated = match batched {
+            Some(batched) => {
+                let cpu = emulator.get_mut_cpu();
+                let first = LimitedTrace::accumulating(limit, resident, initial, cpu)?;
+                if first.is_none() {
+                    batched?;
+                }
+                first
+            }
+            None => None,
+        };
+        // The field events of a run that accumulated every cycle; a run that
+        // accumulated first plans each batch after its transition.
+        let mut accumulated_events = None;
+        let (mut trace, mut batch_rows, planned) = match accumulated {
+            Some((mut trace, peeked)) => {
+                let mut events = 0;
+                match trace.accumulate(&mut emulator, &mut prev_pc, &mut events, peeked)? {
+                    Some(next) => {
+                        let phase = TraceAllocationPhase::RowGrowth;
+                        let anchor = trace
+                            .cycles
+                            .len()
+                            .checked_add(next.rows)
+                            .and_then(|rows| doubling_target(initial, rows))
+                            .ok_or(TraceAllocationError::SizeOverflow { phase })?;
+                        let tape = emulator.get_cpu().advice_tape.capacity();
+                        trace.start_batches(&bytecode, tape, anchor, events)?;
+                    }
+                    None => accumulated_events = Some(events),
+                }
+                (trace, 1, true)
+            }
+            None => {
+                let trace = LimitedTrace::reserve(limit, resident, initial, window)?;
+                (trace, batch_rows, false)
+            }
+        };
+        let cpu = emulator.get_mut_cpu();
+        cpu.set_advice_write_allowance(trace.advice_write_allowance(0));
+        while accumulated_events.is_none() {
             let pending = trace.cycles.len();
             crate::step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace.cycles));
             if let Some(refusal) = emulator.get_cpu().advice_write_refusal() {
@@ -195,13 +250,22 @@ impl TracerBackend {
             if trace.cycles.len() >= batch_rows {
                 let tape = emulator.get_cpu().advice_tape.capacity();
                 trace.convert_pending(&bytecode, tape)?;
+                if planned {
+                    batch_rows = trace.plan_batch(tape)?;
+                }
                 let cpu = emulator.get_mut_cpu();
-                cpu.set_advice_write_allowance(trace.advice_write_allowance());
+                cpu.set_advice_write_allowance(trace.advice_write_allowance(0));
             }
         }
         let (advice_tape, final_memory, device) = crate::finish_emulator(emulator);
-        trace.convert_pending(&bytecode, advice_tape.capacity())?;
-        let (data, dimensions, image) = trace.finish(&final_memory, advice_tape.capacity())?;
+        let tape = advice_tape.capacity();
+        let (data, dimensions, image) = match accumulated_events {
+            Some(events) => trace.finish_accumulated(&bytecode, final_memory, tape, events)?,
+            None => {
+                trace.convert_pending(&bytecode, tape)?;
+                trace.finish(FinalImage::Flat(final_memory.flat_image()), tape)?
+            }
+        };
         Ok(TraceOutput::with_dimensions(
             dimensions,
             Arc::new(data),
@@ -297,7 +361,8 @@ impl ExecutionBackend for TracerBackend {
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-/// Pending cycles at which a limited trace converts a batch: 96 MiB of
+/// Pending cycles at which a limited trace that batches from the start
+/// converts a batch, and the most a planned batch holds: 96 MiB of
 /// default-build cycles, 64 parallel conversion slices.
 const SERIAL_BATCH_ROWS: usize = 1 << 20;
 
@@ -319,6 +384,27 @@ fn field_event_count(cycles: &[Cycle]) -> usize {
         .iter()
         .filter(|cycle| cycle.field_inline_trace().is_some())
         .count()
+}
+
+#[cfg(feature = "field-inline")]
+const FIELD_EVENT_BYTES: usize = size_of::<FieldEvent>();
+#[cfg(not(feature = "field-inline"))]
+const FIELD_EVENT_BYTES: usize = 0;
+
+/// The most rows, and field events, one tick emits.
+const TICK_BOUND: Emission = Emission {
+    rows: MAX_EXPANDED_ROWS_PER_SOURCE,
+    field_events: MAX_EXPANDED_ROWS_PER_SOURCE,
+};
+
+/// The parallel slices, or one serial slice, a conversion of `pending` cycles
+/// fills: one converted chunk each.
+fn conversion_slices(pending: usize) -> usize {
+    if pending > PARALLEL_ROW_CONVERSION_THRESHOLD {
+        pending.div_ceil(PARALLEL_ROW_CONVERSION_THRESHOLD)
+    } else {
+        1
+    }
 }
 
 #[derive(Default)]
@@ -523,15 +609,146 @@ impl LimitedSetup {
 struct LimitedTrace {
     limit: usize,
     /// The PC map, the caller's buffers, the device's input copies and output
-    /// reserve, and flat guest memory, none of which grows after setup.
+    /// reserve, and flat guest memory (or the final image collected in its
+    /// place), none of which grows after setup.
     resident: usize,
-    /// The pending cycles, in a window that holds one full tick past the
-    /// batch.
+    /// The pending cycles: every cycle while the trace accumulates, otherwise
+    /// a window that holds one full tick past the batch.
     cycles: Vec<Cycle>,
     rows: Vec<JoltTraceRow>,
     chunks: Vec<ConvertedChunk>,
     /// Bytes of the converted chunks' field-event buffers.
     fields: usize,
+}
+
+/// A limited trace's buffers as its request checks count them, in bytes at
+/// observed capacity, or at the capacity a planned request gives them.
+#[derive(Clone, Copy)]
+struct Residency {
+    limit: usize,
+    resident: usize,
+    tape: usize,
+    cycles: usize,
+    rows: usize,
+    /// Converted chunks, and the metadata's capacity in chunks.
+    chunks: usize,
+    chunk_capacity: usize,
+    fields: usize,
+}
+
+impl Residency {
+    /// What a request may take beside the resident buffers, the cycles, the
+    /// chunks' field events and the advice tape.
+    fn others(&self) -> TraceAllocationAllowance {
+        let live = [self.resident, self.cycles, self.fields, self.tape]
+            .into_iter()
+            .fold(0, usize::saturating_add);
+        TraceAllocationAllowance::new(self.limit, live)
+    }
+
+    /// The rows and the chunk metadata.
+    fn held(&self) -> usize {
+        self.chunk_capacity
+            .saturating_mul(size_of::<ConvertedChunk>())
+            .saturating_add(self.rows)
+    }
+
+    fn live(&self) -> usize {
+        let others = [self.resident, self.cycles, self.fields, self.tape];
+        others.into_iter().fold(self.held(), usize::saturating_add)
+    }
+
+    /// Checks a `capacity`-cycle buffer beside every buffer.
+    fn grow_cycles(&self, capacity: usize) -> Result<usize, TraceAllocationError> {
+        let phase = TraceAllocationPhase::CycleBuffer;
+        let cycles = bytes_of::<Cycle>(capacity, phase)?;
+        self.others().check_request(phase, self.held(), cycles)
+    }
+
+    /// Checks `capacity` rows beside every buffer. Returns the bytes live then
+    /// and the residency once they replace the old rows.
+    fn grow_rows(self, capacity: usize) -> Result<(usize, Self), TraceAllocationError> {
+        let phase = TraceAllocationPhase::RowGrowth;
+        let rows = bytes_of::<JoltTraceRow>(capacity, phase)?;
+        let live = self.others().check_request(phase, self.held(), rows)?;
+        Ok((live, Self { rows, ..self }))
+    }
+
+    /// The chunks after `slices` more, and the metadata capacity they grow it
+    /// to by [`growth_target`], if they must.
+    fn chunk_growth(&self, slices: usize) -> Result<(usize, Option<usize>), TraceAllocationError> {
+        let phase = TraceAllocationPhase::Conversion;
+        let chunks = self
+            .chunks
+            .checked_add(slices)
+            .ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let target =
+            (chunks > self.chunk_capacity).then(|| growth_target(self.chunk_capacity, chunks));
+        Ok((chunks, target))
+    }
+
+    /// Checks one conversion's request beside every buffer: the metadata of
+    /// `slices` more chunks, grown with the old live, and `events` field
+    /// events. Returns the bytes live then and the residency after it.
+    fn convert(self, slices: usize, events: usize) -> Result<(usize, Self), TraceAllocationError> {
+        let phase = TraceAllocationPhase::Conversion;
+        let overflow = TraceAllocationError::SizeOverflow { phase };
+        let (chunks, target) = self.chunk_growth(slices)?;
+        let metadata = bytes_of::<ConvertedChunk>(target.unwrap_or(0), phase)?;
+        let fields = events.checked_mul(FIELD_EVENT_BYTES).ok_or(overflow)?;
+        let request = metadata.checked_add(fields).ok_or(overflow)?;
+        let live = self.others().check_request(phase, self.held(), request)?;
+        let converted = Self {
+            chunks,
+            chunk_capacity: target.unwrap_or(self.chunk_capacity),
+            fields: self.fields.saturating_add(fields),
+            ..self
+        };
+        Ok((live, converted))
+    }
+
+    /// Checks converting `pending` cycles with `events` field events, the rows
+    /// grown first to `rows` when given. Returns the most bytes live during
+    /// either request and the residency after them.
+    fn plan_conversion(
+        self,
+        pending: usize,
+        events: usize,
+        rows: Option<usize>,
+    ) -> Result<(usize, Self), TraceAllocationError> {
+        let (growth, grown) = match rows {
+            Some(capacity) => self.grow_rows(capacity)?,
+            None => (0, self),
+        };
+        let (conversion, converted) = grown.convert(conversion_slices(pending), events)?;
+        Ok((growth.max(conversion), converted))
+    }
+
+    /// Checks merging `events` field events into one buffer beside every
+    /// buffer, their sources included.
+    #[cfg(feature = "field-inline")]
+    fn merge_fields(&self, events: usize) -> Result<usize, TraceAllocationError> {
+        let phase = TraceAllocationPhase::FieldMerge;
+        let fields = bytes_of::<FieldEvent>(events, phase)?;
+        self.others().check_request(phase, self.held(), fields)
+    }
+}
+
+/// An accumulating trace's next tick.
+enum Next {
+    Tick(Tick),
+    /// The pending cycles must become rows before this tick, which emits this.
+    Convert(Emission),
+}
+
+/// An admitted tick of an accumulating trace.
+struct Tick {
+    capacity: usize,
+    /// The emission that admitted it, or `None` for [`TICK_BOUND`].
+    peeked: Option<Emission>,
+    /// Bytes its conversion needs beyond the live buffers, which its advice
+    /// writes may not take.
+    reserved: usize,
 }
 
 impl LimitedTrace {
@@ -558,28 +775,291 @@ impl LimitedTrace {
         })
     }
 
-    /// What an advice write may request beside every buffer of this trace;
-    /// the write's own check counts the advice tape.
-    fn advice_write_allowance(&self) -> TraceAllocationAllowance {
+    /// An accumulating trace with its `initial`-cycle buffer reserved, and the
+    /// first tick's peeked emission if a peek admitted it, or `None` when
+    /// [`Self::next_tick`] does not admit the first tick at that buffer.
+    fn accumulating(
+        limit: usize,
+        resident: usize,
+        initial: usize,
+        cpu: &mut Cpu,
+    ) -> Result<Option<(Self, Option<Emission>)>, TraceError> {
+        let mut trace = Self::reserve(limit, resident, 0, 0)?;
+        let Next::Tick(tick) = trace.next_tick(cpu, 0, 0, initial, None)? else {
+            return Ok(None);
+        };
+        let phase = TraceAllocationPhase::Initial;
+        reserve_exact(&mut trace.cycles, tick.capacity, phase)?;
+        let emission = tick.peeked.unwrap_or(TICK_BOUND);
+        let tape = cpu.advice_tape.capacity();
+        let admitted = trace.admit_tick(trace.cycles.capacity(), emission, 0, tape);
+        Ok(admitted.is_ok().then_some((trace, tick.peeked)))
+    }
+
+    /// Runs an accumulating trace to its end, returning `None`, or to a tick
+    /// it cannot admit, returning that tick's emission unrun. `events` counts
+    /// the cycles' field events. Advice writes leave room for the conversion
+    /// that admitted their tick; a tick that changes the buffer's capacity
+    /// fails with [`TraceError::UncountedCycles`].
+    fn accumulate(
+        &mut self,
+        emulator: &mut Emulator,
+        prev_pc: &mut u64,
+        events: &mut usize,
+        mut peeked: Option<Emission>,
+    ) -> Result<Option<Emission>, TraceError> {
+        loop {
+            let cpu = emulator.get_mut_cpu();
+            let capacity = self.cycles.capacity();
+            let tick = match self.next_tick(cpu, *prev_pc, *events, capacity, peeked.take())? {
+                Next::Tick(tick) => tick,
+                Next::Convert(emission) => return Ok(Some(emission)),
+            };
+            let mut reserved = tick.reserved;
+            if tick.capacity > capacity {
+                let additional = tick.capacity - self.cycles.len();
+                let phase = TraceAllocationPhase::CycleBuffer;
+                reserve_exact(&mut self.cycles, additional, phase)?;
+                // Admitted again at the capacity the allocator returned.
+                let emission = tick.peeked.unwrap_or(TICK_BOUND);
+                let tape = cpu.advice_tape.capacity();
+                match self.admit_tick(self.cycles.capacity(), emission, *events, tape) {
+                    Ok(bytes) => reserved = bytes,
+                    Err(_) => return Ok(Some(emission)),
+                }
+            }
+            cpu.set_advice_write_allowance(self.advice_write_allowance(reserved));
+            let (pending, capacity) = (self.cycles.len(), self.cycles.capacity());
+            crate::step_emulator(emulator, prev_pc, Some(&mut self.cycles));
+            if let Some(refusal) = emulator.get_cpu().advice_write_refusal() {
+                return Err(refusal.into());
+            }
+            if self.cycles.capacity() != capacity {
+                return Err(TraceError::UncountedCycles { capacity });
+            }
+            if self.cycles.len() == pending {
+                return Ok(None);
+            }
+            #[cfg(feature = "field-inline")]
+            {
+                *events += field_event_count(&self.cycles[pending..]);
+            }
+        }
+    }
+
+    /// Admits the next tick at a `capacity`-cycle buffer, whose cycles carry
+    /// `events` field events: its cycles fit the buffer, grown by
+    /// [`growth_target`] if they must, and converting every cycle after it
+    /// fits beside the buffer. [`TICK_BOUND`] admits it without a peek where
+    /// no growth is needed; else its emission is `peeked` or peeked now, and
+    /// nothing at a PC stall or a wait for an interrupt.
+    fn next_tick(
+        &self,
+        cpu: &mut Cpu,
+        prev_pc: u64,
+        events: usize,
+        capacity: usize,
+        peeked: Option<Emission>,
+    ) -> Result<Next, TraceError> {
+        let tape = cpu.advice_tape.capacity();
+        let pending = self.cycles.len();
+        let emission = match peeked {
+            Some(emission) => emission,
+            None => {
+                let bounded = pending
+                    .checked_add(TICK_BOUND.rows)
+                    .filter(|&rows| rows <= capacity)
+                    .and_then(|_| self.admit_tick(capacity, TICK_BOUND, events, tape).ok());
+                if let Some(reserved) = bounded {
+                    let peeked = None;
+                    return Ok(Next::Tick(Tick {
+                        capacity,
+                        peeked,
+                        reserved,
+                    }));
+                }
+                if prev_pc == cpu.read_pc() {
+                    Emission::default()
+                } else {
+                    match cpu.peek_instruction() {
+                        Some(instruction) => instruction.emission(cpu)?,
+                        None => Emission::default(),
+                    }
+                }
+            }
+        };
+        let phase = TraceAllocationPhase::CycleBuffer;
+        let required = pending
+            .checked_add(emission.rows)
+            .ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let target = match (required > capacity).then(|| growth_target(capacity, required)) {
+            Some(target) => self.residency(tape).grow_cycles(target).map(|_| target),
+            None => Ok(capacity),
+        };
+        let tick = target.and_then(|capacity| {
+            let reserved = self.admit_tick(capacity, emission, events, tape)?;
+            let peeked = Some(emission);
+            Ok(Tick {
+                capacity,
+                peeked,
+                reserved,
+            })
+        });
+        Ok(tick.map_or(Next::Convert(emission), Next::Tick))
+    }
+
+    /// Checks converting every pending cycle after a tick that emits
+    /// `emission`, the cycles before it carrying `events` field events, beside
+    /// a `capacity`-cycle buffer. Returns the bytes the conversion needs
+    /// beyond the buffers live before it.
+    fn admit_tick(
+        &self,
+        capacity: usize,
+        emission: Emission,
+        events: usize,
+        tape: usize,
+    ) -> Result<usize, TraceAllocationError> {
+        let overflow = TraceAllocationError::SizeOverflow {
+            phase: TraceAllocationPhase::Conversion,
+        };
+        let pending = self
+            .cycles
+            .len()
+            .checked_add(emission.rows)
+            .ok_or(overflow)?;
+        let events = events.checked_add(emission.field_events).ok_or(overflow)?;
+        let cycles = bytes_of::<Cycle>(capacity, TraceAllocationPhase::CycleBuffer)?;
+        let residency = Residency {
+            cycles,
+            ..self.residency(tape)
+        };
+        let (peak, _) = residency.plan_conversion(pending, events, self.row_target(pending)?)?;
+        Ok(peak.saturating_sub(residency.live()))
+    }
+
+    fn residency(&self, tape: usize) -> Residency {
+        Residency {
+            limit: self.limit,
+            resident: self.resident,
+            tape,
+            cycles: heap_bytes(&self.cycles),
+            rows: heap_bytes(&self.rows),
+            chunks: self.chunks.len(),
+            chunk_capacity: self.chunks.capacity(),
+            fields: self.fields,
+        }
+    }
+
+    /// What an advice write may request beside every buffer of this trace and
+    /// the `reserved` bytes a conversion still needs; the write's own check
+    /// counts the advice tape.
+    fn advice_write_allowance(&self, reserved: usize) -> TraceAllocationAllowance {
         let live = [
             self.resident,
             heap_bytes(&self.cycles),
             heap_bytes(&self.rows),
             heap_bytes(&self.chunks),
             self.fields,
+            reserved,
         ]
         .into_iter()
         .fold(0, usize::saturating_add);
         TraceAllocationAllowance::new(self.limit, live)
     }
 
-    /// What a request may take beside the resident buffers, the pending
-    /// window, the chunks' field events and `tape` bytes of advice tape.
-    fn others(&self, tape: usize) -> TraceAllocationAllowance {
-        let live = [self.resident, heap_bytes(&self.cycles), self.fields, tape]
-            .into_iter()
-            .fold(0, usize::saturating_add);
-        TraceAllocationAllowance::new(self.limit, live)
+    /// The capacity converting `pending` more cycles grows the rows to by
+    /// [`growth_target`], if they must grow.
+    fn row_target(&self, pending: usize) -> Result<Option<usize>, TraceAllocationError> {
+        let phase = TraceAllocationPhase::RowGrowth;
+        let required = self
+            .rows
+            .len()
+            .checked_add(pending)
+            .ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let capacity = self.rows.capacity();
+        Ok((required > capacity).then(|| growth_target(capacity, required)))
+    }
+
+    /// Grows the rows to `capacity`, checked beside the old rows, the chunk
+    /// metadata and every other buffer.
+    fn grow_rows(&mut self, capacity: usize, tape: usize) -> Result<(), TraceAllocationError> {
+        self.residency(tape).grow_rows(capacity)?;
+        let additional = capacity - self.rows.len();
+        reserve_exact(&mut self.rows, additional, TraceAllocationPhase::RowGrowth)
+    }
+
+    /// Replaces the empty pending window with one of `window` cycles, the old
+    /// one dropped first, checked beside every other buffer.
+    fn replace_window(&mut self, window: usize, tape: usize) -> Result<(), TraceAllocationError> {
+        if self.cycles.capacity() != window {
+            self.cycles = Vec::new();
+            self.residency(tape).grow_cycles(window)?;
+            reserve_exact(&mut self.cycles, window, TraceAllocationPhase::CycleBuffer)?;
+        }
+        Ok(())
+    }
+
+    /// Converts the accumulated cycles, which carry `events` field events,
+    /// into rows of `anchor` capacity and leaves a one-tick window: straight
+    /// into `anchor` rows if that fits beside the cycles, else into exact rows
+    /// that grow to `anchor` once the cycles drop.
+    fn start_batches(
+        &mut self,
+        bytecode: &BytecodePCMapper,
+        tape: usize,
+        anchor: usize,
+        events: usize,
+    ) -> Result<(), TraceError> {
+        let pending = self.cycles.len();
+        let direct = self
+            .residency(tape)
+            .plan_conversion(pending, events, Some(anchor));
+        if direct.is_ok() {
+            self.grow_rows(anchor, tape)?;
+        }
+        self.convert_pending(bytecode, tape)?;
+        self.cycles = Vec::new();
+        if self.rows.capacity() < anchor {
+            self.grow_rows(anchor, tape)?;
+        }
+        self.replace_window(MAX_EXPANDED_ROWS_PER_SOURCE, tape)?;
+        Ok(())
+    }
+
+    /// Reserves the next window at an empty one and returns its batch, the
+    /// window less one tick: the longest window up to
+    /// `pending_window(SERIAL_BATCH_ROWS)` whose cycles, field events and
+    /// metadata fit beside every other buffer with the rows grown for it; else
+    /// the longest within the rows' capacity; else one tick.
+    fn plan_batch(&mut self, tape: usize) -> Result<usize, TraceError> {
+        let phase = TraceAllocationPhase::CycleBuffer;
+        let full = pending_window(SERIAL_BATCH_ROWS)
+            .ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let residency = Residency {
+            cycles: 0,
+            rows: 0,
+            ..self.residency(tape)
+        };
+        let (_, metadata) = residency.chunk_growth(conversion_slices(full))?;
+        let others = bytes_of::<ConvertedChunk>(metadata.unwrap_or(0), phase)?
+            .saturating_add(residency.live());
+        let window_for = |rows: usize| {
+            rows.checked_mul(size_of::<JoltTraceRow>())
+                .and_then(|rows| rows.checked_add(others))
+                .map_or(0, |held| {
+                    self.limit.saturating_sub(held) / (size_of::<Cycle>() + FIELD_EVENT_BYTES)
+                })
+        };
+        let (converted, capacity) = (self.rows.len(), self.rows.capacity());
+        let required = converted.saturating_add(full);
+        let growth = (required > capacity).then(|| growth_target(capacity, required));
+        let mut window = full.min(window_for(capacity.saturating_add(growth.unwrap_or(0))));
+        if window < MAX_EXPANDED_ROWS_PER_SOURCE {
+            window = full.min(capacity - converted).min(window_for(capacity));
+        }
+        let window = window.max(MAX_EXPANDED_ROWS_PER_SOURCE);
+        self.replace_window(window, tape)?;
+        Ok(window - MAX_EXPANDED_ROWS_PER_SOURCE + 1)
     }
 
     /// Appends the rows of the pending cycles, which follow every converted
@@ -592,51 +1072,27 @@ impl LimitedTrace {
         bytecode: &BytecodePCMapper,
         tape: usize,
     ) -> Result<(), TraceError> {
-        let others = self.others(tape);
-        let cycles = &self.cycles;
-        let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
+        let parallel = self.cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
         let _span = tracing::info_span!(
             "trace_rows_from_cycles",
-            cycles = cycles.len(),
+            cycles = self.cycles.len(),
             mode = if parallel { "parallel" } else { "serial" }
         )
         .entered();
-        let slices = if parallel {
-            cycles.len().div_ceil(PARALLEL_ROW_CONVERSION_THRESHOLD)
-        } else {
-            1
-        };
-        let phase = TraceAllocationPhase::RowGrowth;
-        let required = self
-            .rows
-            .len()
-            .checked_add(cycles.len())
-            .ok_or(TraceAllocationError::SizeOverflow { phase })?;
-        if required > self.rows.capacity() {
-            let target = growth_target(self.rows.capacity(), required);
-            let held = heap_bytes(&self.rows).saturating_add(heap_bytes(&self.chunks));
-            others.check_request(phase, held, bytes_of::<JoltTraceRow>(target, phase)?)?;
-            let additional = target - self.rows.len();
-            reserve_exact(&mut self.rows, additional, phase)?;
+        if let Some(capacity) = self.row_target(self.cycles.len())? {
+            self.grow_rows(capacity, tape)?;
         }
-        let phase = TraceAllocationPhase::Conversion;
-        let overflow = TraceAllocationError::SizeOverflow { phase };
-        let required = self.chunks.len().checked_add(slices).ok_or(overflow)?;
-        let target = (required > self.chunks.capacity())
-            .then(|| growth_target(self.chunks.capacity(), required));
-        let new_chunks = bytes_of::<ConvertedChunk>(target.unwrap_or(0), phase)?;
+        let cycles = &self.cycles;
+        let slices = conversion_slices(cycles.len());
         #[cfg(feature = "field-inline")]
-        let new_fields = bytes_of::<FieldEvent>(field_event_count(cycles), phase)?;
+        let events = field_event_count(cycles);
         #[cfg(not(feature = "field-inline"))]
-        let new_fields = 0;
-        let held = heap_bytes(&self.rows).saturating_add(heap_bytes(&self.chunks));
-        others.check_request(
-            phase,
-            held,
-            new_chunks.checked_add(new_fields).ok_or(overflow)?,
-        )?;
-        if let Some(target) = target {
-            let additional = target - self.chunks.len();
+        let events = 0;
+        let residency = self.residency(tape);
+        let (_, converted) = residency.convert(slices, events)?;
+        let phase = TraceAllocationPhase::Conversion;
+        if converted.chunk_capacity > self.chunks.capacity() {
+            let additional = converted.chunk_capacity - self.chunks.len();
             reserve_exact(&mut self.chunks, additional, phase)?;
         }
         let start = self.rows.len();
@@ -686,22 +1142,76 @@ impl LimitedTrace {
         Ok(())
     }
 
+    /// The trace data, dimensions and final image of an accumulated trace,
+    /// whose cycles carry `events` field events. When the image, and then,
+    /// with the flat memory freed for it, the conversion and the field merge
+    /// all fit, the image comes first, as in the original trace, and the flat
+    /// memory drops before the conversion; otherwise the rows come first and
+    /// the image last. Either way the cycles drop before the field merge.
+    fn finish_accumulated(
+        mut self,
+        bytecode: &BytecodePCMapper,
+        final_memory: Memory,
+        tape: usize,
+        events: usize,
+    ) -> Result<(TraceData, ExecutionDimensions, MemoryImage), TraceError> {
+        let image = final_memory.flat_image();
+        let residency = self.residency(tape);
+        let everything = TraceAllocationAllowance::new(self.limit, residency.live());
+        let flat = final_memory.flat_heap_bytes();
+        let pending = self.cycles.len();
+        let image_first = image.bytes().and_then(|bytes| {
+            everything.check_request(TraceAllocationPhase::FinalMemory, 0, bytes)?;
+            let resident = residency
+                .resident
+                .saturating_sub(flat)
+                .saturating_add(bytes);
+            let freed = Residency {
+                resident,
+                ..residency
+            };
+            let (_, converted) =
+                freed.plan_conversion(pending, events, self.row_target(pending)?)?;
+            #[cfg(feature = "field-inline")]
+            Residency {
+                cycles: 0,
+                ..converted
+            }
+            .merge_fields(events)?;
+            #[cfg(not(feature = "field-inline"))]
+            let _ = converted;
+            Ok(())
+        });
+        if image_first.is_ok() {
+            let bytes = image.try_collect(everything)?;
+            self.resident = self
+                .resident
+                .saturating_sub(flat)
+                .saturating_add(heap_bytes(&bytes));
+            drop(final_memory);
+            self.convert_pending(bytecode, tape)?;
+            self.cycles = Vec::new();
+            return self.finish(FinalImage::Collected(bytes), tape);
+        }
+        self.convert_pending(bytecode, tape)?;
+        self.cycles = Vec::new();
+        self.finish(FinalImage::Flat(image), tape)
+    }
+
     /// The trace data, its dimensions and the final memory image. The merged
     /// field events are checked with every source buffer, the pending window
     /// and `tape` bytes of advice tape live; the image after the window drops,
     /// beside the trace data, the tape and the resident buffers.
     fn finish(
         self,
-        final_memory: &Memory,
+        image: FinalImage<'_>,
         tape: usize,
     ) -> Result<(TraceData, ExecutionDimensions, MemoryImage), TraceError> {
         #[cfg(feature = "field-inline")]
         let fields = {
             let phase = TraceAllocationPhase::FieldMerge;
             let count = self.chunks.iter().map(|chunk| chunk.fields.len()).sum();
-            let held = heap_bytes(&self.rows).saturating_add(heap_bytes(&self.chunks));
-            self.others(tape)
-                .check_request(phase, held, bytes_of::<FieldEvent>(count, phase)?)?;
+            self.residency(tape).merge_fields(count)?;
             let mut fields = Vec::new();
             reserve_exact(&mut fields, count, phase)?;
             fields
@@ -725,10 +1235,21 @@ impl LimitedTrace {
         let live = [resident, tape, data.heap_bytes()]
             .into_iter()
             .fold(0, usize::saturating_add);
-        let bytes =
-            final_memory.try_flat_nonzero_bytes(TraceAllocationAllowance::new(limit, live))?;
+        let bytes = match image {
+            FinalImage::Collected(bytes) => bytes,
+            FinalImage::Flat(image) => {
+                image.try_collect(TraceAllocationAllowance::new(limit, live))?
+            }
+        };
         Ok((data, dimensions, MemoryImage { bytes }))
     }
+}
+
+/// A limited trace's final memory image: collected before the last
+/// conversion, or still to collect from the flat memory.
+enum FinalImage<'a> {
+    Collected(Vec<(u64, u8)>),
+    Flat(FlatImage<'a>),
 }
 
 /// A resume point for the chunked-execution contract, built on the two-pass

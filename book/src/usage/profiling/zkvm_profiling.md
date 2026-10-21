@@ -64,8 +64,10 @@ At or above it, the profile traces the guest twice, as without a budget.
 Below it, one limited serial trace feeds the proof: it rejects parallel
 tracing (`TRACER_PARALLEL`), fails at the first covered trace-storage request
 the budget cannot hold (its setup alone requests over 1 GiB by default, so
-smaller budgets fail during tracing, before the checks below), and keeps its
-row reserve in the trace output those checks count. A run much shorter than
+smaller budgets fail during tracing, before the checks below), and keeps the
+row capacity it reserved in the trace output those checks count: exactly the
+rows of a run it converts once, at the end, and at least its row reserve when
+it converts in batches. A run much shorter than
 its domain can take the limited trace although the original would fit, and a
 budget just above the proxy keeps an original trace whose unpriced requests
 can exceed it.

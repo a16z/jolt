@@ -12,8 +12,10 @@
 //! limited trace rejects parallel tracing (`TRACER_PARALLEL`) and chunked
 //! execution (chunk replay stays unchecked), fails before setup when the
 //! budget cannot hold its setup requests (over 1 GiB by default), and keeps
-//! its row reserve in the trace, which [`TraceData::heap_bytes`] counts here;
-//! budgets below that floor never reach this check. A generated SDK prover
+//! the row capacity it reserved in the trace: exactly the rows of a run it
+//! converts once, at the end, and at least its row reserve when it converts
+//! in batches. [`TraceData::heap_bytes`] counts that capacity here; budgets
+//! below the setup floor never reach this check. A generated SDK prover
 //! given a budget also runs the compute-advice guest without a trace under
 //! its bytes (`TracerBackend::execute_advice_tape`), checking named setup
 //! requests and advice writes, before the proof's trace.

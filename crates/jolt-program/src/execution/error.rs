@@ -34,13 +34,15 @@ pub enum TraceError {
     UnsupportedTraceAllocationMode,
     #[error(transparent)]
     InvalidMemoryLayout(#[from] MemoryLayoutError),
+    #[error("a checked tick emitted cycles its admission did not count, past the {capacity}-cycle buffer")]
+    UncountedCycles { capacity: usize },
 }
 
 /// The trace-storage request an explicit trace allocation limit stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TraceAllocationPhase {
-    /// Setup buffers, and a trace's initial row reserve and pending cycle
-    /// window.
+    /// Setup buffers, and a trace's first cycle buffer, or its initial row
+    /// reserve and pending cycle window.
     Initial,
     RowGrowth,
     /// Converted-chunk metadata and field-event buffers.
@@ -49,6 +51,9 @@ pub enum TraceAllocationPhase {
     FinalMemory,
     /// A host advice write's guest-copy scratch and advice-tape growth.
     AdviceWrite,
+    /// An accumulating trace's cycle-buffer growth, and a batched trace's
+    /// pending window after setup.
+    CycleBuffer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
