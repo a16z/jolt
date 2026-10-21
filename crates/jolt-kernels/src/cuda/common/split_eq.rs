@@ -24,6 +24,42 @@ pub struct DeviceSplitEq<F: JoltField> {
     out_shards: usize,
 }
 
+#[cfg(all(test, not(feature = "field-inline")))]
+pub fn split_eq_tables_window<F: JoltField>(
+    context: &CudaKernelContext,
+    point: &[F],
+    shard: usize,
+    shards: usize,
+) -> Result<(DeviceFrVec, DeviceFrVec, usize), CudaError> {
+    if point.is_empty() {
+        return Err(CudaError::InvariantViolation {
+            reason: "an eq factor pair needs at least one variable",
+        });
+    }
+    let split = point.len() / 2;
+    let in_bits = point.len() - split;
+    let (outer, inner) = point.split_at(split);
+    let outer_evals = EqPolynomial::<F>::evals(outer, None);
+    if shards == 0 || shard >= shards || !outer_evals.len().is_multiple_of(shards) {
+        return Err(CudaError::InvariantViolation {
+            reason: "an eq shard needs an in-range index and a shard count dividing the outer \
+                     factor",
+        });
+    }
+    let len = outer_evals.len() / shards;
+    let window =
+        outer_evals
+            .get(shard * len..(shard + 1) * len)
+            .ok_or(CudaError::InvariantViolation {
+                reason: "an eq shard window lies outside the outer factor",
+            })?;
+    let e_out = context.upload(super::device::require_fr_slice(window)?)?;
+    let e_in = context.upload(super::device::require_fr_slice(&EqPolynomial::<F>::evals(
+        inner, None,
+    ))?)?;
+    Ok((e_in, e_out, in_bits))
+}
+
 impl<F: JoltField> DeviceSplitEq<F> {
     #[cfg(feature = "allocative")]
     pub fn device_bytes(&self) -> usize {

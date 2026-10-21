@@ -158,6 +158,8 @@ mod ram_output_check;
 mod registers_claim_reduction;
 #[cfg(test)]
 mod registers_read_write;
+#[cfg(all(test, not(feature = "field-inline")))]
+mod spartan_product;
 mod witness;
 
 pub use common::context::{

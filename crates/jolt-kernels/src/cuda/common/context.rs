@@ -103,6 +103,10 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     amm_lift: CudaFunction,
     brc_message_dense: CudaFunction,
+    #[cfg(all(test, not(feature = "field-inline")))]
+    sp_gather: CudaFunction,
+    #[cfg(all(test, not(feature = "field-inline")))]
+    sp_matrix: CudaFunction,
     roc_message: CudaFunction,
     #[cfg(test)]
     unr_mul_scatter: CudaFunction,
@@ -308,6 +312,10 @@ impl CudaKernelContext {
             #[cfg(test)]
             amm_lift: module.load_function("amm_lift_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
+            #[cfg(all(test, not(feature = "field-inline")))]
+            sp_gather: module.load_function("sp_gather_kernel")?,
+            #[cfg(all(test, not(feature = "field-inline")))]
+            sp_matrix: module.load_function("sp_matrix_kernel")?,
             roc_message: module.load_function("roc_message_kernel")?,
             #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
@@ -693,6 +701,16 @@ impl CudaKernelContext {
 
     pub(crate) const fn ii_flag_words(&self) -> &CudaFunction {
         &self.ii_flag_words
+    }
+
+    #[cfg(all(test, not(feature = "field-inline")))]
+    pub(crate) const fn sp_gather(&self) -> &CudaFunction {
+        &self.sp_gather
+    }
+
+    #[cfg(all(test, not(feature = "field-inline")))]
+    pub(crate) const fn sp_matrix(&self) -> &CudaFunction {
+        &self.sp_matrix
     }
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {

@@ -6,6 +6,40 @@ __device__ __constant__ u64 UNR_MONT_2_64[4] = {
 };
 
 
+__device__ __forceinline__ void unr_zero(u64 *folded) {
+    for (int i = 0; i < 2 * UNR_SLOTS; i++) folded[i] = 0;
+}
+
+__device__ __forceinline__ void unr_mul_words(const u64 *value,
+                                              const unsigned long long *words,
+                                              unsigned int word_count,
+                                              u64 *folded) {
+    for (unsigned int w = 0; w < word_count; w++) {
+        unsigned long long m = words[w];
+        if (m == 0ULL) continue;
+        u64 carry = 0;
+        for (int i = 0; i < LIMBS; i++) {
+            u128 t = (u128)value[i] * (u128)m + (u128)carry;
+            unsigned int slot = w + (unsigned int)i;
+            unsigned long long piece = (unsigned long long)t;
+            folded[2 * slot] += (piece & 0xFFFFFFFFULL);
+            folded[2 * slot + 1] += (piece >> 32);
+            carry = (u64)(t >> 64);
+        }
+        unsigned int slot = w + LIMBS;
+        folded[2 * slot] += (carry & 0xFFFFFFFFULL);
+        folded[2 * slot + 1] += (carry >> 32);
+    }
+}
+
+__device__ __forceinline__ void unr_add_field(u64 *folded, const u64 *value) {
+    for (int i = 0; i < LIMBS; i++) {
+        unsigned long long piece = (unsigned long long)value[i];
+        folded[2 * i] += (piece & 0xFFFFFFFFULL);
+        folded[2 * i + 1] += (piece >> 32);
+    }
+}
+
 __device__ __forceinline__ void unr_finalize(const u64 *folded, u64 *out) {
     u64 limbs[UNR_SLOTS + 1];
     u64 carry = 0;
