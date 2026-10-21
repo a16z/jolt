@@ -23,7 +23,6 @@ impl SummedHalf {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NarrowKind {
     U64,
-    #[cfg(test)]
     U128,
     TwosI128,
     #[cfg(test)]
@@ -38,16 +37,13 @@ impl NarrowKind {
             Self::U64 => 1,
             #[cfg(test)]
             Self::U32 | Self::Bit(_) => 1,
-            #[cfg(test)]
-            Self::U128 => 2,
-            Self::TwosI128 => 2,
+            Self::U128 | Self::TwosI128 => 2,
         }
     }
 
     const fn code(self) -> u32 {
         match self {
             Self::U64 => 0,
-            #[cfg(test)]
             Self::U128 => 1,
             Self::TwosI128 => 2,
             #[cfg(test)]
@@ -62,8 +58,8 @@ impl NarrowKind {
             #[cfg(test)]
             Self::Bit(bit) => bit,
             #[cfg(test)]
-            Self::U128 | Self::U32 => 0,
-            Self::U64 | Self::TwosI128 => 0,
+            Self::U32 => 0,
+            Self::U64 | Self::U128 | Self::TwosI128 => 0,
         }
     }
 }

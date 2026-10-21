@@ -176,6 +176,25 @@ pub(crate) fn session_window_residency<F: JoltField>(
     ))
 }
 
+#[cfg(test)]
+pub(crate) fn session_atom_columns<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Arc<DeviceAtomColumns>, KernelError<F>> {
+    session_atom_columns_window(
+        context,
+        session,
+        witness,
+        cycles,
+        &CycleWindow {
+            start: 0,
+            len: cycles,
+        },
+    )
+}
+
 pub(crate) fn session_atom_columns_window<F: JoltField>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
