@@ -2,6 +2,7 @@
 pub(crate) mod address_first;
 #[cfg(test)]
 pub(crate) mod address_major_matrix;
+pub(crate) mod address_rounds;
 pub mod context;
 #[cfg(test)]
 pub(crate) mod dense_product;

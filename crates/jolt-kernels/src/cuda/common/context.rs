@@ -103,6 +103,7 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     amm_lift: CudaFunction,
     brc_message_dense: CudaFunction,
+    roc_message: CudaFunction,
     #[cfg(test)]
     unr_mul_scatter: CudaFunction,
     #[cfg(test)]
@@ -307,6 +308,7 @@ impl CudaKernelContext {
             #[cfg(test)]
             amm_lift: module.load_function("amm_lift_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
+            roc_message: module.load_function("roc_message_kernel")?,
             #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             #[cfg(test)]
@@ -695,6 +697,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {
         &self.brc_message_dense
+    }
+
+    pub(crate) const fn roc_message(&self) -> &CudaFunction {
+        &self.roc_message
     }
 
     #[cfg(test)]
