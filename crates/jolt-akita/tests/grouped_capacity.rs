@@ -28,7 +28,6 @@ use support::{f, layout, polynomial};
 /// The smallest one-column K=16 Single arity whose scalar guide has a
 /// recursive child fold, which bounded grouped provisioning requires.
 const FINAL_NUM_VARS: usize = 18;
-/// Four variables above this one-column trace group.
 const ADVICE_NUM_VARS: usize = 22;
 const TRUSTED_ADVICE: CommitmentGroupRole =
     CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice");

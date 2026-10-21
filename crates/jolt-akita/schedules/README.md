@@ -24,7 +24,7 @@ catalog, duplicate key, or missing exact row fails loading or setup. The applica
 producer and consumer setups must use compatible frozen producer profiles.
 
 Committed programs use one whole-bytecode group and one image group. Their
-physical arities are `max(14, logical_arity)` with a ceiling of 35. Bytecode
+physical arities are `max(14, logical_arity)` with a ceiling of 34. Bytecode
 logical arity is `9 + log2(padded_bytecode_rows)` and may exceed the trace
 group arity. Producer and grouped schedule admission run before whole-table
 allocation. Existing dense catalogs are reused; this changes the requested
