@@ -10,7 +10,9 @@
 //! rejection sampler's accept/reject sequence is independent of the value it
 //! finally returns.
 
-use rand_core::{CryptoRng, RngCore};
+use jolt_algebra::parallel::*;
+use rand_chacha::ChaCha20Rng;
+use rand_core::{CryptoRng, RngCore, SeedableRng};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use super::fixed::{binary_gaussian_cdt, pow2_neg_table, Fix192};
@@ -22,6 +24,11 @@ const BINARY_GAUSSIAN_SIGMA: f64 = 0.849_321_800_288_019_1;
 /// Keeps the tail cut `14k` within the Ajtai map's `2^62` input bound, and
 /// `27k²` (the exponent of a trial) below `2^128`.
 const MAX_MULTIPLIER: u64 = 1 << 58;
+
+/// Outputs per chunk of [`GaussianSampler::fill_parallel`]. A public
+/// constant, so the chunk count and boundaries depend on the output length
+/// alone.
+const FILL_CHUNK: usize = 1 << 14;
 
 /// Thresholds `j ∈ [0, 12]`; `Pr[X ≥ 14] ≈ 2^{−196.6}` is below resolution.
 const CDT_LEN: u32 = 13;
@@ -99,6 +106,26 @@ impl GaussianSampler {
         }
     }
 
+    /// [`Self::fill`] on rayon's current pool. One 32-byte seed per chunk
+    /// of [`FILL_CHUNK`] outputs is drawn from `rng` first, in chunk order;
+    /// chunk `i` is then filled by [`Self::fill`] from ChaCha20 keyed by
+    /// seed `i`. The output is a function of `rng`'s stream alone, whatever
+    /// the thread count or scheduling, and the work split depends only on
+    /// `out.len()`. Replacing `rng`'s coins by ChaCha20 streams adds a PRG
+    /// assumption on ChaCha20 to any statistical argument about the output.
+    pub fn fill_parallel<R: RngCore + CryptoRng>(&self, rng: &mut R, out: &mut [i64]) {
+        let seeds: Vec<[u8; 32]> = (0..out.len().div_ceil(FILL_CHUNK))
+            .map(|_| {
+                let mut seed = [0u8; 32];
+                rng.fill_bytes(&mut seed);
+                seed
+            })
+            .collect();
+        cfg_chunks_mut!(out, FILL_CHUNK)
+            .zip(cfg_iter!(seeds))
+            .for_each(|(chunk, seed)| self.fill(&mut ChaCha20Rng::from_seed(*seed), chunk));
+    }
+
     // Kept out of line so the reviewed constant-time code is the code that
     // runs, whatever the caller's inlining.
     #[inline(never)]
@@ -147,8 +174,6 @@ mod tests {
     use super::super::fixed::Fix192;
     use super::*;
     use crate::sample::stats::{chi_square_p, ks_p, normal_cdf};
-    use rand_chacha::ChaCha20Rng;
-    use rand_core::SeedableRng;
 
     /// mpmath (400-bit) `⌊2^{192}·2^{−2^i/k²}⌋`, little-endian limbs.
     const EXP_VECTORS: [(u64, usize, [u64; 3]); 6] = [
@@ -271,6 +296,27 @@ mod tests {
         }
     }
 
+    /// The parallel fill depends on the seed alone: one worker and eight
+    /// give the same bytes, over a length that ends mid-chunk.
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn parallel_fill_is_independent_of_the_thread_count() {
+        let sampler = GaussianSampler::new(GaussianWidth::from_multiplier(57_033_704_728).unwrap());
+        let run = |threads: usize| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            let mut out = vec![0i64; 5 * FILL_CHUNK + 123];
+            pool.install(|| sampler.fill_parallel(&mut ChaCha20Rng::seed_from_u64(9), &mut out));
+            out
+        };
+        let one = run(1);
+        assert_eq!(one, run(8));
+        // Chunks draw from distinct streams.
+        assert_ne!(one[..FILL_CHUNK], one[FILL_CHUNK..2 * FILL_CHUNK]);
+    }
+
     #[test]
     fn rejects_out_of_range_multipliers() {
         for k in [0, MAX_MULTIPLIER + 1] {
@@ -330,7 +376,7 @@ mod tests {
             let sigma = sampler.width().sigma();
             let n = 2_000_000usize;
             let mut samples = vec![0i64; n];
-            sampler.fill(&mut rng, &mut samples);
+            sampler.fill_parallel(&mut rng, &mut samples);
 
             // For σ ≫ η_ε(Z), the mass of the integers in [a, b] equals the
             // normal mass of [a − 1/2, b + 1/2] to within f64 precision.

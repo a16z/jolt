@@ -635,7 +635,7 @@ mod prover {
             rng: &mut R,
         ) -> Result<Option<Accepted<F>>, WhiteoutError> {
             for (range, _) in &self.blocks {
-                self.sampler.fill(
+                self.sampler.fill_parallel(
                     rng,
                     self.y
                         .get_mut(range.clone())
