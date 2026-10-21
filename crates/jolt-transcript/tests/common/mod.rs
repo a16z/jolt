@@ -83,11 +83,11 @@ macro_rules! transcript_tests {
 
         #[test]
         fn test_order_matters() {
-            let c1 = challenge_after(b"ordr", |t| {
+            let c1 = challenge_after(b"swap", |t| {
                 t.append(&1u64);
                 t.append(&2u64);
             });
-            let c2 = challenge_after(b"ordr", |t| {
+            let c2 = challenge_after(b"swap", |t| {
                 t.append(&2u64);
                 t.append(&1u64);
             });
