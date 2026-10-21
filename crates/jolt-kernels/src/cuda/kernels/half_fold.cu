@@ -143,3 +143,27 @@ extern "C" __global__ void hf_row_fold_kernel(const u64 *__restrict__ column,
     }
     store4(out + (unsigned long long)a * LIMBS, result);
 }
+
+extern "C" __global__ void hf_bind_low_to_high_kernel(const u64 *__restrict__ column,
+                                                     unsigned int kind,
+                                                     unsigned int entry_stride,
+                                                     unsigned int entry_offset,
+                                                     unsigned int entry_bit,
+                                                     u64 c0, u64 c1, u64 c2, u64 c3,
+                                                     u64 *__restrict__ out,
+                                                     unsigned int half) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= half) return;
+    u64 lo[LIMBS], hi[LIMBS], c[LIMBS], d[LIMBS], t[LIMBS], r[LIMBS];
+    unsigned long long pair = (unsigned long long)i * 2;
+    hf_load_value(column, kind, entry_stride, entry_offset, entry_bit, pair, lo);
+    hf_load_value(column, kind, entry_stride, entry_offset, entry_bit, pair + 1, hi);
+    c[0] = c0;
+    c[1] = c1;
+    c[2] = c2;
+    c[3] = c3;
+    fr_sub(hi, lo, d);
+    fr_mul(c, d, t);
+    fr_add(lo, t, r);
+    store4(out + i * LIMBS, r);
+}

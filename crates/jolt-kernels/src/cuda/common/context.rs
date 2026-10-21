@@ -58,8 +58,8 @@ pub struct CudaKernelContext {
     dense_product_round: CudaFunction,
     lane_sum_total: CudaFunction,
     sop_round: CudaFunction,
-    #[cfg(test)]
     sopg_round: CudaFunction,
+    ii_flag_words: CudaFunction,
     #[cfg(test)]
     ra_split_tables: CudaFunction,
     #[cfg(test)]
@@ -223,6 +223,7 @@ pub struct CudaKernelContext {
     pub(super) g2_mul_by_char_probe: CudaFunction,
     hf_half_fold: CudaFunction,
     hf_row_fold: CudaFunction,
+    hf_bind_low_to_high: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -261,8 +262,8 @@ impl CudaKernelContext {
             dense_product_round: module.load_function("dense_product_round_kernel")?,
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
-            #[cfg(test)]
             sopg_round: module.load_function("sopg_round_kernel")?,
+            ii_flag_words: module.load_function("ii_flag_words_kernel")?,
             #[cfg(test)]
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             #[cfg(test)]
@@ -429,6 +430,7 @@ impl CudaKernelContext {
             g2_mul_by_char_probe: module.load_function("g2_mul_by_char_probe")?,
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
+            hf_bind_low_to_high: module.load_function("hf_bind_low_to_high_kernel")?,
         })
     }
 
@@ -570,7 +572,6 @@ impl CudaKernelContext {
         Ok(out)
     }
 
-    #[cfg(test)]
     pub(crate) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
         Ok(self.stream.alloc_zeros::<u64>(len)?)
     }
@@ -615,7 +616,6 @@ impl CudaKernelContext {
         Ok((total.saturating_sub(free), total))
     }
 
-    #[cfg(test)]
     pub(crate) fn require_owned(&self, ordinal: usize) -> Result<(), CudaError> {
         if ordinal == self.ordinal {
             return Ok(());
@@ -652,6 +652,10 @@ impl CudaKernelContext {
         &self.hf_row_fold
     }
 
+    pub(crate) const fn hf_bind_low_to_high(&self) -> &CudaFunction {
+        &self.hf_bind_low_to_high
+    }
+
     pub(crate) const fn pcr_round(&self) -> &CudaFunction {
         &self.pcr_round
     }
@@ -681,9 +685,12 @@ impl CudaKernelContext {
         &self.sop_round
     }
 
-    #[cfg(test)]
     pub(crate) const fn sopg_round(&self) -> &CudaFunction {
         &self.sopg_round
+    }
+
+    pub(crate) const fn ii_flag_words(&self) -> &CudaFunction {
+        &self.ii_flag_words
     }
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {

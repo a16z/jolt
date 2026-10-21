@@ -1,4 +1,6 @@
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
+#[cfg(test)]
+use jolt_field::Fr;
 use jolt_field::JoltField;
 
 use super::context::{CudaKernelContext, BLOCK};
@@ -27,16 +29,15 @@ pub enum NarrowKind {
     TwosI128,
     #[cfg(test)]
     U32,
-    #[cfg(test)]
     Bit(u32),
 }
 
 impl NarrowKind {
     const fn words(self) -> usize {
         match self {
-            Self::U64 => 1,
+            Self::U64 | Self::Bit(_) => 1,
             #[cfg(test)]
-            Self::U32 | Self::Bit(_) => 1,
+            Self::U32 => 1,
             Self::U128 | Self::TwosI128 => 2,
         }
     }
@@ -48,14 +49,12 @@ impl NarrowKind {
             Self::TwosI128 => 2,
             #[cfg(test)]
             Self::U32 => 4,
-            #[cfg(test)]
             Self::Bit(_) => 5,
         }
     }
 
     const fn bit(self) -> u32 {
         match self {
-            #[cfg(test)]
             Self::Bit(bit) => bit,
             #[cfg(test)]
             Self::U32 => 0,
@@ -176,6 +175,67 @@ pub fn half_fold<F: JoltField>(
         F::zero(),
         false,
     )?;
+    Ok(out)
+}
+
+pub fn bind_column<F: JoltField>(
+    context: &CudaKernelContext,
+    column: FoldColumn<'_>,
+    challenge: F,
+) -> Result<DeviceFrVec, CudaError> {
+    let len = column.len();
+    if len < 2 || !len.is_multiple_of(2) || !column.covers(len) {
+        return Err(CudaError::LengthMismatch {
+            expected: len.next_power_of_two().max(2),
+            got: len,
+        });
+    }
+    let half = len / 2;
+    let mut out = context.alloc(half)?;
+    let limbs = fr_limbs(require_fr(challenge)?);
+    let count = CudaKernelContext::count_of(half)?;
+    let kind = column.kind();
+    let (stride, offset, bit) = column.geometry()?;
+
+    let mut builder = context
+        .stream()
+        .launch_builder(context.hf_bind_low_to_high());
+    let _ = builder.arg(column.words());
+    let _ = builder.arg(&kind);
+    let _ = builder.arg(&stride);
+    let _ = builder.arg(&offset);
+    let _ = builder.arg(&bit);
+    for limb in &limbs {
+        let _ = builder.arg(limb);
+    }
+    let _ = builder.arg(out.limbs_mut());
+    let _ = builder.arg(&count);
+    // SAFETY: thread `i < half` reads entries `2i` and `2i + 1` of `column`,
+    // both below `len`, whose words `offset + i * stride ..= + kind.words()`
+    // `covers` checked against `words.len()`; `bit` only shifts a loaded word
+    // and `covers` bounded it below `u64::BITS`. It writes only `out[i]` of the
+    // freshly allocated `half` elements, distinct from `column`. The challenge
+    // arrives as four by-value limbs, so no device buffer backs it, and threads
+    // with `i >= half` return before any access.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+    Ok(out)
+}
+
+#[cfg(test)]
+pub(crate) fn promote_for_test(
+    context: &CudaKernelContext,
+    column: FoldColumn<'_>,
+) -> Result<Vec<Fr>, CudaError> {
+    use jolt_field::Ring;
+    let zero = Fr::from_u64(0);
+    let one = Fr::from_u64(1);
+    let evens = bind_column(context, column, zero)?.to_host()?;
+    let odds = bind_column(context, column, one)?.to_host()?;
+    let mut out = Vec::with_capacity(evens.len() + odds.len());
+    for (even, odd) in evens.into_iter().zip(odds) {
+        out.push(even);
+        out.push(odd);
+    }
     Ok(out)
 }
 

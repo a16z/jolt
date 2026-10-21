@@ -6,7 +6,6 @@ use super::device::{require_fr, DeviceFrVec, LIMBS};
 use super::error::CudaError;
 use super::half_fold::FoldColumn;
 use super::primitives::reduce_lanes;
-#[cfg(test)]
 use super::split_eq::DeviceSplitEq;
 
 pub struct SumOfProducts<F: JoltField> {
@@ -170,7 +169,6 @@ impl DeviceSumOfProducts {
             .collect()
     }
 
-    #[cfg(test)]
     pub fn round_gruen_endpoints<F: JoltField>(
         &self,
         context: &CudaKernelContext,

@@ -27,6 +27,7 @@ const KERNEL_FILES: &[&str] = &[
     "address_phase.cu",
     "booleanity_cycle.cu",
     "one_hot_fold.cu",
+    "instruction_input.cu",
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
