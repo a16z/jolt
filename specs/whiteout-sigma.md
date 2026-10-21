@@ -884,8 +884,14 @@ model; T_att makes all-rejected ≤ 2^−128.
   ε stays at 2^−137: a smaller T_att would allow a larger ε, but that moves
   α by under 1%.
 - **Prover time.** The attempt is dominated by the serial Gaussian `fill`,
-  whose cost per sample grows with ℓ = ⌈log₂ 27k²⌉, the length of its
-  constant-time exponential product. The measurement is in A16.
+  whose cost per sample is about `200 + 6.0·ℓ` ns on one thread, with
+  ℓ = ⌈log₂ 27k²⌉ the length of its constant-time exponential product
+  (`whiteout-gaussian.md`). Expected Σ time per proof at the headline on an
+  idle machine (6.08M samples, plus about 0.1 s of other work per attempt):
+  today 2.37 × 3.1 ≈ 7.4 s; 2^−9.7: 1.001 × (6.08M × 0.62 µs) ≈ 3.9 s;
+  default: 4.1 s; 2^−21.2: 1 × (6.08M × 0.76 µs) ≈ 4.7 s. Measured before
+  and after in A16: 1.8× faster. All are 3–6× over the paper's 1.15 s, so
+  the parallel fill remains needed.
 
 **Default: D = 10, α = 2^17, box failure ≤ 2^−20.** Per-attempt rejection
 is at most 2^−13.2, so a proof takes a second attempt about once in 9,400
@@ -1166,6 +1172,39 @@ Moved out of W4:
   10 ns Gaussian sample. Closing the gap needs a parallel fill (independent
   per-block RNG streams forked from the attempt's randomness) in M5a's
   sampler; the Σ-protocol's own work is about 0.08 s per attempt.
+
+  **After almost-never rejection (§5.1), 2026-10-21.** `sigma_timing` at
+  scale 5,920 (6,076,160 Gaussian coefficients, the headline's count), 16
+  threads, release, 10 proofs per run, before and after binaries
+  interleaved twice. The machine was shared and heavily loaded (load
+  average 45–140), so absolute times are about twice the idle ones; the
+  ratio is the signal.
+
+  | Build | attempts (mean) | per proof, run 1 / run 2 |
+  |---|---|---|
+  | before (α = 16, two widths) | 2.20 | 16.2 s / 13.0 s |
+  | after (α = 2^17, one width) | 1.00 | 7.1 s / 8.7 s |
+
+  - **Ratio.** About 1.8× faster per proof, as predicted: 2.37 attempts
+    become 1, and the per-sample cost rises by 655/502 = 1.30 (ℓ = 51 → 77,
+    `whiteout-gaussian.md`).
+  - **Idle-machine estimate.** One attempt is `fill` at 6.08M × 655 ns ≈
+    4.0 s on one thread, plus about 0.1 s of Σ work (`N·y` and `L·y` now
+    take two limb passes). Before: 2.37 × (3.05 + 0.08) ≈ 7.4 s.
+  - **Sampler share.** About 97% of the attempt, as before.
+  - **Budget.** The paper charges 1.15 s. Almost-never rejection removes
+    the 2.37× factor but not the per-sample cost, so the parallel fill is
+    still needed. Splitting `fill` into fixed-size chunks, each with a
+    32-byte seed drawn from the prover's RNG and expanded by ChaCha20, is
+    data-independent: chunk boundaries and seeds' use depend only on public
+    lengths, so it stays constant time. At 16 threads that is about
+    4.0/16 ≈ 0.25–0.3 s. A shorter exponential product (fewer than ℓ = 77
+    192-bit multiplications per trial) needs either a Rényi-divergence
+    argument for 64-bit arithmetic (M5a Q1, about 5×) or a different exact
+    sampler; vectorizing 192-bit products on NEON gains little. The fixed
+    part of a trial (CDT scan, ChaCha draws) is about 200 ns per sample, so
+    even ℓ → 0 leaves 30× the paper's 10 ns on one thread: threads are the
+    lever.
 
 **Found in implementation (W4 slices 5–9):**
 
