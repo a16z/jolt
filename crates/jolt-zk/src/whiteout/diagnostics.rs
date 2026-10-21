@@ -15,10 +15,10 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 use super::challenge::{challenge_times_i64_into, DenseChallenge};
+pub use super::dit::with_dit;
 use super::fixture::{Instance, F};
 use super::lift::{AggregatedRelation, ChallengeRing, ClaimTables, LiftedRelation, LinearParts};
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
-pub use super::sigma::with_dit;
 use super::sigma::{attempt_seed, prove_sigma_with, SelfChecks};
 use super::{SigmaSetup, WhiteoutError};
 use crate::masking::ZkError;

@@ -161,6 +161,14 @@ mod tests {
 
     use super::{install, is_enabled, is_supported, DitGuard};
 
+    /// Every Apple silicon Mac core implements FEAT_DIT, so a detection
+    /// failure here would silently turn the guard into a no-op.
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    #[test]
+    fn apple_cores_report_dit() {
+        assert!(is_supported());
+    }
+
     #[test]
     fn guard_sets_and_restores() {
         let before = is_enabled();

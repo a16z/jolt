@@ -19,6 +19,8 @@ use jolt_algebra::JoltField;
 use jolt_crypto::lattice::{MatrixShape, MatrixView, PreparedMatrix, CHALLENGE_RING_DIM};
 
 #[cfg(feature = "whiteout-prover")]
+use super::dit::with_dit;
+#[cfg(feature = "whiteout-prover")]
 use super::placement::{PadPlace, OPERAND_LEVELS, PAD_LEVELS};
 use super::placement::{PadPlacement, OPERAND_LOG_BASIS, PAD_LOG_BASIS};
 use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
@@ -166,9 +168,20 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
     /// Commits `pads` (the whole schedule), the mask `g` and the box digits
     /// `randomness` (`randomness_columns · D` of them). Constant time in
     /// the pads, g and the randomness: their digits come from the branch-free
-    /// decomposition and the Ajtai map.
+    /// decomposition and the Ajtai map, run with DIT set on every thread
+    /// (A11).
     #[cfg(feature = "whiteout-prover")]
     pub fn commit(
+        &self,
+        pads: &[F],
+        g: CyclotomicRing<F, CHALLENGE_RING_DIM>,
+        randomness: &[i8],
+    ) -> Result<(Vec<CyclotomicRing<F, D>>, LatticePadOpening), WhiteoutError> {
+        with_dit(|| self.commit_under_dit(pads, g, randomness))?
+    }
+
+    #[cfg(feature = "whiteout-prover")]
+    fn commit_under_dit(
         &self,
         pads: &[F],
         g: CyclotomicRing<F, CHALLENGE_RING_DIM>,

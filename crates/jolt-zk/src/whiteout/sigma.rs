@@ -348,8 +348,6 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
 pub use prover::prove_sigma;
 #[cfg(all(test, feature = "whiteout-prover"))]
 pub(crate) use prover::take_rejected;
-#[cfg(feature = "whiteout-diagnostics")]
-pub use prover::with_dit;
 #[cfg(any(
     all(test, feature = "whiteout-prover"),
     feature = "whiteout-diagnostics"
@@ -368,6 +366,7 @@ mod prover {
     use rand_core::{CryptoRng, RngCore};
 
     use super::super::challenge::{challenge_ring, challenge_times_i64_into};
+    use super::super::dit::with_dit;
     use super::super::lift::{
         constant_ring, AggregatedRelation, ChallengeRing, ClaimTables, LiftedRelation, LinearParts,
     };
@@ -387,20 +386,36 @@ mod prover {
         Skip,
     }
 
-    /// Rejected attempts' `(t_D bytes, nonce)`, for substitution tests.
-    /// Process-wide, since attempts run on the DIT pool's workers; nextest
-    /// runs each test in its own process.
+    /// A rejected attempt's `t_D` bytes and nonce, for substitution tests.
     #[cfg(test)]
-    static REJECTED: std::sync::Mutex<Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])>> =
+    type Rejected = (Vec<u8>, [u8; ATTEMPT_NONCE_LEN]);
+
+    /// Rejected attempts, keyed by the thread that called
+    /// `prove_sigma_with`: the attempts run on the DIT pool's workers, and
+    /// tests may share the process.
+    #[cfg(test)]
+    static REJECTED: std::sync::Mutex<Vec<(std::thread::ThreadId, Rejected)>> =
         std::sync::Mutex::new(Vec::new());
 
-    /// The rejected attempts recorded so far, cleared.
     #[cfg(test)]
-    pub(crate) fn take_rejected() -> Vec<(Vec<u8>, [u8; ATTEMPT_NONCE_LEN])> {
-        REJECTED
-            .lock()
-            .map(|mut rejected| std::mem::take(&mut *rejected))
-            .unwrap_or_default()
+    thread_local! {
+        /// On the worker running a proof: the thread that called it.
+        static CALLER: std::cell::Cell<Option<std::thread::ThreadId>> =
+            const { std::cell::Cell::new(None) };
+    }
+
+    /// The rejected attempts of this thread's proofs, cleared.
+    #[cfg(test)]
+    pub(crate) fn take_rejected() -> Vec<Rejected> {
+        let caller = std::thread::current().id();
+        let Ok(mut rejected) = REJECTED.lock() else {
+            return Vec::new();
+        };
+        let (mine, others) = std::mem::take(&mut *rejected)
+            .into_iter()
+            .partition::<Vec<_>, _>(|(thread, _)| *thread == caller);
+        *rejected = others;
+        mine.into_iter().map(|(_, attempt)| attempt).collect()
     }
 
     /// What an accepted attempt hands on.
@@ -453,25 +468,21 @@ mod prover {
         R: RngCore + CryptoRng + Send,
         P: ResponseProver<F, D> + Sync,
     {
-        let s = setup.private_vector(residual, pads)?;
-        prove_sigma_with(
-            setup,
-            relation,
-            &s,
-            transcript,
-            rng,
-            response,
-            SelfChecks::Run,
-        )
+        with_dit(|| {
+            let s = setup.private_vector(residual, pads)?;
+            prove_under_dit(
+                setup,
+                relation,
+                &s,
+                transcript,
+                rng,
+                response,
+                SelfChecks::Run,
+            )
+        })?
     }
 
-    /// Runs `op` with DIT set on its thread and on every rayon worker it
-    /// uses (A11): the attempts' arithmetic is constant time only under DIT
-    /// on cores that time integer operations by their operands.
-    pub fn with_dit<T: Send>(op: impl FnOnce() -> T + Send) -> Result<T, WhiteoutError> {
-        jolt_dit::install(op).map_err(|_| WhiteoutError::DitPool)
-    }
-
+    #[cfg(any(test, feature = "whiteout-diagnostics"))]
     pub(crate) fn prove_sigma_with<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
@@ -487,7 +498,13 @@ mod prover {
         R: RngCore + CryptoRng + Send,
         P: ResponseProver<F, D> + Sync,
     {
-        with_dit(|| prove_under_dit(setup, relation, s, transcript, rng, response, checks))?
+        #[cfg(test)]
+        let caller = std::thread::current().id();
+        with_dit(|| {
+            #[cfg(test)]
+            CALLER.set(Some(caller));
+            prove_under_dit(setup, relation, s, transcript, rng, response, checks)
+        })?
     }
 
     fn prove_under_dit<F, const D: usize, H, R, P>(
@@ -693,14 +710,14 @@ mod prover {
             };
             if !bool::from(accept) {
                 #[cfg(test)]
-                if let Ok(mut rejected) = REJECTED.lock() {
+                if let (Some(caller), Ok(mut rejected)) = (CALLER.get(), REJECTED.lock()) {
                     let mut bytes = vec![0u8; F::NUM_BYTES];
                     let mut flat = Vec::new();
                     for coefficient in t_d.iter().flat_map(|ring| ring.coefficients()) {
                         coefficient.to_bytes_le(&mut bytes);
                         flat.extend_from_slice(&bytes);
                     }
-                    rejected.push((flat, nonce));
+                    rejected.push((caller, (flat, nonce)));
                 }
                 return Ok(None);
             }
