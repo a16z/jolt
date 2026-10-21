@@ -120,6 +120,12 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         self.setup.response_layout()
     }
 
+    /// `log₂` of `e`'s digit radix: Item 1 puts every digit in the
+    /// one-digit balanced alphabet of this base.
+    pub fn digit_log_basis(&self) -> u32 {
+        RESPONSE_LOG_BASIS
+    }
+
     /// The Σ-protocol challenge `c`.
     pub fn challenge(&self) -> &SparseChallenge {
         &self.challenge
