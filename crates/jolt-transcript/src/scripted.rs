@@ -11,7 +11,9 @@ use crate::{
     ChallengeSetSize, FieldTranscript, ProverInit, ProverTranscript, VerifierInit,
     VerifierTranscript,
 };
-use spongefish::{DuplexSpongeInterface, Encoding, FromNarg, VerificationError, VerifierState};
+use spongefish::{
+    DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, VerificationError, VerifierState,
+};
 
 /// One sponge operation a [`ScriptedTranscript`] saw, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +42,21 @@ pub trait Script<F> {
     /// Sees the bytes of a squeeze outside a challenge draw, such as a
     /// proof-of-work check, and may replace them. By default it keeps them.
     fn check_bytes(&mut self, _bytes: &mut [u8]) {}
+
+    /// Sees the encoding of a message about to be absorbed, a public message
+    /// or a prover message the verifier reads, and may replace the bytes the
+    /// sponge absorbs. A prover's own messages are not offered. By default it
+    /// keeps them.
+    fn absorb_bytes(&mut self, _bytes: &mut Vec<u8>) {}
+}
+
+/// Bytes absorbed as they are: the encoding of a message a [`Script`] saw.
+struct Absorbed<'a>(&'a [u8]);
+
+impl Encoding for Absorbed<'_> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0
+    }
 }
 
 /// A queue of challenges that replace the drawn ones, in order, while it
@@ -68,7 +85,8 @@ impl<F> Script<F> for VecDeque<F> {
 /// nonces.
 ///
 /// The script also sees the bytes of every other squeeze, such as a
-/// proof-of-work check, and may replace them.
+/// proof-of-work check, and the bytes of every absorbed message except the
+/// prover's own, and may replace them.
 ///
 /// Tests use it to choose challenges, to compare absorb orders, to record and
 /// replay challenge tapes, and to reach checks that a hand-built proof would
@@ -150,9 +168,10 @@ impl<'a, H: DuplexSpongeInterface, F, S> From<ScriptedTranscript<VerifierState<'
 
 impl<T: Sealed, F, S: Script<F>> Sealed for ScriptedTranscript<T, F, S> {
     fn absorb<M: Encoding + ?Sized>(&mut self, message: &M) {
-        self.events
-            .push(TranscriptEvent::Absorb(message.encode().as_ref().to_vec()));
-        self.inner.absorb(message);
+        let mut bytes = message.encode().as_ref().to_vec();
+        self.script.absorb_bytes(&mut bytes);
+        self.inner.absorb(&Absorbed(&bytes));
+        self.events.push(TranscriptEvent::Absorb(bytes));
     }
 
     fn squeeze<U>(&mut self, len: usize, decode: impl FnOnce(&[u8]) -> U) -> U {
@@ -220,11 +239,20 @@ impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscri
     }
 }
 
-impl<T: VerifierTranscript, F, S: Script<F>> VerifierTranscript for ScriptedTranscript<T, F, S> {
+impl<H, F, S> VerifierTranscript for ScriptedTranscript<VerifierState<'_, H>, F, S>
+where
+    H: DuplexSpongeInterface<U = u8>,
+    S: Script<F>,
+{
     fn prover_message<M: Encoding + FromNarg>(&mut self) -> Result<M, VerificationError> {
-        let message = self.inner.prover_message::<M>()?;
-        self.events
-            .push(TranscriptEvent::Absorb(message.encode().as_ref().to_vec()));
+        let script = &mut self.script;
+        let mut absorbed = Vec::new();
+        let message = self.inner.prover_message_with(M::from_narg, |message| {
+            absorbed = message.encode().as_ref().to_vec();
+            script.absorb_bytes(&mut absorbed);
+            absorbed.clone()
+        })?;
+        self.events.push(TranscriptEvent::Absorb(absorbed));
         Ok(message)
     }
 
@@ -237,11 +265,16 @@ impl<T: VerifierTranscript, F, S: Script<F>> VerifierTranscript for ScriptedTran
     }
 }
 
-impl<'a, T: VerifierInit<'a>, F, S: Script<F> + Default> VerifierInit<'a>
-    for ScriptedTranscript<T, F, S>
+impl<'a, H, F, S> VerifierInit<'a> for ScriptedTranscript<VerifierState<'a, H>, F, S>
+where
+    H: DuplexSpongeInit<U = u8>,
+    S: Script<F> + Default,
 {
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self {
-        Self::scripted_by(T::init(session, statement, narg), S::default())
+        Self::scripted_by(
+            <VerifierState<'a, H> as VerifierInit<'a>>::init(session, statement, narg),
+            S::default(),
+        )
     }
 }
 
