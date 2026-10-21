@@ -40,9 +40,6 @@ jolt-verifier::stages/stage6a/booleanity.rs::BooleanityAddressPhase<F>::draw_cha
 jolt-verifier::stages/stage6a/booleanity.rs::BooleanityAddressPhase<F>::draw_challenges::challenge_vector#0
 jolt-verifier::stages/stage6a/outputs.rs::Stage6aSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge#0
-jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge#1
-jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge#2
-jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge#3
 jolt-verifier::stages/stage6b/outputs.rs::Stage6bSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage7/outputs.rs::Stage7Sumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#0
