@@ -128,6 +128,10 @@
 //! Program-image reductions upload padded words as field elements and compute
 //! shifted RAM equality weights per entry on device. Optimized builds those
 //! weights in aligned blocks and permutes words before field conversion.
+//! Dense booleanity rounds reduce both endpoint values and the quadratic
+//! coefficient against split equality tables. RAM hamming weights use a dense
+//! field table for these rounds; optimized starts with bit-pattern histograms
+//! before materializing its table.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -141,6 +145,8 @@ mod dory;
 #[cfg(test)]
 mod instruction_read_raf;
 mod program_image_claim_reduction;
+#[cfg(test)]
+mod ram_hamming_booleanity;
 #[cfg(test)]
 mod registers_read_write;
 

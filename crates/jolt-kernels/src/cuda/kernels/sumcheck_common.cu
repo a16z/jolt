@@ -1,3 +1,20 @@
+__device__ __forceinline__ void eq_split_weight(const u64 *__restrict__ e_in,
+                                                unsigned int e_in_len,
+                                                const u64 *__restrict__ e_out,
+                                                unsigned int num_x_in_bits, unsigned long long g,
+                                                u64 *combined) {
+    u64 weight[LIMBS];
+    if (e_in_len <= 1) {
+        load4(FR_ONE, weight);
+    } else {
+        unsigned long long x_in = g & ((1ull << num_x_in_bits) - 1ull);
+        load4(e_in + x_in * LIMBS, weight);
+    }
+    u64 e_out_eval[LIMBS];
+    load4(e_out + (g >> num_x_in_bits) * LIMBS, e_out_eval);
+    fr_mul(weight, e_out_eval, combined);
+}
+
 __device__ __forceinline__ void lane_block_reduce(u64 *scratch, unsigned int lanes,
                                                   u64 (*acc)[LIMBS],
                                                   u64 *__restrict__ partials) {
