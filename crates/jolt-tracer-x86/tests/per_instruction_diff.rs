@@ -432,9 +432,6 @@ fn fence(rng: &mut StdRng) -> Instance {
 
 fn host_io(rng: &mut StdRng) -> Instance {
     let mut i = base_instance(rng, kind_by_name("VirtualHostIO"));
-    i.row.operands.rs1 = Some(reg(rng));
-    // FormatI unwraps rd; the exec never writes it (parity holds either way).
-    i.row.operands.rd = Some(rd(rng));
     // a0 selects the call: unknown ids are no-ops on both sides; advice
     // writes append guest bytes to the tape on both sides.
     if rng.gen() {
