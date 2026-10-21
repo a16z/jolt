@@ -18,6 +18,7 @@ parallel = [
   "jolt-crypto/parallel",
   "jolt-kernels/parallel",
   "jolt-sumcheck/parallel",
+  "jolt-transcript/parallel",
   "dep:rayon",
 ]
 prover-fixtures = ["dep:jolt-host"]
@@ -112,7 +113,7 @@ jolt-poly = { workspace = true, default-features = false }
 jolt-program.workspace = true
 jolt-riscv.workspace = true
 jolt-sumcheck.workspace = true
-jolt-transcript.workspace = true
+jolt-transcript = { workspace = true, features = ["prover-grinding", "transcript-keccak"] }
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rand_core = { workspace = true, features = ["getrandom"], optional = true }

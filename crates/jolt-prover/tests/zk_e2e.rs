@@ -30,7 +30,7 @@ mod zk {
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_riscv::JoltTraceRow;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_transcript::{Keccak, LegacyBlake2bTranscript as ProverState<Keccak>, ProverState};
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -97,7 +97,7 @@ mod zk {
                 .expect("trusted advice commitment")
         });
         let proof =
-            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 backend.with_witness(&witness),
                 &preprocessing,
                 &config,
@@ -118,7 +118,7 @@ mod zk {
     }
 
     fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &proved.preprocessing.verifier,
             &proved.public_io,
             &proved.proof,
@@ -167,7 +167,7 @@ mod zk {
                 JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
             );
             let proof =
-                jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                     JoltBackend::reference().with_witness(&witness),
                     &preprocessing,
                     &config,
@@ -175,7 +175,7 @@ mod zk {
                     &public_io,
                 )
                 .expect("committed ZK prove");
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,

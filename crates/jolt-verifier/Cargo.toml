@@ -68,6 +68,7 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+jolt-transcript = { workspace = true, features = ["test-utils", "transcript-keccak"] }
 jolt-host.workspace = true
 jolt-prover.workspace = true
 jolt-witness.workspace = true

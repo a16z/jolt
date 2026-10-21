@@ -20,7 +20,7 @@ use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
 use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 
 use super::precommitted::precommitted_final_openings;
 use crate::stages::pow::{check_pow, PowSite, StagePowNonces};
@@ -150,7 +150,7 @@ fn reduce_object<PCS, T>(
 ) -> Result<EvaluationClaim<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let claims = object_leaf_claims(&object.plan, leaves)?;
     let semantic = object.plan.packed_claims(&claims).map_err(batch_failed)?;
@@ -245,10 +245,10 @@ pub fn verify<PCS, VC, T>(
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: Clone + AppendToTranscript + OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct

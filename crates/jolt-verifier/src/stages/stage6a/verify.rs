@@ -4,7 +4,7 @@ use jolt_claims::protocols::composed::ComposedClaims;
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(feature = "field-inline")]
 use super::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
@@ -53,7 +53,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     // The upstream cycle/register points and entry index ride on the relation
     // (full geometry at construction) for the prover's address-phase kernel;
@@ -197,13 +197,12 @@ mod tests {
     };
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
-    use crate::stages::relations::append_recording::RecordingTranscript;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::draw_recording::{record, recorder, squeeze};
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::ChallengeSetSize;
+    use jolt_transcript::{prover_transcript, Keccak, ScriptedTranscript};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -262,17 +261,17 @@ mod tests {
 
         let (inline_events, (inline_gammas, inline_reference_address, inline_gamma)) =
             record(|t| {
-                let gammas: Vec<Fr> = (0..6).map(|_| t.challenge_scalar()).collect();
+                let gammas: Vec<Fr> = (0..6).map(|_| t.challenge().unwrap()).collect();
                 let mut reference_address: Vec<Fr> = address.iter().rev().copied().collect();
-                reference_address.extend(t.challenge_vector(1));
-                (gammas, reference_address, t.challenge())
+                reference_address.extend(t.challenge_vector(1).unwrap());
+                (gammas, reference_address, t.challenge().unwrap())
             });
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
         assert_eq!(
             draw_events,
-            (1..=8u64).map(DrawEvent::Squeeze).collect::<Vec<_>>()
+            (1..=8u64).map(squeeze).collect::<Vec<_>>()
         );
         assert_eq!(
             vec![
@@ -313,7 +312,7 @@ mod tests {
 
         assert_eq!(
             draw_events,
-            (1..=7u64).map(DrawEvent::Squeeze).collect::<Vec<_>>()
+            (1..=7u64).map(squeeze).collect::<Vec<_>>()
         );
         let reversed: Vec<Fr> = address.iter().rev().copied().collect();
         assert_eq!(challenges.booleanity.reference_address, reversed[1..]);
@@ -331,49 +330,24 @@ mod tests {
         let mut claims = sample_claims();
         claims.bytecode_read_raf.val_stages = (903..908).map(fr).collect();
 
-        let mut got = RecordingTranscript::default();
+        let mut got = recorder();
         sumchecks.append_output_claims(&mut got, &claims);
 
-        let mut want = RecordingTranscript::default();
+        let mut want = recorder();
         for value in [901, 903, 904, 905, 906, 907, 902].map(fr) {
             want.append_labeled(b"opening_claim", &value);
         }
 
-        assert_eq!(got.chunks, want.chunks);
-    }
-
-    /// A transcript double whose every squeeze returns the same nontrivial
-    /// scalar, so `challenge_scalar_powers`' output is a genuine power vector.
-    #[derive(Clone, Default)]
-    struct ConstantChallengeTranscript;
-
-    impl Transcript for ConstantChallengeTranscript {
-        type Challenge = Fr;
-        // Scripted challenges: no proof of work.
-        const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-        fn new(_label: &'static [u8]) -> Self {
-            Self
-        }
-        fn append_bytes(&mut self, _bytes: &[u8]) {}
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(7)
-        }
-        fn challenge_bytes(&mut self, out: &mut [u8]) {
-            out.fill(0);
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
+        assert_eq!(got.absorbed(), want.absorbed());
     }
 
     /// The `stage_gamma_powers` expansion of a drawn scalar must equal
-    /// `challenge_scalar_powers`' output for the same squeezed scalar — the
+    /// `challenge_powers`' output for the same drawn scalar — the
     /// value-identity the stage-6a generated draw substitution relies on
     /// (the prover draws each stage's power vector inline; the verifier stores
     /// the scalar and expands at the stage-6b folds).
     #[test]
-    fn stage_gamma_powers_matches_challenge_scalar_powers() {
+    fn stage_gamma_powers_matches_challenge_powers() {
         use jolt_claims::protocols::jolt::geometry::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
         use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 
@@ -386,13 +360,16 @@ mod tests {
             stage4_gamma: gamma,
             stage5_gamma: gamma,
         };
-        let mut transcript = ConstantChallengeTranscript;
+        let mut transcript = ScriptedTranscript::with_script(
+            prover_transcript::<Keccak>(b"stage-gamma-powers", b""),
+            vec![gamma; BYTECODE_STAGE_GAMMA_COUNTS.len()],
+        );
         for (powers, len) in challenges
             .stage_gamma_powers()
             .into_iter()
             .zip(BYTECODE_STAGE_GAMMA_COUNTS)
         {
-            assert_eq!(powers, transcript.challenge_scalar_powers(len));
+            assert_eq!(powers, transcript.challenge_powers(len).unwrap());
         }
     }
 }

@@ -142,4 +142,20 @@ pub enum VerifierError {
 
     #[error("the challenge set needs proof of work, which this build's proofs do not carry")]
     ChallengeSetNeedsProofOfWork,
+
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+
+    /// The proof's NARG string has unread bytes, or a transcript check
+    /// failed earlier.
+    #[error("the transcript did not end cleanly")]
+    NargNotConsumed,
+}
+
+impl From<jolt_transcript::VerificationError> for VerifierError {
+    fn from(_: jolt_transcript::VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

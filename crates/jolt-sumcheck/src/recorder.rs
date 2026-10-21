@@ -21,7 +21,7 @@ use jolt_field::Field;
 #[cfg(feature = "committed")]
 use jolt_field::JoltField;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript, Transcript};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -49,9 +49,7 @@ pub trait SumcheckRecorder<F: Field> {
     /// declaration order). Clear: each appended under `b"sumcheck_claim"`.
     /// Committed: no-op — the claims' commitments were already absorbed by the
     /// stage that produced them, so the transcript never sees the scalars.
-    fn absorb_input_claims<T>(&mut self, input_claims: &[F], transcript: &mut T)
-    where
-        T: FieldTranscript<F> + ProverTranscript;
+    fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T);
 
     /// Record one round polynomial, grind the round's proof of work at the
     /// difficulty for `degree_bound` (the batch's degree bound, which the
@@ -116,10 +114,7 @@ impl<F: Field> ClearSumcheckRecorder<F> {
 impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
     type Proof = CompressedSumcheckProof<F>;
 
-    fn absorb_input_claims<T>(&mut self, input_claims: &[F], transcript: &mut T)
-    where
-        T: FieldTranscript<F> + ProverTranscript,
-    {
+    fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T) {
         for input_claim in input_claims {
             append_sumcheck_claim(transcript, input_claim);
         }
@@ -206,10 +201,7 @@ where
 {
     type Proof = SumcheckProof<F, VC::Output>;
 
-    fn absorb_input_claims<T>(&mut self, _input_claims: &[F], _transcript: &mut T)
-    where
-        T: FieldTranscript<F> + ProverTranscript,
-    {
+    fn absorb_input_claims<T: Transcript>(&mut self, _input_claims: &[F], _transcript: &mut T) {
     }
 
     fn absorb_round<T>(

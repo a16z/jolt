@@ -15,7 +15,7 @@
 //! A slot holds a nonce exactly when its difficulty is positive.
 
 use jolt_claims::{Expr, Source};
-use jolt_transcript::{grind_bits_for_loss, Transcript, SECURITY_BITS};
+use jolt_transcript::{grind_bits_for_loss, FieldTranscript, SECURITY_BITS};
 use serde::{Deserialize, Serialize};
 
 use crate::num::u64_from_usize;
@@ -178,7 +178,7 @@ impl TryFrom<PowNonceWire> for StagePowNonces {
 /// # Errors
 /// [`VerifierError::PowDifficulty`] if no supported difficulty reaches
 /// `SECURITY_BITS` for this loss and challenge set.
-pub fn pow_bits<T: Transcript>(site: PowSite, loss: u64) -> Result<u32, VerifierError> {
+pub fn pow_bits<F, T: FieldTranscript<F>>(site: PowSite, loss: u64) -> Result<u32, VerifierError> {
     if loss == 0 {
         return Ok(0);
     }
@@ -192,30 +192,14 @@ pub fn pow_bits<T: Transcript>(site: PowSite, loss: u64) -> Result<u32, Verifier
 /// [`VerifierError::PowDifficulty`] as for [`pow_bits`], and
 /// [`VerifierError::ProofOfWorkRejected`] if the nonce is missing, present
 /// when the difficulty is zero, or fails the check.
-pub fn check_pow<T: Transcript>(
+pub fn check_pow<F, T: FieldTranscript<F>>(
     site: PowSite,
     loss: u64,
     nonces: &StagePowNonces,
     transcript: &mut T,
 ) -> Result<(), VerifierError> {
     transcript
-        .check_grind(pow_bits::<T>(site, loss)?, nonces.get(site))
-        .map_err(|_| VerifierError::ProofOfWorkRejected { site })
-}
-
-/// Grinds the nonce of the burst at `site` right before its first draw, for
-/// the prover. Returns `None` when the difficulty is zero.
-///
-/// # Errors
-/// [`VerifierError::PowDifficulty`] as for [`pow_bits`], and
-/// [`VerifierError::ProofOfWorkRejected`] if the nonce search fails.
-pub fn grind_pow<T: Transcript>(
-    site: PowSite,
-    loss: u64,
-    transcript: &mut T,
-) -> Result<Option<u32>, VerifierError> {
-    transcript
-        .grind(pow_bits::<T>(site, loss)?)
+        .check_public_grind(pow_bits::<F, T>(site, loss)?, nonces.get(site))
         .map_err(|_| VerifierError::ProofOfWorkRejected { site })
 }
 
@@ -227,7 +211,7 @@ pub fn grind_pow<T: Transcript>(
 /// # Errors
 /// [`VerifierError::ChallengeSetNeedsProofOfWork`] if a burst of the largest
 /// loss needs a positive difficulty.
-pub fn require_no_pow<T: Transcript>() -> Result<(), VerifierError> {
+pub fn require_no_pow<F, T: FieldTranscript<F>>() -> Result<(), VerifierError> {
     match grind_bits_for_loss(u64::MAX, T::CHALLENGE_SET, SECURITY_BITS) {
         Ok(0) => Ok(()),
         _ => Err(VerifierError::ChallengeSetNeedsProofOfWork),

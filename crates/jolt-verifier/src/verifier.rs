@@ -2,6 +2,7 @@
 
 use common::constants::MAX_BLINDFOLD_GENERATORS;
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::field_inline::FieldInlineRepresentation;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 #[cfg(not(feature = "akita"))]
@@ -13,15 +14,16 @@ use jolt_openings::CommitmentScheme;
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
-#[cfg(feature = "akita")]
-use jolt_transcript::append_length_prefixed;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{
+    Encoding, FieldTranscript, Label, LabelWithCount, Transcript, U64Word, VerifierInit,
+};
 
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
 use crate::{
     config::{
-        validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE,
+        validate_proof_config, CommitmentConfig, JoltProtocolConfig, ZkConfig,
+        JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE,
     },
     num,
     preprocessing::JoltVerifierPreprocessing,
@@ -34,30 +36,31 @@ use crate::{
 };
 
 #[cfg(not(feature = "akita"))]
-pub fn verify<F, PCS, VC, T>(
+pub fn verify<'a, F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC>,
+    proof: &'a JoltProof<PCS, VC>,
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(), VerifierError>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: Encoding + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F> + VerifierInit<'a>,
 {
     use crate::stages::zk::{blindfold, inputs::BlindFoldInputs};
 
-    crate::stages::pow::require_no_pow::<T>()?;
-    let (checked, mut transcript) = validate_and_seed_transcript::<PCS, VC, T, _>(
+    crate::stages::pow::require_no_pow::<F, T>()?;
+    let (checked, mut transcript) = validate_and_seed_transcript(
         preprocessing,
         public_io,
         proof,
         trusted_advice_commitment,
+        |statement| T::init(JOLT_SESSION, statement, &proof.narg),
     )?;
 
     // Built once for the whole verification and shared by the stages that read
@@ -160,40 +163,42 @@ where
             .map_err(|error| VerifierError::BlindFoldVerificationFailed {
                 reason: error.to_string(),
             })?;
-        return Ok(());
+    } else {
+        let stage8::Stage8Output::Clear(_) = stage8 else {
+            return Err(VerifierError::ExpectedClearProof { field: "stage8" });
+        };
     }
 
-    let stage8::Stage8Output::Clear(_) = stage8 else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage8" });
-    };
-
-    Ok(())
+    transcript
+        .check_eof()
+        .map_err(|_| VerifierError::NargNotConsumed)
 }
 
 /// The Akita verification path: the same stage spine, with ordered native
 /// trace-column claims and one batch opening for the trace, advice,
 /// and committed-program objects. No homomorphism bounds and no ZK tail.
 #[cfg(feature = "akita")]
-pub fn verify<F, PCS, VC, T>(
+pub fn verify<'a, F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC>,
+    proof: &'a JoltProof<PCS, VC>,
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(), VerifierError>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + AppendToTranscript + stage8::OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + stage8::OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: stage8::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + Encoding,
+    T: FieldTranscript<F> + VerifierInit<'a>,
 {
-    let (checked, mut transcript) = validate_and_seed_transcript::<PCS, VC, T, _>(
+    let (checked, mut transcript) = validate_and_seed_transcript(
         preprocessing,
         public_io,
         proof,
         trusted_advice_commitment,
+        |statement| T::init(JOLT_SESSION, statement, &proof.narg),
     )?;
 
     // Built once for the whole verification and shared by the stages that read
@@ -274,25 +279,136 @@ where
         return Err(VerifierError::ExpectedClearProof { field: "stage8" });
     };
 
-    Ok(())
+    transcript
+        .check_eof()
+        .map_err(|_| VerifierError::NargNotConsumed)
 }
 
-/// Validates the inputs and proof shape, then seeds the Fiat-Shamir transcript
-/// with the preamble and commitment absorptions. Every consumer of the staged
-/// verification — [`verify`] on both builds, and the zk audit harness — starts
-/// here, so there is exactly one absorption order.
+/// The session every Jolt transcript is bound to.
+pub const JOLT_SESSION: &[u8] = b"Jolt";
+
+/// The statement every Jolt transcript is bound to before its first message:
+/// the protocol configuration, the preprocessing digest, the public I/O, and
+/// the proof's structural parameters, all validated before the transcript is
+/// built. Prover and verifier encode it through this one type.
+#[derive(Clone, Copy, Debug)]
+pub struct JoltStatement<'a> {
+    pub checked: &'a CheckedInputs,
+    pub config: ProofTranscriptConfig,
+}
+
+impl Encoding for JoltStatement<'_> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let checked = self.checked;
+        let public_io = &checked.public_io;
+        let protocol = JoltProtocolConfig::for_zk(checked.zk);
+        let mut out = Vec::new();
+        let mut word = |label: &'static [u8], value: u64| {
+            out.extend_from_slice(Label(label).encode().as_ref());
+            out.extend_from_slice(U64Word(value).encode().as_ref());
+        };
+        word(
+            b"zk",
+            match protocol.zk {
+                ZkConfig::Transparent => 0,
+                ZkConfig::BlindFold => 1,
+            },
+        );
+        word(
+            b"commitment",
+            match protocol.commitment {
+                CommitmentConfig::Homomorphic => 0,
+                CommitmentConfig::Akita => 1,
+            },
+        );
+        word(
+            b"field_inline",
+            u64::from(protocol.field_inline.enabled),
+        );
+        word(
+            b"field_register_log_k",
+            num::u64_from_usize(protocol.field_inline.field_register_log_k),
+        );
+        word(
+            b"field_inline_representation",
+            match protocol.field_inline.representation {
+                FieldInlineRepresentation::NativeFieldElement => 0,
+            },
+        );
+        word(
+            b"max_input_size",
+            public_io.memory_layout.max_input_size,
+        );
+        word(
+            b"max_output_size",
+            public_io.memory_layout.max_output_size,
+        );
+        word(b"heap_size", public_io.memory_layout.heap_size);
+        word(b"panic", u64::from(public_io.panic));
+        word(b"ram_K", num::u64_from_usize(checked.ram_K));
+        word(b"trace_length", num::u64_from_usize(checked.trace_length));
+        word(b"entry_address", checked.entry_address);
+        let rw = self.config.rw_config;
+        word(
+            b"ram_rw_phase1_num_rounds",
+            u64::from(rw.ram_rw_phase1_num_rounds),
+        );
+        word(
+            b"ram_rw_phase2_num_rounds",
+            u64::from(rw.ram_rw_phase2_num_rounds),
+        );
+        word(
+            b"registers_rw_phase1_num_rounds",
+            u64::from(rw.registers_rw_phase1_num_rounds),
+        );
+        word(
+            b"registers_rw_phase2_num_rounds",
+            u64::from(rw.registers_rw_phase2_num_rounds),
+        );
+        let one_hot = self.config.one_hot_config;
+        word(b"log_k_chunk", u64::from(one_hot.log_k_chunk));
+        word(
+            b"lookups_ra_virtual_log_k_chunk",
+            u64::from(one_hot.lookups_ra_virtual_log_k_chunk),
+        );
+        word(
+            b"dory_layout",
+            self.config.trace_polynomial_order.transcript_scalar(),
+        );
+        for (label, bytes) in [
+            (&b"preprocessing_digest"[..], &checked.preprocessing_digest[..]),
+            (b"inputs", &public_io.inputs),
+            (b"outputs", &public_io.outputs),
+        ] {
+            out.extend_from_slice(
+                LabelWithCount(label, num::u64_from_usize(bytes.len()))
+                    .encode()
+                    .as_ref(),
+            );
+            out.extend_from_slice(bytes);
+        }
+        out
+    }
+}
+
+/// Validates the inputs and proof shape, builds the Fiat-Shamir transcript
+/// with `new_transcript` from the [`JoltStatement`], then absorbs the
+/// commitments. Every consumer of the staged verification — [`verify`] on
+/// both builds, the ZK prover's replay and the zk audit harness — starts here,
+/// so there is exactly one absorption order.
 pub fn validate_and_seed_transcript<PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
+    new_transcript: impl FnOnce(&JoltStatement<'_>) -> T,
 ) -> Result<(CheckedInputs, T), VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: Encoding,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: AppendToTranscript,
-    T: Transcript<Challenge = PCS::Field>,
+    VC::Output: Encoding,
+    T: Transcript,
 {
     validate_proof_config(&JOLT_VERIFIER_CONFIG, proof.protocol)?;
     validate_proof_consistency(proof, JOLT_VERIFIER_CONFIG.zk == ZkConfig::BlindFold)?;
@@ -303,8 +419,14 @@ where
         trusted_advice_commitment.is_some(),
     )?;
 
-    let mut transcript = T::new(b"Jolt");
-    absorb_preamble(&checked, proof, &mut transcript);
+    let mut transcript = new_transcript(&JoltStatement {
+        checked: &checked,
+        config: ProofTranscriptConfig {
+            rw_config: proof.rw_config,
+            one_hot_config: proof.one_hot_config,
+            trace_polynomial_order: proof.trace_polynomial_order,
+        },
+    });
     absorb_commitments(
         preprocessing,
         proof,
@@ -626,84 +748,6 @@ where
     }
 }
 
-/// Absorbs the Jolt Fiat-Shamir preamble: the preprocessing digest, public I/O
-/// metadata, and the proof-derived structural parameters. WARNING: the byte
-/// order here is consensus-critical — the prover's preamble must absorb
-/// identically or the transcripts diverge.
-#[jolt_verifier_derive::fs_scope(Preamble)]
-pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
-    checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    transcript: &mut T,
-) where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
-{
-    let public_io = &checked.public_io;
-    absorb_labeled_bytes(
-        transcript,
-        b"preprocessing_digest",
-        &checked.preprocessing_digest,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_input_size",
-        public_io.memory_layout.max_input_size,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_output_size",
-        public_io.memory_layout.max_output_size,
-    );
-    absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
-    absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
-    absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
-    absorb_labeled_u64(transcript, b"panic", u64::from(public_io.panic));
-    absorb_labeled_u64(transcript, b"ram_K", num::u64_from_usize(checked.ram_K));
-    absorb_labeled_u64(
-        transcript,
-        b"trace_length",
-        num::u64_from_usize(checked.trace_length),
-    );
-    absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase1_num_rounds",
-        u64::from(proof.rw_config.ram_rw_phase1_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase2_num_rounds",
-        u64::from(proof.rw_config.ram_rw_phase2_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase1_num_rounds",
-        u64::from(proof.rw_config.registers_rw_phase1_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase2_num_rounds",
-        u64::from(proof.rw_config.registers_rw_phase2_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"log_k_chunk",
-        u64::from(proof.one_hot_config.log_k_chunk),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lookups_ra_virtual_log_k_chunk",
-        u64::from(proof.one_hot_config.lookups_ra_virtual_log_k_chunk),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"dory_layout",
-        proof.trace_polynomial_order.transcript_scalar(),
-    );
-}
-
 /// Absorbs the commitments in the consensus-critical order — the proof-carried
 /// polynomial commitments, the optional advice commitments, then the committed
 /// program's preprocessing-held commitments. WARNING: the prover must absorb
@@ -718,9 +762,9 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     transcript: &mut T,
 ) where
     PCS: CommitmentScheme,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: Encoding,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: Transcript,
 {
     #[cfg(not(feature = "akita"))]
     {
@@ -767,19 +811,19 @@ pub fn absorb_akita_commitments<C, T>(
     program_commitments: Option<(&C, &C)>,
     transcript: &mut T,
 ) where
-    C: AppendToTranscript,
+    C: Encoding,
     T: Transcript,
 {
-    append_length_prefixed(transcript, b"commitment", one_hot_trace);
+    transcript.append_labeled(b"commitment", one_hot_trace);
     if let Some(commitment) = untrusted_advice_commitment {
-        append_length_prefixed(transcript, b"untrusted_advice", commitment);
+        transcript.append_labeled(b"untrusted_advice", commitment);
     }
     if let Some(commitment) = trusted_advice_commitment {
-        append_length_prefixed(transcript, b"trusted_advice", commitment);
+        transcript.append_labeled(b"trusted_advice", commitment);
     }
     #[cfg(feature = "field-inline")]
     if let Some(commitment) = field_inc_commitment {
-        append_length_prefixed(transcript, b"field_inc", commitment);
+        transcript.append_labeled(b"field_inc", commitment);
     }
     if let Some((bytecode, image)) = program_commitments {
         absorb_akita_program_commitments(bytecode, image, transcript);
@@ -789,11 +833,11 @@ pub fn absorb_akita_commitments<C, T>(
 #[cfg(feature = "akita")]
 pub fn absorb_akita_program_commitments<C, T>(bytecode: &C, image: &C, transcript: &mut T)
 where
-    C: AppendToTranscript,
+    C: Encoding,
     T: Transcript,
 {
-    append_length_prefixed(transcript, b"program_bytecode_commitment", bytecode);
-    append_length_prefixed(transcript, b"program_image_init_commitment", image);
+    transcript.append_labeled(b"program_bytecode_commitment", bytecode);
+    transcript.append_labeled(b"program_image_init_commitment", image);
 }
 
 /// Absorbs the preprocessing-held committed-program commitments (whole
@@ -804,17 +848,11 @@ pub fn absorb_committed_program_commitments<C, T>(
     program_image_commitment: &C,
     transcript: &mut T,
 ) where
-    C: AppendToTranscript,
+    C: Encoding,
     T: Transcript,
 {
-    append_payload_label(transcript, b"program_bytecode_commit", bytecode_commitment);
-    transcript.append(bytecode_commitment);
-    append_payload_label(
-        transcript,
-        b"program_image_commitment",
-        program_image_commitment,
-    );
-    transcript.append(program_image_commitment);
+    transcript.append_labeled(b"program_bytecode_commit", bytecode_commitment);
+    transcript.append_labeled(b"program_image_commitment", program_image_commitment);
 }
 
 /// Absorbs the proof-derived polynomial commitments (increment, one-hot `ra`,
@@ -829,13 +867,10 @@ pub fn absorb_transcript_commitments<C, T>(
     trusted_advice_commitment: Option<&C>,
     transcript: &mut T,
 ) where
-    C: AppendToTranscript,
+    C: Encoding,
     T: Transcript,
 {
-    let mut absorb_commitment = |commitment: &C| {
-        append_payload_label(transcript, b"commitment", commitment);
-        transcript.append(commitment);
-    };
+    let mut absorb_commitment = |commitment: &C| transcript.append_labeled(b"commitment", commitment);
     absorb_commitment(&commitments.rd_inc);
     absorb_commitment(&commitments.ram_inc);
     for commitment in &commitments.instruction_ra {
@@ -852,130 +887,27 @@ pub fn absorb_transcript_commitments<C, T>(
     // protocol. The prover's stage 0 must commit in this same order.
     #[cfg(feature = "field-inline")]
     if let Some(field_inline) = &commitments.field_inline {
-        append_payload_label(
-            transcript,
+        transcript.append_labeled(
             b"field_rd_inc_commitment",
             &field_inline.field_registers.rd_inc,
         );
-        transcript.append(&field_inline.field_registers.rd_inc);
     }
     if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
-        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
-        transcript.append(untrusted_advice_commitment);
+        transcript.append_labeled(b"untrusted_advice", untrusted_advice_commitment);
     }
     if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
-        transcript.append(trusted_advice_commitment);
+        transcript.append_labeled(b"trusted_advice", trusted_advice_commitment);
     }
 }
 
-fn append_payload_label<T, A>(transcript: &mut T, label: &'static [u8], payload: &A)
-where
-    T: Transcript,
-    A: AppendToTranscript,
-{
-    if let Some(len) = payload.transcript_payload_len() {
-        transcript.append(&LabelWithCount(label, len));
-    } else {
-        transcript.append(&Label(label));
-    }
-}
-
-/// Proof-derived configuration that participates in the Fiat-Shamir preamble.
-/// Bundles the parameters [`absorb_transcript_preamble`] reads from the proof so
-/// the modular prover can seed an identical transcript before it has a finished
+/// The proof's structural parameters in the [`JoltStatement`]. The modular
+/// prover builds it from its configuration, before it has a finished
 /// [`JoltProof`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProofTranscriptConfig {
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
-}
-
-/// Verifier state captured immediately before stage 1, after input validation
-/// and the preamble/commitment absorption. The modular prover drives the staged
-/// verification itself, so it reuses this entry point to obtain the checked
-/// inputs and a transcript seeded identically to [`verify`].
-#[derive(Debug)]
-pub struct PreStage1VerifierState<T> {
-    pub checked: CheckedInputs,
-    pub transcript: T,
-}
-
-/// Absorbs the Jolt Fiat-Shamir preamble: the preprocessing digest, public I/O
-/// metadata, and the proof-derived structural parameters carried by
-/// [`ProofTranscriptConfig`]. WARNING: the byte order here is consensus-critical.
-/// It must stay identical to the order [`verify`] uses (via `absorb_preamble`)
-/// or prover and verifier transcripts diverge.
-pub fn absorb_transcript_preamble<T>(
-    checked: &CheckedInputs,
-    config: ProofTranscriptConfig,
-    transcript: &mut T,
-) where
-    T: Transcript,
-{
-    let public_io = &checked.public_io;
-    absorb_labeled_bytes(
-        transcript,
-        b"preprocessing_digest",
-        &checked.preprocessing_digest,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_input_size",
-        public_io.memory_layout.max_input_size,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_output_size",
-        public_io.memory_layout.max_output_size,
-    );
-    absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
-    absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
-    absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
-    absorb_labeled_u64(transcript, b"panic", u64::from(public_io.panic));
-    absorb_labeled_u64(transcript, b"ram_K", num::u64_from_usize(checked.ram_K));
-    absorb_labeled_u64(
-        transcript,
-        b"trace_length",
-        num::u64_from_usize(checked.trace_length),
-    );
-    absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase1_num_rounds",
-        u64::from(config.rw_config.ram_rw_phase1_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase2_num_rounds",
-        u64::from(config.rw_config.ram_rw_phase2_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase1_num_rounds",
-        u64::from(config.rw_config.registers_rw_phase1_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase2_num_rounds",
-        u64::from(config.rw_config.registers_rw_phase2_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"log_k_chunk",
-        u64::from(config.one_hot_config.log_k_chunk),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lookups_ra_virtual_log_k_chunk",
-        u64::from(config.one_hot_config.lookups_ra_virtual_log_k_chunk),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"dory_layout",
-        config.trace_polynomial_order.transcript_scalar(),
-    );
 }
 
 /// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
@@ -1157,42 +1089,6 @@ where
     })
 }
 
-/// Runs the [`verify`] preamble — input validation, proof-consistency and
-/// config checks, then preamble + commitment absorption — and returns the
-/// pre-stage-1 state. [`verify`] delegates to this function, so both paths share
-/// one absorption order and cannot diverge.
-pub fn verify_until_stage1<PCS, VC, T, ZkProof>(
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    trusted_advice_commitment: Option<&PCS::Output>,
-) -> Result<PreStage1VerifierState<T>, VerifierError>
-where
-    PCS: CommitmentScheme,
-    PCS::Output: AppendToTranscript,
-    VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: AppendToTranscript,
-    T: Transcript<Challenge = PCS::Field>,
-{
-    let (checked, transcript) =
-        validate_and_seed_transcript(preprocessing, public_io, proof, trusted_advice_commitment)?;
-
-    Ok(PreStage1VerifierState {
-        checked,
-        transcript,
-    })
-}
-
-fn absorb_labeled_bytes<T: Transcript>(transcript: &mut T, label: &'static [u8], bytes: &[u8]) {
-    transcript.append(&LabelWithCount(label, num::u64_from_usize(bytes.len())));
-    transcript.append_bytes(bytes);
-}
-
-fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], value: u64) {
-    transcript.append(&Label(label));
-    transcript.append(&U64Word(value));
-}
-
 #[cfg(test)]
 #[cfg_attr(
     not(feature = "field-inline"),
@@ -1238,7 +1134,7 @@ mod tests {
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
-    use jolt_transcript::Transcript;
+    use jolt_transcript::{FieldTranscript, Transcript};
     use num_traits::Zero;
 
     use crate::preprocessing::ProgramPreprocessing;
@@ -1282,7 +1178,7 @@ mod tests {
             _eval: Self::Field,
             _setup: &Self::ProverSetup,
             _hint: Option<Self::OpeningHint>,
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _transcript: &mut impl FieldTranscript<Self::Field>,
         ) -> Result<Self::Proof, OpeningsError> {
             Ok(())
         }
@@ -1293,13 +1189,13 @@ mod tests {
             _eval: Self::Field,
             _proof: &Self::Proof,
             _setup: &Self::VerifierSetup,
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _transcript: &mut impl FieldTranscript<Self::Field>,
         ) -> Result<(), OpeningsError> {
             Ok(())
         }
     }
 
-    impl jolt_transcript::AppendToTranscript for TestCommitment {
+    impl jolt_transcript::Encoding for TestCommitment {
         fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
     }
 
@@ -1563,6 +1459,7 @@ mod tests {
                 lookups_ra_virtual_log_k_chunk: 0,
             },
             trace_polynomial_order: crate::proof::TracePolynomialOrder::CycleMajor,
+            narg: Vec::new(),
         }
     }
 

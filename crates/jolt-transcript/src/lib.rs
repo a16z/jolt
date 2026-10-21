@@ -53,13 +53,13 @@ pub use grind_bits::{
 pub use poseidon::PoseidonSponge;
 #[cfg(feature = "prover-grinding")]
 pub use pow::{MessageSearch, Probe};
-pub use prover::ProverTranscript;
+pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
-pub use scripted::{ScriptedTranscript, TranscriptEvent};
+pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
 pub use spongefish::{Encoding, ProverState, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};
-pub use verifier::VerifierTranscript;
+pub use verifier::{VerifierInit, VerifierTranscript};
 
 #[cfg(feature = "transcript-blake2b")]
 use blake2::Blake2b512 as Blake2b512Digest;

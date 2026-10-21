@@ -251,7 +251,7 @@ mod matrix {
         use jolt_dory::DoryScheme;
         use jolt_field::Fr;
         use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
-        use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+        use jolt_transcript::{Keccak, LegacyBlake2bTranscript as ProverState<Keccak>, ProverState};
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
         use crate::support::{self, GuestCase};
@@ -300,7 +300,7 @@ mod matrix {
                 .include_trusted_advice(trusted.is_some()),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 JoltBackend::optimized().with_witness(&witness),
                 &preprocessing,
                 &config,
@@ -308,7 +308,7 @@ mod matrix {
                 &public_io,
             )
             .expect("Dory proof");
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,

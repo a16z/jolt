@@ -10,6 +10,8 @@
 //! exactly when their precommitted layout needs a cycle-phase reduction, so the
 //! batch's instance count matches the prover's.
 
+use std::convert::Infallible;
+
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 #[cfg(not(feature = "akita"))]
@@ -27,7 +29,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::JoltInstructionRow;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use super::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use super::bytecode_read_raf::{
@@ -124,13 +126,13 @@ pub struct Stage6bDraws<F> {
 }
 
 impl<F: JoltField> Stage6bDraws<F> {
-    pub fn draw<T: Transcript<Challenge = F>>(
+    pub fn draw<T: FieldTranscript<F>>(
         transcript: &mut T,
         formula_dimensions: &JoltFormulaDimensions,
         committed_bytecode: bool,
-    ) -> Self {
+    ) -> Result<Self, VerifierError> {
         Self::sequence(formula_dimensions, committed_bytecode, |_| {
-            transcript.challenge_scalar()
+            transcript.challenge().map_err(VerifierError::from)
         })
     }
 
@@ -145,37 +147,38 @@ impl<F: JoltField> Stage6bDraws<F> {
         let mut loss = BATCH_COEFFICIENT_LOSS;
         let _ = Self::sequence(formula_dimensions, committed_bytecode, |draw_loss| {
             loss = loss.saturating_add(draw_loss);
-            F::from_u64(0)
+            Ok::<F, Infallible>(F::from_u64(0))
         });
         loss
     }
 
     /// The burst's draws in squeeze order. `scalar` receives each draw's loss
-    /// and returns its value. Each draw folds its member's input claims with
+    /// and returns its value, or an error that stops the burst. Each draw folds its member's input claims with
     /// powers up to one less than the claim count: the instruction RA claims,
     /// the four base increment claims, the two field-register increment
     /// claims, and the staged bytecode Val claims.
-    fn sequence(
+    fn sequence<E>(
         formula_dimensions: &JoltFormulaDimensions,
         committed_bytecode: bool,
-        mut scalar: impl FnMut(u64) -> F,
-    ) -> Self {
+        mut scalar: impl FnMut(u64) -> Result<F, E>,
+    ) -> Result<Self, E> {
         // Field order is draw order: the struct literal evaluates in
         // declaration order.
-        Self {
+        Ok(Self {
             instruction_ra_gamma: scalar(u64_from_usize(
                 formula_dimensions
                     .instruction_ra_virtualization
                     .num_virtual_ra_polys()
                     .saturating_sub(1),
-            )),
+            ))?,
             #[cfg(not(feature = "akita"))]
-            inc_gamma: scalar(3),
+            inc_gamma: scalar(3)?,
             #[cfg(feature = "field-inline")]
-            field_registers_inc_gamma: scalar(1),
+            field_registers_inc_gamma: scalar(1)?,
             eta: committed_bytecode
-                .then(|| scalar(u64_from_usize(NUM_BYTECODE_VAL_STAGES.saturating_sub(1)))),
-        }
+                .then(|| scalar(u64_from_usize(NUM_BYTECODE_VAL_STAGES.saturating_sub(1))))
+                .transpose()?,
+        })
     }
 }
 
@@ -609,7 +612,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 )]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::draw_recording::{record, squeeze};
     use jolt_field::Fr;
 
     /// Pins the post-6a draw schedule to member declaration order: the instruction-RA gamma,
@@ -643,17 +646,19 @@ mod tests {
 
             let (inline_events, inline_values) = record(|t| {
                 (0..expected_squeezes)
-                    .map(|_| t.challenge_scalar())
+                    .map(|_| t.challenge().unwrap())
                     .collect::<Vec<Fr>>()
             });
             let (draw_events, draws) =
-                record(|t| Stage6bDraws::<Fr>::draw(t, &formula_dimensions, committed_bytecode));
+                record(|t| {
+                    Stage6bDraws::<Fr>::draw(t, &formula_dimensions, committed_bytecode).unwrap()
+                });
 
             assert_eq!(draw_events, inline_events);
             assert_eq!(
                 draw_events,
                 (1..=expected_squeezes as u64)
-                    .map(DrawEvent::Squeeze)
+                    .map(squeeze)
                     .collect::<Vec<_>>()
             );
             let mut ordered = vec![draws.instruction_ra_gamma];

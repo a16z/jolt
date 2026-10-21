@@ -9,7 +9,9 @@
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::formula_dimensions_from_parts;
+use jolt_verifier::stages::pow::{pow_bits, PowSite};
 use jolt_verifier::{CheckedInputs, VerifierError};
 
 use crate::ProverConfig;
@@ -25,6 +27,26 @@ pub mod stage5;
 pub mod stage6a;
 pub mod stage6b;
 pub mod stage7;
+
+/// Grinds the nonce of the burst at `site` right before its first draw, the
+/// prover's side of `jolt_verifier::stages::pow::check_pow`. Returns `None`
+/// when the difficulty is zero.
+///
+/// # Errors
+/// [`VerifierError::PowDifficulty`] as for [`pow_bits`], and
+/// [`VerifierError::ProofOfWorkRejected`] if the nonce search fails.
+pub(crate) fn grind_pow<F, T>(
+    site: PowSite,
+    loss: u64,
+    transcript: &mut T,
+) -> Result<Option<u32>, VerifierError>
+where
+    T: FieldTranscript<F> + ProverTranscript,
+{
+    transcript
+        .public_grind(pow_bits::<F, T>(site, loss)?)
+        .map_err(|_| VerifierError::ProofOfWorkRejected { site })
+}
 
 /// The one-hot formula dimensions, built by the same core constructor as the
 /// verifier's `build_formula_dimensions` (which reads the one-hot config off

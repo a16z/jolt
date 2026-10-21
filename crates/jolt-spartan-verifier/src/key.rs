@@ -2,7 +2,7 @@ use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
-use jolt_transcript::{AppendToTranscript, Label, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, Label};
 
 use crate::{outer_relation, SpartanError};
 
@@ -147,13 +147,13 @@ impl<F: JoltField> SpartanKey<F> {
     }
 }
 
-impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
+impl<F: JoltField + Encoding> SpartanKey<F> {
     /// Bind the authenticated relation, public input, and commitment before tau.
-    pub fn begin<C: AppendToTranscript>(
+    pub fn begin<C: Encoding>(
         &self,
         public_inputs: &[F],
         commitment: &C,
-        transcript: &mut impl Transcript<Challenge = F>,
+        transcript: &mut impl FieldTranscript<F>,
     ) -> Result<Vec<F>, SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
         transcript.append(&Label(b"spartan-clear-v1"));
@@ -161,7 +161,7 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
         transcript.append_bytes(&self.policy_id);
         transcript.append_values(b"public-inputs", public_inputs);
         transcript.append_labeled(b"witness-commitment", commitment);
-        let tau = transcript.challenge_vector(self.row_vars());
+        let tau = transcript.challenge_vector(self.row_vars())?;
         transcript.append_labeled(b"spartan-outer", &F::zero());
         Ok(tau)
     }
@@ -172,14 +172,14 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
         row_weights: &[F],
         public_inputs: &[F],
         evaluations: [F; 3],
-        transcript: &mut impl Transcript<Challenge = F>,
+        transcript: &mut impl FieldTranscript<F>,
     ) -> Result<([F; 3], F), SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
         transcript.append_values(b"outer-evaluations", &evaluations);
         let weights = [
-            transcript.challenge(),
-            transcript.challenge(),
-            transcript.challenge(),
+            transcript.challenge()?,
+            transcript.challenge()?,
+            transcript.challenge()?,
         ];
         let public = std::iter::once(F::one())
             .chain(public_inputs.iter().copied())
@@ -204,7 +204,7 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
     /// Binds the terminal witness claim before the PCS opening transcript.
     pub fn append_witness_evaluation(
         evaluation: F,
-        transcript: &mut impl Transcript<Challenge = F>,
+        transcript: &mut impl FieldTranscript<F>,
     ) {
         transcript.append_labeled(b"witness-evaluation", &evaluation);
     }
