@@ -613,7 +613,10 @@ fn output_scale_errors<F: BinaryField>() {
     invalid.degrees = DegreeSchedule::uniform(4, 0);
     assert!(matches!(
         invalid.member_output_scale(0, &[F::sample(7); 4]),
-        Err(SumcheckError::ZeroBatchDegree { max_num_vars: 4 })
+        Err(SumcheckError::ZeroBatchDegree {
+            max_num_vars: 4,
+            round: 0
+        })
     ));
     invalid = prelude;
     invalid.degrees = DegreeSchedule::uniform(258, 1);

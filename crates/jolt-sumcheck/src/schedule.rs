@@ -95,10 +95,11 @@ impl DegreeSchedule {
     /// [`SumcheckError::ZeroBatchDegree`] or [`SumcheckError::DegreeOverflow`]
     /// at the first offending round.
     pub(crate) fn validate<F: Field>(&self) -> Result<(), SumcheckError<F>> {
-        for &degree in &self.degrees {
+        for (round, &degree) in self.degrees.iter().enumerate() {
             if degree == 0 {
                 return Err(SumcheckError::ZeroBatchDegree {
                     max_num_vars: self.num_rounds(),
+                    round,
                 });
             }
             if degree.checked_add(1).is_none() {
@@ -167,7 +168,10 @@ mod tests {
     fn validation_rejects_zero_and_unrepresentable_degrees() {
         assert!(matches!(
             DegreeSchedule::uniform(2, 0).validate::<F>(),
-            Err(SumcheckError::ZeroBatchDegree { max_num_vars: 2 })
+            Err(SumcheckError::ZeroBatchDegree {
+                max_num_vars: 2,
+                round: 0
+            })
         ));
         assert!(matches!(
             DegreeSchedule::uniform(1, usize::MAX).validate::<F>(),

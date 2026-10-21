@@ -626,7 +626,10 @@ fn prove_batch_rejects_zero_max_degree() {
     );
     assert!(matches!(
         result,
-        Err(SumcheckError::ZeroBatchDegree { max_num_vars: 2 })
+        Err(SumcheckError::ZeroBatchDegree {
+            max_num_vars: 2,
+            round: 0
+        })
     ));
 }
 

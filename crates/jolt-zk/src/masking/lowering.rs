@@ -416,9 +416,9 @@ impl RoundFormat {
 ///
 /// # Errors
 ///
+/// [`ZkError::RoundCountMismatch`] if the rounds and schedule differ in count;
 /// [`ZkError::RoundWidthMismatch`] if a round's wire length differs from its
-/// scheduled width or the rounds and schedule differ in count;
-/// [`ZkError::InvalidRelation`] on another malformed round.
+/// scheduled width; [`ZkError::InvalidRelation`] on another malformed round.
 pub fn sumcheck_rows<F: Field>(
     relation: &mut ResidualRelation<F>,
     input: AffineRow<F>,

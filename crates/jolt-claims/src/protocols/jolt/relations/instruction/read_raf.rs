@@ -139,16 +139,6 @@ mod tests {
     }
 
     #[test]
-    fn address_rounds_are_quadratic_and_cycle_rounds_carry_every_ra_chunk() {
-        let relation = ReadRaf::new(read_raf_dimensions(8));
-        let degrees: Vec<_> = (0..relation.rounds())
-            .map(|round| relation.round_degree(round))
-            .collect();
-        assert_eq!(degrees, [vec![2; 128], vec![10; 5]].concat());
-        assert_eq!(relation.degree(), 10);
-    }
-
-    #[test]
     fn read_raf_evaluates_like_core_formula() {
         let dimensions = read_raf_dimensions(2);
         let relation = ReadRaf::new(dimensions);

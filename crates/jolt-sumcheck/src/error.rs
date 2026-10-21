@@ -51,10 +51,12 @@ pub enum SumcheckError<F: Field> {
     /// A batch's degree schedule gives one of its rounds degree zero. A
     /// sumcheck round polynomial must have degree at least 1 — the same
     /// invariant `SumcheckClaim::new` enforces on the verify side.
-    #[error("batch schedules a round of its {max_num_vars} at degree 0")]
+    #[error("batch schedules round {round} of its {max_num_vars} at degree 0")]
     ZeroBatchDegree {
         /// Number of rounds that would need round polynomials.
         max_num_vars: usize,
+        /// The first round scheduled at degree 0.
+        round: usize,
     },
 
     /// A batch member declared more rounds than the batch contains.
