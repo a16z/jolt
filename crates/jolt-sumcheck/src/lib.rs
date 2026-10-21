@@ -127,7 +127,7 @@ pub use round_proof::{
 };
 pub use schedule::{DegreeSchedule, MemberDegrees};
 pub use single::{
-    prove_single, verify_single, ProverRoundContext, SingleFormat, SingleInstance, SingleReduction,
-    SumcheckRole, SumcheckSite, VerifierRoundContext,
+    prove_single, receive_masked_single, verify_single, ProverRoundContext, SingleFormat,
+    SingleInstance, SingleReduction, SumcheckRole, SumcheckSite, VerifierRoundContext,
 };
 pub use verifier::SumcheckVerifier;

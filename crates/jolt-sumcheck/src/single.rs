@@ -12,12 +12,11 @@
 
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly, Point, UnivariatePoly, LOW_TO_HIGH};
-use jolt_transcript::{
-    Channel, PadSlots, PrivateChannel, ProverTranscript, SiteId, Sponge, VerifierTranscript,
-};
+use jolt_transcript::{Channel, PadSlots, PrivateChannel, SiteId};
 
 use crate::domain::{BooleanHypercube, EqFactoredRound, SumcheckDomain};
 use crate::error::SumcheckError;
+use crate::masked::MaskedRound;
 use crate::prover::ProveRounds;
 use crate::round_proof::padded_coefficients;
 
@@ -39,13 +38,19 @@ pub struct SumcheckSite {
     pub role: SumcheckRole,
 }
 
-/// The prover's round context: it owns the transcript, names sites, and draws
-/// each round challenge, applying whatever grinding its caller schedules.
-pub trait ProverRoundContext<E> {
-    type Sponge: Sponge;
+/// The prover's round context: it owns the channel the rounds are sent on,
+/// names sites, and draws each round challenge, applying whatever grinding
+/// its caller schedules.
+///
+/// The channel is the clear transcript or a masked channel over committed
+/// pads (Akita `specs/whiteout-akita.md` §4.5). Its errors reach the driver
+/// as a [`SumcheckError`]: [`SumcheckError::Transcript`] for the clear
+/// transcript, [`SumcheckError::PrivateChannel`] for a masked channel.
+pub trait ProverRoundContext<E: Field> {
+    type Channel: Channel + PrivateChannel<Error: Into<SumcheckError<E>>>;
     type Error;
 
-    fn transcript_mut(&mut self) -> &mut ProverTranscript<Self::Sponge>;
+    fn channel_mut(&mut self) -> &mut Self::Channel;
 
     /// The transcript site for `site`, or `None` to emit no site.
     fn site(&self, site: SumcheckSite) -> Option<SiteId>;
@@ -55,12 +60,13 @@ pub trait ProverRoundContext<E> {
     fn challenge(&mut self, site: SumcheckSite) -> Result<E, Self::Error>;
 }
 
-/// The verifier's mirror of [`ProverRoundContext`].
-pub trait VerifierRoundContext<'proof, E> {
-    type Sponge: Sponge;
+/// The verifier's mirror of [`ProverRoundContext`]: the clear transcript, or
+/// the masked channel [`receive_masked_single`] records pad slots from.
+pub trait VerifierRoundContext<E: Field> {
+    type Channel: Channel + PrivateChannel<Error: Into<SumcheckError<E>>>;
     type Error;
 
-    fn transcript_mut(&mut self) -> &mut VerifierTranscript<'proof, Self::Sponge>;
+    fn channel_mut(&mut self) -> &mut Self::Channel;
 
     /// The transcript site for `site`, or `None` to emit no site.
     fn site(&self, site: SumcheckSite) -> Option<SiteId>;
@@ -207,8 +213,8 @@ fn mark<C: Channel>(channel: &mut C, site: Option<SiteId>) {
 /// Proves one instance: the input claim bound as a derived claim at the claim
 /// site; per round, the self-checked round polynomial's `degree` wire
 /// coefficients exchanged as private messages at the round-body site, then
-/// the context's challenge. Sends no output claims. Masking, when it comes,
-/// is supplied through the context's channel, as for [`verify_single`].
+/// the context's challenge. Sends no output claims. Masked mode is the
+/// context's channel; the verifier reads it with [`receive_masked_single`].
 ///
 /// The kernel's round API is fused, as for the batched engine: round `i > 0`
 /// receives challenge `i − 1`, and [`ProveRounds::finish_rounds`] the last.
@@ -237,22 +243,20 @@ where
 
     let mut claim = instance.input_claim;
     let claim_site = context.site(instance.site(0, SumcheckRole::Claim));
-    let transcript = context.transcript_mut();
-    mark(transcript, claim_site);
-    transcript
-        .bind_derived::<F, E>(&claim)
-        .map_err(SumcheckError::from)?;
+    let channel = context.channel_mut();
+    mark(channel, claim_site);
+    channel.bind_derived::<F, E>(&claim).map_err(Into::into)?;
 
     let mut challenges: Vec<E> = Vec::with_capacity(instance.rounds);
     for (round, round_id) in (0..instance.rounds).zip(0u32..) {
         let poly = member.prove_round(challenges.last().copied(), round, claim)?;
         let wire = instance.wire_coefficients(round, claim, &poly)?;
         let body_site = context.site(instance.site(round_id, SumcheckRole::RoundBody));
-        let transcript = context.transcript_mut();
-        mark(transcript, body_site);
-        let _: PadSlots = transcript
+        let channel = context.channel_mut();
+        mark(channel, body_site);
+        let _: PadSlots = channel
             .exchange_private::<F, E>(&mut wire.clone())
-            .map_err(SumcheckError::from)?;
+            .map_err(Into::into)?;
         let challenge = context.challenge(instance.site(round_id, SumcheckRole::Challenge))?;
         claim = instance.next_claim(round, claim, wire, challenge)?;
         challenges.push(challenge);
@@ -269,11 +273,18 @@ where
 
 /// Replays one instance's rounds and returns the reduction before any oracle
 /// check, so a caller can exchange late claims first. Receives exactly what
-/// [`prove_single`] sends; the omitted coefficient of each round is defined by
-/// its check, so the check holds by construction and the oracle check carries
-/// soundness.
+/// [`prove_single`] sends, through [`receive_masked_single`]; the omitted
+/// coefficient of each round is defined by its check, so the check holds by
+/// construction and the oracle check carries soundness.
+///
+/// # Errors
+///
+/// As [`receive_masked_single`], and
+/// [`SumcheckError::MaskedRoundInClearReplay`] if the context's channel is
+/// masked: its rounds carry pad slots, and folding m̂ as clear values would
+/// check nothing.
 #[tracing::instrument(skip_all, name = "verify_single", fields(rounds = instance.rounds))]
-pub fn verify_single<'proof, F, E, Err, C>(
+pub fn verify_single<F, E, Err, C>(
     instance: &SingleInstance<E>,
     context: &mut C,
 ) -> Result<SingleReduction<E>, Err>
@@ -281,34 +292,83 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + CanonicalDecode,
     Err: From<SumcheckError<E>>,
-    C: VerifierRoundContext<'proof, E, Error = Err>,
+    C: VerifierRoundContext<E, Error = Err>,
 {
-    instance.validate()?;
-
+    let rounds = receive_masked_single::<F, E, Err, C>(instance, context)?;
     let mut claim = instance.input_claim;
-    let claim_site = context.site(instance.site(0, SumcheckRole::Claim));
-    let transcript = context.transcript_mut();
-    mark(transcript, claim_site);
-    transcript
-        .bind_derived::<F, E>(&claim)
-        .map_err(SumcheckError::from)?;
-
-    let mut challenges = Vec::with_capacity(instance.rounds);
-    for (round, round_id) in (0..instance.rounds).zip(0u32..) {
-        let body_site = context.site(instance.site(round_id, SumcheckRole::RoundBody));
-        let transcript = context.transcript_mut();
-        mark(transcript, body_site);
-        let mut wire = vec![E::zero(); instance.degree];
-        let _: PadSlots = transcript
-            .exchange_private::<F, E>(&mut wire)
-            .map_err(SumcheckError::from)?;
-        let challenge = context.challenge(instance.site(round_id, SumcheckRole::Challenge))?;
+    let mut challenges = Vec::with_capacity(rounds.len());
+    for (
+        round,
+        MaskedRound {
+            wire,
+            slots,
+            challenge,
+        },
+    ) in rounds.into_iter().enumerate()
+    {
+        if slots.len != 0 {
+            return Err(SumcheckError::MaskedRoundInClearReplay { round }.into());
+        }
         claim = instance.next_claim(round, claim, wire, challenge)?;
         challenges.push(challenge);
     }
-
     Ok(SingleReduction {
         challenges,
         output_claim: claim,
     })
+}
+
+/// Reads one instance's rounds as [`prove_single`] sends them, recording
+/// each round's wire values, pad slots and challenge without folding them
+/// into a claim. Each challenge is drawn through the context, so per-round
+/// grinding applies, unlike [`receive_masked_rounds`](crate::receive_masked_rounds),
+/// which draws `challenge_small` directly.
+///
+/// Over a masked channel the wire values are m̂ = m + p, the input claim binds
+/// nothing (so `instance.input_claim` is unused), and the round checks are
+/// left to the caller's residual lowering (Akita `specs/whiteout-akita.md`
+/// §4.5). Over the clear transcript the slots are empty and
+/// [`verify_single`] folds the rounds.
+///
+/// # Errors
+///
+/// A shape error before any transcript operation; the channel's or the
+/// context's error on a truncated proof, an exhausted pad schedule or a
+/// rejected grinding nonce.
+pub fn receive_masked_single<F, E, Err, C>(
+    instance: &SingleInstance<E>,
+    context: &mut C,
+) -> Result<Vec<MaskedRound<E>>, Err>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + CanonicalDecode,
+    Err: From<SumcheckError<E>>,
+    C: VerifierRoundContext<E, Error = Err>,
+{
+    instance.validate()?;
+
+    let claim_site = context.site(instance.site(0, SumcheckRole::Claim));
+    let channel = context.channel_mut();
+    mark(channel, claim_site);
+    channel
+        .bind_derived::<F, E>(&instance.input_claim)
+        .map_err(Into::into)?;
+
+    let mut rounds = Vec::with_capacity(instance.rounds);
+    for round_id in (0u32..).take(instance.rounds) {
+        let body_site = context.site(instance.site(round_id, SumcheckRole::RoundBody));
+        let channel = context.channel_mut();
+        mark(channel, body_site);
+        let mut wire = vec![E::zero(); instance.degree];
+        let slots = channel
+            .exchange_private::<F, E>(&mut wire)
+            .map_err(Into::into)?;
+        let challenge = context.challenge(instance.site(round_id, SumcheckRole::Challenge))?;
+        rounds.push(MaskedRound {
+            wire,
+            slots,
+            challenge,
+        });
+    }
+    Ok(rounds)
 }

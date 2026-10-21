@@ -1,5 +1,6 @@
 //! The private-message seam: witness-dependent field messages, which masked
-//! mode hides behind pads and clear mode exchanges as they are.
+//! mode hides behind pads and clear mode exchanges as they are, and the
+//! claim domains the checks on those messages are written over.
 
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
 
@@ -114,3 +115,112 @@ macro_rules! clear_private_channel {
 
 clear_private_channel!(ProverTranscript<H>);
 clear_private_channel!(VerifierTranscript<'_, H>);
+
+/// The values a verifier check is written over, so one formula serves the
+/// clear verifier ([`ClearDomain`]), the masked verifier (affine forms over
+/// the pads, whose checks become residual rows) and the pad layout (symbolic
+/// shape). Akita writes its masked-level stage checks once over this trait
+/// (Akita `specs/whiteout-akita.md` §4.4); Jolt's residual lowering
+/// implements it in `jolt-zk`.
+///
+/// Auxiliary slots are allocated from a formula's structure alone, never from
+/// values, so every domain allocates the same slots in the same order.
+pub trait ClaimDomain<F> {
+    /// One value of the domain.
+    type Value: Clone;
+    /// Why a check or an allocation failed.
+    type Error;
+
+    /// The public constant `value`.
+    fn constant(&self, value: F) -> Self::Value;
+
+    /// `lhs + rhs`.
+    fn add(&self, lhs: &Self::Value, rhs: &Self::Value) -> Self::Value;
+
+    /// `value · scale` for a public `scale`.
+    fn scale(&self, value: &Self::Value, scale: F) -> Self::Value;
+
+    /// A new auxiliary slot defined by the affine `value`; returns the slot.
+    ///
+    /// # Errors
+    ///
+    /// The domain's error if no slot is left.
+    fn define_auxiliary(&mut self, value: Self::Value) -> Result<Self::Value, Self::Error>;
+
+    /// A new auxiliary slot holding `x · y`, where `x` is a single masked or
+    /// auxiliary slot; returns the slot.
+    ///
+    /// # Errors
+    ///
+    /// The domain's error if `x` is not a single slot or no slot is left.
+    fn product(&mut self, x: Self::Value, y: Self::Value) -> Result<Self::Value, Self::Error>;
+
+    /// The check `x · y = target`, with no new slot: the product lands on an
+    /// existing value, such as a sumcheck's running claim. `x` is as for
+    /// [`product`](Self::product).
+    ///
+    /// # Errors
+    ///
+    /// The domain's error if the check fails where it is evaluated, or `x`
+    /// is not a single slot.
+    fn product_into(
+        &mut self,
+        x: Self::Value,
+        y: Self::Value,
+        target: Self::Value,
+    ) -> Result<(), Self::Error>;
+
+    /// The check `value = 0`.
+    ///
+    /// # Errors
+    ///
+    /// The domain's error if the check fails where it is evaluated.
+    fn check_zero(&mut self, value: Self::Value) -> Result<(), Self::Error>;
+}
+
+/// A clear check failed: the values it compares differ.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("a clear claim check failed")]
+pub struct ClaimMismatch;
+
+/// The clear verifier's domain: values are field elements, auxiliary slots
+/// are the values themselves, and checks compare.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ClearDomain;
+
+impl<F: Field> ClaimDomain<F> for ClearDomain {
+    type Value = F;
+    type Error = ClaimMismatch;
+
+    fn constant(&self, value: F) -> F {
+        value
+    }
+
+    fn add(&self, lhs: &F, rhs: &F) -> F {
+        *lhs + *rhs
+    }
+
+    fn scale(&self, value: &F, scale: F) -> F {
+        *value * scale
+    }
+
+    fn define_auxiliary(&mut self, value: F) -> Result<F, ClaimMismatch> {
+        Ok(value)
+    }
+
+    fn product(&mut self, x: F, y: F) -> Result<F, ClaimMismatch> {
+        Ok(x * y)
+    }
+
+    fn product_into(&mut self, x: F, y: F, target: F) -> Result<(), ClaimMismatch> {
+        self.check_zero(x * y - target)
+    }
+
+    fn check_zero(&mut self, value: F) -> Result<(), ClaimMismatch> {
+        if value.is_zero() {
+            Ok(())
+        } else {
+            Err(ClaimMismatch)
+        }
+    }
+}

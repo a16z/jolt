@@ -52,6 +52,9 @@ jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs
 jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge_small#1
 jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge_small#2
 jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenges_small#0
+jolt-zk::masking/pads.rs::MaskedProver<'_,F,O,H>::challenge::challenge#0
+jolt-zk::masking/pads.rs::MaskedProver<'_,F,O,H>::challenge_bytes::challenge_bytes#0
+jolt-zk::masking/pads.rs::MaskedProver<'_,F,O,H>::challenge_small::challenge_small#0
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::challenge::challenge#0
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::challenge_bytes::challenge_bytes#0
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::challenge_small::challenge_small#0

@@ -12,7 +12,8 @@ use crate::schedule::DegreeSchedule;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaskedRound<F> {
     /// The masked wire coefficients: `[c0, c2, …]` for a compressed round,
-    /// every coefficient for a full one.
+    /// `[q1, …, qd]` for an eq-factored one, every coefficient for a full
+    /// one.
     pub wire: Vec<F>,
     pub slots: PadSlots,
     pub challenge: F,

@@ -42,7 +42,7 @@ rayon.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-jolt-algebra = { workspace = true, features = ["bn254"] }
+jolt-algebra = { workspace = true, features = ["bn254", "solinas"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",

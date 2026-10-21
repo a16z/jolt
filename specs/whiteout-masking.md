@@ -70,10 +70,13 @@ opening data), and only `receive_pad_commitment` builds
 `CommittedPadsView<PadCommitment>` (no blind). The prover's masking
 `SumcheckRecorder` owns `&mut CommittedPads`, and the prover's other private
 sends (uni-skip, stage 4's staged openings, the auxiliary block) go through
-`CommittedPads::send`, which returns the masked values it sent. There is no
-prover-side `PrivateChannel`: its methods
-are generic over the message field, which a pad vector of one field cannot
-serve. The verifier threads `&mut CommittedPadsView` through the ZK drivers
+`CommittedPads::send`, which returns the masked values it sent. For
+protocols written once over both roles' channels (`prove_single`, Akita's
+masked levels), `CommittedPads::channel` is the prover's masked
+`PrivateChannel`, `MaskedProver`, over the same masking; since its methods
+are generic over the message field and a pad vector has one field, a release
+check rejects any other message field (`ZkError::MessageFieldMismatch`), and
+an extension element takes one pad per base coordinate. The verifier threads `&mut CommittedPadsView` through the ZK drivers
 only; its `MaskedVerifier` is the masked `PrivateChannel`. The recorder type,
 not a flag, decides the routes a proof sends on and which hidden-value checks
 are skipped. Clear `verify` signatures stay concrete; only the masked leaf
@@ -89,6 +92,9 @@ unsatisfiable), never dropped.
 
 - **Compressed rounds:** weights from `SumcheckDomain::round_sum_coefficients`;
   c₁ is solved from the running claim; v_i = Σ c_j r_iʲ stays affine. No rows.
+  Eq-factored rounds (`RoundFormat::EqFactored`, Akita's stage 1) solve q₀
+  from the weights `[1, τ_i, τ_i, …]` the same way; the running claim is the
+  normalized q_i(r_i).
 - **Uni-skip:** two rows each: Σ_D f = input claim, and
   (v̂ − p_v) − Σ_j (ĉ_j − p_j) r₀ʲ = 0 (the clear check of `uniskip.rs`).
 - **Claims:** the batched input claim is affine; v_n = Σ_k β_k · output_k is
@@ -106,8 +112,15 @@ unsatisfiable), never dropped.
   `jolt-verifier`, not to the stage-agnostic lowering: for Dory,
   y − Σ γ_i scale_i (m̂_i − p_i) = 0 with y = `ResidualVar::Witness(0)`.
 
-The lowering is generic over its value domain: symbolic shape (layout),
-affine forms (verifier rows), decoded values (prover auxiliary values). The
+The lowering is generic over its value domain, `jolt_transcript::ClaimDomain`
+(shared with Akita's stage checks, whose clear verifier uses its
+`ClearDomain`): symbolic shape (layout), affine forms (verifier rows), decoded
+values (prover auxiliary values). Its checks are `check_zero` (an affine row)
+and `product_into` (a product row whose z is an existing value, so no
+auxiliary slot); Jolt's stage rows (running claim against the batched output,
+alias equalities) go through `check_zero`. Jolt keeps one auxiliary slot per
+intermediate product: landing a stage's last product on its running claim
+would drop slots and change every ZK proof. The
 prover never restates it. **A1:** the auxiliary block comes after stage 8.
 This is sound because auxiliary slots form an acyclic chain, each defined by
 exactly one product row or defining affine row whose inputs are earlier
