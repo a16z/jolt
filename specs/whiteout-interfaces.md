@@ -66,9 +66,9 @@ pub enum SumcheckRole { Claim = 1, RoundBody = 3, Challenge = 4 } // Akita's dis
 
 pub struct SumcheckSite { pub invocation: u32, pub round: u32, pub role: SumcheckRole }
 
-pub trait ProverRoundContext<E> {
+pub trait ProverRoundContext<E: Field> {
     /// The clear transcript, or a masked channel over committed pads.
-    type Channel: Channel + PrivateChannel;
+    type Channel: Channel + PrivateChannel<Error: Into<SumcheckError<E>>>;
     type Error;
     fn channel_mut(&mut self) -> &mut Self::Channel;
     /// The transcript site for `site`, or `None` to emit no site.
@@ -76,12 +76,13 @@ pub trait ProverRoundContext<E> {
     /// Grinding and the round challenge.
     fn challenge(&mut self, site: SumcheckSite) -> Result<E, Self::Error>;
 }
-pub trait VerifierRoundContext<E> { /* mirror */ }
+pub trait VerifierRoundContext<E: Field> { /* mirror */ }
 ```
 
-Channel errors reach the drivers through `SumcheckError<E>: From<_>`: a
+Channel errors reach the drivers through the associated type's bound: a
 `TranscriptError` as `SumcheckError::Transcript`, a masked channel's error as
-`SumcheckError::PrivateChannel`.
+`SumcheckError::PrivateChannel`. The bound sits on the trait, so generic
+callers of the drivers restate nothing.
 
 Akita implements both on its existing grinding wrappers; its grinding plan stays
 in Akita. A Jolt context wrapping a bare transcript is added only when a Jolt

@@ -43,11 +43,11 @@ pub struct SumcheckSite {
 /// its caller schedules.
 ///
 /// The channel is the clear transcript or a masked channel over committed
-/// pads (Akita `specs/whiteout-akita.md` §4.5); its errors reach the driver
-/// through `SumcheckError: From<_>`, as [`SumcheckError::PrivateChannel`] for
-/// a masked channel.
-pub trait ProverRoundContext<E> {
-    type Channel: Channel + PrivateChannel;
+/// pads (Akita `specs/whiteout-akita.md` §4.5). Its errors reach the driver
+/// as a [`SumcheckError`]: [`SumcheckError::Transcript`] for the clear
+/// transcript, [`SumcheckError::PrivateChannel`] for a masked channel.
+pub trait ProverRoundContext<E: Field> {
+    type Channel: Channel + PrivateChannel<Error: Into<SumcheckError<E>>>;
     type Error;
 
     fn channel_mut(&mut self) -> &mut Self::Channel;
@@ -62,8 +62,8 @@ pub trait ProverRoundContext<E> {
 
 /// The verifier's mirror of [`ProverRoundContext`]: the clear transcript, or
 /// the masked channel [`receive_masked_single`] records pad slots from.
-pub trait VerifierRoundContext<E> {
-    type Channel: Channel + PrivateChannel;
+pub trait VerifierRoundContext<E: Field> {
+    type Channel: Channel + PrivateChannel<Error: Into<SumcheckError<E>>>;
     type Error;
 
     fn channel_mut(&mut self) -> &mut Self::Channel;
@@ -231,7 +231,6 @@ where
     E: ExtField<F> + CanonicalDecode,
     Err: From<SumcheckError<E>>,
     C: ProverRoundContext<E, Error = Err>,
-    SumcheckError<E>: From<<C::Channel as PrivateChannel>::Error>,
 {
     instance.validate()?;
     if member.num_rounds() != instance.rounds {
@@ -248,7 +247,7 @@ where
     mark(channel, claim_site);
     channel
         .bind_derived::<F, E>(&claim)
-        .map_err(SumcheckError::from)?;
+        .map_err(Into::into)?;
 
     let mut challenges: Vec<E> = Vec::with_capacity(instance.rounds);
     for (round, round_id) in (0..instance.rounds).zip(0u32..) {
@@ -259,7 +258,7 @@ where
         mark(channel, body_site);
         let _: PadSlots = channel
             .exchange_private::<F, E>(&mut wire.clone())
-            .map_err(SumcheckError::from)?;
+            .map_err(Into::into)?;
         let challenge = context.challenge(instance.site(round_id, SumcheckRole::Challenge))?;
         claim = instance.next_claim(round, claim, wire, challenge)?;
         challenges.push(challenge);
@@ -289,7 +288,6 @@ where
     E: ExtField<F> + CanonicalDecode,
     Err: From<SumcheckError<E>>,
     C: VerifierRoundContext<E, Error = Err>,
-    SumcheckError<E>: From<<C::Channel as PrivateChannel>::Error>,
 {
     let rounds = receive_masked_single::<F, E, Err, C>(instance, context)?;
     let mut claim = instance.input_claim;
@@ -336,7 +334,6 @@ where
     E: ExtField<F> + CanonicalDecode,
     Err: From<SumcheckError<E>>,
     C: VerifierRoundContext<E, Error = Err>,
-    SumcheckError<E>: From<<C::Channel as PrivateChannel>::Error>,
 {
     instance.validate()?;
 
@@ -345,7 +342,7 @@ where
     mark(channel, claim_site);
     channel
         .bind_derived::<F, E>(&instance.input_claim)
-        .map_err(SumcheckError::from)?;
+        .map_err(Into::into)?;
 
     let mut rounds = Vec::with_capacity(instance.rounds);
     for round_id in (0u32..).take(instance.rounds) {
@@ -355,7 +352,7 @@ where
         let mut wire = vec![E::zero(); instance.degree];
         let slots = channel
             .exchange_private::<F, E>(&mut wire)
-            .map_err(SumcheckError::from)?;
+            .map_err(Into::into)?;
         let challenge = context.challenge(instance.site(round_id, SumcheckRole::Challenge))?;
         rounds.push(MaskedRound {
             wire,
