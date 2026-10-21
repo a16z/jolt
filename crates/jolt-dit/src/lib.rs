@@ -157,6 +157,8 @@ mod arch {
 
 #[cfg(test)]
 mod tests {
+    use rayon::ThreadPoolBuildError;
+
     use super::{install, is_enabled, is_supported, DitGuard};
 
     #[test]
@@ -175,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn install_sets_dit_on_every_worker_only() -> Result<(), rayon::ThreadPoolBuildError> {
+    fn install_sets_dit_on_every_worker_only() -> Result<(), ThreadPoolBuildError> {
         let before = is_enabled();
         let threads = rayon::current_num_threads();
         let workers = install(|| rayon::broadcast(|_| is_enabled()))?;

@@ -57,7 +57,7 @@ jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::challenge_bytes::challenge_by
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::challenge_small::challenge_small#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_full_round::challenge_small#1
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_round::challenge_small#1
-jolt-zk::whiteout/sigma.rs::prover::prove_sigma_with::challenge#0
-jolt-zk::whiteout/sigma.rs::prover::prove_sigma_with::challenge_bytes#1
+jolt-zk::whiteout/sigma.rs::prover::prove_under_dit::challenge#0
+jolt-zk::whiteout/sigma.rs::prover::prove_under_dit::challenge_bytes#1
 jolt-zk::whiteout/sigma.rs::verify_sigma::challenge#0
 jolt-zk::whiteout/sigma.rs::verify_sigma::challenge_bytes#1

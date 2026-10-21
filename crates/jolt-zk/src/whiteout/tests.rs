@@ -8,8 +8,8 @@
 //! - the pinned row `L`, algebraic properties, the abort rate at two α, the
 //!   response's moments, and tamper rejection.
 
-use std::sync::Mutex;
 use std::f64::consts::LN_2;
+use std::sync::Mutex;
 
 use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
 use jolt_crypto::lattice::{MatrixShape, MatrixView, CHALLENGE_RING_DIM};

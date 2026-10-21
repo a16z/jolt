@@ -264,5 +264,6 @@ jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_round::.send#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::finish::.send#0
 jolt-zk::whiteout/diagnostics.rs::AttemptHarness<D>::prove::prove_sigma_with#1
 jolt-zk::whiteout/sigma.rs::prover::prove_sigma::prove_sigma_with#0
-jolt-zk::whiteout/sigma.rs::prover::prove_sigma_with::.prove_response#4
+jolt-zk::whiteout/sigma.rs::prover::prove_sigma_with::prove_under_dit#0
+jolt-zk::whiteout/sigma.rs::prover::prove_under_dit::.prove_response#4
 jolt-zk::whiteout/sigma.rs::verify_sigma::.verify_response#4

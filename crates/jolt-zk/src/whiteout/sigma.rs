@@ -348,13 +348,13 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
 pub use prover::prove_sigma;
 #[cfg(all(test, feature = "whiteout-prover"))]
 pub(crate) use prover::take_rejected;
+#[cfg(feature = "whiteout-diagnostics")]
+pub use prover::with_dit;
 #[cfg(any(
     all(test, feature = "whiteout-prover"),
     feature = "whiteout-diagnostics"
 ))]
 pub(crate) use prover::{prove_sigma_with, SelfChecks};
-#[cfg(feature = "whiteout-diagnostics")]
-pub use prover::with_dit;
 
 #[cfg(feature = "whiteout-prover")]
 mod prover {
