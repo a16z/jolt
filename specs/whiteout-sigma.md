@@ -245,16 +245,17 @@ kernels against these semantics (§7, item 5).
   `(image_coeffs + extra_coeffs)·⌈log₂ q⌉ + 2λ + slack_bits`.
 
 The extra term is `extra_coeffs = 64` for the pad commitment's row **L**, and
-the slack is `slack_bits = 8` (§6.2). With the rank-3 matrices over R_256 this
-gives:
+the slack is `slack_bits = 8` (§6.2). The columns follow the matrices'
+rank. With the rank-5 matrices over R_256 of §5.1 this gives:
 
-| Randomness | Columns | Cells |
-|---|---|---|
-| r_p | 105 R_256 | 26,880 |
-| r_a | 97 R_256 | 24,832 |
+| Randomness | Columns | Cells | (rank 3, before §5.1) |
+|---|---|---|---|
+| r_p | 169 R_256 | 43,264 | 105, 26,880 |
+| r_a | 161 R_256 | 41,216 | 97, 24,832 |
 
-The script's 26,752 and 24,704 round to R_64 elements instead. Each slice
-draws its own randomness (§4.1).
+Resizing the randomness with the rank keeps every slice at 8 bits of
+entropy beyond its image plus 2λ, so δ_LHL stays at 2^−129.2 (§6). Each
+slice draws its own randomness (§4.1).
 
 ### 1.6 The lattice pad commitment (`jolt-zk::whiteout`)
 
@@ -464,7 +465,7 @@ ChaCha20 streams were uniform coins, the coordinates would be exactly
 independent, as with `fill` on true randomness. They are not uniform, so
 the hybrid that replaces each stream by uniform coins costs the PRG
 advantage once per stream. Over at most T_att attempts with
-`Σ_b ⌈N_b/2^14⌉` chunks each (382 at the headline, so `n_ch ≤ 3,820`), the
+`Σ_b ⌈N_b/2^14⌉` chunks each (405 at the headline, so `n_ch ≤ 4,050`), the
 zero-knowledge error gains
 
   `n_ch · Adv^PRG_ChaCha20(t)`,
@@ -822,24 +823,25 @@ g enters only through Q_μ's `u·g(s)` term.
 |---|---|---|---|
 | challenge family | d = 64, 31 × ±1, 11 × ±2, ‖c‖_op ≤ Γ = 18, 2^128.06 elements, κ₁ = 53 | `jolt-crypto::challenge` (M5b) | `SigmaParams::new`: `OperatorNormRejection::D64_SELECTIVE_L2.validate(64, cfg)` and `validate_min_entropy_for_ring_dim(64, 128)`. The latter bounds the unfiltered family; the filtered family's 2^128.06 is the certificate checked when the table is built (M5b) |
 | α, ε | 2^17, 2^−137 (M − 1 ≈ 1.05·10^−4; §5.1) | `SigmaParams` (`ALPHA`, `EPSILON_BITS`) | `JointRejection::new` |
-| width k | one for every Gaussian coordinate, derived (below): 57,033,704,728 ≈ 2^35.7 (headline table, ΣN = 6,221,056) | `SigmaParams::derive(segments)` | exact check (below) |
-| digits D_b, D_pub | 10 for every Gaussian segment; 3 | derived | `⌊L_b²/k²⌋ ≥ 1 + ⌈log₂(2^21 N)⌉` (below); `D_pub` covers `κ₁·B` |
+| width k | one for every Gaussian coordinate, derived (below): 58,642,511,897 ≈ 2^35.8 (headline table at rank 5, ΣN = 6,597,888) | `SigmaParams::derive(segments)` | exact check (below) |
+| digits D_b, D_pub | 10 for every Gaussian segment; 3 | derived | `⌊L_b²/k²⌋ ≥ 1 + ⌈log₂(2^21 N)⌉` (below), here 76 ≥ 45; `D_pub` covers `κ₁·B` |
 | box L_b | `7(16^{D_b}−1)/15` = 513,105,426,295 ≈ 2^38.9, the positive end of the certified range (A9) | derived | implied by the digit rule: `p_𝓑 ≥ 1 − 2^−21` |
 | shift bound | `κ₁ · B_b` | derived | `JointRejection::accept` |
 | T_att | 10 | prover-only: `JointRejection::max_attempts`, from the sampler's realized M and `p_𝓑 ≥ 1 − 2^−20` | smallest T with `(1 − (p_𝓑 − ε)/M′)^T ≤ 2^−128`, in 128-bit fixed point with every rounding against acceptance |
 | rejection arithmetic | — | derived | `SigmaParams::new` mirrors `JointRejection::new`'s bounds: boxes and shifts ≤ 2^62, the denominator k² < 2^126 (always, as k ≤ 2^58), worst-case exponent numerator < 2^126. A table the prover could not run is rejected by both roles |
 | ν | 256 | const | — |
 | ℓ | 14 | `RowLabels` | — |
-| A_a, [B_a\|B′_a], A_p ranks | 3 × R_256 each | Akita planner and SIS tables (rule 3), in the setup | Akita (SIS); W4 checks module structure and view lengths |
+| A_a, [B_a\|B′_a], A_p ranks | 5 × R_256 each (§5.1; 3 before) | Akita planner and SIS tables (rule 3), in the setup | Akita (SIS); W4 checks module structure and view lengths |
 | A_D | 1 × R_64, binding on radix-16 digits | Akita planner | Akita; view length |
-| randomness | r_a 97 and r_p 105 R_256 columns, radix 16 | layouts | `required_randomness_columns` |
+| randomness | r_a 161 and r_p 169 R_256 columns, radix 16 (§1.5) | layouts | `required_randomness_columns` |
 | pad radices | 16 (32 digits), operands 256 (16 digits) | `LatticePadCommitment` consts | `GadgetDigits` checks |
 
 **Width derivation** (A10). The width is derived in jolt-zk with integer
 arithmetic, not tabulated. Prover and verifier must agree bit for bit, because
 D_b fixes the e layout. The numbers above come from the code's headline
 table (`tests/whiteout_params.rs`), in which every segment holds whole R_256
-elements, so ΣN = 6,221,056.
+elements, so ΣN = 6,597,888 at rank 5. The test takes the rank from one
+constant and the randomness lengths from `required_randomness_columns`.
 
 1. **Closed form.** One width for every Gaussian coordinate (§5.1, "One
    width"): `σ = αΓ·√(Σ_b γ_b²)`, and so
@@ -857,10 +859,11 @@ elements, so ΣN = 6,221,056.
    needs no separate check. A width that no digit count up to 15 covers is
    rejected (`WhiteoutError::Overflow`).
 
-At α = 16 the per-block closed form of the earlier revision gave widths
-6,766,161 and 13,532,321 and seven digits everywhere; one width gives
-6,962,124 and the same digits. At α = 2^17 the response part of e grows
-from 64,191,232 to 82,854,400 cells (public coordinates included).
+On the rank-3 table at α = 16, the per-block closed form of the earlier
+revision gave widths 6,766,161 and 13,532,321 and seven digits everywhere;
+one width gives 6,962,124 and the same digits. At α = 2^17 and rank 5 the
+response part of e grows from 64,191,232 (rank 3, α = 16) to 87,802,368
+cells, public coordinates included.
 
 ### 5.1 Almost-never rejection (review decision, 2026-10-21)
 
@@ -886,9 +889,12 @@ The cost that matters is the digit count D, not α:
 
 So each regime below is D digits with α near the largest that D allows.
 
-**One width.** At α ≥ 2^9 the two distinct widths of the closed form make
-the rejection rule's denominator `Q = Π k_b²` exceed its `2^126` bound. The
-widths are therefore one common width, `k = ⌈√(2 ln 2 · Γ²α² · Σ_b γ_b²)⌉
+**One width.** With the two distinct widths of the closed form, the
+rejection rule's worst-case exponent numerator `Σ_b (2L_bV_b + V_b²)·len_b·
+Q/k_b²` passes its `2^126` bound at α ≈ 2^9.75, and the denominator
+`Q = Π k_b²` passes it at α ≈ 2^12.4 (computed on the rank-3 headline table
+with the derivation's integer rules). The widths are therefore one common
+width, `k = ⌈√(2 ln 2 · Γ²α² · Σ_b γ_b²)⌉
 + 1` (weights `ω_b = γ_b²/Σγ²`), so `Q = k²`. At the headline this widens
 the dense blocks by 2.9% and narrows the operand block by 49%; every block
 keeps its digit count at α = 16 (checked with `SigmaParams`' derivation
@@ -921,7 +927,7 @@ model; T_att makes all-rejected ≤ 2^−128.
   - total with δ_LHL = 2^−129.2 and the sampler term: 2^−128.8 / 2^−129.1 /
     2^−129.1;
   - plus, since the parallel fill (§2.4.1), the computational term
-    `n_ch · Adv^PRG_ChaCha20(t)` with `n_ch ≤ 382·T_att`: about `t·2^−244`
+    `n_ch · Adv^PRG_ChaCha20(t)` with `n_ch ≤ 405·T_att`: about `t·2^−244`
     at the default, at most 2^−144 for `t ≤ 2^100`.
 
   ε stays at 2^−137: a smaller T_att would allow a larger ε, but that moves
@@ -945,9 +951,11 @@ proofs, and T_att = 10. Reasons:
   does so. D = 9 retries once in 830 proofs for 6 points less verifier work.
   D = 12 retries once in 2.4M proofs, but costs 17 more points of verifier
   scans and a longer exponential product in the sampler.
-- α is the only constant. Moving to D = 12 is `ALPHA = 1 << 25` and
-  `BOX_FAILURE_INVERSE = 1 << 28`; the rejection arithmetic, the sampler,
-  the Ajtai map and the digit layout already admit it.
+- Two constants set the regime, `ALPHA` and `BOX_FAILURE_INVERSE`, both in
+  `params.rs`. Moving to D = 12 is `ALPHA = 1 << 25` and
+  `BOX_FAILURE_INVERSE = 1 << 28`, plus the setup's ranks; the rejection
+  arithmetic, the sampler, the Ajtai map and the digit layout already admit
+  it.
 
 **Rejection stays exact.** Smudging needs `y` wider than `cs` by about
 2^λ (statistical distance `‖cs‖/σ`), i.e. about 2^128 instead of 2^17 in
@@ -986,7 +994,7 @@ fold in.
 | Per-attempt rejection | 1 − 1/2.37 ≈ 0.58 (implied, `06_evaluation.tex:104`) | ≤ 2^−13.2 | As above. |
 | T_att, E[attempts] | 163 and 2.37 (`06_evaluation.tex:103-104`) | 10 and 1.0001 | `(2^−13.2)^10 ≤ 2^−128`, the same completeness target (Thm `wo:thm:completeness`, `05_security.tex:128-141`). |
 | ZK error | about 2^−128.8 with rejection term 2^−130.9 (`06_evaluation.tex:105-107`) | about 2^−129.1 with rejection term 2^−133.7, plus the computational PRG term `n_ch · Adv^PRG_ChaCha20` (≤ 2^−144 for `t ≤ 2^100`) | Thm `wo:thm:zk` (`05_security.tex:332-339`) unchanged except for the mask coins (row below); only T_att moves. |
-| Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (`06_evaluation.tex:121-133`) | radii up to about 2^48, ranks 5 / 5 / 5 over R_256 | The radius follows the ten-digit box. Ranks are the setup's (Akita planner), not W4's. |
+| Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (`06_evaluation.tex:121-133`) | radii up to about 2^48, ranks 5 / 5 / 5 over R_256; randomness r_a 161, r_p 169 R_256 columns (was 97, 105) | The radius follows the ten-digit box. Ranks are the setup's (Akita planner), not W4's. The randomness grows with the image, keeping δ_LHL at 2^−129.2. |
 | e, ν, proof, verifier | e ≈ 65.5M (2^26); +7.28 KB; verifier scans +0.7% (`06_evaluation.tex:170-185`, `eval_table.tex`) | e ≈ 90M (2^27); +9.66 KB; scans +23% | Consequences of the digits and ranks (`whiteout-costs.py` at α = 2^17, R_256 only). |
 | Prover-time model | 2.37 attempts × 10 ns per sample (`06_evaluation.tex:250-253`) | one attempt; per-sample cost grows with ℓ = 77 bits; the mask is sampled in parallel | Measured in A16. The paper's 10 ns is a per-sample cost with no thread count; ours is 655 ns on one thread, divided by the threads. |
 | Mask coins | true randomness, implicitly (Thm `wo:thm:zk` is statistical, `05_security.tex:332-339`) | ChaCha20 streams keyed by 256-bit seeds from the prover's RNG, one per 2^14-coordinate chunk | Parallel sampling with an output independent of the thread count. Adds `n_ch · Adv^PRG_ChaCha20` to the ZK error, so the statement becomes computational in that term only (§2.4.1). |
@@ -1014,8 +1022,8 @@ fold in.
 | T_att = 10 (§5.1) | `wo:thm:completeness`; the `T_att ε/M` term |
 | Per-row checks before ρ; ct(h) assertion | H6 precondition; no ρ-weighted leak (§2.1) |
 | Raw t_p and t_D | Their compressed forms are functions of them (§2.4), so sending them raw removes nothing from H4 or H8: the hybrids already replace the raw images with uniform ones |
-| Sampler precision (M5a) | +2^−149 on 2^−128.8 |
-| ChaCha20 seed expansion (M5a), now in `fill_parallel` | adds a computational term, `n_ch · Adv^PRG_ChaCha20` with `n_ch ≤ 3,820` (§2.4.1) |
+| Sampler precision (M5a) | +2^−157 on 2^−129.1 (`whiteout-gaussian.md`, update note) |
+| ChaCha20 seed expansion (M5a), now in `fill_parallel` | adds a computational term, `n_ch · Adv^PRG_ChaCha20` with `n_ch ≤ 4,050` (§2.4.1) |
 
 ## 7. Test plan
 
@@ -1219,7 +1227,8 @@ Moved out of W4:
   sampler; the Σ-protocol's own work is about 0.08 s per attempt.
 
   **After almost-never rejection (§5.1), 2026-10-21.** `sigma_timing` at
-  scale 5,920 (6,076,160 Gaussian coefficients, the headline's count), 16
+  scale 5,920 (6,076,160 Gaussian coefficients, the rank-3 headline's
+  count; rank 5 has 6,597,888, 8.6% more), 16
   threads, release, 10 proofs per run, before and after binaries
   interleaved twice. The machine was shared and heavily loaded (load
   average 45–140), so absolute times are about twice the idle ones; the

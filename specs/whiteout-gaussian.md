@@ -12,7 +12,7 @@ are unchanged, but their ranges and the production values moved:
   `14k` within the Ajtai map's `2^62` input bound and `27k² < 2^128`.
 - `JointRejection::new` accepts `α ≤ 2^31` (was `2^16`) and `ε_bits ≤ 2^16`.
 - In production, every Gaussian coordinate has one width
-  `k = 57,033,704,728` (`ℓ = 77` exponent bits), with `α = 2^17`, `M − 1 ≈
+  `k = 58,642,511,897` (`ℓ = 77` exponent bits), with `α = 2^17`, `M − 1 ≈
   1.05·10^−4`, and `T_att = 10`. With one width, `Q = k²`.
 - **Precision.** Per trial, `δ ≤ (26 + 2·77 + 1)·2^−192 + 2^−196.6 ≈
   2^−184.5`; per output, `2δ/0.68 ≈ 2^−182.9`. Over `6.2·10⁶ × 10 ≈
@@ -25,7 +25,7 @@ are unchanged, but their ranges and the production values moved:
   | 6,000 | 30 | 377 |
   | 6,766,161 | 51 | 502 |
   | 13,532,321 | 53 | 515 |
-  | 57,033,704,728 | 77 | 655 |
+  | 57,033,704,728 (rank-3 headline) | 77 | 655 |
   | 14,600,628,409,964 | 93 | 753 |
 
 ## 1. Distributions
