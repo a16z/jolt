@@ -120,6 +120,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         &serde_json::to_string(&verifier_setup).expect("verifier setup should serialize"),
     )
     .expect("verifier setup should deserialize");
+    let prover_tail = prover_state.verifier_message::<[u8; 32]>();
     for setup in [&verifier_setup, &transported] {
         let mut verifier_transcript =
             prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
@@ -132,7 +133,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         )
         .expect("grouped opening should verify");
         assert_eq!(
-            prover_state.verifier_message::<[u8; 32]>(),
+            prover_tail,
             verifier_transcript.verifier_message::<[u8; 32]>()
         );
     }
