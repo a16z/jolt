@@ -2,8 +2,7 @@
 //! the public API from the arkworks types.
 //!
 //! Serde and transcript encodings are the 32-byte little-endian canonical
-//! form (identical to jolt-field). Challenges are full-width: the default
-//! wide reduction of [`CanonicalEncoding::from_challenge_bytes`].
+//! form (identical to jolt-field).
 
 mod mont;
 

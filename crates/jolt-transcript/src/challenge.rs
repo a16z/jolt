@@ -29,7 +29,6 @@ use jolt_field::{Fq, Fr};
 use jolt_field::{F128, F192, F64, F8};
 #[cfg(feature = "transcript-keccak")]
 use spongefish::instantiations::Keccak;
-#[cfg(feature = "spongefish")]
 use spongefish::{DuplexSpongeInterface, VerificationError};
 
 #[cfg(feature = "transcript-blake2b")]
@@ -114,7 +113,6 @@ pub trait ChallengeCodec: Sized + Sealed {
 ///
 /// `PoseidonSponge` is not one: each block it squeezes is the little-endian
 /// encoding of a BN254 scalar, whose top bits are far from uniform.
-#[cfg(feature = "spongefish")]
 pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
 
 #[cfg(feature = "transcript-keccak")]
@@ -343,7 +341,6 @@ binary_codec!(F8, F64, F128, F192);
 /// # Errors
 /// Returns `VerificationError` when `F` does not support `len` or the message
 /// would exceed [`MAX_CHALLENGE_BYTES`].
-#[cfg(feature = "spongefish")]
 pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, VerificationError> {
     F::challenge_bytes(len)
         .filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
@@ -353,9 +350,7 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
 #[cfg(all(test, feature = "solinas"))]
 mod tests {
     use super::{Prime64Offset59, Sealed, UniformBytes};
-    use crate::{
-        prover_transcript, verifier_transcript, BytesMsg, ProverTranscript, VerifierTranscript,
-    };
+    use crate::{prover_transcript, verifier_transcript, BytesMsg, FieldTranscript};
     use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
     /// A sponge whose output is all ones, so every pooled candidate is
@@ -390,14 +385,14 @@ mod tests {
 
     #[test]
     fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
-        let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
-        assert!(ProverTranscript::field_challenges::<Prime64Offset59>(&mut prover, 3).is_err());
+        let mut prover = prover_transcript::<Saturated>(SESSION, &INSTANCE);
+        assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut prover, 3).is_err());
 
-        let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
+        let mut prover = prover_transcript::<Saturated>(SESSION, &INSTANCE);
         prover.prover_message(&BytesMsg(b"after".to_vec()));
         let mut verifier =
-            verifier_transcript::<Saturated>(SESSION, INSTANCE, prover.narg_string());
-        assert!(VerifierTranscript::field_challenges::<Prime64Offset59>(&mut verifier, 3).is_err());
+            verifier_transcript::<Saturated>(SESSION, &INSTANCE, prover.narg_string());
+        assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut verifier, 3).is_err());
         assert!(verifier.prover_message::<BytesMsg>().is_err());
         assert!(verifier.check_eof().is_err());
     }

@@ -4,7 +4,34 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::Fr;
-use jolt_transcript::{Blake2bTranscript, KeccakTranscript, PoseidonTranscript, Transcript};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, Keccak, PoseidonSponge, ProverState, Transcript,
+};
+use spongefish::DuplexSpongeInterface;
+
+fn fresh<H: DuplexSpongeInterface<U = u8> + spongefish::DuplexSpongeInit>() -> ProverState<H> {
+    prover_transcript::<H>(b"bench", b"bench")
+}
+
+fn bench_append_bytes_with<H>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    label: &str,
+    data: &[u8],
+) where
+    H: DuplexSpongeInterface<U = u8> + spongefish::DuplexSpongeInit,
+{
+    group.bench_with_input(BenchmarkId::new(name, label), data, |bench, data| {
+        bench.iter_batched(
+            fresh::<H>,
+            |mut t| {
+                t.append_bytes(black_box(data));
+                t
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
 
 fn bench_append_bytes(c: &mut Criterion) {
     let mut group = c.benchmark_group("append_bytes");
@@ -12,36 +39,9 @@ fn bench_append_bytes(c: &mut Criterion) {
     let data_256 = [0xCDu8; 256];
 
     for (label, data) in [("32B", &data_32[..]), ("256B", &data_256[..])] {
-        group.bench_with_input(BenchmarkId::new("Blake2b", label), data, |bench, data| {
-            bench.iter_batched(
-                || Blake2bTranscript::<Fr>::new(b"bench"),
-                |mut t| {
-                    t.append_bytes(black_box(data));
-                    t
-                },
-                criterion::BatchSize::SmallInput,
-            );
-        });
-        group.bench_with_input(BenchmarkId::new("Keccak", label), data, |bench, data| {
-            bench.iter_batched(
-                || KeccakTranscript::<Fr>::new(b"bench"),
-                |mut t| {
-                    t.append_bytes(black_box(data));
-                    t
-                },
-                criterion::BatchSize::SmallInput,
-            );
-        });
-        group.bench_with_input(BenchmarkId::new("Poseidon", label), data, |bench, data| {
-            bench.iter_batched(
-                || PoseidonTranscript::<Fr>::new(b"bench"),
-                |mut t| {
-                    t.append_bytes(black_box(data));
-                    t
-                },
-                criterion::BatchSize::SmallInput,
-            );
-        });
+        bench_append_bytes_with::<Blake2b512>(&mut group, "Blake2b", label, data);
+        bench_append_bytes_with::<Keccak>(&mut group, "Keccak", label, data);
+        bench_append_bytes_with::<PoseidonSponge>(&mut group, "Poseidon", label, data);
     }
     group.finish();
 }
@@ -52,11 +52,11 @@ fn bench_challenge(c: &mut Criterion) {
     group.bench_function("Blake2b", |bench| {
         bench.iter_batched(
             || {
-                let mut t = Blake2bTranscript::<Fr>::new(b"bench");
+                let mut t = fresh::<Blake2b512>();
                 t.append_bytes(&[42u8; 32]);
                 t
             },
-            |mut t| t.challenge(),
+            |mut t| FieldTranscript::<Fr>::challenge(&mut t),
             criterion::BatchSize::SmallInput,
         );
     });
@@ -64,23 +64,11 @@ fn bench_challenge(c: &mut Criterion) {
     group.bench_function("Keccak", |bench| {
         bench.iter_batched(
             || {
-                let mut t = KeccakTranscript::<Fr>::new(b"bench");
+                let mut t = fresh::<Keccak>();
                 t.append_bytes(&[42u8; 32]);
                 t
             },
-            |mut t| t.challenge(),
-            criterion::BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("Poseidon", |bench| {
-        bench.iter_batched(
-            || {
-                let mut t = PoseidonTranscript::<Fr>::new(b"bench");
-                t.append_bytes(&[42u8; 32]);
-                t
-            },
-            |mut t| t.challenge(),
+            |mut t| FieldTranscript::<Fr>::challenge(&mut t),
             criterion::BatchSize::SmallInput,
         );
     });

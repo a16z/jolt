@@ -457,85 +457,18 @@ mod tests {
         }
     }
 
-    /// The legacy facades reduce `Fr::challenge_width` squeezed bytes, so
-    /// they draw from all of `Fr`, as the codec does. A site's loss factor is
-    /// a `u64`, so `u64::MAX` bounds every site: none needs proof of work.
-    #[cfg(all(
-        feature = "bn254",
-        feature = "transcript-blake2b",
-        feature = "transcript-keccak"
-    ))]
-    #[test]
-    fn bn254_facades_need_no_proof_of_work() {
-        use crate::{
-            Blake2bTranscript, ChallengeCodec, KeccakTranscript, LegacyBlake2bTranscript,
-            Transcript, SECURITY_BITS,
-        };
-        use jolt_field::Fr;
-
-        for set in [
-            LegacyBlake2bTranscript::<Fr>::CHALLENGE_SET,
-            Blake2bTranscript::<Fr>::CHALLENGE_SET,
-            KeccakTranscript::<Fr>::CHALLENGE_SET,
-        ] {
-            assert_eq!(set, <Fr as ChallengeCodec>::CHALLENGE_SET_SIZE);
-            assert_eq!(grind_bits_for_loss(u64::MAX, set, SECURITY_BITS), Ok(0));
-        }
-    }
-
-    /// Draw `k` after an absorb reduces `8w ≥ MODULUS_BITS + 160 + 2⌈log₂ k⌉`
-    /// bits, so it is within `2^-162 / k²` of uniform and any number of draws
-    /// after one message stay within `2^-161`. The first BN254 draw matches
-    /// the codec's one-element width.
-    #[cfg(all(feature = "bn254", feature = "solinas"))]
-    #[test]
-    fn challenge_width_keeps_every_message_within_budget() {
-        use crate::ChallengeCodec;
-        use jolt_field::{CanonicalEncoding, Fq, Fr, Prime128Offset275, Prime128OffsetA7F7};
-
-        fn check<F: CanonicalEncoding>() {
-            let draws = (1..=1 << 12).chain([u64::from(u32::MAX), u64::MAX - 1, u64::MAX]);
-            let mut previous = 0;
-            for draw in draws {
-                let width = F::challenge_width(draw);
-                let log_draw = u64::BITS - (draw - 1).leading_zeros();
-                assert!(
-                    8 * width as u32 >= F::MODULUS_BITS + 160 + 2 * log_draw,
-                    "draw {draw}"
-                );
-                assert!(width >= previous, "draw {draw}");
-                previous = width;
-            }
-        }
-        check::<Fr>();
-        check::<Fq>();
-        check::<Prime128Offset275>();
-        check::<Prime128OffsetA7F7>();
-        assert_eq!(Fr::challenge_width(1), 52);
-        assert_eq!(<Fr as ChallengeCodec>::challenge_bytes(1), Some(52));
-        assert_eq!(Prime128OffsetA7F7::challenge_width(1), 36);
-    }
-
     /// fp128 challenges are priced at the full order `p = 2^128 − 275`: a
     /// loss factor that is not a power of two needs `⌈log₂ L⌉` bits.
-    #[cfg(all(feature = "solinas", feature = "transcript-blake2b"))]
+    #[cfg(feature = "solinas")]
     #[test]
-    fn fp128_facades_use_the_full_order() {
-        use crate::{ChallengeCodec, LegacyBlake2bTranscript, Transcript, SECURITY_BITS};
+    fn fp128_codecs_use_the_full_order() {
+        use crate::{ChallengeCodec, SECURITY_BITS};
         use jolt_field::{Prime128Offset275, Prime128OffsetA7F7};
 
-        let sets = [
-            (
-                LegacyBlake2bTranscript::<Prime128Offset275>::CHALLENGE_SET,
-                <Prime128Offset275 as ChallengeCodec>::CHALLENGE_SET_SIZE,
-            ),
-            (
-                LegacyBlake2bTranscript::<Prime128OffsetA7F7>::CHALLENGE_SET,
-                <Prime128OffsetA7F7 as ChallengeCodec>::CHALLENGE_SET_SIZE,
-            ),
-        ];
-        for (set, codec_set) in sets {
-            assert_eq!(set, codec_set);
+        for set in [
+            <Prime128Offset275 as ChallengeCodec>::CHALLENGE_SET_SIZE,
+            <Prime128OffsetA7F7 as ChallengeCodec>::CHALLENGE_SET_SIZE,
+        ] {
             for (loss, bits) in [(1, 1), (2, 2), (3, 2), (6, 3), (10, 4), (27, 5), (42, 6)] {
                 assert_eq!(
                     grind_bits_for_loss(loss, set, SECURITY_BITS),

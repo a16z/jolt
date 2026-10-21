@@ -1,19 +1,24 @@
-//! Length-prefixed byte messages for byte-oriented spongefish transcripts.
+//! Message encodings for byte-oriented spongefish transcripts.
 //!
-//! `BytesMsg` uses an eight-byte little-endian length, followed by the body.
-//! Challenges use spongefish's built-in `u128` codec.
+//! [`BytesMsg`] is a byte string with an eight-byte little-endian length,
+//! followed by the body. [`Label`], [`LabelWithCount`] and [`U64Word`] are the
+//! 32-byte words that name what the next messages are.
 
 use spongefish::{Encoding, FromNarg, NargReader, VerificationError};
 
-/// Length-prefixed byte string. 8-byte LE length keeps `BytesMsg(a) ; BytesMsg(b)`
-/// distinguishable from `BytesMsg(a||b)`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytesMsg(pub Vec<u8>);
+/// Maximum label length in bytes accepted by [`Label`].
+pub const MAX_LABEL_LEN: usize = 32;
 
-impl BytesMsg {
+/// Length-prefixed byte string, owned (`Vec<u8>`, the default) or borrowed.
+/// The 8-byte LE length keeps `BytesMsg(a) ; BytesMsg(b)` distinguishable
+/// from `BytesMsg(a||b)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BytesMsg<B = Vec<u8>>(pub B);
+
+impl<B: AsRef<[u8]>> BytesMsg<B> {
     /// Returns the inner bytes.
     pub fn as_slice(&self) -> &[u8] {
-        &self.0
+        self.0.as_ref()
     }
 }
 
@@ -23,11 +28,12 @@ impl From<Vec<u8>> for BytesMsg {
     }
 }
 
-impl Encoding for BytesMsg {
+impl<B: AsRef<[u8]>> Encoding for BytesMsg<B> {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = Vec::with_capacity(8 + self.0.len());
-        out.extend_from_slice(&(self.0.len() as u64).to_le_bytes());
-        out.extend_from_slice(&self.0);
+        let body = self.0.as_ref();
+        let mut out = Vec::with_capacity(8 + body.len());
+        out.extend_from_slice(&(body.len() as u64).to_le_bytes());
+        out.extend_from_slice(body);
         out
     }
 }
@@ -44,6 +50,62 @@ impl FromNarg for BytesMsg {
     }
 }
 
+/// 32-byte zero-padded label word.
+///
+/// Labels are protocol constants; encoding one longer than
+/// [`MAX_LABEL_LEN`] bytes panics.
+#[derive(Clone, Copy, Debug)]
+pub struct Label(pub &'static [u8]);
+
+impl Encoding for Label {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        assert!(
+            self.0.len() <= MAX_LABEL_LEN,
+            "label {:?} exceeds 32 bytes",
+            core::str::from_utf8(self.0)
+        );
+        let mut padded = [0u8; 32];
+        let (head, _) = padded.split_at_mut(self.0.len());
+        head.copy_from_slice(self.0);
+        padded
+    }
+}
+
+/// Packed label (24 bytes) + count (8-byte big-endian) in one 32-byte word.
+///
+/// Labels are protocol constants; encoding one longer than 24 bytes panics.
+#[derive(Clone, Copy, Debug)]
+pub struct LabelWithCount(pub &'static [u8], pub u64);
+
+impl Encoding for LabelWithCount {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        assert!(
+            self.0.len() <= 24,
+            "label {:?} exceeds 24 bytes",
+            core::str::from_utf8(self.0)
+        );
+        let mut packed = [0u8; 32];
+        let (head, tail) = packed.split_at_mut(24);
+        let (label, _) = head.split_at_mut(self.0.len());
+        label.copy_from_slice(self.0);
+        tail.copy_from_slice(&self.1.to_be_bytes());
+        packed
+    }
+}
+
+/// EVM-compatible left-padded u64: 24 zero bytes + 8-byte BE value.
+#[derive(Clone, Copy, Debug)]
+pub struct U64Word(pub u64);
+
+impl Encoding for U64Word {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut packed = [0u8; 32];
+        let (_, value) = packed.split_at_mut(24);
+        value.copy_from_slice(&self.0.to_be_bytes());
+        packed
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
@@ -57,6 +119,31 @@ mod tests {
         assert_eq!(bytes.len(), 8 + 4);
         assert_eq!(&bytes[..8], &4u64.to_le_bytes());
         assert_eq!(&bytes[8..], &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn borrowed_and_owned_bytes_encode_alike() {
+        let owned = BytesMsg(vec![5u8, 6, 7]);
+        let borrowed = BytesMsg(&[5u8, 6, 7][..]);
+        assert_eq!(owned.encode().as_ref(), borrowed.encode().as_ref());
+    }
+
+    #[test]
+    fn label_words_pad_and_pack() {
+        let label = Label(b"abc");
+        let encoded = label.encode();
+        assert_eq!(&encoded.as_ref()[..3], b"abc");
+        assert!(encoded.as_ref()[3..].iter().all(|&byte| byte == 0));
+
+        let counted = LabelWithCount(b"xy", 0x0102);
+        let encoded = counted.encode();
+        assert_eq!(&encoded.as_ref()[..2], b"xy");
+        assert_eq!(&encoded.as_ref()[24..], &0x0102u64.to_be_bytes());
+
+        let word = U64Word(7);
+        let encoded = word.encode();
+        assert!(encoded.as_ref()[..31].iter().all(|&byte| byte == 0));
+        assert_eq!(encoded.as_ref()[31], 7);
     }
 
     #[test]

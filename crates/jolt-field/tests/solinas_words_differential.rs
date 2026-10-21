@@ -107,11 +107,6 @@ macro_rules! check_prime {
                     Some(bytes_mod(&challenge[..len], p)),
                     "decode vs oracle"
                 );
-                assert_eq!(
-                    <$two as CanonicalEncoding>::from_challenge_bytes(&challenge[..len]),
-                    ours,
-                    "challenge derivation defaults to the reducing decode"
-                );
             }
 
             let t_bytes = bincode::serde::encode_to_vec(ta, cfg).unwrap();

@@ -117,11 +117,6 @@ impl CanonicalEncoding for F64 {
     fn num_bits(&self) -> u32 {
         u64::BITS - self.0.leading_zeros()
     }
-
-    #[inline]
-    fn challenge_width(_draw: u64) -> usize {
-        Self::NUM_BYTES
-    }
 }
 
 impl WithAccumulator for F64 {
