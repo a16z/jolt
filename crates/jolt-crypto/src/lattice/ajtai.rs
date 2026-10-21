@@ -30,6 +30,10 @@ const CRT_PRIMES: usize = 6;
 /// Columns accumulated before one exact reconstruction, unless the CRT
 /// capacity allows fewer. Also the unit of parallel work.
 const COLUMN_CHUNK: usize = 64;
+/// Limb width of [`PreparedMatrix::apply_transposed`]'s field weights: one
+/// limb fits the `i32` lift.
+const LIMB_BITS: u32 = 31;
+const LIMB_MASK: u64 = (1 << LIMB_BITS) - 1;
 
 /// Balanced gadget digits: base `2^log_basis`, `levels` digits, digit 0 least
 /// significant, decomposed by jolt-algebra's branch-free balanced
@@ -207,6 +211,80 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
             for (out, value) in output.iter_mut().zip(partial) {
                 *out += value;
             }
+        }
+        Ok(output)
+    }
+
+    /// `Mᵀ · w` over field weights: entry `col` is `Σ_row w_row · M[row][col]`.
+    ///
+    /// Each weight coefficient is split into unsigned 31-bit limbs, and every
+    /// limb plane runs the CRT product exactly. Not constant time: the
+    /// weights must be public.
+    pub fn apply_transposed(
+        &self,
+        weights: &[CyclotomicRing<F, D>],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
+        if weights.len() != self.shape.rows {
+            return Err(CryptoError::InvalidSize {
+                expected: self.shape.rows,
+                actual: weights.len(),
+            });
+        }
+        if !self
+            .params
+            .crt_capacity()
+            .supports::<F, D>(self.shape.rows, LIMB_MASK)
+        {
+            return Err(CryptoError::InvalidSetup(
+                "the CRT primes cannot hold one transposed column".into(),
+            ));
+        }
+        let canonical: Vec<[u128; D]> = weights
+            .iter()
+            .map(|ring| {
+                let mut values = [0u128; D];
+                for (dst, coefficient) in values.iter_mut().zip(ring.coefficients()) {
+                    *dst = coefficient.to_u128_checked().ok_or_else(|| {
+                        CryptoError::InvalidInput("weight exceeds 128 bits".into())
+                    })?;
+                }
+                Ok(values)
+            })
+            .collect::<Result<_, CryptoError>>()?;
+        let limbs = field_bits::<F>()?.div_ceil(LIMB_BITS) as usize;
+        let mut output = vec![CyclotomicRing::<F, D>::zero(); self.shape.width];
+        let mut scale = F::one();
+        let radix = F::from_u64(1 << LIMB_BITS);
+        for limb in 0..limbs {
+            let shift = LIMB_BITS * limb as u32;
+            let rows: Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>> = canonical
+                .iter()
+                .map(|values| {
+                    // In range: the mask keeps 31 bits.
+                    let plane: [i32; D] =
+                        values.map(|value| ((value >> shift) as u64 & LIMB_MASK) as i32);
+                    let mut ntt = CyclotomicCrtNtt::zero();
+                    ntt.assign_centered_i32_ct(&plane, &self.params);
+                    ntt
+                })
+                .collect();
+            let columns: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..self.shape.width)
+                .map(|col| {
+                    let mut accumulator = CyclotomicCrtNtt::zero();
+                    for (row, weight) in rows.iter().enumerate() {
+                        let entry = self
+                            .entries
+                            .get(row * self.shape.width + col)
+                            .ok_or_else(|| CryptoError::Internal("matrix entry missing".into()))?;
+                        accumulator.add_assign_pointwise_mul(entry, weight, &self.params);
+                    }
+                    Ok(accumulator.to_ring_ct(&self.params))
+                })
+                .collect::<Result<_, CryptoError>>()?;
+            for (out, column) in output.iter_mut().zip(columns) {
+                column.scale_accumulate_into(out, scale);
+            }
+            scale *= radix;
         }
         Ok(output)
     }
