@@ -27,6 +27,10 @@ use crate::CryptoError;
 /// Number of 32-bit CRT primes. Their product exceeds `2^179`, which holds
 /// `2 · width · D · ⌊q/2⌋ · bound` for every shape used here.
 const CRT_PRIMES: usize = 6;
+/// The largest input bound of [`PreparedMatrix::apply_centered`].
+pub const MAX_CENTERED_BOUND: u64 = 1 << 62;
+/// Bits per limb when an input exceeds the `i32` lift.
+const LIMB_BITS: u32 = 30;
 /// Columns accumulated before one exact reconstruction, unless the CRT
 /// capacity allows fewer. Also the unit of parallel work.
 const COLUMN_CHUNK: usize = 64;
@@ -155,11 +159,15 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
     }
 
     /// `M · x` for centered integer columns `x`, laid out column by column
-    /// with `D` coefficients each, every one at most `bound` in magnitude.
+    /// with `D` coefficients each, every one at most `bound ≤`
+    /// [`MAX_CENTERED_BOUND`] in magnitude.
     ///
     /// Constant time in `x`: the bound is checked over all coefficients as
     /// one aggregate, which is the only value branched on, and every
-    /// coefficient takes the same lift, transform, and accumulation.
+    /// coefficient takes the same lift, transform, and accumulation. A bound
+    /// above `i32::MAX` splits every input into balanced 30-bit limbs by
+    /// shifts, applies the map to each limb, and recombines in `F`; the limb
+    /// count depends on `bound` alone.
     ///
     /// WARNING: `bound` must be a hard bound on every input the caller can
     /// produce, such as the Gaussian sampler's tail cut, never a statistical
@@ -168,7 +176,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
     pub fn apply_centered(
         &self,
         input: &[i64],
-        bound: u32,
+        bound: u64,
     ) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
         let expected = self.shape.width.checked_mul(D).ok_or_else(|| {
             CryptoError::InvalidSetup("matrix input length overflows usize".into())
@@ -179,9 +187,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 actual: input.len(),
             });
         }
-        if bound > i32::MAX as u32 {
+        if bound > MAX_CENTERED_BOUND {
             return Err(CryptoError::InvalidInput(format!(
-                "input bound {bound} exceeds the i32 lift"
+                "input bound {bound} exceeds 2^62"
             )));
         }
         if !all_within(input, bound) {
@@ -189,6 +197,57 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 "an input coefficient exceeds its bound {bound}"
             )));
         }
+        if let Some(bound) = u32::try_from(bound).ok().filter(|&b| b <= i32::MAX as u32) {
+            return self.apply_i32(input, bound);
+        }
+        // Balanced base-2^30 digits: with `h_j = 2^29·(2^{30j} − 1)/(2^30 − 1)`,
+        // `rest_j = ⌊(x + h_j)/2^{30j}⌋`, limb `j` is `rest_j`'s low 30 bits
+        // sign-extended, and the top limb is `rest_j` itself. Each pass
+        // recomputes its limb from `input` into one scratch buffer.
+        let mut limb = vec![0i64; input.len()];
+        let mut output = vec![CyclotomicRing::zero(); self.shape.rows];
+        let mut weight = F::one();
+        let radix = F::from_u64(1 << LIMB_BITS);
+        let (mut offset, mut shift) = (0i128, 0u32);
+        let mut remaining = bound;
+        while remaining > i32::MAX as u64 {
+            for (dst, &value) in limb.iter_mut().zip(input) {
+                let rest = ((i128::from(value) + offset) >> shift) as i64;
+                *dst = (rest << (64 - LIMB_BITS)) >> (64 - LIMB_BITS);
+            }
+            self.accumulate(&limb, 1 << (LIMB_BITS - 1), weight, &mut output)?;
+            weight *= radix;
+            offset += 1 << (LIMB_BITS - 1 + shift);
+            shift += LIMB_BITS;
+            remaining = (remaining >> LIMB_BITS) + 1;
+        }
+        for (dst, &value) in limb.iter_mut().zip(input) {
+            *dst = ((i128::from(value) + offset) >> shift) as i64;
+        }
+        self.accumulate(&limb, remaining as u32, weight, &mut output)?;
+        Ok(output)
+    }
+
+    /// `output += weight · M·x` for inputs within the `i32` lift.
+    fn accumulate(
+        &self,
+        input: &[i64],
+        bound: u32,
+        weight: F,
+        output: &mut [CyclotomicRing<F, D>],
+    ) -> Result<(), CryptoError> {
+        for (out, value) in output.iter_mut().zip(self.apply_i32(input, bound)?) {
+            value.scale_accumulate_into(out, weight);
+        }
+        Ok(())
+    }
+
+    /// `M · x` for inputs already known to lie within `bound ≤ i32::MAX`.
+    fn apply_i32(
+        &self,
+        input: &[i64],
+        bound: u32,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
         let chunk = self
             .params
             .crt_capacity()
@@ -229,7 +288,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
             .ok_or_else(|| CryptoError::Internal("column chunk outside the input".into()))?;
         for (offset, coefficients) in columns.chunks_exact(D).enumerate() {
             for (dst, &value) in lifted.iter_mut().zip(coefficients) {
-                // In range: `apply_centered` checked `|value| <= bound <= i32::MAX`.
+                // In range: every caller bounds `|value| <= bound <= i32::MAX`.
                 *dst = value as i32;
             }
             column.assign_centered_i32_ct(&lifted, &self.params);
@@ -302,7 +361,7 @@ pub fn commit<F: Field + CanonicalEncoding, const D: usize>(
 
 /// Whether every `|x| <= bound`, evaluated over all of `input` without an
 /// early exit or a branch on any one value.
-fn all_within(input: &[i64], bound: u32) -> bool {
+fn all_within(input: &[i64], bound: u64) -> bool {
     let bound = i128::from(bound);
     let outside = input.iter().fold(0i128, |acc, &value| {
         let value = i128::from(value);

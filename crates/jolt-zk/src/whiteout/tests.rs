@@ -13,6 +13,7 @@ use std::sync::Mutex;
 
 use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
 use jolt_crypto::lattice::{MatrixShape, MatrixView, CHALLENGE_RING_DIM};
+use jolt_crypto::sample::GaussianWidth;
 use jolt_poly::EqPolynomial;
 use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, Sponge, VerifierTranscript};
 use rand_chacha::ChaCha20Rng;
@@ -25,10 +26,10 @@ use super::fixture::{
 };
 use super::labels::RowLabels;
 use super::lift::constant_ring;
-use super::params::{ALPHA, EPSILON_BITS};
+use super::params::EPSILON_BITS;
 use super::placement::{PadPlace, PadPlacement, OPERAND_LEVELS, PAD_LEVELS};
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
-use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
+use super::segments::SegmentRole;
 use super::sigma::{prove_sigma_with, take_rejected, SelfChecks};
 use super::{
     verify_sigma, LiftedRelation, ResidualBlock, ResponseSegment, SegmentTable, SigmaParams,
@@ -590,12 +591,14 @@ fn predicted_repetition_rate(alpha: u32) -> f64 {
 }
 
 /// The mean attempt count over 300 proofs is within 4σ of `M`, at the
-/// paper's α and at α = 10 (`M ≈ 3.99`), which a wrong rate would leave.
+/// paper's α = 16 and at α = 10 (`M ≈ 3.99`), which a wrong rate would leave.
+/// The production α rejects too rarely to measure here; its `T_att` is
+/// pinned in `tests/whiteout_params.rs`.
 #[test]
 fn abort_rate_matches_the_repetition_rate() {
     const PROOFS: u64 = 300;
     let instance = Instance::<64>::new(60);
-    for alpha in [ALPHA, 10] {
+    for alpha in [16, 10] {
         let setup = instance.setup().with_alpha(alpha).unwrap();
         let lifted = setup.lift(&instance.relation, &instance.claims).unwrap();
         let attempts: Vec<f64> = (0..PROOFS)
@@ -636,7 +639,7 @@ fn accepted_responses_have_the_configured_moments() {
     let params = SigmaParams::derive(setup.table()).unwrap();
     let block = params.blocks()[0];
     let start = setup.table().placed()[block.segment].coefficient;
-    let sigma = block.width as f64 / (2.0 * LN_2).sqrt();
+    let sigma = params.width() as f64 / (2.0 * LN_2).sqrt();
     let samples: Vec<f64> = capture
         .accepted
         .lock()
@@ -696,6 +699,7 @@ fn tampered_proofs_are_rejected() {
 }
 
 /// A rejected attempt's `(t_D, n)` with the accepted `z` does not verify.
+/// Runs at the paper's α = 16, where rejections are common.
 #[test]
 fn rejected_attempts_cannot_be_substituted() {
     let instance = Instance::<64>::new(80);
@@ -703,7 +707,7 @@ fn rejected_attempts_cannot_be_substituted() {
     let mut seed = 81;
     let (proof, rejected) = loop {
         let _ = take_rejected();
-        let setup = instance.setup();
+        let setup = instance.setup().with_alpha(16).unwrap();
         let lifted = setup.lift(&instance.relation, &instance.claims).unwrap();
         let (proof, attempts) = prove(
             &instance,
@@ -728,25 +732,32 @@ fn rejected_attempts_cannot_be_substituted() {
 }
 
 #[test]
-fn oversized_tables_are_rejected_before_the_lift_overflows() {
+fn widths_past_every_digit_count_are_rejected() {
     let table = SegmentTable::new(residual_segments::<64>(1)).unwrap();
-    let widths = vec![1u64 << 31; 3];
-    // Widths this large need at least nine digits: past the i32 lift.
-    assert!(matches!(
-        SigmaParams::new(&table, &widths),
-        Err(WhiteoutError::ResponseBoundTooLarge | WhiteoutError::RejectionArithmetic)
-    ));
-    let big = SegmentTable::new(vec![Segment {
-        role: SegmentRole::Witness,
-        len: 1 << 20,
-        native_dim: 64,
-        log_basis: 4,
-        shape: SegmentShape::Dense,
-        mask: SegmentMask::Gaussian,
-    }])
-    .unwrap();
+    // The sampler's largest width needs more than fifteen digits for its box.
     assert_eq!(
-        SigmaParams::derive(&big),
-        Err(WhiteoutError::ResponseBoundTooLarge)
+        SigmaParams::new(&table, 1 << 58),
+        Err(WhiteoutError::Overflow)
     );
+    assert_eq!(
+        SigmaParams::new(&table, (1 << 58) + 1),
+        Err(WhiteoutError::WidthOutOfRange {
+            width: (1 << 58) + 1
+        })
+    );
+}
+
+/// `SigmaParams` mirrors the sampler's width range for the verifier, which
+/// does not build the sampler.
+#[test]
+fn width_range_matches_the_sampler() {
+    let table = SegmentTable::new(residual_segments::<64>(1)).unwrap();
+    for width in [0, 1, 1 << 58, (1 << 58) + 1] {
+        let sampler = GaussianWidth::from_multiplier(width).is_ok();
+        let params = !matches!(
+            SigmaParams::new(&table, width),
+            Err(WhiteoutError::WidthOutOfRange { .. })
+        );
+        assert_eq!(sampler, params, "width {width}");
+    }
 }

@@ -12,7 +12,7 @@ mod matrix;
 mod randomness;
 mod view;
 
-pub use ajtai::{commit, AjtaiLevel, GadgetDigits, PreparedMatrix};
+pub use ajtai::{commit, AjtaiLevel, GadgetDigits, PreparedMatrix, MAX_CENTERED_BOUND};
 pub use layout::{BlockGeometry, SliceCount, TwoLevelLayout, CHALLENGE_RING_DIM};
 pub use matrix::{
     check_public_matrix_prefix, derive_public_matrix_prefix, PublicMatrixDerivation,

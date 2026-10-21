@@ -4,6 +4,30 @@ Design only. Labels refer to `akita-paper/sections/whiteout/` (read
 2026-10-19). Numbers the text omits come from `scripts/whiteout-costs.py`
 (headline: k=2, variant 1, `mqo+eroot`).
 
+**Update, 2026-10-21 (almost-never rejection, `whiteout-sigma.md` §5.1).**
+The values below are the paper's α = 16 regime. The sampler and the rule
+are unchanged, but their ranges and the production values moved:
+
+- `GaussianWidth` accepts `k ≤ 2^58` (was `2^31`). This keeps the tail cut
+  `14k` within the Ajtai map's `2^62` input bound and `27k² < 2^128`.
+- `JointRejection::new` accepts `α ≤ 2^31` (was `2^16`) and `ε_bits ≤ 2^16`.
+- In production, every Gaussian coordinate has one width
+  `k = 58,642,511,897` (`ℓ = 77` exponent bits), with `α = 2^17`, `M − 1 ≈
+  1.05·10^−4`, and `T_att = 10`. With one width, `Q = k²`.
+- **Precision.** Per trial, `δ ≤ (26 + 2·77 + 1)·2^−192 + 2^−196.6 ≈
+  2^−184.5`; per output, `2δ/0.68 ≈ 2^−182.9`. Over `6.2·10⁶ × 10 ≈
+  2^25.9` samples this adds at most `2^−157` to Thm `wo:thm:zk`.
+- **Cost.** Measured on one thread (M4 Max, release), one `fill` sample
+  costs about `200 + 6.0·ℓ` ns:
+
+  | k | ℓ | ns per sample |
+  |---|---|---|
+  | 6,000 | 30 | 377 |
+  | 6,766,161 | 51 | 502 |
+  | 13,532,321 | 53 | 515 |
+  | 57,033,704,728 (rank-3 headline) | 77 | 655 |
+  | 14,600,628,409,964 | 93 | 753 |
+
 ## 1. Distributions
 
 - **Gaussian.** `D_σ(z) ∝ exp(−z²/(2σ²))` on Z, centre 0 (§2.5,

@@ -156,7 +156,7 @@ A view is prepared once as `PreparedMatrix<F, D>`, which checks
 `shape.ring_dim == D`. It offers two operations:
 
 - `apply_centered(x: &[i64], bound) -> Vec<CyclotomicRing<F, D>>`: the map
-  `M·x` on centered integer columns with `|x| ≤ bound < 2^31`. This is the
+  `M·x` on centered integer columns with `|x| ≤ bound ≤ 2^62`. This is the
   Σ-protocol's `N·y`, and the core of `commit`. `bound` must be a hard bound,
   such as the sampler's tail cut, never a statistical one: an input above it
   returns an error, which for a secret input would be an abort correlated
@@ -190,6 +190,11 @@ transformed by the forward NTT and accumulated pointwise into each output row.
   other Akita kernel.
 - **Input bound.** The bound `|x| ≤ bound` is checked over all inputs as one
   constant-time aggregate, and only the aggregate is branched on.
+- **Limbs (§5.1).** A bound above `i32::MAX` splits each input by shifts
+  into balanced 30-bit limbs (`x = Σ_j 2^{30j} x_j`), applies the map to
+  each limb, and recombines in F. The limb count depends only on the public
+  bound. At the headline the mask's tail cut `14k ≈ 2^39.5` takes two limbs,
+  so `N·y` and `L·y` cost two passes.
 
 `q ≡ 9 (mod 16)` gives no NTT over F_q for `X^256 + 1`. Schoolbook `N·y` would
 cost seconds per attempt. CRT-NTT is therefore the definition and also the
@@ -240,16 +245,17 @@ kernels against these semantics (§7, item 5).
   `(image_coeffs + extra_coeffs)·⌈log₂ q⌉ + 2λ + slack_bits`.
 
 The extra term is `extra_coeffs = 64` for the pad commitment's row **L**, and
-the slack is `slack_bits = 8` (§6.2). With the rank-3 matrices over R_256 this
-gives:
+the slack is `slack_bits = 8` (§6.2). The columns follow the matrices'
+rank. With the rank-5 matrices over R_256 of §5.1 this gives:
 
-| Randomness | Columns | Cells |
-|---|---|---|
-| r_p | 105 R_256 | 26,880 |
-| r_a | 97 R_256 | 24,832 |
+| Randomness | Columns | Cells | (rank 3, before §5.1) |
+|---|---|---|---|
+| r_p | 169 R_256 | 43,264 | 105, 26,880 |
+| r_a | 161 R_256 | 41,216 | 97, 24,832 |
 
-The script's 26,752 and 24,704 round to R_64 elements instead. Each slice
-draws its own randomness (§4.1).
+Resizing the randomness with the rank keeps every slice at 8 bits of
+entropy beyond its image plus 2λ, so δ_LHL stays at 2^−129.2 (§6). Each
+slice draws its own randomness (§4.1).
 
 ### 1.6 The lattice pad commitment (`jolt-zk::whiteout`)
 
@@ -406,7 +412,8 @@ verifier squeezes it at the same position. σ binds the oracle input's τ. Then,
 for i = 1..T_att:
 
 1. **Mask.** Draw `y ← π_0` with M5a's `GaussianSampler::fill`, one sampler
-   per Gaussian segment. Public segments get `y = 0`.
+   for the common width (§5), in parallel (`fill_parallel`, §2.4.1). Public
+   segments get `y = 0`.
 2. **First message.** Compute:
    - `f = N·y`: `apply_centered` on each part of N;
    - `E_0 = L·y + Q_μ(0, y)`;
@@ -440,6 +447,45 @@ until it is published.
 
 A fork lives outside the transcript. It records no `TranscriptEvent`, and a
 rejected attempt leaves nothing in the replay log.
+
+#### 2.4.1 Parallel mask sampling
+
+`GaussianSampler::fill_parallel` fills each Gaussian block. For a block of
+N coordinates it:
+
+1. draws `⌈N/2^14⌉` seeds of 32 bytes from the prover's RNG, in chunk
+   order, before sampling anything;
+2. fills chunk i (coordinates `2^14·i ..`) with M5a's `fill`, driven by
+   ChaCha20 keyed by seed i, as one rayon job.
+
+**Distribution.** Each chunk runs the unchanged sampler on its own coin
+stream, so each coordinate is a draw from `D_σ`. The streams are keyed by
+independent uniform 256-bit seeds (the RNG is a `CryptoRng`). If the
+ChaCha20 streams were uniform coins, the coordinates would be exactly
+independent, as with `fill` on true randomness. They are not uniform, so
+the hybrid that replaces each stream by uniform coins costs the PRG
+advantage once per stream. Over at most T_att attempts with
+`Σ_b ⌈N_b/2^14⌉` chunks each (405 at the headline, so `n_ch ≤ 4,050`), the
+zero-knowledge error gains
+
+  `n_ch · Adv^PRG_ChaCha20(t)`,
+
+where t is the distinguisher's running time. This term is computational:
+Thm `wo:thm:zk` stays statistical in all its other terms. Under the usual
+conjecture that ChaCha20 with a 256-bit key has no attack better than key
+search, `Adv ≤ t/2^256`, so the term is about `t·2^−244`, at most 2^−144
+for `t ≤ 2^100`. It does not affect completeness or soundness.
+
+The serial `fill` used the caller's RNG directly, so its coins were as good
+as that RNG; a caller passing a seeded `ChaCha20Rng` already had this
+assumption. `fill_parallel` makes it unconditional.
+
+**Determinism.** The seeds are drawn sequentially and the chunking depends
+only on N, so the output depends only on the RNG's stream. A test fills
+`5·2^14 + 123` coordinates on one worker and on eight and compares the
+bytes.
+
+**Constant time.** See the `fill` row of §2.8.
 
 ### 2.5 What enters the transcript
 
@@ -501,7 +547,7 @@ reveal them either.
 
 | Step | Secret inputs | Requirement |
 |---|---|---|
-| Gaussian `fill` | y | M5a sampler (isochronous, reviewed). |
+| Gaussian `fill` | y | M5a sampler (isochronous, reviewed), run as `fill_parallel` (§2.4.1): 2^14-output chunks whose count and boundaries come from the public block length; all chunk seeds drawn from the prover's RNG before any chunk runs; every chunk runs the isochronous loop to completion, with no early exit and no shared state. A chunk's duration depends on its trial accept bits, which are independent of the values it outputs (the HPRR20 argument, per chunk), so rayon's scheduling sees only those. The chunks run on the DIT pool of A11, as rayon jobs of the attempt inside `with_dit`. |
 | `N·y`, `A_D·G⁻¹(V)` | y, V | `apply_centered` of §1.3: branch-free Montgomery lift, NTT with public twiddles, constant-time Garner, no LUT. |
 | `Q_μ(0,y)`, `B_μ`, `L·y`, `g(y)`, `Λ_μ(0,y)` | y | Branch-free centered lift into F. Ring products with public or s-only operands. |
 | `G⁻¹(V)` | V | The bias path of `BalancedDecomposePow2Params::biased`, whose sign select is a 129-bit signed subtraction. A comparison there compiled to branches on x86 (W4 found and fixed this; `cargo asm` on `x86_64-apple-darwin` shows the scalar kernel and the AVX2/AVX-512 remainder loops branch-free). |
@@ -776,54 +822,183 @@ g enters only through Q_μ's `u·g(s)` term.
 | Parameter | Headline value | Lives in | Validated by |
 |---|---|---|---|
 | challenge family | d = 64, 31 × ±1, 11 × ±2, ‖c‖_op ≤ Γ = 18, 2^128.06 elements, κ₁ = 53 | `jolt-crypto::challenge` (M5b) | `SigmaParams::new`: `OperatorNormRejection::D64_SELECTIVE_L2.validate(64, cfg)` and `validate_min_entropy_for_ring_dim(64, 128)`. The latter bounds the unfiltered family; the filtered family's 2^128.06 is the certificate checked when the table is built (M5b) |
-| α, ε | 16, 2^−137 (M ≈ 2.37) | `SigmaParams` | `JointRejection::new` |
-| widths k_b | derived (below): 6,766,161 for B = 8 dense segments; 13,532,321 for operand digits (headline table, ΣN = 6,221,056) | `SigmaParams::derive(segments)` | exact rational check (below) |
-| digits D_b, D_pub | 7 for every Gaussian segment; 3 | derived | `⌊L_b²/k_b²⌋ ≥ 1 + ⌈log₂(2000 N)⌉` (below); `D_pub` covers `κ₁·B` |
-| box L_b | `7(16^{D_b}−1)/15`, the positive end of the certified range (A9) | derived | implied by the digit rule: `p_𝓑 ≥ 1 − 1/2000` |
+| α, ε | 2^17, 2^−137 (M − 1 ≈ 1.05·10^−4; §5.1) | `SigmaParams` (`ALPHA`, `EPSILON_BITS`) | `JointRejection::new` |
+| width k | one for every Gaussian coordinate, derived (below): 58,642,511,897 ≈ 2^35.8 (headline table at rank 5, ΣN = 6,597,888) | `SigmaParams::derive(segments)` | exact check (below) |
+| digits D_b, D_pub | 10 for every Gaussian segment; 3 | derived | `⌊L_b²/k²⌋ ≥ 1 + ⌈log₂(2^21 N)⌉` (below), here 76 ≥ 45; `D_pub` covers `κ₁·B` |
+| box L_b | `7(16^{D_b}−1)/15` = 513,105,426,295 ≈ 2^38.9, the positive end of the certified range (A9) | derived | implied by the digit rule: `p_𝓑 ≥ 1 − 2^−21` |
 | shift bound | `κ₁ · B_b` | derived | `JointRejection::accept` |
-| T_att | 163 | prover-only: `JointRejection::max_attempts`, from the sampler's realized M | smallest T with `(1 − (p_𝓑 − ε)/M′)^T ≤ 2^−128`, in 128-bit fixed point with every rounding against acceptance |
-| rejection arithmetic | — | derived | `SigmaParams::new` mirrors `JointRejection::new`'s bounds: boxes and shifts ≤ 2^62, the product of distinct k_b² < 2^126, worst-case exponent numerator < 2^126. A table the prover could not run is rejected by both roles |
+| T_att | 10 | prover-only: `JointRejection::max_attempts`, from the sampler's realized M and `p_𝓑 ≥ 1 − 2^−20` | smallest T with `(1 − (p_𝓑 − ε)/M′)^T ≤ 2^−128`, in 128-bit fixed point with every rounding against acceptance |
+| rejection arithmetic | — | derived | `SigmaParams::new` mirrors `JointRejection::new`'s bounds: boxes and shifts ≤ 2^62, the denominator k² < 2^126 (always, as k ≤ 2^58), worst-case exponent numerator < 2^126. A table the prover could not run is rejected by both roles |
 | ν | 256 | const | — |
 | ℓ | 14 | `RowLabels` | — |
-| A_a, [B_a\|B′_a], A_p ranks | 3 × R_256 each | Akita planner and SIS tables (rule 3), in the setup | Akita (SIS); W4 checks module structure and view lengths |
+| A_a, [B_a\|B′_a], A_p ranks | 5 × R_256 each (§5.1; 3 before) | Akita planner and SIS tables (rule 3), in the setup | Akita (SIS); W4 checks module structure and view lengths |
 | A_D | 1 × R_64, binding on radix-16 digits | Akita planner | Akita; view length |
-| randomness | r_a 97 and r_p 105 R_256 columns, radix 16 | layouts | `required_randomness_columns` |
+| randomness | r_a 161 and r_p 169 R_256 columns, radix 16 (§1.5) | layouts | `required_randomness_columns` |
 | pad radices | 16 (32 digits), operands 256 (16 digits) | `LatticePadCommitment` consts | `GadgetDigits` checks |
 
-**Width derivation** (A10). Widths are derived in jolt-zk with integer
+**Width derivation** (A10). The width is derived in jolt-zk with integer
 arithmetic, not tabulated. Prover and verifier must agree bit for bit, because
 D_b fixes the e layout. The numbers above come from the code's headline
-table, in which every segment holds whole R_256 elements, so ΣN = 6,221,056.
-The cost script counts unaligned cells (ΣN = 6,220,582), so its widths
-differ slightly. It also stretches each width to its digit envelope, and
-those widths fail the whole-element table at Σ = 1.003.
+table (`tests/whiteout_params.rs`), in which every segment holds whole R_256
+elements, so ΣN = 6,597,888 at rank 5. The test takes the rank from one
+constant and the randomness lengths from `required_randomness_columns`.
 
-1. **Closed form.** Take the continuous optimum of §6.2,
-   `ω_b = N_b/ΣN` over Gaussian cells. The width is
-   `σ_b = αΓγ_b·√(ΣN/N_b)`, and so
-   `k_b = ⌈αΓ·√(2 ln 2 · γ_b² · ΣN / N_b)⌉ + 1`.
-   - ln 2 is a fixed-point upper bound with 2^−64 error.
-   - The final +1 leaves relative slack of about 10^−7, far above the
-     ceiling errors.
-2. **Exact check.** `Σ_b 2·LN2_HI·Γ²γ_b²α²/k_b² ≤ 1` is evaluated in
-   fixed point with ceilings. This is `‖cs‖_σ ≤ 1/α` for every c and every s
-   that passes check 1 of §2.1. `SigmaParams::new` runs it on whatever widths
-   it is given, so the derivation is checked too.
+1. **Closed form.** One width for every Gaussian coordinate (§5.1, "One
+   width"): `σ = αΓ·√(Σ_b γ_b²)`, and so
+   `k = ⌈√(2 ln 2 · Γ²α² · Σ_b γ_b²)⌉ + 1`.
+   - ln 2 is a fixed-point upper bound with 2^−64 error, and the constant
+     `2 ln 2·Γ²α²` is rounded up at 2^−32.
+   - The final +1 leaves relative slack far above the ceiling errors.
+2. **Exact check.** `⌈2^32·2 ln 2·Γ²α²⌉ · Σ_b γ_b² ≤ 2^32 k²`, in integers.
+   This is `‖cs‖_σ ≤ 1/α` for every c and every s that passes check 1 of
+   §2.1. `SigmaParams::new` runs it on whatever width it is given, so the
+   derivation is checked too.
 3. **Digits.** `D_b` is the smallest D with
-   `⌊L(D)²/k_b²⌋ ≥ 1 + ⌈log₂(2000·N_tot)⌉`. Then each coefficient leaves the
-   box with probability at most `2^{1−L²/k²} ≤ 1/(2000 N)`, so p_𝓑 ≥ 1 −
-   1/2000 needs no separate check. With `k ≤ 2^31`, nine digits always
-   suffice.
+   `⌊L(D)²/k²⌋ ≥ 1 + ⌈log₂(2·2^20·N_tot)⌉`. Then each coefficient leaves the
+   box with probability at most `2^{1−L²/k²} ≤ 2^−21/N`, so p_𝓑 ≥ 1 − 2^−21
+   needs no separate check. A width that no digit count up to 15 covers is
+   rejected (`WhiteoutError::Overflow`).
 
-**Gap to the script's discrete optimum.**
+On the rank-3 table at α = 16, the per-block closed form of the earlier
+revision gave widths 6,766,161 and 13,532,321 and seven digits everywhere;
+one width gives 6,962,124 and the same digits. At α = 2^17 and rank 5 the
+response part of e grows from 64,191,232 (rank 3, α = 16) to 87,802,368
+cells, public coordinates included.
 
-- The script gives 6 digits to r_a, pads and r_p, and 7 to w, t̂ and the
-  operands. It does this by stretching each width to its digit envelope.
-- The closed form gives 7 everywhere. That adds 111,968 cells to e
-  (65,450,122 → 65,562,090, still below 2^26), so the padded domain and the
-  proof size do not change.
-- Porting the discrete search in exact arithmetic is possible later and
-  would recover those cells. It is not needed now.
+### 5.1 Almost-never rejection (review decision, 2026-10-21)
+
+Review (Q. Dao) asked for a rejection probability that almost never
+rejects, accepting larger parameters for a predictable prover. This
+replaces the planned parallel Gaussian sampler as the answer to the
+prover's time budget (A16).
+
+**What sets the rejection probability.** One attempt is rejected with
+probability `1 − (p_𝓑 − ε')/M ≈ ln M + (1 − p_𝓑)`, where `ln M = t/α +
+1/(2α²)` and `t = √(2 ε_bits ln 2) = 13.78` at `ε = 2^{−137}`. The
+probability does not depend on the witness or the shift. Driving it to r
+needs `α ≈ t/r` and `1 − p_𝓑 ≪ r`. Every width `σ_b` scales with α, so each
+factor of 16 in α costs one radix-16 response digit.
+
+The cost that matters is the digit count D, not α:
+
+- the certified box 𝓑_cert is the D-digit envelope, so the collision radius
+  `4Γ_Δ B_M`, and with it the SIS ranks of A, [B|B′] and A_p, depend only
+  on D;
+- for a fixed D, the largest α whose box still fits the digit rule of §5 is
+  free.
+
+So each regime below is D digits with α near the largest that D allows.
+
+**One width.** With the two distinct widths of the closed form, the
+rejection rule's worst-case exponent numerator `Σ_b (2L_bV_b + V_b²)·len_b·
+Q/k_b²` passes its `2^126` bound at α ≈ 2^9.75, and the denominator
+`Q = Π k_b²` passes it at α ≈ 2^12.4 (computed on the rank-3 headline table
+with the derivation's integer rules). The widths are therefore one common
+width, `k = ⌈√(2 ln 2 · Γ²α² · Σ_b γ_b²)⌉
++ 1` (weights `ω_b = γ_b²/Σγ²`), so `Q = k²`. At the headline this widens
+the dense blocks by 2.9% and narrows the operand block by 49%; every block
+keeps its digit count at α = 16 (checked with `SigmaParams`' derivation
+on the headline table).
+
+**Candidates** (headline T = 2^24, k = 2, variant 1, `mqo+eroot`). Ranks,
+proof bytes and verifier scans come from `whiteout-costs.py` with ranks
+restricted to R_256 (W4 needs one native dimension, A20) and Akita's
+`sis_estimator_once` for the new radii; e counts are the script's envelope
+model; T_att makes all-rejected ≤ 2^−128.
+
+| per-attempt rejection r | D | α (M − 1) | \|z\| ≤ | e cells (2^ν) | ranks A / [B\|B′] / A_p (×R_256) | proof Δ | verifier scans Δ | T_att | E[attempts] | sampler bits ℓ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0.58 (today) | 7 | 16 (1.37) | 2^26.9 | 65.5M (2^26) | 3 / 3 / 3 | +7.28 KB | +0.7% | 163 | 2.37 | 51–53 |
+| 2^−9.7 | 9 | 1.15·10⁴ (1.2·10^−3) | 2^34.9 | 80.9M (2^27) | 4 / 5 / 4 | +9.63 KB | +17.2% | 14 | 1.001 | 70 |
+| **2^−13.2 (default)** | **10** | **2^17 (1.05·10^−4)** | **2^38.9** | **90.1M (2^27)** | **5 / 5 / 5** | **+9.66 KB** | **+23.0%** | **10** | **1.0001** | **77** |
+| 2^−21.2 | 12 | 2^25 (4.1·10^−7) | 2^46.9 | 106.7M (2^27) | 6 / 7 / 6 | +9.94 KB | +39.7% | 7 | 1 + 4·10^−7 | 93 |
+| 2^−40 | 17 | ≈ 2^44 | 2^66.9 | — | — | — | — | 4 | 1 | — |
+
+- **2^−40 is infeasible.** z exceeds i64 and the 15-digit cap of the
+  rejection arithmetic (box ≤ 2^62), and the collision bound (≈ 2^77)
+  is outside Akita's SIS estimator.
+- **The first extra digit is the cliff.** Any D ≥ 8 crosses e = 2^26, so
+  the response proof's domain doubles to 2^27. Above that, proof bytes grow
+  by a few hundred bytes, and verifier work grows with the ranks.
+- **Error budget.** With `Q_tot ≤ 2^64`, the zero-knowledge terms of Thm
+  `wo:thm:zk` are, for today / default / 2^−21.2:
+  - `T_att ε/M`: 2^−130.9 / 2^−133.7 / 2^−134.2;
+  - `(T_att Q_tot + T_att²)/2^256`: 2^−184.7 / 2^−188.7 / 2^−189.2;
+  - total with δ_LHL = 2^−129.2 and the sampler term: 2^−128.8 / 2^−129.1 /
+    2^−129.1;
+  - plus, since the parallel fill (§2.4.1), the computational term
+    `n_ch · Adv^PRG_ChaCha20(t)` with `n_ch ≤ 405·T_att`: about `t·2^−244`
+    at the default, at most 2^−144 for `t ≤ 2^100`.
+
+  ε stays at 2^−137: a smaller T_att would allow a larger ε, but that moves
+  α by under 1%.
+- **Prover time.** The attempt is dominated by the serial Gaussian `fill`,
+  whose cost per sample is about `200 + 6.0·ℓ` ns on one thread, with
+  ℓ = ⌈log₂ 27k²⌉ the length of its constant-time exponential product
+  (`whiteout-gaussian.md`). Expected Σ time per proof at the headline on an
+  idle machine (6.08M samples, plus about 0.1 s of other work per attempt):
+  today 2.37 × 3.1 ≈ 7.4 s; 2^−9.7: 1.001 × (6.08M × 0.62 µs) ≈ 3.9 s;
+  default: 4.1 s; 2^−21.2: 1 × (6.08M × 0.76 µs) ≈ 4.7 s. Measured before
+  and after in A16: 1.8× faster. All are 3–6× over the paper's 1.15 s on
+  one thread; the parallel fill (§2.4.1) brings the default to about
+  0.8 s per proof at 16 threads (A16).
+
+**Default: D = 10, α = 2^17, box failure ≤ 2^−20.** Per-attempt rejection
+is at most 2^−13.2, so a proof takes a second attempt about once in 9,400
+proofs, and T_att = 10. Reasons:
+
+- It meets "one attempt almost always" at the smallest verifier cost that
+  does so. D = 9 retries once in 830 proofs for 6 points less verifier work.
+  D = 12 retries once in 2.4M proofs, but costs 17 more points of verifier
+  scans and a longer exponential product in the sampler.
+- Two constants set the regime, `ALPHA` and `BOX_FAILURE_INVERSE`, both in
+  `params.rs`. Moving to D = 12 is `ALPHA = 1 << 25` and
+  `BOX_FAILURE_INVERSE = 1 << 28`, plus the setup's ranks; the rejection
+  arithmetic, the sampler, the Ajtai map and the digit layout already admit
+  it.
+
+**Rejection stays exact.** Smudging needs `y` wider than `cs` by about
+2^λ (statistical distance `‖cs‖/σ`), i.e. about 2^128 instead of 2^17 in
+α. That is 28 more digits and is infeasible; exact rejection stays.
+
+**Constant time stays; the orchestration does not change shape.** The rule
+of §2.8 binds every step computed before an attempt's accept bit. A rejected
+attempt still occurs with probability 2^−13.2 per attempt, and its
+(y, c, z) are correlated with the witness through the rejection event.
+Within the accepted attempt, `y = z − c·s` with z and c public, so a timing
+leak of y is a leak of s. Therefore:
+
+- DIT (A11), the isochronous sampler, the constant-time challenge sampler,
+  the constant-time `accept`, and `apply_centered`'s constant-time lift all
+  stay;
+- the attempt nonce and fork stay: H2 needs a fresh secret nonce for every
+  attempt that may be rejected, and T_att > 1;
+- the loop stays, bounded by T_att = 10 instead of 163. A single attempt
+  with whole-proof rerun on rejection would leave a completeness error of
+  2^−13 per proof, and it would move the loop into W6 rather than remove it.
+
+What does change is predictability: the attempt count is 1 except with
+probability 2^−13.2, so prover time is one attempt's time.
+
+#### Paper deltas
+
+Each item gives the paper's statement, ours, and why, for the authors to
+fold in.
+
+| Item | Paper | Here | Why |
+|---|---|---|---|
+| α, M | α = 16, M ≈ 2.37 (`02_preliminaries.tex:272`, `06_evaluation.tex:96`) | α = 2^17, M = 1 + 1.05·10^−4 | Almost-never rejection (review). α = 2^17 is the largest power of two whose box fits ten digits. |
+| Widths | per-block `σ_b = αΓγ_bω_b^{−1/2}`, optimized ω_b (`02_preliminaries.tex:273`, `06_evaluation.tex:97-100`) | one width `σ = αΓ√(Σγ_b²)`, i.e. `ω_b = γ_b²/Σγ²` | Keeps the exact rejection arithmetic's denominator `k²` below 2^126 at large α. It satisfies the same hypothesis `‖cs‖_σ ≤ 1/α`; no block changes digit count at α = 16. |
+| Box | `p_𝓑 ≥ 0.999` (`06_evaluation.tex:97`) | `p_𝓑 ≥ 1 − 2^−20` | The box failure must sit well below the rejection target; it costs no digit. |
+| Response digits, \|z\| | seven radix-16 digits, \|z\| ≈ 2^27 (`06_evaluation.tex:101-102`) | ten digits, \|z\| ≤ 2^38.9 | Width × 2^13. |
+| Per-attempt rejection | 1 − 1/2.37 ≈ 0.58 (implied, `06_evaluation.tex:104`) | ≤ 2^−13.2 | As above. |
+| T_att, E[attempts] | 163 and 2.37 (`06_evaluation.tex:103-104`) | 10 and 1.0001 | `(2^−13.2)^10 ≤ 2^−128`, the same completeness target (Thm `wo:thm:completeness`, `05_security.tex:128-141`). |
+| ZK error | about 2^−128.8 with rejection term 2^−130.9 (`06_evaluation.tex:105-107`) | about 2^−129.1 with rejection term 2^−133.7, plus the computational PRG term `n_ch · Adv^PRG_ChaCha20` (≤ 2^−144 for `t ≤ 2^100`) | Thm `wo:thm:zk` (`05_security.tex:332-339`) unchanged except for the mask coins (row below); only T_att moves. |
+| Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (`06_evaluation.tex:121-133`) | radii up to about 2^48, ranks 5 / 5 / 5 over R_256; randomness r_a 161, r_p 169 R_256 columns (was 97, 105) | The radius follows the ten-digit box. Ranks are the setup's (Akita planner), not W4's. The randomness grows with the image, keeping δ_LHL at 2^−129.2. |
+| e, ν, proof, verifier | e ≈ 65.5M (2^26); +7.28 KB; verifier scans +0.7% (`06_evaluation.tex:170-185`, `eval_table.tex`) | e ≈ 90M (2^27); +9.66 KB; scans +23% | Consequences of the digits and ranks (`whiteout-costs.py` at α = 2^17, R_256 only). |
+| Prover-time model | 2.37 attempts × 10 ns per sample (`06_evaluation.tex:250-253`) | one attempt; per-sample cost grows with ℓ = 77 bits; the mask is sampled in parallel | Measured in A16. The paper's 10 ns is a per-sample cost with no thread count; ours is 655 ns on one thread, divided by the threads. |
+| Mask coins | true randomness, implicitly (Thm `wo:thm:zk` is statistical, `05_security.tex:332-339`) | ChaCha20 streams keyed by 256-bit seeds from the prover's RNG, one per 2^14-coordinate chunk | Parallel sampling with an output independent of the thread count. Adds `n_ch · Adv^PRG_ChaCha20` to the ZK error, so the statement becomes computational in that term only (§2.4.1). |
+| Constant time | outside the model (H2 discussion, `05_security.tex:355-362`) | unchanged: §2.8's rule still applies | Rejected attempts still occur, and the accepted attempt's y reveals s. |
 
 ## 6. Soundness and zero knowledge, mapped to the paper
 
@@ -844,19 +1019,20 @@ those widths fail the whole-element table at Σ = 1.003.
 | Secret uniform 256-bit n_i; oracle input (σ ⊇ τ, t_D, n_i) in its own fork domain; only the accepted attempt is sent | H2: Pr[Bad] ≤ (T_att Q_tot + T_att²)/2^256 |
 | Constant-time attempt body (§2.8) | keeps H2's "answers at rejected inputs are never observed" true against a timing adversary (outside the paper's model) |
 | Fresh y per attempt; M5a rejection | H3: ε/M per attempt |
-| T_att = 163 | `wo:thm:completeness`; the `T_att ε/M` term |
+| T_att = 10 (§5.1) | `wo:thm:completeness`; the `T_att ε/M` term |
 | Per-row checks before ρ; ct(h) assertion | H6 precondition; no ρ-weighted leak (§2.1) |
 | Raw t_p and t_D | Their compressed forms are functions of them (§2.4), so sending them raw removes nothing from H4 or H8: the hybrids already replace the raw images with uniform ones |
-| Sampler precision (M5a) | +2^−149 on 2^−128.8 |
-| ChaCha20 seed expansion (M5a) | adds a PRG assumption; stated in the module docs |
+| Sampler precision (M5a) | +2^−157 on 2^−129.1 (`whiteout-gaussian.md`, update note) |
+| ChaCha20 seed expansion (M5a), now in `fill_parallel` | adds a computational term, `n_ch · Adv^PRG_ChaCha20` with `n_ch ≤ 4,050` (§2.4.1) |
 
 ## 7. Test plan
 
 1. **Completeness at the predicted abort rate.**
    - Honest proofs over `CheckingResponseProver` verify at D = 64 and 256.
-   - Over 300 deterministic proofs each at α = 16 (`ALPHA`) and α = 10, the
+   - Over 300 deterministic proofs each at α = 16 (the paper's) and α = 10, the
      mean attempt count lies within 4σ of the repetition rate M that α and
-     `EPSILON_BITS` predict (M ≈ 2.37 and 3.99).
+     `EPSILON_BITS` predict (M ≈ 2.37 and 3.99). The production α rejects
+     too rarely to measure this way; the headline test pins its T_att = 10.
 2. **Tamper rejection.**
    - Flipping a byte of t_D, of n, of t_p or of u_a is rejected.
    - Reordering ρ is rejected.
@@ -866,7 +1042,7 @@ those widths fail the whole-element table at Σ = 1.003.
      bypassed through a test-only path, the checking prover rejects the
      result.
    - Pairing a rejected attempt's (t_D, n) with a different attempt's z is
-     rejected. A whole rejected attempt, with its own z, is a valid proof
+     rejected (run at α = 16, where rejections occur). A whole rejected attempt, with its own z, is a valid proof
      whenever z ∈ 𝓑_cert, and the test asserts that too.
 3. **Statistics.**
    - Accepted z per block passes KS and χ² tests against π_0(·|𝓑).
@@ -898,7 +1074,7 @@ those widths fail the whole-element table at Σ = 1.003.
    operator-norm rejections and position collisions.
 8. **Parameters.**
    - The derived widths pass the exact check.
-   - Perturbing any k_b down by 1% fails it.
+   - Perturbing k down by 1% fails it.
    - The headline shape reproduces the values of §5.
 
 ## 8. Implementation slices
@@ -1049,6 +1225,65 @@ Moved out of W4:
   10 ns Gaussian sample. Closing the gap needs a parallel fill (independent
   per-block RNG streams forked from the attempt's randomness) in M5a's
   sampler; the Σ-protocol's own work is about 0.08 s per attempt.
+
+  **After almost-never rejection (§5.1), 2026-10-21.** `sigma_timing` at
+  scale 5,920 (6,076,160 Gaussian coefficients, the rank-3 headline's
+  count; rank 5 has 6,597,888, 8.6% more), 16
+  threads, release, 10 proofs per run, before and after binaries
+  interleaved twice. The machine was shared and heavily loaded (load
+  average 45–140), so absolute times are about twice the idle ones; the
+  ratio is the signal.
+
+  | Build | attempts (mean) | per proof, run 1 / run 2 |
+  |---|---|---|
+  | before (α = 16, two widths) | 2.20 | 16.2 s / 13.0 s |
+  | after (α = 2^17, one width) | 1.00 | 7.1 s / 8.7 s |
+
+  - **Ratio.** About 1.8× faster per proof, as predicted: 2.37 attempts
+    become 1, and the per-sample cost rises by 655/502 = 1.30 (ℓ = 51 → 77,
+    `whiteout-gaussian.md`).
+  - **Idle-machine estimate.** One attempt is `fill` at 6.08M × 655 ns ≈
+    4.0 s on one thread, plus about 0.1 s of Σ work (`N·y` and `L·y` now
+    take two limb passes). Before: 2.37 × (3.05 + 0.08) ≈ 7.4 s.
+  - **Sampler share.** About 97% of the attempt, as before.
+  - **Budget.** The paper charges 1.15 s. Almost-never rejection removes
+    the 2.37× factor but not the per-sample cost, so the parallel fill is
+    still needed. Splitting `fill` into fixed-size chunks, each with a
+    32-byte seed drawn from the prover's RNG and expanded by ChaCha20, is
+    data-independent: chunk boundaries and seeds' use depend only on public
+    lengths, so it stays constant time. At 16 threads that is about
+    4.0/16 ≈ 0.25–0.3 s. A shorter exponential product (fewer than ℓ = 77
+    192-bit multiplications per trial) needs either a Rényi-divergence
+    argument for 64-bit arithmetic (M5a Q1, about 5×) or a different exact
+    sampler; vectorizing 192-bit products on NEON gains little. The fixed
+    part of a trial (CDT scan, ChaCha draws) is about 200 ns per sample, so
+    even ℓ → 0 leaves 30× the paper's 10 ns on one thread: threads are the
+    lever.
+
+  **Parallel fill (§2.4.1), 2026-10-21.** Same scale, release, serial-fill
+  and parallel-fill binaries interleaved twice; load average 33–64.
+
+  | Threads | serial fill, per proof | parallel fill, per proof |
+  |---|---|---|
+  | 16 | 5.44 s / 4.78 s | 0.81 s / 0.83 s |
+  | 1 | 6.68 s / 8.75 s | 5.22 s / 6.88 s |
+
+  `fill` alone on the 6,076,160 coefficients, at the production width,
+  inside `with_dit`, best of three: 4.07 s on one thread (670 ns per
+  sample) both serially and through `fill_parallel` (no overhead), and
+  0.36 s on 16 threads (60 ns per sample in wall time, 11.2× on a loaded
+  machine).
+
+  - **Per attempt** (every proof took one): about 0.82 s at 16 threads, of
+    which `fill` is 0.36 s (44%); the rest (`N·y` and `L·y` in two limb
+    passes, the lifts, `t_D`, the self-checks before ρ and the witness of
+    the accepted attempt) is about 0.45 s. At one thread, `fill` is about
+    4.1 s of 5–7 s.
+  - **Against the budget.** 0.82 s per proof at 16 threads against the
+    paper's 1.15 s for the sampling and `N·y` share, on a loaded machine.
+    Sampling is no longer the dominant cost.
+  - The one-thread rows differ only by noise (the fill alone is 4.07 s
+    either way).
 
 **Found in implementation (W4 slices 5–9):**
 
