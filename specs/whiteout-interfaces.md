@@ -325,9 +325,11 @@ pub struct CommittedPadsView<C> { /* commitment, cursor */ }
 
 The back end creates `CommittedPads` (§5); the prover sends the commitment
 before any challenge. The prover masks through `CommittedPads::send` (and the
-masking `SumcheckRecorder` built on it) rather than a `PrivateChannel`, whose
-methods are generic over the message field; the verifier's masked
-`PrivateChannel` is built from `CommittedPadsView`. The layout is derived by
+masking `SumcheckRecorder` built on it); for protocols written over both
+roles' channels, `CommittedPads::channel` gives the prover's masked
+`PrivateChannel` over the same masking, with a release check that the message
+field is the pad field. The verifier's masked `PrivateChannel` is built from
+`CommittedPadsView`. The layout is derived by
 replaying the masked verifier over the seeded prefix with a counting view
 (`CommittedPadsView::counting`). `CommittedPads::send` returns the masked
 values it sent, so m̂ = m + p has one owner. At the end the cursor must equal
