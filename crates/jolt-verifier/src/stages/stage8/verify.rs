@@ -44,11 +44,11 @@ use jolt_openings::{
 };
 #[cfg(not(feature = "akita"))]
 use jolt_poly::Point;
-#[cfg(not(feature = "akita"))]
-use jolt_transcript::LabelWithCount;
 #[cfg(feature = "akita")]
 use jolt_transcript::Encoding;
 use jolt_transcript::FieldTranscript;
+#[cfg(not(feature = "akita"))]
+use jolt_transcript::LabelWithCount;
 
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
@@ -265,7 +265,10 @@ where
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
-    transcript.append(&EvaluationClaim::new(pcs_opening_point.clone(), joint_claim));
+    transcript.append(&EvaluationClaim::new(
+        pcs_opening_point.clone(),
+        joint_claim,
+    ));
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
         opening_claims,

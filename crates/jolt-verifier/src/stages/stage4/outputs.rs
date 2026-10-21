@@ -290,7 +290,7 @@ mod tests {
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the inline draw order: one `challenge_scalar` per
+    /// Pins the batch's `draw_challenges` to the inline draw order: one `challenge()` per
     /// leading member — the registers gamma, under `field-inline` the field-register
     /// read-write gamma (the spec's draw slot: after the registers gamma, before the RAM
     /// value-check draw) — then the RAM value-check draw (its domain separator + gamma; that

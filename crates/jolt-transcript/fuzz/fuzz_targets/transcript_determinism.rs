@@ -1,16 +1,16 @@
 #![no_main]
 
-//! Determinism and absorption oracles over the digest transcripts.
+//! Determinism and absorption oracles over the transcript sponges.
 //!
-//! The old `transcript_no_panic` target asserted nothing on a surface with no
-//! panic conditions. Instead, twin instances driven by the same fuzzer-chosen
-//! op sequence must agree on every challenge and on the final `state()`, and
-//! replaying the sequence with one absorbed byte flipped must reach a
-//! different final state — a matching state would mean absorbed bytes are
+//! Twin instances driven by the same fuzzer-chosen op sequence must agree on
+//! every squeeze and on the final state, observed as the next 32 squeezed
+//! bytes, and replaying the sequence with one absorbed byte flipped must reach
+//! a different final state — a matching state would mean absorbed bytes are
 //! ignored or collide.
 
-use jolt_transcript::{Blake2bTranscript, KeccakTranscript, PoseidonTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, Keccak, PoseidonSponge, Transcript};
 use libfuzzer_sys::fuzz_target;
+use spongefish::DuplexSpongeInit;
 
 const MAX_OPS: usize = 32;
 
@@ -41,8 +41,11 @@ fn parse_ops(data: &[u8]) -> Vec<Op<'_>> {
 
 /// Replays `ops`, optionally XOR-ing `mask` into the absorbed byte at global
 /// offset `position`. Returns the challenge stream and the final state.
-fn run<T: Transcript>(ops: &[Op<'_>], flip: Option<(usize, u8)>) -> (Vec<T::Challenge>, [u8; 32]) {
-    let mut transcript = T::new(b"fuzz-determinism");
+fn run<H: DuplexSpongeInit<U = u8>>(
+    ops: &[Op<'_>],
+    flip: Option<(usize, u8)>,
+) -> (Vec<[u8; 16]>, [u8; 32]) {
+    let mut transcript = prover_transcript::<H>(b"fuzz-determinism", b"");
     let mut challenges = Vec::new();
     let mut absorbed = 0usize;
     for op in ops {
@@ -60,25 +63,27 @@ fn run<T: Transcript>(ops: &[Op<'_>], flip: Option<(usize, u8)>) -> (Vec<T::Chal
                 }
                 absorbed += chunk.len();
             }
-            Op::Challenge => challenges.push(transcript.challenge()),
+            Op::Challenge => challenges.push(transcript.verifier_messages::<u8, 16>()),
         }
     }
-    (challenges, transcript.state())
+    (challenges, transcript.verifier_messages::<u8, 32>())
 }
 
-fn check<T: Transcript>(ops: &[Op<'_>], total_absorbed: usize, position: usize, mask: u8)
-where
-    T::Challenge: PartialEq,
-{
-    let (challenges_a, state_a) = run::<T>(ops, None);
-    let (challenges_b, state_b) = run::<T>(ops, None);
+fn check<H: DuplexSpongeInit<U = u8>>(
+    ops: &[Op<'_>],
+    total_absorbed: usize,
+    position: usize,
+    mask: u8,
+) {
+    let (challenges_a, state_a) = run::<H>(ops, None);
+    let (challenges_b, state_b) = run::<H>(ops, None);
     assert!(
         challenges_a == challenges_b && state_a == state_b,
         "transcript replay is nondeterministic"
     );
 
     if total_absorbed > 0 && mask != 0 {
-        let (_, state_flipped) = run::<T>(ops, Some((position % total_absorbed, mask)));
+        let (_, state_flipped) = run::<H>(ops, Some((position % total_absorbed, mask)));
         assert_ne!(
             state_a, state_flipped,
             "flipping an absorbed byte did not change the transcript state"
@@ -101,7 +106,7 @@ fuzz_target!(|data: &[u8]| {
         })
         .sum();
 
-    check::<Blake2bTranscript>(&ops, total_absorbed, position, mask);
-    check::<KeccakTranscript>(&ops, total_absorbed, position, mask);
-    check::<PoseidonTranscript>(&ops, total_absorbed, position, mask);
+    check::<Blake2b512>(&ops, total_absorbed, position, mask);
+    check::<Keccak>(&ops, total_absorbed, position, mask);
+    check::<PoseidonSponge>(&ops, total_absorbed, position, mask);
 });

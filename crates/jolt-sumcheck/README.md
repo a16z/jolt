@@ -17,10 +17,10 @@ pool. Its default feature set is empty.
 
 Polynomial storage, compression, round generation, and the shared prover and
 verifier engines require `jolt_field::Field`. The stock clear recorder and
-proof-verification conveniences additionally require
-`jolt_transcript::AppendToTranscript`, because they absorb field elements.
-Implement `jolt_transcript::Transcript` to choose challenge generation; stock
-hash transcripts retain their `CanonicalEncoding` requirement. Jolt's own
+proof-verification conveniences additionally require spongefish's
+`Encoding`, because they absorb field elements. Challenges come from
+`jolt_transcript::FieldTranscript`, which spongefish's prover and verifier
+states implement through the field's `ChallengeCodec`. Jolt's own
 optimized kernels and commitment-backed modes may require the broader
 `JoltField` bundle at their integration boundary.
 

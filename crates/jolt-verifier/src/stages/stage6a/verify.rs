@@ -76,7 +76,7 @@ where
 
     // The generated per-member draw: the bytecode member's six squeezes (the
     // fold gamma plus the five per-stage folding gammas, each formerly an
-    // inline `challenge_scalar_powers(..)` whose single squeeze's degree-1
+    // inline `challenge_powers(..)` whose single squeeze's degree-1
     // power equals the squeezed scalar; byte- and value-equal, test-locked in
     // `bytecode_read_raf.rs` — stage 6b's folds expand the power vectors via
     // `stage_gamma_powers`, test-locked below), then the booleanity member's
@@ -269,10 +269,7 @@ mod tests {
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        assert_eq!(
-            draw_events,
-            (1..=8u64).map(squeeze).collect::<Vec<_>>()
-        );
+        assert_eq!(draw_events, (1..=8u64).map(squeeze).collect::<Vec<_>>());
         assert_eq!(
             vec![
                 challenges.bytecode_read_raf.gamma,
@@ -310,10 +307,7 @@ mod tests {
 
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
-        assert_eq!(
-            draw_events,
-            (1..=7u64).map(squeeze).collect::<Vec<_>>()
-        );
+        assert_eq!(draw_events, (1..=7u64).map(squeeze).collect::<Vec<_>>());
         let reversed: Vec<Fr> = address.iter().rev().copied().collect();
         assert_eq!(challenges.booleanity.reference_address, reversed[1..]);
         assert_eq!(sumchecks.booleanity.reference_cycle(), vec![fr(21)]);
@@ -347,6 +341,7 @@ mod tests {
     /// (the prover draws each stage's power vector inline; the verifier stores
     /// the scalar and expands at the stage-6b folds).
     #[test]
+    #[expect(clippy::unwrap_used)]
     fn stage_gamma_powers_matches_challenge_powers() {
         use jolt_claims::protocols::jolt::geometry::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
         use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;

@@ -594,7 +594,6 @@ fn append_opening_claims<F, T>(
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use jolt_transcript::Transcript;
     #[cfg(not(feature = "akita"))]
     use super::super::booleanity::BooleanityOutputClaims;
     #[cfg(not(feature = "akita"))]
@@ -611,6 +610,7 @@ mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::recorder;
     use jolt_field::{Fr, Ring};
+    use jolt_transcript::Transcript;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

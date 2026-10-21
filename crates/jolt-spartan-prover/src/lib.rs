@@ -32,7 +32,7 @@ pub fn prove<PCS: CommitmentScheme>(
     public_inputs: &[PCS::Field],
     witness: &[PCS::Field],
     pcs_setup: &PCS::ProverSetup,
-    transcript: &mut impl FieldTranscript<PCS::Field>,
+    transcript: &mut (impl FieldTranscript<PCS::Field> + ProverTranscript),
 ) -> Result<SpartanProof<PCS::Field, PCS::Output, PCS::Proof>, SpartanError<PCS::Field>>
 where
     PCS::Field: Encoding,

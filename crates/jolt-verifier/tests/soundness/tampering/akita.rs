@@ -31,7 +31,7 @@ use jolt_claims::protocols::jolt::lattice::relations::{
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::{JoltField, Ring};
-use jolt_prover::akita::preprocessing::{AkitaVc};
+use jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_transcript::{Keccak, VerifierState};
 use jolt_verifier::preprocessing::{CommittedProgramPreprocessing, ProgramPreprocessing};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};

@@ -26,7 +26,7 @@ pub use tracer::JoltDevice;
 pub type VerifierField = jolt_field::Fr;
 pub type VerifierPCS = jolt_dory::DoryScheme;
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
-pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
+pub type VerifierTranscript<'a> = jolt_transcript::VerifierState<'a, jolt_transcript::Keccak>;
 
 pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
 pub type ProverPreprocessing = DoryProverPreprocessing;
@@ -64,7 +64,7 @@ pub fn verify(
     proof: Proof,
     io_device: &JoltDevice,
 ) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript>(
+    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript<'_>>(
         verifier_pp,
         io_device,
         &proof,
@@ -95,7 +95,7 @@ pub fn verify_with_claims(
     io_device.outputs = claimed_outputs.to_vec();
     io_device.panic = claimed_panic;
 
-    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript>(
+    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript<'_>>(
         verifier_pp,
         &io_device,
         &proof,

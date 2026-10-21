@@ -120,9 +120,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
     /// so the generated aggregate draw lands the vector exactly where the legacy
     /// stage front drew it — after both batch gammas.
     ///
-    /// MUST stay `challenge()` (not `challenge_scalar()`): both decode the same
-    /// 16-byte squeeze, but differently, so switching would silently change the
-    /// address point values without changing the transcript bytes.
+    /// Each coordinate is its own one-challenge codec message; one
+    /// `challenge_vector` message would squeeze different bytes.
     fn draw_challenges<T: FieldTranscript<F>>(
         &self,
         transcript: &mut T,
