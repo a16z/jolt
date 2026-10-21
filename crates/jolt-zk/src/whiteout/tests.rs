@@ -27,7 +27,7 @@ use super::labels::RowLabels;
 use super::lift::constant_ring;
 use super::params::{ALPHA, EPSILON_BITS};
 use super::placement::{PadPlace, PadPlacement, OPERAND_LEVELS, PAD_LEVELS};
-use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
+use super::response::{ResponseProver, ResponseRows, ResponseStatement, ResponseWitness};
 use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
 use super::sigma::{take_rejected, SelfChecks};
 use super::test_support::{
@@ -682,7 +682,7 @@ impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
 
         let shape = statement.row_shape();
         let mut random = |len: usize| (0..len).map(|_| F::random(&mut rng)).collect::<Vec<F>>();
-        let weights = super::ResponseRows {
+        let weights = ResponseRows {
             v_image: random(shape.v_image),
             linear: random(shape.linear),
             ct_h: random(1)[0],
