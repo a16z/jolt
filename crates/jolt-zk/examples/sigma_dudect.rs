@@ -7,8 +7,8 @@
 //! ```
 //!
 //! Each test is a Welch t-test on raw timings, fixed class vs random class,
-//! interleaved at random, every input of a chunk generated before the chunk
-//! is timed. As in dudect, the statistic is also computed on measurements
+//! interleaved at random, every input of a chunk written into preallocated
+//! slots before the chunk is timed. As in dudect, the statistic is also computed on measurements
 //! cropped at ten percentiles (taken from a first batch); a test passes if
 //! every `|t| < 4.5`. Fixed classes are extremes: all zero, all `+B`, all
 //! `−B` for masks (`B = 2^20`); zero and `−1` for `V`; zero, all `+2` and
@@ -32,7 +32,6 @@
     reason = "a diagnostic tool on fixed, valid shapes"
 )]
 
-use std::cell::RefCell;
 use std::hint::black_box;
 use std::ops::Range;
 use std::process::ExitCode;
@@ -140,26 +139,29 @@ fn report(name: &str, test: &Cropped, failures: &mut usize) {
     );
 }
 
-/// Times `run` on a fixed input vs fresh inputs. Both classes are built by
-/// the same code path, so they reach memory the same way; a clone of one
-/// fixed input would not (a large `memcpy` leaves it out of cache).
+/// Times `run` on a fixed input vs fresh inputs. The inputs live in
+/// `CHUNK` slots allocated once, so both classes are read from the same
+/// addresses; `fill` rewrites a slot in place for its class (`true` for
+/// fixed), drawing the same randomness for both. Fresh allocations per input
+/// gave both classes different memory placement, and crop-only false
+/// positives of up to |t| = 15 for two inputs with identical value
+/// distributions (A11).
 fn fixed_vs_random<T>(
     measurements: usize,
     rng: &mut ChaCha20Rng,
-    mut fixed: impl FnMut() -> T,
-    mut fresh: impl FnMut(&mut ChaCha20Rng) -> T,
+    slot: impl Fn() -> T,
+    mut fill: impl FnMut(&mut T, bool, &mut ChaCha20Rng),
     mut run: impl FnMut(&T),
 ) -> Cropped {
     let mut test = Cropped::default();
     let mut first = Vec::new();
+    let mut slots: Vec<(usize, T)> = (0..CHUNK).map(|_| (0, slot())).collect();
     for chunk in 0..measurements.div_ceil(CHUNK) {
-        let inputs: Vec<(usize, T)> = (0..CHUNK)
-            .map(|_| {
-                let class = (rng.next_u32() & 1) as usize;
-                (class, if class == 0 { fixed() } else { fresh(rng) })
-            })
-            .collect();
-        for (class, input) in &inputs {
+        for (class, input) in &mut slots {
+            *class = (rng.next_u32() & 1) as usize;
+            fill(input, *class == 0, rng);
+        }
+        for (class, input) in &slots {
             let start = Instant::now();
             run(black_box(input));
             let elapsed = start.elapsed().as_nanos() as f64;
@@ -175,21 +177,19 @@ fn fixed_vs_random<T>(
     test
 }
 
-/// A mask: Gaussian ranges filled, public coordinates zero.
-///
-/// Every class must reach memory the same way: the buffer starts nonzero
-/// so no store of 0 is elided onto the shared zero page, and callers pass
-/// a fixed value through `black_box` so it is stored element by element,
-/// like a random one, not by a bulk fill that may bypass the cache.
-fn mask(harness_len: usize, ranges: &[Range<usize>], value: impl Fn() -> i64) -> Vec<i64> {
-    let mut y = vec![1i64; harness_len];
-    y.fill(0);
+/// Writes a mask into `y`: the Gaussian ranges get `fixed` if given, else
+/// uniform values in `[−B, B]`; public coordinates stay zero. A random value
+/// is drawn either way and the fixed one selected without a branch, so both
+/// classes leave the same state behind.
+fn fill_mask(y: &mut [i64], ranges: &[Range<usize>], fixed: Option<i64>, rng: &mut ChaCha20Rng) {
+    let keep_random = -i64::from(fixed.is_none());
+    let fixed = fixed.unwrap_or(0);
     for range in ranges {
         for slot in &mut y[range.clone()] {
-            *slot = value();
+            let random = (rng.next_u64() % (2 * MASK_BOUND as u64 + 1)) as i64 - MASK_BOUND;
+            *slot = (random & black_box(keep_random)) | (fixed & !black_box(keep_random));
         }
     }
-    y
 }
 
 fn run_dimension<const D: usize>(
@@ -206,17 +206,12 @@ fn run_dimension<const D: usize>(
     let bound = MASK_BOUND as u32;
     harness
         .steps(|steps| {
-            let random = |rng: &mut ChaCha20Rng| {
-                let cell = RefCell::new(rng.clone());
-                let y = mask(len, &ranges, || {
-                    (cell.borrow_mut().next_u64() % (2 * MASK_BOUND as u64 + 1)) as i64 - MASK_BOUND
-                });
-                *rng = cell.into_inner();
-                y
-            };
             for (label, value) in [("0", 0), ("+B", MASK_BOUND), ("−B", -MASK_BOUND)] {
-                let fixed = || mask(len, &ranges, || black_box(value));
-                let test = fixed_vs_random(measurements, &mut rng, fixed, random, |y| {
+                let slot = || vec![0i64; len];
+                let fill = |y: &mut Vec<i64>, fixed: bool, rng: &mut ChaCha20Rng| {
+                    fill_mask(y, &ranges, fixed.then_some(value), rng);
+                };
+                let test = fixed_vs_random(measurements, &mut rng, slot, fill, |y| {
                     let _ = black_box(steps.linear_parts(y));
                 });
                 report(
@@ -224,23 +219,28 @@ fn run_dimension<const D: usize>(
                     &test,
                     failures,
                 );
-                let test = fixed_vs_random(measurements, &mut rng, fixed, random, |y| {
+                let test = fixed_vs_random(measurements, &mut rng, slot, fill, |y| {
                     let _ = black_box(steps.ajtai(y, bound));
                 });
                 report(&format!("N·y with gadget, fixed {label}"), &test, failures);
-                let test = fixed_vs_random(measurements, &mut rng, fixed, random, |y| {
+                let test = fixed_vs_random(measurements, &mut rng, slot, fill, |y| {
                     let _ = black_box(steps.l_row(y, bound));
                 });
                 report(&format!("L·y, fixed {label}"), &test, failures);
             }
+            let new_mask = |fixed: Option<i64>, rng: &mut ChaCha20Rng| {
+                let mut y = vec![0i64; len];
+                fill_mask(&mut y, &ranges, fixed, rng);
+                y
+            };
             // Q_μ(0, y) and the polar form, on precomputed parts.
             let parts: Vec<_> = (0..64)
-                .map(|_| steps.linear_parts(&random(&mut rng)))
+                .map(|_| steps.linear_parts(&new_mask(None, &mut rng)))
                 .collect::<Result<_, _>>()?;
             // As many separate copies of the fixed class, so both classes
             // cycle through the same amount of memory.
             let fixed_parts: Vec<_> = (0..64)
-                .map(|_| steps.linear_parts(&mask(len, &ranges, || black_box(MASK_BOUND))))
+                .map(|_| steps.linear_parts(&new_mask(Some(MASK_BOUND), &mut rng)))
                 .collect::<Result<_, _>>()?;
             let mut test = Cropped::default();
             let mut first = Vec::new();
@@ -266,30 +266,39 @@ fn run_dimension<const D: usize>(
             report("Q_μ(0,y) and polar form, fixed +B", &test, failures);
 
             let v_rings = harness.v_rings();
-            let random_v = |rng: &mut ChaCha20Rng| -> Vec<CyclotomicRing<F, RING>> {
-                (0..v_rings).map(|_| CyclotomicRing::random(rng)).collect()
-            };
+            let zero_v = || vec![CyclotomicRing::<F, RING>::zero(); v_rings];
             for (label, value) in [("0", F::from_u64(0)), ("−1", -F::from_u64(1))] {
-                let fixed = || -> Vec<CyclotomicRing<F, RING>> {
-                    (0..v_rings)
-                        .map(|_| CyclotomicRing::from_coefficients([value; RING]))
-                        .collect()
+                let fill = |v: &mut Vec<CyclotomicRing<F, RING>>,
+                            fixed: bool,
+                            rng: &mut ChaCha20Rng| {
+                    for ring in v.iter_mut() {
+                        let random = CyclotomicRing::random(rng);
+                        *ring = if fixed {
+                            CyclotomicRing::from_coefficients([value; RING])
+                        } else {
+                            random
+                        };
+                    }
                 };
-                let test = fixed_vs_random(commit_measurements, &mut rng, fixed, random_v, |v| {
+                let test = fixed_vs_random(commit_measurements, &mut rng, zero_v, fill, |v| {
                     let _ = black_box(steps.commit_v(v));
                 });
                 report(&format!("t_D = A_D G⁻¹(V), fixed {label}"), &test, failures);
             }
 
-            let t_d = steps.commit_v(&random_v(&mut rng))?;
+            let random_v: Vec<_> = (0..v_rings)
+                .map(|_| CyclotomicRing::random(&mut rng))
+                .collect();
+            let t_d = steps.commit_v(&random_v)?;
             let test = fixed_vs_random(
                 measurements,
                 &mut rng,
                 || [0u8; 32],
-                |rng| {
-                    let mut nonce = [0u8; 32];
-                    rng.fill_bytes(&mut nonce);
-                    nonce
+                |nonce, fixed, rng| {
+                    rng.fill_bytes(nonce);
+                    if fixed {
+                        *nonce = [0; 32];
+                    }
                 },
                 |nonce| {
                     let _ = black_box(steps.seed(nonce, &t_d));
@@ -297,7 +306,7 @@ fn run_dimension<const D: usize>(
             );
             report("attempt fork seed, fixed zero nonce", &test, failures);
 
-            let y = random(&mut rng);
+            let y = new_mask(None, &mut rng);
             let gaussian: usize = ranges.iter().map(|range| range.len()).sum();
             let (mut z, mut v) = (vec![0i64; gaussian], vec![0i64; gaussian]);
             let random_c = |rng: &mut ChaCha20Rng| -> DenseChallenge {
@@ -307,8 +316,11 @@ fn run_dimension<const D: usize>(
                 let test = fixed_vs_random(
                     measurements,
                     &mut rng,
-                    || [value; 64],
-                    random_c,
+                    || [0; 64],
+                    |c, fixed, rng| {
+                        let random = random_c(rng);
+                        *c = if fixed { [value; 64] } else { random };
+                    },
                     |c| {
                         let _ = black_box(steps.assemble(c, &y, &mut z, &mut v));
                     },
