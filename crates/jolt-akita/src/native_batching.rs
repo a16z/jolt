@@ -55,8 +55,8 @@ const STANDALONE_SESSION: &[u8] = b"jolt-akita/batch";
 /// Such an opening is a standalone argument: Akita's own transcript binds its
 /// setup, schedule selection, points, evaluations and commitment digest. The
 /// session adds what Akita does not see: Jolt's layout digests of the
-/// commitment and of the setup default, the trusted catalog's digest, and one
-/// challenge from the caller's transcript, which binds the opening to the
+/// commitment and of the setup default, the trusted catalog's digest, and two
+/// challenges from the caller's transcript, which bind the opening to the
 /// caller's state. Every part has a fixed length. Jolt's trace batch never
 /// takes this path.
 fn standalone_session<T>(
@@ -75,7 +75,13 @@ where
                 .catalog_digest())
         }
     };
-    let bridge = transcript.challenge()?.to_bytes_le_vec();
+    // Two field elements, so that finding two caller states with one bridge
+    // costs about 2^128 hash calls, not 2^64.
+    let bridge: Vec<u8> = transcript
+        .challenge_vector(2)?
+        .iter()
+        .flat_map(|challenge| challenge.to_bytes_le_vec())
+        .collect();
     Ok([
         STANDALONE_SESSION,
         &commitment.layout_digest,
