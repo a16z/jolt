@@ -162,6 +162,14 @@ where
         .map_err(VerifierError::from)
     }
 
+    /// Proof-of-work loss of what [`draw_challenges`](Self::draw_challenges)
+    /// draws: a bound, fixed by the protocol parameters, on how many values of
+    /// those challenges, in units of one challenge set, let a false claim
+    /// survive every later use of them, derived powers and later phases
+    /// included. `0` when it draws nothing. The stage's nonce covers the sum
+    /// over its members ([`crate::stages::pow`]).
+    fn challenge_loss(&self) -> u64;
+
     /// This relation's cross-relation opening aliases, as `(aliased, canonical
     /// source)` id pairs: each aliased opening is produced by this relation's
     /// output `Expr` but is the same polynomial, at the same (structurally

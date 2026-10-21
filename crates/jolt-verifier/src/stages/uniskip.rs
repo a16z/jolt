@@ -23,6 +23,7 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 
+use crate::num::u64_from_usize;
 use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
@@ -99,6 +100,23 @@ where
         reason = "log_t is an ilog2 result (< 64); log_t + 2 cannot overflow usize"
     )]
     transcript.challenge_vector(log_t + 2)
+}
+
+/// Proof-of-work loss of [`draw_spartan_outer_tau`]. A false outer claim
+/// survives `tau` only at a root of a nonzero polynomial in it: multilinear in
+/// the `log_t + 1` equality coordinates, and of degree `domain_size - 1` in
+/// the last coordinate through the uni-skip Lagrange kernel. The loss is its
+/// total degree.
+pub fn spartan_outer_tau_loss(log_t: usize) -> u64 {
+    u64_from_usize(log_t).saturating_add(u64_from_usize(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE))
+}
+
+/// Proof-of-work loss of [`draw_spartan_product_tau_high`]. The Lagrange
+/// kernel weighs the product lanes' claims by polynomials of degree
+/// `domain_size - 1` in `tau_high`, so a false lane survives only at a root
+/// of one.
+pub fn spartan_product_tau_high_loss() -> u64 {
+    u64_from_usize(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE).saturating_sub(1)
 }
 
 /// The stage-2 product tau_high, drawn before the product uni-skip round.

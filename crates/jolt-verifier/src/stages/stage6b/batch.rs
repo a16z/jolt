@@ -17,7 +17,7 @@ use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::{
     geometry::{
         booleanity::BooleanityDimensions,
-        claim_reductions::bytecode::BytecodeLaneWeightInputs,
+        claim_reductions::bytecode::{BytecodeLaneWeightInputs, NUM_BYTECODE_VAL_STAGES},
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
     },
     JoltRelationId,
@@ -55,8 +55,10 @@ use super::instruction_ra_virtualization::{
 use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
+use crate::num::u64_from_usize;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
+use crate::stages::pow::BATCH_COEFFICIENT_LOSS;
 use crate::stages::stage1::Stage1Output;
 use crate::stages::stage2::{Stage2BatchOutputPoints, Stage2Output};
 use crate::stages::stage3::outputs::Stage3OutputPoints;
@@ -136,6 +138,33 @@ impl<F: JoltField> Stage6bDraws<F> {
             field_registers_inc_gamma: transcript.challenge_scalar(),
             eta: committed_bytecode.then(|| transcript.challenge_scalar()),
         }
+    }
+
+    /// The loss of the burst [`draw`](Self::draw) opens, including the batching
+    /// coefficients that follow it. Each draw folds its member's input claims
+    /// with powers up to one less than the claim count: the instruction RA
+    /// claims, the four base increment claims, the two field-register increment
+    /// claims, and the staged bytecode Val claims.
+    pub fn challenge_loss(
+        formula_dimensions: &JoltFormulaDimensions,
+        committed_bytecode: bool,
+    ) -> u64 {
+        let instruction_ra = u64_from_usize(
+            formula_dimensions
+                .instruction_ra_virtualization
+                .num_virtual_ra_polys()
+                .saturating_sub(1),
+        );
+        let inc = if cfg!(feature = "akita") { 0 } else { 3 };
+        let field_registers_inc = u64::from(cfg!(feature = "field-inline"));
+        let bytecode = if committed_bytecode {
+            u64_from_usize(NUM_BYTECODE_VAL_STAGES.saturating_sub(1))
+        } else {
+            0
+        };
+        [inc, field_registers_inc, bytecode, BATCH_COEFFICIENT_LOSS]
+            .into_iter()
+            .fold(instruction_ra, u64::saturating_add)
     }
 }
 

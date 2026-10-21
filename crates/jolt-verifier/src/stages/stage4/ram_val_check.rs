@@ -168,6 +168,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         &self.symbolic
     }
 
+    /// Its gamma folds the input claims with powers up to 1.
+    fn challenge_loss(&self) -> u64 {
+        1
+    }
+
     fn wire_output_openings(&self) -> std::collections::BTreeSet<JoltOpeningId> {
         // Wire openings beyond the output-`Expr` set (`ram_ra`/`ram_inc`): the
         // present staged `Val_init` contribution openings (advice /

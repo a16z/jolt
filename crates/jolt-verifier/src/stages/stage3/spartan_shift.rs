@@ -73,6 +73,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for SpartanShift<F> {
         &self.symbolic
     }
 
+    /// Its gamma folds the input claims with powers up to 4.
+    fn challenge_loss(&self) -> u64 {
+        4
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],

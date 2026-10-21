@@ -10,10 +10,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::JoltProtocolConfig,
     stages::{
-        stage1::outputs::Stage1OutputClaims, stage2::outputs::Stage2OutputClaims,
-        stage3::outputs::Stage3OutputClaims, stage4::outputs::Stage4OutputClaims,
-        stage5::outputs::Stage5OutputClaims, stage6a::outputs::Stage6aOutputClaims,
-        stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims,
+        pow::StagePowNonces, stage1::outputs::Stage1OutputClaims,
+        stage2::outputs::Stage2OutputClaims, stage3::outputs::Stage3OutputClaims,
+        stage4::outputs::Stage4OutputClaims, stage5::outputs::Stage5OutputClaims,
+        stage6a::outputs::Stage6aOutputClaims, stage6b::outputs::Stage6bOutputClaims,
+        stage7::outputs::Stage7OutputClaims,
     },
     VerifierError,
 };
@@ -314,4 +315,30 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    /// Nonces of the challenge bursts outside the sumcheck rounds. Only the
+    /// Akita build's challenge set needs them; the other builds carry none and
+    /// reject a challenge set that would ([`require_no_pow`]).
+    ///
+    /// [`require_no_pow`]: crate::stages::pow::require_no_pow
+    #[cfg(feature = "akita")]
+    pub pow_nonces: StagePowNonces,
+}
+
+impl<F, VC> JoltStageProofs<F, VC>
+where
+    F: JoltField,
+    VC: VectorCommitment<Field = F>,
+{
+    /// The proof-of-work nonces of the challenge bursts; none on builds whose
+    /// proofs carry no slots for them.
+    pub const fn pow_nonces(&self) -> StagePowNonces {
+        #[cfg(feature = "akita")]
+        {
+            self.pow_nonces
+        }
+        #[cfg(not(feature = "akita"))]
+        {
+            StagePowNonces::new()
+        }
+    }
 }

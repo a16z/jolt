@@ -52,6 +52,7 @@ where
 {
     use crate::stages::zk::{blindfold, inputs::BlindFoldInputs};
 
+    crate::stages::pow::require_no_pow::<T>()?;
     let (checked, mut transcript) = validate_and_seed_transcript::<PCS, VC, T, _>(
         preprocessing,
         public_io,
@@ -1211,6 +1212,8 @@ mod tests {
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
+    #[cfg(feature = "akita")]
+    use crate::stages::pow::StagePowNonces;
     use crate::stages::stage1::outputs::Stage1OutputClaims;
     use crate::stages::stage1::OuterRemainderOutputClaims;
     use crate::stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims};
@@ -1837,6 +1840,8 @@ mod tests {
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
+            #[cfg(feature = "akita")]
+            pow_nonces: StagePowNonces::new(),
         }
     }
 

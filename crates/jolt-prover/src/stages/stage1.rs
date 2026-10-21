@@ -19,13 +19,14 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
+use jolt_verifier::stages::pow::{grind_pow, PowSite};
 use jolt_verifier::stages::stage1::outer_remainder::{
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
 use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
-use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
+use jolt_verifier::stages::uniskip::{draw_spartan_outer_tau, spartan_outer_tau_loss};
 
 use crate::recorder::ProofMode;
 use crate::{ProverError, StageProver as _};
@@ -33,6 +34,10 @@ use crate::{ProverError, StageProver as _};
 /// Stage 1's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage1ProverOutput<F: JoltField, C> {
+    /// Nonce ground before the `tau` draw.
+    pub tau_pow_nonce: Option<u32>,
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u32>,
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage1OutputClaims<F>,
@@ -57,6 +62,11 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
+    let tau_pow_nonce = grind_pow(
+        PowSite::Stage1Tau,
+        spartan_outer_tau_loss(log_t),
+        transcript,
+    )?;
     let tau = draw_spartan_outer_tau(transcript, log_t);
     // Backend-neutral kernel-seam spans at the call boundary, so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's
@@ -82,6 +92,7 @@ where
             uniskip_challenge,
         ),
     };
+    let pow_nonce = grind_pow(PowSite::Stage1, sumchecks.challenge_loss(), transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
     let input_points = sumchecks.empty_input_points();
     let inputs = Stage1BatchInputClaims {
@@ -108,6 +119,8 @@ where
     let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
     Ok(Stage1ProverOutput {
+        tau_pow_nonce,
+        pow_nonce,
         uniskip_proof: proved_uniskip.proof,
         sumcheck_proof,
         claims,

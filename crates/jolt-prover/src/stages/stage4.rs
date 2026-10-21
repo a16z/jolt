@@ -24,6 +24,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
+use jolt_verifier::stages::pow::{grind_pow, PowSite};
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 #[cfg(feature = "field-inline")]
@@ -46,6 +47,8 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
 pub struct Stage4ProverOutput<F: JoltField, C> {
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u32>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage4OutputClaims<F>,
     pub clear_output: Stage4ClearOutput<F>,
@@ -181,6 +184,7 @@ where
     // Draws the registers gamma, under `field-inline` the field-register read-write gamma,
     // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
     // separator (replayed by the relation's `draw_challenges` override).
+    let pow_nonce = grind_pow(PowSite::Stage4, sumchecks.challenge_loss(), transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage4_input_values_from_upstream(
@@ -215,6 +219,7 @@ where
     let sumcheck_proof = proved.recorded.proof.into();
 
     Ok(Stage4ProverOutput {
+        pow_nonce,
         sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage4ClearOutput {

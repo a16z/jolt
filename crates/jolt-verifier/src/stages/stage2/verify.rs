@@ -35,6 +35,7 @@ use super::{
 use crate::{
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         relations::ConcreteSumcheck,
         stage1::{Stage1ClearOutput, Stage1Output},
         uniskip,
@@ -169,6 +170,12 @@ where
     // point (the last member's `draw_challenges` override — one raw `challenge()` per RAM
     // address variable, landing after the gammas as the inline draw did). The drawn challenges
     // feed the input/output claims and populate the stage aggregate carried downstream.
+    check_pow(
+        PowSite::Stage2,
+        sumchecks.challenge_loss(),
+        &proof.stages.pow_nonces(),
+        transcript,
+    )?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let input_points = sumchecks.empty_input_points();
@@ -278,6 +285,12 @@ where
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let tau_low = product_tau_low(&stage1.remainder_point(), log_t)?;
 
+    check_pow(
+        PowSite::Stage2TauHigh,
+        uniskip::spartan_product_tau_high_loss(),
+        &proof.stages.pow_nonces(),
+        transcript,
+    )?;
     let tau_high = uniskip::draw_spartan_product_tau_high(transcript);
     let uniskip_params = uniskip::UniskipParams::spartan_product();
     match stage1 {

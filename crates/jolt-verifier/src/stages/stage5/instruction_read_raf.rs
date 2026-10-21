@@ -114,6 +114,12 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         &self.symbolic
     }
 
+    /// Its gamma folds the input claims with powers up to 2, or up to 3 when
+    /// the canonical instruction address adds its claim.
+    fn challenge_loss(&self) -> u64 {
+        2u64.saturating_add(u64::from(CANONICAL_INSTRUCTION_ADDRESS))
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],

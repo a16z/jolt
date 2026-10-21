@@ -26,6 +26,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
+use jolt_verifier::stages::pow::{grind_pow, PowSite};
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
@@ -48,6 +49,8 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// Stage 6a's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 6b consumes.
 pub struct Stage6aProverOutput<F: JoltField, C> {
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u32>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6aOutputClaims<F>,
     pub clear_output: Stage6aClearOutput<F>,
@@ -111,6 +114,7 @@ where
     // then the booleanity member's override (the reference-address pad draw
     // and the gamma). The 6a verifier only carries the booleanity values; this
     // prover's booleanity kernel consumes them off the challenge aggregate.
+    let pow_nonce = grind_pow(PowSite::Stage6a, sumchecks.challenge_loss(), transcript)?;
     let address_challenges = sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -163,6 +167,7 @@ where
     let sumcheck_proof = proved.recorded.proof.into();
 
     Ok(Stage6aProverOutput {
+        pow_nonce,
         sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage6aClearOutput {

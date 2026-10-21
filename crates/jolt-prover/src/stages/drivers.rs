@@ -306,6 +306,11 @@ mod twin_tests {
                     &self.symbolic
                 }
 
+                /// Test relation: draws no challenge of its own.
+                fn challenge_loss(&self) -> u64 {
+                    0
+                }
+
                 fn derive_opening_points(
                     &self,
                     sumcheck_point: &[F],

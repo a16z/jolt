@@ -1045,10 +1045,29 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // value re-rolls) hand-assembles its challenge aggregate, and a generated
     // per-member draw would squeeze at the wrong transcript position if ever
     // called — so it must not exist to be miscalled.
+    let loss_terms = plans.iter().map(|plan| {
+        let id = &plan.ident;
+        per_member(
+            plan.is_option,
+            &[(&member_ident, quote!(self.#id))],
+            quote!(__loss = __loss.saturating_add(__member.challenge_loss());),
+        )
+    });
     let draw_challenges_method = if options.no_draw_challenges {
         quote!()
     } else {
         quote! {
+            /// Proof-of-work loss of the burst that [`Self::draw_challenges`]
+            /// starts and the batching-coefficient draw of `begin_batch` ends:
+            /// each present member's `challenge_loss`, plus
+            /// `BATCH_COEFFICIENT_LOSS` for the coefficients.
+            pub fn challenge_loss(&self) -> u64 {
+                use #relations::ConcreteSumcheck as _;
+                let mut __loss = #krate::stages::pow::BATCH_COEFFICIENT_LOSS;
+                #(#loss_terms)*
+                __loss
+            }
+
             /// Draw each instance's Fiat-Shamir challenges in declaration order,
             /// assembling the stage's challenge aggregate. Members with no
             /// challenges draw nothing; `Option` members draw only when present.

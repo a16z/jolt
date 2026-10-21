@@ -316,6 +316,12 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
         &self.symbolic
     }
 
+    /// Draws no challenge before the batch: its challenges come from the
+    /// batch-level draw or from an earlier stage.
+    fn challenge_loss(&self) -> u64 {
+        0
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
@@ -749,6 +755,12 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         &self.symbolic
     }
 
+    /// Draws no challenge before the batch: its challenges come from the
+    /// batch-level draw or from an earlier stage.
+    fn challenge_loss(&self) -> u64 {
+        0
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
@@ -959,6 +971,12 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.anchor
+    }
+
+    /// Draws no challenge before the batch: its challenges come from the
+    /// batch-level draw or from an earlier stage.
+    fn challenge_loss(&self) -> u64 {
+        0
     }
 
     fn derive_opening_points(
