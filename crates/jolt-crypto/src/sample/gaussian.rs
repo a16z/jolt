@@ -301,7 +301,7 @@ mod tests {
     #[cfg(feature = "parallel")]
     #[test]
     fn parallel_fill_is_independent_of_the_thread_count() {
-        let sampler = GaussianSampler::new(GaussianWidth::from_multiplier(57_033_704_728).unwrap());
+        let sampler = GaussianSampler::new(GaussianWidth::from_multiplier(58_642_511_897).unwrap());
         let run = |threads: usize| {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn production_widths_match_normal_law() {
         let mut rng = ChaCha20Rng::seed_from_u64(2);
-        for k in [16_080_468u64, 57_033_704_728] {
+        for k in [16_080_468u64, 58_642_511_897] {
             let sampler = GaussianSampler::new(GaussianWidth::from_multiplier(k).unwrap());
             let sigma = sampler.width().sigma();
             let n = 2_000_000usize;
