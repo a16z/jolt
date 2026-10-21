@@ -316,6 +316,24 @@ fn compensated_pairs_are_caught_where_their_operands_are_pinned() {
     );
 }
 
+/// The lift takes only product rows with pairs whose operands are masked
+/// operand pads.
+#[test]
+fn lift_rejects_empty_rows_and_affine_operands() {
+    let instance = Instance::<64>::new(18);
+    let setup = instance.setup();
+    let mut empty = instance.relation.clone();
+    empty.products[0].pairs.clear();
+    let mut affine = instance.relation.clone();
+    affine.products[0].pairs[1].x = ProductOperand::Affine(affine.products[0].pairs[1].x.form());
+    for relation in [empty, affine] {
+        assert!(matches!(
+            setup.lift(&relation, &instance.claims),
+            Err(WhiteoutError::InvalidRelation(_))
+        ));
+    }
+}
+
 /// Each self-check fires on its own case, with the exact row or variant.
 #[test]
 fn each_self_check_fires_on_its_own_case() {
