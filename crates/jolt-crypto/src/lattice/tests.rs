@@ -51,8 +51,8 @@ fn lift<const D: usize>(input: &[i64]) -> Vec<CyclotomicRing<F, D>> {
 }
 
 /// Centered inputs at `bound`, including both extremes.
-fn centered_input(len: usize, bound: u32, rng: &mut ChaCha20Rng) -> Vec<i64> {
-    let bound = i64::from(bound);
+fn centered_input(len: usize, bound: u64, rng: &mut ChaCha20Rng) -> Vec<i64> {
+    let bound = bound as i64;
     (0..len)
         .map(|index| match index % 11 {
             0 => bound,
@@ -82,14 +82,14 @@ fn digest<const D: usize>(rings: &[CyclotomicRing<F, D>]) -> [u8; 32] {
     out
 }
 
-fn check_apply_centered<const D: usize>(bound: u32) -> [u8; 32] {
+fn check_apply_centered<const D: usize>(bound: u64) -> [u8; 32] {
     let shape = MatrixShape {
         rows: 3,
         width: 130,
         ring_dim: D,
     };
     let (data, matrix) = prepared::<D>(shape, 11);
-    let mut rng = ChaCha20Rng::seed_from_u64(D as u64 + u64::from(bound));
+    let mut rng = ChaCha20Rng::seed_from_u64(D as u64 + bound);
     let input = centered_input(shape.width * D, bound, &mut rng);
     let expected = schoolbook(shape, &data, &lift::<D>(&input));
     let actual = matrix.apply_centered(&input, bound).unwrap();
@@ -107,7 +107,7 @@ fn apply_centered_matches_schoolbook_across_chunks() {
             "9c24c5494f15ec6403971f437bb2905d48f163cb9d69e1ff828977a7727ff9a5",
         ),
         (
-            check_apply_centered::<64>(i32::MAX as u32),
+            check_apply_centered::<64>(i32::MAX as u64),
             "3d17b525db1c7b4b5fac09f19b4155999d7c55b6ae1323444ca56b247a12c147",
         ),
         (
@@ -121,6 +121,27 @@ fn apply_centered_matches_schoolbook_across_chunks() {
     ] {
         assert_eq!(hex(digest), expected);
     }
+}
+
+/// Bounds past the `i32` lift take the limb split; schoolbook is the oracle,
+/// at the largest bound and at one needing two limbs.
+#[test]
+fn apply_centered_splits_wide_inputs_into_limbs() {
+    for bound in [(1 << 40) + 3, MAX_CENTERED_BOUND] {
+        let _ = check_apply_centered::<64>(bound);
+        let _ = check_apply_centered::<256>(bound);
+    }
+    let (_, matrix) = prepared::<64>(
+        MatrixShape {
+            rows: 1,
+            width: 1,
+            ring_dim: 64,
+        },
+        15,
+    );
+    assert!(matrix
+        .apply_centered(&[0; 64], MAX_CENTERED_BOUND + 1)
+        .is_err());
 }
 
 #[test]

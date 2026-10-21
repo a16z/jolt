@@ -18,8 +18,9 @@ use super::{GaussianWidth, SampleError};
 const MAX_BOUND: u64 = 1 << 62;
 /// Bound on `|P|` and `Q`, so restoring division never overflows `u128`.
 const MAX_NUMERATOR: u128 = 1 << 126;
-/// Bound on `α` and `ε_bits`, so computing `M` cannot overflow.
-const MAX_REJECTION_PARAMETER: u32 = 1 << 16;
+/// Bounds on `α` and `ε_bits`, so computing `M` cannot overflow.
+const MAX_ALPHA: u32 = 1 << 31;
+const MAX_EPSILON_BITS: u32 = 1 << 16;
 
 /// One block of Gaussian-masked coordinates. Public coordinates of `s` are
 /// never part of a block.
@@ -64,7 +65,7 @@ impl JointRejection {
     /// the rule with some `M' ≥ M`.
     ///
     /// Requires `M ≤ 4`: the evaluation clamps the exponent so that the
-    /// ratio saturates only for `M^{−1} ≥ 1/4` (Whiteout's `M ≈ 2.37`).
+    /// ratio saturates only for `M^{−1} ≥ 1/4`.
     pub fn new(
         blocks: Vec<BlockParams>,
         alpha: u32,
@@ -73,8 +74,7 @@ impl JointRejection {
         if blocks.is_empty() {
             return Err(SampleError::NoBlocks);
         }
-        let in_range = |p: u32| (1..=MAX_REJECTION_PARAMETER).contains(&p);
-        if !(in_range(alpha) && in_range(epsilon_bits)) {
+        if !((1..=MAX_ALPHA).contains(&alpha) && (1..=MAX_EPSILON_BITS).contains(&epsilon_bits)) {
             return Err(SampleError::BadRejectionParameters);
         }
         let inverse_m = inverse_repetition_rate(alpha, epsilon_bits);
@@ -586,8 +586,8 @@ mod tests {
             (0, EPSILON_BITS),
             (ALPHA, 0),
             (8, EPSILON_BITS),
-            (MAX_REJECTION_PARAMETER + 1, EPSILON_BITS),
-            (ALPHA, MAX_REJECTION_PARAMETER + 1),
+            (MAX_ALPHA + 1, EPSILON_BITS),
+            (ALPHA, MAX_EPSILON_BITS + 1),
         ] {
             assert_eq!(
                 JointRejection::new(small_blocks(), alpha, epsilon_bits).err(),
@@ -599,16 +599,22 @@ mod tests {
     }
 
     /// `T_att` against the completeness bound in `f64` with the exact `M`:
-    /// 163 at the paper's parameters (§6.2), and the same rule at the
-    /// near-bound `α`.
+    /// 163 at the paper's parameters (§6.2), 10 at Whiteout's almost-never
+    /// rejection (`α = 2^{17}`, box failure `2^{−20}`), and the same rule at
+    /// the near-bound `α`.
     #[test]
     fn max_attempts_meets_the_completeness_bound() {
-        for (alpha, expected) in [(ALPHA, 163), (ALPHA_NEAR_BOUND, 0)] {
+        for (alpha, box_failure_inverse, expected) in [
+            (ALPHA, 1000, 163),
+            (1 << 17, 1 << 20, 10),
+            (ALPHA_NEAR_BOUND, 1000, 0),
+        ] {
             let rule = JointRejection::new(small_blocks(), alpha, EPSILON_BITS).unwrap();
-            let attempts = rule.max_attempts(1000, 128).unwrap();
+            let attempts = rule.max_attempts(box_failure_inverse, 128).unwrap();
             let t = (2.0 * f64::from(EPSILON_BITS) * LN_2).sqrt();
             let m = (t / f64::from(alpha) + 0.5 / f64::from(alpha).powi(2)).exp();
-            let failure = 1.0 - (0.999 - (-f64::from(EPSILON_BITS)).exp2()) / m;
+            let p_box = 1.0 - 1.0 / box_failure_inverse as f64;
+            let failure = 1.0 - (p_box - (-f64::from(EPSILON_BITS)).exp2()) / m;
             let bits = |n: usize| -(n as f64) * failure.log2();
             assert!(
                 bits(attempts) >= 128.0 && bits(attempts - 1) < 128.0,

@@ -436,9 +436,11 @@ mod prover {
         parts_s: LinearParts<F>,
         l_s: ChallengeRing<F>,
         h: ChallengeRing<F>,
-        /// `(coefficient range, native dimension, sampler)` per Gaussian block.
-        samplers: Vec<(Range<usize>, usize, GaussianSampler)>,
-        tail_bound: u32,
+        /// `(coefficient range, native dimension)` per Gaussian block.
+        blocks: Vec<(Range<usize>, usize)>,
+        /// The one sampler: every Gaussian coordinate has the same width.
+        sampler: GaussianSampler,
+        tail_bound: u64,
         sigma: [u8; FORK_SEED_LEN],
         /// The mask, zero on public coordinates.
         y: Vec<i64>,
@@ -535,7 +537,7 @@ mod prover {
         // Before any challenge: every row and ct(g), N·s = t, the alphabets.
         let digit_bound = table
             .segments()
-            .map(|segment| segment.digit_bound() as u32)
+            .map(|segment| segment.digit_bound())
             .max()
             .unwrap_or(0);
         if checks == SelfChecks::Run {
@@ -561,7 +563,7 @@ mod prover {
         // ct(h) = Σ μ_row · row(s) + ct(g), so the per-row check above
         // already guarantees ct(h) = 0.
         let h = aggregated.quadratic(&constant_ring(F::one()), &parts_s);
-        let samplers = setup
+        let blocks = setup
             .params()
             .blocks()
             .iter()
@@ -570,19 +572,12 @@ mod prover {
                     .placed()
                     .get(block.segment)
                     .ok_or(WhiteoutError::InvalidRelation("block segment missing"))?;
-                Ok((
-                    placed.coefficients(),
-                    placed.segment.native_dim,
-                    GaussianSampler::new(GaussianWidth::from_multiplier(block.width)?),
-                ))
+                Ok((placed.coefficients(), placed.segment.native_dim))
             })
             .collect::<Result<Vec<_>, WhiteoutError>>()?;
-        let tail_bound = samplers
-            .iter()
-            .map(|(_, _, sampler)| sampler.width().tail_bound())
-            .max()
-            .unwrap_or(0);
-        let gaussian_len = samplers.iter().map(|(range, _, _)| range.len()).sum();
+        let width =
+            GaussianWidth::from_multiplier(setup.params().width()).map_err(WhiteoutError::from)?;
+        let gaussian_len = blocks.iter().map(|(range, _)| range.len()).sum();
         let mut prover = Prover {
             setup,
             l_s: setup.l_row().apply(s, digit_bound)?,
@@ -591,9 +586,9 @@ mod prover {
             s,
             parts_s,
             h,
-            samplers,
-            tail_bound: u32::try_from(tail_bound)
-                .map_err(|_| WhiteoutError::InvariantViolation("tail bound exceeds u32"))?,
+            blocks,
+            sampler: GaussianSampler::new(width),
+            tail_bound: width.tail_bound(),
             sigma: transcript.challenge_bytes(),
             y: vec![0i64; table.num_coefficients()],
             z_gaussian: vec![0i64; gaussian_len],
@@ -639,8 +634,8 @@ mod prover {
             rejection: &JointRejection,
             rng: &mut R,
         ) -> Result<Option<Accepted<F>>, WhiteoutError> {
-            for (range, _, sampler) in &self.samplers {
-                sampler.fill(
+            for (range, _) in &self.blocks {
+                self.sampler.fill(
                     rng,
                     self.y
                         .get_mut(range.clone())
@@ -673,7 +668,7 @@ mod prover {
             let c = challenge.to_dense_ct()?;
 
             let mut offset = 0;
-            for (range, native_dim, _) in &self.samplers {
+            for (range, native_dim) in &self.blocks {
                 let (z, v_shift) = (
                     self.z_gaussian
                         .get_mut(offset..offset + range.len())

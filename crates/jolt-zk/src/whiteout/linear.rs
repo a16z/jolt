@@ -94,7 +94,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
     ///
     /// Constant time in `x`: the Ajtai map is, and the gadget lift is
     /// branch-free.
-    pub fn apply(&self, x: &[i64], bound: u32) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
+    pub fn apply(&self, x: &[i64], bound: u64) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
         let mut out = Vec::with_capacity(self.num_outputs());
         for block in &self.blocks {
             let input = x
@@ -145,7 +145,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> LRow<F, D> {
     pub fn apply(
         &self,
         x: &[i64],
-        bound: u32,
+        bound: u64,
     ) -> Result<CyclotomicRing<F, CHALLENGE_RING_DIM>, WhiteoutError> {
         let input = x
             .get(self.input.clone())

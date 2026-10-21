@@ -184,7 +184,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         let t_d = self
             .setup
             .v_matrix()
-            .apply_centered(&v_digits, max.unsigned_abs().max(min.unsigned_abs()) as u32)?;
+            .apply_centered(&v_digits, max.unsigned_abs().max(min.unsigned_abs()) as u64)?;
         if t_d != self.v_image {
             return Err(WhiteoutError::ResponseRejected("V commitment"));
         }

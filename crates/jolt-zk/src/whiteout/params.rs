@@ -1,16 +1,18 @@
 //! Σ-protocol parameters (Whiteout §6.2), derived from the segment table.
 //!
-//! Both roles derive the Gaussian widths, response digit counts and boxes from
+//! Both roles derive the Gaussian width, response digit counts and boxes from
 //! the public segment table in integer arithmetic, so they agree on the
 //! response vector's layout. The attempt cap `T_att` is the prover's alone and
 //! comes from the sampling layer's realized repetition rate.
 //!
-//! The widths follow the continuous optimum of §6.2, `ω_b = N_b / ΣN` over
-//! Gaussian coefficients, so `σ_b = αΓγ_b·√(ΣN/N_b)` with `γ_b²` the
-//! segment's honest `ℓ₂²` bound. The derivation never trusts its own output:
-//! [`SigmaParams::new`] checks `Σ_b ‖c s_b‖²/σ_b² ≤ α⁻²` exactly, with
-//! `σ_b² = k_b²/(2 ln 2)` and `ln 2` replaced by an upper bound, for whatever
-//! widths it receives.
+//! Rejection almost never happens (`specs/whiteout-sigma.md` §5.1): `α` is
+//! large enough that one attempt is rejected with probability at most about
+//! `2^{−13.2}`. Every Gaussian coordinate has one width
+//! `σ = αΓ·√(Σ_b γ_b²)`, with `γ_b²` segment `b`'s honest `ℓ₂²` bound, so the
+//! rejection rule's denominator is the single `k²`. The derivation never
+//! trusts its own output: [`SigmaParams::new`] checks
+//! `Σ_b ‖c s_b‖²/σ² ≤ α⁻²` exactly, with `σ² = k²/(2 ln 2)` and `ln 2`
+//! replaced by an upper bound, for whatever width it receives.
 
 use jolt_crypto::challenge::{
     OperatorNormRejection, D64_SELECTIVE_L2_CHALLENGE_CONFIG, MIN_FOLD_CHALLENGE_ENTROPY_BITS,
@@ -22,14 +24,16 @@ use jolt_crypto::sample::{BlockParams, GaussianWidth, JointRejection};
 use super::segments::{balanced_range, SegmentMask, SegmentTable};
 use super::WhiteoutError;
 
-/// Rejection parameter α of §6.2.
-pub const ALPHA: u32 = 16;
+/// Rejection parameter α: the largest power of two whose box fits ten
+/// response digits at the headline, so `M − 1 ≈ 1.05·10^{−4}`.
+pub const ALPHA: u32 = 1 << 17;
 /// `ε = 2^{−137}` per attempt (§6.2).
 pub const EPSILON_BITS: u32 = 137;
 /// Response digits are balanced radix 16.
 pub const RESPONSE_LOG_BASIS: u32 = 4;
-/// The acceptance box keeps `p_𝓑 ≥ 1 − 1/1000`.
-const BOX_FAILURE_INVERSE: u64 = 1000;
+/// The acceptance box keeps `p_𝓑 ≥ 1 − 2^{−20}`, far below the rejection
+/// rate set by `M`.
+const BOX_FAILURE_INVERSE: u64 = 1 << 20;
 /// All `T_att` attempts are rejected with probability at most `2^{−128}`.
 #[cfg(feature = "whiteout-prover")]
 const ALL_REJECTED_BITS: u32 = 128;
@@ -37,8 +41,10 @@ const ALL_REJECTED_BITS: u32 = 128;
 const LN2_CEIL_2_64: u128 = 12_786_308_645_202_655_660;
 /// Largest digit count whose box stays below the rejection rule's `2^62`.
 const MAX_RESPONSE_DIGITS: usize = 15;
-/// The sampler's largest width multiplier.
-const MAX_WIDTH: u64 = 1 << 31;
+/// The sampler's largest width multiplier, mirrored so that the verifier,
+/// which does not build the sampler, rejects a width the prover could not
+/// sample.
+const MAX_WIDTH: u64 = 1 << 58;
 /// Bounds of `JointRejection::new`'s exact arithmetic, mirrored so that both
 /// roles reject a table the prover could not run.
 const MAX_REJECTION_BOUND: u128 = 1 << 62;
@@ -49,8 +55,6 @@ const MAX_REJECTION_NUMERATOR: u128 = 1 << 126;
 pub struct GaussianBlock {
     /// Index into the segment table.
     pub segment: usize,
-    /// Width multiplier `k_b`: `σ_b = k_b / √(2 ln 2)`.
-    pub width: u64,
     /// Radix-16 digits of each response coefficient.
     pub digits: usize,
     /// Acceptance box `|z| ≤ box_bound`, the positive end of the digits'
@@ -66,15 +70,18 @@ pub struct GaussianBlock {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SigmaParams {
     alpha: u32,
+    /// Width multiplier `k` of every Gaussian coordinate:
+    /// `σ = k / √(2 ln 2)`.
+    width: u64,
     blocks: Vec<GaussianBlock>,
     /// Radix-16 response digits per segment, Gaussian or public.
     response_digits: Vec<usize>,
     /// A hard bound on every response coefficient with these digits.
-    response_bound: u32,
+    response_bound: u64,
 }
 
 impl SigmaParams {
-    /// Derives the widths in closed form and validates them with [`Self::new`].
+    /// Derives the width in closed form and validates it with [`Self::new`].
     pub fn derive(table: &SegmentTable) -> Result<Self, WhiteoutError> {
         Self::derive_with_alpha(table, ALPHA)
     }
@@ -84,88 +91,58 @@ impl SigmaParams {
         table: &SegmentTable,
         alpha: u32,
     ) -> Result<Self, WhiteoutError> {
-        let (gamma, _) = challenge_norms();
-        let gaussian: Vec<_> = table
-            .segments()
-            .filter(|segment| segment.mask == SegmentMask::Gaussian)
-            .collect();
-        let total = gaussian
-            .iter()
-            .map(|segment| segment.num_coefficients() as u128)
-            .sum::<u128>();
-        // `C = ⌈2 ln 2 · Γ² α² · 2^32⌉`, so `k_b² ≥ C γ_b² ΣN / (N_b 2^32)`.
-        let scale = (2 * LN2_CEIL_2_64 * u128::from(gamma).pow(2) * u128::from(alpha).pow(2))
+        // `k² ≥ 2 ln 2 · Γ² α² · Σ_b γ_b²`, the bound `new` checks.
+        let required = width_scale(alpha)?
+            .checked_mul(gaussian_l2_sq(table)?)
+            .ok_or(WhiteoutError::Overflow)?
             .div_ceil(1 << 32);
-        let widths = gaussian
-            .iter()
-            .map(|segment| {
-                let required = scale
-                    .checked_mul(segment.honest_l2_sq())
-                    .and_then(|value| value.checked_mul(total))
-                    .ok_or(WhiteoutError::Overflow)?
-                    .div_ceil((segment.num_coefficients() as u128) << 32);
-                // The `+ 1` leaves slack far above the check's rounding.
-                u64::try_from(ceil_sqrt(required) + 1).map_err(|_| WhiteoutError::Overflow)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Self::new_with_alpha(table, &widths, alpha)
+        // The `+ 1` leaves slack far above the check's rounding.
+        let width = u64::try_from(ceil_sqrt(required) + 1).map_err(|_| WhiteoutError::Overflow)?;
+        Self::new_with_alpha(table, width, alpha)
     }
 
-    /// Validates `widths`, one per Gaussian segment in table order, and
-    /// derives the digits, boxes and shift bounds.
+    /// Validates the common `width` multiplier and derives the digits, boxes
+    /// and shift bounds.
     ///
-    /// Rejects an invalid challenge family; widths for which some `s` of the
+    /// Rejects an invalid challenge family; a width for which some `s` of the
     /// table's shapes has `‖c s‖_σ > 1/α` for a challenge `c` (Thm
     /// `wo:thm:joint-rejection`); and parameters outside the rejection rule's
     /// exact arithmetic.
     ///
     /// Each block's digit count `D_b` is the fewest with
-    /// `⌊L_b²/k_b²⌋ ≥ 1 + ⌈log₂(2000 N)⌉`, `N` the Gaussian coefficient count.
-    /// Then `2·exp(−L_b²/(2σ_b²)) = 2^{1−L_b²/k_b²} ≤ 1/(2000 N)` per
-    /// coefficient, so `p_𝓑 ≥ 1 − 1/2000` (§2.5's box bound) holds without a
-    /// separate check.
-    pub fn new(table: &SegmentTable, widths: &[u64]) -> Result<Self, WhiteoutError> {
-        Self::new_with_alpha(table, widths, ALPHA)
+    /// `⌊L_b²/k²⌋ ≥ 1 + ⌈log₂(2 · 2^{20} · N)⌉`, `N` the Gaussian coefficient
+    /// count. Then `2·exp(−L_b²/(2σ²)) = 2^{1−L_b²/k²} ≤ 2^{−21}/N` per
+    /// coefficient, so `p_𝓑 ≥ 1 − 2^{−21}` holds without a separate check.
+    pub fn new(table: &SegmentTable, width: u64) -> Result<Self, WhiteoutError> {
+        Self::new_with_alpha(table, width, ALPHA)
     }
 
-    fn new_with_alpha(
-        table: &SegmentTable,
-        widths: &[u64],
-        alpha: u32,
-    ) -> Result<Self, WhiteoutError> {
+    fn new_with_alpha(table: &SegmentTable, width: u64, alpha: u32) -> Result<Self, WhiteoutError> {
         OperatorNormRejection::D64_SELECTIVE_L2
             .validate(CHALLENGE_RING_DIM, &D64_SELECTIVE_L2_CHALLENGE_CONFIG)
             .map_err(WhiteoutError::ChallengeFamily)?;
         D64_SELECTIVE_L2_CHALLENGE_CONFIG
             .validate_min_entropy_for_ring_dim(CHALLENGE_RING_DIM, MIN_FOLD_CHALLENGE_ENTROPY_BITS)
             .map_err(WhiteoutError::ChallengeFamily)?;
-        let (gamma, kappa) = challenge_norms();
+        let (_, kappa) = challenge_norms();
         let gaussian = table
             .segments()
             .filter(|segment| segment.mask == SegmentMask::Gaussian)
             .collect::<Vec<_>>();
-        if gaussian.is_empty() || gaussian.len() != widths.len() {
-            return Err(WhiteoutError::WidthCount {
-                expected: gaussian.len(),
-                actual: widths.len(),
-            });
+        if gaussian.is_empty() {
+            return Err(WhiteoutError::NoGaussianSegment);
         }
-        if let Some(&width) = widths.iter().find(|&&k| !(1..=MAX_WIDTH).contains(&k)) {
+        if !(1..=MAX_WIDTH).contains(&width) {
             return Err(WhiteoutError::WidthOutOfRange { width });
         }
 
-        // Σ_b 2 ln2 Γ² α² γ_b² / k_b² ≤ 1, each term rounded up at 2^{−64}.
-        let numerator = 2 * LN2_CEIL_2_64 * u128::from(gamma).pow(2) * u128::from(alpha).pow(2);
-        let mut sum = 0u128;
-        for (segment, &k) in gaussian.iter().zip(widths) {
-            let term = numerator
-                .checked_mul(segment.honest_l2_sq())
-                .ok_or(WhiteoutError::Overflow)?
-                .div_ceil(u128::from(k).pow(2));
-            sum = sum.checked_add(term).ok_or(WhiteoutError::Overflow)?;
-        }
-        if sum > 1 << 64 {
-            return Err(WhiteoutError::WidthsTooNarrow);
+        // 2 ln2 Γ² α² Σ_b γ_b² / k² ≤ 1, the constant rounded up at 2^{−32}.
+        let k_sq = u128::from(width).pow(2);
+        let lhs = width_scale(alpha)?
+            .checked_mul(gaussian_l2_sq(table)?)
+            .ok_or(WhiteoutError::Overflow)?;
+        if lhs.div_ceil(1 << 32) > k_sq {
+            return Err(WhiteoutError::WidthTooNarrow);
         }
 
         let total = gaussian
@@ -175,25 +152,18 @@ impl SigmaParams {
         let required_exponent = 1 + ceil_log2(2 * u128::from(BOX_FAILURE_INVERSE) * total);
         let mut blocks = Vec::with_capacity(gaussian.len());
         let mut response_digits = Vec::with_capacity(table.segments().len());
-        let mut widths = widths.iter();
         for (index, segment) in table.segments().enumerate() {
             let shift_bound = u64::from(kappa) * segment.digit_bound();
-            let Some(&width) = (segment.mask == SegmentMask::Gaussian)
-                .then(|| widths.next())
-                .flatten()
-            else {
+            if segment.mask != SegmentMask::Gaussian {
                 response_digits.push(digits_covering(u128::from(shift_bound))?);
                 continue;
-            };
-            let k_sq = u128::from(width).pow(2);
-            // Always found: `k ≤ 2^31` needs at most nine digits.
+            }
             let digits = (1..=MAX_RESPONSE_DIGITS)
                 .find(|&digits| box_end(digits).pow(2) / k_sq >= required_exponent)
                 .ok_or(WhiteoutError::Overflow)?;
             response_digits.push(digits);
             blocks.push(GaussianBlock {
                 segment: index,
-                width,
                 digits,
                 box_bound: u64::try_from(box_end(digits)).map_err(|_| WhiteoutError::Overflow)?,
                 shift_bound,
@@ -201,22 +171,27 @@ impl SigmaParams {
             });
         }
         check_rejection_arithmetic(&blocks)?;
-        // Every response coefficient goes through the Ajtai map's i32 lift.
+        // At most fifteen digits: below the Ajtai map's 2^62 input bound.
         let response_bound = response_digits
             .iter()
             .map(|&digits| {
                 balanced_range(RESPONSE_LOG_BASIS, digits).map(|(min, _)| min.unsigned_abs())
             })
             .try_fold(0u128, |bound, end| Some(bound.max(end?)))
-            .and_then(|bound| u32::try_from(bound).ok())
-            .filter(|&bound| bound <= i32::MAX as u32)
-            .ok_or(WhiteoutError::ResponseBoundTooLarge)?;
+            .and_then(|bound| u64::try_from(bound).ok())
+            .ok_or(WhiteoutError::Overflow)?;
         Ok(Self {
             alpha,
+            width,
             blocks,
             response_digits,
             response_bound,
         })
+    }
+
+    /// The common width multiplier `k`: `σ = k / √(2 ln 2)`.
+    pub fn width(&self) -> u64 {
+        self.width
     }
 
     pub fn blocks(&self) -> &[GaussianBlock] {
@@ -228,32 +203,31 @@ impl SigmaParams {
         &self.response_digits
     }
 
-    /// A hard bound on every response coefficient, below `2^31`.
-    pub(crate) fn response_bound(&self) -> u32 {
+    /// A hard bound on every response coefficient, below `2^60`.
+    pub(crate) fn response_bound(&self) -> u64 {
         self.response_bound
     }
 
     /// The joint rejection rule over the Gaussian blocks, in block order.
     #[cfg(feature = "whiteout-prover")]
     pub fn rejection(&self) -> Result<JointRejection, WhiteoutError> {
+        let width = GaussianWidth::from_multiplier(self.width)?;
         let blocks = self
             .blocks
             .iter()
-            .map(|block| {
-                Ok(BlockParams {
-                    width: GaussianWidth::from_multiplier(block.width)?,
-                    box_bound: block.box_bound,
-                    shift_bound: block.shift_bound,
-                    len: block.len,
-                })
+            .map(|block| BlockParams {
+                width,
+                box_bound: block.box_bound,
+                shift_bound: block.shift_bound,
+                len: block.len,
             })
-            .collect::<Result<Vec<_>, WhiteoutError>>()?;
+            .collect();
         Ok(JointRejection::new(blocks, self.alpha, EPSILON_BITS)?)
     }
 
     /// `T_att`, the prover's attempt cap: all attempts are rejected with
     /// probability at most `2^{−128}` (Thm `wo:thm:completeness`), computed
-    /// from the rejection rule's realized `M` and `p_𝓑 ≥ 0.999`.
+    /// from the rejection rule's realized `M` and `p_𝓑 ≥ 1 − 2^{−20}`.
     #[cfg(feature = "whiteout-prover")]
     pub fn max_attempts(&self) -> Result<usize, WhiteoutError> {
         Ok(self
@@ -262,22 +236,32 @@ impl SigmaParams {
     }
 }
 
-/// Mirrors the parameter bounds of `JointRejection::new`: every box and shift
-/// bound at most `2^62`, the product `Q` of the distinct `k_b²` below
-/// `2^126`, and the worst-case exponent numerator
-/// `Σ_b (2 L_b V_b + V_b²) · len_b · Q/k_b²` below `2^126`.
+/// `⌈2^{32} · 2 ln 2 · Γ² α²⌉`, with `ln 2` rounded up: the width condition
+/// is `⌈width_scale · Σ_b γ_b² / 2^{32}⌉ ≤ k²`.
+fn width_scale(alpha: u32) -> Result<u128, WhiteoutError> {
+    let (gamma, _) = challenge_norms();
+    (2 * LN2_CEIL_2_64 * u128::from(gamma).pow(2))
+        .checked_mul(u128::from(alpha).pow(2))
+        .map(|scale| scale.div_ceil(1 << 32))
+        .ok_or(WhiteoutError::Overflow)
+}
+
+/// `Σ_b γ_b²` over the Gaussian segments.
+fn gaussian_l2_sq(table: &SegmentTable) -> Result<u128, WhiteoutError> {
+    table
+        .segments()
+        .filter(|segment| segment.mask == SegmentMask::Gaussian)
+        .try_fold(0u128, |sum, segment| {
+            sum.checked_add(segment.honest_l2_sq())
+        })
+        .ok_or(WhiteoutError::Overflow)
+}
+
+/// Mirrors the parameter bounds of `JointRejection::new` for one common
+/// width (denominator `k² < 2^{117}`): every box and shift bound at most
+/// `2^62`, and the worst-case exponent numerator
+/// `Σ_b (2 L_b V_b + V_b²) · len_b` below `2^126`.
 fn check_rejection_arithmetic(blocks: &[GaussianBlock]) -> Result<(), WhiteoutError> {
-    let mut distinct = blocks
-        .iter()
-        .map(|block| u128::from(block.width).pow(2))
-        .collect::<Vec<_>>();
-    distinct.sort_unstable();
-    distinct.dedup();
-    let denominator = distinct
-        .iter()
-        .try_fold(1u128, |product, &k_sq| product.checked_mul(k_sq))
-        .filter(|&product| product < MAX_REJECTION_NUMERATOR)
-        .ok_or(WhiteoutError::RejectionArithmetic)?;
     let worst = blocks.iter().try_fold(0u128, |acc, block| {
         let (box_bound, shift) = (u128::from(block.box_bound), u128::from(block.shift_bound));
         if box_bound > MAX_REJECTION_BOUND || shift > MAX_REJECTION_BOUND {
@@ -287,11 +271,7 @@ fn check_rejection_arithmetic(blocks: &[GaussianBlock]) -> Result<(), WhiteoutEr
             .checked_mul(shift)?
             .checked_mul(2)?
             .checked_add(shift.checked_mul(shift)?)?;
-        acc.checked_add(
-            per_coordinate
-                .checked_mul(u128::try_from(block.len).ok()?)?
-                .checked_mul(denominator / u128::from(block.width).pow(2))?,
-        )
+        acc.checked_add(per_coordinate.checked_mul(u128::try_from(block.len).ok()?)?)
     });
     match worst {
         Some(worst) if worst < MAX_REJECTION_NUMERATOR => Ok(()),

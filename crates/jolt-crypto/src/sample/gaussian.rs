@@ -19,12 +19,14 @@ use super::SampleError;
 /// `σ_2 = 1/√(2 ln 2)`, the width of the binary Gaussian `∝ 2^{−x²}`.
 const BINARY_GAUSSIAN_SIGMA: f64 = 0.849_321_800_288_019_1;
 
-const MAX_MULTIPLIER: u64 = 1 << 31;
+/// Keeps the tail cut `14k` within the Ajtai map's `2^62` input bound, and
+/// `27k²` (the exponent of a trial) below `2^128`.
+const MAX_MULTIPLIER: u64 = 1 << 58;
 
 /// Thresholds `j ∈ [0, 12]`; `Pr[X ≥ 14] ≈ 2^{−196.6}` is below resolution.
 const CDT_LEN: u32 = 13;
 
-/// A Gaussian width `σ = k·σ_2` with integer `k ∈ [1, 2^{31}]`.
+/// A Gaussian width `σ = k·σ_2` with integer `k ∈ [1, 2^{58}]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GaussianWidth {
     k: u64,
@@ -323,7 +325,7 @@ mod tests {
     #[test]
     fn production_widths_match_normal_law() {
         let mut rng = ChaCha20Rng::seed_from_u64(2);
-        for k in [16_080_468u64, 1_005_030] {
+        for k in [16_080_468u64, 57_033_704_728] {
             let sampler = GaussianSampler::new(GaussianWidth::from_multiplier(k).unwrap());
             let sigma = sampler.width().sigma();
             let n = 2_000_000usize;

@@ -27,20 +27,16 @@ pub enum WhiteoutError {
     /// The challenge family fails its own validation.
     #[error("invalid challenge family: {0}")]
     ChallengeFamily(&'static str),
-    /// Widths must number one per Gaussian segment, and at least one.
-    #[error("expected {expected} Gaussian widths, got {actual}")]
-    WidthCount { expected: usize, actual: usize },
-    /// A width multiplier outside the sampler's `[1, 2^31]`.
-    #[error("width multiplier {width} outside [1, 2^31]")]
+    /// The segment table has no Gaussian-masked segment.
+    #[error("the segment table has no Gaussian segment")]
+    NoGaussianSegment,
+    /// A width multiplier outside the sampler's `[1, 2^58]`.
+    #[error("width multiplier {width} outside [1, 2^58]")]
     WidthOutOfRange { width: u64 },
-    /// The widths admit `‖cs‖_σ > 1/α` for an honest `s` of the table's
+    /// The width admits `‖cs‖_σ > 1/α` for an honest `s` of the table's
     /// shapes, breaking the joint rejection theorem's hypothesis.
-    #[error("Gaussian widths too narrow for the segments' honest norms")]
-    WidthsTooNarrow,
-    /// A response coefficient could exceed `2^31 − 1`, the Ajtai map's
-    /// exact lift: the table is too large for the derived widths.
-    #[error("response coefficients exceed the Ajtai map's i32 lift")]
-    ResponseBoundTooLarge,
+    #[error("Gaussian width too narrow for the segments' honest norms")]
+    WidthTooNarrow,
     /// The parameters exceed the joint rejection rule's exact arithmetic.
     #[error("parameters exceed the rejection rule's arithmetic bounds")]
     RejectionArithmetic,
