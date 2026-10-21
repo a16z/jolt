@@ -11,8 +11,11 @@
 //! Three sponges are feature-gated: `transcript-keccak` (spongefish `Keccak`,
 //! the default), `transcript-blake2b` (spongefish `Blake2b512`) and
 //! `transcript-poseidon` (a Circom-compatible BN254 [`PoseidonSponge`]).
-//! Field challenges need uniform squeezed bytes ([`UniformBytes`]), which
-//! Poseidon does not give, so a Poseidon transcript cannot draw them.
+//! Keccak and Blake2b absorb messages as bytes and decode field challenges
+//! from uniform squeezed bytes ([`UniformBytes`]). Poseidon works over BN254
+//! `Fr`: it packs each message's bytes into field elements and draws `Fr`
+//! challenges as squeezed elements, with no decoding; it draws challenges in
+//! no other field ([`ChallengeSponge`]).
 
 #![deny(missing_docs)]
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
@@ -44,20 +47,20 @@ mod setup;
 mod transcript;
 mod verifier;
 
-pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
-pub use codec::{BytesMsg, Label, LabelWithCount, U64Word, MAX_LABEL_LEN};
+pub use challenge::{ChallengeCodec, ChallengeSponge, UniformBytes, MAX_CHALLENGE_BYTES};
+pub use codec::{BytesMsg, Label, LabelWithCount, SpongeUnit, U64Word, MAX_LABEL_LEN};
 pub use grind_bits::{
     grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS, SECURITY_BITS,
 };
 #[cfg(feature = "transcript-poseidon")]
-pub use poseidon::PoseidonSponge;
+pub use poseidon::{FrUnit, PoseidonPermutation, PoseidonSponge};
 #[cfg(feature = "prover-grinding")]
 pub use pow::{MessageSearch, Probe};
 pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
-pub use spongefish::{Encoding, ProverState, VerificationError, VerifierState};
+pub use spongefish::{Encoding, ProverState, Unit, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};
 pub use verifier::{VerifierInit, VerifierTranscript};
 

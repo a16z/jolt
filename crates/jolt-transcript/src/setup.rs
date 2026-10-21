@@ -7,6 +7,8 @@
 use spongefish::instantiations::TurboShake128;
 use spongefish::{DuplexSpongeInit, Encoding, ProverState, SessionId, VerifierState};
 
+use crate::codec::{SpongeUnit, Units};
+
 /// Crate-wide protocol identifier (ASCII left, zero-padded to 64 bytes).
 /// [`session_id`] derives the spongefish session identifier from it.
 pub const PROTOCOL_ID: [u8; 64] = pad_id(b"a16z/jolt-transcript/v1");
@@ -31,7 +33,7 @@ const fn pad_id(src: &[u8]) -> [u8; 64] {
 /// The spongefish instance: the session and the statement, each with an
 /// eight-byte little-endian length. Never empty, so spongefish's constructors
 /// accept it, and self-delimiting, so the statement cannot run into the first
-/// message.
+/// message. The sponge absorbs it as one message ([`SpongeUnit`]).
 struct Instance<'a, S: ?Sized> {
     session: &'a [u8],
     statement: &'a S,
@@ -80,9 +82,9 @@ impl<S: Encoding + ?Sized> Encoding for Instance<'_, S> {
 #[must_use]
 pub fn prover_transcript<H>(session: &[u8], statement: &(impl Encoding + ?Sized)) -> ProverState<H>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit<U: SpongeUnit>,
 {
-    ProverState::new(&session_id(), &Instance { session, statement })
+    ProverState::new(&session_id(), &Units(Instance { session, statement }))
 }
 
 /// Build a verifier transcript bound to `session` and `statement` over
@@ -96,9 +98,9 @@ pub fn verifier_transcript<'a, H>(
     narg: &'a [u8],
 ) -> VerifierState<'a, H>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit<U: SpongeUnit>,
 {
-    VerifierState::new(&session_id(), &Instance { session, statement }, narg)
+    VerifierState::new(&session_id(), &Units(Instance { session, statement }), narg)
 }
 
 /// Derive the spongefish session identifier from [`PROTOCOL_ID`] using

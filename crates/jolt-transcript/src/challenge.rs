@@ -29,15 +29,15 @@ use jolt_field::{Fq, Fr};
 use jolt_field::{F128, F192, F64, F8};
 #[cfg(feature = "transcript-keccak")]
 use spongefish::instantiations::Keccak;
-use spongefish::{DuplexSpongeInterface, VerificationError};
+use spongefish::DuplexSpongeInterface;
 
 #[cfg(feature = "transcript-blake2b")]
 use crate::Blake2b512;
-use crate::ChallengeSetSize;
+use crate::{ChallengeSetSize, SpongeUnit};
 
 use sealed::Sealed;
 
-mod sealed {
+pub(crate) mod sealed {
     pub trait Sealed {}
 }
 
@@ -111,9 +111,48 @@ pub trait ChallengeCodec: Sized + Sealed {
 /// security. Field challenges are decoded from raw squeezed bytes, so the
 /// codecs' TV bounds hold only on such a sponge.
 ///
-/// `PoseidonSponge` is not one: each block it squeezes is the little-endian
-/// encoding of a BN254 scalar, whose top bits are far from uniform.
+/// `PoseidonSponge` squeezes field elements, not bytes, and is not one; it
+/// draws `Fr` challenges natively through [`ChallengeSponge`].
 pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
+
+/// A sponge that draws one message of `len` challenges in `F`, with
+/// conventional TV at most 2^-161 for the whole message.
+///
+/// Every [`UniformBytes`] sponge draws every [`ChallengeCodec`] field by
+/// decoding squeezed bytes. `PoseidonSponge` draws only BN254 `Fr`, one
+/// squeezed element per challenge with no decoding; challenges in other
+/// fields have no implementation on it, so asking for them does not compile.
+///
+/// The trait is sealed.
+pub trait ChallengeSponge<F>: DuplexSpongeInterface<U: SpongeUnit> + Sealed {
+    /// `|F|` as this sponge draws it: the number of values one challenge can
+    /// take. Proof-of-work difficulties are priced from it
+    /// ([`grind_bits_for_loss`]).
+    ///
+    /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
+    const CHALLENGE_SET: ChallengeSetSize;
+
+    /// Units squeezed for `len` elements; depends only on the sponge, `F` and
+    /// `len`. `None` when `F` does not support `len` or the message would
+    /// exceed [`MAX_CHALLENGE_BYTES`] bytes of squeezed output.
+    fn challenge_units(len: usize) -> Option<usize>;
+
+    /// Decodes exactly `challenge_units(len)` squeezed units. `None` on a
+    /// wrong length or rejection-pool exhaustion.
+    fn decode_challenges(units: &[Self::U], len: usize) -> Option<Vec<F>>;
+}
+
+impl<H: UniformBytes, F: ChallengeCodec> ChallengeSponge<F> for H {
+    const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
+
+    fn challenge_units(len: usize) -> Option<usize> {
+        F::challenge_bytes(len).filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
+    }
+
+    fn decode_challenges(units: &[u8], len: usize) -> Option<Vec<F>> {
+        F::decode_challenges(units, len)
+    }
+}
 
 #[cfg(feature = "transcript-keccak")]
 impl Sealed for Keccak {}
@@ -124,9 +163,10 @@ impl Sealed for Blake2b512 {}
 #[cfg(feature = "transcript-blake2b")]
 impl UniformBytes for Blake2b512 {}
 
-/// Largest challenge message, in squeezed bytes. Larger requests are rejected
-/// before touching the sponge, so a length taken from the input cannot make
-/// the verifier allocate without bound.
+/// Largest challenge message, in squeezed bytes; a Poseidon element counts as
+/// 32 bytes. Larger requests are rejected before touching the sponge, so a
+/// length taken from the input cannot make the verifier allocate without
+/// bound.
 pub const MAX_CHALLENGE_BYTES: usize = 1 << 24;
 
 #[cfg(any(feature = "solinas", feature = "bn254"))]
@@ -335,17 +375,6 @@ macro_rules! binary_codec {
 
 #[cfg(feature = "binary")]
 binary_codec!(F8, F64, F128, F192);
-
-/// Bytes squeezed for a message of `len` elements of `F`.
-///
-/// # Errors
-/// Returns `VerificationError` when `F` does not support `len` or the message
-/// would exceed [`MAX_CHALLENGE_BYTES`].
-pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, VerificationError> {
-    F::challenge_bytes(len)
-        .filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
-        .ok_or(VerificationError)
-}
 
 #[cfg(all(test, feature = "solinas"))]
 mod tests {

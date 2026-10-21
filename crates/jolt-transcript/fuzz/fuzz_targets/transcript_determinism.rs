@@ -3,12 +3,16 @@
 //! Determinism and absorption oracles over the transcript sponges.
 //!
 //! Twin instances driven by the same fuzzer-chosen op sequence must agree on
-//! every squeeze and on the final state, observed as the next 32 squeezed
-//! bytes, and replaying the sequence with one absorbed byte flipped must reach
-//! a different final state — a matching state would mean absorbed bytes are
-//! ignored or collide.
+//! every squeeze and on the final state, observed as the next four squeezed
+//! units (bytes, or `Fr` elements on Poseidon), and replaying the sequence
+//! with one absorbed byte flipped must reach a different final state — a
+//! matching state would mean absorbed bytes are ignored or collide.
 
-use jolt_transcript::{prover_transcript, Blake2b512, Keccak, PoseidonSponge, Transcript};
+use std::fmt::Debug;
+
+use jolt_transcript::{
+    prover_transcript, Blake2b512, Keccak, PoseidonSponge, SpongeUnit, Transcript,
+};
 use libfuzzer_sys::fuzz_target;
 use spongefish::DuplexSpongeInit;
 
@@ -41,10 +45,10 @@ fn parse_ops(data: &[u8]) -> Vec<Op<'_>> {
 
 /// Replays `ops`, optionally XOR-ing `mask` into the absorbed byte at global
 /// offset `position`. Returns the challenge stream and the final state.
-fn run<H: DuplexSpongeInit<U = u8>>(
+fn run<H: DuplexSpongeInit<U: SpongeUnit>>(
     ops: &[Op<'_>],
     flip: Option<(usize, u8)>,
-) -> (Vec<[u8; 16]>, [u8; 32]) {
+) -> (Vec<Vec<H::U>>, Vec<H::U>) {
     let mut transcript = prover_transcript::<H>(b"fuzz-determinism", b"");
     let mut challenges = Vec::new();
     let mut absorbed = 0usize;
@@ -63,13 +67,13 @@ fn run<H: DuplexSpongeInit<U = u8>>(
                 }
                 absorbed += chunk.len();
             }
-            Op::Challenge => challenges.push(transcript.verifier_messages::<u8, 16>()),
+            Op::Challenge => challenges.push(transcript.verifier_message_as(16, <[H::U]>::to_vec)),
         }
     }
-    (challenges, transcript.verifier_messages::<u8, 32>())
+    (challenges, transcript.verifier_message_as(32, <[H::U]>::to_vec))
 }
 
-fn check<H: DuplexSpongeInit<U = u8>>(
+fn check<H: DuplexSpongeInit<U: SpongeUnit + Debug>>(
     ops: &[Op<'_>],
     total_absorbed: usize,
     position: usize,
