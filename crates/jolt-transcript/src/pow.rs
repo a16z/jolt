@@ -97,10 +97,14 @@ impl<H: DuplexSpongeInterface<U = u8> + Sync> Probe for MessageSearch<H> {
     }
 }
 
-/// Difficulties up to this many bits search on the calling thread: their
-/// expected `2^bits` probes cost less than waking the thread pool.
+/// Nonces the calling thread tries before the search wakes the thread pool.
+/// Waking the pool's workers costs about as much as this many probes
+/// (200-450 us against about 0.3 us per probe, measured on 8 threads), so
+/// scanning this far first keeps a search within about twice the cost of the
+/// better of the two strategies. Grinds of up to 8 bits almost always end
+/// here.
 #[cfg(feature = "parallel")]
-const SEQUENTIAL_POW_BITS: u32 = 6;
+const CALLER_NONCES: u32 = 1024;
 
 /// The layout of one proof-of-work step at a difficulty of `1..=MAX_POW_BITS`.
 #[derive(Clone, Copy)]
@@ -178,35 +182,37 @@ impl SpongePow {
         self.accepts(out)
     }
 
-    /// The least accepted nonce. Builds without `parallel`, and difficulties
-    /// up to [`SEQUENTIAL_POW_BITS`] bits, scan on the calling thread; larger
-    /// ones scan on every thread of the current pool. Either way the result
-    /// is the least accepted nonce, so the proof does not depend on the
-    /// thread count.
+    /// The least accepted nonce. The calling thread scans the first
+    /// [`CALLER_NONCES`] nonces; if none passes, every thread of the current
+    /// pool scans the rest. Builds without `parallel` scan everything on the
+    /// calling thread. Either way the result is the least accepted nonce, so
+    /// the proof does not depend on the thread count.
     pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
+        let last = self.last_nonce();
         // `u64::MAX` is no nonce, so it marks "not found".
         let least = AtomicU64::new(u64::MAX);
         #[cfg(feature = "parallel")]
-        let on_pool = self.bits > SEQUENTIAL_POW_BITS;
-        #[cfg(not(feature = "parallel"))]
-        let on_pool = false;
-        if on_pool {
-            // Each thread scans its own residue class.
-            #[cfg(feature = "parallel")]
-            drop(rayon::broadcast(|ctx| {
-                self.scan(probe, ctx.index(), ctx.num_threads(), &least);
-            }));
-        } else {
-            self.scan(probe, 0, 1, &least);
+        {
+            let caller_last = last.min(CALLER_NONCES - 1);
+            self.scan(probe, 0, 1, caller_last, &least);
+            if least.load(Ordering::Relaxed) == u64::MAX && caller_last < last {
+                // Each thread scans its own residue class of the rest.
+                drop(rayon::broadcast(|ctx| {
+                    let first = u64::from(caller_last) + 1 + ctx.index() as u64;
+                    self.scan(probe, first, ctx.num_threads(), last, &least);
+                }));
+            }
         }
+        #[cfg(not(feature = "parallel"))]
+        self.scan(probe, 0, 1, last, &least);
         u32::try_from(least.into_inner()).ok()
     }
 
-    /// Scans the nonces `first, first + stride, ...` in increasing order and
-    /// lowers `least` to the first one accepted. Stops once it cannot beat
-    /// `least`, which other scans may lower meanwhile.
-    fn scan(self, probe: &impl Probe, first: usize, stride: usize, least: &AtomicU64) {
-        let nonces = (first as u64..=u64::from(self.last_nonce()))
+    /// Scans the nonces `first, first + stride, ...` up to `last` in
+    /// increasing order and lowers `least` to the first one accepted. Stops
+    /// once it cannot beat `least`, which other scans may lower meanwhile.
+    fn scan(self, probe: &impl Probe, first: u64, stride: usize, last: u32, least: &AtomicU64) {
+        let nonces = (first..=u64::from(last))
             .step_by(stride)
             .filter_map(|nonce| u32::try_from(nonce).ok());
         for nonce in nonces {
@@ -393,24 +399,36 @@ mod tests {
             }
         }
 
-        /// On either side of the calling-thread cutoff and on any number of
-        /// threads, the search returns the same, least accepted nonce, so
-        /// proofs do not depend on the thread count.
+        /// Wherever the least accepted nonce falls (inside the calling
+        /// thread's stretch, at either side of its edge, or past it) and on
+        /// any number of threads, the search returns it, so proofs do not
+        /// depend on the thread count.
         #[cfg(feature = "parallel")]
         #[test]
         fn search_is_independent_of_the_thread_count() {
-            use super::super::SEQUENTIAL_POW_BITS;
+            use super::super::CALLER_NONCES;
 
-            for bits in [SEQUENTIAL_POW_BITS, SEQUENTIAL_POW_BITS + 1, 9] {
+            for bits in [2, 9] {
                 let pow = SpongePow::new(bits).unwrap();
                 let last = pow.last_nonce();
-                let probe = AcceptAny(vec![last, last / 2, last / 3 + 1]);
-                for threads in [1, 2, 3, 8] {
-                    let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(threads)
-                        .build()
-                        .unwrap();
-                    assert_eq!(pool.install(|| pow.search(&probe)), Some(last / 3 + 1));
+                let candidates = [
+                    0,
+                    5,
+                    CALLER_NONCES - 1,
+                    CALLER_NONCES,
+                    CALLER_NONCES + 17,
+                    last / 2,
+                    last,
+                ];
+                for least in candidates.into_iter().filter(|&least| least <= last) {
+                    let probe = AcceptAny(vec![last, least, (least + 1).min(last)]);
+                    for threads in [1, 2, 3, 8] {
+                        let pool = rayon::ThreadPoolBuilder::new()
+                            .num_threads(threads)
+                            .build()
+                            .unwrap();
+                        assert_eq!(pool.install(|| pow.search(&probe)), Some(least));
+                    }
                 }
             }
         }
