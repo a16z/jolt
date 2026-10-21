@@ -185,6 +185,8 @@ pub enum VerificationError<F: JoltField> {
     DegenerateSumcheck { name: &'static str },
     #[error("proof of work before the {site} was rejected")]
     ProofOfWorkRejected { site: &'static str },
+    #[error("expected {expected} proof-of-work nonces, got {got}")]
+    WrongNumberOfPowNonces { expected: usize, got: usize },
     #[error("folded eval commitment {index} does not match opened value and blinding")]
     EvalCommitmentMismatch { index: usize },
     #[error("folded eval witness {kind} {index} does not match opened witness coordinate")]

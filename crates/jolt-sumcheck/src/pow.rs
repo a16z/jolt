@@ -11,10 +11,17 @@
 //! a degree the prover declares, so the difficulty is fixed by the protocol
 //! parameters and the proof cannot lower it. The nonce sits in the proof next
 //! to the round messages: one per round when the difficulty is positive, none
-//! when it is zero.
+//! when it is zero. [`Nonced`] serializes the two together so that a proof
+//! with no nonces pays no bytes for them.
+
+use std::fmt::{Formatter, Result as FmtResult};
+use std::marker::PhantomData;
 
 use jolt_field::Field;
 use jolt_transcript::{grind_bits_for_loss, Transcript, SECURITY_BITS};
+use serde::de::{Error as _, SeqAccess, Visitor};
+use serde::ser::{Error as _, SerializeTuple};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::SumcheckError;
 
@@ -83,4 +90,90 @@ pub fn grind_round<F: Field, T: Transcript>(
         .map_err(|_| SumcheckError::ProofOfWorkRejected { round })?;
     nonces.extend(nonce);
     Ok(())
+}
+
+/// Prover messages and the proof-of-work nonces ground among them, as
+/// deserialized from a proof. [`NoncedRef`] serializes the same layout.
+///
+/// The wire form is one tuple: the header `2 · messages.len() + has_nonces`,
+/// the messages, then, only when `has_nonces` is 1, the nonces as a
+/// length-prefixed list, which must not be empty. With no nonces this costs
+/// nothing beyond a plain length prefix: under bincode's varint both take one
+/// byte for up to 125 messages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Nonced<M> {
+    pub messages: Vec<M>,
+    pub pow_nonces: Vec<u32>,
+}
+
+/// Borrowed [`Nonced`], for serialization.
+pub struct NoncedRef<'a, M> {
+    pub messages: &'a [M],
+    pub pow_nonces: &'a [u32],
+}
+
+impl<M: Serialize> Serialize for NoncedRef<'_, M> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let has_nonces = !self.pow_nonces.is_empty();
+        let header = u64::try_from(self.messages.len())
+            .ok()
+            .and_then(|len| len.checked_mul(2))
+            .ok_or_else(|| S::Error::custom("too many messages"))?
+            | u64::from(has_nonces);
+        let len = self
+            .messages
+            .len()
+            .saturating_add(1 + usize::from(has_nonces));
+        let mut tuple = serializer.serialize_tuple(len)?;
+        tuple.serialize_element(&header)?;
+        for message in self.messages {
+            tuple.serialize_element(message)?;
+        }
+        if has_nonces {
+            tuple.serialize_element(self.pow_nonces)?;
+        }
+        tuple.end()
+    }
+}
+
+impl<'de, M: Deserialize<'de>> Deserialize<'de> for Nonced<M> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct NoncedVisitor<M>(PhantomData<M>);
+
+        impl<'de, M: Deserialize<'de>> Visitor<'de> for NoncedVisitor<M> {
+            type Value = Nonced<M>;
+
+            fn expecting(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+                formatter.write_str("a header, messages, and proof-of-work nonces")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let missing = || A::Error::custom("truncated messages with nonces");
+                let header: u64 = seq.next_element()?.ok_or_else(missing)?;
+                let len = usize::try_from(header >> 1)
+                    .map_err(|_| A::Error::custom("message count overflows usize"))?;
+                // Grows with the bytes actually read, never with the header.
+                let mut messages = Vec::new();
+                for _ in 0..len {
+                    messages.push(seq.next_element()?.ok_or_else(missing)?);
+                }
+                let pow_nonces = if header & 1 == 1 {
+                    let nonces: Vec<u32> = seq.next_element()?.ok_or_else(missing)?;
+                    if nonces.is_empty() {
+                        return Err(A::Error::custom("empty proof-of-work nonce list"));
+                    }
+                    nonces
+                } else {
+                    Vec::new()
+                };
+                Ok(Nonced {
+                    messages,
+                    pow_nonces,
+                })
+            }
+        }
+
+        // The length is read from the header; the deserializer only bounds it.
+        deserializer.deserialize_tuple(usize::MAX, NoncedVisitor(PhantomData))
+    }
 }

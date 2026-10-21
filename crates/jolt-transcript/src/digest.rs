@@ -135,9 +135,7 @@ where
 {
     type Challenge = F;
 
-    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(F::CHALLENGE_BITS);
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize =
-        ChallengeSetSize::power_of_two(F::SCALAR_CHALLENGE_BITS);
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::from_limbs(F::CHALLENGE_SET_LIMBS);
 
     fn new(label: &'static [u8]) -> Self {
         assert!(
@@ -169,15 +167,9 @@ where
     }
 
     fn challenge(&mut self) -> F {
-        let mut buf = [0u8; 16];
+        let mut buf = vec![0u8; F::CHALLENGE_BYTES];
         self.squeeze(&mut buf);
         F::from_challenge_bytes(&buf)
-    }
-
-    fn challenge_scalar(&mut self) -> F {
-        let mut buf = [0u8; 16];
-        self.squeeze(&mut buf);
-        F::from_scalar_challenge_bytes(&buf)
     }
 
     fn challenge_bytes(&mut self, out: &mut [u8]) {

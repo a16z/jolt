@@ -5,12 +5,12 @@ use crate::{
     error::SumcheckError,
     round_proof::LabeledRoundPoly,
     verifier::SumcheckVerifier,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    Nonced, NoncedRef, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{AppendToTranscript, Transcript};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
 ///
@@ -22,8 +22,7 @@ use serde::{Deserialize, Serialize};
 /// The proof is complete when all $n$ round polynomials have been sent;
 /// the verifier is left with a single evaluation claim at the point
 /// $(r_1, \ldots, r_n)$.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClearSumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
@@ -32,14 +31,45 @@ pub struct ClearSumcheckProof<F: Field> {
     pub pow_nonces: Vec<u32>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CompressedSumcheckProof<F: Field> {
     /// Boolean-hypercube round polynomials with the linear coefficient omitted.
     pub round_polynomials: Vec<CompressedPoly<F>>,
     /// One proof-of-work nonce per round, as in [`ClearSumcheckProof`].
     pub pow_nonces: Vec<u32>,
 }
+
+/// Serializes the rounds and their nonces as one [`Nonced`] list, so a proof
+/// with no nonces costs what its rounds alone do.
+macro_rules! nonced_rounds_serde {
+    ($proof:ident, $poly:ident) => {
+        impl<F: Field + Serialize> Serialize for $proof<F> {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                NoncedRef {
+                    messages: &self.round_polynomials,
+                    pow_nonces: &self.pow_nonces,
+                }
+                .serialize(serializer)
+            }
+        }
+
+        impl<'de, F: Field + Deserialize<'de>> Deserialize<'de> for $proof<F> {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let Nonced {
+                    messages,
+                    pow_nonces,
+                } = Nonced::<$poly<F>>::deserialize(deserializer)?;
+                Ok(Self {
+                    round_polynomials: messages,
+                    pow_nonces,
+                })
+            }
+        }
+    };
+}
+
+nonced_rounds_serde!(ClearSumcheckProof, UnivariatePoly);
+nonced_rounds_serde!(CompressedSumcheckProof, CompressedPoly);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]

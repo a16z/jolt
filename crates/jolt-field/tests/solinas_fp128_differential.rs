@@ -189,11 +189,6 @@ macro_rules! check_prime128 {
                     ours,
                     "challenge derivation defaults to the reducing decode"
                 );
-                assert_eq!(
-                    <$two as CanonicalEncoding>::from_scalar_challenge_bytes(&challenge[..len]),
-                    ours,
-                    "scalar challenge derivation defaults to the reducing decode"
-                );
                 let mut padded = [0u8; 32];
                 padded[..len].copy_from_slice(&challenge[..len]);
                 let limbs: [u64; 4] = std::array::from_fn(|i| {

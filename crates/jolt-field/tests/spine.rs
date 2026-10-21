@@ -90,8 +90,7 @@ impl CanonicalBytes for M61 {
 
 impl CanonicalEncoding for M61 {
     const MODULUS_BITS: u32 = 61;
-    const CHALLENGE_BITS: u32 = 60;
-    const SCALAR_CHALLENGE_BITS: u32 = 60;
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [P, 0, 0, 0];
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let base = M61::from_u64(256);
         bytes
@@ -114,9 +113,6 @@ impl CanonicalEncoding for M61 {
     }
     fn num_bits(&self) -> u32 {
         64 - self.0.leading_zeros()
-    }
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
     }
 }
 
@@ -234,10 +230,6 @@ fn canonical_surface() {
     assert_eq!(
         M61::from_challenge_bytes(&wide),
         M61::from_bytes_le_reduced(&wide)
-    );
-    assert_eq!(
-        M61::from_scalar_challenge_bytes(&wide),
-        M61::from_challenge_bytes(&wide)
     );
     assert_eq!(M61::zero().num_bits(), 0);
     assert_eq!(M61(0b1011).num_bits(), 4);

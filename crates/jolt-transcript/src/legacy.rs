@@ -44,16 +44,13 @@ pub trait Transcript: Clone + Default + Sync + Send + 'static {
     /// they need; custom transcripts may return an algebra-only field type.
     type Challenge;
 
-    /// The set [`challenge`](Self::challenge) draws from, as its min-entropy:
-    /// no challenge value has probability above `1 / CHALLENGE_SET`. Prices
-    /// the proof of work before a challenge ([`grind_bits_for_loss`]).
+    /// Size of the set every challenge is drawn from, near-uniformly: the
+    /// field's [`CHALLENGE_SET_LIMBS`](jolt_field::CanonicalEncoding::CHALLENGE_SET_LIMBS)
+    /// for the field transcripts. Prices the proof of work before a challenge
+    /// ([`grind_bits_for_loss`]).
     ///
     /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
     const CHALLENGE_SET: ChallengeSetSize;
-
-    /// [`CHALLENGE_SET`](Self::CHALLENGE_SET) for
-    /// [`challenge_scalar`](Self::challenge_scalar).
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize;
 
     /// Creates a new transcript with the given domain separation label.
     ///
@@ -88,7 +85,8 @@ pub trait Transcript: Clone + Default + Sync + Send + 'static {
     #[must_use]
     fn challenge(&mut self) -> Self::Challenge;
 
-    /// Squeezes a non-optimized scalar challenge from the transcript.
+    /// Squeezes a scalar challenge, such as a batching coefficient. It is
+    /// decoded exactly as [`challenge`](Self::challenge) is.
     #[must_use]
     fn challenge_scalar(&mut self) -> Self::Challenge {
         self.challenge()
@@ -363,9 +361,7 @@ where
 {
     type Challenge = F;
 
-    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(F::CHALLENGE_BITS);
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize =
-        ChallengeSetSize::power_of_two(F::SCALAR_CHALLENGE_BITS);
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::from_limbs(F::CHALLENGE_SET_LIMBS);
 
     fn new(label: &'static [u8]) -> Self {
         assert!(
@@ -399,25 +395,16 @@ where
     }
 
     fn challenge(&mut self) -> F {
-        // WARNING: this squeezes 16 bytes for every sponge — including
-        // Poseidon — even though the split-trait surface (`OptimizedChallenge`,
-        // see `prover.rs:53-55`) deliberately makes 128-bit challenges a
-        // compile error on Poseidon-backed states. The two surfaces
-        // disagree on purpose: the legacy facade preserves the legacy
-        // deployed challenge width for in-flight consumers (jolt-sumcheck,
-        // jolt-openings, jolt-crypto). Once those migrate to the split-trait
-        // surface this facade goes away and the inconsistency with it.
-        let mut buf = [0u8; 16];
+        // WARNING: this decodes squeezed bytes for every sponge — including
+        // Poseidon, whose byte output is not uniform — while the split-trait
+        // surface (`ChallengeCodec`) admits only uniform-byte sponges. The
+        // legacy facade keeps byte challenges for in-flight consumers
+        // (jolt-sumcheck, jolt-openings, jolt-crypto). Once those migrate to
+        // the split-trait surface this facade goes away and the
+        // inconsistency with it.
+        let mut buf = vec![0u8; F::CHALLENGE_BYTES];
         let _ = self.sponge.squeeze(&mut buf);
         F::from_challenge_bytes(&buf)
-    }
-
-    fn challenge_scalar(&mut self) -> F {
-        // Mirrors the digest transcript's scalar challenge: same 16-byte
-        // squeeze width as `challenge`, but the non-optimized decoding path.
-        let mut buf = [0u8; 16];
-        let _ = self.sponge.squeeze(&mut buf);
-        F::from_scalar_challenge_bytes(&buf)
     }
 
     fn challenge_bytes(&mut self, out: &mut [u8]) {

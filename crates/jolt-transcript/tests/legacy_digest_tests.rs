@@ -14,7 +14,7 @@
 //! squeeze        : out    = H(state || round_word(n)),  state' = out, n += 1
 //! ```
 
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr};
 use jolt_transcript::{Label, LabelWithCount, LegacyBlake2bTranscript, Transcript, U64Word};
 
 type T = LegacyBlake2bTranscript<Fr>;
@@ -82,30 +82,29 @@ fn multi_chunk_draw_concatenates_successive_squeezes() {
     );
 }
 
+/// A challenge squeezes `Fr::CHALLENGE_BYTES = 54` bytes, two chunks, and
+/// reduces them modulo `r` as a little-endian integer. The value was computed
+/// independently (Python `int.from_bytes(.., "little") % r`).
 #[test]
-fn challenge_decodes_the_pinned_bytes_via_from_challenge_bytes() {
-    let mut transcript = T::new(KAT_LABEL);
-    transcript.append_bytes(b"jolt says hello");
-    let challenge: Fr = transcript.challenge();
+fn challenge_reduces_fifty_four_squeezed_bytes() {
+    const SQUEEZED: &str = "25a496912b5b75d6504cbc204a25b13d6121e6266ac056589689c43dc06f9142\
+                            66bf5655d23fb7f4e92e96ea1f0df9727d7f0e9a8bc4";
+    const REDUCED: &str = "bb853f47ada345918da9d364bb1f609650e36705132c743cd9116cd029f2be2a";
+    assert_eq!(Fr::CHALLENGE_BYTES, 54);
 
-    let pinned: [u8; 16] = [
-        0x25, 0xa4, 0x96, 0x91, 0x2b, 0x5b, 0x75, 0xd6, 0x50, 0x4c, 0xbc, 0x20, 0x4a, 0x25, 0xb1,
-        0x3d,
-    ];
-    assert_eq!(challenge, Fr::from_challenge_bytes(&pinned));
-}
+    let mut probe = T::new(KAT_LABEL);
+    probe.append_bytes(b"jolt says hello");
+    let mut squeezed = [0u8; 54];
+    probe.challenge_bytes(&mut squeezed);
+    assert_eq!(hex(&squeezed), SQUEEZED.replace(' ', ""));
 
-#[test]
-fn challenge_scalar_uses_the_scalar_decode_path() {
-    let mut transcript = T::new(KAT_LABEL);
-    transcript.append_bytes(b"jolt says hello");
-    let challenge: Fr = transcript.challenge_scalar();
-
-    let pinned: [u8; 16] = [
-        0x25, 0xa4, 0x96, 0x91, 0x2b, 0x5b, 0x75, 0xd6, 0x50, 0x4c, 0xbc, 0x20, 0x4a, 0x25, 0xb1,
-        0x3d,
-    ];
-    assert_eq!(challenge, Fr::from_scalar_challenge_bytes(&pinned));
+    for draw in [T::challenge, T::challenge_scalar] {
+        let mut transcript = T::new(KAT_LABEL);
+        transcript.append_bytes(b"jolt says hello");
+        let challenge: Fr = draw(&mut transcript);
+        assert_eq!(hex(&challenge.to_bytes_le_vec()), REDUCED);
+        assert_eq!(transcript.state(), probe.state());
+    }
 }
 
 #[test]

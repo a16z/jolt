@@ -286,15 +286,23 @@ pub trait CanonicalEncoding:
     /// Bit length of the field order `|F|` (for prime fields, the modulus).
     const MODULUS_BITS: u32;
 
-    /// Min-entropy of [`from_challenge_bytes`](Self::from_challenge_bytes) on
-    /// 16 uniform bytes, the width the legacy transcripts squeeze: no value
-    /// has probability above `2^-CHALLENGE_BITS`. Proof-of-work difficulty is
-    /// priced from it.
-    const CHALLENGE_BITS: u32;
+    /// Number of transcript bytes squeezed for one challenge and decoded by
+    /// [`from_challenge_bytes`](Self::from_challenge_bytes).
+    ///
+    /// The default reduces `8 · CHALLENGE_BYTES ≥ MODULUS_BITS + 178` uniform
+    /// bits modulo the field order `p`. The result is within statistical
+    /// distance `p / 2^(8 · CHALLENGE_BYTES + 2) < 2^-180` of uniform, so a
+    /// message followed by up to `2^19` challenges stays within `2^-161`.
+    const CHALLENGE_BYTES: usize = (Self::MODULUS_BITS as usize + 178).div_ceil(8);
 
-    /// [`CHALLENGE_BITS`](Self::CHALLENGE_BITS) for
-    /// [`from_scalar_challenge_bytes`](Self::from_scalar_challenge_bytes).
-    const SCALAR_CHALLENGE_BITS: u32;
+    /// Size of the set [`from_challenge_bytes`](Self::from_challenge_bytes)
+    /// draws from on [`CHALLENGE_BYTES`](Self::CHALLENGE_BYTES) uniform bytes,
+    /// as little-endian 64-bit limbs. Either no challenge has probability
+    /// above one over this size, or the draw is within statistical
+    /// distance `2^-180` of uniform on a set of this size, as the field order
+    /// is for the default wide reduction. Proof-of-work difficulty is priced
+    /// from it; that distance is charged separately.
+    const CHALLENGE_SET_LIMBS: [u64; 4];
 
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;
@@ -346,15 +354,12 @@ pub trait CanonicalEncoding:
     /// Zero is considered to have zero significant bits.
     fn num_bits(&self) -> u32;
 
+    /// Decodes one challenge from [`CHALLENGE_BYTES`](Self::CHALLENGE_BYTES)
+    /// transcript bytes. Every challenge, scalar or not, uses this decoder.
     #[inline]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         Self::from_bytes_le_reduced(bytes)
     }
-
-    /// Constructs a non-optimized scalar challenge from transcript bytes.
-    ///
-    /// Implementations must choose the protocol's byte order explicitly.
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self;
 }
 
 /// Accumulates sums and products with potentially deferred modular reduction.

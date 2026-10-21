@@ -18,9 +18,10 @@ struct FixedTranscript {
 
 impl Transcript for FixedTranscript {
     type Challenge = F;
-    // Scripted challenges: no proof of work.
+    // A scripted toy with no soundness: it declares the largest set so that
+    // no proof of work runs. A real transcript declares the size of the set
+    // its challenges are drawn from.
     const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         let mut transcript = Self::default();

@@ -642,13 +642,18 @@ where
         random_eval_commitments,
         random_u,
         cross_term_error_row_commitments,
-        fold_pow_nonce,
-        outer_point_pow_nonce,
+        pow_nonces: [
+            fold_pow_nonce,
+            outer_point_pow_nonce,
+            inner_combination_pow_nonce,
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         outer_sumcheck: outer_trace.proof,
         az_rx,
         bz_rx,
         cz_rx,
-        inner_combination_pow_nonce,
         inner_sumcheck: inner_trace.proof,
         witness_opening,
         error_opening,

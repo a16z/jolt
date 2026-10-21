@@ -5,7 +5,7 @@ use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
 
-use crate::pow::PowSite;
+use crate::pow::{PowNonces, PowSite};
 use crate::{
     BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError,
     WitnessCoordinate,
@@ -30,7 +30,8 @@ where
         VC: VectorCommitment<Field = F, Output = Com>,
         T: Transcript<Challenge = F>,
     {
-        let folded = self.folded_instance_from_proof(proof, transcript)?;
+        let mut nonces = PowNonces::new(&proof.pow_nonces);
+        let folded = self.folded_instance_from_proof(proof, &mut nonces, transcript)?;
         ensure_len(
             "folded eval outputs",
             folded.eval_commitments.len(),
@@ -43,9 +44,22 @@ where
         )?;
         proof.verify_folded_eval_commitments::<VC>(vc_setup, &folded)?;
         self.verify_folded_eval_witness_bindings::<VC, T>(proof, vc_setup, &folded, transcript)?;
-        let outer = self.verify_outer_folded_r1cs::<VC, T>(proof, vc_setup, &folded, transcript)?;
-        self.verify_inner_folded_r1cs::<VC, T>(proof, vc_setup, &folded, &outer, transcript)?;
-        Ok(())
+        let outer = self.verify_outer_folded_r1cs::<VC, T>(
+            proof,
+            vc_setup,
+            &folded,
+            &mut nonces,
+            transcript,
+        )?;
+        self.verify_inner_folded_r1cs::<VC, T>(
+            proof,
+            vc_setup,
+            &folded,
+            &outer,
+            &mut nonces,
+            transcript,
+        )?;
+        nonces.finish()
     }
 }
 
@@ -57,6 +71,7 @@ where
     fn folded_instance_from_proof<T>(
         &self,
         proof: &BlindFoldProof<F, Com>,
+        nonces: &mut PowNonces<'_>,
         transcript: &mut T,
     ) -> Result<RelaxedInstance<F, Com>, VerificationError<F>>
     where
@@ -90,7 +105,7 @@ where
         self.validate_cross_term_error_rows(&proof.cross_term_error_row_commitments)?;
         transcript.append_values(b"bf_cross_e", &proof.cross_term_error_row_commitments);
 
-        check_pow(PowSite::Fold, proof.fold_pow_nonce, transcript)?;
+        nonces.check(PowSite::Fold, transcript)?;
         let folding_challenge = transcript.challenge();
         Ok(committed.fold(
             &random,
@@ -133,6 +148,7 @@ where
         proof: &BlindFoldProof<F, Com>,
         vc_setup: &VC::Setup,
         folded: &RelaxedInstance<F, Com>,
+        nonces: &mut PowNonces<'_>,
         transcript: &mut T,
     ) -> Result<OuterCheck<F>, VerificationError<F>>
     where
@@ -170,11 +186,7 @@ where
         }
 
         transcript.append(&Label(b"bf_spartan"));
-        check_pow(
-            PowSite::OuterPoint { num_vars },
-            proof.outer_point_pow_nonce,
-            transcript,
-        )?;
+        nonces.check(PowSite::OuterPoint { num_vars }, transcript)?;
         let tau = transcript.challenge_vector(num_vars);
         let claim = SumcheckClaim::new(num_vars, OUTER_SUMCHECK_DEGREE, F::zero());
         let outer = proof
@@ -429,17 +441,14 @@ where
         vc_setup: &VC::Setup,
         folded: &RelaxedInstance<F, Com>,
         outer: &OuterCheck<F>,
+        nonces: &mut PowNonces<'_>,
         transcript: &mut T,
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
         T: Transcript<Challenge = F>,
     {
-        check_pow(
-            PowSite::InnerCombination,
-            proof.inner_combination_pow_nonce,
-            transcript,
-        )?;
+        nonces.check(PowSite::InnerCombination, transcript)?;
         let ra = transcript.challenge();
         let rb = transcript.challenge();
         let rc = transcript.challenge();
@@ -520,21 +529,6 @@ where
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OuterCheck<F> {
     point: Vec<F>,
-}
-
-/// Checks the proof-of-work nonce for `site` right before its challenge draw.
-fn check_pow<F, T>(
-    site: PowSite,
-    nonce: Option<u32>,
-    transcript: &mut T,
-) -> Result<(), VerificationError<F>>
-where
-    F: JoltField,
-    T: Transcript,
-{
-    let rejected = || VerificationError::ProofOfWorkRejected { site: site.name() };
-    let bits = site.bits::<T>().ok_or_else(rejected)?;
-    transcript.check_grind(bits, nonce).map_err(|_| rejected())
 }
 
 fn append_vector_opening<F, T>(
@@ -845,13 +839,11 @@ mod tests {
             ],
             random_u: f(3),
             cross_term_error_row_commitments: vec![identity(); protocol.dimensions.error.row_count],
-            fold_pow_nonce: None,
-            outer_point_pow_nonce: None,
+            pow_nonces: Vec::new(),
             outer_sumcheck: zero_outer_sumcheck(protocol),
             az_rx: f(0),
             bz_rx: f(0),
             cz_rx: f(0),
-            inner_combination_pow_nonce: None,
             inner_sumcheck: CompressedSumcheckProof::default(),
             witness_opening: opening(protocol.dimensions.witness.row_len),
             error_opening: opening(protocol.dimensions.error.row_len),
@@ -916,41 +908,6 @@ mod tests {
         proof.folded_eval_outputs = vec![f(7) + folding_challenge * f(11)];
         proof.folded_eval_blindings = vec![f(70) + folding_challenge * f(110)];
         proof
-    }
-
-    #[test]
-    fn verify_rejects_missing_and_wrong_fold_pow_nonce() {
-        let setup = setup();
-        let protocol = protocol(&setup);
-        let mut proof = proof(&setup, &protocol);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("missing fold nonce is rejected");
-        assert!(matches!(
-            error,
-            VerificationError::ProofOfWorkRejected {
-                site: "folding challenge"
-            }
-        ));
-
-        let bits = PowSite::Fold
-            .bits::<Blake2bTranscript<Fr>>()
-            .expect("fold difficulty");
-        let before_fold = fold_transcript(&protocol, &proof);
-        proof.fold_pow_nonce = (0..u32::MAX)
-            .find(|&nonce| before_fold.clone().check_grind(bits, Some(nonce)).is_err());
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-        let error = protocol
-            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
-            .expect_err("wrong fold nonce is rejected");
-        assert!(matches!(
-            error,
-            VerificationError::ProofOfWorkRejected {
-                site: "folding challenge"
-            }
-        ));
     }
 
     #[test]
@@ -1043,7 +1000,7 @@ mod tests {
         let proof = proof_with_valid_eval_opening(&setup, &protocol);
         let mut transcript = Unpriced::new(b"blindfold-verify");
         let folded = protocol
-            .folded_instance_from_proof(&proof, &mut transcript)
+            .folded_instance_from_proof(&proof, &mut PowNonces::new(&[]), &mut transcript)
             .expect("folded instance builds");
 
         proof

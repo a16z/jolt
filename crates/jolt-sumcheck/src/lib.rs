@@ -150,7 +150,7 @@ pub use committed::{
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
-pub use pow::{grind_round, round_pow_bits};
+pub use pow::{grind_round, round_pow_bits, Nonced, NoncedRef};
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 #[cfg(feature = "committed")]
 pub use prover::prove_uniskip_committed;

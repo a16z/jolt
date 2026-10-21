@@ -63,6 +63,28 @@ fn real_prover_roundtrip_verifies_with_two_final_openings() {
 }
 
 #[test]
+fn bn254_proof_carries_no_nonces_and_rejects_an_extra_one() {
+    let mut rng = ChaCha20Rng::from_seed([109; 32]);
+    let instance = build_protocol_backed_instance(&mut rng);
+    let mut proof =
+        prove_real(&instance, &mut rng).expect("real prover succeeds on a valid witness");
+    assert!(proof.pow_nonces.is_empty());
+
+    proof.pow_nonces.push(0);
+    let err = verify_real(&instance, &proof).expect_err("an extra nonce is rejected");
+    assert!(
+        matches!(
+            err,
+            VerificationError::WrongNumberOfPowNonces {
+                expected: 0,
+                got: 1
+            }
+        ),
+        "expected a nonce count mismatch, got: {err}"
+    );
+}
+
+#[test]
 fn real_prover_rejects_missing_witness_row() {
     let mut rng = ChaCha20Rng::from_seed([103; 32]);
     let mut instance = build_protocol_backed_instance(&mut rng);

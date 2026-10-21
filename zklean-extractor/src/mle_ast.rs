@@ -1329,8 +1329,7 @@ impl CanonicalBytes for MleAst {
 impl CanonicalEncoding for MleAst {
     const MODULUS_BITS: u32 = 254;
     /// Mirrors BN254 `Fr`, which this AST models.
-    const CHALLENGE_BITS: u32 = 125;
-    const SCALAR_CHALLENGE_BITS: u32 = 128;
+    const CHALLENGE_SET_LIMBS: [u64; 4] = BN254_MODULUS;
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         if let Some(challenge) = take_pending_challenge() {
@@ -1387,10 +1386,6 @@ impl CanonicalEncoding for MleAst {
         self.to_u128_checked().map_or(Self::MODULUS_BITS, |value| {
             u128::BITS - value.leading_zeros()
         })
-    }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
     }
 }
 

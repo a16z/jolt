@@ -112,11 +112,6 @@ macro_rules! check_prime {
                     ours,
                     "challenge derivation defaults to the reducing decode"
                 );
-                assert_eq!(
-                    <$two as CanonicalEncoding>::from_scalar_challenge_bytes(&challenge[..len]),
-                    ours,
-                    "scalar challenge derivation defaults to the reducing decode"
-                );
             }
 
             let t_bytes = bincode::serde::encode_to_vec(ta, cfg).unwrap();

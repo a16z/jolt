@@ -68,7 +68,6 @@ impl<F: ChallengeField> Transcript for ExtensionTranscript<F> {
     type Challenge = F;
     // Scripted challenges: no proof of work.
     const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         let mut transcript = Self::default();
@@ -113,7 +112,6 @@ impl Transcript for CapturingTranscript {
     type Challenge = Quadratic;
     // Scripted challenges: no proof of work.
     const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         Self {

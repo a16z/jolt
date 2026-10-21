@@ -289,7 +289,6 @@ impl Transcript for ZeroTranscript {
     type Challenge = Fr;
     // Scripted challenges: no proof of work.
     const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(_: &'static [u8]) -> Self {
         Self

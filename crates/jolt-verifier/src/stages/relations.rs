@@ -571,7 +571,6 @@ pub(crate) mod draw_recording {
         type Challenge = Fr;
         // Scripted challenges: no proof of work.
         const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-        const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
         fn new(_label: &'static [u8]) -> Self {
             Self::default()
@@ -629,7 +628,6 @@ pub(crate) mod append_recording {
         type Challenge = Fr;
         // Scripted challenges: no proof of work.
         const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-        const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
         fn new(_label: &'static [u8]) -> Self {
             Self::default()

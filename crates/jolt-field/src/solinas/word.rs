@@ -307,11 +307,7 @@ macro_rules! define_solinas_prime {
 
         impl<const P: $word> CanonicalEncoding for $name<P> {
             const MODULUS_BITS: u32 = Self::BITS;
-            /// 16 bytes reduced modulo `p > 2^(BITS − 1)`: each value has
-            /// probability at most `1/p + 2^-128 ≤ 2^(1 − BITS)` for
-            /// `BITS ≤ 64`.
-            const CHALLENGE_BITS: u32 = Self::BITS - 1;
-            const SCALAR_CHALLENGE_BITS: u32 = Self::BITS - 1;
+            const CHALLENGE_SET_LIMBS: [u64; 4] = [P as u64, 0, 0, 0];
 
             #[inline(always)]
             fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
@@ -357,11 +353,6 @@ macro_rules! define_solinas_prime {
             #[inline]
             fn num_bits(&self) -> u32 {
                 <$word>::BITS - self.0.leading_zeros()
-            }
-
-            #[inline]
-            fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-                Self::from_bytes_le_reduced(bytes)
             }
         }
 

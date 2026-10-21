@@ -174,7 +174,6 @@ where
 {
     type Challenge = T::Challenge;
     const CHALLENGE_SET: ChallengeSetSize = T::CHALLENGE_SET;
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize = T::SCALAR_CHALLENGE_SET;
 
     fn new(label: &'static [u8]) -> Self {
         Self {

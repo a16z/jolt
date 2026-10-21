@@ -6,11 +6,12 @@ use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::SumcheckError;
 #[cfg(feature = "committed")]
 use crate::pow::grind_round;
+use crate::pow::{Nonced, NoncedRef};
 #[cfg(feature = "committed")]
 use crate::proof::SumcheckProof;
 use crate::round_proof::RoundMessage;
@@ -58,13 +59,37 @@ impl<C: AppendToTranscript> AppendToTranscript for CommittedOutputClaims<C> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CommittedSumcheckProof<C> {
     pub rounds: Vec<CommittedRound<C>>,
     /// One proof-of-work nonce per round, ground after the round commitment
     /// and before its challenge; empty when the round difficulty is zero.
     pub pow_nonces: Vec<u32>,
     pub output_claims: CommittedOutputClaims<C>,
+}
+
+/// The rounds and their nonces form one [`Nonced`] list, followed by the
+/// output claims.
+impl<C: Serialize> Serialize for CommittedSumcheckProof<C> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let rounds = NoncedRef {
+            messages: &self.rounds,
+            pow_nonces: &self.pow_nonces,
+        };
+        (rounds, &self.output_claims).serialize(serializer)
+    }
+}
+
+impl<'de, C: Deserialize<'de>> Deserialize<'de> for CommittedSumcheckProof<C> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (rounds, output_claims) =
+            <(Nonced<CommittedRound<C>>, CommittedOutputClaims<C>)>::deserialize(deserializer)?;
+        Ok(Self {
+            rounds: rounds.messages,
+            pow_nonces: rounds.pow_nonces,
+            output_claims,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

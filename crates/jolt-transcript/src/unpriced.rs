@@ -4,14 +4,14 @@ use jolt_field::Ring;
 
 use crate::{ChallengeSetSize, Transcript};
 
-/// `T` with both challenge sets declared as `2^256`, so every difficulty from
+/// `T` with its challenge set declared as `2^256`, so every difficulty from
 /// [`grind_bits_for_loss`](crate::grind_bits_for_loss) is 0: proofs carry no
 /// nonces and the transcript absorbs and squeezes exactly what `T` does
 /// without proof of work.
 ///
 /// Tests use it to reach checks that a hand-built proof would otherwise fail
 /// at its first proof-of-work step, and to run fields whose challenge sets
-/// cannot reach the target. It overstates `T`'s challenge sets, so it gives
+/// cannot reach the target. It overstates `T`'s challenge set, so it gives
 /// no soundness and must never back a real proof; the `test-utils` feature
 /// that exports it is for dev-dependencies.
 #[derive(Clone, Default)]
@@ -20,7 +20,6 @@ pub struct UnpricedTranscript<T>(pub T);
 impl<T: Transcript> Transcript for UnpricedTranscript<T> {
     type Challenge = T::Challenge;
     const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-    const SCALAR_CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         Self(T::new(label))

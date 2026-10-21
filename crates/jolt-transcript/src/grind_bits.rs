@@ -87,9 +87,9 @@ impl ChallengeSetSize {
         Self { hi: 0, lo: value }
     }
 
-    /// From little-endian 64-bit limbs.
-    #[cfg(feature = "bn254")]
-    pub(crate) const fn from_limbs([l0, l1, l2, l3]: [u64; 4]) -> Self {
+    /// A set of the size given by little-endian 64-bit limbs, such as a field
+    /// modulus.
+    pub const fn from_limbs([l0, l1, l2, l3]: [u64; 4]) -> Self {
         Self {
             hi: ((l3 as u128) << 64) | (l2 as u128),
             lo: ((l1 as u128) << 64) | (l0 as u128),
@@ -398,6 +398,62 @@ mod tests {
             }
             // 4 · |F| < (2^64 - 1) · 2^192 ≤ 8 · |F|.
             assert_eq!(grind_bits_for_loss(u64::MAX, size, 192), Ok(3));
+        }
+    }
+
+    /// The legacy facades reduce `Fr::CHALLENGE_BYTES` squeezed bytes, so
+    /// they draw from all of `Fr`, as the codec does. A site's loss factor is
+    /// a `u64`, so `u64::MAX` bounds every site: none needs proof of work.
+    #[cfg(all(
+        feature = "bn254",
+        feature = "transcript-blake2b",
+        feature = "transcript-keccak"
+    ))]
+    #[test]
+    fn bn254_facades_need_no_proof_of_work() {
+        use crate::{
+            Blake2bTranscript, ChallengeCodec, KeccakTranscript, LegacyBlake2bTranscript,
+            Transcript, SECURITY_BITS,
+        };
+        use jolt_field::Fr;
+
+        for set in [
+            LegacyBlake2bTranscript::<Fr>::CHALLENGE_SET,
+            Blake2bTranscript::<Fr>::CHALLENGE_SET,
+            KeccakTranscript::<Fr>::CHALLENGE_SET,
+        ] {
+            assert_eq!(set, <Fr as ChallengeCodec>::CHALLENGE_SET_SIZE);
+            assert_eq!(grind_bits_for_loss(u64::MAX, set, SECURITY_BITS), Ok(0));
+        }
+    }
+
+    /// fp128 challenges are priced at the full order `p = 2^128 − 275`: a
+    /// loss factor that is not a power of two needs `⌈log₂ L⌉` bits.
+    #[cfg(all(feature = "solinas", feature = "transcript-blake2b"))]
+    #[test]
+    fn fp128_facades_use_the_full_order() {
+        use crate::{ChallengeCodec, LegacyBlake2bTranscript, Transcript, SECURITY_BITS};
+        use jolt_field::{Prime128Offset275, Prime128OffsetA7F7};
+
+        let sets = [
+            (
+                LegacyBlake2bTranscript::<Prime128Offset275>::CHALLENGE_SET,
+                <Prime128Offset275 as ChallengeCodec>::CHALLENGE_SET_SIZE,
+            ),
+            (
+                LegacyBlake2bTranscript::<Prime128OffsetA7F7>::CHALLENGE_SET,
+                <Prime128OffsetA7F7 as ChallengeCodec>::CHALLENGE_SET_SIZE,
+            ),
+        ];
+        for (set, codec_set) in sets {
+            assert_eq!(set, codec_set);
+            for (loss, bits) in [(1, 1), (2, 2), (3, 2), (6, 3), (10, 4), (27, 5), (42, 6)] {
+                assert_eq!(
+                    grind_bits_for_loss(loss, set, SECURITY_BITS),
+                    Ok(bits),
+                    "L={loss}"
+                );
+            }
         }
     }
 

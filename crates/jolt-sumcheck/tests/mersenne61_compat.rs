@@ -247,8 +247,10 @@ impl CanonicalBytes for Mersenne61 {
 
 impl CanonicalEncoding for Mersenne61 {
     const MODULUS_BITS: u32 = 61;
-    const CHALLENGE_BITS: u32 = 60;
-    const SCALAR_CHALLENGE_BITS: u32 = 60;
+    /// At most 16 bytes are reduced modulo `p = 2^61 − 1`, so each value has
+    /// probability at most `1/p + 2^-128 ≤ 2^-60`.
+    const CHALLENGE_BYTES: usize = 16;
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [1 << 60, 0, 0, 0];
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut buf = [0u8; 16];
@@ -280,10 +282,6 @@ impl CanonicalEncoding for Mersenne61 {
 
     fn num_bits(&self) -> u32 {
         u64::BITS - self.0.leading_zeros()
-    }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
     }
 }
 
