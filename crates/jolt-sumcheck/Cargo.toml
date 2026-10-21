@@ -47,7 +47,6 @@ jolt-transcript = { workspace = true, features = [
   "transcript-keccak",
   "test-utils",
 ] }
-num-traits = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 
 [[test]]
