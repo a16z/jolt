@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792525518122,
+  "lastUpdate": 1792610655008,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -194722,6 +194722,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 781760,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "241190306+sumchecker@users.noreply.github.com",
+            "name": "sumchecker",
+            "username": "sumchecker"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "528777f561b482a84a3f846724caed757c1811dc",
+          "message": "feat(akita)!: NIST category 3 Module-SIS and 2^31 schedule coverage (#2107)\n\n* chore(deps): bump Akita to the NIST category 3 SIS policy\n\nPin all Akita crates to the LayerZero-Labs/akita#232 head, which raises the\nModule-SIS gate from 128 bits to an ADPS16 quantum Core-SVP score of at least\n169 bits (NIST category 3) and doubles the compression ladder's terminal\nimage. It also carries Akita main through #189.\n\nThe commitment shape guard now derives the expected payload length from\nGroupCommitPhaseParams::outer_compression_plan, Akita's single owner of the\nB-image compression chain and its ladder admission rule.\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n\n* feat(akita): extend schedule coverage to 2^31 traces\n\nK=16 trace keys now cover log_T 12..=31 (arities 16..=35). The admitted\none- and two-polynomial scalar range reaches arity 44 for both K values, and\nthe dense producer grid reaches 35. The K=256 Single catalog also carries the\nnarrowest and widest native traces, derived from the same RV64 width\nenumeration as K=16, at 2^30 and 2^31.\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n\n* chore(akita): regenerate schedule catalogs for the NIST category 3 policy\n\ngen_jolt_schedules at the pinned Akita revision replans every base and\nfixture catalog under the 169-bit SIS policy and the 2^31 coverage grid.\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n\n* test(akita): cover 2^31 traces and retarget fixtures to the new rows\n\nExtend the trace-geometry and field-inline coverage tests to 2^31, and add\nan ignored check that plans every Jolt-scale key of the generator's family\nspecs and reports levels, estimated proof bytes, and setup capacity.\n\nThe cutover test now states the rule for every emitted trace key in every\npackaged profile: rows below the cutover are direct, and Single rows at or\nabove it offload. The regenerated one-column Single rows at arities 16 and 17\nterminate immediately and the 25-variable one-column row stays direct, so the\ngrouped capacity and serde-transport fixtures move to shapes that still model\ntheir cases (18 and the 51-column cutover trace), and the small-arity\nrejection test pins the new 12..=17 range.\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): state the NIST category 3 SIS target and 2^31 coverage\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n\n* chore(deps): pin Akita to the merged NIST category 3 commit\n\nLayerZero-Labs/akita#232 merged as dfdbd767 on Akita main. Pin every Akita\ncrate to that commit instead of the PR head.\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n\n* refactor(akita): keep 2^31 coverage to its production consumers\n\nK=256 catalogs are fixtures only, so drop the 2^30/2^31 K=256 trace rows,\nwhich no test or fixture consumed, and keep the admitted scalar ceilings at\n40 and 43: the 2^31 trace arities (35 for K=16, 39 for K=256) already fit,\nand nothing uses wider scalar rows. Remove the ignored Jolt-scale planning\ndiagnostic; gen_jolt_schedules --check already replans every key and compares\nthe artifacts byte for byte.\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): keep the committed-program arity ceiling at 34\n\nDIRECT_PROGRAM_MAX_PHYSICAL_VARS still rejects 35-variable committed\nprograms; the new dense rows do not change that admission guard. Also\ndrop an arithmetic-only fixture comment.\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-21T14:37:49-04:00",
+          "tree_id": "9974d74f8bb16f3beb25c3a0bec2c0c11b5e887e",
+          "url": "https://github.com/a16z/jolt/commit/528777f561b482a84a3f846724caed757c1811dc"
+        },
+        "date": 1792610648175,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.319,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.0032,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 502692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 509000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 510924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5997,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 506812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5008,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 501056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.7291,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 2.8977,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 229692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.1937,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5225,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3854,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 14.9846,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 2.9734,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 502500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 23.0389,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1983280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.6142,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 642692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 51.6624,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1165700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0696,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2236,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 511088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 10.9991,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861564,
             "unit": "KB",
             "extra": ""
           }
