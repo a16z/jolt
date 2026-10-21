@@ -126,18 +126,36 @@ pub struct F8DomainSizeError {
     pub size: usize,
 }
 
+/// A number of embedded `F8` domain points, in `1..=F8_DOMAIN_MAX_SIZE`.
+#[cfg(feature = "binary")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct F8DomainSize(usize);
+
+#[cfg(feature = "binary")]
+impl F8DomainSize {
+    /// Returns [`F8DomainSizeError`] unless `1 <= size <= 256`.
+    pub fn new(size: usize) -> Result<Self, F8DomainSizeError> {
+        if !(1..=F8_DOMAIN_MAX_SIZE).contains(&size) {
+            return Err(F8DomainSizeError { size });
+        }
+        Ok(Self(size))
+    }
+
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
 /// Returns the first `size` images of `F8` elements in raw-byte order.
 ///
 /// `From<F8>` must be a field embedding; the implementations for `F64`,
 /// `F128`, and `F192` satisfy this requirement. It makes the points distinct
 /// and each smaller domain a prefix of every larger domain.
-/// Returns [`F8DomainSizeError`] unless `1 <= size <= 256`.
 #[cfg(feature = "binary")]
-pub fn f8_domain_nodes<F: Field + From<F8>>(size: usize) -> Result<Vec<F>, F8DomainSizeError> {
-    if !(1..=F8_DOMAIN_MAX_SIZE).contains(&size) {
-        return Err(F8DomainSizeError { size });
-    }
-    Ok((0..size).map(|i| F::from(F8::from_raw(i as u8))).collect())
+pub fn f8_domain_nodes<F: Field + From<F8>>(size: F8DomainSize) -> Vec<F> {
+    (0..size.0)
+        .map(|i| F::from(F8::from_raw(i as u8)))
+        .collect()
 }
 
 /// Evaluates all Lagrange basis polynomials $L_0(r), \ldots, L_{N-1}(r)$ over

@@ -4,9 +4,9 @@ use core::ops::Range;
 use jolt_field::Field;
 #[cfg(feature = "binary")]
 use jolt_field::F8;
-#[cfg(feature = "binary")]
-use jolt_poly::lagrange::f8_domain_nodes;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
+#[cfg(feature = "binary")]
+use jolt_poly::lagrange::{f8_domain_nodes, F8DomainSize, F8DomainSizeError};
 
 pub trait SumcheckDomain<F: Field> {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>>;
@@ -76,37 +76,33 @@ pub struct BooleanHypercube;
 /// The first `size` elements of `F8` in raw order, embedded in the proof field.
 ///
 /// The field's `From<F8>` must be a field embedding, as it is for `F64`, `F128`,
-/// and `F192`. Round-sum coefficients validate the size before the degree and
-/// sum powers in the proof field. Valid sizes are 1 through 256.
+/// and `F192`. Round-sum coefficients are power sums computed in the proof field.
 #[cfg(feature = "binary")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct F8Domain {
-    size: usize,
+    size: F8DomainSize,
 }
 
 #[cfg(feature = "binary")]
 impl F8Domain {
-    /// Records a size; validation is deferred to the round-sum computation.
-    pub const fn new(size: usize) -> Self {
-        Self { size }
+    /// Returns [`F8DomainSizeError`] unless `1 <= size <= 256`.
+    pub fn new(size: usize) -> Result<Self, F8DomainSizeError> {
+        F8DomainSize::new(size).map(|size| Self { size })
     }
 
-    /// Returns the requested number of points, even if the size is invalid.
     pub const fn size(self) -> usize {
-        self.size
+        self.size.get()
     }
 }
 
 #[cfg(feature = "binary")]
 impl<F: Field + From<F8>> SumcheckDomain<F> for F8Domain {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
-        let nodes = f8_domain_nodes::<F>(self.size)
-            .map_err(|error| SumcheckError::InvalidF8Domain { size: error.size })?;
         let count = degree
             .checked_add(1)
             .ok_or(SumcheckError::DegreeOverflow { degree })?;
         let mut sums = vec![F::zero(); count];
-        for node in nodes {
+        for node in f8_domain_nodes::<F>(self.size) {
             let mut power = F::one();
             for sum in &mut sums {
                 *sum += power;

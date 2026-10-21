@@ -3,6 +3,7 @@
 use std::error::Error;
 
 use jolt_field::{CanonicalEncoding, Field, F128, F192, F64, F8};
+use jolt_poly::lagrange::F8DomainSizeError;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     ClearProof, ClearSumcheckProof, F8Domain, SumcheckClaim, SumcheckDomain, SumcheckError,
@@ -17,9 +18,9 @@ fn horner<F: Field>(coefficients: &[F], point: F) -> F {
         .fold(F::zero(), |value, &coefficient| value * point + coefficient)
 }
 
-fn round_sum_rule<F: Field + From<F8>>() -> Result<(), SumcheckError<F>> {
+fn round_sum_rule<F: Field + From<F8> + 'static>() -> Result<(), Box<dyn Error>> {
     for size in [1, 2, 3, 10, 64] {
-        let domain = F8Domain::new(size);
+        let domain = F8Domain::new(size)?;
         assert_eq!(domain.size(), size);
         let mut degrees = vec![0, 1, size - 1, size, 2 * size];
         degrees.sort_unstable();
@@ -47,10 +48,10 @@ fn round_sum_rule<F: Field + From<F8>>() -> Result<(), SumcheckError<F>> {
     Ok(())
 }
 
-fn subspace_power_sums<F: Field + From<F8>>() -> Result<(), SumcheckError<F>> {
+fn subspace_power_sums<F: Field + From<F8> + 'static>() -> Result<(), Box<dyn Error>> {
     for exponent in 1..=6 {
         let size = 1 << exponent;
-        let moments: Vec<F> = F8Domain::new(size).round_sum_coefficients(size - 1)?;
+        let moments: Vec<F> = F8Domain::new(size)?.round_sum_coefficients(size - 1)?;
         assert_eq!(moments.len(), size);
         assert!(moments.iter().take(size - 1).all(|moment| moment.is_zero()));
         let nonzero_product: F = (1..size)
@@ -62,21 +63,13 @@ fn subspace_power_sums<F: Field + From<F8>>() -> Result<(), SumcheckError<F>> {
     Ok(())
 }
 
-fn domain_errors<F: Field + From<F8>>() {
-    for size in [0, 257, usize::MAX] {
-        let result: Result<Vec<F>, _> = F8Domain::new(size).round_sum_coefficients(2);
-        assert!(matches!(result, Err(SumcheckError::InvalidF8Domain { size: got }) if got == size));
-    }
-    let overflow: Result<Vec<F>, _> = F8Domain::new(4).round_sum_coefficients(usize::MAX);
+fn degree_overflow<F: Field + From<F8>>() -> Result<(), F8DomainSizeError> {
+    let overflow: Result<Vec<F>, _> = F8Domain::new(4)?.round_sum_coefficients(usize::MAX);
     assert!(matches!(
         overflow,
         Err(SumcheckError::DegreeOverflow { degree: usize::MAX })
     ));
-    let invalid_first: Result<Vec<F>, _> = F8Domain::new(0).round_sum_coefficients(usize::MAX);
-    assert!(matches!(
-        invalid_first,
-        Err(SumcheckError::InvalidF8Domain { size: 0 })
-    ));
+    Ok(())
 }
 
 fn full_clear_round<F: Field>(coefficients: Vec<F>) -> SumcheckProof<F, ()> {
@@ -94,10 +87,11 @@ where
         .map(|index| horner(&coefficients, F::from(F8::from_raw(index))))
         .sum();
     let claim = SumcheckClaim::new(1, 5, direct_sum);
+    let domain = F8Domain::new(4)?;
     let mut transcript = Blake2bTranscript::<F>::new(b"f8-uniskip-reduction");
     let reduced = full_clear_round(coefficients.to_vec()).verify(
         &claim,
-        F8Domain::new(4),
+        domain,
         UNISKIP_ROUND_TRANSCRIPT_LABEL,
         &mut transcript,
     )?;
@@ -125,7 +119,7 @@ where
     assert!(matches!(
         full_clear_round(changed_cubic).verify(
             &claim,
-            F8Domain::new(4),
+            domain,
             UNISKIP_ROUND_TRANSCRIPT_LABEL,
             &mut transcript,
         ),
@@ -140,7 +134,7 @@ where
     let mut transcript = Blake2bTranscript::<F>::new(b"f8-uniskip-reduction");
     let reduced = full_clear_round(changed_constant).verify(
         &claim,
-        F8Domain::new(4),
+        domain,
         UNISKIP_ROUND_TRANSCRIPT_LABEL,
         &mut transcript,
     )?;
@@ -160,19 +154,18 @@ macro_rules! field_tests {
             use super::*;
 
             #[test]
-            fn polynomial_round_sum_matches_direct_evaluation() -> Result<(), SumcheckError<$field>>
-            {
+            fn polynomial_round_sum_matches_direct_evaluation() -> Result<(), Box<dyn Error>> {
                 round_sum_rule::<$field>()
             }
 
             #[test]
-            fn subspace_moments_vanish_below_top_power() -> Result<(), SumcheckError<$field>> {
+            fn subspace_moments_vanish_below_top_power() -> Result<(), Box<dyn Error>> {
                 subspace_power_sums::<$field>()
             }
 
             #[test]
-            fn invalid_size_precedes_degree_overflow() {
-                domain_errors::<$field>();
+            fn degree_overflow_is_an_error() -> Result<(), F8DomainSizeError> {
+                degree_overflow::<$field>()
             }
 
             #[test]
@@ -186,3 +179,10 @@ macro_rules! field_tests {
 field_tests!(f64, F64);
 field_tests!(f128, F128);
 field_tests!(f192, F192);
+
+#[test]
+fn new_rejects_sizes_outside_1_to_256() {
+    for size in [0, 257, usize::MAX] {
+        assert_eq!(F8Domain::new(size), Err(F8DomainSizeError { size }));
+    }
+}
