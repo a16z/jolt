@@ -4,10 +4,10 @@
 use common::jolt_device::JoltDevice;
 use jolt_akita::AkitaProverSetup;
 use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-use jolt_prover::akita::preprocessing::{AkitaVc};
-use jolt_transcript::{Keccak, ProverState, VerifierState};
+use jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_prover::JoltBackend;
 use jolt_prover::{akita, ProverConfig};
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
 use jolt_witness::field_inline::FieldInlineWitnessOracle;

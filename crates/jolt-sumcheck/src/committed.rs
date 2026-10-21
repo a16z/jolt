@@ -3,7 +3,9 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, JoltField};
 #[cfg(feature = "committed")]
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{Encoding, FieldTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{Encoding, LabelWithCount, Transcript};
+#[cfg(feature = "committed")]
+use jolt_transcript::{FieldTranscript, ProverTranscript};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -283,7 +285,7 @@ where
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
-        T: FieldTranscript<F> + jolt_transcript::ProverTranscript,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         let coefficients = round_poly.coefficients().to_vec();
         if coefficients.len() > VC::capacity(self.setup) {
@@ -327,7 +329,7 @@ where
         transcript: &mut T,
     ) -> Result<(SumcheckProof<F, VC::Output>, CommittedSumcheckWitness<F>), SumcheckError<F>>
     where
-        T: FieldTranscript<F> + jolt_transcript::ProverTranscript,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         let capacity = VC::capacity(self.setup);
         let mut commitments = Vec::with_capacity(output_claim_values.len().div_ceil(capacity));

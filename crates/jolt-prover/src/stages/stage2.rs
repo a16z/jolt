@@ -278,9 +278,9 @@ mod field_inline_round_trip {
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &out);
 
         assert_eq!(
-        transcript.verifier_message::<[u8; 32]>(),
-        prover_state.verifier_message::<[u8; 32]>()
-    );
+            transcript.verifier_message::<[u8; 32]>(),
+            prover_state.verifier_message::<[u8; 32]>()
+        );
     }
 }
 
@@ -436,8 +436,8 @@ mod field_inline_zk {
             .unwrap();
 
         assert_eq!(
-        transcript.verifier_message::<[u8; 32]>(),
-        prover_state.verifier_message::<[u8; 32]>()
-    );
+            transcript.verifier_message::<[u8; 32]>(),
+            prover_state.verifier_message::<[u8; 32]>()
+        );
     }
 }

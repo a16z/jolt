@@ -484,7 +484,7 @@ pub(crate) mod twins {
     use jolt_claims::NoChallenges;
     use jolt_field::Ring;
     use jolt_program::preprocess::PublicIoMemory;
-    use jolt_transcript::{Keccak, Encoding, ProverState};
+    use jolt_transcript::{Encoding, Keccak, ProverState};
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage1::outer_remainder::{

@@ -1,6 +1,6 @@
 use jolt_crypto::{Bn254G1, Bn254G2, JoltGroup};
 use jolt_field::Fr;
-use jolt_transcript::{FieldTranscript, U64Word};
+use jolt_transcript::{FieldTranscript, U64Word, VerificationError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -111,8 +111,8 @@ pub enum HyperKZGError {
     TranscriptRejected,
 }
 
-impl From<jolt_transcript::VerificationError> for HyperKZGError {
-    fn from(_: jolt_transcript::VerificationError) -> Self {
+impl From<VerificationError> for HyperKZGError {
+    fn from(_: VerificationError) -> Self {
         Self::TranscriptRejected
     }
 }

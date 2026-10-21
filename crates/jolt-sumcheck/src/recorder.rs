@@ -201,8 +201,7 @@ where
 {
     type Proof = SumcheckProof<F, VC::Output>;
 
-    fn absorb_input_claims<T: Transcript>(&mut self, _input_claims: &[F], _transcript: &mut T) {
-    }
+    fn absorb_input_claims<T: Transcript>(&mut self, _input_claims: &[F], _transcript: &mut T) {}
 
     fn absorb_round<T>(
         &mut self,

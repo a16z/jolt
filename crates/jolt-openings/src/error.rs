@@ -1,3 +1,5 @@
+use jolt_transcript::VerificationError;
+
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum OpeningsError {
     #[error("opening proof verification failed")]
@@ -24,8 +26,8 @@ pub enum OpeningsError {
     TranscriptRejected,
 }
 
-impl From<jolt_transcript::VerificationError> for OpeningsError {
-    fn from(_: jolt_transcript::VerificationError) -> Self {
+impl From<VerificationError> for OpeningsError {
+    fn from(_: VerificationError) -> Self {
         Self::TranscriptRejected
     }
 }

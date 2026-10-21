@@ -282,7 +282,9 @@ mod tests {
         let mut adapter = JoltToDoryTranscript::new(&mut adapted);
         adapter.append_bytes(b"caller-label", b"shared-absorption");
         let adapter_challenge = adapter.challenge_scalar(b"caller-label");
-        adapter.finish().expect("the adapter draws a supported challenge");
+        adapter
+            .finish()
+            .expect("the adapter draws a supported challenge");
 
         let mut direct = transcript();
         direct.append(&label_with_count_word(b"dory_bytes", 17));

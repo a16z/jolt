@@ -12,6 +12,8 @@ use jolt_field::{
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+#[cfg(feature = "spongefish")]
+use spongefish::Encoding;
 
 const P: u64 = (1 << 61) - 1;
 
@@ -20,7 +22,7 @@ const P: u64 = (1 << 61) - 1;
 struct M61(u64);
 
 #[cfg(feature = "spongefish")]
-impl spongefish::Encoding for M61 {
+impl Encoding for M61 {
     fn encode(&self) -> impl AsRef<[u8]> {
         self.0.to_le_bytes()
     }

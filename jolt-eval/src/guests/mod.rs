@@ -12,6 +12,7 @@ pub use jolt_verifier::VerifierError;
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
 use jolt_prover::dory::DoryProverPreprocessing;
+use jolt_transcript::{Keccak, VerifierState};
 
 pub use btreemap::BTreeMapOps;
 pub use fibonacci::Fibonacci;
@@ -26,7 +27,7 @@ pub use tracer::JoltDevice;
 pub type VerifierField = jolt_field::Fr;
 pub type VerifierPCS = jolt_dory::DoryScheme;
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
-pub type VerifierTranscript<'a> = jolt_transcript::VerifierState<'a, jolt_transcript::Keccak>;
+pub type VerifierTranscript<'a> = VerifierState<'a, Keccak>;
 
 pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
 pub type ProverPreprocessing = DoryProverPreprocessing;

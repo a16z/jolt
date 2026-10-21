@@ -4,7 +4,9 @@
 
 mod common;
 
-transcript_tests!(jolt_transcript::Blake2b512);
+use jolt_transcript::Blake2b512;
+
+transcript_tests!(Blake2b512);
 
 #[test]
 fn test_blake2b_known_vector() {

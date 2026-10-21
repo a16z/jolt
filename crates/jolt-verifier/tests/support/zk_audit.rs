@@ -13,7 +13,7 @@ use jolt_verifier::{
         stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
         zk::{blindfold, inputs::BlindFoldInputs},
     },
-    VerifierError,
+    VerifierError, JOLT_SESSION,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,7 +67,7 @@ where
         public_io,
         proof,
         trusted_advice_commitment,
-        |statement| T::init(jolt_verifier::JOLT_SESSION, statement, &proof.narg),
+        |statement| T::init(JOLT_SESSION, statement, &proof.narg),
     )?;
 
     let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(

@@ -1,4 +1,5 @@
 use jolt_field::Field;
+use jolt_transcript::VerificationError;
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -254,8 +255,8 @@ pub enum SumcheckError<F: Field> {
     TranscriptRejected,
 }
 
-impl<F: Field> From<jolt_transcript::VerificationError> for SumcheckError<F> {
-    fn from(_: jolt_transcript::VerificationError) -> Self {
+impl<F: Field> From<VerificationError> for SumcheckError<F> {
+    fn from(_: VerificationError) -> Self {
         Self::TranscriptRejected
     }
 }

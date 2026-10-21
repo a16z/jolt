@@ -38,13 +38,11 @@ mod akita_tests {
     };
     use jolt_field::Ring;
     use jolt_prover::akita;
-    use jolt_prover::akita::preprocessing::{
-        self, AkitaProverPreprocessing, AkitaVc,
-    };
-    use jolt_transcript::{Keccak, ProverState, VerifierState};
+    use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
     use jolt_prover::akita::witness::commit_advice;
     use jolt_prover::JoltBackend;
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
     use jolt_verifier::stages::pow::PowSite;
     use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};

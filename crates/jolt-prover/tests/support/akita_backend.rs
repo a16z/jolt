@@ -24,8 +24,8 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
 use jolt_prover::akita;
 use jolt_prover::akita::preprocessing::{AkitaProverPreprocessing, AkitaVc};
-use jolt_transcript::{Keccak, ProverState};
 use jolt_prover::ProverConfig;
+use jolt_transcript::{Keccak, ProverState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 struct UnreadableWitness;

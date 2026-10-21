@@ -202,10 +202,7 @@ impl<F: JoltField + Encoding> SpartanKey<F> {
     }
 
     /// Binds the terminal witness claim before the PCS opening transcript.
-    pub fn append_witness_evaluation(
-        evaluation: F,
-        transcript: &mut impl FieldTranscript<F>,
-    ) {
+    pub fn append_witness_evaluation(evaluation: F, transcript: &mut impl FieldTranscript<F>) {
         transcript.append_labeled(b"witness-evaluation", &evaluation);
     }
 }

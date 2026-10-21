@@ -3,6 +3,8 @@ use super::outputs::Stage8Output;
 use super::outputs::{Stage8ClearOutput, Stage8ZkOutput};
 #[cfg(not(feature = "akita"))]
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
+#[cfg(feature = "akita")]
+use super::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
 #[cfg(feature = "akita")]
@@ -687,7 +689,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + Encoding + super::OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: super::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     T: FieldTranscript<F>,

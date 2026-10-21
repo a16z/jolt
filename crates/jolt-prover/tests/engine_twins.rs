@@ -173,9 +173,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
     )
     .unwrap();
     let output_values = synthetic_output_values();
-    let recorded = recorder
-        .finish(&output_values, &mut prover_state)
-        .unwrap();
+    let recorded = recorder.finish(&output_values, &mut prover_state).unwrap();
 
     // Verifier: draw → begin_batch → verify_compressed_boolean → output-claim
     // absorbs (the low-level clear path the composed `verify_clear` wraps).
@@ -315,14 +313,9 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
     );
 
     let mut prover_state = prover_transcript::<Keccak>(b"uniskip-stage-twin", b"");
-    let proved = prove_uniskip_clear::<Fr, _>(
-        poly,
-        input_claim,
-        degree,
-        domain_size,
-        &mut prover_state,
-    )
-    .unwrap();
+    let proved =
+        prove_uniskip_clear::<Fr, _>(poly, input_claim, degree, domain_size, &mut prover_state)
+            .unwrap();
 
     let mut verifier_transcript = prover_transcript::<Keccak>(b"uniskip-stage-twin", b"");
     let challenge = uniskip::verify_clear(
