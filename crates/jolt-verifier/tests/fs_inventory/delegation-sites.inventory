@@ -143,8 +143,8 @@ jolt-sumcheck::round_proof.rs::receive_compressed_round::receive_private#0
 jolt-sumcheck::round_proof.rs::receive_full_round::receive_private#0
 jolt-sumcheck::single.rs::prove_single::mark#0
 jolt-sumcheck::single.rs::prove_single::mark#2
-jolt-sumcheck::single.rs::verify_single::mark#0
-jolt-sumcheck::single.rs::verify_single::mark#2
+jolt-sumcheck::single.rs::receive_masked_single::mark#0
+jolt-sumcheck::single.rs::receive_masked_single::mark#2
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::receive_full_round#0
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::Self::verify_compressed_scheduled#0
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed_scheduled::receive_compressed_round#0
@@ -259,6 +259,8 @@ jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs
 jolt-zk::blindfold/verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::SumcheckVerifier::verify_compressed#1
 jolt-zk::blindfold/wire.rs::OuterClaims<F>::receive::receive_opening#3
 jolt-zk::blindfold/wire.rs::OuterClaims<F>::send::send_opening#1
+jolt-zk::masking/pads.rs::MaskedProver<'_,F,O,H>::record_fork_draw::.record_fork_draw#0
+jolt-zk::masking/pads.rs::MaskedProver<'_,P,O,H>::exchange_private_base::.send#0
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::record_fork_draw::.record_fork_draw#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_full_round::.send#0
 jolt-zk::masking/recorder.rs::MaskingRecorder<'_,F,O>::absorb_round::.send#0
