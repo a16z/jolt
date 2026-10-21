@@ -156,7 +156,7 @@ A view is prepared once as `PreparedMatrix<F, D>`, which checks
 `shape.ring_dim == D`. It offers two operations:
 
 - `apply_centered(x: &[i64], bound) -> Vec<CyclotomicRing<F, D>>`: the map
-  `M·x` on centered integer columns with `|x| ≤ bound < 2^31`. This is the
+  `M·x` on centered integer columns with `|x| ≤ bound ≤ 2^62`. This is the
   Σ-protocol's `N·y`, and the core of `commit`. `bound` must be a hard bound,
   such as the sampler's tail cut, never a statistical one: an input above it
   returns an error, which for a secret input would be an abort correlated
@@ -190,6 +190,11 @@ transformed by the forward NTT and accumulated pointwise into each output row.
   other Akita kernel.
 - **Input bound.** The bound `|x| ≤ bound` is checked over all inputs as one
   constant-time aggregate, and only the aggregate is branched on.
+- **Limbs (§5.1).** A bound above `i32::MAX` splits each input by shifts
+  into balanced 30-bit limbs (`x = Σ_j 2^{30j} x_j`), applies the map to
+  each limb, and recombines in F. The limb count depends only on the public
+  bound. At the headline the mask's tail cut `14k ≈ 2^39.5` takes two limbs,
+  so `N·y` and `L·y` cost two passes.
 
 `q ≡ 9 (mod 16)` gives no NTT over F_q for `X^256 + 1`. Schoolbook `N·y` would
 cost seconds per attempt. CRT-NTT is therefore the definition and also the
@@ -406,7 +411,7 @@ verifier squeezes it at the same position. σ binds the oracle input's τ. Then,
 for i = 1..T_att:
 
 1. **Mask.** Draw `y ← π_0` with M5a's `GaussianSampler::fill`, one sampler
-   per Gaussian segment. Public segments get `y = 0`.
+   for the common width (§5). Public segments get `y = 0`.
 2. **First message.** Compute:
    - `f = N·y`: `apply_centered` on each part of N;
    - `E_0 = L·y + Q_μ(0, y)`;
@@ -776,13 +781,13 @@ g enters only through Q_μ's `u·g(s)` term.
 | Parameter | Headline value | Lives in | Validated by |
 |---|---|---|---|
 | challenge family | d = 64, 31 × ±1, 11 × ±2, ‖c‖_op ≤ Γ = 18, 2^128.06 elements, κ₁ = 53 | `jolt-crypto::challenge` (M5b) | `SigmaParams::new`: `OperatorNormRejection::D64_SELECTIVE_L2.validate(64, cfg)` and `validate_min_entropy_for_ring_dim(64, 128)`. The latter bounds the unfiltered family; the filtered family's 2^128.06 is the certificate checked when the table is built (M5b) |
-| α, ε | 16, 2^−137 (M ≈ 2.37) | `SigmaParams` | `JointRejection::new` |
-| widths k_b | derived (below): 6,766,161 for B = 8 dense segments; 13,532,321 for operand digits (headline table, ΣN = 6,221,056) | `SigmaParams::derive(segments)` | exact rational check (below) |
-| digits D_b, D_pub | 7 for every Gaussian segment; 3 | derived | `⌊L_b²/k_b²⌋ ≥ 1 + ⌈log₂(2000 N)⌉` (below); `D_pub` covers `κ₁·B` |
-| box L_b | `7(16^{D_b}−1)/15`, the positive end of the certified range (A9) | derived | implied by the digit rule: `p_𝓑 ≥ 1 − 1/2000` |
+| α, ε | 2^17, 2^−137 (M − 1 ≈ 1.05·10^−4; §5.1) | `SigmaParams` (`ALPHA`, `EPSILON_BITS`) | `JointRejection::new` |
+| width k | one for every Gaussian coordinate, derived (below): 57,033,704,728 ≈ 2^35.7 (headline table, ΣN = 6,221,056) | `SigmaParams::derive(segments)` | exact check (below) |
+| digits D_b, D_pub | 10 for every Gaussian segment; 3 | derived | `⌊L_b²/k²⌋ ≥ 1 + ⌈log₂(2^21 N)⌉` (below); `D_pub` covers `κ₁·B` |
+| box L_b | `7(16^{D_b}−1)/15` = 513,105,426,295 ≈ 2^38.9, the positive end of the certified range (A9) | derived | implied by the digit rule: `p_𝓑 ≥ 1 − 2^−21` |
 | shift bound | `κ₁ · B_b` | derived | `JointRejection::accept` |
-| T_att | 163 | prover-only: `JointRejection::max_attempts`, from the sampler's realized M | smallest T with `(1 − (p_𝓑 − ε)/M′)^T ≤ 2^−128`, in 128-bit fixed point with every rounding against acceptance |
-| rejection arithmetic | — | derived | `SigmaParams::new` mirrors `JointRejection::new`'s bounds: boxes and shifts ≤ 2^62, the product of distinct k_b² < 2^126, worst-case exponent numerator < 2^126. A table the prover could not run is rejected by both roles |
+| T_att | 10 | prover-only: `JointRejection::max_attempts`, from the sampler's realized M and `p_𝓑 ≥ 1 − 2^−20` | smallest T with `(1 − (p_𝓑 − ε)/M′)^T ≤ 2^−128`, in 128-bit fixed point with every rounding against acceptance |
+| rejection arithmetic | — | derived | `SigmaParams::new` mirrors `JointRejection::new`'s bounds: boxes and shifts ≤ 2^62, the denominator k² < 2^126 (always, as k ≤ 2^58), worst-case exponent numerator < 2^126. A table the prover could not run is rejected by both roles |
 | ν | 256 | const | — |
 | ℓ | 14 | `RowLabels` | — |
 | A_a, [B_a\|B′_a], A_p ranks | 3 × R_256 each | Akita planner and SIS tables (rule 3), in the setup | Akita (SIS); W4 checks module structure and view lengths |
@@ -790,40 +795,32 @@ g enters only through Q_μ's `u·g(s)` term.
 | randomness | r_a 97 and r_p 105 R_256 columns, radix 16 | layouts | `required_randomness_columns` |
 | pad radices | 16 (32 digits), operands 256 (16 digits) | `LatticePadCommitment` consts | `GadgetDigits` checks |
 
-**Width derivation** (A10). Widths are derived in jolt-zk with integer
+**Width derivation** (A10). The width is derived in jolt-zk with integer
 arithmetic, not tabulated. Prover and verifier must agree bit for bit, because
 D_b fixes the e layout. The numbers above come from the code's headline
-table, in which every segment holds whole R_256 elements, so ΣN = 6,221,056.
-The cost script counts unaligned cells (ΣN = 6,220,582), so its widths
-differ slightly. It also stretches each width to its digit envelope, and
-those widths fail the whole-element table at Σ = 1.003.
+table (`tests/whiteout_params.rs`), in which every segment holds whole R_256
+elements, so ΣN = 6,221,056.
 
-1. **Closed form.** Take the continuous optimum of §6.2,
-   `ω_b = N_b/ΣN` over Gaussian cells. The width is
-   `σ_b = αΓγ_b·√(ΣN/N_b)`, and so
-   `k_b = ⌈αΓ·√(2 ln 2 · γ_b² · ΣN / N_b)⌉ + 1`.
-   - ln 2 is a fixed-point upper bound with 2^−64 error.
-   - The final +1 leaves relative slack of about 10^−7, far above the
-     ceiling errors.
-2. **Exact check.** `Σ_b 2·LN2_HI·Γ²γ_b²α²/k_b² ≤ 1` is evaluated in
-   fixed point with ceilings. This is `‖cs‖_σ ≤ 1/α` for every c and every s
-   that passes check 1 of §2.1. `SigmaParams::new` runs it on whatever widths
-   it is given, so the derivation is checked too.
+1. **Closed form.** One width for every Gaussian coordinate (§5.1, "One
+   width"): `σ = αΓ·√(Σ_b γ_b²)`, and so
+   `k = ⌈√(2 ln 2 · Γ²α² · Σ_b γ_b²)⌉ + 1`.
+   - ln 2 is a fixed-point upper bound with 2^−64 error, and the constant
+     `2 ln 2·Γ²α²` is rounded up at 2^−32.
+   - The final +1 leaves relative slack far above the ceiling errors.
+2. **Exact check.** `⌈2^32·2 ln 2·Γ²α²⌉ · Σ_b γ_b² ≤ 2^32 k²`, in integers.
+   This is `‖cs‖_σ ≤ 1/α` for every c and every s that passes check 1 of
+   §2.1. `SigmaParams::new` runs it on whatever width it is given, so the
+   derivation is checked too.
 3. **Digits.** `D_b` is the smallest D with
-   `⌊L(D)²/k_b²⌋ ≥ 1 + ⌈log₂(2000·N_tot)⌉`. Then each coefficient leaves the
-   box with probability at most `2^{1−L²/k²} ≤ 1/(2000 N)`, so p_𝓑 ≥ 1 −
-   1/2000 needs no separate check. With `k ≤ 2^31`, nine digits always
-   suffice.
+   `⌊L(D)²/k²⌋ ≥ 1 + ⌈log₂(2·2^20·N_tot)⌉`. Then each coefficient leaves the
+   box with probability at most `2^{1−L²/k²} ≤ 2^−21/N`, so p_𝓑 ≥ 1 − 2^−21
+   needs no separate check. A width that no digit count up to 15 covers is
+   rejected (`WhiteoutError::Overflow`).
 
-**Gap to the script's discrete optimum.**
-
-- The script gives 6 digits to r_a, pads and r_p, and 7 to w, t̂ and the
-  operands. It does this by stretching each width to its digit envelope.
-- The closed form gives 7 everywhere. That adds 111,968 cells to e
-  (65,450,122 → 65,562,090, still below 2^26), so the padded domain and the
-  proof size do not change.
-- Porting the discrete search in exact arithmetic is possible later and
-  would recover those cells. It is not needed now.
+At α = 16 the per-block closed form of the earlier revision gave widths
+6,766,161 and 13,532,321 and seven digits everywhere; one width gives
+6,962,124 and the same digits. At α = 2^17 the response part of e grows
+from 64,191,232 to 82,854,400 cells (public coordinates included).
 
 ### 5.1 Almost-never rejection (review decision, 2026-10-21)
 
@@ -963,7 +960,7 @@ fold in.
 | Secret uniform 256-bit n_i; oracle input (σ ⊇ τ, t_D, n_i) in its own fork domain; only the accepted attempt is sent | H2: Pr[Bad] ≤ (T_att Q_tot + T_att²)/2^256 |
 | Constant-time attempt body (§2.8) | keeps H2's "answers at rejected inputs are never observed" true against a timing adversary (outside the paper's model) |
 | Fresh y per attempt; M5a rejection | H3: ε/M per attempt |
-| T_att = 163 | `wo:thm:completeness`; the `T_att ε/M` term |
+| T_att = 10 (§5.1) | `wo:thm:completeness`; the `T_att ε/M` term |
 | Per-row checks before ρ; ct(h) assertion | H6 precondition; no ρ-weighted leak (§2.1) |
 | Raw t_p and t_D | Their compressed forms are functions of them (§2.4), so sending them raw removes nothing from H4 or H8: the hybrids already replace the raw images with uniform ones |
 | Sampler precision (M5a) | +2^−149 on 2^−128.8 |
@@ -973,9 +970,10 @@ fold in.
 
 1. **Completeness at the predicted abort rate.**
    - Honest proofs over `CheckingResponseProver` verify at D = 64 and 256.
-   - Over 300 deterministic proofs each at α = 16 (`ALPHA`) and α = 10, the
+   - Over 300 deterministic proofs each at α = 16 (the paper's) and α = 10, the
      mean attempt count lies within 4σ of the repetition rate M that α and
-     `EPSILON_BITS` predict (M ≈ 2.37 and 3.99).
+     `EPSILON_BITS` predict (M ≈ 2.37 and 3.99). The production α rejects
+     too rarely to measure this way; the headline test pins its T_att = 10.
 2. **Tamper rejection.**
    - Flipping a byte of t_D, of n, of t_p or of u_a is rejected.
    - Reordering ρ is rejected.
@@ -985,7 +983,7 @@ fold in.
      bypassed through a test-only path, the checking prover rejects the
      result.
    - Pairing a rejected attempt's (t_D, n) with a different attempt's z is
-     rejected. A whole rejected attempt, with its own z, is a valid proof
+     rejected (run at α = 16, where rejections occur). A whole rejected attempt, with its own z, is a valid proof
      whenever z ∈ 𝓑_cert, and the test asserts that too.
 3. **Statistics.**
    - Accepted z per block passes KS and χ² tests against π_0(·|𝓑).
@@ -1017,7 +1015,7 @@ fold in.
    operator-norm rejections and position collisions.
 8. **Parameters.**
    - The derived widths pass the exact check.
-   - Perturbing any k_b down by 1% fails it.
+   - Perturbing k down by 1% fails it.
    - The headline shape reproduces the values of §5.
 
 ## 8. Implementation slices
