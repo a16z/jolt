@@ -14,7 +14,7 @@ use jolt_dory::{DoryCommitment, DoryScheme};
 use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
-use jolt_transcript::LegacyBlake2bTranscript;
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_verifier::{verify, JoltProof, JoltProofClaims, JoltVerifierPreprocessing, ZkConfig};
 use libfuzzer_sys::fuzz_target;
 
@@ -40,7 +40,7 @@ fn bundles() -> &'static [Bundle] {
                         .expect("fixture decodes");
                 assert_eq!(consumed, bytes.len(), "fixture has trailing bytes");
                 let (preprocessing, public_io, proof, advice) = &bundle;
-                verify::<Fr, DoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+                verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
                     preprocessing,
                     public_io,
                     proof,
@@ -257,7 +257,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
         &preprocessing,
         &public_io,
         &proof,

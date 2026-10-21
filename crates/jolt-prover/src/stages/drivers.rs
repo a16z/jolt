@@ -196,7 +196,7 @@ mod twin_tests {
         ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds, SequentialRounds,
         SumcheckError, SumcheckProof,
     };
-    use jolt_transcript::{prover_transcript, Keccak, Transcript};
+    use jolt_transcript::{prover_transcript, Keccak};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
     use jolt_verifier::VerifierError;
     use jolt_witness::{

@@ -258,7 +258,7 @@ mod field_inline_round_trip {
     use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
-    use jolt_transcript::{prover_transcript, Keccak, ProverState, Transcript};
+    use jolt_transcript::{prover_transcript, Keccak, ProverState};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
     use jolt_witness::JoltWitnessOracle as _;
 

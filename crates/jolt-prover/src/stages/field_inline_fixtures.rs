@@ -558,7 +558,7 @@ pub(crate) mod twins {
         transcript: &mut ProverState<Keccak>,
         stage1: &Stage1ProverOutput<Fr, C>,
     ) {
-        let tau = draw_spartan_outer_tau(transcript, LOG_T);
+        let tau = draw_spartan_outer_tau(transcript, LOG_T).unwrap();
         let uniskip_challenge = uniskip::verify_clear(
             &stage1.uniskip_proof,
             &UniskipParams::spartan_outer(),
@@ -612,7 +612,7 @@ pub(crate) mod twins {
         let raf_dimensions = RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap();
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
 
-        let tau_high: Fr = draw_spartan_product_tau_high(transcript);
+        let tau_high: Fr = draw_spartan_product_tau_high(transcript).unwrap();
         let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
         let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
         let uniskip_input_claim = uniskip_relation

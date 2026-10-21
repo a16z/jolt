@@ -4,7 +4,8 @@
 use common::jolt_device::JoltDevice;
 use jolt_akita::AkitaProverSetup;
 use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+use jolt_prover::akita::preprocessing::{AkitaVc};
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_prover::JoltBackend;
 use jolt_prover::{akita, ProverConfig};
 use jolt_verifier::proof::JoltProof;
@@ -78,7 +79,7 @@ pub fn prove<D>(
         &prover_preprocessing.pcs_setup,
     );
 
-    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -101,7 +102,7 @@ pub fn verify_full(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
         preprocessing,
         public_io,
         proof,

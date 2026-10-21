@@ -175,7 +175,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::FieldTranscript;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

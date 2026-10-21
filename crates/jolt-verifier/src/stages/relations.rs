@@ -612,6 +612,7 @@ mod tests {
     }
 
     use super::draw_recording::recorder;
+    use jolt_transcript::Transcript;
 
     /// The absorb stream produced by appending `opening_values()` one-by-one is
     /// the reference Fiat-Shamir order; `append_openings` must reproduce it.
@@ -1234,7 +1235,7 @@ mod sumcheck_batch_derive_tests {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod begin_batch_tests {
-    use super::draw_recording::{record, DrawEvent};
+    use super::draw_recording::{record, TranscriptEvent};
     use super::ConcreteSumcheck as _;
     use crate::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -1243,7 +1244,7 @@ mod begin_batch_tests {
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_sumcheck::{append_sumcheck_claim, BatchMember, ClearSumcheckRecorder};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::FieldTranscript;
 
     #[derive(super::SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
@@ -1315,7 +1316,7 @@ mod begin_batch_tests {
         let (replica_events, (instruction_coeff, registers_coeff)) = record(|t| {
             append_sumcheck_claim(t, &instruction_sum);
             append_sumcheck_claim(t, &registers_sum);
-            (t.challenge()?, t.challenge()?)
+            (t.challenge().unwrap(), t.challenge().unwrap())
         });
         assert_eq!(events, replica_events);
 
@@ -1372,7 +1373,7 @@ mod begin_batch_tests {
         assert_eq!(
             events
                 .iter()
-                .filter(|event| matches!(event, DrawEvent::Squeeze(_)))
+                .filter(|event| matches!(event, TranscriptEvent::Squeeze(_)))
                 .count(),
             1,
         );

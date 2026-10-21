@@ -594,6 +594,7 @@ fn append_opening_claims<F, T>(
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use jolt_transcript::Transcript;
     #[cfg(not(feature = "akita"))]
     use super::super::booleanity::BooleanityOutputClaims;
     #[cfg(not(feature = "akita"))]

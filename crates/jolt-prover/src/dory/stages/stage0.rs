@@ -409,7 +409,7 @@ mod field_inline_tests {
     use jolt_kernels::finish_streamed;
     use jolt_kernels::KernelError;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};
-    use jolt_transcript::{prover_transcript, Keccak, LegacyBlake2bTranscript};
+    use jolt_transcript::{prover_transcript, FieldTranscript, Keccak, ProverState};
 
     fn grid() -> CommitmentGrid {
         CommitmentGrid {
@@ -485,27 +485,26 @@ mod field_inline_tests {
             direct_dense_commitment(&column, &setup)
         );
 
-        let mut prover_state = Legacyprover_transcript::<Keccak>(b"Jolt", b"");
+        let mut prover_state = prover_transcript::<Keccak>(b"Jolt", b"");
         absorb_transcript_commitments(&commitments, None, None, &mut prover_state);
-        let mut verifier_transcript = Legacyprover_transcript::<Keccak>(b"Jolt", b"");
+        let mut verifier_transcript = prover_transcript::<Keccak>(b"Jolt", b"");
         jolt_verifier::absorb_transcript_commitments(
             &commitments,
             None,
             None,
             &mut verifier_transcript,
         );
-        assert_eq!(
-            prover_state.challenge()?,
-            verifier_transcript.challenge()?
-        );
+        let first = |transcript: &mut ProverState<Keccak>| -> Fr { transcript.challenge().unwrap() };
+        let expected = first(&mut prover_state);
+        assert_eq!(expected, first(&mut verifier_transcript));
 
         let mut stripped = commitments.clone();
         stripped.field_inline = None;
-        let mut stripped_transcript = Legacyprover_transcript::<Keccak>(b"Jolt", b"");
+        let mut stripped_transcript = prover_transcript::<Keccak>(b"Jolt", b"");
         absorb_transcript_commitments(&stripped, None, None, &mut stripped_transcript);
         assert_ne!(
-            prover_state.challenge()?,
-            stripped_transcript.challenge()?,
+            expected,
+            first(&mut stripped_transcript),
             "the field-inline payload must be Fiat-Shamir-bound"
         );
     }

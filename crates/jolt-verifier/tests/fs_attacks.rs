@@ -20,8 +20,6 @@ use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 #[cfg(all(not(feature = "akita"), not(feature = "zk")))]
 use jolt_field::Ring;
-#[cfg(not(feature = "akita"))]
-use jolt_transcript::LegacyBlake2bTranscript;
 
 #[cfg(all(not(feature = "akita"), not(feature = "zk")))]
 #[test]
@@ -34,7 +32,7 @@ fn dory_clear_preprocessing_digest_requires_fiat_shamir_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &case.preprocessing,
             &case.public_io,
@@ -54,7 +52,7 @@ fn dory_clear_preprocessing_digest_requires_fiat_shamir_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &preprocessing,
             &case.public_io,
@@ -74,7 +72,7 @@ fn dory_clear_preprocessing_digest_requires_fiat_shamir_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &preprocessing,
             &case.public_io,
@@ -103,7 +101,7 @@ fn dory_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &case.preprocessing,
             &case.public_io,
@@ -123,7 +121,7 @@ fn dory_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &case.preprocessing,
             &case.public_io,
@@ -143,7 +141,7 @@ fn dory_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &case.preprocessing,
             &case.public_io,
@@ -172,7 +170,7 @@ fn dory_clear_final_opening_batch_requires_commitment_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &case.preprocessing,
             &case.public_io,
@@ -192,7 +190,7 @@ fn dory_clear_final_opening_batch_requires_commitment_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &case.preprocessing,
             &case.public_io,
@@ -212,7 +210,7 @@ fn dory_clear_final_opening_batch_requires_commitment_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(
             &case.preprocessing,
             &case.public_io,
@@ -241,7 +239,7 @@ fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(&case.preprocessing, &case.public_io, &case.proof, None)
     });
     assert!(
@@ -256,7 +254,7 @@ fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(&preprocessing, &case.public_io, &case.proof, None)
     });
     assert!(
@@ -271,7 +269,7 @@ fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(&preprocessing, &case.public_io, &case.proof, None)
     });
     assert!(
@@ -295,7 +293,7 @@ fn dory_zk_final_opening_batch_requires_commitment_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(&case.preprocessing, &case.public_io, &case.proof, None)
     });
     assert!(
@@ -310,7 +308,7 @@ fn dory_zk_final_opening_batch_requires_commitment_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(&case.preprocessing, &case.public_io, &proof, None)
     });
     assert!(
@@ -325,7 +323,7 @@ fn dory_zk_final_opening_batch_requires_commitment_binding() {
             Fr,
             DoryScheme,
             Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
+            AuditTranscript<'_, Fr>,
         >(&case.preprocessing, &case.public_io, &proof, None)
     });
     assert!(
@@ -342,12 +340,12 @@ fn dory_zk_final_opening_batch_requires_commitment_binding() {
 #[test]
 fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
     use jolt_akita::{AkitaField, AkitaScheme};
-    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use jolt_prover::akita::preprocessing::AkitaVc;
     use support::akita_fixtures::akita_muldiv_case;
 
     let case = akita_muldiv_case();
     let (honest, tape) = record_challenges::<AkitaField, _>(|| {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
             &case.preprocessing,
             &case.public_io,
             &case.proof,
@@ -359,7 +357,7 @@ fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
     let mut preprocessing = case.preprocessing.clone();
     preprocessing.preprocessing_digest[0] ^= 1;
     let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
             &preprocessing,
             &case.public_io,
             &case.proof,
@@ -374,7 +372,7 @@ fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
     assert_eq!(frozen.consumed, frozen.expected);
 
     let (production, mutated_tape) = record_challenges::<AkitaField, _>(|| {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
             &preprocessing,
             &case.public_io,
             &case.proof,
@@ -396,12 +394,12 @@ fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
 fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
     use jolt_akita::{AkitaField, AkitaScheme};
     use jolt_field::Ring;
-    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use jolt_prover::akita::preprocessing::AkitaVc;
     use support::akita_fixtures::akita_muldiv_case;
 
     let case = akita_muldiv_case();
     let (honest, tape) = record_challenges::<AkitaField, _>(|| {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
             &case.preprocessing,
             &case.public_io,
             &case.proof,
@@ -413,7 +411,7 @@ fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
     let mut proof = case.proof.clone();
     equivocate_stage1_clear(&mut proof, &tape, AkitaField::from_u64(1));
     let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
             &case.preprocessing,
             &case.public_io,
             &proof,
@@ -428,7 +426,7 @@ fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
     assert_eq!(frozen.consumed, frozen.expected);
 
     let (production, mutated_tape) = record_challenges::<AkitaField, _>(|| {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
             &case.preprocessing,
             &case.public_io,
             &proof,

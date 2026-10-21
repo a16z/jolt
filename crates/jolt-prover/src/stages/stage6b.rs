@@ -362,7 +362,7 @@ mod field_inline_round_trip {
         )
         .unwrap();
         let carried = &stage6a.clear_output.challenges;
-        let draws = Stage6bDraws::draw(&mut transcript, &formula_dimensions, false);
+        let draws = Stage6bDraws::draw(&mut transcript, &formula_dimensions, false).unwrap();
         let program = preprocessing.program().unwrap();
         let entry_bytecode_index = preprocessing
             .verifier
