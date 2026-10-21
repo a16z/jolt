@@ -64,8 +64,8 @@ pub enum VerifierError {
     #[error("public output length {got} exceeds configured maximum {max}")]
     OutputTooLarge { got: usize, max: usize },
 
-    #[error("invalid trace length {got}; expected a power of two no larger than {max}")]
-    InvalidTraceLength { got: usize, max: usize },
+    #[error("invalid trace length {got}; expected a power of two in [{min}, {max}]")]
+    InvalidTraceLength { got: usize, min: usize, max: usize },
 
     #[error("invalid RAM domain size {got}; expected a power of two in [{min}, {max}]")]
     InvalidRamK { got: usize, min: usize, max: usize },
