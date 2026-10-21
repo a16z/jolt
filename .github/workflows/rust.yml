@@ -108,6 +108,21 @@ jobs:
       # --all-features turns on parallel; lint the sequential nonce search too.
       - name: cargo clippy -p jolt-transcript --features bn254,solinas,binary,prover-grinding
         run: cargo clippy -p jolt-transcript --all-targets --features bn254,solinas,binary,prover-grinding
+      # The workspace-wide invocations above unify jolt-prover's `prover`
+      # features into every crate, so lint the verifier-only graph on its own:
+      # jolt-sumcheck and jolt-blindfold without `prover`, and jolt-verifier's
+      # library without the dev-dependency on jolt-prover.
+      - name: cargo clippy verifier-only sumcheck and BlindFold
+        run: cargo clippy -p jolt-sumcheck -p jolt-blindfold --all-targets
+      - name: cargo clippy -p jolt-verifier --lib
+        run: cargo clippy -p jolt-verifier --lib
+      - name: Check the verifier graph leaves out the prover's grinding
+        run: |
+          if cargo tree -p jolt-verifier -e normal,features --prefix none \
+               | grep -E 'feature "(prover|prover-grinding|yolocrypto)"'; then
+            echo "jolt-verifier enables the prover's proof-of-work search" >&2
+            exit 1
+          fi
       # jolt-verifier's prover-fixtures feature gates live prover artifact
       # generation for verifier tests. It is not enabled by the workspace-wide
       # invocations above, so build it explicitly in both modes.
@@ -795,7 +810,12 @@ jobs:
         run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
-        run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
+        run: cargo nextest run -p jolt-sumcheck --features committed,prover --cargo-quiet
+      # The shard loop above tests jolt-blindfold without its prover, which
+      # skips the proof pipelines.
+      - name: Test jolt-blindfold with its prover
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-blindfold --features prover --cargo-quiet
       - name: Test isolated external sumcheck consumer
         if: matrix.shard == 0
         run: cargo nextest run --manifest-path crates/jolt-sumcheck/tests/external-consumer/Cargo.toml --locked --cargo-quiet

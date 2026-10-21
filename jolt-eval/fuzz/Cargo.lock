@@ -1136,7 +1136,6 @@ dependencies = [
  "jolt-transcript",
  "jolt-utils",
  "rand_core",
- "rayon",
  "serde",
  "thiserror 2.0.18",
 ]

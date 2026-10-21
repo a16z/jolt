@@ -109,6 +109,7 @@ pub mod domain;
 pub mod error;
 mod pow;
 pub mod proof;
+#[cfg(feature = "prover")]
 pub mod prover;
 #[cfg(feature = "r1cs")]
 pub mod r1cs;
@@ -116,9 +117,9 @@ pub mod recorder;
 pub mod round_proof;
 pub mod verifier;
 
-#[cfg(all(test, feature = "committed"))]
+#[cfg(all(test, feature = "committed", feature = "prover"))]
 mod round_scheduler_tests;
-#[cfg(all(test, feature = "committed"))]
+#[cfg(all(test, feature = "committed", feature = "prover"))]
 mod tests;
 
 use jolt_transcript::Encoding;
@@ -143,7 +144,7 @@ where
 
 pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub use committed::CommittedSumcheckBuilder;
 pub use committed::{
     BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedRound,
@@ -152,10 +153,13 @@ pub use committed::{
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
-pub use pow::{grind_round, round_pow_bits, Nonced, NoncedRef};
+#[cfg(feature = "prover")]
+pub use pow::grind_round;
+pub use pow::{round_pow_bits, Nonced, NoncedRef};
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub use prover::prove_uniskip_committed;
+#[cfg(feature = "prover")]
 pub use prover::{
     prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
     ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
@@ -166,7 +170,7 @@ pub use r1cs::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};

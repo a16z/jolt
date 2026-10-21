@@ -16,11 +16,11 @@ ignored = ["getrandom_v04"]
 workspace = true
 
 [features]
-default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
+# Keccak is the stock sponge; Blake2b and Poseidon are opt-in.
+default = ["transcript-keccak"]
 # The prover's proof-of-work nonce search. It copies the sponge state, which
-# spongefish 0.8.0 exposes only under `yolocrypto`. Crates that hold both sides
-# enable it in verifier builds too; `yolocrypto` changes visibility only, not
-# the bytes absorbed or squeezed.
+# spongefish 0.8.0 exposes only under `yolocrypto`, so verifier builds leave it
+# off. `yolocrypto` changes visibility only, not the bytes absorbed or squeezed.
 prover-grinding = ["spongefish/yolocrypto"]
 # Searches proof-of-work nonces on all threads; the nonce found is the same.
 parallel = ["prover-grinding", "dep:rayon"]

@@ -62,18 +62,18 @@ impl<S: Encoding + ?Sized> Encoding for Instance<'_, S> {
 ///
 /// ```
 /// use jolt_transcript::{
-///     prover_transcript, verifier_transcript, Blake2b512, BytesMsg, ProverTranscript,
+///     prover_transcript, verifier_transcript, BytesMsg, Keccak, ProverTranscript,
 ///     VerifierTranscript,
 /// };
 ///
 /// const SESSION: &[u8] = b"jolt-rv64imac/v1";
 /// let statement: [u8; 32] = [0xAB; 32];
 ///
-/// let mut prover = prover_transcript::<Blake2b512>(SESSION, &statement);
+/// let mut prover = prover_transcript::<Keccak>(SESSION, &statement);
 /// prover.prover_message(&BytesMsg(b"commitment-a".to_vec()));
 /// let narg = prover.narg_string().to_vec();
 ///
-/// let mut verifier = verifier_transcript::<Blake2b512>(SESSION, &statement, &narg);
+/// let mut verifier = verifier_transcript::<Keccak>(SESSION, &statement, &narg);
 /// let _: BytesMsg = verifier.prover_message().unwrap();
 /// verifier.check_eof().unwrap();
 /// ```

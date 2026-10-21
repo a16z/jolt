@@ -5,6 +5,15 @@ edition = "2021"
 license = "MIT"
 description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 
+[features]
+# The prove side: `prove` and the proof-of-work search before its challenges,
+# which copies the sponge state. Verifier builds leave it off.
+prover = [
+  "jolt-sumcheck/prover",
+  "jolt-transcript/prover-grinding",
+  "dep:rayon",
+]
+
 [lints]
 workspace = true
 
@@ -15,11 +24,10 @@ jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
-# The prover grinds its public proof-of-work nonces on a copy of the sponge.
-jolt-transcript = { workspace = true, features = ["prover-grinding"] }
+jolt-transcript.workspace = true
 jolt-utils.workspace = true
 rand_core.workspace = true
-rayon.workspace = true
+rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
@@ -29,7 +37,28 @@ jolt-transcript = { workspace = true, features = [
   "bn254",
   "solinas",
   "transcript-blake2b",
+  "prover-grinding",
   "test-utils",
 ] }
 rand_chacha.workspace = true
 rand_core.workspace = true
+
+[[test]]
+name = "assignment_pipeline"
+required-features = ["prover"]
+
+[[test]]
+name = "proof_pipeline"
+required-features = ["prover"]
+
+[[test]]
+name = "r1cs_pipeline"
+required-features = ["prover"]
+
+[[test]]
+name = "real_prover"
+required-features = ["prover"]
+
+[[test]]
+name = "sumcheck_pipeline"
+required-features = ["prover"]
