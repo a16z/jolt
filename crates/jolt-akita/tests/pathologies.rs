@@ -131,39 +131,35 @@ fn akita_proof_payloads_reject_unknown_serialized_fields() {
 }
 
 #[test]
-fn akita_forged_commitment_metadata_rejects_before_shape_backed_allocation() {
-    let (verifier_setup, statement, proof) = native_proof_fixture(b"akita-forged-metadata");
-
-    // Forge the commitment's declared coefficient count to the upstream
-    // deserializer's 2^25 cap: without the shape guard this would reserve
-    // ~512 MiB before hitting EOF. The statement must be internally
-    // consistent, so every claim carries the forged commitment.
-    let mut forged =
+fn akita_commitment_rejects_non_canonical_group_bytes() {
+    let (_, statement, _) = native_proof_fixture(b"akita-group-bytes");
+    let serialized =
         serde_json::to_value(&statement[0].commitment).expect("commitment should serialize");
-    *forged
-        .get_mut("backend_coeff_len")
-        .expect("commitment should expose backend_coeff_len") = json!(1u64 << 25);
-    let forged: AkitaCommitment =
-        serde_json::from_value(forged).expect("forged commitment should deserialize");
-    let forged_statement: AkitaNativeBatchStatement = statement
-        .iter()
-        .map(|claim| jolt_openings::VerifierOpeningClaim {
-            commitment: forged.clone(),
-            evaluation: claim.evaluation.clone(),
-        })
-        .collect();
-    let mut transcript = prover_transcript::<Blake2b512>(b"akita-forged-metadata", b"");
-    let err = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-        &verifier_setup,
-        &forged_statement,
-        &proof,
-        &mut transcript,
-    )
-    .expect_err("forged backend_coeff_len should reject");
-    assert!(
-        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("coefficients")),
-        "expected a shape-guard rejection, got: {err}"
-    );
+    let group_bytes = |value: &mut Value| -> Vec<Value> {
+        value
+            .get_mut("group")
+            .and_then(Value::as_array_mut)
+            .expect("commitment should carry its group bytes")
+            .clone()
+    };
+    let roundtrip: AkitaCommitment =
+        serde_json::from_value(serialized.clone()).expect("exact group bytes deserialize");
+    assert_eq!(roundtrip, statement[0].commitment);
+
+    // A truncated or extended group must not decode: the group's header fixes
+    // its row count, and decoding consumes the bytes exactly.
+    for edit in [
+        |bytes: &mut Vec<Value>| {
+            let _ = bytes.pop();
+        },
+        |bytes: &mut Vec<Value>| bytes.push(json!(0)),
+    ] {
+        let mut tampered = serialized.clone();
+        let mut bytes = group_bytes(&mut tampered);
+        edit(&mut bytes);
+        *tampered.get_mut("group").expect("group field") = Value::Array(bytes);
+        assert!(serde_json::from_value::<AkitaCommitment>(tampered).is_err());
+    }
 }
 
 #[test]

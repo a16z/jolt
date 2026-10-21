@@ -11,11 +11,11 @@ use jolt_akita::{
     AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupOpeningClaim, OpeningsError,
-    VerifierOpeningClaim,
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupBatchOpening, GroupOpeningClaim,
+    OpeningsError, VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
-use jolt_transcript::{prover_transcript, Blake2b512};
+use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512, Keccak};
 use support::{
     batch_polynomials, f, layout, native_setup, native_statement, polynomial, setup_for,
     single_statement,
@@ -87,7 +87,8 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
     )
     .expect("streamed trace group should commit");
     let mut statement = GroupOpeningClaim::new(commitment, point, evaluations);
-    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-streamed-tamper", b"");
+    let session = b"akita-streamed-tamper";
+    let mut prover_state = prover_transcript::<Keccak>(session, b"");
     let proof = AkitaScheme::prove_batch(
         &prover_setup,
         Vec::new(),
@@ -96,30 +97,28 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
         &mut prover_state,
     )
     .expect("streamed trace batch should prove");
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-streamed-tamper", b"");
-    AkitaScheme::verify_batch(
-        &verifier_setup,
-        &[],
-        &statement,
-        &proof,
-        &mut verifier_transcript,
-    )
-    .expect("original streamed trace evaluations must verify");
-    assert_eq!(
-        prover_state.verifier_message::<[u8; 32]>(),
-        verifier_transcript.verifier_message::<[u8; 32]>()
-    );
+    let narg = prover_state.narg_string().to_vec();
+    let verify = |statement: &GroupOpeningClaim<_, _>, narg: &[u8]| {
+        let mut verifier_state = verifier_transcript::<Keccak>(session, b"", narg);
+        let pending = AkitaScheme::verify_batch(
+            &verifier_setup,
+            &[],
+            statement,
+            &proof,
+            &mut verifier_state,
+        )?;
+        AkitaScheme::check_eof(pending, verifier_state)
+    };
+    verify(&statement, &narg).expect("original streamed trace evaluations must verify");
+
+    // The argument lives in the caller's string, so its end is the string's
+    // end: one appended byte must reject.
+    let mut extended = narg.clone();
+    extended.push(0);
+    assert!(verify(&statement, &extended).is_err());
 
     statement.evaluations.swap(0, 1);
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-streamed-tamper", b"");
-    assert!(AkitaScheme::verify_batch(
-        &verifier_setup,
-        &[],
-        &statement,
-        &proof,
-        &mut verifier_transcript,
-    )
-    .is_err());
+    assert!(verify(&statement, &narg).is_err());
 }
 
 #[test]

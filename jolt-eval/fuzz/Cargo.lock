@@ -1384,6 +1384,7 @@ dependencies = [
  "jolt-poly",
  "jolt-transcript",
  "serde",
+ "spongefish",
  "thiserror 2.0.18",
  "tracing",
 ]

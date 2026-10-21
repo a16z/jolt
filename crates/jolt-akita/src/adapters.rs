@@ -18,17 +18,14 @@ use akita_pcs::{
 };
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
-    AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
-    CommittedGroup as AkitaBackendCommittedGroup,
+    AkitaVerifierSetup as BackendVerifierSetup, CommittedGroup as AkitaBackendCommittedGroup,
 };
-use jolt_field::{CanonicalBytes, Zero};
-use jolt_openings::{OpeningsError, VerifierOpeningClaim};
+use jolt_field::Zero;
+use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
-use jolt_transcript::{
-    BytesMsg, Encoding, FieldTranscript, Label, LabelWithCount, Transcript, U64Word,
-};
+use jolt_transcript::{BytesMsg, Encoding, Label, LabelWithCount, U64Word};
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use serde::{Deserialize, Serialize};
+use serde::{ser::Error as _, Deserialize, Serialize, Serializer};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{
@@ -53,7 +50,6 @@ pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtFie
 
 pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
-pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
 pub(crate) type AkitaBackendHint = CommitmentHandle<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendVerifierSetup = BackendVerifierSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
@@ -669,60 +665,6 @@ impl PartialEq for BackendVerifierCache {
 
 impl Eq for BackendVerifierCache {}
 
-/// Binds one backend flavor's setup identity into the transcript. The backend
-/// key is determined by the absorbed dimensions and admitted catalog; binding
-/// the validated catalog digest avoids hashing the large serialized key while
-/// preventing cross-catalog replay.
-pub(crate) fn append_verifier_setup<T: Transcript>(
-    transcript: &mut T,
-    setup: &AkitaVerifierSetup,
-    flavor: AkitaBackendFlavor,
-) -> Result<(), OpeningsError> {
-    let akita_chunk_profile = setup.akita_chunk_profile();
-    transcript.append(&Label(b"akita_setup_key"));
-    transcript.append_bytes(b"akita/fp128");
-    transcript.append_bytes(flavor.transcript_label());
-    transcript.append(&U64Word(setup.max_num_vars as u64));
-    transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
-    transcript.append(&U64Word(setup.max_total_batch_polys as u64));
-    transcript.append(&U64Word(setup.one_hot_k as u64));
-    if flavor == AkitaBackendFlavor::OneHot {
-        transcript.append(&Label(b"akita_chunk_profile"));
-        transcript.append(&U64Word(akita_chunk_profile.chunks as u64));
-        transcript.append(&Label(b"akita_chunked_levels"));
-        transcript.append(&U64Word(akita_chunk_profile.levels as u64));
-    }
-    transcript.append_bytes(&setup.default_layout_digest);
-    let catalog_digest = match flavor {
-        AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog_digest(),
-        AkitaBackendFlavor::OneHot => {
-            with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| scheme
-                .schedules()
-                .catalog_digest())
-        }
-    };
-    transcript.append_bytes(&catalog_digest);
-    Ok(())
-}
-
-/// Binds the batch statement (commitment group, point, per-claim data) into
-/// the transcript.
-pub(crate) fn append_batch_statement<T: Transcript>(
-    transcript: &mut T,
-    statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
-    commitment: &AkitaCommitment,
-    point: &[AkitaField],
-) {
-    transcript.append(&Label(b"akita_batch_statement"));
-    transcript.append(&commitment);
-    transcript.append_values(b"akita_pcs_point", point);
-    transcript.append(&LabelWithCount(b"akita_claims", statement.len() as u64));
-    for claim in statement {
-        transcript.append(&claim.commitment);
-        transcript.append(&claim.evaluation.value);
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AkitaBackendFlavor {
@@ -740,18 +682,63 @@ impl AkitaBackendFlavor {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// A commitment object: Jolt's metadata for it and the Akita committed group.
+///
+/// The group carries its profile, its rows and its 32-byte digest. Jolt's
+/// transcript absorbs the metadata and the digest, never the rows.
+/// Deserialization decodes the group under full validation, which recomputes
+/// the digest; no input supplies it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "AkitaCommitmentWire")]
 pub struct AkitaCommitment {
     pub(crate) backend_flavor: AkitaBackendFlavor,
     pub(crate) layout_digest: AkitaLayoutDigest,
     pub(crate) num_vars: usize,
     pub(crate) poly_count: usize,
     pub(crate) one_hot_k: usize,
-    /// Field-coefficient count of the serialized backend commitment — the
-    /// deserialization context [`akita_types::Commitment`] requires.
-    pub(crate) backend_coeff_len: usize,
-    pub(crate) serialized_backend_bytes: Vec<u8>,
+    pub(crate) group: AkitaBackendCommitment,
+}
+
+/// The serialized form of [`AkitaCommitment`].
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AkitaCommitmentWire {
+    backend_flavor: AkitaBackendFlavor,
+    layout_digest: AkitaLayoutDigest,
+    num_vars: usize,
+    poly_count: usize,
+    one_hot_k: usize,
+    /// The group's canonical bytes: its profile header, then its rows.
+    group: Vec<u8>,
+}
+
+impl TryFrom<AkitaCommitmentWire> for AkitaCommitment {
+    type Error = OpeningsError;
+
+    fn try_from(wire: AkitaCommitmentWire) -> Result<Self, OpeningsError> {
+        Ok(Self {
+            backend_flavor: wire.backend_flavor,
+            layout_digest: wire.layout_digest,
+            num_vars: wire.num_vars,
+            poly_count: wire.poly_count,
+            one_hot_k: wire.one_hot_k,
+            group: deserialize_akita(&wire.group, &())?,
+        })
+    }
+}
+
+impl Serialize for AkitaCommitment {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        AkitaCommitmentWire {
+            backend_flavor: self.backend_flavor,
+            layout_digest: self.layout_digest,
+            num_vars: self.num_vars,
+            poly_count: self.poly_count,
+            one_hot_k: self.one_hot_k,
+            group: serialize_akita(&self.group).map_err(S::Error::custom)?,
+        }
+        .serialize(serializer)
+    }
 }
 
 impl jolt_openings::GroupCommitmentMetadata for AkitaCommitment {
@@ -867,23 +854,12 @@ impl Encoding for AkitaCommitment {
                 .as_ref(),
         );
         out.extend_from_slice(BytesMsg(&self.layout_digest).encode().as_ref());
-        for word in [
-            self.num_vars,
-            self.poly_count,
-            self.one_hot_k,
-            self.backend_coeff_len,
-        ] {
+        for word in [self.num_vars, self.poly_count, self.one_hot_k] {
             out.extend_from_slice(U64Word(word as u64).encode().as_ref());
         }
-        out.extend_from_slice(
-            LabelWithCount(
-                b"akita_commitment_bytes",
-                self.serialized_backend_bytes.len() as u64,
-            )
-            .encode()
-            .as_ref(),
-        );
-        out.extend_from_slice(BytesMsg(&self.serialized_backend_bytes).encode().as_ref());
+        // The digest covers the group's profile and rows, so the transcript
+        // binds the whole group in 32 bytes.
+        out.extend_from_slice(self.group.digest().as_bytes());
         out
     }
 }
@@ -951,10 +927,9 @@ impl Encoding for AkitaHidingCommitment {
 
 #[derive(Clone, Debug, Default)]
 pub struct AkitaProverHint {
-    pub(crate) commitment: AkitaCommitment,
-    /// The public committed group and the backend handle retaining its exact
+    /// The public commitment and the backend handle retaining its exact
     /// source, produced at commit time and consumed when opening.
-    pub(crate) backend: Option<(AkitaBackendCommitment, AkitaBackendHint)>,
+    pub(crate) opening: Option<(AkitaCommitment, AkitaBackendHint)>,
     pub(crate) source: AkitaHintSource,
 }
 
@@ -1221,29 +1196,6 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
     )
 }
 
-/// Ends outer Jolt challenge derivation at one statement-bound challenge and
-/// uses it to domain-separate the nested Akita argument's session. No
-/// subsequent Jolt challenge consumes the terminal opening proof, so
-/// reabsorbing that proof into the outer transcript could not affect
-/// acceptance.
-pub(crate) fn bridged_akita_session<T>(
-    jolt_transcript: &mut T,
-    session_label: &[u8],
-) -> Result<Vec<u8>, OpeningsError>
-where
-    T: FieldTranscript<AkitaField>,
-{
-    let bridge = jolt_transcript.challenge()?;
-    let bridge_bytes = bridge.to_bytes_le_vec();
-    // Akita binds the concrete instance into its own Fiat-Shamir state but
-    // keeps the session bytes as domain separator, so the cross-protocol
-    // bridge belongs here.
-    let mut bridged_session = Vec::with_capacity(session_label.len() + bridge_bytes.len());
-    bridged_session.extend_from_slice(session_label);
-    bridged_session.extend_from_slice(&bridge_bytes);
-    Ok(bridged_session)
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -1253,7 +1205,7 @@ mod tests {
     )]
 
     use super::*;
-    use akita_types::RingVec;
+    use akita_types::{Commitment, RingVec};
     use jolt_field::Ring;
 
     fn af(value: u64) -> AkitaField {
@@ -1393,17 +1345,17 @@ mod tests {
     #[test]
     fn deserialize_akita_rejects_trailing_bytes() {
         // The wire form carries coefficients only, so the fixture stays D-free.
-        let payload = AkitaBackendCommitmentPayload::new(RingVec::from_coeffs(
+        let payload = Commitment::<AkitaField>::new(RingVec::from_coeffs(
             (1..=64).map(AkitaField::from_u64).collect(),
         ));
         let coeff_len = payload.rows().coeff_len();
         let mut bytes = serialize_akita(&payload).expect("payload serializes");
-        let roundtrip: AkitaBackendCommitmentPayload =
+        let roundtrip: Commitment<AkitaField> =
             deserialize_akita(&bytes, &coeff_len).expect("exact bytes deserialize");
         assert_eq!(roundtrip, payload);
 
         bytes.push(0);
-        let err = deserialize_akita::<AkitaBackendCommitmentPayload>(&bytes, &coeff_len)
+        let err = deserialize_akita::<Commitment<AkitaField>>(&bytes, &coeff_len)
             .expect_err("trailing bytes must be rejected");
         assert!(
             matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")),

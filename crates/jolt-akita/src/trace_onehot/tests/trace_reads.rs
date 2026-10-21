@@ -126,7 +126,9 @@ fn coefficient_packing_reads_each_trace_row_once() {
     let prepared = packing_point::<D>(source.num_vars, num_live_positions, 4);
     let _ = coefficient_packing_partials_columns::<AkitaField, D>(
         source,
-        SubringCoefficientPackingPlan { point: &prepared },
+        SubringCoefficientPackingPlan {
+            tables: &SubringCoefficientPackingTables::new(prepared).unwrap(),
+        },
     )
     .unwrap();
     assert_eq!(fills.load(Ordering::Relaxed), ROWS);

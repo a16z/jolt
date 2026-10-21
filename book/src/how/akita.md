@@ -38,9 +38,12 @@ in the last owner. When the schedule reduces the chunk count, it merges owners.
 This behavior is provided by
 [Akita #175](https://github.com/LayerZero-Labs/akita/pull/175).
 
-The canonical layout checks column order and dimensions. Commitments, their
-polynomial counts, group points, and ordered evaluations are bound to the
-transcript before Akita derives batching challenges. The streaming witness
+The canonical layout checks column order and dimensions. Akita runs inside
+Jolt's Fiat-Shamir transcript: its messages go into Jolt's proof bytes and its
+challenges come from Jolt's sponge. At stage 0, Jolt absorbs each commitment's
+metadata and the 32-byte digest of its committed group. Before deriving
+batching challenges, Akita absorbs an instance descriptor, each group's
+opening point, and the ordered evaluations. The streaming witness
 uses a `u64` mask to distinguish selected address zero from an empty row, so
 the layout rejects more than 64 trace columns.
 
@@ -88,9 +91,9 @@ named `jolt-fp128-onehot-k<K>-w<chunks>r<levels>.aks`; an unsuffixed filename de
 and distribute their own production coverage.
 
 The same upstream verifier consumes the selected catalog and geometry embedded
-in public verifier preprocessing. Every one-hot setup binds both
-`akita_chunk_profile` (chunks) and `akita_chunked_levels` (levels) into the
-transcript. Verification does not read source catalog files.
+in public verifier preprocessing. Akita's instance descriptor binds the selected
+schedule, so a one-hot opening binds both its chunk count and its chunked
+level count. Verification does not read source catalog files.
 
 Both prover and verifier must be built for the same protocol. The `akita` feature selects native grouped commitments and little-endian scalar challenges. A compiled verifier accepts only its selected protocol configuration and rejects a mismatching proof. Dory and Akita proofs therefore require matching preprocessing and verifier builds.
 

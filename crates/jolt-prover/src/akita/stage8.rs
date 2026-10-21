@@ -3,6 +3,7 @@
 //! FieldInc (field-inline) OR ProgramBytecode, ProgramImageInit (committed),
 //! OneHotTrace]`. Field-inline and committed-program suffixes are exclusive.
 
+use std::borrow::BorrowMut;
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
@@ -11,9 +12,10 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
+    CommitmentScheme, EvaluationClaim, GroupBatchOpening, GroupOpeningClaim,
+    TaggedGroupOpeningClaim,
 };
-use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverState, ProverTranscript};
 use jolt_verifier::stages::pow::PowSite;
 
 use crate::stages::grind_pow;
@@ -74,10 +76,10 @@ pub fn prove_stage8<F, PCS, VC, T>(
 ) -> Result<(PCS::Proof, Option<u32>), ProverError<F>>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + GroupBatchOpening,
     PCS::Output: Clone + Encoding,
     VC: VectorCommitment<Field = F>,
-    T: FieldTranscript<F> + ProverTranscript,
+    T: FieldTranscript<F> + ProverTranscript + BorrowMut<ProverState<PCS::Sponge>>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let chunk_width = config.one_hot_config.committed_chunk_bits();
@@ -176,7 +178,7 @@ where
             auxiliary_groups,
             main_group,
             one_hot_trace_hint,
-            transcript,
+            BorrowMut::<ProverState<PCS::Sponge>>::borrow_mut(transcript),
         )
         .map_err(batch_failed::<F>)
     })?;

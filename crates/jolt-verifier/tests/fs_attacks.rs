@@ -10,6 +10,8 @@ mod support;
 use support::fs_mutations::cancel_dory_final_opening_commitments;
 #[cfg(not(feature = "zk"))]
 use support::fs_mutations::equivocate_stage1_clear;
+#[cfg(feature = "akita")]
+use support::fs_transcript::ReplayResult;
 use support::fs_transcript::{record_challenges, replay_challenges, AuditTranscript};
 
 #[cfg(not(feature = "akita"))]
@@ -20,6 +22,8 @@ use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 #[cfg(all(not(feature = "akita"), not(feature = "zk")))]
 use jolt_field::Ring;
+#[cfg(feature = "akita")]
+use jolt_verifier::VerifierError;
 
 #[cfg(all(not(feature = "akita"), not(feature = "zk")))]
 #[test]
@@ -291,6 +295,27 @@ fn dory_zk_final_opening_batch_requires_commitment_binding() {
     );
 }
 
+/// Akita draws its challenges from the inner sponge, outside the replay
+/// script, and that sponge has absorbed the mutated data. So a frozen run
+/// keeps Jolt's stages 1–7 on the recorded challenges, and Akita's own
+/// binding then rejects at the stage-8 opening. The frozen verifier must
+/// either accept or fail only there, after consuming every scripted draw.
+#[cfg(feature = "akita")]
+fn assert_frozen_akita_reaches_opening(
+    frozen: &ReplayResult<Result<(), VerifierError>>,
+    attack: &str,
+) {
+    assert!(
+        matches!(
+            frozen.output,
+            Ok(()) | Err(VerifierError::FinalOpeningVerificationFailed { .. })
+        ),
+        "frozen Akita verifier rejected {attack} before the stage-8 opening: {:?}",
+        frozen.output
+    );
+    assert_eq!(frozen.consumed, frozen.expected);
+}
+
 #[cfg(feature = "akita")]
 #[test]
 fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
@@ -319,12 +344,7 @@ fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
             case.trusted_advice_commitment.as_ref(),
         )
     });
-    assert!(
-        frozen.output.is_ok(),
-        "frozen Akita verifier rejected the replay attack: {:?}",
-        frozen.output
-    );
-    assert_eq!(frozen.consumed, frozen.expected);
+    assert_frozen_akita_reaches_opening(&frozen, "the replay attack");
 
     let (production, mutated_tape) = record_challenges::<AkitaField, _>(|| {
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
@@ -373,12 +393,7 @@ fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
             case.trusted_advice_commitment.as_ref(),
         )
     });
-    assert!(
-        frozen.output.is_ok(),
-        "frozen Akita verifier rejected stage-1 equivocation: {:?}",
-        frozen.output
-    );
-    assert_eq!(frozen.consumed, frozen.expected);
+    assert_frozen_akita_reaches_opening(&frozen, "stage-1 equivocation");
 
     let (production, mutated_tape) = record_challenges::<AkitaField, _>(|| {
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(

@@ -453,6 +453,10 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
         if is_named_absorb || is_transcript_method {
             self.record_absorb(&method, expression);
         }
+        if hands_off_transcript(&method) && receives_transcript {
+            self.record_absorb(&method, expression);
+            self.record_challenge(&method);
+        }
         visit::visit_expr_method_call(self, expression);
     }
 
@@ -479,6 +483,12 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
         {
             self.record_absorb(name, expression);
         }
+        // A protocol that runs on the caller's transcript (Akita's embedded
+        // opening) absorbs and draws there, outside this scan.
+        if hands_off_transcript(name) && arguments.to_ascii_lowercase().contains("transcript") {
+            self.record_absorb(name, expression);
+            self.record_challenge(name);
+        }
         visit::visit_expr_call(self, expression);
     }
 
@@ -500,6 +510,16 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
                 context,
                 invocation.tokens.to_string().replace(' ', "")
             ));
+        }
+        // Macro bodies are opaque token streams, so find hand-offs by text.
+        let tokens = invocation.tokens.to_string().replace(' ', "");
+        if tokens.to_ascii_lowercase().contains("transcript") {
+            for name in HANDS_OFF_TRANSCRIPT {
+                if tokens.contains(&format!(".{name}(")) || tokens.contains(&format!("::{name}(")) {
+                    self.record_absorb(name, &invocation.tokens);
+                    self.record_challenge(name);
+                }
+            }
         }
         visit::visit_macro(self, invocation);
     }
@@ -553,6 +573,13 @@ fn has_derive(attributes: &[Attribute], derive: &str) -> bool {
 
 fn prover_only_name(name: &str) -> bool {
     name.starts_with("prove") || name.starts_with("commit_round")
+}
+
+/// Calls that hand the caller's transcript to another crate's protocol.
+const HANDS_OFF_TRANSCRIPT: [&str; 3] = ["batched_verify_embedded", "verify_batch", "check_eof"];
+
+fn hands_off_transcript(name: &str) -> bool {
+    HANDS_OFF_TRANSCRIPT.contains(&name)
 }
 
 fn is_challenge_call(name: &str) -> bool {

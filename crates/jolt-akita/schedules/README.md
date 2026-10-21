@@ -36,9 +36,12 @@ relevant base catalog.
 Preprocessing validates and serializes the exact catalog in `AkitaVerifierSetup`.
 An independent upstream verifier reconstructs its verification tables from that
 public setup, without reading source catalogs, running the planner, or needing
-the application's proving backend. The catalog digest is bound into the transcript. Every one-hot setup also binds
-its chunk count and leading chunked fold count, including `w1r0`. Verification only admits selections from
-its installed trusted setup; a proof cannot install a catalog.
+the application's proving backend. Before the opening, Akita absorbs one
+instance descriptor into Jolt's transcript. It covers the setup seed and
+algebra, the selected schedule row and its full schedule (so a one-hot
+opening binds its chunk count and leading chunked fold count, including
+`w1r0`), the grinding plan, and the opening layout. Verification only admits
+selections from its installed trusted setup; a proof cannot install a catalog.
 
 Schedule catalogs are part of the verifier's trusted preprocessing. Before use,
 catalogs pass through Akita's validated constructor, including when reconstructed

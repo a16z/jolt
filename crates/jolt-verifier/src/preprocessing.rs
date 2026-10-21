@@ -150,10 +150,10 @@ const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
 
 #[cfg(all(feature = "akita", not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/akita-whole-bytecode/v1";
+    b"jolt/program-preprocessing/akita-whole-bytecode/v2";
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v1";
+    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v2";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -306,13 +306,13 @@ mod tests {
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        10, 241, 10, 25, 152, 236, 113, 66, 234, 148, 180, 8, 19, 181, 13, 175, 248, 211, 234, 243,
-        37, 208, 9, 65, 14, 159, 55, 184, 173, 177, 237, 213,
+        239, 103, 0, 46, 88, 129, 56, 168, 232, 88, 101, 200, 154, 91, 243, 64, 117, 146, 119, 74,
+        59, 249, 26, 30, 203, 133, 134, 181, 161, 118, 146, 90,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        15, 187, 25, 179, 115, 141, 121, 127, 18, 224, 184, 85, 46, 153, 30, 31, 49, 77, 174, 174,
-        246, 42, 254, 70, 82, 144, 107, 4, 129, 86, 83, 51,
+        63, 241, 188, 72, 87, 52, 109, 83, 134, 151, 239, 136, 210, 149, 146, 153, 172, 253, 34,
+        111, 41, 59, 164, 84, 232, 53, 174, 53, 167, 199, 253, 70,
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
@@ -321,8 +321,8 @@ mod tests {
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        46, 218, 61, 222, 109, 82, 229, 196, 36, 71, 22, 191, 255, 174, 216, 201, 97, 149, 220, 63,
-        57, 1, 117, 198, 80, 239, 126, 253, 235, 189, 178, 98,
+        34, 45, 51, 124, 233, 161, 96, 254, 166, 180, 49, 42, 51, 129, 116, 29, 74, 44, 219, 243,
+        174, 142, 167, 105, 181, 191, 238, 3, 179, 26, 27, 112,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
@@ -331,8 +331,8 @@ mod tests {
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        137, 52, 205, 208, 140, 177, 124, 190, 165, 69, 252, 53, 193, 68, 174, 237, 91, 43, 197,
-        129, 25, 27, 4, 20, 124, 93, 228, 56, 33, 25, 6, 75,
+        59, 172, 154, 230, 79, 189, 39, 86, 174, 236, 211, 180, 53, 193, 215, 100, 173, 197, 26,
+        204, 0, 162, 207, 100, 216, 10, 21, 242, 112, 218, 90, 161,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout
@@ -358,14 +358,40 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(not(feature = "akita"))]
+    fn placeholder_commitment() -> Commitment {
+        Commitment::default()
+    }
+
+    /// Akita commitments carry a real committed group, so the placeholder is
+    /// the commitment to a zero polynomial under a fixed packaged schedule.
+    #[cfg(feature = "akita")]
+    fn placeholder_commitment() -> Commitment {
+        use jolt_akita::{AkitaChunkProfile, AkitaScheduleArtifacts, AkitaSetupParams};
+        use jolt_openings::CommitmentScheme;
+        use jolt_poly::Polynomial;
+
+        const NUM_VARS: usize = 14;
+        let (setup, _) = Pcs::setup(AkitaSetupParams::new(
+            NUM_VARS,
+            1,
+            [0; 32],
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
+        ))
+        .unwrap();
+        let zero = Polynomial::new(vec![Default::default(); 1 << NUM_VARS]);
+        Pcs::commit(&zero, &setup).unwrap().0
+    }
+
     fn committed() -> CommittedProgramPreprocessing<Pcs> {
         let full = program();
+        let commitment = placeholder_commitment();
         CommittedProgramPreprocessing {
             meta: full.metadata().unwrap(),
             memory_layout: full.memory_layout,
             max_padded_trace_length: full.max_padded_trace_length,
-            program_image_commitment: Commitment::default(),
-            bytecode_commitment: Commitment::default(),
+            program_image_commitment: commitment.clone(),
+            bytecode_commitment: commitment,
             trace_order: TracePolynomialOrder::CycleMajor,
         }
     }

@@ -1,6 +1,7 @@
 //! A transcript wrapper for tests: scripted challenges, an event log, and no
 //! proof of work.
 
+use std::borrow::{Borrow, BorrowMut};
 use std::collections::VecDeque;
 
 #[cfg(feature = "prover-grinding")]
@@ -10,7 +11,7 @@ use crate::{
     ChallengeSetSize, FieldTranscript, ProverInit, ProverTranscript, VerifierInit,
     VerifierTranscript,
 };
-use spongefish::{Encoding, FromNarg, VerificationError};
+use spongefish::{DuplexSpongeInterface, Encoding, FromNarg, VerificationError, VerifierState};
 
 /// One sponge operation a [`ScriptedTranscript`] saw, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +123,28 @@ impl<T, F, S> ScriptedTranscript<T, F, S> {
     /// The wrapped transcript.
     pub fn into_inner(self) -> T {
         self.inner
+    }
+}
+
+/// The wrapped state, for a protocol that runs on it directly, such as an
+/// embedded opening argument. Its operations bypass the script and the log.
+impl<T, F, S> Borrow<T> for ScriptedTranscript<T, F, S> {
+    fn borrow(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T, F, S> BorrowMut<T> for ScriptedTranscript<T, F, S> {
+    fn borrow_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+}
+
+impl<'a, H: DuplexSpongeInterface, F, S> From<ScriptedTranscript<VerifierState<'a, H>, F, S>>
+    for VerifierState<'a, H>
+{
+    fn from(transcript: ScriptedTranscript<VerifierState<'a, H>, F, S>) -> Self {
+        transcript.inner
     }
 }
 

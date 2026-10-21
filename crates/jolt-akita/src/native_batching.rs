@@ -11,28 +11,31 @@
 //!   of independently committed groups at their group-local points, in one
 //!   backend proof.
 //!
-//! This adapter performs no claim combination of its own — it validates the
-//! statement shape, bridges Jolt's Fiat-Shamir transcript into Akita's
-//! session, and embeds the backend argument bytes wholesale.
+//! This adapter performs no claim combination of its own. It validates the
+//! statement shape and runs Akita's argument. Jolt's trace batch runs inside
+//! Jolt's own Fiat-Shamir sponge: Akita absorbs its statement and writes its
+//! messages into Jolt's argument string. The generic [`BatchOpeningScheme`]
+//! and single-polynomial paths run Akita standalone (see
+//! [`STANDALONE_SESSION`]).
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
-use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_transcript::{ProverChannel, VerifierChannel};
+use akita_types::{GroupBatchStatement, OpeningClaims, PendingEof, PolynomialGroupClaims};
 use jolt_openings::{
     BatchOpeningScheme, GroupOpeningClaim, GroupOpeningWithHint, OpeningsError,
     TaggedGroupOpeningClaim, VerifierOpeningClaim,
 };
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{FieldTranscript, Label, LabelWithCount, U64Word};
+use jolt_transcript::FieldTranscript;
 use tracing::info_span;
 
 use crate::adapters::{
-    akita_error, append_batch_statement, append_verifier_setup, bridged_akita_session,
-    invalid_batch, prove_failed, reverse_point, serialize_akita, validate_one_hot_k,
-    with_backend_pool, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
-    AkitaBackendHint, AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource,
-    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    akita_error, invalid_batch, prove_failed, reverse_point, validate_one_hot_k, with_backend_pool,
+    AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint,
+    AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource, AkitaProverHint,
+    AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::scheme::validate_group_order;
@@ -41,6 +44,14 @@ use crate::scheme::validate_group_order;
 /// opening protocol.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AkitaNativeBatching;
+
+/// Akita session for an opening that runs outside Jolt's sponge.
+///
+/// Such an opening is a standalone argument: Akita's own transcript binds its
+/// setup, schedule selection, points, evaluations and commitment digests. It
+/// neither reads nor advances the caller's transcript. Jolt's trace batch
+/// never takes this path.
+const STANDALONE_SESSION: &[u8] = b"jolt-akita/batch";
 
 type AkitaOpening<'a> =
     SelectedProverOpeningData<'a, AkitaBackendExtField, AkitaBackendHint, AkitaField>;
@@ -66,17 +77,21 @@ fn validate_grouped_claim(
     Ok(())
 }
 
-fn validate_grouped_hint(
+/// Returns the backend handle of a hint whose commitment is the claim's.
+fn grouped_backend_hint(
     role: &'static str,
     claim: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
-    hint: &AkitaProverHint,
-) -> Result<(), OpeningsError> {
-    if hint.commitment != claim.commitment {
-        return Err(invalid_batch(format!(
+    hint: AkitaProverHint,
+) -> Result<AkitaBackendHint, OpeningsError> {
+    match hint.opening {
+        Some((commitment, backend_hint)) if commitment == claim.commitment => Ok(backend_hint),
+        Some(_) => Err(invalid_batch(format!(
             "Akita {role} hint does not match its public commitment"
-        )));
+        ))),
+        None => Err(invalid_batch(format!(
+            "Akita {role} hint has no backend opening data"
+        ))),
     }
-    Ok(())
 }
 
 fn validate_trace_batch_statement(
@@ -149,56 +164,9 @@ fn validate_trace_batch_statement(
     Ok(())
 }
 
-fn bind_grouped_statement_transcripts<T>(
-    transcript: &mut T,
-    setup: &AkitaVerifierSetup,
-    selection: OpeningScheduleSelection,
-    auxiliary_groups: &[TaggedGroupOpeningClaim<AkitaField, AkitaCommitment>],
-    main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
-) -> Result<Vec<u8>, OpeningsError>
-where
-    T: FieldTranscript<AkitaField>,
-{
-    append_verifier_setup(transcript, setup, AkitaBackendFlavor::OneHot)?;
-    transcript.append(&Label(b"akita_precommit_batch_v4"));
-    transcript.append_bytes(&serialize_akita(&selection)?);
-    let group_count = auxiliary_groups
-        .len()
-        .checked_add(1)
-        .ok_or_else(|| invalid_batch("Akita grouped statement group count overflows"))?;
-    transcript.append(&LabelWithCount(b"akita_groups", group_count as u64));
-    let groups = auxiliary_groups
-        .iter()
-        .map(|entry| (Some(entry.role), &entry.claim))
-        .chain(std::iter::once((None, main)));
-    for (index, (role, claim)) in groups.enumerate() {
-        transcript.append(&U64Word(index as u64));
-        if let Some(role) = role {
-            transcript.append_bytes(role.transcript_label());
-            if let Some(role_index) = role.transcript_index() {
-                transcript.append(&U64Word(role_index));
-            }
-        } else {
-            transcript.append_bytes(b"main_trace");
-        }
-        transcript.append(&U64Word(u64::from(role.is_some())));
-        transcript.append(&claim.commitment);
-        transcript.append_values(b"akita_group_point", &claim.point);
-        transcript.append(&LabelWithCount(
-            b"akita_group_evaluations",
-            claim.evaluations.len() as u64,
-        ));
-        for evaluation in &claim.evaluations {
-            transcript.append(&evaluation);
-        }
-    }
-    bridged_akita_session(transcript, b"jolt-akita/precommitted-group-batch/v4")
-}
-
 fn prove_one_hot_opening(
     setup: &AkitaProverSetup,
     opening: AkitaOpening<'_>,
-    session: &[u8],
 ) -> Result<Vec<u8>, OpeningsError> {
     let (backend_prover_setup, backend) = setup.one_hot_backend()?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
@@ -208,7 +176,7 @@ fn prove_one_hot_opening(
             backend_prover_setup,
             opening,
             backend,
-            session,
+            STANDALONE_SESSION,
             BasisMode::Lagrange,
         ))?;
         let _ = backend.trim_caches()?;
@@ -220,14 +188,13 @@ fn prove_one_hot_opening(
 fn verify_one_hot_statement(
     setup: &AkitaVerifierSetup,
     proof: &AkitaBatchProof,
-    session: &[u8],
     statement: GroupBatchStatement<'_, AkitaBackendExtField, AkitaField>,
 ) -> Result<(), OpeningsError> {
     let verifier = setup.one_hot_verifier()?;
     let verified = with_backend_pool(|| {
         with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify(
             &proof.backend_proof,
-            session,
+            STANDALONE_SESSION,
             statement,
             BasisMode::Lagrange,
         ))
@@ -236,52 +203,42 @@ fn verify_one_hot_statement(
 }
 
 impl AkitaNativeBatching {
-    pub(crate) fn prove_trace_batch<T>(
+    /// Proves Jolt's trace batch inside Jolt's sponge. Akita writes its whole
+    /// argument into `transcript`, so the returned proof carries only the
+    /// schedule selection.
+    pub(crate) fn prove_trace_batch(
         setup: &AkitaProverSetup,
         auxiliary_groups: Vec<GroupOpeningWithHint<AkitaField, AkitaCommitment, AkitaProverHint>>,
         main: GroupOpeningClaim<AkitaField, AkitaCommitment>,
         main_hint: AkitaProverHint,
-        transcript: &mut T,
-    ) -> Result<AkitaBatchProof, OpeningsError>
-    where
-        T: FieldTranscript<AkitaField>,
-    {
+        transcript: &mut ProverChannel,
+    ) -> Result<AkitaBatchProof, OpeningsError> {
         let auxiliary_claims = auxiliary_groups
             .iter()
             .map(|(entry, _)| entry.clone())
             .collect::<Vec<_>>();
         validate_trace_batch_statement(&setup.verifier, &auxiliary_claims, &main)?;
-        for (entry, hint) in &auxiliary_groups {
-            validate_grouped_hint(entry.role.diagnostic_name(), &entry.claim, hint)?;
-        }
-        validate_grouped_hint("main-trace", &main, &main_hint)?;
 
         // Group order is canonical: every auxiliary group, then the final
         // trace group. Claims and backend handles stay index-aligned.
         let mut group_claims = Vec::with_capacity(auxiliary_groups.len() + 1);
         let mut handles = Vec::with_capacity(auxiliary_groups.len() + 1);
         for (entry, hint) in auxiliary_groups {
+            let role = entry.role.diagnostic_name();
             if !matches!(hint.source, AkitaHintSource::Dense { poly_count: 1 }) {
                 return Err(invalid_batch(format!(
-                    "Akita {} hint must retain one dense source",
-                    entry.role.diagnostic_name()
+                    "Akita {role} hint must retain one dense source"
                 )));
             }
-            let (backend_commitment, backend_hint) = hint.backend.ok_or_else(|| {
-                invalid_batch(format!(
-                    "Akita {} hint has no backend payload",
-                    entry.role.diagnostic_name()
-                ))
-            })?;
+            handles.push(grouped_backend_hint(role, &entry.claim, hint)?);
             group_claims.push(
                 PolynomialGroupClaims::new(
-                    entry.claim.point.clone(),
-                    entry.claim.evaluations.clone(),
-                    backend_commitment,
+                    entry.claim.point,
+                    entry.claim.evaluations,
+                    entry.claim.commitment.group,
                 )
                 .map_err(akita_error)?,
             );
-            handles.push(backend_hint);
         }
         if !matches!(
             main_hint.source,
@@ -291,14 +248,12 @@ impl AkitaNativeBatching {
                 "Akita main-trace hint must retain the one-hot batch",
             ));
         }
-        let (main_backend_commitment, main_backend_hint) = main_hint
-            .backend
-            .ok_or_else(|| invalid_batch("Akita main-trace hint has no backend payload"))?;
+        let main_backend_hint = grouped_backend_hint("main-trace", &main, main_hint)?;
         group_claims.push(
             PolynomialGroupClaims::new(
                 reverse_point(&main.point),
-                main.evaluations.clone(),
-                main_backend_commitment,
+                main.evaluations,
+                main.commitment.group,
             )
             .map_err(akita_error)?,
         );
@@ -308,7 +263,7 @@ impl AkitaNativeBatching {
         // imported handle from its retained source and checks the recomputed
         // commitment against this setup's public matrix (shared by every Jolt
         // setup through the deterministic setup seed).
-        let (_, backend) = setup.one_hot_backend()?;
+        let (backend_prover_setup, backend) = setup.one_hot_backend()?;
         let mut handles = with_backend_pool(|| {
             let _span = info_span!("AkitaNativeBatching::import_auxiliary_handles").entered();
             handles
@@ -319,7 +274,8 @@ impl AkitaNativeBatching {
         .map_err(prove_failed)?;
         handles.push(main_backend_hint);
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
-        let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
+        let scheme = setup.verifier.one_hot_scheme()?;
+        let opening = with_one_hot_family!(scheme scheme, |scheme, Cfg| {
             SelectedProverOpeningData::from_committed_claims::<Cfg>(
                 claims,
                 handles,
@@ -328,67 +284,70 @@ impl AkitaNativeBatching {
         })
         .map_err(akita_error)?;
         let selection = opening.selection();
-        let session = bind_grouped_statement_transcripts(
-            transcript,
-            &setup.verifier,
-            selection,
-            &auxiliary_claims,
-            &main,
-        )?;
-        let backend_proof = prove_one_hot_opening(setup, opening, &session)?;
-        Ok(AkitaBatchProof::new(selection, backend_proof))
+        let _span = info_span!("AkitaNativeBatching::backend_batched_prove_embedded").entered();
+        with_backend_pool(|| {
+            with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove_embedded(
+                backend_prover_setup,
+                opening,
+                backend,
+                transcript,
+                BasisMode::Lagrange,
+            ))?;
+            let _ = backend.trim_caches()?;
+            Ok::<_, AkitaError>(())
+        })
+        .map_err(prove_failed)?;
+        Ok(AkitaBatchProof::new(selection, Vec::new()))
     }
 
-    pub(crate) fn verify_trace_batch<T>(
+    /// Verifies Jolt's trace batch inside Jolt's sponge. The caller completes
+    /// the verification with [`PendingEof::check_eof`] after its own last
+    /// message.
+    pub(crate) fn verify_trace_batch(
         setup: &AkitaVerifierSetup,
         auxiliary_groups: &[TaggedGroupOpeningClaim<AkitaField, AkitaCommitment>],
         main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
         proof: &AkitaBatchProof,
-        transcript: &mut T,
-    ) -> Result<(), OpeningsError>
-    where
-        T: FieldTranscript<AkitaField>,
-    {
+        transcript: &mut VerifierChannel<'_>,
+    ) -> Result<PendingEof, OpeningsError> {
         validate_trace_batch_statement(setup, auxiliary_groups, main)?;
-        let backend_main_point = reverse_point(&main.point);
-        let auxiliary_commitments = auxiliary_groups
-            .iter()
-            .map(|entry| &entry.claim.commitment)
-            .collect::<Vec<_>>();
-        let (auxiliary_backend, main_backend) = with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| {
-            crate::shape_guard::deserialize_checked_grouped_backend_payload(
-                scheme.schedules(),
-                &auxiliary_commitments,
-                &main.commitment,
-                proof.selection(),
-            )
-        })?;
-        let selection = proof.selection();
-        let session = bind_grouped_statement_transcripts(
-            transcript,
-            setup,
-            selection,
-            auxiliary_groups,
-            main,
-        )?;
+        // Akita's argument lives in Jolt's argument string. Bytes here would be
+        // an unbound second encoding of the same proof.
+        if !proof.backend_proof.is_empty() {
+            return Err(invalid_batch(
+                "Akita embedded trace batch carries a standalone argument",
+            ));
+        }
         let mut group_claims = Vec::with_capacity(auxiliary_groups.len() + 1);
-        for (entry, backend) in auxiliary_groups.iter().zip(&auxiliary_backend) {
+        for entry in auxiliary_groups {
             group_claims.push(
                 PolynomialGroupClaims::new(
                     entry.claim.point.clone(),
                     entry.claim.evaluations.clone(),
-                    backend,
+                    &entry.claim.commitment.group,
                 )
                 .map_err(akita_error)?,
             );
         }
         group_claims.push(
-            PolynomialGroupClaims::new(backend_main_point, main.evaluations.clone(), &main_backend)
-                .map_err(akita_error)?,
+            PolynomialGroupClaims::new(
+                reverse_point(&main.point),
+                main.evaluations.clone(),
+                &main.commitment.group,
+            )
+            .map_err(akita_error)?,
         );
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
-        let batch_statement = GroupBatchStatement::new(selection, claims).map_err(akita_error)?;
-        verify_one_hot_statement(setup, proof, &session, batch_statement)
+        let statement = GroupBatchStatement::new(proof.selection(), claims).map_err(akita_error)?;
+        let verifier = setup.one_hot_verifier()?;
+        with_backend_pool(|| {
+            with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify_embedded(
+                transcript,
+                statement,
+                BasisMode::Lagrange,
+            ))
+        })
+        .map_err(|_| OpeningsError::VerificationFailed)
     }
 }
 
@@ -480,7 +439,7 @@ fn validate_witness(
     commitment: &AkitaCommitment,
     polynomials: &[&(dyn MultilinearPoly<AkitaField> + '_)],
 ) -> Result<(), OpeningsError> {
-    if hint.commitment != *commitment {
+    if hint.opening.as_ref().map(|(hinted, _)| hinted) != Some(commitment) {
         return Err(invalid_batch(
             "Akita prover hint does not match the statement commitment",
         ));
@@ -514,28 +473,6 @@ fn validate_witness(
     Ok(())
 }
 
-/// Binds the verifier setup and statement into Jolt's transcript, then bridges
-/// a Jolt challenge into the Akita session bytes so the backend argument is
-/// bound to everything Jolt observed.
-fn bind_statement_transcripts<T>(
-    transcript: &mut T,
-    verifier_setup: &AkitaVerifierSetup,
-    statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
-    commitment: &AkitaCommitment,
-    point: &[AkitaField],
-) -> Result<Vec<u8>, OpeningsError>
-where
-    T: FieldTranscript<AkitaField>,
-{
-    {
-        let _span = info_span!("AkitaNativeBatching::append_setup_and_statement").entered();
-        append_verifier_setup(transcript, verifier_setup, commitment.backend_flavor)?;
-        append_batch_statement(transcript, statement, commitment, point);
-    }
-    let _span = info_span!("AkitaNativeBatching::bridge_transcripts").entered();
-    bridged_akita_session(transcript, b"jolt-akita/batch")
-}
-
 fn single_group_batch<'a, Cfg>(
     schedules: &TrustedScheduleCatalog<Cfg>,
     point: &[AkitaField],
@@ -560,7 +497,6 @@ fn prove_one_hot(
     evaluations: &[AkitaField],
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
-    session: &[u8],
 ) -> Result<(OpeningScheduleSelection, Vec<u8>), OpeningsError> {
     let backend_point = reverse_point(point);
     let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
@@ -574,7 +510,7 @@ fn prove_one_hot(
     })
     .map_err(akita_error)?;
     let selection = opening.selection();
-    let proof = prove_one_hot_opening(setup, opening, session)?;
+    let proof = prove_one_hot_opening(setup, opening)?;
     Ok((selection, proof))
 }
 
@@ -590,12 +526,14 @@ impl BatchOpeningScheme for AkitaNativeBatching {
     type Hints = AkitaProverHint;
     type Proof = AkitaBatchProof;
 
+    /// Runs Akita standalone under [`STANDALONE_SESSION`]; `_transcript` is
+    /// untouched.
     fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         statement: Self::Statement,
         polynomials: Self::Polynomials<'a>,
         hint: Self::Hints,
-        transcript: &mut T,
+        _transcript: &mut T,
     ) -> Result<Self::Proof, OpeningsError>
     where
         Self: 'a,
@@ -616,18 +554,17 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         )
         .entered();
         validate_witness(&hint, commitment, &polynomials)?;
-        let (backend_commitment, backend_hint) = hint
-            .backend
+        let backend_commitment = commitment.group.clone();
+        let source = hint.source;
+        let (_, backend_hint) = hint
+            .opening
             .ok_or_else(|| invalid_batch("Akita prover hint is missing backend opening data"))?;
-
-        let session =
-            bind_statement_transcripts(transcript, &setup.verifier, &statement, commitment, point)?;
 
         let evaluations: Vec<AkitaField> = statement
             .iter()
             .map(|claim| claim.evaluation.value)
             .collect();
-        let (selection, backend_proof) = match hint.source {
+        let (selection, backend_proof) = match source {
             AkitaHintSource::Dense { .. } => {
                 let scheme = setup.verifier.dense_scheme()?;
                 let opening = single_group_batch::<AkitaConfig>(
@@ -646,7 +583,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                         backend_prover_setup,
                         opening,
                         backend,
-                        &session,
+                        STANDALONE_SESSION,
                         BasisMode::Lagrange,
                     )?;
                     let _ = backend.trim_caches()?;
@@ -655,23 +592,20 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 .map_err(prove_failed)?;
                 (selection, proof)
             }
-            AkitaHintSource::OneHot { .. } | AkitaHintSource::TraceOneHot { .. } => prove_one_hot(
-                setup,
-                point,
-                &evaluations,
-                backend_commitment,
-                backend_hint,
-                &session,
-            )?,
+            AkitaHintSource::OneHot { .. } | AkitaHintSource::TraceOneHot { .. } => {
+                prove_one_hot(setup, point, &evaluations, backend_commitment, backend_hint)?
+            }
         };
         Ok(AkitaBatchProof::new(selection, backend_proof))
     }
 
+    /// Verifies a standalone Akita argument under [`STANDALONE_SESSION`];
+    /// `_transcript` is untouched.
     fn verify_batch<T>(
         setup: &Self::VerifierSetup,
         statement: &Self::Statement,
         proof: &Self::Proof,
-        transcript: &mut T,
+        _transcript: &mut T,
     ) -> Result<(), OpeningsError>
     where
         T: FieldTranscript<Self::Field>,
@@ -686,37 +620,11 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             AkitaBackendFlavor::Dense => point.to_vec(),
             AkitaBackendFlavor::OneHot => reverse_point(point),
         };
-        // Deserializes the proof-controlled backend commitment only after its
-        // shape is validated against the trusted schedule, so a malformed
-        // proof cannot drive shape-backed allocations (see `shape_guard`).
-        let backend_commitment = match commitment.backend_flavor {
-            AkitaBackendFlavor::Dense => crate::shape_guard::deserialize_checked_backend_payload(
-                setup.dense_scheme()?.schedules(),
-                commitment,
-                proof.selection(),
-                statement.len(),
-                &backend_point,
-            ),
-            AkitaBackendFlavor::OneHot => {
-                with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| {
-                    crate::shape_guard::deserialize_checked_backend_payload(
-                        scheme.schedules(),
-                        commitment,
-                        proof.selection(),
-                        statement.len(),
-                        &backend_point,
-                    )
-                })
-            }
-        }?;
-
-        let session = bind_statement_transcripts(transcript, setup, statement, commitment, point)?;
-
         let openings: Vec<AkitaField> = statement
             .iter()
             .map(|claim| claim.evaluation.value)
             .collect();
-        let group = PolynomialGroupClaims::new(backend_point, openings, &backend_commitment)
+        let group = PolynomialGroupClaims::new(backend_point, openings, &commitment.group)
             .map_err(akita_error)?;
         let claims = OpeningClaims::from_groups(vec![group]).map_err(akita_error)?;
         let batch_statement =
@@ -727,16 +635,14 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 with_backend_pool(|| {
                     verifier.batched_verify(
                         &proof.backend_proof,
-                        &session,
+                        STANDALONE_SESSION,
                         batch_statement,
                         BasisMode::Lagrange,
                     )
                 })
                 .map_err(|_| OpeningsError::VerificationFailed)
             }
-            AkitaBackendFlavor::OneHot => {
-                verify_one_hot_statement(setup, proof, &session, batch_statement)
-            }
+            AkitaBackendFlavor::OneHot => verify_one_hot_statement(setup, proof, batch_statement),
         }
     }
 }
@@ -756,6 +662,49 @@ mod tests {
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
     use crate::configs::AkitaChunkProfile;
+    use crate::AkitaScheduleArtifacts;
+    use akita_params::{ChunkedWitnessCfg, PolynomialGroupLayout, ScheduleLookupKey};
+    use akita_types::{Commitment, RingVec};
+    use std::sync::OnceLock;
+
+    /// A committed group under an admitted dense profile, with zero rows. The
+    /// checks under test read only Jolt's metadata.
+    fn placeholder_group() -> AkitaBackendCommitment {
+        static GROUP: OnceLock<AkitaBackendCommitment> = OnceLock::new();
+        GROUP.get_or_init(build_placeholder_group).clone()
+    }
+
+    fn build_placeholder_group() -> AkitaBackendCommitment {
+        let artifacts = AkitaScheduleArtifacts::from_directory(
+            AkitaScheduleArtifacts::packaged_directory(),
+            AkitaChunkProfile::new(8, 2),
+        )
+        .unwrap();
+        let schedules = TrustedScheduleCatalog::<AkitaConfig>::new(
+            artifacts.dense_catalog().unwrap(),
+            ChunkedWitnessCfg {
+                num_chunks: 8,
+                num_activated_levels: 2,
+            },
+        )
+        .unwrap();
+        let profile = schedules
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
+                14, 1,
+            )))
+            .unwrap()
+            .profiles()
+            .final_group;
+        let coefficients = profile
+            .outer_compression_plan()
+            .unwrap()
+            .terminal_coefficients();
+        AkitaBackendCommitment::new(
+            profile,
+            Commitment::new(RingVec::from_coeffs(vec![AkitaField::zero(); coefficients])),
+        )
+        .unwrap()
+    }
 
     fn commitment(
         backend_flavor: AkitaBackendFlavor,
@@ -769,8 +718,7 @@ mod tests {
             num_vars,
             poly_count: 1,
             one_hot_k,
-            backend_coeff_len: 0,
-            serialized_backend_bytes: Vec::new(),
+            group: placeholder_group(),
         }
     }
 
