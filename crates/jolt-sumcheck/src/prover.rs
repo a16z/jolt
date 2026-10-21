@@ -23,7 +23,7 @@ use jolt_field::Field;
 #[cfg(feature = "committed")]
 use jolt_field::JoltField;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -207,7 +207,7 @@ pub fn prove_batch<F, R, T>(
 where
     F: Field,
     R: SumcheckRecorder<F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     if members.len() != prelude.members.len() {
         return Err(SumcheckError::BatchMemberCountMismatch {
@@ -400,7 +400,7 @@ pub struct ProvedUniskipCommitted<F: Field, C> {
 /// Self-check the uni-skip round polynomial against the verifier's round
 /// checks before anything reaches the transcript: degree bound and
 /// centered-integer-domain round sum.
-fn check_uniskip_round<F: Field + AppendToTranscript>(
+fn check_uniskip_round<F: Field + Encoding>(
     round_poly: &UnivariatePoly<F>,
     input_claim: F,
     degree: usize,
@@ -435,15 +435,15 @@ pub fn prove_uniskip_clear<F, T>(
     transcript: &mut T,
 ) -> Result<ProvedUniskip<F>, SumcheckError<F>>
 where
-    F: Field + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    F: Field + Encoding,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
 
     LabeledRoundPoly::uniskip(&round_poly).append_to_transcript(transcript);
     let mut pow_nonces = Vec::new();
     grind_round(degree, 0, &mut pow_nonces, transcript)?;
-    let challenge = transcript.challenge();
+    let challenge = transcript.challenge()?;
     let output_claim = round_poly.evaluate(challenge);
     transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &output_claim);
 
@@ -476,7 +476,7 @@ pub fn prove_uniskip_committed<F, VC, T, R>(
 where
     F: JoltField,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
     R: RngCore,
 {
     check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;

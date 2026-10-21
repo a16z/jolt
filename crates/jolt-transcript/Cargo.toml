@@ -28,7 +28,7 @@ bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
 transcript-blake2b = ["dep:blake2"]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["bn254", "dep:light-poseidon"]
-# `UnpricedTranscript`, a wrapper that declares no proof of work. Tests only.
+# `ScriptedTranscript`: scripted challenges, an event log, no proof of work. Tests only.
 test-utils = []
 
 [dependencies]

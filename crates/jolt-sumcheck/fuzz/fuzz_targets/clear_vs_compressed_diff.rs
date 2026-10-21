@@ -16,7 +16,10 @@ use jolt_sumcheck::{
     round_pow_bits, BooleanHypercube, CompressedSumcheckProof, EvaluationClaim, SumcheckClaim,
     SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, LabelWithCount, ProverState, ProverTranscript,
+    Transcript,
+};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
@@ -50,8 +53,9 @@ fuzz_target!(|data: &[u8]| {
     // Reference: decompress each round with the running-sum hint, evaluate
     // the full polynomial, and mirror the wire transcript framing exactly,
     // grinding each round's proof of work the way an honest prover does.
-    let bits = round_pow_bits::<Fr, Blake2bTranscript>(degree).expect("difficulty for degree <= 4");
-    let mut transcript = Blake2bTranscript::new(b"jolt-sumcheck-diff-fuzz");
+    let bits =
+        round_pow_bits::<Fr, ProverState<Blake2b512>>(degree).expect("difficulty for degree <= 4");
+    let mut transcript = prover_transcript::<Blake2b512>(b"jolt-sumcheck-diff-fuzz", b"");
     let mut running_sum = claimed_sum;
     let mut challenges: Vec<Fr> = Vec::with_capacity(num_vars);
     let mut pow_nonces = Vec::with_capacity(num_vars);
@@ -62,10 +66,10 @@ fuzz_target!(|data: &[u8]| {
             stored.len() as u64,
         ));
         for coefficient in stored {
-            coefficient.append_to_transcript(&mut transcript);
+            transcript.append(coefficient);
         }
-        pow_nonces.extend(transcript.grind(bits).expect("proof-of-work search"));
-        let r: Fr = transcript.challenge();
+        pow_nonces.extend(transcript.public_grind(bits).expect("proof-of-work search"));
+        let r: Fr = transcript.challenge().unwrap();
         let full = round.decompress(running_sum);
         running_sum = full.evaluate(r);
         challenges.push(r);
@@ -76,7 +80,7 @@ fuzz_target!(|data: &[u8]| {
         round_polynomials: wire_rounds,
         pow_nonces,
     };
-    let mut transcript = Blake2bTranscript::new(b"jolt-sumcheck-diff-fuzz");
+    let mut transcript = prover_transcript::<Blake2b512>(b"jolt-sumcheck-diff-fuzz", b"");
     let production = SumcheckVerifier::verify_compressed(
         &claim,
         &proof,

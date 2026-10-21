@@ -3387,6 +3387,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "spongefish 0.8.0",
  "thiserror 2.0.20",
 ]
 
@@ -3895,7 +3896,6 @@ dependencies = [
  "ark-ff 0.5.0",
  "blake2 0.11.0",
  "criterion",
- "digest 0.11.3",
  "getrandom 0.4.3",
  "jolt-field",
  "light-poseidon",

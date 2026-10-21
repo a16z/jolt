@@ -81,7 +81,7 @@
 //!
 //! Polynomial and clear sumcheck arithmetic is generic over
 //! [`Field`](jolt_field::Field). Stock clear transcript adapters additionally
-//! require [`AppendToTranscript`](jolt_transcript::AppendToTranscript) where
+//! require [`Encoding`](jolt_transcript::Encoding) where
 //! field values are absorbed. Optimized Jolt kernels and commitment backends
 //! retain their stronger capability bounds at their own integration points.
 //!
@@ -133,7 +133,7 @@ pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
 /// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
 pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
 where
-    A: jolt_transcript::AppendToTranscript,
+    A: jolt_transcript::Encoding,
     T: jolt_transcript::Transcript,
 {
     transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);

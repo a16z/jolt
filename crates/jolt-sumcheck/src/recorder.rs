@@ -21,7 +21,7 @@ use jolt_field::Field;
 #[cfg(feature = "committed")]
 use jolt_field::JoltField;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -51,7 +51,7 @@ pub trait SumcheckRecorder<F: Field> {
     /// stage that produced them, so the transcript never sees the scalars.
     fn absorb_input_claims<T>(&mut self, input_claims: &[F], transcript: &mut T)
     where
-        T: Transcript<Challenge = F>;
+        T: FieldTranscript<F> + ProverTranscript;
 
     /// Record one round polynomial, grind the round's proof of work at the
     /// difficulty for `degree_bound` (the batch's degree bound, which the
@@ -65,7 +65,7 @@ pub trait SumcheckRecorder<F: Field> {
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>;
+        T: FieldTranscript<F> + ProverTranscript;
 
     /// Record the flattened output-claim values (canonical absorb order) and
     /// assemble the proof. Clear: each value appended under
@@ -77,7 +77,7 @@ pub trait SumcheckRecorder<F: Field> {
         transcript: &mut T,
     ) -> Result<RecordedSumcheck<F, Self::Proof>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>;
+        T: FieldTranscript<F> + ProverTranscript;
 }
 
 /// A recorded sumcheck: the wire proof, plus (for a committed recorder) the
@@ -113,12 +113,12 @@ impl<F: Field> ClearSumcheckRecorder<F> {
     }
 }
 
-impl<F: Field + AppendToTranscript> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
+impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
     type Proof = CompressedSumcheckProof<F>;
 
     fn absorb_input_claims<T>(&mut self, input_claims: &[F], transcript: &mut T)
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         for input_claim in input_claims {
             append_sumcheck_claim(transcript, input_claim);
@@ -132,7 +132,7 @@ impl<F: Field + AppendToTranscript> SumcheckRecorder<F> for ClearSumcheckRecorde
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         CompressedLabeledRoundPoly::sumcheck(round_poly).append_to_transcript(transcript);
         grind_round(
@@ -141,7 +141,7 @@ impl<F: Field + AppendToTranscript> SumcheckRecorder<F> for ClearSumcheckRecorde
             &mut self.pow_nonces,
             transcript,
         )?;
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge()?;
         self.round_polynomials.push(round_poly.compress());
         Ok(challenge)
     }
@@ -152,7 +152,7 @@ impl<F: Field + AppendToTranscript> SumcheckRecorder<F> for ClearSumcheckRecorde
         transcript: &mut T,
     ) -> Result<RecordedSumcheck<F, Self::Proof>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         for opening_claim in output_claim_values {
             transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, opening_claim);
@@ -208,7 +208,7 @@ where
 
     fn absorb_input_claims<T>(&mut self, _input_claims: &[F], _transcript: &mut T)
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
     }
 
@@ -219,7 +219,7 @@ where
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         self.builder
             .commit_round(round_poly, degree_bound, transcript)
@@ -231,7 +231,7 @@ where
         transcript: &mut T,
     ) -> Result<RecordedSumcheck<F, Self::Proof>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         let (proof, witness) = self.builder.finish(output_claim_values, transcript)?;
         Ok(RecordedSumcheck {

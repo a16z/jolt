@@ -26,7 +26,10 @@ jolt-crypto = { path = "../jolt-crypto", default-features = false, optional = tr
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 jolt-r1cs = { path = "../jolt-r1cs", default-features = false, optional = true }
-jolt-transcript = { path = "../jolt-transcript", default-features = false }
+# The prover's per-round nonce search copies the sponge state.
+jolt-transcript = { path = "../jolt-transcript", default-features = false, features = [
+  "prover-grinding",
+] }
 rand_core = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
@@ -38,6 +41,8 @@ jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true, features = ["bn254", "solinas", "binary"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
+  "solinas",
+  "binary",
   "transcript-blake2b",
   "transcript-keccak",
   "test-utils",
@@ -50,4 +55,4 @@ name = "committed"
 required-features = ["committed"]
 
 [[example]]
-name = "clear_custom_transcript"
+name = "clear_sumcheck"

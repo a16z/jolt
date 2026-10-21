@@ -16,7 +16,7 @@ use jolt_sumcheck::{
     BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckVerifier,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
@@ -69,7 +69,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     // The verifier must terminate without panicking on any input.
-    let mut transcript = Blake2bTranscript::new(b"jolt-sumcheck-fuzz");
+    let mut transcript = prover_transcript::<Blake2b512>(b"jolt-sumcheck-fuzz", b"");
     let _ = SumcheckVerifier::verify_compressed(
         &claim,
         &proof,

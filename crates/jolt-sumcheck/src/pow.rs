@@ -5,7 +5,8 @@
 //! A false claim survives a round only when the challenge is a root of a
 //! nonzero polynomial of degree at most `d`, so the round loses a factor `d`
 //! (Schwartz-Zippel) and its difficulty is
-//! `grind_bits_for_loss(d, T::CHALLENGE_SET, SECURITY_BITS)`.
+//! `grind_bits_for_loss(d, T::CHALLENGE_SET, SECURITY_BITS)`, where
+//! `T::CHALLENGE_SET` is the [`FieldTranscript`] challenge set for `F`.
 //!
 //! `d` is always the verifier's degree bound for the claim or statement, never
 //! a degree the prover declares, so the difficulty is fixed by the protocol
@@ -18,7 +19,7 @@ use std::fmt::{Formatter, Result as FmtResult};
 use std::marker::PhantomData;
 
 use jolt_field::Field;
-use jolt_transcript::{grind_bits_for_loss, Transcript, SECURITY_BITS};
+use jolt_transcript::{grind_bits_for_loss, FieldTranscript, ProverTranscript, SECURITY_BITS};
 use serde::de::{Error as _, SeqAccess, Visitor};
 use serde::ser::{Error as _, SerializeTuple};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -26,12 +27,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::error::SumcheckError;
 
 /// Proof-of-work difficulty for a round whose polynomial has degree at most
-/// `degree`, with challenges drawn by `T::challenge`.
+/// `degree`, with challenges drawn by [`FieldTranscript::challenge`].
 ///
 /// # Errors
 /// [`SumcheckError::PowDifficulty`] if no supported difficulty reaches the
 /// target for this degree and challenge set.
-pub fn round_pow_bits<F: Field, T: Transcript>(degree: usize) -> Result<u32, SumcheckError<F>> {
+pub fn round_pow_bits<F: Field, T: FieldTranscript<F>>(
+    degree: usize,
+) -> Result<u32, SumcheckError<F>> {
     let loss = u64::try_from(degree.max(1)).map_err(|_| SumcheckError::PowDifficulty { degree })?;
     grind_bits_for_loss(loss, T::CHALLENGE_SET, SECURITY_BITS)
         .map_err(|_| SumcheckError::PowDifficulty { degree })
@@ -46,7 +49,7 @@ pub(crate) struct RoundNonces<'a> {
 impl<'a> RoundNonces<'a> {
     /// Accepts `nonces` for `rounds` rounds of degree at most `degree`: one
     /// nonce per round when the difficulty is positive, none otherwise.
-    pub(crate) fn new<F: Field, T: Transcript>(
+    pub(crate) fn new<F: Field, T: FieldTranscript<F>>(
         degree: usize,
         rounds: usize,
         nonces: &'a [u32],
@@ -64,13 +67,13 @@ impl<'a> RoundNonces<'a> {
 
     /// Checks round `round`'s nonce against the transcript, after the round
     /// message is absorbed and before the round challenge is drawn.
-    pub(crate) fn check<F: Field, T: Transcript>(
+    pub(crate) fn check<F: Field, T: FieldTranscript<F>>(
         &self,
         round: usize,
         transcript: &mut T,
     ) -> Result<(), SumcheckError<F>> {
         transcript
-            .check_grind(self.bits, self.nonces.get(round).copied())
+            .check_public_grind(self.bits, self.nonces.get(round).copied())
             .map_err(|_| SumcheckError::ProofOfWorkRejected { round })
     }
 }
@@ -78,7 +81,7 @@ impl<'a> RoundNonces<'a> {
 /// Grinds round `round`'s nonce after the round message is absorbed and before
 /// the round challenge is drawn, appending it to `nonces` when the difficulty
 /// is positive.
-pub fn grind_round<F: Field, T: Transcript>(
+pub fn grind_round<F: Field, T: FieldTranscript<F> + ProverTranscript>(
     degree: usize,
     round: usize,
     nonces: &mut Vec<u32>,
@@ -86,7 +89,7 @@ pub fn grind_round<F: Field, T: Transcript>(
 ) -> Result<(), SumcheckError<F>> {
     let bits = round_pow_bits::<F, T>(degree)?;
     let nonce = transcript
-        .grind(bits)
+        .public_grind(bits)
         .map_err(|_| SumcheckError::ProofOfWorkRejected { round })?;
     nonces.extend(nonce);
     Ok(())
