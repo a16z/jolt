@@ -1485,6 +1485,39 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validate_inputs_rejects_trace_length_below_pcs_floor() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        // A power of two below the fixture's maximum, so only the floor rejects it.
+        let undersized = MIN_PADDED_TRACE_LENGTH >> 1;
+        proof.trace_length = undersized;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidTraceLength { got, .. }) if got == undersized
+        ));
+        assert!(matches!(
+            validate_inputs_from_parts(
+                &preprocessing,
+                &public_io,
+                undersized,
+                proof.ram_K,
+                proof.trace_polynomial_order,
+                proof.one_hot_config,
+                false,
+                #[cfg(not(feature = "akita"))]
+                false,
+                false,
+            ),
+            Err(VerifierError::InvalidTraceLength { got, .. }) if got == undersized
+        ));
+    }
+
     /// The field-inline BlindFold generator budget must fit the largest committed round of the
     /// composed protocol: the Spartan outer uni-skip first round (degree
     /// `SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE`, one coefficient more), or `commit_round`
