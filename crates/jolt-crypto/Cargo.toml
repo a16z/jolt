@@ -110,7 +110,7 @@ required-features = ["bn254"]
 
 [[example]]
 name = "sample_dudect"
-required-features = ["sample"]
+required-features = ["sample", "parallel"]
 
 [[bench]]
 name = "crypto"
