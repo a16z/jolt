@@ -536,7 +536,9 @@ production monomorphization.
   that draws the same randomness for either class. A cloned fixed input,
   one left on the zero page, or inputs allocated afresh per measurement
   reach memory differently and gave false positives (the last one under
-  DIT, see below). An A/A run (both classes random) passes everywhere.
+  DIT, see below). An A/A run (both classes random) passed everywhere on
+  the old harness, and again on the slot harness under DIT (3 · 10⁴
+  measurements, seed 0, all 30 slot tests, max |t| = 3.8).
 
   First record, without DIT and with per-measurement allocation: 10⁵
   measurements per test at D = 64 (2.5 · 10⁴ at D = 256), t_D at 10⁷
@@ -952,32 +954,54 @@ Moved out of W4:
   overlapping other roles at offset 0 is acceptable for H4 and H8. The LHL
   statement allows side information that depends on the matrix.
 - **A9, box (authors).** L_b is the full positive digit envelope.
-- **A11, platform: resolved, DIT set for the attempts.** The §2.8 record
-  shows `to_ring_ct` leaks a zero output on M4 without DIT (|t| up to 190
-  at D = 256), and DIT removes that leak.
+- **A11, platform: resolved, DIT set for the attempts and the pad
+  commitment.** The §2.8 record shows `to_ring_ct` leaks a zero output on
+  M4 without DIT (|t| up to 190 at D = 256), and DIT removes that leak.
   - **Mechanism.** `crates/jolt-dit` owns the `unsafe` and sits outside
     the verifier closure; only `jolt-zk/whiteout-prover` depends on it, and
     jolt-zk keeps `forbid(unsafe_code)`. `DitGuard` sets PSTATE.DIT on the
     current thread (`msr DIT, #1`) and restores the state it read
     (`mrs DIT`) on drop, so guards nest. `jolt_dit::install` runs a closure
     on a fresh rayon pool of `rayon::current_num_threads()` workers, each
-    holding a guard from its start handler for its whole life.
-    `prove_sigma` runs entirely inside it: the attempts, the serial steps
-    on the worker that runs the closure, every rayon job they spawn, and
-    the response proof. DIT is per thread, so a guard on the caller alone
-    would leave the rayon workers unprotected. Building the pool costs
-    about 0.8 ms per proof (16 threads), against 0.49 s per proof (A16).
+    holding a guard from its start handler for its whole life. DIT is per
+    thread, so a guard on the caller alone would leave the rayon workers
+    unprotected.
+  - **Scope.** Two prover entry points run inside such a pool
+    (`whiteout::dit::with_dit`):
+    - `prove_sigma`, entirely: building s from the residual and pad
+      openings, the attempts, every rayon job they spawn, and the response
+      proof;
+    - `LatticePadCommitment::commit`: the pads' decomposition and the Ajtai
+      map on them.
+
+    Everything upstream is outside DIT: whatever computes the residual
+    opening, the pads, g and the commitment randomness before these calls.
     `prove_sigma` now needs `R: Send` and `P: Sync`.
+  - **Cost.** One pool per call. Measured on a loaded 16-thread M4 Max
+    (load average about 51), 100 calls per sample: `install` of an empty
+    closure 0.6–0.8 ms, which returns before every worker has started;
+    `install` plus a `rayon::broadcast`, which starts all 16 workers as a
+    proof does, 8.5–10.3 ms. A second measurement on a loaded machine gave
+    4.0 ms for the latter. So 4–10 ms per call, about 1–2% of a 0.49 s proof
+    (A16).
   - **Detection.** FEAT_DIT is detected at run time
-    (`is_aarch64_feature_detected!("dit")`; the test machine reports it).
-    Without it, and on every other target, the guard is a no-op and the
-    proof is not protected by DIT; no error is raised. Intel DOITM is an
+    (`is_aarch64_feature_detected!("dit")`). A jolt-dit test asserts it is
+    detected on aarch64 macOS, so a broken detection cannot silently turn
+    the guard into a no-op there. Without FEAT_DIT, and on every other
+    target, the guard is a no-op and no error is raised. Intel DOITM is an
     MSR only the kernel can set, out of scope here.
-  - **Residual.** None. The DIT residual on `L·y` and `N·y` at D = 256 was
-    the dudect harness's per-measurement allocation, not the arithmetic
-    (§2.8). Not covered: work the attempt sends to another pool or a
-    `std::thread` (none today), and cores whose DIT does not cover an
-    operation the attempt uses.
+  - **DMP.** The GoFetch authors report that DIT disables the
+    data-memory-dependent prefetcher on M3 but not on M1 or M2
+    (gofetch.fail). This note has not checked that against Apple's
+    documentation, nor measured it on M4. On M1 and M2, DIT is not a DMP
+    mitigation.
+  - **Residual.** None detected above about 17 ns on `L·y` (seed 2,
+    4 · 10⁵ measurements) or about 38 ns at 10⁵, the sizes of the positive
+    controls the slot harness found (§2.8). The residual seen under DIT on
+    `L·y` and `N·y` at D = 256 was the old harness's per-measurement
+    allocation, not the arithmetic. Not covered: work these entry points
+    send to another pool or a `std::thread` (none today), and operations
+    the attempt uses that DIT does not cover on a given core.
 - **A12, compression (W5, authors).**
   - Akita caps a compression source at 8 KiB, i.e. 512 Fp128 coefficients
     (`akita-params/src/compression.rs:19`). t_p and u_a have 768
