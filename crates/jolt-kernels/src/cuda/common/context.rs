@@ -103,7 +103,6 @@ pub struct CudaKernelContext {
     amm_initial_values: CudaFunction,
     #[cfg(test)]
     amm_lift: CudaFunction,
-    #[cfg(test)]
     brc_message_dense: CudaFunction,
     #[cfg(test)]
     unr_mul_scatter: CudaFunction,
@@ -310,7 +309,6 @@ impl CudaKernelContext {
             amm_initial_values: module.load_function("amm_initial_values_kernel")?,
             #[cfg(test)]
             amm_lift: module.load_function("amm_lift_kernel")?,
-            #[cfg(test)]
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
             #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
@@ -697,7 +695,6 @@ impl CudaKernelContext {
         &self.sopg_round
     }
 
-    #[cfg(test)]
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {
         &self.brc_message_dense
     }

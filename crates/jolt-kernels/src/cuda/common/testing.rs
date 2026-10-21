@@ -1,33 +1,46 @@
 #![expect(
     clippy::expect_used,
-    reason = "test scaffolding: fixture errors fail loudly"
+    clippy::panic,
+    reason = "test scaffolding: device operations and fixture errors fail loudly"
 )]
 
 use std::ops::Range;
+use std::sync::Arc;
 
-use common::jolt_device::MemoryLayout;
+use common::jolt_device::{MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::{
-    JoltAdviceKind, JoltCommittedPolynomial, JoltPolynomialId, PrecommittedClaimReduction,
+    JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
+    PrecommittedClaimReduction,
 };
+use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, Ring};
 use jolt_poly::UnivariatePoly;
+use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::instructions::VirtualAdvice;
 use jolt_riscv::{
     JoltInstruction, JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
 };
-use jolt_riscv::{RamRead, RamWrite};
-use jolt_sumcheck::ProveRounds;
+use jolt_riscv::{RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite};
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::{
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
+};
+use jolt_witness::__private::TraceRow;
 use jolt_witness::{
-    ChunkVisitor, FixedBackend, JoltWitnessOracle, PolynomialEncoding, ProgramSource, RowSource,
-    Shape, WitnessError,
+    ChunkVisitor, FixedBackend, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
+    JoltWitnessPlane, PolynomialEncoding, ProgramSource, RowSource, Shape, TraceBackend,
+    WitnessError,
 };
 use proptest::prelude::*;
 use tracer::instruction::lw::LW;
 use tracer::instruction::sw::SW;
 use tracer::instruction::Cycle;
 use tracer::instruction::RISCVCycle;
+
+use crate::reference::ReferenceBackend;
+use crate::{PrepareKernel, ProofSession, ProverInputs};
 
 pub fn fr(seed: u64) -> Fr {
     Fr::from_u64(seed.wrapping_mul(2_654_435_761) % 1_000_003 + 1)
@@ -78,8 +91,6 @@ pub struct RamCell {
 }
 
 pub fn ram_matrix_cells(log_t: usize, ram_k: usize) -> Vec<RamCell> {
-    use jolt_riscv::RamAccess;
-
     let layout = MemoryLayout::default();
     let cells: Vec<RamCell> = ram_trace(log_t, ram_k)
         .iter()
@@ -106,6 +117,178 @@ pub fn ram_matrix_cells(log_t: usize, ram_k: usize) -> Vec<RamCell> {
         "the RAM fixture produced no accesses to build a matrix from",
     );
     cells
+}
+
+pub(crate) fn synthetic_row(
+    mut instruction: JoltInstructionRow,
+    mut registers: RegisterState,
+    access: RamAccess,
+    pc: u32,
+) -> TraceRow {
+    match access {
+        RamAccess::Read(read) => {
+            instruction.instruction_kind = JoltInstructionKind::LD;
+            instruction.operands.rs2 = None;
+            instruction.operands.rd = Some(1);
+            registers.rs2 = None;
+            registers.rd = Some(RegisterWrite {
+                register: 1,
+                pre_value: registers.rd.map_or(0, |write| write.pre_value),
+                post_value: read.value,
+            });
+        }
+        RamAccess::Write(write) => {
+            instruction.instruction_kind = JoltInstructionKind::SD;
+            instruction.operands.rd = None;
+            instruction.operands.rs2 = Some(3);
+            registers.rd = None;
+            registers.rs2 = Some(RegisterRead {
+                register: 3,
+                value: write.post_value,
+            });
+        }
+        RamAccess::NoOp => {
+            if instruction.instruction_kind == JoltInstructionKind::NoOp {
+                if registers == RegisterState::default() {
+                    return TraceRow::default();
+                }
+                instruction.instruction_kind = JoltInstructionKind::ADD;
+            }
+        }
+    }
+    instruction.operands.rs1 = registers.rs1.map(|read| read.register);
+    instruction.operands.rs2 = registers.rs2.map(|read| read.register);
+    instruction.operands.rd = registers.rd.map(|write| write.register);
+    TraceRow::new(instruction, registers, access, pc.max(1)).expect("checked synthetic row")
+}
+
+const RAM_FIXTURE_PATTERN: usize = 6;
+
+const fn ram_fixture_padding(log_t: usize) -> usize {
+    let cycles = 1usize << log_t;
+    if cycles < 8 {
+        1
+    } else {
+        cycles / 8
+    }
+}
+
+pub const fn ram_fixture_is_cold(log_t: usize, cycle: usize) -> bool {
+    cycle >= (1usize << log_t) - ram_fixture_padding(log_t)
+        || matches!(cycle % RAM_FIXTURE_PATTERN, 0 | 4 | 5)
+}
+
+fn ram_rows(
+    instruction: JoltInstructionRow,
+    log_t: usize,
+    layout: &MemoryLayout,
+    ram_k: usize,
+    seed: u64,
+) -> Vec<TraceRow> {
+    let cycles = 1usize << log_t;
+    let padding_start = cycles - ram_fixture_padding(log_t);
+    let lowest = layout.get_lowest_address();
+    let below_lowest = lowest.saturating_sub(8);
+    let mut last_hot = lowest + 8;
+    let mut rows = Vec::with_capacity(cycles);
+
+    for cycle in 0..cycles {
+        let mix = seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(cycle as u64 + 1);
+        let word = (mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29)) % ram_k as u64;
+        let address = lowest + 8 * word;
+        let value = 900 + cycle as u64;
+
+        let access = if cycle >= padding_start {
+            RamAccess::NoOp
+        } else if ram_fixture_is_cold(log_t, cycle) {
+            match cycle % RAM_FIXTURE_PATTERN {
+                4 => RamAccess::Read(RamRead { address: 0, value }),
+                5 => RamAccess::Read(RamRead {
+                    address: below_lowest,
+                    value,
+                }),
+                _ => RamAccess::NoOp,
+            }
+        } else {
+            match cycle % RAM_FIXTURE_PATTERN {
+                2 => {
+                    last_hot = address;
+                    RamAccess::Write(RamWrite {
+                        address,
+                        pre_value: value,
+                        post_value: value + 1,
+                    })
+                }
+                3 => RamAccess::Read(RamRead {
+                    address: last_hot,
+                    value,
+                }),
+                _ => {
+                    last_hot = address;
+                    RamAccess::Read(RamRead { address, value })
+                }
+            }
+        };
+
+        rows.push(synthetic_row(
+            instruction,
+            RegisterState::default(),
+            access,
+            1,
+        ));
+    }
+    rows
+}
+
+pub fn with_ram_witness<R>(
+    log_t: usize,
+    ram_k: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend) -> R,
+) -> R {
+    let instruction = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::XOR,
+        address: 0x8000_0000,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    };
+    let memory_layout = MemoryLayout::new(&MemoryConfig {
+        program_size: Some(1 << 12),
+        ..MemoryConfig::default()
+    });
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(
+            vec![instruction],
+            instruction.address as u64,
+            RV64IMAC_JOLT,
+        )
+        .expect("ram bytecode fixture"),
+        ram: RAMPreprocessing::default(),
+        memory_layout: memory_layout.clone(),
+        max_padded_trace_length: 1usize << log_t,
+    });
+    let program = Arc::new(JoltProgram::default());
+    let trace = TraceOutput::new(
+        TraceData::new(ram_rows(instruction, log_t, &memory_layout, ram_k, seed)),
+        Default::default(),
+        None,
+        None,
+    );
+    let backend = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, ram_k, one_hot),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+    );
+    body(&backend)
 }
 
 pub struct FixedPlane {
@@ -190,6 +373,37 @@ impl RowSource for FixedPlane {
 impl ProgramSource for FixedPlane {
     fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
         &self.program
+    }
+}
+
+pub fn reference_input_claim<'a, R>(
+    witness: &dyn JoltWitnessPlane<Fr>,
+    make_inputs: impl Fn() -> ProverInputs<'a, Fr, R>,
+) -> Fr
+where
+    R: ConcreteSumcheck<Fr> + 'a,
+    ReferenceBackend: PrepareKernel<Fr, R>,
+    SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr>,
+    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
+{
+    let mut probe = ReferenceBackend
+        .prepare(&mut ProofSession::default(), witness, make_inputs())
+        .expect("reference prepare for the input-claim probe");
+    probe_input_claim(&mut *probe)
+}
+
+pub fn probe_input_claim<K: ProveRounds<Fr> + ?Sized>(kernel: &mut K) -> Fr {
+    kernel.prove_round(None, 0, Fr::from_u64(0)).map_or_else(
+        |error| claim_from_round_check(&error),
+        |poly| poly.evaluate(Fr::from_u64(0)) + poly.evaluate(Fr::from_u64(1)),
+    )
+}
+
+fn claim_from_round_check(error: &SumcheckError<Fr>) -> Fr {
+    match error {
+        SumcheckError::RoundCheckFailed { actual, .. } => *actual,
+        other => panic!("reference kernel failed on the fixture: {other:?}"),
     }
 }
 

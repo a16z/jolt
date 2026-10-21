@@ -6,9 +6,7 @@ pub mod context;
 #[cfg(test)]
 pub(crate) mod dense_product;
 pub mod device;
-#[cfg(test)]
 pub(crate) mod device_columns;
-#[cfg(test)]
 pub(crate) mod devices;
 pub mod error;
 #[cfg(test)]
@@ -30,7 +28,6 @@ pub mod primitives;
 pub(crate) mod ra_poly;
 #[cfg(test)]
 pub(crate) mod read_write_matrix;
-#[cfg(test)]
 pub(crate) mod split_eq;
 #[cfg(test)]
 pub(crate) mod sum_of_products;

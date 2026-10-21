@@ -25,6 +25,15 @@ pub struct DeviceSplitEq<F: JoltField> {
 }
 
 impl<F: JoltField> DeviceSplitEq<F> {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        self.e_in
+            .iter()
+            .chain(self.e_out.iter())
+            .map(DeviceFrVec::device_bytes)
+            .sum()
+    }
+
     pub fn new(
         context: &CudaKernelContext,
         point: &[F],
@@ -163,6 +172,7 @@ impl<F: JoltField> DeviceSplitEq<F> {
             })
     }
 
+    #[cfg(test)]
     pub fn merge(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         context.upload(super::device::require_fr_slice(self.host.merge().evals())?)
     }

@@ -1,8 +1,10 @@
+use cudarc::driver::CudaSlice;
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, JoltField};
 
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::DeviceSplitEq;
@@ -22,6 +24,36 @@ impl DeviceHammingWeight {
             weights: context.u64_to_montgomery(weights)?,
             one: context.upload(&[Fr::from(1u64)])?,
         })
+    }
+
+    pub fn from_device(
+        context: &CudaKernelContext,
+        weights: &CudaSlice<u64>,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
+        Self::require_power_of_two(cycles)?;
+        Ok(Self {
+            weights: context.u64_to_montgomery_device(weights, cycles)?,
+            one: context.upload(&[Fr::from(1u64)])?,
+        })
+    }
+
+    fn from_table(context: &CudaKernelContext, values: &[Fr]) -> Result<Self, CudaError> {
+        Self::require_power_of_two(values.len())?;
+        Ok(Self {
+            weights: context.upload(values)?,
+            one: context.upload(&[Fr::from(1u64)])?,
+        })
+    }
+
+    fn window_scalar(&self) -> Result<Fr, CudaError> {
+        if self.weights.len() != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.weights.len(),
+            });
+        }
+        self.weights.first()
     }
 
     fn require_power_of_two(len: usize) -> Result<(), CudaError> {
@@ -135,6 +167,141 @@ impl DeviceHammingWeight {
             quadratic,
             fr_into(host[2]).ok_or_else(unsupported)?,
         ))
+    }
+}
+
+pub(crate) struct HammingShard<F: JoltField> {
+    pub(crate) ordinal: usize,
+    pub(crate) weights: DeviceHammingWeight,
+    pub(crate) eq: DeviceSplitEq<F>,
+}
+
+pub(crate) struct ShardedHammingWeight<F: JoltField> {
+    shards: Vec<HammingShard<F>>,
+    collapsed: Option<DeviceHammingWeight>,
+    local_rounds: usize,
+    tail_rounds: usize,
+}
+
+impl<F: JoltField> ShardedHammingWeight<F> {
+    pub(crate) fn new(shards: Vec<HammingShard<F>>, log_t: usize) -> Result<Self, CudaError> {
+        let count = shards.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded hamming weight needs a power-of-two shard count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded hamming weight cannot split more windows than cycle rounds",
+            });
+        }
+        if count == 1 {
+            let shard = shards
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-shard hamming weight lost its state",
+                })?;
+            return Ok(Self {
+                shards: Vec::new(),
+                collapsed: Some(shard.weights),
+                local_rounds: log_t,
+                tail_rounds: 0,
+            });
+        }
+        Ok(Self {
+            shards,
+            collapsed: None,
+            local_rounds: log_t - tail_rounds,
+            tail_rounds,
+        })
+    }
+
+    pub(crate) fn round_coefficients(
+        &self,
+        whole_eq: &DeviceSplitEq<F>,
+    ) -> Result<(F, F, F), CudaError> {
+        if let Some(collapsed) = &self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.round_coefficients(context, whole_eq);
+        }
+        let tasks: Vec<DeviceTask<'_, (F, F, F), CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, (F, F, F), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.weights.round_coefficients(context, &shard.eq)
+                });
+                task
+            })
+            .collect();
+        let mut total = (F::zero(), F::zero(), F::zero());
+        for part in fan_out(tasks)? {
+            total.0 += part.0;
+            total.1 += part.1;
+            total.2 += part.2;
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn bind(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+        if let Some(collapsed) = &mut self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.bind(context, challenge);
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.weights.bind(context, challenge)?;
+                    shard.eq.bind(challenge);
+                    Ok(())
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let shards = std::mem::take(&mut self.shards);
+        let mut scalars = Vec::with_capacity(shards.len());
+        for shard in &shards {
+            scalars.push(shard.weights.window_scalar()?);
+        }
+        if scalars.len() != 1usize << self.tail_rounds {
+            return Err(CudaError::LengthMismatch {
+                expected: 1usize << self.tail_rounds,
+                got: scalars.len(),
+            });
+        }
+        self.collapsed = Some(DeviceHammingWeight::from_table(context, &scalars)?);
+        Ok(())
+    }
+
+    pub(crate) fn final_claim(&self) -> Result<F, CudaError> {
+        self.collapsed
+            .as_ref()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded hamming weight was asked for its claim before the tail rounds",
+            })?
+            .final_claim()
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a sharded hamming weight window names an absent device",
     }
 }
 

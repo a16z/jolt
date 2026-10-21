@@ -1,0 +1,200 @@
+//! Proof-session ownership of packed trace windows and lazily extracted atoms.
+//!
+//! Optimized kernels share host rows or recollect compact bundles. CUDA retains
+//! the uploaded window and its atom columns instead. `ResidentTraces::get`
+//! checks witness identity, device, window base, and covered length before reuse.
+//! A window includes its successor row when one exists, so next-row flags agree
+//! at device boundaries; consumers process only the window's logical cycles.
+
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_witness::RowSource;
+use std::sync::{Arc, OnceLock};
+
+use jolt_field::JoltField;
+use jolt_witness::backend::cuda::{DeviceAtomColumns, DeviceTrace};
+use jolt_witness::JoltWitnessPlane;
+
+use super::common::context::CudaKernelContext;
+use super::common::device_columns::witness_identity;
+use super::common::devices::CycleWindow;
+use crate::{KernelError, ProofSession};
+
+pub(crate) struct ResidentTrace {
+    source: usize,
+    cycles: usize,
+    base: usize,
+    trace: Arc<DeviceTrace>,
+    atoms: OnceLock<Arc<DeviceAtomColumns>>,
+}
+
+#[derive(Default)]
+pub(crate) struct ResidentTraces {
+    devices: Vec<Vec<ResidentTrace>>,
+}
+
+impl ResidentTraces {
+    fn get(&self, ordinal: usize, source: usize, window: &CycleWindow) -> Option<&ResidentTrace> {
+        self.devices.get(ordinal)?.iter().find(|resident| {
+            resident.source == source
+                && resident.base == window.start
+                && resident.cycles >= window.len
+        })
+    }
+
+    fn park(&mut self, ordinal: usize, resident: ResidentTrace) {
+        if self.devices.len() <= ordinal {
+            self.devices.resize_with(ordinal + 1, Vec::new);
+        }
+        if let Some(slot) = self.devices.get_mut(ordinal) {
+            slot.retain(|held| held.source == resident.source && held.base != resident.base);
+            slot.push(resident);
+        }
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl Allocative for ResidentTraces {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        for resident in self.devices.iter().flatten() {
+            visitor.visit_simple(Key::new("device_trace"), resident.trace.device_bytes());
+            visitor.visit_simple(
+                Key::new("device_atom_columns"),
+                resident.atoms.get().map_or(0, |atoms| atoms.device_bytes()),
+            );
+        }
+        visitor.exit();
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn session_device_trace<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Arc<DeviceTrace>, KernelError<F>> {
+    session_device_trace_window(
+        context,
+        session,
+        witness,
+        cycles,
+        &CycleWindow {
+            start: 0,
+            len: cycles,
+        },
+    )
+}
+
+pub(crate) fn session_device_trace_window<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<DeviceTrace>, KernelError<F>> {
+    session_row_trace_window(
+        context,
+        session,
+        witness,
+        witness.program_preprocessing(),
+        cycles,
+        window,
+    )
+}
+
+pub(crate) fn session_row_trace_window<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn RowSource,
+    preprocessing: &JoltProgramPreprocessing,
+    _cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<DeviceTrace>, KernelError<F>> {
+    let identity = witness_identity(witness);
+    let ordinal = context.ordinal();
+    if let Some(resident) = session
+        .state::<ResidentTraces>()
+        .and_then(|traces| traces.get(ordinal, identity, window))
+    {
+        return Ok(Arc::clone(&resident.trace));
+    }
+    let trace = tracing::info_span!(
+        "cuda_witness_residency",
+        cycles = window.len,
+        device = ordinal
+    )
+    .in_scope(|| {
+        DeviceTrace::upload_source(
+            Arc::clone(context.stream()),
+            witness,
+            window.start..window.start + window.len,
+            preprocessing,
+        )
+    })?;
+    let trace = Arc::new(trace);
+    park_device_trace(session, ordinal, identity, window, Arc::clone(&trace));
+    Ok(trace)
+}
+
+pub(crate) fn park_device_trace(
+    session: &mut ProofSession,
+    ordinal: usize,
+    source: usize,
+    window: &CycleWindow,
+    trace: Arc<DeviceTrace>,
+) {
+    session.state_or_insert_with(ResidentTraces::default).park(
+        ordinal,
+        ResidentTrace {
+            source,
+            cycles: window.len,
+            base: window.start,
+            trace,
+            atoms: OnceLock::new(),
+        },
+    );
+}
+
+pub(crate) fn session_window_residency<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<(Arc<DeviceTrace>, Arc<DeviceAtomColumns>), KernelError<F>> {
+    let resident = window.residency(cycles);
+    Ok((
+        session_device_trace_window(context, session, witness, cycles, &resident)?,
+        session_atom_columns_window(context, session, witness, cycles, &resident)?,
+    ))
+}
+
+pub(crate) fn session_atom_columns_window<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<DeviceAtomColumns>, KernelError<F>> {
+    let trace = session_device_trace_window(context, session, witness, cycles, window)?;
+    let identity = witness_identity(witness);
+    let resident = session
+        .state::<ResidentTraces>()
+        .and_then(|traces| traces.get(context.ordinal(), identity, window))
+        .ok_or(KernelError::InvariantViolation {
+            reason: "the device residency was parked without an atom-column cache",
+        })?;
+    if let Some(columns) = resident.atoms.get() {
+        return Ok(Arc::clone(columns));
+    }
+    let columns = Arc::new(trace.atom_columns()?);
+    let _ = resident.atoms.set(Arc::clone(&columns));
+    Ok(columns)
+}

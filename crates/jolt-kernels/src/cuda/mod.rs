@@ -1,8 +1,9 @@
-//! CUDA precommitted claim reduction alongside optimized kernels and host witnesses.
+//! CUDA precommitted claim reduction and RAM hamming-weight booleanity kernels.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
-//! cycle/address slots in the optimized registry. [`CudaDoryScheme`] selects the
-//! PCS separately and currently forwards to CPU Dory with shared proof and setup types.
+//! cycle/address slots and RAM hamming-weight booleanity in the optimized registry.
+//! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
+//! with shared proof and setup types.
 //!
 //! The shared CUDA runtime owns process-wide device contexts and compiled
 //! modules. [`DeviceFrVec`] stores BN254 Montgomery limbs on its owning stream;
@@ -145,10 +146,10 @@ mod dory;
 #[cfg(test)]
 mod instruction_read_raf;
 mod program_image_claim_reduction;
-#[cfg(test)]
 mod ram_hamming_booleanity;
 #[cfg(test)]
 mod registers_read_write;
+mod witness;
 
 pub use common::context::{
     context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,
@@ -182,7 +183,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Replace precommitted cycle/address slots with CUDA implementations.
+    /// Replace precommitted reductions and RAM hamming booleanity with CUDA kernels.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -198,6 +199,7 @@ where
         backend.untrusted_advice_address = Box::new(CudaBackend);
         backend.bytecode_reduction_address = Box::new(CudaBackend);
         backend.program_image_reduction_address = Box::new(CudaBackend);
+        backend.ram_hamming_booleanity = Box::new(CudaBackend);
         backend
     }
 }
