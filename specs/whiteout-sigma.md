@@ -411,7 +411,8 @@ verifier squeezes it at the same position. σ binds the oracle input's τ. Then,
 for i = 1..T_att:
 
 1. **Mask.** Draw `y ← π_0` with M5a's `GaussianSampler::fill`, one sampler
-   for the common width (§5). Public segments get `y = 0`.
+   for the common width (§5), in parallel (`fill_parallel`, §2.4.1). Public
+   segments get `y = 0`.
 2. **First message.** Compute:
    - `f = N·y`: `apply_centered` on each part of N;
    - `E_0 = L·y + Q_μ(0, y)`;
@@ -445,6 +446,45 @@ until it is published.
 
 A fork lives outside the transcript. It records no `TranscriptEvent`, and a
 rejected attempt leaves nothing in the replay log.
+
+#### 2.4.1 Parallel mask sampling
+
+`GaussianSampler::fill_parallel` fills each Gaussian block. For a block of
+N coordinates it:
+
+1. draws `⌈N/2^14⌉` seeds of 32 bytes from the prover's RNG, in chunk
+   order, before sampling anything;
+2. fills chunk i (coordinates `2^14·i ..`) with M5a's `fill`, driven by
+   ChaCha20 keyed by seed i, as one rayon job.
+
+**Distribution.** Each chunk runs the unchanged sampler on its own coin
+stream, so each coordinate is a draw from `D_σ`. The streams are keyed by
+independent uniform 256-bit seeds (the RNG is a `CryptoRng`). If the
+ChaCha20 streams were uniform coins, the coordinates would be exactly
+independent, as with `fill` on true randomness. They are not uniform, so
+the hybrid that replaces each stream by uniform coins costs the PRG
+advantage once per stream. Over at most T_att attempts with
+`Σ_b ⌈N_b/2^14⌉` chunks each (382 at the headline, so `n_ch ≤ 3,820`), the
+zero-knowledge error gains
+
+  `n_ch · Adv^PRG_ChaCha20(t)`,
+
+where t is the distinguisher's running time. This term is computational:
+Thm `wo:thm:zk` stays statistical in all its other terms. Under the usual
+conjecture that ChaCha20 with a 256-bit key has no attack better than key
+search, `Adv ≤ t/2^256`, so the term is about `t·2^−244`, at most 2^−144
+for `t ≤ 2^100`. It does not affect completeness or soundness.
+
+The serial `fill` used the caller's RNG directly, so its coins were as good
+as that RNG; a caller passing a seeded `ChaCha20Rng` already had this
+assumption. `fill_parallel` makes it unconditional.
+
+**Determinism.** The seeds are drawn sequentially and the chunking depends
+only on N, so the output depends only on the RNG's stream. A test fills
+`5·2^14 + 123` coordinates on one worker and on eight and compares the
+bytes.
+
+**Constant time.** See the `fill` row of §2.8.
 
 ### 2.5 What enters the transcript
 
@@ -506,7 +546,7 @@ reveal them either.
 
 | Step | Secret inputs | Requirement |
 |---|---|---|
-| Gaussian `fill` | y | M5a sampler (isochronous, reviewed). |
+| Gaussian `fill` | y | M5a sampler (isochronous, reviewed), run as `fill_parallel` (§2.4.1): 2^14-output chunks whose count and boundaries come from the public block length; all chunk seeds drawn from the prover's RNG before any chunk runs; every chunk runs the isochronous loop to completion, with no early exit and no shared state. A chunk's duration depends on its trial accept bits, which are independent of the values it outputs (the HPRR20 argument, per chunk), so rayon's scheduling sees only those. The chunks run on the DIT pool of A11, as rayon jobs of the attempt inside `with_dit`. |
 | `N·y`, `A_D·G⁻¹(V)` | y, V | `apply_centered` of §1.3: branch-free Montgomery lift, NTT with public twiddles, constant-time Garner, no LUT. |
 | `Q_μ(0,y)`, `B_μ`, `L·y`, `g(y)`, `Λ_μ(0,y)` | y | Branch-free centered lift into F. Ring products with public or s-only operands. |
 | `G⁻¹(V)` | V | The bias path of `BalancedDecomposePow2Params::biased`, whose sign select is a 129-bit signed subtraction. A comparison there compiled to branches on x86 (W4 found and fixed this; `cargo asm` on `x86_64-apple-darwin` shows the scalar kernel and the AVX2/AVX-512 remainder loops branch-free). |
@@ -879,7 +919,10 @@ model; T_att makes all-rejected ≤ 2^−128.
   - `T_att ε/M`: 2^−130.9 / 2^−133.7 / 2^−134.2;
   - `(T_att Q_tot + T_att²)/2^256`: 2^−184.7 / 2^−188.7 / 2^−189.2;
   - total with δ_LHL = 2^−129.2 and the sampler term: 2^−128.8 / 2^−129.1 /
-    2^−129.1.
+    2^−129.1;
+  - plus, since the parallel fill (§2.4.1), the computational term
+    `n_ch · Adv^PRG_ChaCha20(t)` with `n_ch ≤ 382·T_att`: about `t·2^−244`
+    at the default, at most 2^−144 for `t ≤ 2^100`.
 
   ε stays at 2^−137: a smaller T_att would allow a larger ε, but that moves
   α by under 1%.
@@ -890,8 +933,9 @@ model; T_att makes all-rejected ≤ 2^−128.
   idle machine (6.08M samples, plus about 0.1 s of other work per attempt):
   today 2.37 × 3.1 ≈ 7.4 s; 2^−9.7: 1.001 × (6.08M × 0.62 µs) ≈ 3.9 s;
   default: 4.1 s; 2^−21.2: 1 × (6.08M × 0.76 µs) ≈ 4.7 s. Measured before
-  and after in A16: 1.8× faster. All are 3–6× over the paper's 1.15 s, so
-  the parallel fill remains needed.
+  and after in A16: 1.8× faster. All are 3–6× over the paper's 1.15 s on
+  one thread; the parallel fill (§2.4.1) brings the default to about
+  0.8 s per proof at 16 threads (A16).
 
 **Default: D = 10, α = 2^17, box failure ≤ 2^−20.** Per-attempt rejection
 is at most 2^−13.2, so a proof takes a second attempt about once in 9,400
@@ -941,10 +985,11 @@ fold in.
 | Response digits, \|z\| | seven radix-16 digits, \|z\| ≈ 2^27 (`06_evaluation.tex:101-102`) | ten digits, \|z\| ≤ 2^38.9 | Width × 2^13. |
 | Per-attempt rejection | 1 − 1/2.37 ≈ 0.58 (implied, `06_evaluation.tex:104`) | ≤ 2^−13.2 | As above. |
 | T_att, E[attempts] | 163 and 2.37 (`06_evaluation.tex:103-104`) | 10 and 1.0001 | `(2^−13.2)^10 ≤ 2^−128`, the same completeness target (Thm `wo:thm:completeness`, `05_security.tex:128-141`). |
-| ZK error | about 2^−128.8 with rejection term 2^−130.9 (`06_evaluation.tex:105-107`) | about 2^−129.1 with rejection term 2^−133.7 | Thm `wo:thm:zk` (`05_security.tex:332-339`) unchanged; only T_att moves. |
+| ZK error | about 2^−128.8 with rejection term 2^−130.9 (`06_evaluation.tex:105-107`) | about 2^−129.1 with rejection term 2^−133.7, plus the computational PRG term `n_ch · Adv^PRG_ChaCha20` (≤ 2^−144 for `t ≤ 2^100`) | Thm `wo:thm:zk` (`05_security.tex:332-339`) unchanged except for the mask coins (row below); only T_att moves. |
 | Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (`06_evaluation.tex:121-133`) | radii up to about 2^48, ranks 5 / 5 / 5 over R_256 | The radius follows the ten-digit box. Ranks are the setup's (Akita planner), not W4's. |
 | e, ν, proof, verifier | e ≈ 65.5M (2^26); +7.28 KB; verifier scans +0.7% (`06_evaluation.tex:170-185`, `eval_table.tex`) | e ≈ 90M (2^27); +9.66 KB; scans +23% | Consequences of the digits and ranks (`whiteout-costs.py` at α = 2^17, R_256 only). |
-| Prover-time model | 2.37 attempts × 10 ns per sample (`06_evaluation.tex:250-253`) | one attempt; per-sample cost grows with ℓ = 77 bits | Measured in A16. |
+| Prover-time model | 2.37 attempts × 10 ns per sample (`06_evaluation.tex:250-253`) | one attempt; per-sample cost grows with ℓ = 77 bits; the mask is sampled in parallel | Measured in A16. The paper's 10 ns is a per-sample cost with no thread count; ours is 655 ns on one thread, divided by the threads. |
+| Mask coins | true randomness, implicitly (Thm `wo:thm:zk` is statistical, `05_security.tex:332-339`) | ChaCha20 streams keyed by 256-bit seeds from the prover's RNG, one per 2^14-coordinate chunk | Parallel sampling with an output independent of the thread count. Adds `n_ch · Adv^PRG_ChaCha20` to the ZK error, so the statement becomes computational in that term only (§2.4.1). |
 | Constant time | outside the model (H2 discussion, `05_security.tex:355-362`) | unchanged: §2.8's rule still applies | Rejected attempts still occur, and the accepted attempt's y reveals s. |
 
 ## 6. Soundness and zero knowledge, mapped to the paper
@@ -970,7 +1015,7 @@ fold in.
 | Per-row checks before ρ; ct(h) assertion | H6 precondition; no ρ-weighted leak (§2.1) |
 | Raw t_p and t_D | Their compressed forms are functions of them (§2.4), so sending them raw removes nothing from H4 or H8: the hybrids already replace the raw images with uniform ones |
 | Sampler precision (M5a) | +2^−149 on 2^−128.8 |
-| ChaCha20 seed expansion (M5a) | adds a PRG assumption; stated in the module docs |
+| ChaCha20 seed expansion (M5a), now in `fill_parallel` | adds a computational term, `n_ch · Adv^PRG_ChaCha20` with `n_ch ≤ 3,820` (§2.4.1) |
 
 ## 7. Test plan
 
@@ -1205,6 +1250,31 @@ Moved out of W4:
     part of a trial (CDT scan, ChaCha draws) is about 200 ns per sample, so
     even ℓ → 0 leaves 30× the paper's 10 ns on one thread: threads are the
     lever.
+
+  **Parallel fill (§2.4.1), 2026-10-21.** Same scale, release, serial-fill
+  and parallel-fill binaries interleaved twice; load average 33–64.
+
+  | Threads | serial fill, per proof | parallel fill, per proof |
+  |---|---|---|
+  | 16 | 5.44 s / 4.78 s | 0.81 s / 0.83 s |
+  | 1 | 6.68 s / 8.75 s | 5.22 s / 6.88 s |
+
+  `fill` alone on the 6,076,160 coefficients, at the production width,
+  inside `with_dit`, best of three: 4.07 s on one thread (670 ns per
+  sample) both serially and through `fill_parallel` (no overhead), and
+  0.36 s on 16 threads (60 ns per sample in wall time, 11.2× on a loaded
+  machine).
+
+  - **Per attempt** (every proof took one): about 0.82 s at 16 threads, of
+    which `fill` is 0.36 s (44%); the rest (`N·y` and `L·y` in two limb
+    passes, the lifts, `t_D`, the self-checks before ρ and the witness of
+    the accepted attempt) is about 0.45 s. At one thread, `fill` is about
+    4.1 s of 5–7 s.
+  - **Against the budget.** 0.82 s per proof at 16 threads against the
+    paper's 1.15 s for the sampling and `N·y` share, on a loaded machine.
+    Sampling is no longer the dominant cost.
+  - The one-thread rows differ only by noise (the fill alone is 4.07 s
+    either way).
 
 **Found in implementation (W4 slices 5–9):**
 
