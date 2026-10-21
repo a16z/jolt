@@ -103,6 +103,10 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     amm_lift: CudaFunction,
     brc_message_dense: CudaFunction,
+    #[cfg(all(test, not(feature = "field-inline")))]
+    so_gather: CudaFunction,
+    #[cfg(all(test, not(feature = "field-inline")))]
+    so_shift: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
     sp_gather: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
@@ -318,6 +322,10 @@ impl CudaKernelContext {
             #[cfg(test)]
             amm_lift: module.load_function("amm_lift_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
+            #[cfg(all(test, not(feature = "field-inline")))]
+            so_gather: module.load_function("so_gather_kernel")?,
+            #[cfg(all(test, not(feature = "field-inline")))]
+            so_shift: module.load_function("so_shift_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             sp_gather: module.load_function("sp_gather_kernel")?,
             #[cfg(not(feature = "field-inline"))]
@@ -742,6 +750,16 @@ impl CudaKernelContext {
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {
         &self.brc_message_dense
+    }
+
+    #[cfg(all(test, not(feature = "field-inline")))]
+    pub(crate) const fn so_gather(&self) -> &CudaFunction {
+        &self.so_gather
+    }
+
+    #[cfg(all(test, not(feature = "field-inline")))]
+    pub(crate) const fn so_shift(&self) -> &CudaFunction {
+        &self.so_shift
     }
 
     pub(crate) const fn roc_message(&self) -> &CudaFunction {
