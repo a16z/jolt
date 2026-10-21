@@ -44,10 +44,10 @@ struct ProverContext<E> {
 }
 
 impl<E: Field> ProverRoundContext<E> for ProverContext<E> {
-    type Sponge = H;
+    type Channel = ProverTranscript<H>;
     type Error = SumcheckError<E>;
 
-    fn transcript_mut(&mut self) -> &mut ProverTranscript<H> {
+    fn channel_mut(&mut self) -> &mut ProverTranscript<H> {
         &mut self.transcript
     }
 
@@ -66,11 +66,11 @@ struct VerifierContext<'proof, E> {
     _field: PhantomData<E>,
 }
 
-impl<'proof, E: Field> VerifierRoundContext<'proof, E> for VerifierContext<'proof, E> {
-    type Sponge = H;
+impl<'proof, E: Field> VerifierRoundContext<E> for VerifierContext<'proof, E> {
+    type Channel = VerifierTranscript<'proof, H>;
     type Error = SumcheckError<E>;
 
-    fn transcript_mut(&mut self) -> &mut VerifierTranscript<'proof, H> {
+    fn channel_mut(&mut self) -> &mut VerifierTranscript<'proof, H> {
         &mut self.transcript
     }
 
@@ -502,10 +502,10 @@ impl ProveRounds<P, BackendError> for FailingKernel {
 struct BackendContext(ProverTranscript<H>);
 
 impl ProverRoundContext<P> for BackendContext {
-    type Sponge = H;
+    type Channel = ProverTranscript<H>;
     type Error = BackendError;
 
-    fn transcript_mut(&mut self) -> &mut ProverTranscript<H> {
+    fn channel_mut(&mut self) -> &mut ProverTranscript<H> {
         &mut self.0
     }
 

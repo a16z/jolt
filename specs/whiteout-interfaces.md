@@ -67,16 +67,21 @@ pub enum SumcheckRole { Claim = 1, RoundBody = 3, Challenge = 4 } // Akita's dis
 pub struct SumcheckSite { pub invocation: u32, pub round: u32, pub role: SumcheckRole }
 
 pub trait ProverRoundContext<E> {
-    type Sponge: Sponge;
+    /// The clear transcript, or a masked channel over committed pads.
+    type Channel: Channel + PrivateChannel;
     type Error;
-    fn transcript_mut(&mut self) -> &mut ProverTranscript<Self::Sponge>;
+    fn channel_mut(&mut self) -> &mut Self::Channel;
     /// The transcript site for `site`, or `None` to emit no site.
     fn site(&self, site: SumcheckSite) -> Option<SiteId>;
     /// Grinding and the round challenge.
     fn challenge(&mut self, site: SumcheckSite) -> Result<E, Self::Error>;
 }
-pub trait VerifierRoundContext<'proof, E> { /* mirror, over VerifierTranscript<'proof, _> */ }
+pub trait VerifierRoundContext<E> { /* mirror */ }
 ```
+
+Channel errors reach the drivers through `SumcheckError<E>: From<_>`: a
+`TranscriptError` as `SumcheckError::Transcript`, a masked channel's error as
+`SumcheckError::PrivateChannel`.
 
 Akita implements both on its existing grinding wrappers; its grinding plan stays
 in Akita. A Jolt context wrapping a bare transcript is added only when a Jolt
@@ -134,8 +139,15 @@ where
     C: ProverRoundContext<E, Error = Err>;
 
 /// Replays the rounds and returns the reduction before any oracle check, as
-/// Akita's `verify_*_rounds` do; Akita exchanges late claims first.
+/// Akita's `verify_*_rounds` do; Akita exchanges late claims first. A fold of
+/// `receive_masked_single`'s rounds.
 pub fn verify_single<F, E, Err, C>(/* mirror */) -> Result<SingleReduction<E>, Err>;
+
+/// Reads the rounds without folding them: wire values, pad slots and the
+/// context's challenge per round, for the masked verifier's residual lowering
+/// (Akita `specs/whiteout-akita.md` §4.5).
+pub fn receive_masked_single<F, E, Err, C>(/* as verify_single */)
+    -> Result<Vec<MaskedRound<E>>, Err>;
 
 /// Both roles' result: challenges and the final (normalized) running claim.
 pub struct SingleReduction<E> { pub challenges: Vec<E>, pub output_claim: E }
@@ -156,10 +168,10 @@ reflexive impl over all fields is not possible: a type with a second
 `ExtField` impl (`F192: ExtField<F64>`, `FpExt2<F, _>: ExtField<F>`) would
 make `T::DEGREE` ambiguous wherever it is named concretely.
 
-`prove_single` takes no recorder. Like `verify_single`, it calls
-`bind_derived` and `exchange_private` on `context.transcript_mut()`, so the
+`prove_single` takes no recorder. Like `receive_masked_single`, it calls
+`bind_derived` and `exchange_private` on `context.channel_mut()`, so the
 two roles are symmetric. Masked mode is supplied through the context's
-channel, which also assigns the verifier's pad slots (designed in M6b). A
+channel, which also assigns the verifier's pad slots (M6b). A
 `SumcheckRecorder<E>` cannot serve here anyway: its `absorb_round` draws
 `challenge_small`, which needs `E: CanonicalEncoding`, and extension fields
 implement only `CanonicalDecode`.
