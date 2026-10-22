@@ -197,6 +197,20 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
     }
 }
 
+impl<F: Field + CanonicalEncoding> CommittedPads<F, ()> {
+    /// `pads` under `layout` with no commitment, for tests of protocols
+    /// written over the masked channel (Akita's masked levels). It hides
+    /// nothing a verifier could check, and no back end opens it.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::InvalidLayout`] if `pads` does not fill `layout`.
+    #[cfg(feature = "test-support")]
+    pub fn uncommitted(layout: PadLayout, pads: Vec<F>) -> Result<Self, ZkError> {
+        Self::new(layout, pads, ())
+    }
+}
+
 /// The verifier's view of the pad commitment `C`: the commitment and a
 /// cursor, no opening data. Only a [`ZkBackend`](super::ZkBackend) builds
 /// one, at the transcript position of the commitment.
@@ -272,6 +286,34 @@ impl<C> CommittedPadsView<C> {
 pub struct MaskedVerifier<'a, 'p, H: Sponge> {
     transcript: &'a mut VerifierTranscript<'p, H>,
     cursor: &'a mut Cursor,
+}
+
+/// The verifier's reads of the public proof-of-work messages a protocol
+/// interleaves with its masked messages (Akita's grinding nonces and
+/// fold-response counters, `specs/whiteout-akita.md` §4.5). They take no pad.
+impl<H: Sponge> MaskedVerifier<'_, '_, H> {
+    /// [`VerifierTranscript::check_grind`].
+    ///
+    /// # Errors
+    ///
+    /// As [`VerifierTranscript::check_grind`].
+    pub fn check_grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
+        self.transcript.check_grind(bits)
+    }
+
+    /// [`VerifierTranscript::receive_nonce`].
+    ///
+    /// # Errors
+    ///
+    /// As [`VerifierTranscript::receive_nonce`].
+    pub fn receive_nonce(&mut self, nonce_bits: u8) -> Result<u32, TranscriptError> {
+        self.transcript.receive_nonce(nonce_bits)
+    }
+
+    /// The unread proof bytes.
+    pub fn remaining(&self) -> usize {
+        self.transcript.remaining()
+    }
 }
 
 /// Public messages and challenges pass through to the transcript.
@@ -376,6 +418,32 @@ impl<H: Sponge> PrivateChannel for MaskedVerifier<'_, '_, H> {
 pub struct MaskedProver<'a, F, O, H: Sponge> {
     pads: &'a mut CommittedPads<F, O>,
     transcript: &'a mut ProverTranscript<H>,
+}
+
+/// The prover's public proof-of-work messages, interleaved with its masked
+/// ones (Akita's grinding nonces and fold-response counters,
+/// `specs/whiteout-akita.md` §4.5). A nonce is found from public transcript
+/// state alone, so it takes no pad; no other unmasked send is offered.
+impl<F, O, H: Sponge> MaskedProver<'_, F, O, H> {
+    /// [`ProverTranscript::grind`].
+    ///
+    /// # Errors
+    ///
+    /// As [`ProverTranscript::grind`].
+    pub fn grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
+        self.transcript.grind(bits)
+    }
+
+    /// [`ProverTranscript::send_nonce`]: a counter the verifier rechecks
+    /// against public challenges.
+    pub fn send_nonce(&mut self, nonce: u32) {
+        self.transcript.send_nonce(nonce);
+    }
+
+    /// The length of the argument string so far.
+    pub fn narg_len(&self) -> usize {
+        self.transcript.narg().len()
+    }
 }
 
 /// `value` as a `T`, if `S` is `T`.
