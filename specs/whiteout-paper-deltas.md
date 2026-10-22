@@ -57,7 +57,7 @@ so the authors can fold it into the paper.
 | D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | open; W6 rejects them under ZK |
 | D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
 | D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
-| D27 | Soundness ledger of the response proof: the α round alone costs 126/q ≈ 2^−121 | open (authors) | ledger drafted |
+| D27 | Soundness ledger of the response proof: ≈ 2^−119.7 in total; the α round alone 126/q ≈ 2^−121 | accepted for now | accepted for now (user, 2026-10-22); revisit with the paper authors |
 
 ## D1. Constant-time Σ attempt
 
@@ -1128,9 +1128,10 @@ At the headline (`ν = 27`, `⌈log₂ m⌉ ≤ 27`, `⌈log₂ n_×⌉ ≤ 10`)
 rows sum to at most `(126 + 20 + 27 + 27 + 2 + 27 + 81)/q = 310/q ≈
 2^−119.7`, before Stage 1. The α round alone is `126/q ≈ 2^−121`.
 
-**Open (for the authors).** The response proof is below 128 bits over a
-single `F_q128`. Options: draw `α` (and the sumcheck challenges) from an
-extension, repeat the α round, or state the headline as about 2^−119 for
-this component. The product and fused sumchecks also carry no proof of
+**Status.** Accepted for now (user, 2026-10-22); revisit with the paper
+authors. The response proof is below 128 bits over a single `F_q128`.
+Options if the headline must hold: draw `α` (and the sumcheck challenges)
+from an extension field, repeat the α round, or state the headline as
+about 2^−119.7 for this component. The product and fused sumchecks also carry no proof of
 work (Akita spec A34).
 
