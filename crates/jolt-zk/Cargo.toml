@@ -47,6 +47,7 @@ rand_chacha = { workspace = true, optional = true }
 rand_core.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 jolt-algebra = { workspace = true, features = ["bn254", "solinas"] }
@@ -68,6 +69,10 @@ required-features = ["whiteout-prover"]
 
 [[test]]
 name = "whiteout_params"
+required-features = ["whiteout-prover"]
+
+[[test]]
+name = "whiteout_zeroize"
 required-features = ["whiteout-prover"]
 
 [[example]]

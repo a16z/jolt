@@ -16,6 +16,7 @@ use jolt_crypto::lattice::{PreparedMatrix, CHALLENGE_RING_DIM};
 
 use super::segments::lift_ct;
 use super::WhiteoutError;
+use crate::secret::SecretVec;
 
 /// One block of the residual commitment's opening rows,
 /// `M·(input segments) − G(gadget segment) = target`, addressed by residual
@@ -115,16 +116,22 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
     /// (the Gaussian tail cut for a mask), never a statistical one.
     ///
     /// Constant time in `x`: the Ajtai map is, and the gadget lift is
-    /// branch-free.
-    pub fn apply(&self, x: &[i64], bound: u64) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
-        let mut out = Vec::with_capacity(self.num_outputs());
+    /// branch-free. `N·x` is as secret as `x` (a mask), so it is zeroed
+    /// when dropped.
+    pub fn apply(
+        &self,
+        x: &[i64],
+        bound: u64,
+    ) -> Result<SecretVec<CyclotomicRing<F, D>>, WhiteoutError> {
+        let mut out = SecretVec::from(vec![CyclotomicRing::zero(); self.num_outputs()]);
+        let mut written = 0;
         for block in &self.blocks {
             let input = x
                 .get(block.input.clone())
                 .ok_or(WhiteoutError::InvalidRelation(
                     "linear block reads outside s",
                 ))?;
-            let mut rows = block.matrix.apply_centered(input, bound)?;
+            let mut rows = SecretVec::from(block.matrix.apply_centered(input, bound)?);
             if let Some(gadget) = &block.gadget {
                 let digits = x
                     .get(gadget.input.clone())
@@ -140,7 +147,12 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
                     }
                 }
             }
-            out.extend(rows);
+            out.get_mut(written..written + rows.len())
+                .ok_or(WhiteoutError::InvalidRelation(
+                    "a block's image differs from its target",
+                ))?
+                .copy_from_slice(&rows);
+            written += rows.len();
         }
         Ok(out)
     }
@@ -210,16 +222,18 @@ impl<F: Field + CanonicalEncoding, const D: usize> LRow<F, D> {
         let input = x
             .get(self.input.clone())
             .ok_or(WhiteoutError::InvalidRelation("L reads outside s"))?;
-        let [row] =
-            <[CyclotomicRing<F, D>; 1]>::try_from(self.matrix.apply_centered(input, bound)?)
-                .map_err(|_| WhiteoutError::InvalidRelation("L is not one row"))?;
+        let rows = SecretVec::from(self.matrix.apply_centered(input, bound)?);
+        let [row] = &*rows else {
+            return Err(WhiteoutError::InvalidRelation("L is not one row"));
+        };
         let stride = D / CHALLENGE_RING_DIM;
-        let component: Vec<F> = row
-            .coefficients()
-            .iter()
-            .step_by(stride.max(1))
-            .copied()
-            .collect();
+        let component = SecretVec::from(
+            row.coefficients()
+                .iter()
+                .step_by(stride.max(1))
+                .copied()
+                .collect::<Vec<F>>(),
+        );
         Ok(CyclotomicRing::from_slice(&component))
     }
 

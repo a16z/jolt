@@ -20,5 +20,6 @@
 
 pub mod blindfold;
 pub mod masking;
+mod secret;
 #[cfg(feature = "whiteout")]
 pub mod whiteout;

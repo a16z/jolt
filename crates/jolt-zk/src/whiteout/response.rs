@@ -39,6 +39,7 @@ use super::segments::balanced_range;
 use super::sigma::SigmaSetup;
 use super::WhiteoutError;
 use crate::masking::ZkError;
+use crate::secret::wipe;
 
 /// Radix-16 digits of a field element of `V` or `θ`.
 pub const FIELD_LEVELS: usize = 32;
@@ -101,10 +102,18 @@ impl ResponseLayout {
     }
 }
 
-/// `e` in digit form, in [`ResponseLayout`] order.
+/// `e` in digit form, in [`ResponseLayout`] order. Zeroed when dropped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResponseWitness {
     pub digits: Vec<i8>,
+}
+
+// Hand-written: the derived `ZeroizeOnDrop` wipes a `Vec` twice, byte by
+// byte, and `e` is the largest buffer of a proof.
+impl Drop for ResponseWitness {
+    fn drop(&mut self) {
+        wipe(&mut self.digits);
+    }
 }
 
 /// What the response proof certifies.
@@ -304,7 +313,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 
         let c = self.challenge.to_dense_ct()?;
         let bound = self.setup.params().response_bound();
-        let mut linear = flat(self.setup.linear().apply(z, bound)?);
+        let mut linear = flat(self.setup.linear().apply(z, bound)?.to_vec());
         let shifts = self
             .targets(&decoded)?
             .iter()
@@ -717,15 +726,17 @@ pub(crate) fn push_planes<F: JoltField>(out: &mut Vec<F>, values: &[F], levels: 
     }
 }
 
-/// The balanced radix-16 digits of every integer in `values` with
-/// `levels` digits each, digit plane by digit plane.
+/// Writes the balanced radix-16 digits of every integer in `values` with
+/// `levels` digits each, digit plane by digit plane, to `digits`.
 #[cfg(feature = "whiteout-prover")]
-pub(crate) fn integer_digits(values: &[i64], levels: usize) -> Result<Vec<i8>, WhiteoutError> {
+fn integer_digits(values: &[i64], levels: usize, digits: &mut [i8]) -> Result<(), WhiteoutError> {
     let radix = 1i128 << RESPONSE_LOG_BASIS;
     let (min, top) = balanced_range(RESPONSE_LOG_BASIS, levels)
         .ok_or(WhiteoutError::InvariantViolation("response digit range"))?;
     let offset = -min;
-    let mut digits = vec![0i8; values.len() * levels];
+    if digits.len() != values.len() * levels {
+        return Err(WhiteoutError::InvariantViolation("response digit count"));
+    }
     for (index, &value) in values.iter().enumerate() {
         let value = i128::from(value);
         if !(-offset..=top).contains(&value) {
@@ -741,7 +752,7 @@ pub(crate) fn integer_digits(values: &[i64], levels: usize) -> Result<Vec<i8>, W
             shifted /= radix;
         }
     }
-    Ok(digits)
+    Ok(())
 }
 
 /// The integers whose `levels` balanced radix-16 digits per coefficient are
@@ -773,13 +784,18 @@ pub(crate) fn field_from_planes<F: JoltField>(planes: &[i8], coefficients: usize
     values
 }
 
-/// The 32 balanced radix-16 digit planes of `values`.
+/// Writes the 32 balanced radix-16 digit planes of `values` to `digits`.
 #[cfg(feature = "whiteout-prover")]
-pub(crate) fn field_digits<F: JoltField>(values: &[F]) -> Vec<i8> {
+pub(crate) fn field_digits<F: JoltField>(
+    values: &[F],
+    digits: &mut [i8],
+) -> Result<(), WhiteoutError> {
+    if digits.len() != values.len() * FIELD_LEVELS {
+        return Err(WhiteoutError::InvariantViolation("field digit count"));
+    }
     let params = BalancedDecomposePow2Params::<F>::new(FIELD_LEVELS, RESPONSE_LOG_BASIS);
-    let mut digits = vec![0i8; values.len() * FIELD_LEVELS];
-    balanced_decompose_coefficients_pow2_i8_into(values, &mut digits, &params);
-    digits
+    balanced_decompose_coefficients_pow2_i8_into(values, digits, &params);
+    Ok(())
 }
 
 #[cfg(feature = "whiteout-prover")]
@@ -818,9 +834,16 @@ impl ResponseWitness {
         }
         witnesses.push(t_d_witness.to_vec());
         let mut witnesses = witnesses.into_iter();
-        let mut digits = Vec::with_capacity(layout.len());
+        let mut witness = Self {
+            digits: vec![0i8; layout.len()],
+        };
+        let mut out = witness.digits.as_mut_slice();
         let mut rest = z;
         for segment in layout.segments {
+            let (digits, tail) = std::mem::take(&mut out)
+                .split_at_mut_checked(segment.num_digits())
+                .ok_or(WhiteoutError::InvariantViolation("response layout length"))?;
+            out = tail;
             match segment {
                 ResponseSegment::Response {
                     coefficients,
@@ -829,29 +852,30 @@ impl ResponseWitness {
                 } => {
                     let (values, tail) = rest.split_at(coefficients);
                     rest = tail;
-                    digits.extend(integer_digits(values, levels)?);
+                    integer_digits(values, levels, digits)?;
                 }
                 ResponseSegment::V { .. } => {
-                    for ring in v.chunks_exact(CHALLENGE_RING_DIM) {
-                        digits.extend(field_digits(ring));
+                    for (ring, digits) in v
+                        .chunks_exact(CHALLENGE_RING_DIM)
+                        .zip(digits.chunks_exact_mut(CHALLENGE_RING_DIM * FIELD_LEVELS))
+                    {
+                        field_digits(ring, digits)?;
                     }
                 }
-                ResponseSegment::Theta => digits.extend(field_digits(theta)),
-                ResponseSegment::Compression {
-                    digits: expected, ..
-                } => {
+                ResponseSegment::Theta => field_digits(theta, digits)?,
+                ResponseSegment::Compression { .. } => {
                     let witness = witnesses.next().ok_or(WhiteoutError::InvariantViolation(
                         "compression witness missing",
                     ))?;
-                    if witness.len() != expected {
+                    if witness.len() != digits.len() {
                         return Err(WhiteoutError::InvariantViolation(
                             "compression witness length",
                         ));
                     }
-                    digits.extend(witness);
+                    digits.copy_from_slice(&witness);
                 }
             }
         }
-        Ok(Self { digits })
+        Ok(witness)
     }
 }

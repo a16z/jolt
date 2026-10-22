@@ -311,7 +311,11 @@ impl ImageCompression<F> for RawImages {
     fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
         Ok(CompressedImage {
             payload: image.to_vec(),
-            witness: field_digits(image),
+            witness: {
+                let mut digits = vec![0i8; image.len() * FIELD_LEVELS];
+                field_digits(image, &mut digits)?;
+                digits
+            },
         })
     }
 
