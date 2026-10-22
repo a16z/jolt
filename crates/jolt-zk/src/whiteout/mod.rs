@@ -66,6 +66,8 @@ pub use segments::{
 };
 #[cfg(feature = "whiteout-prover")]
 pub use sigma::prove_sigma;
+#[cfg(feature = "whiteout-test-support")]
+pub use sigma::prove_sigma_unchecked;
 pub use sigma::{verify_sigma, SigmaSetup};
 
 #[cfg(all(test, feature = "whiteout-prover"))]

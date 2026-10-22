@@ -414,6 +414,8 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
 
 #[cfg(feature = "whiteout-prover")]
 pub use prover::prove_sigma;
+#[cfg(feature = "whiteout-test-support")]
+pub use prover::prove_sigma_unchecked;
 #[cfg(all(test, feature = "whiteout-prover"))]
 pub(crate) use prover::take_rejected;
 #[cfg(any(
@@ -554,6 +556,41 @@ mod prover {
                 rng,
                 response,
                 SelfChecks::Run,
+            )
+        })?
+    }
+
+    /// [`prove_sigma`] with the prover's per-row, opening and alphabet
+    /// checks skipped, so a test can show that the response statement and
+    /// the verifier reject a false relation on their own (Akita's
+    /// consistent-cheat tests, `specs/whiteout-akita.md` §5.5 HT4). Test
+    /// support only.
+    #[cfg(feature = "whiteout-test-support")]
+    pub fn prove_sigma_unchecked<F, const D: usize, H, R, P>(
+        setup: &SigmaSetup<F, D>,
+        relation: &LiftedRelation<F>,
+        residual: &[i64],
+        pads: &LatticePadOpening,
+        transcript: &mut ProverTranscript<H>,
+        rng: &mut R,
+        response: &P,
+    ) -> Result<usize, ZkError>
+    where
+        F: JoltField,
+        H: Sponge,
+        R: RngCore + CryptoRng + Send,
+        P: ResponseProver<F, D> + Sync,
+    {
+        with_dit(|| {
+            let s = setup.private_vector(residual, pads)?;
+            prove_under_dit(
+                setup,
+                relation,
+                &s,
+                transcript,
+                rng,
+                response,
+                SelfChecks::Skip,
             )
         })?
     }
