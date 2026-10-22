@@ -12,11 +12,17 @@ use jolt_witness::WitnessBundle;
 #[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
+pub const VARIABLES: usize = 35;
+
 pub const NARROW: usize = 13;
 pub const WIDE: usize = 4;
 pub const SIGNED_WIDE: usize = 3;
 
 const _: () = assert!(SIGNED_WIDE < WIDE);
+
+pub const KIND_NARROW: u32 = 0;
+pub const KIND_WIDE: u32 = 1;
+pub const KIND_FLAG: u32 = 2;
 
 pub const PC_SLOT: usize = 1;
 pub const UNEXPANDED_PC_SLOT: usize = 2;
@@ -28,6 +34,48 @@ pub const FIRST_IN_SEQUENCE_BIT: u32 = 14;
 pub const NEXT_IS_VIRTUAL_BIT: u32 = 16;
 pub const NEXT_IS_FIRST_IN_SEQUENCE_BIT: u32 = 17;
 pub const SIGN_BIT_BASE: u32 = 24;
+
+const fn code(kind: u32, slot: u32) -> u32 {
+    (kind << 8) | slot
+}
+
+pub const LAYOUT: [u32; VARIABLES] = [
+    code(KIND_NARROW, 0),
+    code(KIND_WIDE, 0),
+    code(KIND_WIDE, 1),
+    code(KIND_FLAG, 0),
+    code(KIND_NARROW, PC_SLOT as u32),
+    code(KIND_NARROW, UNEXPANDED_PC_SLOT as u32),
+    code(KIND_WIDE, 2),
+    code(KIND_NARROW, 3),
+    code(KIND_NARROW, 4),
+    code(KIND_NARROW, 5),
+    code(KIND_NARROW, 6),
+    code(KIND_NARROW, 7),
+    code(KIND_NARROW, 8),
+    code(KIND_NARROW, 9),
+    code(KIND_WIDE, 3),
+    code(KIND_NARROW, NEXT_UNEXPANDED_PC_SLOT as u32),
+    code(KIND_NARROW, NEXT_PC_SLOT as u32),
+    code(KIND_FLAG, NEXT_IS_VIRTUAL_BIT),
+    code(KIND_FLAG, NEXT_IS_FIRST_IN_SEQUENCE_BIT),
+    code(KIND_NARROW, 10),
+    code(KIND_FLAG, 1),
+    code(KIND_FLAG, 2),
+    code(KIND_FLAG, 3),
+    code(KIND_FLAG, 4),
+    code(KIND_FLAG, 5),
+    code(KIND_FLAG, 6),
+    code(KIND_FLAG, 7),
+    code(KIND_FLAG, 8),
+    code(KIND_FLAG, VIRTUAL_INSTRUCTION_BIT),
+    code(KIND_FLAG, 10),
+    code(KIND_FLAG, 11),
+    code(KIND_FLAG, 12),
+    code(KIND_FLAG, 13),
+    code(KIND_FLAG, FIRST_IN_SEQUENCE_BIT),
+    code(KIND_FLAG, 15),
+];
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]

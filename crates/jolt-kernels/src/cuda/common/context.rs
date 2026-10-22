@@ -107,6 +107,8 @@ pub struct CudaKernelContext {
     so_gather: CudaFunction,
     #[cfg(all(test, not(feature = "field-inline")))]
     so_shift: CudaFunction,
+    #[cfg(all(test, not(feature = "field-inline")))]
+    so_uniskip: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
     sp_gather: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
@@ -326,6 +328,8 @@ impl CudaKernelContext {
             so_gather: module.load_function("so_gather_kernel")?,
             #[cfg(all(test, not(feature = "field-inline")))]
             so_shift: module.load_function("so_shift_kernel")?,
+            #[cfg(all(test, not(feature = "field-inline")))]
+            so_uniskip: module.load_function("so_uniskip_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             sp_gather: module.load_function("sp_gather_kernel")?,
             #[cfg(not(feature = "field-inline"))]
@@ -760,6 +764,11 @@ impl CudaKernelContext {
     #[cfg(all(test, not(feature = "field-inline")))]
     pub(crate) const fn so_shift(&self) -> &CudaFunction {
         &self.so_shift
+    }
+
+    #[cfg(all(test, not(feature = "field-inline")))]
+    pub(crate) const fn so_uniskip(&self) -> &CudaFunction {
+        &self.so_uniskip
     }
 
     pub(crate) const fn roc_message(&self) -> &CudaFunction {

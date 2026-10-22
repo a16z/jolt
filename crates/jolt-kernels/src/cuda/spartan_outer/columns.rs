@@ -1,4 +1,8 @@
+use super::witness::{LAYOUT, VARIABLES};
+use crate::cuda::common::device::DeviceFrVec;
+use cudarc::driver::LaunchArgs;
 use cudarc::driver::{CudaSlice, PushKernelArg};
+use jolt_field::{Fr, JoltField};
 use jolt_riscv::CircuitFlags;
 use jolt_witness::backend::cuda::{
     circuit_flag_bit, DeviceAtomColumns, DeviceTrace, FLAG_BIT_PRODUCT_NEGATIVE,
@@ -199,6 +203,81 @@ impl DeviceR1csInputs {
 
     pub const fn flags(&self) -> &CudaSlice<u32> {
         &self.flags
+    }
+}
+
+pub struct LinearForms {
+    offsets: Vec<u32>,
+    counts: Vec<u32>,
+    terms: Vec<u32>,
+    coefficients: Vec<Fr>,
+    constants: Vec<Fr>,
+}
+
+impl LinearForms {
+    pub fn new() -> Self {
+        Self {
+            offsets: Vec::new(),
+            counts: Vec::new(),
+            terms: Vec::new(),
+            coefficients: Vec::new(),
+            constants: Vec::new(),
+        }
+    }
+
+    pub fn push<F: JoltField>(&mut self, weights: &[F], constant: F) -> Result<(), CudaError> {
+        if weights.len() != VARIABLES {
+            return Err(CudaError::LengthMismatch {
+                expected: VARIABLES,
+                got: weights.len(),
+            });
+        }
+        let start = u32::try_from(self.terms.len()).map_err(|_| CudaError::InvariantViolation {
+            reason: "the Spartan outer linear forms exceed a u32 term offset",
+        })?;
+        let mut count = 0u32;
+        for (variable, &weight) in weights.iter().enumerate() {
+            if weight.is_zero() {
+                continue;
+            }
+            self.terms.push(LAYOUT[variable]);
+            self.coefficients
+                .push(crate::cuda::common::device::require_fr(weight)?);
+            count += 1;
+        }
+        self.offsets.push(start);
+        self.counts.push(count);
+        self.constants
+            .push(crate::cuda::common::device::require_fr(constant)?);
+        Ok(())
+    }
+
+    pub fn upload(&self, context: &CudaKernelContext) -> Result<DeviceLinearForms, CudaError> {
+        Ok(DeviceLinearForms {
+            offsets: context.upload_u32_slice(&self.offsets)?,
+            counts: context.upload_u32_slice(&self.counts)?,
+            terms: context.upload_u32_slice(&self.terms)?,
+            coefficients: context.upload(&self.coefficients)?,
+            constants: context.upload(&self.constants)?,
+        })
+    }
+}
+
+pub struct DeviceLinearForms {
+    pub offsets: CudaSlice<u32>,
+    pub counts: CudaSlice<u32>,
+    pub terms: CudaSlice<u32>,
+    pub coefficients: DeviceFrVec,
+    pub constants: DeviceFrVec,
+}
+
+impl DeviceLinearForms {
+    pub fn bind_args<'a>(&'a self, builder: &mut LaunchArgs<'a>) {
+        let _ = builder.arg(&self.offsets);
+        let _ = builder.arg(&self.counts);
+        let _ = builder.arg(self.constants.limbs());
+        let _ = builder.arg(&self.terms);
+        let _ = builder.arg(self.coefficients.limbs());
     }
 }
 

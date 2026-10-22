@@ -1,5 +1,9 @@
 #define SO_NARROW 13
 #define SO_WIDE 4
+#define SO_SIGN_BASE 24
+#define SO_KIND_NARROW 0u
+#define SO_KIND_WIDE 1u
+#define SO_KIND_FLAG 2u
 #define SO_EXTRA_WORDS 11
 #define SO_EXTRA_RS1 0
 #define SO_EXTRA_RS2 1
@@ -105,6 +109,68 @@ extern "C" __global__ void so_shift_kernel(const unsigned int *__restrict__ raw,
     flags[t] = mask;
 }
 
+__device__ __forceinline__ void so_linear_form(const u64 *__restrict__ narrow,
+                                               const u64 *__restrict__ wide, unsigned int mask,
+                                               unsigned long long t,
+                                               const unsigned int *__restrict__ terms,
+                                               const u64 *__restrict__ coeffs, unsigned int count,
+                                               const u64 *__restrict__ constant, u64 *out) {
+    u64 pos[2 * UNR_SLOTS];
+    unr_zero(pos);
+    const u64 zero[LIMBS] = {0, 0, 0, 0};
+
+    const u64 *row = narrow + t * SO_NARROW;
+    const u64 *row_wide = wide + t * (SO_WIDE * 2);
+
+    for (unsigned int k = 0; k < count; k++) {
+        unsigned int term = terms[k];
+        unsigned int slot = term & 0xFFu;
+        unsigned int kind = (term >> 8) & 3u;
+        const u64 *coefficient = coeffs + (unsigned long long)k * LIMBS;
+
+        if (kind == SO_KIND_FLAG) {
+            if ((mask >> slot) & 1u) unr_add_field(pos, coefficient);
+            continue;
+        }
+        if (kind == SO_KIND_NARROW) {
+            unsigned long long word = row[slot];
+            if (word != 0ULL) unr_mul_words(coefficient, &word, 1, pos);
+            continue;
+        }
+        unsigned long long words[2];
+        words[0] = row_wide[2 * slot];
+        words[1] = row_wide[2 * slot + 1];
+        if (words[0] == 0ULL && words[1] == 0ULL) continue;
+        if ((mask >> (SO_SIGN_BASE + slot)) & 1u) {
+            u64 flipped[LIMBS];
+            fr_sub(zero, coefficient, flipped);
+            unr_mul_words(flipped, words, 2, pos);
+        } else {
+            unr_mul_words(coefficient, words, 2, pos);
+        }
+    }
+
+    u64 total[LIMBS];
+    unr_finalize(pos, total);
+    u64 shift[LIMBS];
+    load4(constant, shift);
+    fr_add(total, shift, out);
+}
+
+__device__ __forceinline__ void so_form(const u64 *__restrict__ narrow,
+                                        const u64 *__restrict__ wide, unsigned int mask,
+                                        unsigned long long t,
+                                        const unsigned int *__restrict__ offsets,
+                                        const unsigned int *__restrict__ counts,
+                                        const u64 *__restrict__ constants,
+                                        const unsigned int *__restrict__ terms,
+                                        const u64 *__restrict__ coeffs, unsigned int form,
+                                        u64 *out) {
+    so_linear_form(narrow, wide, mask, t, terms + offsets[form],
+                   coeffs + (unsigned long long)offsets[form] * LIMBS, counts[form],
+                   constants + (unsigned long long)form * LIMBS, out);
+}
+
 __device__ __forceinline__ void so_split_eq(const u64 *__restrict__ e_in,
                                             const u64 *__restrict__ e_out, unsigned int in_bits,
                                             unsigned long long index, u64 *out) {
@@ -137,6 +203,45 @@ __device__ __forceinline__ void so_block_reduce(u64 *scratch, unsigned int lanes
         }
         __syncthreads();
     }
+}
+
+extern "C" __global__ void so_uniskip_kernel(
+    const u64 *__restrict__ narrow, const u64 *__restrict__ wide,
+    const unsigned int *__restrict__ flags, const unsigned int *__restrict__ offsets,
+    const unsigned int *__restrict__ counts, const u64 *__restrict__ constants,
+    const unsigned int *__restrict__ terms, const u64 *__restrict__ coeffs,
+    const u64 *__restrict__ e_in, const u64 *__restrict__ e_out, unsigned int in_bits,
+    unsigned int cycles, unsigned int strip, u64 *__restrict__ partials) {
+    extern __shared__ u64 scratch[];
+    unsigned int node = blockIdx.y;
+    unsigned long long base =
+        ((unsigned long long)blockIdx.x * blockDim.x + threadIdx.x) * (unsigned long long)strip;
+
+    u64 acc[1][LIMBS];
+    for (int l = 0; l < LIMBS; l++) acc[0][l] = 0;
+
+    for (unsigned int step = 0; step < strip; step++) {
+        unsigned long long t = base + step;
+        if (t >= cycles) break;
+        unsigned int mask = flags[t];
+
+        for (unsigned int stream = 0; stream < 2; stream++) {
+            unsigned int form = (node * 2 + stream) * 2;
+            u64 az[LIMBS], bz[LIMBS];
+            so_form(narrow, wide, mask, t, offsets, counts, constants, terms, coeffs, form, az);
+            so_form(narrow, wide, mask, t, offsets, counts, constants, terms, coeffs, form + 1, bz);
+
+            u64 product[LIMBS], weight[LIMBS], weighted[LIMBS], sum[LIMBS];
+            fr_mul(az, bz, product);
+            so_split_eq(e_in, e_out, in_bits, (t << 1) | stream, weight);
+            fr_mul(product, weight, weighted);
+            fr_add(acc[0], weighted, sum);
+            for (int l = 0; l < LIMBS; l++) acc[0][l] = sum[l];
+        }
+    }
+
+    u64 *lane_partials = partials + (unsigned long long)node * gridDim.x * LIMBS;
+    so_block_reduce(scratch, 1, acc, lane_partials);
 }
 
 extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
