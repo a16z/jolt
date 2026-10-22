@@ -201,6 +201,8 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
             jolt_riscv::instructions::VirtualRev8W(()),
         )),
         (0b001, _) => Ok(SourceInstructionKind::VirtualAssertEQ),
+        // VirtualHostIO writes no register; its encoding requires rd = 0.
+        (0b010, _) if rd(word) != 0 => invalid("invalid VirtualHostIO rd"),
         (0b010, _) => Ok(SourceInstructionKind::VirtualHostIO(
             jolt_riscv::instructions::VirtualHostIO(()),
         )),
@@ -332,6 +334,7 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         | SourceInstructionKind::EBREAK
         | SourceInstructionKind::MRET => format_i_operands(word),
         SourceInstructionKind::FENCE
+        | SourceInstructionKind::VirtualHostIO(_)
         | SourceInstructionKind::NoOp
         | SourceInstructionKind::Unimpl => NormalizedOperands::default(),
         _ => format_i_or_r_operands(instruction_kind, word),

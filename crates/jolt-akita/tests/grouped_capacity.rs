@@ -14,7 +14,7 @@ use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
-    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
+    AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
     GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
@@ -25,8 +25,9 @@ use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial};
 
-const FINAL_NUM_VARS: usize = 16;
-/// Six variables above this one-column trace group.
+/// The smallest one-column K=16 Single arity whose scalar guide has a
+/// recursive child fold, which bounded grouped provisioning requires.
+const FINAL_NUM_VARS: usize = 18;
 const ADVICE_NUM_VARS: usize = 22;
 const TRUSTED_ADVICE: CommitmentGroupRole =
     CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice");
@@ -55,7 +56,8 @@ impl TraceOneHotRows for TraceRows {
 
 #[test]
 fn grouped_opening_proves_advice_larger_than_the_trace_group() {
-    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let artifacts =
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let (prover_setup, verifier_setup) =
         AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
             FINAL_NUM_VARS,

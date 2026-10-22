@@ -68,14 +68,12 @@ fn main() {
 
     info!("\nVerifying proof...");
     let start = Instant::now();
-    let is_valid = verify_verify_txs(&txs_bytes, output, program_io.panic, proof);
+    let verification = verify_verify_txs(&txs_bytes, output, program_io.panic, proof);
     let verify_time = start.elapsed();
     info!("Verify time: {:?}", verify_time);
-    info!("Proof valid: {}", is_valid);
 
-    if is_valid {
-        info!("\n✅ sig-recovery zkVM transaction verification successful!");
-    } else {
-        info!("\n❌ Proof verification failed!");
+    match verification {
+        Ok(()) => info!("\n✅ sig-recovery zkVM transaction verification successful!"),
+        Err(error) => info!("\n❌ Proof verification failed: {error}"),
     }
 }

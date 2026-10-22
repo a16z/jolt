@@ -5,9 +5,12 @@
 
 use arbitrary::{Arbitrary, Result as ArbitraryResult, Unstructured};
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr as JFr};
-use spongefish::instantiations::{Blake2b512, Keccak};
+use spongefish::instantiations::Keccak;
+use spongefish::{DuplexSpongeInit, VerificationError};
 
-use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PoseidonSponge};
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge,
+};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
@@ -64,11 +67,11 @@ fn arb_scalar(u: &mut Unstructured<'_>) -> ArbitraryResult<JFr> {
     Ok(JFr::from_bytes_le_reduced(&bytes))
 }
 
-fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), CheckError>
+fn run_check<H>(input: &Input) -> Result<(), CheckError>
 where
-    H: spongefish::DuplexSpongeInterface<U = u8>,
+    H: DuplexSpongeInit<U = u8>,
 {
-    let mut prover = prover_transcript(SESSION, INSTANCE_DIGEST, build_sponge());
+    let mut prover = prover_transcript::<H>(SESSION, INSTANCE_DIGEST);
     let mut prover_challenges: Vec<[u8; 32]> = Vec::new();
 
     for op in &input.ops {
@@ -85,7 +88,7 @@ where
     }
 
     let narg: Vec<u8> = prover.narg_string().to_vec();
-    let mut verifier = verifier_transcript(SESSION, INSTANCE_DIGEST, build_sponge(), &narg);
+    let mut verifier = verifier_transcript::<H>(SESSION, INSTANCE_DIGEST, &narg);
     let mut challenge_idx = 0usize;
 
     for (op_idx, op) in input.ops.iter().enumerate() {
@@ -130,7 +133,7 @@ fn scalar_bytes(value: JFr) -> [u8; 32] {
     out
 }
 
-fn violation(what: &str, op_idx: usize, err: spongefish::VerificationError) -> CheckError {
+fn violation(what: &str, op_idx: usize, err: VerificationError) -> CheckError {
     CheckError::Violation(InvariantViolation::with_details(
         format!("{what} failed on verifier"),
         format!("op_idx={op_idx}, err={err:?}"),
@@ -255,9 +258,9 @@ impl Invariant for TranscriptConsistencyInvariant {
     fn check(&self, _setup: &(), input: SpongeInput) -> Result<(), CheckError> {
         let ops = Input { ops: input.ops };
         match input.sponge {
-            SpongeKind::Blake2b => run_check::<Blake2b512>(&ops, Blake2b512::default),
-            SpongeKind::Keccak => run_check::<Keccak>(&ops, Keccak::default),
-            SpongeKind::Poseidon => run_check::<PoseidonSponge>(&ops, PoseidonSponge::new),
+            SpongeKind::Blake2b => run_check::<Blake2b512>(&ops),
+            SpongeKind::Keccak => run_check::<Keccak>(&ops),
+            SpongeKind::Poseidon => run_check::<PoseidonSponge>(&ops),
         }
     }
 
@@ -299,7 +302,7 @@ impl Invariant for TranscriptConsistencyBlake2bInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
-        run_check::<Blake2b512>(&input, Blake2b512::default)
+        run_check::<Blake2b512>(&input)
     }
 
     fn seed_corpus(&self) -> Vec<Input> {
@@ -326,7 +329,7 @@ impl Invariant for TranscriptConsistencyKeccakInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
-        run_check::<Keccak>(&input, Keccak::default)
+        run_check::<Keccak>(&input)
     }
 
     fn seed_corpus(&self) -> Vec<Input> {
@@ -353,7 +356,7 @@ impl Invariant for TranscriptConsistencyPoseidonInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
-        run_check::<PoseidonSponge>(&input, PoseidonSponge::new)
+        run_check::<PoseidonSponge>(&input)
     }
 
     fn seed_corpus(&self) -> Vec<Input> {

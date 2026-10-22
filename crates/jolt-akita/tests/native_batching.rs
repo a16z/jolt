@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use akita_params::PolynomialGroupLayout;
 use jolt_akita::{
-    AkitaCommitment, AkitaNativeBatching, AkitaProverHint, AkitaScheduleArtifacts, AkitaScheme,
-    AkitaSetupParams, GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
+    AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
+    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, GroupedScheduleParams, TraceOneHotRows,
+    AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupOpeningClaim, OpeningsError,
@@ -58,7 +59,7 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
                 Vec::new(),
                 PolynomialGroupLayout::new(NUM_VARS, 2),
             )),
-            AkitaScheduleArtifacts::shared_from_default_directory(),
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         ))
         .expect("streamed trace setup should build");
     let indices: Vec<_> = (0..1 << (NUM_VARS - 4))
@@ -518,7 +519,7 @@ fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
         1,
         layout(7),
         AKITA_ONE_HOT_K16,
-        AkitaScheduleArtifacts::shared_from_default_directory(),
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
     ))
     .expect("one-hot setup should build");
     let one_hot_indices: Vec<_> = (0..256usize)

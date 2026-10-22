@@ -12,10 +12,10 @@ console.log(`preprocessing: ${pp.length} bytes`);
 console.log(`proof: ${proof.length} bytes`);
 console.log(`io: ${io.length} bytes`);
 
-const result = verify_fib(pp, proof, io, new Uint8Array());
-console.log(`verification result: ${result}`);
-
-if (!result) {
-    console.error('WASM verification failed');
+try {
+    verify_fib(pp, proof, io, new Uint8Array());
+} catch (error) {
+    console.error(`WASM verification failed: ${error.message}`);
     process.exit(1);
 }
+console.log('verification result: ok');

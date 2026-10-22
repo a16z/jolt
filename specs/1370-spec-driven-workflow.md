@@ -19,7 +19,6 @@ Introduce a spec-driven development workflow where a single PR carries a feature
 
 ### Invariants
 
-- Every spec PR gets auto-labeled (`spec` / `no-spec` / `implementation`) based on changed files.
 - Spec files are auto-renamed to `<PR#>-<name>.md` on PR creation.
 - Claude's analysis is read-only — CI never writes to the repo.
 - The `claude-approved` label is only added when Claude's ambiguity score is below 20%.
@@ -28,17 +27,13 @@ Introduce a spec-driven development workflow where a single PR carries a feature
 ### Non-Goals
 
 - Automated implementation via CI (implementation runs locally or in Claude Code cloud).
-- Hard CI gates blocking PRs without specs (soft warning only).
+- Hard CI gates blocking PRs without specs.
 - Persistent Claude sessions across PR comments (future enhancement via Channels or webhook server).
 
 ## Evaluation
 
 ### Acceptance Criteria
 
-- [ ] A PR adding only a `specs/*.md` file gets the `spec` label automatically.
-- [ ] A PR with no spec file gets the `no-spec` label.
-- [ ] A PR with both spec and non-spec changes gets both `spec` and `implementation` labels.
-- [ ] A PR exceeding 500 changed lines without a spec file gets a warning comment.
 - [ ] The spec file is auto-renamed to include the PR number on PR open.
 - [ ] `@claude analyze` on a spec PR triggers Claude to post a single-pass analysis comment.
 - [ ] When Claude is satisfied, it adds `claude-approved` and posts a summary with link to Claude Code cloud.
@@ -60,13 +55,12 @@ N/A — workflow tooling, not runtime code.
 **Workflow lifecycle:**
 
 ```
-new-spec.sh / /new-spec → open PR → [auto-rename + spec label]
+new-spec.sh / /new-spec → open PR → [auto-rename]
 → @claude analyze (CI, read-only) → approve spec
 → /implement-spec (local/cloud) → review code → merge
 ```
 
 **GitHub Actions:**
-- `spec-tracking.yml`: Auto-label, auto-rename, large-PR warning
 - `claude.yml`: `@claude` command handler (Opus model, read-only)
 
 **Claude skills (`.claude/skills/`):**
@@ -78,12 +72,7 @@ new-spec.sh / /new-spec → open PR → [auto-rename + spec label]
 
 | Label | Meaning | Applied by |
 |-------|---------|------------|
-| `spec` | PR contains a spec file | Action (auto) |
-| `no-spec` | PR has no spec file | Action (auto) |
-| `implementation` | PR contains non-spec code alongside a spec | Action (auto) |
 | `claude-approved` | Claude's analysis found no ambiguities | Claude (via `gh pr edit`) |
-
-**Soft guardrails:** PRs exceeding 500 changed lines without a spec file get a warning comment linking to `CONTRIBUTING.md`.
 
 ### Alternatives Considered
 
@@ -107,7 +96,6 @@ No Jolt book changes required — this is developer workflow tooling with no use
 ### Files to modify
 - `specs/TEMPLATE.md` — add Status, PR, structured sections
 - `.github/workflows/claude.yml` — Opus model, env vars, read-only
-- `.github/workflows/spec-tracking.yml` — replace issue-creation with labeling + rename + warning
 - `.github/workflows/arch-tests.yml` — paths filter for tracer-only changes
 - `.github/workflows/rust.yml` — paths-ignore for spec/docs changes
 

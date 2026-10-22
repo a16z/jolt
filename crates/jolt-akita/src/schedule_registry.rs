@@ -11,7 +11,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{
     CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey,
     ScheduleRowDigest,
@@ -21,11 +21,50 @@ use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use akita_planner::find_adapted_schedule;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fmt::{Display, Formatter, Result as FormatResult};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{with_one_hot_family, OneHotFamily, AKITA_ONE_HOT_K256};
 
 const MAX_PROVISIONED_ROWS: usize = 128;
+
+/// Provisioning distinguishes a known scalar-guide limitation from other failures.
+#[derive(Debug)]
+pub enum GroupedScheduleError {
+    MissingRecursiveGuide {
+        k: usize,
+        profile: AkitaChunkProfile,
+        final_group: PolynomialGroupLayout,
+    },
+    Backend(AkitaError),
+}
+
+impl From<AkitaError> for GroupedScheduleError {
+    fn from(error: AkitaError) -> Self {
+        Self::Backend(error)
+    }
+}
+
+impl Display for GroupedScheduleError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FormatResult {
+        match self {
+            Self::MissingRecursiveGuide { k, profile, final_group } => write!(f,
+                "one-hot K={k} profile {profile} final shape {final_group:?} has no recursive child fold in its scalar guide; bounded grouped provisioning requires one"
+            ),
+            Self::Backend(error) => Display::fmt(error, f),
+        }
+    }
+}
+
+impl Error for GroupedScheduleError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::MissingRecursiveGuide { .. } => None,
+            Self::Backend(error) => Some(error),
+        }
+    }
+}
 
 /// Physical shape and admitted coefficient range of one dense commitment group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,17 +146,23 @@ impl GroupedScheduleParams {
         one_hot_catalog: &ValidatedScheduleCatalog,
         one_hot_k: usize,
         profile: AkitaChunkProfile,
-    ) -> Result<ValidatedScheduleCatalog, AkitaError> {
+    ) -> Result<ValidatedScheduleCatalog, GroupedScheduleError> {
         let family = OneHotFamily::from_parts(one_hot_k, profile)?;
+        family.validate_num_vars(
+            self.final_group.num_vars(),
+            self.final_group.num_polynomials(),
+        )?;
         with_one_hot_family!(family, |Cfg| {
+            let catalog =
+                TrustedScheduleCatalog::<Cfg>::new(one_hot_catalog.clone(), profile.witness_cfg())?;
             let rows = provision_groups_for_config::<Cfg>(
                 dense_catalog,
                 full_dense_catalog,
-                one_hot_catalog,
+                &catalog,
                 self,
-                family,
+                one_hot_k,
             )?;
-            extend_catalog::<Cfg>(one_hot_catalog, &rows)
+            Ok(extend_catalog::<Cfg>(&catalog, &rows)?)
         })
     }
 }
@@ -148,15 +193,9 @@ impl RegisteredRows {
 
 /// Freeze base and setup-specific rows into one validated immutable catalog.
 pub fn extend_catalog<Cfg: CommitmentConfig>(
-    base: &ValidatedScheduleCatalog,
+    base: &TrustedScheduleCatalog<Cfg>,
     extra: &RegisteredRows,
 ) -> Result<ValidatedScheduleCatalog, AkitaError> {
-    akita_config::validate_config_policy::<Cfg>()?;
-    base.validate_binding(
-        Cfg::schedule_family_name(),
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-    )?;
     let rows = base
         .rows()
         .chain(extra.rows())
@@ -165,13 +204,13 @@ pub fn extend_catalog<Cfg: CommitmentConfig>(
     ValidatedScheduleCatalog::try_new(
         Cfg::schedule_family_name(),
         rows,
-        &policy_of::<Cfg>(),
+        base.policy(),
         Cfg::ring_challenge_config,
     )
 }
 
 fn plan_row<Cfg: CommitmentConfig>(
-    base: &ValidatedScheduleCatalog,
+    base: &TrustedScheduleCatalog<Cfg>,
     final_group: PolynomialGroupLayout,
     producers: &[PrecommittedProducer],
 ) -> Result<Option<ResolvedScheduleRow>, AkitaError> {
@@ -200,7 +239,7 @@ fn plan_row<Cfg: CommitmentConfig>(
         main_row,
         &request,
         Cfg::committed_source_contract()?,
-        &policy_of::<Cfg>(),
+        base.policy(),
         Cfg::ring_challenge_config,
     )?
     .schedule;
@@ -211,20 +250,14 @@ fn plan_row<Cfg: CommitmentConfig>(
         )?,
         precommitteds: key.precommitteds,
     };
-    ResolvedScheduleRow::try_new(profiles, schedule, &policy_of::<Cfg>()).map(Some)
+    ResolvedScheduleRow::try_new(profiles, schedule, base.policy()).map(Some)
 }
 
 fn provision_producers<Cfg: CommitmentConfig>(
-    base: &ValidatedScheduleCatalog,
+    base: &TrustedScheduleCatalog<Cfg>,
     group_combinations: &[Vec<PrecommittedProducer>],
     final_group: PolynomialGroupLayout,
 ) -> Result<RegisteredRows, AkitaError> {
-    akita_config::validate_config_policy::<Cfg>()?;
-    base.validate_binding(
-        Cfg::schedule_family_name(),
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-    )?;
     if group_combinations.iter().any(Vec::is_empty) {
         return Err(AkitaError::InvalidSetup(
             "a grouped row must have at least one auxiliary group".to_owned(),
@@ -309,21 +342,20 @@ pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 fn provision_groups_for_config<Cfg: CommitmentConfig>(
     dense_catalog: &ValidatedScheduleCatalog,
     full_dense_catalog: &ValidatedScheduleCatalog,
-    one_hot_catalog: &ValidatedScheduleCatalog,
+    one_hot_catalog: &TrustedScheduleCatalog<Cfg>,
     params: &GroupedScheduleParams,
-    family: OneHotFamily,
-) -> Result<RegisteredRows, AkitaError> {
+    one_hot_k: usize,
+) -> Result<RegisteredRows, GroupedScheduleError> {
     let final_group = params.final_group;
-    family.validate_num_vars(final_group.num_vars(), final_group.num_polynomials())?;
-    akita_config::validate_config_policy::<JoltDenseBounded>()?;
+    akita_config::validate_config_policy::<JoltDenseBounded>(dense_catalog.policy().witness_chunk)?;
     dense_catalog.validate_binding(
         JoltDenseBounded::schedule_family_name(),
-        &policy_of::<JoltDenseBounded>(),
+        &policy_of::<JoltDenseBounded>(dense_catalog.policy().witness_chunk),
         JoltDenseBounded::ring_challenge_config,
     )?;
     full_dense_catalog.validate_binding(
         JoltDenseFull::schedule_family_name(),
-        &policy_of::<JoltDenseFull>(),
+        &policy_of::<JoltDenseFull>(full_dense_catalog.policy().witness_chunk),
         JoltDenseFull::ring_challenge_config,
     )?;
     let layouts = AdvicePrecommitLayouts {
@@ -359,28 +391,35 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
     let main_row = one_hot_catalog
         .resolve_key(&ScheduleLookupKey::single(final_group))
         .map_err(|error| {
-            let guidance = if family.k() == AKITA_ONE_HOT_K256 {
+            let guidance = if one_hot_k == AKITA_ONE_HOT_K256 {
                 "; shipped K=256 trace catalogs cover fixture and benchmark shapes only; use K=16 for production traces or supply a catalog containing the exact K=256 shape"
             } else {
                 ""
             };
             AkitaError::InvalidSetup(format!(
                 "one-hot K={} final shape (num_vars={}, num_polys={}) is outside the admitted catalog{guidance}: {error}",
-                family.k(), final_group.num_vars(), final_group.num_polynomials(),
+                one_hot_k, final_group.num_vars(), final_group.num_polynomials(),
             ))
         })?;
-    if family.profile() == AkitaChunkProfile::Single
+    let chunking = one_hot_catalog.policy().witness_chunk;
+    let profile = AkitaChunkProfile::new(chunking.num_chunks, chunking.num_activated_levels);
+    if profile == AkitaChunkProfile::default()
         && params.full_width_arities().next().is_none()
         && main_row.schedule().recursive_folds.is_empty()
     {
-        // Bounded-only Single admission follows the scalar guide's child-fold
+        // Bounded-only single-chunk admission follows the scalar guide's child-fold
         // capability; full planner search is intentionally not attempted here.
-        return Err(AkitaError::UnsupportedSchedule(format!(
-            "one-hot K={} profile {:?} final arity {} has no recursive child fold in its scalar guide; bounded grouped provisioning requires one; requested groups: {params:?}",
-            family.k(), family.profile(), final_group.num_vars()
-        )));
+        return Err(GroupedScheduleError::MissingRecursiveGuide {
+            k: one_hot_k,
+            profile,
+            final_group,
+        });
     }
-    provision_producers::<Cfg>(one_hot_catalog, &combinations, final_group)
+    Ok(provision_producers::<Cfg>(
+        one_hot_catalog,
+        &combinations,
+        final_group,
+    )?)
 }
 
 /// Adapt grouped rows for the standard single-chunk one-hot family.
@@ -390,15 +429,23 @@ pub fn provision_groups_for_k(
     one_hot_catalog: &ValidatedScheduleCatalog,
     params: &GroupedScheduleParams,
     one_hot_k: usize,
-) -> Result<RegisteredRows, AkitaError> {
-    let family = OneHotFamily::from_parts(one_hot_k, AkitaChunkProfile::Single)?;
+) -> Result<RegisteredRows, GroupedScheduleError> {
+    let family = OneHotFamily::from_parts(one_hot_k, AkitaChunkProfile::new(1, 0))?;
+    family.validate_num_vars(
+        params.final_group.num_vars(),
+        params.final_group.num_polynomials(),
+    )?;
     with_one_hot_family!(family, |Cfg| {
+        let catalog = TrustedScheduleCatalog::<Cfg>::new(
+            one_hot_catalog.clone(),
+            AkitaChunkProfile::default().witness_cfg(),
+        )?;
         provision_groups_for_config::<Cfg>(
             dense_catalog,
             full_dense_catalog,
-            one_hot_catalog,
+            &catalog,
             params,
-            family,
+            one_hot_k,
         )
     })
 }
@@ -407,15 +454,64 @@ pub fn provision_groups_for_k(
 #[expect(clippy::unwrap_used, reason = "schedule tests should fail loudly")]
 mod tests {
     use super::*;
-    use crate::adapters::AkitaScheduleArtifacts;
+    use crate::AkitaScheduleArtifacts;
     use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
     #[test]
-    fn single_grouped_advice_rejects_small_scalar_arities() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    fn provisioning_rejects_geometry_mismatch_with_and_without_advice() {
+        let profile = AkitaChunkProfile::new(8, 2);
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory(profile);
         let dense = artifacts.dense_catalog().unwrap();
         let full_dense = artifacts.full_dense_catalog().unwrap();
-        for (k, last_scalar_arity) in [(AKITA_ONE_HOT_K16, 15), (AKITA_ONE_HOT_K256, 16)] {
+        let base = artifacts
+            .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
+            .unwrap();
+        for advice in [None, Some(14)] {
+            let params = GroupedScheduleParams::new(
+                None,
+                advice,
+                Vec::new(),
+                PolynomialGroupLayout::singleton(20),
+            );
+            for requested in [AkitaChunkProfile::new(2, 3), AkitaChunkProfile::new(8, 3)] {
+                let error = params
+                    .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, requested)
+                    .unwrap_err();
+                assert!(matches!(
+                    error,
+                    GroupedScheduleError::Backend(AkitaError::InvalidSetup(_))
+                ));
+            }
+            let admitted = params
+                .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
+                .unwrap();
+            assert_eq!(admitted.policy().witness_chunk, profile.witness_cfg());
+            let precommitteds = advice
+                .map(|arity| {
+                    dense_group_profile(&dense, PolynomialGroupLayout::singleton(arity)).unwrap()
+                })
+                .into_iter()
+                .collect();
+            let row = admitted
+                .resolve_key(&ScheduleLookupKey {
+                    final_group: params.final_group,
+                    precommitteds,
+                })
+                .unwrap();
+            assert_eq!(
+                row.schedule().root.params.witness_chunk,
+                profile.witness_cfg()
+            );
+        }
+    }
+
+    #[test]
+    fn single_grouped_advice_rejects_small_scalar_arities() {
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let dense = artifacts.dense_catalog().unwrap();
+        let full_dense = artifacts.full_dense_catalog().unwrap();
+        for (k, last_scalar_arity) in [(AKITA_ONE_HOT_K16, 17), (AKITA_ONE_HOT_K256, 17)] {
             let base = artifacts.one_hot_catalog(k).unwrap();
             for final_arity in 12..=last_scalar_arity {
                 let params = GroupedScheduleParams::new(
@@ -425,28 +521,25 @@ mod tests {
                     PolynomialGroupLayout::new(final_arity, 1),
                 );
                 let error = params
-                    .extend_catalog(&dense, &full_dense, &base, k, AkitaChunkProfile::Single)
+                    .extend_catalog(&dense, &full_dense, &base, k, AkitaChunkProfile::new(1, 0))
                     .unwrap_err();
-                assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
+                assert!(matches!(
+                    error,
+                    GroupedScheduleError::MissingRecursiveGuide { .. }
+                ));
                 let message = error.to_string();
-                assert!(
-                    message.contains(&format!("K={k} profile Single final arity {final_arity}"))
-                );
-                assert!(message.contains("trusted_physical_arity: Some(14)"));
+                assert!(message.contains("has no recursive child fold in its scalar guide"));
             }
         }
     }
 
     #[test]
     fn grouped_advice_rows_cover_recursive_cutover() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let dense = artifacts.dense_catalog().unwrap();
         let full_dense = artifacts.full_dense_catalog().unwrap();
-        for profile in [
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(8, 2)] {
             let base = artifacts
                 .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
                 .unwrap();
@@ -489,7 +582,8 @@ mod tests {
 
     #[test]
     fn grouped_rows_preserve_chunk_independent_producer_profiles() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let dense = artifacts.dense_catalog().unwrap();
         let producers = [14, 22].map(|num_vars| {
             dense_group_profile(&dense, PolynomialGroupLayout::new(num_vars, 1)).unwrap()
@@ -497,12 +591,7 @@ mod tests {
         let full_dense = artifacts.full_dense_catalog().unwrap();
         let full_producer =
             dense_group_profile(&full_dense, PolynomialGroupLayout::new(14, 1)).unwrap();
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             for (one_hot_k, final_num_vars) in [(AKITA_ONE_HOT_K16, 22), (AKITA_ONE_HOT_K256, 20)] {
                 let base = artifacts
                     .one_hot_catalog_for_profile(one_hot_k, profile)
