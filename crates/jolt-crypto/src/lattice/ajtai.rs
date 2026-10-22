@@ -211,12 +211,21 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
 
     /// The entries over `F`, built on first use: once per matrix, so a
     /// verifier that keeps its setup pays for it once, not per proof.
+    ///
+    /// WARNING: the build runs in parallel outside the cell's lock. Inside
+    /// `get_or_init` it would deadlock: callers run on Rayon workers (one
+    /// matrix shared by several blocks of `N`), and a worker that steals
+    /// another caller's job while it waits on the build blocks on the cell it
+    /// is initializing. Concurrent first callers may each build the entries;
+    /// one is kept.
     fn field_entries(&self) -> &[CyclotomicRing<F, D>] {
-        self.coefficients.get_or_init(|| {
-            cfg_iter!(self.entries)
-                .map(|entry| entry.to_ring(&self.params))
-                .collect()
-        })
+        if let Some(entries) = self.coefficients.get() {
+            return entries;
+        }
+        let entries = cfg_iter!(self.entries)
+            .map(|entry| entry.to_ring(&self.params))
+            .collect();
+        self.coefficients.get_or_init(|| entries)
     }
 
     /// `M · x` for centered integer columns `x`, laid out column by column
