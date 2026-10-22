@@ -138,10 +138,9 @@ pub struct CompressedTarget<'a, F> {
     pub payload: &'a [F],
 }
 
-/// Proves the response statement. Akita implements it (W5). The statement's
-/// compressed targets of `N` are bound to the transcript only through the
-/// caller's absorption before the Σ-protocol (see [`super::verify_sigma`]);
-/// the response proof does not absorb them again.
+/// Proves the response statement. Akita implements it (W5). The Σ-protocol
+/// absorbed the statement's compressed targets of `N` before `ρ`
+/// ([`super::verify_sigma`]); the response proof does not absorb them again.
 pub trait ResponseProver<F: JoltField, const D: usize> {
     /// The compression map of the statement's images.
     fn compression(&self) -> &dyn ImageCompression<F>;

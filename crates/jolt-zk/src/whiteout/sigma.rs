@@ -272,6 +272,15 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         }
     }
 
+    /// Absorbs every compressed target's payload, in block order, as a public
+    /// value: the first transcript operation of both roles, so `ρ` and every
+    /// later challenge bind the payloads.
+    fn absorb_targets<C: Channel>(&self, channel: &mut C) {
+        for (_, payload) in self.compressed_targets() {
+            channel.public_all(payload);
+        }
+    }
+
     /// The compressed targets of `N`, in block order: each image's length
     /// and payload.
     pub(crate) fn compressed_targets(&self) -> impl Iterator<Item = (usize, &[F])> {
@@ -359,13 +368,9 @@ pub(crate) fn attempt_seed<H: Sponge, F: JoltField>(
     fork.squeeze()
 }
 
-/// Verifies the Σ-protocol: squeezes `ρ` and `σ`, reads `cm(t_D)` and the
-/// nonce, rebuilds `c`, and has `response` verify the response statement.
-///
-/// The caller must already have absorbed, in `transcript`, the payload of
-/// every compressed target of `setup` (`u_a` and `t_p`), in target order,
-/// before this call: `ρ` is squeezed from that state, and nothing here
-/// absorbs them. The response statement and its prover rely on it.
+/// Verifies the Σ-protocol: absorbs the compressed targets' payloads,
+/// squeezes `ρ` and `σ`, reads `cm(t_D)` and the nonce, rebuilds `c`, and
+/// has `response` verify the response statement.
 pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F, D>>(
     setup: &SigmaSetup<F, D>,
     relation: &LiftedRelation<F>,
@@ -373,6 +378,7 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
     response: &P,
 ) -> Result<(), ZkError> {
     setup.check_relation(relation)?;
+    setup.absorb_targets(transcript);
     let rho: Vec<F> = (0..relation.labels().num_challenges())
         .map(|_| transcript.challenge::<F>())
         .collect();
@@ -521,10 +527,8 @@ mod prover {
     /// the pad opening `pads`, returning the number of attempts (independent
     /// of the witness; the only attempt-dependent value that may leave).
     /// Runs on a fresh rayon pool whose workers all have DIT set (A11).
-    ///
-    /// The caller must already have sent, in `transcript`, the payload of
-    /// every compressed target of `setup`, in target order, as
-    /// [`verify_sigma`] requires.
+    /// The compressed targets' payloads are absorbed first, as
+    /// [`verify_sigma`] does.
     pub fn prove_sigma<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
@@ -599,6 +603,7 @@ mod prover {
         P: ResponseProver<F, D>,
     {
         setup.check_relation(relation)?;
+        setup.absorb_targets(transcript);
         let table = setup.table();
         if s.len() != table.num_coefficients() {
             return Err(WhiteoutError::WitnessLength {

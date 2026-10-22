@@ -678,6 +678,67 @@ fn payloads_of_the_wrong_length_are_rejected() {
     }
 }
 
+/// Records the verifier's `ρ`.
+struct RhoCapture(Mutex<Vec<F>>);
+
+impl<const D: usize> ResponseProver<F, D> for RhoCapture {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        &RawImages
+    }
+
+    fn prove_response<H: Sponge>(
+        &self,
+        _: &ResponseStatement<'_, F, D>,
+        _: &ResponseWitness,
+        _: &mut ProverTranscript<H>,
+    ) -> Result<(), ZkError> {
+        unreachable!("verifier only")
+    }
+
+    fn verify_response<H: Sponge>(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        _: &mut VerifierTranscript<'_, H>,
+    ) -> Result<(), ZkError> {
+        *self.0.lock().unwrap() = statement.rho().to_vec();
+        Ok(())
+    }
+}
+
+/// The Σ-protocol absorbs the compressed targets' payloads itself, before
+/// `ρ`: a verifier holding a moved payload, or the two targets swapped,
+/// draws a different `ρ` from the same proof, so no caller can leave `cm`
+/// free until after the challenges.
+#[test]
+fn rho_binds_the_compressed_targets() {
+    let instance = Instance::<64>::new(74);
+    let proof = prove_checked(&instance, 75).unwrap();
+    let rho = |edit: fn(&mut [BlockTarget<F, 64>; 2])| -> Vec<F> {
+        let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, &proof);
+        let mut targets =
+            [instance.u.len(), instance.t_p.len()].map(|rings| BlockTarget::Compressed {
+                payload: transcript.receive_n::<F>(rings * 64).unwrap(),
+                image: None,
+            });
+        edit(&mut targets);
+        let setup = instance.setup_with(targets);
+        let lifted = setup.lift(&instance.relation, &instance.claims).unwrap();
+        let capture = RhoCapture(Mutex::new(Vec::new()));
+        verify_sigma(&setup, &lifted, &mut transcript, &capture).unwrap();
+        capture.0.into_inner().unwrap()
+    };
+    let honest = rho(|_| {});
+    assert!(!honest.is_empty());
+    let moved = rho(|targets| {
+        if let BlockTarget::Compressed { payload, .. } = &mut targets[0] {
+            payload[1] += F::one();
+        }
+    });
+    assert_ne!(moved, honest);
+    let swapped = rho(|targets| targets.swap(0, 1));
+    assert_ne!(swapped, honest);
+}
+
 /// A rejected attempt's `(t_D, n)` with the accepted `z` does not verify.
 /// Runs at the paper's α = 16, where rejections are common.
 #[test]
