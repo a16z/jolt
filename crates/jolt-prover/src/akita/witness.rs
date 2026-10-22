@@ -32,6 +32,8 @@ pub fn commit_advice<PCS>(
 where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
+    let _commit = tracing::info_span!("akita_advice_commit").entered();
+    let preparation = tracing::info_span!("akita_advice_host_prepare").entered();
     if advice_bytes.len() > max_advice_bytes {
         return Err(commit_failed(
             common::advice::AdviceWordsError::AdviceTooLong {
@@ -48,6 +50,7 @@ where
     let (setup, _) =
         PCS::transparent_object_setup(setup_context, physical_vars, plan.layout_digest())
             .map_err(commit_failed)?;
+    drop(preparation);
     let (commitment, hint) =
         PCS::commit_packed_words(&setup, advice_bytes, max_advice_bytes, physical_vars)
             .map_err(commit_failed)?;
