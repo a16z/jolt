@@ -1,8 +1,10 @@
 //! Lowering verifier checks on masked messages.
 //!
-//! [`lower_factored`] turns a factored claim formula into a value of a
-//! [`ClaimDomain`] (`jolt-transcript`'s, shared with Akita's stage checks),
-//! allocating one auxiliary slot per intermediate product.
+//! [`lower_factored`] turns a factored claim formula into a [`ProductSum`]
+//! over a [`ClaimDomain`] (`jolt-transcript`'s, shared with Akita's stage
+//! checks): an affine value plus each term's last product, left pending so
+//! that a check can land it without a slot ([`ClaimDomain::products_into`]).
+//! Every other intermediate product takes one auxiliary slot.
 //! The allocation depends only on the formula's structure, never on values,
 //! so the same routine serves three domains:
 //!
@@ -23,8 +25,23 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::{ClaimDomain, ClearDomain};
 
-use super::residual::{AffineRow, ProductRow, ResidualRelation};
+use super::residual::{
+    AffineRow, OperandRule, ProductOperand, ProductPair, ProductRow, ResidualRelation,
+};
 use super::{PadIndex, PadLayout, ZkError};
+
+/// A [`ClaimDomain`] the masking lowering runs in: it states the
+/// [`OperandRule`] of its back end, which decides whether
+/// [`lower_factored`] gives a product without a single-opening factor a
+/// defining slot. Every domain of one lowering must state the same rule, so
+/// they allocate the same slots.
+pub trait LoweringDomain<F>: ClaimDomain<F> {
+    fn operands(&self) -> OperandRule;
+}
+
+const NOT_A_MASKED_SLOT: ZkError = ZkError::InvalidRelation {
+    reason: "product operand is not a single masked slot",
+};
 
 /// The numbering of auxiliary slots: slot `k` of the block is pad
 /// `start + k`. [`RowsDomain`] and [`OperandShapeDomain`] both take slots
@@ -64,6 +81,7 @@ impl AuxiliarySlots {
 #[derive(Debug)]
 pub struct OperandShapeDomain {
     slots: AuxiliarySlots,
+    rule: OperandRule,
     operands: Vec<PadIndex>,
 }
 
@@ -73,8 +91,15 @@ impl OperandShapeDomain {
     pub fn new(base: usize) -> Self {
         Self {
             slots: AuxiliarySlots::new(base),
+            rule: OperandRule::MaskedSlot,
             operands: Vec::new(),
         }
+    }
+
+    /// The same shape under `rule`. Under [`OperandRule::Affine`] no
+    /// operand pad is recorded.
+    pub fn with_operands(self, rule: OperandRule) -> Self {
+        Self { rule, ..self }
     }
 
     /// The pad layout: `base` message slots, the auxiliary slots counted,
@@ -87,15 +112,23 @@ impl OperandShapeDomain {
         Ok(PadLayout::new(self.slots.start, self.slots.next)?.with_operand_pads(self.operands))
     }
 
-    /// Records the pad of a product's operand `x`, each pad once.
+    /// Records the pad of a product's operand `x`, each pad once, under
+    /// [`OperandRule::MaskedSlot`].
     fn record_operand(&mut self, x: Option<PadIndex>) -> Result<(), ZkError> {
-        let x = x.ok_or(ZkError::InvalidRelation {
-            reason: "product operand is not a single masked slot",
-        })?;
+        if self.rule == OperandRule::Affine {
+            return Ok(());
+        }
+        let x = x.ok_or(NOT_A_MASKED_SLOT)?;
         if !self.operands.contains(&x) {
             self.operands.push(x);
         }
         Ok(())
+    }
+}
+
+impl<F> LoweringDomain<F> for OperandShapeDomain {
+    fn operands(&self) -> OperandRule {
+        self.rule
     }
 }
 
@@ -129,13 +162,15 @@ impl<F> ClaimDomain<F> for OperandShapeDomain {
         Ok(Some(self.slots.take(None)?))
     }
 
-    fn product_into(
+    fn products_into(
         &mut self,
-        x: Option<PadIndex>,
-        _y: Option<PadIndex>,
+        first: (Option<PadIndex>, Option<PadIndex>),
+        rest: Vec<(Option<PadIndex>, Option<PadIndex>)>,
         _target: Option<PadIndex>,
     ) -> Result<(), ZkError> {
-        self.record_operand(x)
+        std::iter::once(first)
+            .chain(rest)
+            .try_for_each(|(x, _)| self.record_operand(x))
     }
 
     fn check_zero(&mut self, _value: Option<PadIndex>) -> Result<(), ZkError> {
@@ -148,6 +183,23 @@ impl<F> ClaimDomain<F> for OperandShapeDomain {
 #[derive(Debug, Default)]
 pub struct ValuesDomain<F> {
     pub auxiliary: Vec<F>,
+    rule: OperandRule,
+}
+
+impl<F> ValuesDomain<F> {
+    /// An empty domain under `rule`.
+    pub fn with_operands(rule: OperandRule) -> Self {
+        Self {
+            auxiliary: Vec::new(),
+            rule,
+        }
+    }
+}
+
+impl<F: Field> LoweringDomain<F> for ValuesDomain<F> {
+    fn operands(&self) -> OperandRule {
+        self.rule
+    }
 }
 
 impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
@@ -177,8 +229,13 @@ impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
         Ok(z)
     }
 
-    fn product_into(&mut self, x: F, y: F, target: F) -> Result<(), ZkError> {
-        Ok(ClearDomain.product_into(x, y, target)?)
+    fn products_into(
+        &mut self,
+        first: (F, F),
+        rest: Vec<(F, F)>,
+        target: F,
+    ) -> Result<(), ZkError> {
+        Ok(ClearDomain.products_into(first, rest, target)?)
     }
 
     fn check_zero(&mut self, value: F) -> Result<(), ZkError> {
@@ -193,6 +250,7 @@ pub struct RowsDomain<'r, F> {
     relation: &'r mut ResidualRelation<F>,
     masked_auxiliary: &'r [F],
     slots: AuxiliarySlots,
+    rule: OperandRule,
 }
 
 impl<'r, F: Field> RowsDomain<'r, F> {
@@ -202,6 +260,21 @@ impl<'r, F: Field> RowsDomain<'r, F> {
             relation,
             masked_auxiliary,
             slots,
+            rule: OperandRule::MaskedSlot,
+        }
+    }
+
+    /// The same rows under `rule`.
+    pub fn with_operands(self, rule: OperandRule) -> Self {
+        Self { rule, ..self }
+    }
+
+    /// `x` as a product operand under the rule.
+    fn operand(&self, x: AffineRow<F>) -> Result<ProductOperand<F>, ZkError> {
+        match (x.as_masked_operand(), self.rule) {
+            (Some(operand), _) => Ok(ProductOperand::Masked(operand)),
+            (None, OperandRule::Affine) => Ok(ProductOperand::Affine(x)),
+            (None, OperandRule::MaskedSlot) => Err(NOT_A_MASKED_SLOT),
         }
     }
 
@@ -238,6 +311,12 @@ impl<'r, F: Field> RowsDomain<'r, F> {
     }
 }
 
+impl<F: Field> LoweringDomain<F> for RowsDomain<'_, F> {
+    fn operands(&self) -> OperandRule {
+        self.rule
+    }
+}
+
 impl<F: Field> ClaimDomain<F> for RowsDomain<'_, F> {
     type Value = AffineRow<F>;
     type Error = ZkError;
@@ -268,16 +347,25 @@ impl<F: Field> ClaimDomain<F> for RowsDomain<'_, F> {
         Ok(z)
     }
 
-    fn product_into(
+    fn products_into(
         &mut self,
-        x: AffineRow<F>,
-        y: AffineRow<F>,
+        first: (AffineRow<F>, AffineRow<F>),
+        rest: Vec<(AffineRow<F>, AffineRow<F>)>,
         target: AffineRow<F>,
     ) -> Result<(), ZkError> {
-        let x = x.as_masked_operand().ok_or(ZkError::InvalidRelation {
-            reason: "product operand is not a single masked slot",
-        })?;
-        self.relation.products.push(ProductRow { x, y, z: target });
+        let pair = |(x, y)| {
+            Ok::<_, ZkError>(ProductPair {
+                x: self.operand(x)?,
+                y,
+            })
+        };
+        let first = pair(first)?;
+        let rest = rest.into_iter().map(pair).collect::<Result<Vec<_>, _>>()?;
+        self.relation.products.push(ProductRow {
+            first,
+            rest,
+            z: target,
+        });
         Ok(())
     }
 
@@ -324,11 +412,89 @@ fn classify<F, O, P, C>(factor: &Expr<F, O, P, C>) -> Result<Factor<'_, O>, ZkEr
     })
 }
 
+/// A lowered claim: `Σ_k x_k · y_k + affine`, with each term's last product
+/// `x_k · y_k` still pending. A check lands the pairs with
+/// [`check_equals`](Self::check_equals); a value that must stay a single
+/// domain value takes slots for them with [`into_value`](Self::into_value).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductSum<V> {
+    pub pairs: Vec<(V, V)>,
+    pub affine: V,
+}
+
+impl<V: Clone> ProductSum<V> {
+    pub fn zero<F, D: ClaimDomain<F, Value = V>>(domain: &D) -> Self
+    where
+        F: Field,
+    {
+        Self {
+            pairs: Vec::new(),
+            affine: domain.constant(F::zero()),
+        }
+    }
+
+    pub fn add<F, D: ClaimDomain<F, Value = V>>(mut self, other: Self, domain: &D) -> Self {
+        self.pairs.extend(other.pairs);
+        self.affine = domain.add(&self.affine, &other.affine);
+        self
+    }
+
+    /// Scales each pair's `y`, so its `x` stays a single slot.
+    pub fn scale<F: Copy, D: ClaimDomain<F, Value = V>>(self, scale: F, domain: &D) -> Self {
+        Self {
+            pairs: self
+                .pairs
+                .into_iter()
+                .map(|(x, y)| (x, domain.scale(&y, scale)))
+                .collect(),
+            affine: domain.scale(&self.affine, scale),
+        }
+    }
+
+    /// The value as one domain value: one auxiliary slot per pending pair.
+    ///
+    /// # Errors
+    ///
+    /// As [`ClaimDomain::product`].
+    pub fn into_value<F, D>(self, domain: &mut D) -> Result<V, D::Error>
+    where
+        D: ClaimDomain<F, Value = V>,
+    {
+        let mut value = self.affine;
+        for (x, y) in self.pairs {
+            let product = domain.product(x, y)?;
+            value = domain.add(&value, &product);
+        }
+        Ok(value)
+    }
+
+    /// The check `self = target`: one multi-pair row
+    /// `Σ_k x_k · y_k = target − affine`, or an affine row when no pair is
+    /// pending.
+    ///
+    /// # Errors
+    ///
+    /// As [`ClaimDomain::products_into`] and [`ClaimDomain::check_zero`].
+    pub fn check_equals<F: Field, D>(self, target: V, domain: &mut D) -> Result<(), D::Error>
+    where
+        D: ClaimDomain<F, Value = V>,
+    {
+        let rest = domain.add(&target, &domain.scale(&self.affine, -F::one()));
+        let mut pairs = self.pairs.into_iter();
+        match pairs.next() {
+            None => domain.check_zero(rest),
+            Some(first) => domain.products_into(first, pairs.collect(), rest),
+        }
+    }
+}
+
 /// Lowers `expr` into `domain`. Openings resolve to domain values; challenges
 /// and derived ids resolve to public scalars. Auxiliary slots are allocated
-/// per term from its structure alone: a term with h ≥ 2 hidden factors takes
-/// h − 1 product slots, plus one defining slot when none of its factors is a
-/// single opening. No term is skipped, whatever its coefficient.
+/// per term from its structure and the domain's [`OperandRule`] alone: a term
+/// with h ≥ 2 hidden factors takes h − 2 product slots and leaves its last
+/// product pending, plus, under [`OperandRule::MaskedSlot`], one defining
+/// slot when none of its factors is a single opening. No term is skipped,
+/// whatever its coefficient.
 ///
 /// # Errors
 ///
@@ -339,12 +505,12 @@ pub fn lower_factored<F, O, P, C, D>(
     domain: &mut D,
     opening: &mut impl FnMut(&O) -> Result<D::Value, ZkError>,
     public: &mut impl FnMut(&Source<O, P, C>) -> Result<F, ZkError>,
-) -> Result<D::Value, ZkError>
+) -> Result<ProductSum<D::Value>, ZkError>
 where
     F: Field,
-    D: ClaimDomain<F, Error = ZkError>,
+    D: LoweringDomain<F, Error = ZkError>,
 {
-    let mut sum = domain.constant(F::zero());
+    let mut sum = ProductSum::zero(domain);
     for term in &expr.terms {
         let mut scale = term.coefficient;
         let mut hidden = Vec::new();
@@ -374,21 +540,34 @@ where
                 }
             }
         }
-        let value = match hidden.len() {
-            0 => domain.constant(F::one()),
-            1 => hidden.swap_remove(0),
+        let term = match hidden.len() {
+            0 => ProductSum {
+                pairs: Vec::new(),
+                affine: domain.constant(F::one()),
+            },
+            1 => ProductSum {
+                pairs: Vec::new(),
+                affine: hidden.swap_remove(0),
+            },
             _ => {
-                let mut product = match operand {
-                    Some(index) => hidden.remove(index),
-                    None => domain.define_auxiliary(hidden.remove(0))?,
+                let mut product = match (operand, domain.operands()) {
+                    (Some(index), _) => hidden.remove(index),
+                    (None, OperandRule::Affine) => hidden.remove(0),
+                    (None, OperandRule::MaskedSlot) => domain.define_auxiliary(hidden.remove(0))?,
                 };
+                let last = hidden.pop().ok_or(ZkError::InvalidRelation {
+                    reason: "a product term lost its last factor",
+                })?;
                 for factor in hidden {
                     product = domain.product(product, factor)?;
                 }
-                product
+                ProductSum {
+                    pairs: vec![(product, last)],
+                    affine: domain.constant(F::zero()),
+                }
             }
         };
-        sum = domain.add(&sum, &domain.scale(&value, scale));
+        sum = sum.add(term.scale(scale, domain), domain);
     }
     Ok(sum)
 }

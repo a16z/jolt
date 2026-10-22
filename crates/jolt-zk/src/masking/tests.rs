@@ -11,7 +11,7 @@ use jolt_sumcheck::{
     SumcheckDomainSpec, SumcheckRecorder,
 };
 use jolt_transcript::{
-    Blake2b512, PrivateChannel, ProtocolId, ProverTranscript, VerifierTranscript,
+    Blake2b512, ClaimDomain, PrivateChannel, ProtocolId, ProverTranscript, VerifierTranscript,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
@@ -82,7 +82,7 @@ fn layout() -> PadLayout {
     let base = DEGREE + 1 + 1 + NUM_VARS * DEGREE + 2;
     // The two output claims take the last base slots.
     let mut shape = OperandShapeDomain::new(base);
-    let _ = lower_factored(
+    lower_factored(
         &product(),
         &mut shape,
         &mut |id| {
@@ -94,6 +94,8 @@ fn layout() -> PadLayout {
         },
         &mut |_| Ok(Fr::from_u64(0)),
     )
+    .unwrap()
+    .check_equals::<Fr, _>(None, &mut shape)
     .unwrap();
     shape.layout().unwrap()
 }
@@ -239,10 +241,8 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
         &mut |_: &Source<Opening, (), ()>| -> Result<Fr, ZkError> { unreachable!() },
     )
     .unwrap();
+    output.check_equals(running, &mut rows).unwrap();
     rows.finish().unwrap();
-    relation
-        .affine
-        .push(running.add_scaled(&output, -Fr::from_u64(1)));
     relation
 }
 
@@ -383,10 +383,20 @@ fn shape_and_values_domains_allocate_alike() {
         &mut |_| Ok(Fr::from_u64(0)),
     )
     .unwrap();
-    // A zero coefficient still allocates its product slot.
-    assert_eq!(shape.auxiliary.len(), 3);
-    assert_eq!(values.auxiliary, vec![fr(16), fr(80), fr(6)]);
-    assert_eq!(value, fr(80) + fr(2));
+    // A·(B + U) takes a slot and its product with U stays pending, as does
+    // the zero-coefficient A·B.
+    assert_eq!(shape.auxiliary.len(), 1);
+    assert_eq!(values.auxiliary, vec![fr(16)]);
+    assert_eq!(value.pairs, vec![(fr(16), fr(5)), (fr(2), fr(0))]);
+    assert_eq!(evaluate(&value), fr(80) + fr(2));
+}
+
+/// `Σ_k x_k · y_k + affine`.
+fn evaluate(value: &ProductSum<Fr>) -> Fr {
+    value
+        .pairs
+        .iter()
+        .fold(value.affine, |sum, (x, y)| sum + *x * *y)
 }
 
 type RandomExpr = Expr<Fr, usize, (), usize>;
@@ -452,12 +462,14 @@ fn lowering_domains_agree_on_random_formulas() {
         );
 
         let mut shape = OperandShapeDomain::new(RANDOM_OPENINGS);
-        let _ = lower_factored(
+        lower_factored(
             &expr,
             &mut shape,
             &mut |id| Ok(Some(PadIndex(*id))),
             &mut public.clone(),
         )
+        .unwrap()
+        .check_equals::<Fr, _>(None, &mut shape)
         .unwrap();
         let layout = shape.layout().unwrap();
 
@@ -469,7 +481,7 @@ fn lowering_domains_agree_on_random_formulas() {
             &mut public.clone(),
         )
         .unwrap();
-        assert_eq!(value, expected);
+        assert_eq!(evaluate(&value), expected);
         assert_eq!(values.auxiliary.len(), layout.auxiliary.len());
         let pads: Vec<Fr> = (0..layout.num_pads).map(|_| Fr::random(&mut rng)).collect();
         let masked_auxiliary: Vec<Fr> = values
@@ -487,12 +499,114 @@ fn lowering_domains_agree_on_random_formulas() {
             &mut public.clone(),
         )
         .unwrap();
+        output
+            .check_equals(AffineRow::constant(expected), &mut rows)
+            .unwrap();
         rows.finish().unwrap();
-        relation
-            .affine
-            .push(output.add_scaled(&AffineRow::constant(expected), -Fr::from_u64(1)));
+        let pinned: Vec<PadIndex> = relation
+            .products
+            .iter()
+            .flat_map(|row| row.pairs().map(|pair| pair.x.masked().unwrap().pad))
+            .collect();
+        assert!(pinned
+            .iter()
+            .all(|pad| relation.layout.operand_pads.contains(pad)));
         assert_eq!(relation.first_violation(&pads, &[]).unwrap(), None);
     }
+}
+
+fn no_public(_: &Source<usize, (), usize>) -> Result<Fr, ZkError> {
+    unreachable!()
+}
+
+/// `(a + b)·(c + a)` has no single-opening factor: under `MaskedSlot` it first
+/// gives `a + b` a defining slot, and `MaskedSlot` rows reject `a + b` as
+/// an operand; under `Affine` it takes no slot and the pair's operand is
+/// `a + b`. Either
+/// way the honest values satisfy the rows.
+#[test]
+fn operand_rules_decide_the_defining_slot() {
+    let expr: FactoredExpr<Fr, usize, (), usize> = FactoredExpr::product(vec![
+        opening(0usize) + opening(1usize),
+        opening(2usize) + opening(0usize),
+    ]);
+    let openings = [fr(2), fr(3), fr(5)];
+    let pads = [fr(101), fr(103), fr(107), fr(109)];
+    for (rule, slots) in [(OperandRule::MaskedSlot, 1), (OperandRule::Affine, 0)] {
+        let mut shape = OperandShapeDomain::new(3).with_operands(rule);
+        lower_factored(
+            &expr,
+            &mut shape,
+            &mut |id| Ok(Some(PadIndex(*id))),
+            &mut no_public,
+        )
+        .unwrap()
+        .check_equals::<Fr, _>(None, &mut shape)
+        .unwrap();
+        let layout = shape.layout().unwrap();
+        assert_eq!(layout.auxiliary.len(), slots);
+
+        let mut values = ValuesDomain::with_operands(rule);
+        let value = lower_factored(
+            &expr,
+            &mut values,
+            &mut |id| Ok(openings[*id]),
+            &mut no_public,
+        )
+        .unwrap();
+        assert_eq!(evaluate(&value), fr(5) * fr(7));
+        let masked_auxiliary: Vec<Fr> = values.auxiliary.iter().map(|v| *v + pads[3]).collect();
+
+        let mut relation = ResidualRelation::new(layout.clone(), 0);
+        let mut rows = RowsDomain::new(&mut relation, &masked_auxiliary).with_operands(rule);
+        lower_factored(
+            &expr,
+            &mut rows,
+            &mut |id| Ok(AffineRow::masked(openings[*id] + pads[*id], PadIndex(*id))),
+            &mut no_public,
+        )
+        .unwrap()
+        .check_equals(AffineRow::constant(fr(35)), &mut rows)
+        .unwrap();
+        rows.finish().unwrap();
+        assert_eq!(relation.first_violation(&pads, &[]).unwrap(), None);
+        let operand = &relation.products.last().unwrap().first.x;
+        assert_eq!(
+            matches!(operand, ProductOperand::Affine(_)),
+            rule == OperandRule::Affine
+        );
+        if let ProductOperand::Affine(x) = operand {
+            let mut relation = ResidualRelation::new(layout.clone(), 0);
+            assert!(matches!(
+                RowsDomain::new(&mut relation, &[]).products_into(
+                    (x.clone(), AffineRow::constant(fr(1))),
+                    Vec::new(),
+                    AffineRow::constant(fr(0))
+                ),
+                Err(ZkError::InvalidRelation { .. })
+            ));
+        }
+    }
+}
+
+/// A multi-pair row checks the sum of its pairs.
+#[test]
+fn product_rows_check_the_sum_of_their_pairs() {
+    let pads = [fr(11), fr(13), fr(17), fr(19)];
+    let slot = |value: u64, pad: usize| AffineRow::masked(fr(value) + pads[pad], PadIndex(pad));
+    let pair = |x: u64, xp: usize, y: u64, yp: usize| ProductPair {
+        x: ProductOperand::Masked(slot(x, xp).as_masked_operand().unwrap()),
+        y: slot(y, yp),
+    };
+    let row = ProductRow {
+        first: pair(2, 0, 3, 1),
+        rest: vec![pair(5, 2, 7, 3)],
+        z: AffineRow::constant(fr(2 * 3 + 5 * 7)),
+    };
+    assert_eq!(row.evaluate(&pads, &[]).unwrap(), fr(0));
+    let mut tampered = row.clone();
+    tampered.rest[0].y = slot(8, 3);
+    assert_eq!(tampered.evaluate(&pads, &[]).unwrap(), fr(5));
 }
 
 #[test]

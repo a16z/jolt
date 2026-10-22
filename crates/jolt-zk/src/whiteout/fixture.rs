@@ -29,7 +29,8 @@ use super::{
     ResidualGadget, SigmaSetup, FIELD_LEVELS,
 };
 use crate::masking::{
-    AffineRow, MaskedOperand, PadIndex, PadLayout, ProductRow, ResidualRelation, ResidualVar,
+    AffineRow, MaskedOperand, PadIndex, PadLayout, ProductOperand, ProductPair, ProductRow,
+    ResidualRelation, ResidualVar,
 };
 
 pub(crate) type F = Prime128OffsetA7F7;
@@ -113,7 +114,7 @@ pub(crate) fn residual_matrices<const D: usize>(
 pub(crate) fn layout() -> PadLayout {
     PadLayout::new(BASE_PADS, 1)
         .unwrap()
-        .with_operand_pads(vec![PadIndex(0)])
+        .with_operand_pads(vec![PadIndex(0), PadIndex(2)])
 }
 
 pub(crate) fn pad_commitment<const D: usize>() -> LatticePadCommitment<F, D> {
@@ -129,7 +130,7 @@ pub(crate) fn pad_commitment<const D: usize>() -> LatticePadCommitment<F, D> {
 
 /// One synthetic instance: a residual witness `w` (a public and a Gaussian
 /// part) under a two-level commitment, five masked messages and one masked
-/// product, over `R_D`.
+/// two-pair product row, over `R_D`.
 pub(crate) struct Instance<const D: usize> {
     pub(crate) relation: ResidualRelation<F>,
     pub(crate) claims: EvaluationClaims<F>,
@@ -142,7 +143,7 @@ pub(crate) struct Instance<const D: usize> {
 }
 
 impl<const D: usize> Instance<D> {
-    /// Rows `m2 + m3 = sum`, `w̃(r) = m4`, and `m0 · m1 = aux`.
+    /// Rows `m2 + m3 = sum`, `w̃(r) = m4`, and `m0 · m1 + m2 · m3 = aux`.
     #[cfg(test)]
     pub(crate) fn new(seed: u64) -> Self {
         Self::scaled(seed, 1)
@@ -162,7 +163,7 @@ impl<const D: usize> Instance<D> {
         let point: Vec<F> = (0..num_vars).map(|_| F::random(&mut rng)).collect();
         let eq = EqPolynomial::new(point.clone()).evaluations();
         messages[4] = w.iter().zip(&eq).map(|(&w, e)| F::from_i64(w) * *e).sum();
-        let auxiliary = messages[0] * messages[1];
+        let auxiliary = messages[0] * messages[1] + messages[2] * messages[3];
         let masked: Vec<F> = messages
             .iter()
             .chain(std::iter::once(&auxiliary))
@@ -179,12 +180,16 @@ impl<const D: usize> Instance<D> {
         relation
             .affine
             .push(AffineRow::variable(ResidualVar::Witness(0)).add_scaled(&slot(4), -F::one()));
+        let pair = |x: usize, y: usize| ProductPair {
+            x: ProductOperand::Masked(MaskedOperand {
+                masked: masked[x],
+                pad: PadIndex(x),
+            }),
+            y: slot(y),
+        };
         relation.products.push(ProductRow {
-            x: MaskedOperand {
-                masked: masked[0],
-                pad: PadIndex(0),
-            },
-            y: slot(1),
+            first: pair(0, 1),
+            rest: vec![pair(2, 3)],
             z: slot(5),
         });
 

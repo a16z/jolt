@@ -35,7 +35,10 @@ use super::{
     verify_sigma, LiftedRelation, ResidualBlock, ResponseSegment, SegmentTable, SigmaParams,
     SigmaSetup, WhiteoutError,
 };
-use crate::masking::{AffineRow, PadIndex, ResidualRelation, ResidualVar, ZkError};
+use crate::masking::{
+    AffineRow, MaskedOperand, PadIndex, ProductOperand, ProductPair, ResidualRelation, ResidualVar,
+    ZkError,
+};
 
 const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-sigma");
 const LABEL: &[u8] = b"whiteout-sigma";
@@ -203,6 +206,15 @@ fn verify<const D: usize>(
     Ok(transcript.finish()?)
 }
 
+/// A pair's operand, which the fixture states as a masked slot.
+#[expect(clippy::panic, reason = "tests fail loudly")]
+fn masked(pair: &mut ProductPair<F>) -> &mut MaskedOperand<F> {
+    match &mut pair.x {
+        ProductOperand::Masked(operand) => operand,
+        ProductOperand::Affine(_) => panic!("the fixture's operands are masked slots"),
+    }
+}
+
 fn whiteout_error(error: &ZkError) -> Option<&WhiteoutError> {
     if let ZkError::Whiteout(source) = error {
         source.downcast_ref::<WhiteoutError>()
@@ -231,7 +243,7 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
         }),
         ("product row", {
             let mut instance = Instance::new(21);
-            instance.relation.products[0].x.masked += F::one();
+            masked(&mut instance.relation.products[0].rest[0]).masked += F::one();
             instance
         }),
         ("scalarity row", {
@@ -275,11 +287,24 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
     }
 }
 
+/// The lift takes only pairs whose operands are masked operand pads.
+#[test]
+fn lift_rejects_affine_operands() {
+    let instance = Instance::<64>::new(18);
+    let mut relation = instance.relation.clone();
+    let x = &mut relation.products[0].rest[0].x;
+    *x = ProductOperand::Affine(x.form());
+    assert!(matches!(
+        instance.setup().lift(&relation, &instance.claims),
+        Err(WhiteoutError::InvalidRelation(_))
+    ));
+}
+
 /// Each self-check fires on its own case, with the exact row or variant.
 #[test]
 fn each_self_check_fires_on_its_own_case() {
     let affine_rows = 2;
-    let scalarity_rows = 63;
+    let scalarity_rows = 2 * 63;
     let check = |instance: &Instance<64>, expected: WhiteoutError| {
         let error = prove_checked(instance, 9).unwrap_err();
         assert_eq!(whiteout_error(&error), Some(&expected), "{error:?}");
@@ -300,7 +325,7 @@ fn each_self_check_fires_on_its_own_case() {
     );
 
     let mut product = Instance::<64>::new(12);
-    product.relation.products[0].x.masked += F::one();
+    masked(&mut product.relation.products[0].rest[0]).masked += F::one();
     check(
         &product,
         WhiteoutError::ResidualUnsatisfied {
@@ -458,15 +483,24 @@ fn check_quadratic_against_decoding<const D: usize>(seed: u64) {
     for (index, row) in instance.relation.affine.iter().enumerate() {
         expected += weight(labels.affine(index)) * row_value(row);
     }
-    let p_x = operand_poly(0);
-    for (r, coefficient) in p_x.iter().enumerate().skip(1) {
-        expected += weight(RowLabels::scalarity(0, r)) * *coefficient;
+    for operand in 0..2 {
+        for (r, coefficient) in operand_poly(operand).iter().enumerate().skip(1) {
+            expected += weight(RowLabels::scalarity(operand, r)) * *coefficient;
+        }
     }
     for (index, product) in instance.relation.products.iter().enumerate() {
-        let x = product.x.masked - p_x[0];
-        let y = lift_ring(&product.y);
-        let difference: F = (1..64).map(|r| p_x[r] * y[64 - r]).sum();
-        let term = x * row_value(&product.y) - row_value(&product.z) + difference;
+        let mut term = -row_value(&product.z);
+        for pair in product.pairs() {
+            let operand = layout()
+                .operand_pads
+                .iter()
+                .position(|pad| *pad == pair.x.masked().unwrap().pad)
+                .unwrap();
+            let p_x = operand_poly(operand);
+            let y = lift_ring(&pair.y);
+            let difference: F = (1..64).map(|r| p_x[r] * y[64 - r]).sum();
+            term += (pair.x.masked().unwrap().masked - p_x[0]) * row_value(&pair.y) + difference;
+        }
         expected += weight(labels.product(index)) * term;
     }
     expected += (0..PAD_LEVELS).rev().fold(F::zero(), |acc, level| {

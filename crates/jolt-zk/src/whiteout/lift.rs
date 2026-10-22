@@ -5,8 +5,10 @@
 //! form in `(u, s)` over the challenge ring `R = F[X]/(X^64 + 1)`: a
 //! functional `ℓ` with coefficient vector `ℓ̂` lifts to
 //! `L(u, s) = Σ σ(ℓ̂_k) s_k + u·b`, whose constant coefficient is
-//! `ℓ(s) + u·b`. A product `x·y = z` becomes `X·Y − u·Z` with
-//! `X = u·x̂ − P_x(s)` the constant operand. [`AggregatedRelation`] combines
+//! `ℓ(s) + u·b`. A product row `Σ_k x_k·y_k = z` becomes
+//! `Σ_k X_k·Y_k − u·Z` with `X_k = u·x̂_k − P_{x_k}(s)` the constant operands.
+//! Its pairs are flattened into product entries that share the row's weight;
+//! only the row's first entry carries `Z`. [`AggregatedRelation`] combines
 //! every row under the weights `μ` of [`RowLabels`] into the quadratic `Q_μ`
 //! of Protocol `wo:prot:sigma`.
 //!
@@ -214,8 +216,12 @@ impl<F: JoltField> Reconstruction<F> {
     }
 }
 
+/// One pair of a product row, with the row's `Z` on its first pair and zero
+/// on the others.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LiftedProduct<F: JoltField> {
+    /// The product row this pair belongs to.
+    row: usize,
     masked: F,
     operand: usize,
     y: Weights<F>,
@@ -300,26 +306,33 @@ impl<F: JoltField> LiftedRelation<F> {
             .iter()
             .map(|row| context.weights(row))
             .collect::<Result<Vec<_>, _>>()?;
-        let products = relation
-            .products
-            .iter()
-            .map(|row| {
-                let PadPlace::Operand(operand) = placement.place(row.x.pad)? else {
-                    return Err(WhiteoutError::InvalidRelation(
-                        "a product's operand is not an operand pad",
-                    ));
+        let mut products = Vec::new();
+        for (index, row) in relation.products.iter().enumerate() {
+            let z = context.weights(&row.z)?;
+            for (k, pair) in row.pairs().enumerate() {
+                let not_an_operand =
+                    WhiteoutError::InvalidRelation("a product's operand is not an operand pad");
+                let x = pair.x.masked().ok_or(not_an_operand.clone())?;
+                let PadPlace::Operand(operand) = placement.place(x.pad)? else {
+                    return Err(not_an_operand);
                 };
-                let (y, z) = (context.weights(&row.y)?, context.weights(&row.z)?);
-                Ok(LiftedProduct {
-                    masked: row.x.masked,
+                let y = context.weights(&pair.y)?;
+                let z = if k == 0 {
+                    z.clone()
+                } else {
+                    Weights::new(F::zero())
+                };
+                products.push(LiftedProduct {
+                    row: index,
+                    masked: x.masked,
                     operand,
                     y_form: y.form(),
                     z_form: z.form(),
                     y,
                     z,
-                })
-            })
-            .collect::<Result<Vec<_>, WhiteoutError>>()?;
+                });
+            }
+        }
         let operand_rings: Vec<Vec<usize>> = (0..placement.num_operands())
             .map(|operand| {
                 (0..OPERAND_LEVELS)
@@ -390,8 +403,10 @@ impl<F: JoltField> LiftedRelation<F> {
                 power *= radix;
             }
         }
-        let product_weights = (0..self.products.len())
-            .map(|index| self.labels.weight(self.labels.product(index), rho))
+        let product_weights = self
+            .products
+            .iter()
+            .map(|product| self.labels.weight(self.labels.product(product.row), rho))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(AggregatedRelation {
             relation: self,
@@ -427,15 +442,24 @@ impl<F: JoltField> LiftedRelation<F> {
                 index += 1;
             }
         }
-        for product in &self.products {
-            let x = product.masked
-                - self
-                    .operand(product.operand)?
-                    .evaluate(&self.table, s)?
-                    .constant_term();
-            let y = product.y.value(&self.table, s, &claims)?;
-            let z = product.z.value(&self.table, s, &claims)?;
-            if x * y != z {
+        let mut entries = self.products.iter().peekable();
+        while let Some(first) = entries.next() {
+            let mut value = F::zero();
+            let mut product = first;
+            loop {
+                let x = product.masked
+                    - self
+                        .operand(product.operand)?
+                        .evaluate(&self.table, s)?
+                        .constant_term();
+                value += x * product.y.value(&self.table, s, &claims)?
+                    - product.z.value(&self.table, s, &claims)?;
+                match entries.next_if(|next| next.row == first.row) {
+                    Some(next) => product = next,
+                    None => break,
+                }
+            }
+            if !value.is_zero() {
                 return Ok(Some(index));
             }
             index += 1;

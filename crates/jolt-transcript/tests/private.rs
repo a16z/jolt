@@ -107,3 +107,21 @@ fn clear_domain_compares_checks() {
     );
     assert_eq!(ClearDomain.check_zero(Fp::from_u64(1)), Err(ClaimMismatch));
 }
+
+#[test]
+fn clear_domain_checks_a_sum_of_products() {
+    let pairs = [(2, 3), (5, 7), (11, 13)].map(|(x, y)| (Fp::from_u64(x), Fp::from_u64(y)));
+    let target = Fp::from_u64(2 * 3 + 5 * 7 + 11 * 13);
+    assert_eq!(
+        ClearDomain.products_into(pairs[0], pairs[1..].to_vec(), target),
+        Ok(())
+    );
+    assert_eq!(
+        ClearDomain.products_into(pairs[0], pairs[1..].to_vec(), target + Fp::from_u64(1)),
+        Err(ClaimMismatch)
+    );
+    assert_eq!(
+        ClearDomain.products_into(pairs[0], pairs[1..2].to_vec(), target),
+        Err(ClaimMismatch)
+    );
+}

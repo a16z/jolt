@@ -5,8 +5,8 @@ use crate::protocols::jolt::geometry::bytecode::{
 };
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use crate::protocols::jolt::{
-    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
-    JoltRelationId,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltFactoredExpr,
+    JoltOpeningId, JoltRelationId,
 };
 use crate::{SumcheckChallenges, SymbolicSumcheck};
 
@@ -67,6 +67,10 @@ impl SymbolicSumcheck for ReadRaf {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
+        self.output_factored().expand()
+    }
+
+    fn output_factored<F: Ring>(&self) -> JoltFactoredExpr<F> {
         read_raf_cycle_output(self.shape, NUM_BYTECODE_VAL_STAGES)
     }
 }

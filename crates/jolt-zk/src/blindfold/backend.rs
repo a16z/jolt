@@ -8,10 +8,10 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 use rand_core::{CryptoRng, RngCore};
 
-use super::protocol::pad_row_count;
+use super::protocol::{pad_row_count, product_intermediates};
 use super::{prove, BlindFoldProtocol, BlindFoldWitness};
 use crate::masking::{
-    CommittedPads, CommittedPadsView, PadLayout, ResidualRelation, ZkBackend, ZkError,
+    CommittedPads, CommittedPadsView, OperandRule, PadLayout, ResidualRelation, ZkBackend, ZkError,
 };
 
 /// The curve back end over the vector commitment `VC`.
@@ -31,6 +31,13 @@ pub struct BlindFoldPadOpening<F, Com> {
 pub struct BlindFoldResidualWitness<F> {
     pub evaluation: F,
     pub blind: F,
+}
+
+impl<VC> BlindFold<VC> {
+    /// The masking lowering's operand rule for BlindFold: an R1CS
+    /// constraint's A side is any linear combination. The lattice back end
+    /// keeps the default `MaskedSlot` (W6).
+    pub const OPERANDS: OperandRule = OperandRule::Affine;
 }
 
 impl<VC: VectorCommitment> BlindFold<VC> {
@@ -141,6 +148,18 @@ where
             }
             rows.push(row);
             blindings.push(VC::Field::random(rng));
+        }
+        let intermediates = product_intermediates(relation, pads.pads(), &[witness.evaluation])?;
+        for chunk in intermediates.chunks(row_len) {
+            let mut row = chunk.to_vec();
+            row.resize(row_len, VC::Field::zero());
+            rows.push(row);
+            blindings.push(VC::Field::random(rng));
+        }
+        if rows.len() != dimensions.witness_rows.products.end {
+            return Err(ZkError::InvalidRelation {
+                reason: "product intermediates differ from the BlindFold layout",
+            });
         }
         rows.resize(
             dimensions.witness.row_count,

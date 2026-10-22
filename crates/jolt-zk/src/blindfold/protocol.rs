@@ -7,12 +7,16 @@
 //!   pad commitment (never recommitted);
 //! - two dedicated rows holding the residual evaluation y and its blind ρ,
 //!   bound to the residual (evaluation) commitment;
+//! - the product rows: one witness-only intermediate w per pair of a
+//!   multi-pair product row but its last, in row order;
 //! - zero padding up to a power of two.
 //!
 //! Variable 0 is the relaxed instance's u, so every constant of a row
 //! multiplies u: an affine row Σ a_k x_k + b becomes
-//! (Σ a_k x_k + b·u) · u = 0, and a product row x · y = z becomes
-//! (u·m̂_x − p_x) · y = z with the constants of y and z on u.
+//! (Σ a_k x_k + b·u) · u = 0, and a product pair x · y becomes
+//! (u·m̂_x − p_x) · y with the constants of y and z on u. A product row
+//! Σ_{k≤n} x_k · y_k = z takes n constraints: x_k · y_k = w_k for k < n and
+//! x_n · y_n = z − Σ_{k<n} w_k.
 
 use std::ops::Range;
 
@@ -21,7 +25,9 @@ use jolt_crypto::HomomorphicCommitment;
 use jolt_r1cs::{ConstraintMatrices, LinearCombination, Variable};
 
 use super::{RelaxedError, RelaxedInstance};
-use crate::masking::{AffineRow, ResidualRelation, ResidualVar, Row};
+use crate::masking::{
+    AffineRow, ProductPair, ProductRow, ResidualRelation, ResidualVar, Row, ZkError,
+};
 
 #[derive(Clone, Debug)]
 pub struct BlindFoldProtocol<F: JoltField, Com> {
@@ -48,7 +54,10 @@ pub struct BlindFoldDimensions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WitnessRowLayout {
     pub pads: Range<usize>,
+    /// The y and ρ rows, then the product rows.
     pub auxiliary: Range<usize>,
+    /// The intermediates of multi-pair product rows.
+    pub products: Range<usize>,
     pub padding: Range<usize>,
 }
 
@@ -68,6 +77,32 @@ pub struct FinalOpeningWitnessCoordinates {
 /// The number of pad rows a layout of `num_pads` pads takes at `row_len`.
 pub fn pad_row_count(num_pads: usize, row_len: usize) -> usize {
     num_pads.div_ceil(row_len.max(1))
+}
+
+/// The pairs of `row` that take a witness-only intermediate: all but the
+/// last.
+fn intermediates<F>(row: &ProductRow<F>) -> impl Iterator<Item = &ProductPair<F>> {
+    row.pairs().take(row.rest.len())
+}
+
+/// The intermediates of `relation`'s multi-pair product rows on an
+/// assignment, in their witness order: `x_k · y_k` for every pair of a row
+/// but its last, row by row.
+///
+/// # Errors
+///
+/// [`ZkError`] if a row names a variable outside the assignment.
+pub(super) fn product_intermediates<F: JoltField>(
+    relation: &ResidualRelation<F>,
+    pads: &[F],
+    witness: &[F],
+) -> Result<Vec<F>, ZkError> {
+    relation
+        .products
+        .iter()
+        .flat_map(intermediates)
+        .map(|pair| Ok(pair.x.form().evaluate(pads, witness)? * pair.y.evaluate(pads, witness)?))
+        .collect()
 }
 
 impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
@@ -103,7 +138,20 @@ impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
         ensure_len("pad row commitments", pad_rows, pad_row_commitments.len())?;
         let evaluation_row = pad_rows;
         let blinding_row = checked_sum("witness rows", [pad_rows, 1])?;
-        let occupied = checked_sum("witness rows", [pad_rows, 2])?;
+        let products_row = checked_sum("witness rows", [pad_rows, 2])?;
+        let num_intermediates = relation
+            .products
+            .iter()
+            .map(|row| row.rest.len())
+            .try_fold(0usize, |sum, count| sum.checked_add(count))
+            .ok_or(RelaxedError::DimensionOverflow {
+                name: "product intermediates",
+                value: relation.products.len(),
+            })?;
+        let occupied = checked_sum(
+            "witness rows",
+            [products_row, num_intermediates.div_ceil(row_len)],
+        )?;
         let row_count = checked_next_power_of_two("witness rows", occupied)?;
         let witness_values =
             row_count
@@ -118,6 +166,7 @@ impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
             num_pads: relation.layout.num_pads,
             evaluation_row,
         };
+        let mut next_intermediate = products_row * row_len;
         let mut a = Vec::new();
         let mut b = Vec::new();
         let mut c = Vec::new();
@@ -129,9 +178,25 @@ impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
                     c.push(LinearCombination::zero().into_sparse_row());
                 }
                 Row::Product(row) => {
-                    a.push(variables.lower(&row.x.form())?.into_sparse_row());
-                    b.push(variables.lower(&row.y)?.into_sparse_row());
-                    c.push(variables.lower(&row.z)?.into_sparse_row());
+                    let last = row.rest.last().unwrap_or(&row.first);
+                    let mut z = variables.lower(&row.z)?;
+                    for pair in intermediates(row) {
+                        let w =
+                            Variable::new(checked_sum("R1CS variable", [next_intermediate, 1])?);
+                        next_intermediate += 1;
+                        a.push(variables.lower(&pair.x.form())?.into_sparse_row());
+                        b.push(variables.lower(&pair.y)?.into_sparse_row());
+                        c.push(
+                            LinearCombination {
+                                terms: vec![(w, F::one())],
+                            }
+                            .into_sparse_row(),
+                        );
+                        z.terms.push((w, -F::one()));
+                    }
+                    a.push(variables.lower(&last.x.form())?.into_sparse_row());
+                    b.push(variables.lower(&last.y)?.into_sparse_row());
+                    c.push(z.into_sparse_row());
                 }
             }
         }
@@ -150,6 +215,7 @@ impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
             witness_rows: WitnessRowLayout {
                 pads: 0..pad_rows,
                 auxiliary: pad_rows..occupied,
+                products: products_row..occupied,
                 padding: occupied..row_count,
             },
         };
