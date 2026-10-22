@@ -1,11 +1,279 @@
+//! Proof-session cache of derived device columns.
+//!
+//! Like optimized's shared witness bundles, cached columns let later relations
+//! reuse trace-derived values. CUDA keys additionally include device ordinal
+//! and window base. Lookup checks require the same cycle count and a live
+//! address span within the caller's bound; changing the source identity clears
+//! the cache. Shared ownership keeps buffers alive while kernels use them.
+
+#[cfg(feature = "allocative")]
+#[cfg(test)]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+#[cfg(test)]
+use allocative::Key;
+#[cfg(feature = "allocative")]
+#[cfg(test)]
+use allocative::Visitor;
+#[cfg(test)]
+use std::any::Any;
+#[cfg(test)]
+use std::collections::HashMap;
 #[cfg(test)]
 use std::sync::Arc;
 
 #[cfg(test)]
 use cudarc::driver::CudaSlice;
+#[cfg(test)]
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+#[cfg(test)]
+use jolt_field::JoltField;
+#[cfg(test)]
+use jolt_witness::backend::cuda::DeviceTrace;
+#[cfg(test)]
+use jolt_witness::JoltWitnessPlane;
+
+#[cfg(test)]
+use super::context::current_device;
+#[cfg(test)]
+use super::context::CudaKernelContext;
+#[cfg(test)]
+use super::device::{DeviceFrVec, LIMBS};
+#[cfg(test)]
+use crate::cuda::common::devices::CycleWindow;
+#[cfg(test)]
+use crate::cuda::witness::session_device_trace_window;
+#[cfg(test)]
+use crate::{KernelError, ProofSession};
+
+#[cfg(test)]
+pub(crate) const ANY_SPAN: usize = usize::MAX;
+
+#[cfg(test)]
+pub(crate) const NO_SPAN: usize = 0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg(test)]
+pub(crate) enum DeviceColumn {
+    CommittedHot(JoltCommittedPolynomial),
+    LookupIndexLimbs,
+    MappedPcWord,
+    RemappedRamWord,
+}
+
+#[cfg(test)]
+pub(crate) trait DeviceBytes: Any + Send + Sync {
+    fn device_bytes(&self) -> usize;
+}
+
+#[cfg(test)]
+impl DeviceBytes for CudaSlice<u8> {
+    fn device_bytes(&self) -> usize {
+        self.len()
+    }
+}
+
+#[cfg(test)]
+impl DeviceBytes for CudaSlice<u32> {
+    fn device_bytes(&self) -> usize {
+        self.len() * size_of::<u32>()
+    }
+}
+
+#[cfg(test)]
+impl DeviceBytes for CudaSlice<u64> {
+    fn device_bytes(&self) -> usize {
+        self.len() * size_of::<u64>()
+    }
+}
+
+#[cfg(test)]
+impl DeviceBytes for DeviceFrVec {
+    fn device_bytes(&self) -> usize {
+        self.len() * LIMBS * size_of::<u64>()
+    }
+}
+
+#[cfg(test)]
+struct Entry {
+    value: Arc<dyn Any + Send + Sync>,
+    cycles: usize,
+    span: usize,
+    #[cfg_attr(
+        not(feature = "allocative"),
+        expect(
+            dead_code,
+            reason = "device bytes are read only by the allocation visitor"
+        )
+    )]
+    bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg(test)]
+struct ColumnKey {
+    ordinal: usize,
+    column: DeviceColumn,
+    base: usize,
+}
+
+#[derive(Default)]
+#[cfg(test)]
+pub(crate) struct DeviceColumns {
+    source: usize,
+    entries: HashMap<ColumnKey, Entry>,
+}
+
+#[cfg(test)]
+impl DeviceColumns {
+    fn retarget(&mut self, source: usize) {
+        if self.source != source {
+            self.source = source;
+            self.entries.clear();
+        }
+    }
+
+    fn get<T: DeviceBytes>(&self, key: ColumnKey, cycles: usize, span: usize) -> Option<Arc<T>> {
+        let entry = self.entries.get(&key)?;
+        if entry.cycles != cycles || entry.span > span {
+            return None;
+        }
+        Arc::clone(&entry.value).downcast::<T>().ok()
+    }
+
+    fn put<T: DeviceBytes>(&mut self, key: ColumnKey, cycles: usize, span: usize, value: Arc<T>) {
+        let bytes = value.device_bytes();
+        let _ = self.entries.insert(
+            key,
+            Entry {
+                value,
+                cycles,
+                span,
+                bytes,
+            },
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn residency(&self) -> Vec<(DeviceColumn, usize, usize)> {
+        let mut resident: Vec<(DeviceColumn, usize, usize)> = self
+            .entries
+            .iter()
+            .filter(|&(key, _)| key.ordinal == current_device())
+            .map(|(key, entry)| (key.column, entry.cycles, entry.span))
+            .collect();
+        resident
+            .sort_unstable_by_key(|&(column, cycles, span)| (format!("{column:?}"), cycles, span));
+        resident
+    }
+}
+
+#[cfg(feature = "allocative")]
+#[cfg(test)]
+impl Allocative for DeviceColumns {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        for (key, entry) in &self.entries {
+            visitor.visit_simple(Key::new(column_key(key.column)), entry.bytes);
+        }
+        visitor.exit();
+    }
+}
+
+#[cfg(feature = "allocative")]
+#[cfg(test)]
+const fn column_key(column: DeviceColumn) -> &'static str {
+    match column {
+        DeviceColumn::CommittedHot(_) => "CommittedHot",
+        DeviceColumn::LookupIndexLimbs => "LookupIndexLimbs",
+        DeviceColumn::MappedPcWord => "MappedPcWord",
+        DeviceColumn::RemappedRamWord => "RemappedRamWord",
+    }
+}
 
 pub(crate) fn witness_identity<T: ?Sized>(witness: &T) -> usize {
     std::ptr::from_ref(witness).cast::<()>() as usize
+}
+
+#[cfg(test)]
+pub(crate) fn device_columns_for<'a, T: ?Sized>(
+    session: &'a mut ProofSession,
+    source: &T,
+) -> &'a mut DeviceColumns {
+    let identity = witness_identity(source);
+    let columns = session.state_or_insert_with(DeviceColumns::default);
+    columns.retarget(identity);
+    columns
+}
+
+#[cfg(test)]
+pub(crate) fn park_device_column<S: ?Sized, T: DeviceBytes>(
+    session: &mut ProofSession,
+    source: &S,
+    ordinal: usize,
+    column: DeviceColumn,
+    window: &CycleWindow,
+    span: usize,
+    value: Arc<T>,
+) {
+    let key = ColumnKey {
+        ordinal,
+        column,
+        base: window.start,
+    };
+    device_columns_for(session, source).put(key, window.len, span, value);
+}
+
+#[cfg(test)]
+pub(crate) fn device_column<S, T, E>(
+    session: &mut ProofSession,
+    source: &S,
+    ordinal: usize,
+    column: DeviceColumn,
+    window: &CycleWindow,
+    required_span: usize,
+    build: impl FnOnce(&mut ProofSession) -> Result<(T, usize), E>,
+) -> Result<Arc<T>, E>
+where
+    S: ?Sized,
+    T: DeviceBytes,
+{
+    let key = ColumnKey {
+        ordinal,
+        column,
+        base: window.start,
+    };
+    if let Some(resident) =
+        device_columns_for(session, source).get::<T>(key, window.len, required_span)
+    {
+        return Ok(resident);
+    }
+    let (built, span) = tracing::info_span!(
+        "cuda_device_column_build",
+        column = tracing::field::debug(column),
+        base = window.start,
+        cycles = window.len
+    )
+    .in_scope(|| build(session))?;
+    let value = Arc::new(built);
+    park_device_column(
+        session,
+        source,
+        ordinal,
+        column,
+        window,
+        span,
+        Arc::clone(&value),
+    );
+    Ok(value)
+}
+
+#[cfg(test)]
+pub(crate) const fn whole_domain(cycles: usize) -> CycleWindow {
+    CycleWindow {
+        start: 0,
+        len: cycles,
+    }
 }
 
 #[cfg(test)]
@@ -13,4 +281,568 @@ pub(crate) struct DeviceTraceColumns {
     pub(crate) lookup: Arc<CudaSlice<u64>>,
     pub(crate) pc: Arc<CudaSlice<u32>>,
     pub(crate) ram: Arc<CudaSlice<u32>>,
+}
+
+#[cfg(test)]
+fn resident_window<F>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<(Arc<DeviceTrace>, CycleWindow), KernelError<F>>
+where
+    F: JoltField,
+{
+    let trace = session_device_trace_window(context, session, witness, cycles, window)?;
+    let resident = CycleWindow {
+        start: window.start,
+        len: trace.cycles(),
+    };
+    Ok((trace, resident))
+}
+
+#[cfg(test)]
+pub(crate) fn device_lookup_limbs<F>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<CudaSlice<u64>>, KernelError<F>>
+where
+    F: JoltField,
+{
+    let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
+    device_column(
+        session,
+        witness,
+        context.ordinal(),
+        DeviceColumn::LookupIndexLimbs,
+        &resident,
+        ANY_SPAN,
+        |_| Ok((trace.lookup_index_limbs()?, NO_SPAN)),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn device_pc_words<F>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<CudaSlice<u32>>, KernelError<F>>
+where
+    F: JoltField,
+{
+    let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
+    device_column(
+        session,
+        witness,
+        context.ordinal(),
+        DeviceColumn::MappedPcWord,
+        &resident,
+        ANY_SPAN,
+        |_| Ok((trace.mapped_pc_words()?, NO_SPAN)),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn device_ram_words<F>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+    addresses: usize,
+) -> Result<Arc<CudaSlice<u32>>, KernelError<F>>
+where
+    F: JoltField,
+{
+    let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
+    device_column(
+        session,
+        witness,
+        context.ordinal(),
+        DeviceColumn::RemappedRamWord,
+        &resident,
+        addresses,
+        |_| Ok(trace.remapped_ram_words(addresses)?),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn device_trace_columns<F>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+    families: [usize; 3],
+    ram_addresses: usize,
+) -> Result<DeviceTraceColumns, KernelError<F>>
+where
+    F: JoltField,
+{
+    let resident = window.residency(cycles);
+    let lookup = if families[0] > 0 {
+        device_lookup_limbs::<F>(context, session, witness, cycles, &resident)?
+    } else {
+        Arc::new(context.alloc_u64(0)?)
+    };
+    let pc = if families[1] > 0 {
+        device_pc_words::<F>(context, session, witness, cycles, &resident)?
+    } else {
+        Arc::new(context.alloc_u32(0)?)
+    };
+    let ram = if families[2] > 0 {
+        device_ram_words::<F>(context, session, witness, cycles, &resident, ram_addresses)?
+    } else {
+        Arc::new(context.alloc_u32(0)?)
+    };
+    Ok(DeviceTraceColumns { lookup, pc, ram })
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test module: device operations and fixture errors fail loudly"
+)]
+mod tests {
+    use cudarc::driver::CudaSlice;
+    use std::sync::Arc;
+
+    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig};
+    use jolt_field::Fr;
+
+    use super::{
+        current_device, device_column, device_columns_for, device_trace_columns, whole_domain,
+        DeviceColumn, ANY_SPAN, NO_SPAN,
+    };
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::devices::CycleWindow;
+    use crate::cuda::common::error::CudaError;
+    use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
+    use crate::cuda::common::pack::COLD;
+    use crate::cuda::common::testing::with_r1cs_witness;
+    use crate::optimized::support::collect_rows;
+    use crate::ProofSession;
+
+    const CYCLES: usize = 64;
+
+    fn hot(cycles: usize, offset: u32) -> Vec<u32> {
+        (0..cycles).map(|cycle| cycle as u32 + offset).collect()
+    }
+
+    #[test]
+    fn a_second_ask_is_served_without_rebuilding() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let source = [0u8; 8];
+        let mut session = ProofSession::default();
+        let mut builds = 0usize;
+        for _ in 0..3 {
+            let column = device_column(
+                &mut session,
+                &source,
+                current_device(),
+                DeviceColumn::CommittedHot(JoltCommittedPolynomial::RdInc),
+                &whole_domain(CYCLES),
+                ANY_SPAN,
+                |_| -> Result<_, CudaError> {
+                    builds += 1;
+                    Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))
+                },
+            )
+            .expect("device column");
+            assert_eq!(
+                context.download_u32(&column).expect("download"),
+                hot(CYCLES, 0),
+                "the served column does not hold the built contents",
+            );
+        }
+        assert_eq!(
+            builds, 1,
+            "the cache rebuilt a column it had already parked, so nothing is actually shared",
+        );
+    }
+
+    #[test]
+    fn each_window_of_a_column_is_its_own_entry() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let source = [0u8; 8];
+        let mut session = ProofSession::default();
+        let half = CYCLES / 2;
+        let mut builds = 0usize;
+        let ask = |session: &mut ProofSession, window: &CycleWindow, builds: &mut usize| {
+            device_column(
+                session,
+                &source,
+                current_device(),
+                DeviceColumn::MappedPcWord,
+                window,
+                ANY_SPAN,
+                |_| -> Result<_, CudaError> {
+                    *builds += 1;
+                    Ok((
+                        context.upload_u32_slice(&hot(window.len, window.start as u32))?,
+                        NO_SPAN,
+                    ))
+                },
+            )
+            .expect("device column window")
+        };
+
+        let windows = [
+            CycleWindow {
+                start: 0,
+                len: half,
+            },
+            CycleWindow {
+                start: half,
+                len: half,
+            },
+        ];
+        for round in 0..2 {
+            for window in &windows {
+                let column = ask(&mut session, window, &mut builds);
+                assert_eq!(
+                    context.download_u32(&column).expect("download"),
+                    hot(window.len, window.start as u32),
+                    "round {round}: the window at {} was served another window's contents",
+                    window.start,
+                );
+            }
+        }
+        assert_eq!(
+            builds, 2,
+            "the two windows must build once each: a shared key would serve one window's buffer \
+             for the other, and an unkeyed miss would rebuild on every ask",
+        );
+    }
+
+    #[test]
+    fn a_foreign_witness_clears_the_cabinet() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let first = [0u8; 8];
+        let second = [1u8; 8];
+        let key = DeviceColumn::CommittedHot(JoltCommittedPolynomial::RamInc);
+        let mut session = ProofSession::default();
+        let _ = device_column(
+            &mut session,
+            &first,
+            current_device(),
+            key,
+            &whole_domain(CYCLES),
+            ANY_SPAN,
+            |_| -> Result<_, CudaError> {
+                Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))
+            },
+        )
+        .expect("first witness");
+        let mut builds = 0usize;
+        let served = device_column(
+            &mut session,
+            &second,
+            current_device(),
+            key,
+            &whole_domain(CYCLES),
+            ANY_SPAN,
+            |_| -> Result<_, CudaError> {
+                builds += 1;
+                Ok((context.upload_u32_slice(&hot(CYCLES, 100))?, NO_SPAN))
+            },
+        )
+        .expect("second witness");
+        assert_eq!(
+            builds, 1,
+            "a second witness was served the first witness's device column",
+        );
+        assert_eq!(
+            context.download_u32(&served).expect("download"),
+            hot(CYCLES, 100),
+            "the rebuilt column does not hold the second witness's contents",
+        );
+        assert_eq!(
+            device_columns_for(&mut session, &second).residency(),
+            vec![(key, CYCLES, NO_SPAN)],
+            "the first witness's entries survived the retarget",
+        );
+    }
+
+    #[test]
+    fn a_different_cycle_count_misses_without_evicting_its_neighbours() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let source = [0u8; 8];
+        let neighbour = DeviceColumn::MappedPcWord;
+        let mut session = ProofSession::default();
+        let _ = device_column(
+            &mut session,
+            &source,
+            current_device(),
+            neighbour,
+            &whole_domain(CYCLES),
+            ANY_SPAN,
+            |_| -> Result<_, CudaError> {
+                Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))
+            },
+        )
+        .expect("neighbour");
+        let mut builds = 0usize;
+        let _ = device_column(
+            &mut session,
+            &source,
+            current_device(),
+            DeviceColumn::RemappedRamWord,
+            &whole_domain(2 * CYCLES),
+            ANY_SPAN,
+            |_| -> Result<_, CudaError> {
+                builds += 1;
+                Ok((context.upload_u32_slice(&hot(2 * CYCLES, 0))?, NO_SPAN))
+            },
+        )
+        .expect("wider column");
+        assert_eq!(builds, 1, "the wider column was served a shorter entry");
+        assert_eq!(
+            device_columns_for(&mut session, &source).residency().len(),
+            2,
+            "a differing cycle count evicted an unrelated column, which would silently \
+             re-upload every other consumer's data",
+        );
+    }
+
+    #[test]
+    fn a_span_wider_than_the_asker_allows_is_not_served() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let source = [0u8; 8];
+        let key = DeviceColumn::RemappedRamWord;
+        let mut session = ProofSession::default();
+        let _ = device_column(
+            &mut session,
+            &source,
+            current_device(),
+            key,
+            &whole_domain(CYCLES),
+            ANY_SPAN,
+            |_| -> Result<_, CudaError> {
+                Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, 1 << 12))
+            },
+        )
+        .expect("wide span");
+        let mut builds = 0usize;
+        let _ = device_column(
+            &mut session,
+            &source,
+            current_device(),
+            key,
+            &whole_domain(CYCLES),
+            1 << 6,
+            |_| -> Result<_, CudaError> {
+                builds += 1;
+                Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, 1 << 6))
+            },
+        )
+        .expect("narrow span");
+        assert_eq!(
+            builds, 1,
+            "a column whose values reach past the asker's address count was served anyway, \
+             so an out-of-range address could reach a kernel",
+        );
+        let mut builds = 0usize;
+        let _ = device_column(
+            &mut session,
+            &source,
+            current_device(),
+            key,
+            &whole_domain(CYCLES),
+            1 << 20,
+            |_| -> Result<_, CudaError> {
+                builds += 1;
+                Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, 1 << 20))
+            },
+        )
+        .expect("wider span");
+        assert_eq!(
+            builds, 0,
+            "a column narrow enough for the asker was rebuilt, so consumers with different \
+             address counts never share",
+        );
+    }
+
+    #[test]
+    fn a_build_error_parks_nothing() {
+        let Some(_) = shared_context() else {
+            return;
+        };
+        let source = [0u8; 8];
+        let mut session = ProofSession::default();
+        let failed = device_column::<_, CudaSlice<u32>, CudaError>(
+            &mut session,
+            &source,
+            current_device(),
+            DeviceColumn::LookupIndexLimbs,
+            &whole_domain(CYCLES),
+            ANY_SPAN,
+            |_| {
+                Err(CudaError::InvariantViolation {
+                    reason: "the fixture build fails",
+                })
+            },
+        );
+        assert!(failed.is_err(), "the failing build reported success");
+        assert!(
+            device_columns_for(&mut session, &source)
+                .residency()
+                .is_empty(),
+            "a failed build parked an entry, which a later consumer would be served",
+        );
+    }
+
+    const RAM_K: usize = 1 << 10;
+
+    const LOG_T: usize = 8;
+
+    const fn one_hot_config() -> JoltOneHotConfig {
+        JoltOneHotConfig {
+            log_k_chunk: 8,
+            lookups_ra_virtual_log_k_chunk: 32,
+        }
+    }
+
+    #[test]
+    fn device_trace_columns_match_the_packed_host_columns() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let cycles = 1usize << LOG_T;
+        with_r1cs_witness(LOG_T, RAM_K, one_hot_config(), 19, |witness| {
+            let rows = collect_rows::<OneHotCycleWitness>(witness, cycles).expect("oracle rows");
+            let expected = packed_columns(&rows).expect("host pack");
+            assert!(
+                expected.pc.iter().any(|&word| word != expected.pc[0])
+                    && expected.ram.iter().any(|&word| word != expected.ram[0]),
+                "the fixture's PC or RAM column is constant, so a builder that ignored the \
+                 trace would pass",
+            );
+            assert!(
+                expected.ram.contains(&COLD),
+                "no cycle is RAM-cold, so the cold-cycle encoding is untested here",
+            );
+
+            let mut session = ProofSession::default();
+            let got = device_trace_columns::<Fr>(
+                context,
+                &mut session,
+                witness,
+                cycles,
+                &whole_domain(cycles),
+                [1, 1, 1],
+                ANY_SPAN,
+            )
+            .expect("device trace columns");
+            assert_eq!(
+                context.download_u64(&got.lookup).expect("download lookup"),
+                expected.lookup,
+                "the device lookup-index limbs diverge from the host pack",
+            );
+            assert_eq!(
+                context.download_u32(&got.pc).expect("download pc"),
+                expected.pc,
+                "the device mapped-PC words diverge from the host pack",
+            );
+            assert_eq!(
+                context.download_u32(&got.ram).expect("download ram"),
+                expected.ram,
+                "the device remapped-RAM words diverge from the host pack",
+            );
+
+            let residency = device_columns_for(&mut session, witness).residency();
+            assert_eq!(
+                residency.len(),
+                3,
+                "the triple parked {} entries rather than one per column",
+                residency.len(),
+            );
+        });
+    }
+
+    #[test]
+    fn a_switched_off_family_parks_nothing() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let cycles = 1usize << LOG_T;
+        with_r1cs_witness(LOG_T, RAM_K, one_hot_config(), 23, |witness| {
+            let mut session = ProofSession::default();
+            let got = device_trace_columns::<Fr>(
+                context,
+                &mut session,
+                witness,
+                cycles,
+                &whole_domain(cycles),
+                [0, 1, 0],
+                ANY_SPAN,
+            )
+            .expect("device trace columns");
+            assert!(
+                got.lookup.is_empty() && got.ram.is_empty(),
+                "a family the layout switched off still uploaded its column",
+            );
+            assert_eq!(
+                device_columns_for(&mut session, witness).residency(),
+                vec![(DeviceColumn::MappedPcWord, cycles, NO_SPAN)],
+                "the switched-off families parked entries, so a later consumer with those \
+                 families on would be served a buffer built for a different layout",
+            );
+        });
+    }
+
+    #[test]
+    fn fixture_arc_identity_proves_sharing_rather_than_equal_contents() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let source = [0u8; 8];
+        let key = DeviceColumn::LookupIndexLimbs;
+        let mut session = ProofSession::default();
+        let first = device_column(
+            &mut session,
+            &source,
+            current_device(),
+            key,
+            &whole_domain(CYCLES),
+            ANY_SPAN,
+            |_| -> Result<_, CudaError> {
+                Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))
+            },
+        )
+        .expect("first");
+        let second = device_column(
+            &mut session,
+            &source,
+            current_device(),
+            key,
+            &whole_domain(CYCLES),
+            ANY_SPAN,
+            |_| -> Result<_, CudaError> {
+                Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))
+            },
+        )
+        .expect("second");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "the two asks hold different allocations, so the second one uploaded again even \
+             though the contents matched",
+        );
+    }
 }
