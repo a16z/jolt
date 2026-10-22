@@ -170,6 +170,7 @@ The caller contract of #254 gains one item: in ZK mode, Akita's root may run onl
   - HT1: the census in §7.
   - Coverage: every pad has a nonzero coefficient.
   - Counting equality: `pad_layout` equals the honest cursor, on zero bytes and on random bytes.
+  - MaskedSlot lift: build the muldiv relation under `OperandRule::MaskedSlot` and lift it through `PadPlacement`/`LiftedRelation`. Under BlindFold's `Affine` rule the shape records no operand pads, so a `pad_layout` that skipped `JoltResidual::check_stages` would go undetected; only this lift catches a pair operand missing from `operand_pads`.
   - HT3: a forced `FoldOverflow` via `ZkOpeningSchedule::for_tests` reuses nothing from the aborted attempt.
   - HT4: one consistent-cheat case per site class, including stage-8 claims.
 - **V5, tamper suite.** Each case rejects:

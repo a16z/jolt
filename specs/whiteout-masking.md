@@ -267,15 +267,17 @@ same value. The lowering takes 2 slots for this output instead of 16.
 
 **2. Multi-pair rows.** A product row becomes
 
-    ProductRow { pairs: Vec<ProductPair>, z }   ProductPair { x: MaskedOperand, y: AffineRow }
+    ProductRow { first: ProductPair, rest: Vec<ProductPair>, z }
+    ProductPair { x: ProductOperand, y: AffineRow }
 
-with the check Σ_k x_k·y_k = z. A row with one pair is the old row. Every
-row has at least one pair; each back end enforces this with a release check.
+with the check Σ_k x_k·y_k = z over `first` and `rest`. A row with one pair
+is the old row. The type makes a row without a pair unrepresentable; such a
+row would lift to its −Z alone, so no back end needs a check.
 
 - *ClaimDomain op.* `jolt_transcript::ClaimDomain` gains
-  `products_into(pairs, target)`, the check Σ x_k·y_k = target with no new
-  slot. `product_into` becomes a provided method, `products_into(vec![(x, y)],
-  target)`. The change is additive: Akita only calls these methods.
+  `products_into(first, rest, target)`, the check Σ x_k·y_k = target with no
+  new slot. `product_into` becomes a provided method,
+  `products_into((x, y), Vec::new(), target)`. The change is additive: Akita only calls these methods.
   `ClearDomain` and `ValuesDomain` compare, `RowsDomain` emits one
   `ProductRow`, and `OperandShapeDomain` records each pair's operand pad.
 - *Lowering.* `lower_factored` returns `ProductSum { pairs, affine }`. A
@@ -286,8 +288,9 @@ row has at least one pair; each back end enforces this with a release check.
   Input claims use it; on Jolt they are affine, so it takes no slot.
 - *Stage check.* Each stage emits one row,
   `products_into(β-scaled output pairs, running − output.affine)`, through a
-  single `StageClaims::check`. The pad layout (shape domain) and the rows
-  both call it, so the operand pads and the rows have one owner.
+  single `JoltResidual::check_stages`, which calls `ProductSum::check_equals`
+  (an affine row when no pair is pending). The pad layout (shape domain) and
+  the rows both call it, so the operand pads and the rows have one owner.
 - *BlindFold.* A row with n pairs lowers to n R1CS constraints:
   x_k·y_k = w_k for k < n, and x_n·y_n = z − Σ w_k. The w_k are witness-only
   variables. They occupy extra auxiliary witness rows after the y and ρ rows,
@@ -305,10 +308,10 @@ row has at least one pair; each back end enforces this with a release check.
 **3. Affine operands (BlindFold only).** An R1CS A-row accepts any linear
 combination, so BlindFold needs no defining slot.
 
-- `ZkBackend` gains `const OPERANDS: OperandRule`: `MaskedSlot` for the
-  lattice back end, `Affine` for the curve back end. BlindFold also states
-  the rule as an inherent const, so jolt-verifier names it without the
-  commitment bounds.
+- `OperandRule` is `MaskedSlot` for the lattice back end and `Affine` for
+  the curve back end. BlindFold states its rule as the inherent const
+  `BlindFold::OPERANDS`, which jolt-verifier reads; the lattice path keeps
+  the default until W6 gives it a caller.
 - `ProductPair.x` becomes `ProductOperand { Masked(MaskedOperand),
   Affine(AffineRow) }`.
 - The three lowering domains implement `LoweringDomain`, which states the
@@ -319,7 +322,8 @@ combination, so BlindFold needs no defining slot.
   the layout, the values and the rows.
 - Under `Affine`, rows emit `Affine` only for an operand that is not a
   single slot, and the shape records no operand pads.
-- The lattice placement and lift reject `Affine` with a release check.
+- The lattice lift rejects `Affine` with a release check, where it reads
+  each pair's operand pad.
 
 **Σ-statement impact (W5a).** The public surface does not change. On
 `whiteout/dev`, `ResponseStatement::{layout, challenge, rho, v_image,
