@@ -40,7 +40,7 @@ use super::segments::{balanced_range, lift_ct};
 use super::sigma::SigmaSetup;
 use super::WhiteoutError;
 use crate::masking::ZkError;
-use crate::secret::wipe;
+use crate::secret::{wipe, SecretVec};
 
 /// Radix-16 digits of a field element of `V` or `θ`.
 pub const FIELD_LEVELS: usize = 32;
@@ -156,21 +156,27 @@ impl PlaneLayout {
             .collect()
     }
 
-    /// Every coefficient `Σ_p 16^p·digit[index(k, p)]`, as an integer.
-    pub(crate) fn recompose_integers(self, digits: &[i8]) -> Result<Vec<i64>, WhiteoutError> {
-        (0..self.coefficients)
-            .into_par_iter()
-            .map(|k| {
-                (0..self.planes).rev().try_fold(0i64, |value, plane| {
-                    digits
+    /// Writes every coefficient `Σ_p 16^p·digit[index(k, p)]`, as an
+    /// integer, to `out`.
+    pub(crate) fn recompose_integers(
+        self,
+        digits: &[i8],
+        out: &mut [i64],
+    ) -> Result<(), WhiteoutError> {
+        if out.len() != self.coefficients || digits.len() < self.coefficients * self.planes {
+            return Err(WhiteoutError::InvalidRelation(
+                "digits shorter than their planes",
+            ));
+        }
+        out.par_iter_mut().enumerate().for_each(|(k, dst)| {
+            *dst = (0..self.planes).rev().fold(0i64, |value, plane| {
+                value * (1 << RESPONSE_LOG_BASIS)
+                    + digits
                         .get(self.index(k, plane))
-                        .map(|&digit| value * (1 << RESPONSE_LOG_BASIS) + i64::from(digit))
-                        .ok_or(WhiteoutError::InvalidRelation(
-                            "digits shorter than their planes",
-                        ))
-                })
-            })
-            .collect()
+                        .map_or(0, |&digit| i64::from(digit))
+            });
+        });
+        Ok(())
     }
 
     /// The transpose of [`Self::recompose`]: adds `radix^p·weights[k]` to
@@ -456,7 +462,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             return Err(WhiteoutError::ResponseRejected("ring-quadratic identity"));
         }
         let product = aggregated.product_polynomial(&c_ring, &parts);
-        if product.get(CHALLENGE_RING_DIM..) != Some(decoded.theta.as_slice()) {
+        if product.get(CHALLENGE_RING_DIM..) != Some(&decoded.theta[..]) {
             return Err(WhiteoutError::ResponseRejected("product quotient θ"));
         }
         Ok(())
@@ -733,32 +739,43 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             ));
         }
         let mut decoded = Decoded {
-            z: Vec::with_capacity(self.setup.table().num_coefficients()),
-            v: Vec::new(),
-            v_digits: Vec::new(),
-            theta: Vec::new(),
+            z: SecretVec::from(vec![0i64; self.setup.table().num_coefficients()]),
+            v: SecretVec::from(Vec::new()),
+            v_digits: SecretVec::from(Vec::new()),
+            theta: SecretVec::from(Vec::new()),
             images: Vec::new(),
             witnesses: Vec::new(),
         };
+        let mut z_offset = 0;
         let mut rest = digits;
         for segment in &layout.segments {
             let (digits, tail) = rest.split_at(segment.num_digits());
             rest = tail;
             match (*segment, segment.planes()) {
                 (ResponseSegment::Response { .. }, Some(planes)) => {
-                    decoded.z.extend(planes.recompose_integers(digits)?);
+                    let out = decoded
+                        .z
+                        .get_mut(z_offset..z_offset + planes.coefficients)
+                        .ok_or(WhiteoutError::InvalidRelation("response longer than s"))?;
+                    planes.recompose_integers(digits, out)?;
+                    z_offset += planes.coefficients;
                 }
                 (ResponseSegment::V { .. }, Some(planes)) => {
-                    decoded.v = planes.recompose(digits)?;
-                    decoded.v_digits = digits.iter().map(|&digit| i64::from(digit)).collect();
+                    decoded.v = SecretVec::from(planes.recompose(digits)?);
+                    decoded.v_digits = SecretVec::from(
+                        digits
+                            .iter()
+                            .map(|&digit| i64::from(digit))
+                            .collect::<Vec<_>>(),
+                    );
                 }
                 (ResponseSegment::Theta, Some(planes)) => {
-                    decoded.theta = planes.recompose(digits)?;
+                    decoded.theta = SecretVec::from(planes.recompose(digits)?);
                 }
                 (ResponseSegment::Compression { coefficients, .. }, _) => {
-                    decoded
-                        .images
-                        .push(self.compression.reconstruct(coefficients, digits)?);
+                    decoded.images.push(SecretVec::from(
+                        self.compression.reconstruct(coefficients, digits)?,
+                    ));
                     decoded.witnesses.push(digits);
                 }
                 (_, None) => {
@@ -813,14 +830,15 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 const RESPONSE_DIGIT_BOUND: u64 = 1 << (RESPONSE_LOG_BASIS - 1);
 
 /// `e`'s decoded parts.
+/// `e` decoded; every buffer is wiped when dropped.
 struct Decoded<'d, F> {
-    z: Vec<i64>,
-    v: Vec<F>,
-    v_digits: Vec<i64>,
-    theta: Vec<F>,
+    z: SecretVec<i64>,
+    v: SecretVec<F>,
+    v_digits: SecretVec<i64>,
+    theta: SecretVec<F>,
     /// Each compressed image as its witness reconstructs it, in layout
     /// order; `t_D` is last.
-    images: Vec<Vec<F>>,
+    images: Vec<SecretVec<F>>,
     witnesses: Vec<&'d [i8]>,
 }
 
@@ -829,7 +847,7 @@ impl<F> Decoded<'_, F> {
     fn v_image(&self) -> Result<&[F], WhiteoutError> {
         self.images
             .last()
-            .map(Vec::as_slice)
+            .map(|image| &image[..])
             .ok_or(WhiteoutError::InvalidRelation("t_D's compression missing"))
     }
 }
