@@ -54,16 +54,13 @@ pub struct CudaKernelContext {
     pcr_lane_eq: CudaFunction,
     pcr_shift_eq: CudaFunction,
     pcr_place_row: CudaFunction,
-    #[cfg(test)]
     dense_product_round: CudaFunction,
     lane_sum_total: CudaFunction,
     sop_round: CudaFunction,
     sopg_round: CudaFunction,
     ii_flag_words: CudaFunction,
     ss_packed_columns: CudaFunction,
-    #[cfg(test)]
     ra_split_tables: CudaFunction,
-    #[cfg(test)]
     ra_gather: CudaFunction,
     #[cfg(test)]
     sfx_eval_batch: CudaFunction,
@@ -280,16 +277,13 @@ impl CudaKernelContext {
             pcr_lane_eq: module.load_function("pcr_lane_eq_kernel")?,
             pcr_shift_eq: module.load_function("pcr_shift_eq_kernel")?,
             pcr_place_row: module.load_function("pcr_place_row_kernel")?,
-            #[cfg(test)]
             dense_product_round: module.load_function("dense_product_round_kernel")?,
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
             sopg_round: module.load_function("sopg_round_kernel")?,
             ii_flag_words: module.load_function("ii_flag_words_kernel")?,
             ss_packed_columns: module.load_function("ss_packed_columns_kernel")?,
-            #[cfg(test)]
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
-            #[cfg(test)]
             ra_gather: module.load_function("ra_gather_kernel")?,
             #[cfg(test)]
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
@@ -715,7 +709,6 @@ impl CudaKernelContext {
         &self.pcr_place_row
     }
 
-    #[cfg(test)]
     pub(crate) const fn dense_product_round(&self) -> &CudaFunction {
         &self.dense_product_round
     }
@@ -798,12 +791,10 @@ impl CudaKernelContext {
         &self.roc_message
     }
 
-    #[cfg(test)]
     pub(crate) const fn ra_split_tables(&self) -> &CudaFunction {
         &self.ra_split_tables
     }
 
-    #[cfg(test)]
     pub(crate) const fn ra_gather(&self) -> &CudaFunction {
         &self.ra_gather
     }
@@ -1160,7 +1151,6 @@ impl CudaKernelContext {
         ))
     }
 
-    #[cfg(test)]
     pub(crate) fn device_pointers(
         &self,
         tables: &[&DeviceFrVec],

@@ -18,6 +18,7 @@ use super::error::CudaError;
 
 pub const COLLAPSE_AFTER_ROUNDS: usize = 3;
 
+#[cfg(test)]
 pub use crate::cuda::common::pack::COLD;
 
 pub struct DeviceRaPolynomial {
@@ -82,6 +83,35 @@ impl DeviceRaPolynomial {
     ) -> Result<Self, CudaError> {
         let tables = context.upload(require_fr_slice(eq_address)?)?;
         Self::from_device_tables(context, words, tables, order)
+    }
+
+    pub fn from_device_columns(
+        indices: CudaSlice<u32>,
+        tables: DeviceFrVec,
+        cycles: usize,
+        order: BindingOrder,
+    ) -> Result<Self, CudaError> {
+        let addresses = tables.len();
+        if !cycles.is_power_of_two() || !addresses.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a one-hot polynomial needs power-of-two cycle and address counts",
+            });
+        }
+        if indices.len() < cycles {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: indices.len(),
+            });
+        }
+        Ok(Self {
+            indices,
+            tables,
+            addresses,
+            cycles,
+            order,
+            rounds_bound: 0,
+            dense: None,
+        })
     }
 
     #[cfg(test)]

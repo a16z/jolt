@@ -1,13 +1,13 @@
 //! CUDA precommitted, increment, register and instruction claim reductions.
-//! Also provides instruction-input and RAM output checking, and RAM
-//! hamming-weight booleanity, Spartan outer constraints, product virtualization
+//! Also provides instruction-input checking, RAM output and value checking,
+//! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization
 //! and shift checking.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
 //! reduction, instruction operand reduction, instruction-input checking and
-//! RAM output checking, hamming-weight booleanity and Spartan shift checking
-//! in the optimized registry.
+//! RAM output and value checking, hamming-weight booleanity and Spartan shift
+//! checking in the optimized registry.
 //! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
 //! field-inline retains the optimized implementations.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
@@ -159,6 +159,7 @@ mod instruction_read_raf;
 mod program_image_claim_reduction;
 mod ram_hamming_booleanity;
 mod ram_output_check;
+mod ram_val_check;
 mod registers_claim_reduction;
 #[cfg(test)]
 mod registers_read_write;
@@ -201,8 +202,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Replace supported claim reductions, instruction-input and RAM output
-    /// checking, RAM hamming booleanity, Spartan shift, and RV64 Spartan outer
+    /// Replace supported claim reductions, instruction-input, RAM output and
+    /// value checking, RAM hamming booleanity, Spartan shift, and RV64 Spartan outer
     /// and product kernels with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
@@ -225,6 +226,7 @@ where
         backend.instruction_claim_reduction = Box::new(CudaBackend);
         backend.instruction_input = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
+        backend.ram_val_check = Box::new(CudaBackend);
         backend.spartan_shift = Box::new(CudaBackend);
         #[cfg(not(feature = "field-inline"))]
         {

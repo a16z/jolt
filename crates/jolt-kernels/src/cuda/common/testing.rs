@@ -28,6 +28,7 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_witness::__private::TraceRow;
+use jolt_witness::witnesses::{Extract, RamInc, ToField, WitnessEnv};
 use jolt_witness::{
     ChunkVisitor, FixedBackend, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
     JoltWitnessPlane, PolynomialEncoding, ProgramSource, RowSource, Shape, TraceBackend,
@@ -442,7 +443,6 @@ pub struct FixedPlane {
     columns: FixedBackend<Fr>,
     program: JoltProgramPreprocessing,
     label: &'static str,
-    #[expect(dead_code, reason = "advice fixtures only expose oracle columns")]
     log_t: Option<usize>,
 }
 
@@ -521,6 +521,197 @@ impl ProgramSource for FixedPlane {
     fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
         &self.program
     }
+}
+
+impl FixedPlane {
+    pub(crate) fn hot_indices(
+        &self,
+        id: JoltPolynomialId,
+    ) -> Result<Vec<Option<usize>>, WitnessError> {
+        let (log_k, cycles) = self.one_hot_dimensions(id)?;
+        let grid = JoltWitnessOracle::<Fr>::oracle_table(self, id)?;
+        let mut indices = vec![None; cycles];
+        for address in 0..(1usize << log_k) {
+            for cycle in 0..cycles {
+                if grid[address * cycles + cycle] != Fr::from_u64(0) {
+                    if indices[cycle].is_some() {
+                        return Err(WitnessError::InvalidWitnessData {
+                            label: "cuda test plane",
+                            reason: format!("cycle {cycle} of {id:?} has two hot addresses"),
+                        });
+                    }
+                    indices[cycle] = Some(address);
+                }
+            }
+        }
+        Ok(indices)
+    }
+}
+
+impl FixedPlane {
+    fn one_hot_dimensions(&self, id: JoltPolynomialId) -> Result<(usize, usize), WitnessError> {
+        let log_rows = self.columns.shape(id)?.log_rows;
+        let log_t = self.log_t.ok_or(WitnessError::InvalidWitnessData {
+            label: "cuda test plane",
+            reason: "fixture declared no cycle count for its one-hot columns".to_owned(),
+        })?;
+        let log_k = log_rows
+            .checked_sub(log_t)
+            .ok_or(WitnessError::InvalidWitnessData {
+                label: "cuda test plane",
+                reason: format!("{id:?} has fewer rows than the declared cycle count"),
+            })?;
+        Ok((log_k, 1usize << log_t))
+    }
+}
+
+pub struct RowPlane {
+    inner: FixedPlane,
+    rows: Vec<TraceRow>,
+}
+
+impl RowPlane {
+    pub fn new(
+        columns: FixedBackend<Fr>,
+        label: &'static str,
+        log_t: usize,
+        rows: Vec<TraceRow>,
+    ) -> Self {
+        Self {
+            inner: FixedPlane::with_log_t(columns, label, Some(log_t)),
+            rows,
+        }
+    }
+}
+
+impl JoltWitnessOracle<Fr> for RowPlane {
+    fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
+        self.inner.shape(id)
+    }
+
+    fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<Fr>, WitnessError> {
+        JoltWitnessOracle::<Fr>::oracle_table(&self.inner, id)
+    }
+
+    fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+        self.inner.committed_order()
+    }
+}
+
+impl ProgramSource for RowPlane {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
+        self.inner.program_preprocessing()
+    }
+}
+
+impl RowPlane {
+    pub(crate) fn hot_indices(
+        &self,
+        id: JoltPolynomialId,
+    ) -> Result<Vec<Option<usize>>, WitnessError> {
+        self.inner.hot_indices(id)
+    }
+}
+
+impl RowSource for RowPlane {
+    fn visit_chunks(
+        &self,
+        range: Range<usize>,
+        chunk_size: usize,
+        visitor: &mut ChunkVisitor<'_>,
+    ) -> Result<(), WitnessError> {
+        if range.end > self.rows.len() {
+            return Err(WitnessError::InvalidWitnessData {
+                label: "cuda row plane",
+                reason: format!(
+                    "requested cycles {range:?} exceed the {} fixture rows",
+                    self.rows.len()
+                ),
+            });
+        }
+        let env = WitnessEnv::new(self.inner.program_preprocessing());
+        let mut start = range.start;
+        while start < range.end {
+            let end = (start + chunk_size).min(range.end);
+            visitor(&self.rows[start..end], self.rows.get(end), &env)?;
+            start = end;
+        }
+        Ok(())
+    }
+}
+
+pub const RAM_ROW_PATTERN: usize = 5;
+
+pub const fn ram_row_is_cold(cycle: usize) -> bool {
+    matches!(cycle % RAM_ROW_PATTERN, 0 | 3)
+}
+
+pub struct RamRowFixture {
+    pub rows: Vec<TraceRow>,
+    pub ra: Vec<Fr>,
+    pub inc: Vec<Fr>,
+}
+
+pub fn ram_rows_with_grid(log_t: usize, ram_log_k: usize, seed: u64) -> RamRowFixture {
+    let cycles = 1usize << log_t;
+    let addresses = 1usize << ram_log_k;
+    let lowest = MemoryLayout::default().get_lowest_address();
+    let mut ra = vec![Fr::from_u64(0); addresses * cycles];
+    let mut rows = Vec::with_capacity(cycles);
+
+    for cycle in 0..cycles {
+        let mix = seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(cycle as u64 + 1);
+        let word =
+            1 + (mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29)) % (addresses as u64 - 1);
+        let address = lowest + 8 * word;
+        let value = 900 + cycle as u64;
+
+        let access = if ram_row_is_cold(cycle) {
+            if cycle % RAM_ROW_PATTERN == 3 {
+                RamAccess::Read(RamRead { address: 0, value })
+            } else {
+                RamAccess::NoOp
+            }
+        } else {
+            ra[word as usize * cycles + cycle] = Fr::from_u64(1);
+            match cycle % RAM_ROW_PATTERN {
+                1 => RamAccess::Read(RamRead { address, value }),
+                2 => RamAccess::Write(RamWrite {
+                    address,
+                    pre_value: value,
+                    post_value: value + 1 + word,
+                }),
+                _ => RamAccess::Write(RamWrite {
+                    address,
+                    pre_value: value + 1 + word,
+                    post_value: value,
+                }),
+            }
+        };
+
+        rows.push(synthetic_row(
+            JoltInstructionRow::default(),
+            RegisterState::default(),
+            access,
+            1,
+        ));
+    }
+
+    let probe = RowPlane::new(FixedBackend::new(), "inc probe", log_t, Vec::new());
+    let env = WitnessEnv::new(ProgramSource::program_preprocessing(&probe));
+    let inc: Vec<Fr> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            RamInc::extract(row, rows.get(index + 1), &env)
+                .expect("ram increment")
+                .to_field()
+        })
+        .collect();
+
+    RamRowFixture { rows, ra, inc }
 }
 
 pub fn reference_input_claim<'a, R>(

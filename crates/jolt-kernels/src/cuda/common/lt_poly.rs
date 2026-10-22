@@ -3,7 +3,7 @@
 //! `LT(j, r) = LT(j_hi, r_hi) + eq(j_hi, r_hi) * LT(j_lo, r_lo)` keeps
 //! three square-root-sized tables and an optional constant shift. Product
 //! kernels read these factors directly; `coefficients` expands them only for
-//! callers that need a dense table.
+//! callers that need a dense table. A device window restricts the high factors.
 
 use cudarc::driver::PushKernelArg;
 use jolt_field::{Fr, JoltField, Ring};
@@ -72,7 +72,6 @@ impl DeviceLtPolynomial {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn window(&self, shard: usize, shards: usize) -> Result<Self, CudaError> {
         if shards == 0 || !shards.is_power_of_two() || shard >= shards {
             return Err(CudaError::InvariantViolation {

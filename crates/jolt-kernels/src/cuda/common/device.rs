@@ -102,7 +102,6 @@ impl DeviceFrVec {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn slice_elements(&self, offset: usize, len: usize) -> Result<Self, CudaError> {
         if offset + len > self.len {
             return Err(CudaError::LengthMismatch {

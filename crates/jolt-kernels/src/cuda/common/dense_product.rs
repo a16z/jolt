@@ -1,6 +1,17 @@
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
+use core::marker::PhantomData;
 use cudarc::driver::{LaunchConfig, PushKernelArg};
+use jolt_claims::protocols::jolt::JoltChallengeId;
+use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::{Fr, JoltField};
-use jolt_poly::BindingOrder;
+use jolt_poly::{BindingOrder, UnivariatePoly};
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::{
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
+};
 
 use super::context::context_for;
 use super::context::{CudaKernelContext, BLOCK};
@@ -95,6 +106,10 @@ impl ShardedDenseProduct {
     #[cfg(test)]
     pub(crate) fn rounds(&self) -> usize {
         self.local_rounds + self.tail_rounds
+    }
+
+    pub(crate) const fn rounds_bound(&self) -> usize {
+        self.bound
     }
 
     pub(crate) fn toom_evals<F: JoltField>(&self) -> Result<Vec<F>, CudaError> {
@@ -551,6 +566,74 @@ impl DeviceDenseProduct {
                 kernel: "CUDA kernels support only the BN254 scalar field",
             })
             .map(Some)
+    }
+}
+
+pub struct DenseProductKernel<F: JoltField, R> {
+    pub(crate) state: ShardedDenseProduct,
+    pub(crate) relation: R,
+    pub(crate) field: PhantomData<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: JoltField, R> Allocative for DenseProductKernel<F, R> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        let visitor = visitor.enter_self_sized::<Self>();
+        visitor.exit();
+    }
+}
+
+impl<F: JoltField, R> DenseProductKernel<F, R> {
+    pub(crate) fn finals(&self) -> Result<Vec<F>, CudaError> {
+        self.state.factor_finals()
+    }
+
+    pub(crate) fn lt_final(&self) -> Result<Option<F>, CudaError> {
+        self.state.lt_final()
+    }
+}
+
+impl<F, R> ProveRounds<F> for DenseProductKernel<F, R>
+where
+    F: JoltField,
+    R: ConcreteSumcheck<F>,
+    SumcheckInputClaims<F, R>: InputClaims<F>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+{
+    fn num_rounds(&self) -> usize {
+        self.relation.symbolic().rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.state
+                .bind(challenge)
+                .map_err(|_| SumcheckError::MissingEvaluationSource { kind: "cuda bind" })?;
+        }
+        let evals: Vec<F> =
+            self.state
+                .toom_evals()
+                .map_err(|_| SumcheckError::MissingEvaluationSource {
+                    kind: "cuda round_evals",
+                })?;
+        let _ = round;
+        let eval_at_0 = previous_claim - evals[0];
+        let mut toom = Vec::with_capacity(evals.len() + 1);
+        toom.push(eval_at_0);
+        toom.extend_from_slice(&evals);
+        Ok(UnivariatePoly::from_evals_toom(&toom))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.state
+            .bind(bind)
+            .map_err(|_| SumcheckError::MissingEvaluationSource { kind: "cuda bind" })
     }
 }
 
