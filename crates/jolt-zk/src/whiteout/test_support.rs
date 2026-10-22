@@ -111,10 +111,14 @@ impl<const D: usize> SyntheticSigma<D> {
     }
 
     /// The length of `e`, the response statement's committed vector, under
-    /// `compression`.
+    /// `compression`: only its witness lengths are read.
     pub fn response_len(&self, compression: &dyn ImageCompression<F>) -> usize {
+        let unknown = || BlockTarget::Compressed {
+            payload: Vec::new(),
+            image: None,
+        };
         self.instance
-            .setup_with(self.instance.targets(compression))
+            .setup_with([unknown(), unknown()])
             .response_layout(compression)
             .map_or(0, |layout| layout.len())
     }
