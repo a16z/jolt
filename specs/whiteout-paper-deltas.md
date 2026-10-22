@@ -50,7 +50,7 @@ so the authors can fold it into the paper.
 | D17 | Σ challenge budget exhaustion is fatal; ⊥ after T_att is an error the caller may rerun | clarification | implemented |
 | D18 | Masked-level structural constraints (Linf route, E = F, one chunk, d_A = d_B) | clarification | implemented / specified |
 | D19 | Headline fold shapes: level 1 uses d = 512 challenges (η² = 19), not d = 64 (η² = 71) | evaluation input | verified in tests, unexplained |
-| D20 | Setup offloading of the response root is conditional (W5b) | evaluation config | proposed |
+| D20 | Setup offloading of the response root is optional and not built: the scan is ≈ 10–14 ms idle, the offload ≈ +2.9 KB | evaluation config | shelved (2026-10-22) |
 | D21 | Open author questions Q1, Q2 (A7, A8, A9, A14), Q4, Q6, Q7, W6-Q5 | open | open |
 | D22 | Q7: the 1/p clause of Lemma `wo:lem:fold-overflow` holds only for the whole challenge tuple | paper fix | open (authors) |
 | D23 | Bounded rerun (≤ 3 runs) on FoldOverflow or exhausted Σ attempts, where the paper aborts | departure | specified (W6) |
@@ -876,10 +876,21 @@ the verifier's matrix work grows by under 1% (`04_protocol.tex:493-504`,
 W5b (offload into the response root's Stage 3) lands in RP4 only if the direct
 scan exceeds the verifier budget measured in W5-e.
 
-**Status.** Proposed.
+**Status.** Optional; not built (2026-10-22). At the headline N shapes the
+direct scan, parallel over blocks and column chunks, measures 114 ms on one
+thread and about 10–14 ms idle on 12 cores; the matrices' field copies are
+built once per verifier setup. Forcing the root offload and growing the
+setup prefix to cover N (2^22) costs about +2.9 KB of proof (planner
+estimate 70,995 → 73,879 B, Stage 3 736 B) and 3.5M more setup field
+elements. The paper estimates about 1.2 KB. Building it needs a
+response-family planner policy that forces a root offload with a minimum
+prefix (typed error if impossible), N's matrices as Akita setup views with
+A_p and L allocated through Akita, and N's weights as eq-pair tensor families
+in the root's Stage 3 (Akita spec §5.8).
 
-**For the paper.** None yet. If W5b is deferred, the measured verifier cost
-corresponds to the paper's "without offloading" rows.
+**For the paper.** The measured verifier corresponds to the paper's "without
+offloading" rows. Our offload would cost about 2.9 KB, against the paper's
+1.2 KB.
 
 ## D21. Open author questions
 
