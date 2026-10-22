@@ -23,6 +23,7 @@
 use jolt_algebra::balanced_decompose_coefficients_pow2_i8_into;
 #[cfg(feature = "whiteout-prover")]
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+use rayon::prelude::*;
 use std::ops::Range;
 
 use jolt_algebra::{CyclotomicRing, JoltField};
@@ -158,6 +159,7 @@ impl PlaneLayout {
     /// Every coefficient `Σ_p 16^p·digit[index(k, p)]`, as an integer.
     pub(crate) fn recompose_integers(self, digits: &[i8]) -> Result<Vec<i64>, WhiteoutError> {
         (0..self.coefficients)
+            .into_par_iter()
             .map(|k| {
                 (0..self.planes).rev().try_fold(0i64, |value, plane| {
                     digits
@@ -182,15 +184,26 @@ impl PlaneLayout {
             return Err(WhiteoutError::InvalidRelation("plane weights length"));
         }
         let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
-        let mut power = F::one();
-        for plane in 0..self.planes {
-            for (k, weight) in weights.iter().enumerate() {
-                if let Some(dst) = out.get_mut(self.index(k, plane)) {
-                    *dst += *weight * power;
-                }
-            }
-            power *= radix;
-        }
+        let powers: Vec<F> = std::iter::successors(Some(F::one()), |power| Some(*power * radix))
+            .take(self.planes)
+            .collect();
+        let width = self.width.max(1);
+        // Run `c` of `width` digits is plane `c mod planes` of block
+        // `c / planes`: `index(block·width + k, plane) = c·width + k`.
+        out.par_chunks_mut(width)
+            .enumerate()
+            .for_each(|(run, dst)| {
+                let block = run / self.planes;
+                let power = powers.get(run % self.planes).copied().unwrap_or_default();
+                let weights = weights.get(block * width..).unwrap_or_default();
+                dst.par_chunks_mut(PLANE_GRAIN)
+                    .zip(weights.par_chunks(PLANE_GRAIN))
+                    .for_each(|(dst, weights)| {
+                        for (dst, weight) in dst.iter_mut().zip(weights) {
+                            *dst += *weight * power;
+                        }
+                    });
+            });
         Ok(())
     }
 
@@ -249,6 +262,9 @@ impl PlaneLayout {
         Ok(())
     }
 }
+
+/// Digits per parallel task when reading or writing a plane.
+const PLANE_GRAIN: usize = 1 << 14;
 
 /// The logical layout of `e`, from the public setup.
 #[derive(Clone, Debug, PartialEq, Eq)]

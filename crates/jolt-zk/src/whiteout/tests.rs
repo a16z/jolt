@@ -959,3 +959,45 @@ fn width_range_matches_the_sampler() {
         assert_eq!(sampler, params, "width {width}");
     }
 }
+
+/// `PlaneLayout`'s readers and its transpose follow `index`: recomposing
+/// digits written at `index(k, p)` gives the values back, and the transpose
+/// puts `16^p·w_k` at `index(k, p)`, for one block and for many.
+#[test]
+fn plane_layout_readers_and_transpose_follow_its_index() {
+    use super::response::PlaneLayout;
+    let mut rng = ChaCha20Rng::seed_from_u64(91);
+    for layout in [
+        PlaneLayout::single(70_000, 10),
+        PlaneLayout {
+            width: 64,
+            planes: 32,
+            coefficients: 64 * 5,
+        },
+    ] {
+        let len = layout.coefficients * layout.planes;
+        let digits: Vec<i8> = (0..len).map(|_| (rng.next_u32() % 16) as i8 - 8).collect();
+        let values = layout.recompose::<F>(&digits).unwrap();
+        for k in [0, 1, layout.coefficients - 1] {
+            let mut expected = F::zero();
+            let mut power = F::one();
+            for plane in 0..layout.planes {
+                expected += power * F::from_i64(i64::from(digits[layout.index(k, plane)]));
+                power *= F::from_u64(16);
+            }
+            assert_eq!(values[k], expected);
+        }
+        let weights: Vec<F> = (0..layout.coefficients)
+            .map(|_| F::random(&mut rng))
+            .collect();
+        let mut out = vec![F::zero(); len];
+        layout.transpose(&weights, &mut out).unwrap();
+        let mut power = F::one();
+        for plane in 0..layout.planes {
+            for k in [0, 7, layout.coefficients - 1] {
+                assert_eq!(out[layout.index(k, plane)], weights[k] * power);
+            }
+            power *= F::from_u64(16);
+        }
+    }
+}
