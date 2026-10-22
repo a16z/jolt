@@ -64,6 +64,10 @@ required-features = ["whiteout-prover"]
 name = "whiteout_params"
 required-features = ["whiteout-prover"]
 
+[[test]]
+name = "whiteout_zeroize"
+required-features = ["whiteout-prover"]
+
 [[example]]
 name = "sigma_dudect"
 required-features = ["whiteout-diagnostics"]
