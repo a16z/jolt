@@ -686,7 +686,8 @@ fn widths_past_every_digit_count_are_rejected() {
 
 /// Checks the response rows on the accepted witness: Items 2, 3 and 5
 /// vanish, Item 4's target is `Σ U_i W_i`, and the transposed rows agree
-/// with the rows on the witness and on arbitrary digits.
+/// with the rows on the witness and on arbitrary digits, for all weights
+/// and for each row family's weights alone.
 struct RowCheckingResponseProver;
 
 impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
@@ -725,15 +726,70 @@ impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
             .into_iter()
             .map(|digit| digit as i8)
             .collect();
-        for e in [&witness.digits, &arbitrary] {
-            let contracted: F = a
-                .iter()
+        let contract = |a: &[F], b: F, e: &[i8]| -> F {
+            a.iter()
                 .zip(e)
                 .map(|(a, &digit)| *a * F::from_i64(i64::from(digit)))
                 .sum::<F>()
-                + b;
-            assert_eq!(contracted, weights.dot(&statement.rows(e, alpha)?).unwrap());
+                + b
+        };
+        for e in [&witness.digits, &arbitrary] {
+            assert_eq!(
+                contract(&a, b, e),
+                weights.dot(&statement.rows(e, alpha)?).unwrap()
+            );
         }
+
+        // Each row family alone transposes to nonzero weights, which see
+        // the arbitrary digits' violation of that family.
+        let zero = |len: usize| vec![F::zero(); len];
+        let empty = ResponseRows {
+            v_image: zero(shape.v_image),
+            linear: zero(shape.linear),
+            ct_h: F::zero(),
+            product_target: F::zero(),
+            product_x: zero(shape.products),
+            product_y: zero(shape.products),
+        };
+        let families = [
+            ResponseRows {
+                v_image: weights.v_image.clone(),
+                ..empty.clone()
+            },
+            ResponseRows {
+                linear: weights.linear.clone(),
+                ..empty.clone()
+            },
+            ResponseRows {
+                ct_h: weights.ct_h,
+                ..empty.clone()
+            },
+            ResponseRows {
+                product_target: weights.product_target,
+                ..empty.clone()
+            },
+            ResponseRows {
+                product_x: weights.product_x.clone(),
+                ..empty.clone()
+            },
+            ResponseRows {
+                product_y: weights.product_y.clone(),
+                ..empty
+            },
+        ];
+        let honest = statement.rows(&witness.digits, alpha)?;
+        for family in &families {
+            let (a, b) = statement.weigh(family, alpha)?;
+            assert!(a.iter().any(|a| !a.is_zero()));
+            let change = contract(&a, b, &arbitrary) - contract(&a, b, &witness.digits);
+            assert!(!change.is_zero());
+            assert_eq!(
+                change,
+                family.dot(&statement.rows(&arbitrary, alpha)?).unwrap()
+                    - family.dot(&honest).unwrap()
+            );
+        }
+
         SendingResponseProver.prove_response(statement, witness, transcript)
     }
 
