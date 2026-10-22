@@ -168,7 +168,7 @@ mod packed_word_tests {
     #[test]
     fn advice_hook_matches_canonical_cpu_polynomial_and_preserves_roles() {
         let artifacts =
-            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(1, 0));
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         for kind in [JoltAdviceKind::Trusted, JoltAdviceKind::Untrusted] {
             for length in [32, 9, 8, 7, 1, 0] {
                 let bytes: Vec<u8> = (0..length).map(|i| (i * 37 + 255) as u8).collect();
