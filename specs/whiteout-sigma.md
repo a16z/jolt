@@ -676,6 +676,63 @@ data-independent time without DIT/DOITM. The dudect record above refutes this
 on Apple M4 for the CRT reconstruction, so the prover sets DIT for the
 attempts (A11).
 
+**Memory hygiene.** The prover overwrites its heap secrets with zeros, by
+volatile writes through the `zeroize` crate, before freeing them. jolt-zk's
+`SecretVec` zeroes a `Vec`'s whole capacity on drop, in parallel chunks,
+without needing `Zeroize` on the field type; it holds the large buffers and
+every field buffer, and `ResponseWitness` uses the same wipe. jolt-crypto's
+buffers use `Zeroizing`. The writes are unconditional and run over public
+lengths, so they add no secret-dependent branch. Wiped:
+
+- `s` (`private_vector`), the pad opening's digits (`LatticePadOpening`), and
+  the pad commitment's working copies of the pads, g, and their digit planes;
+- per attempt: y, z and c·s on the Gaussian coordinates, `N·y`, `L·y`, V,
+  the linear parts of s, y and z with their claim terms, and t_D. After a
+  rejection the prover zeroes y, z and c·s, the nonce n_i, and the dense
+  c_i before the next attempt runs;
+- the accepted response's z, c·s per segment, the product polynomial, and
+  the response digits e (`ResponseWitness`);
+- `fill_parallel`'s chunk seeds and each chunk's ChaCha20 state;
+  `sample_box_digits`' bytes and digits; `G⁻¹(V)` in `commit`; and the limb
+  scratch of `apply_centered`, which holds the input's low limbs;
+- `CommittedPads`' pads and BlindFold's pad-row blinds (M6b).
+
+Not wiped:
+
+- copies the compiler or allocator makes: register contents, stack spills
+  and stack locals (the Gaussian trial's values, `Fix192` draws, the sparse
+  c_i, the attempt fork's Keccak state, ring values such as E_0, E_1, h and
+  `L·s` held by value), and pages the OS swaps out or dumps;
+- the NTT-domain accumulators and partial outputs inside the Ajtai kernel
+  (`apply_columns`), the parallel partial sums inside the lift's claim
+  terms, and `attempt_seed`'s encoding scratch, which is shared with the
+  verifier and holds one coefficient of t_D;
+- buffers abandoned on a public-shape error before they are wrapped;
+- the caller's RNG, the residual opening the caller passes in, and the
+  message values `CommittedPads::decode` returns;
+- BlindFold's tail, which copies the pads and blinds into its witness rows
+  and draws its own random instance;
+- `check_witness`, the response statement's definition, which rebuilds z
+  and V from e.
+
+Public data and verifier state are not wiped. The one exception is the limb
+scratch of `apply_centered`, which the verifier also runs. The test
+`tests/whiteout_zeroize.rs` (feature `whiteout-prover`) uses a scanning
+global allocator to check that the chunk seeds, the box digits and the pad
+copies are freed zeroed. Each of the three fails on the code before this
+change, and a positive control in each test shows that the scan finds an
+unwiped buffer. No test covers stack values, and none covers the Σ
+attempt's buffers, since their contents cannot be planted from outside.
+
+Cost: `sigma_timing` at scale 2,960 (3.0M Gaussian coefficients, 16
+threads), before and after binaries interleaved four times at 10 proofs
+each, gives 0.261 and 0.266 s per proof (+1.6%). At scale 5,920, two
+interleaved pairs on a lightly loaded machine give 0.509/0.513 and
+0.516/0.516 s (+1%). The first version wiped through `Zeroizing<Vec<_>>`
+on one thread, in two passes with the second byte by byte, and cost about
++18% at scale 2,960 under heavy load. A single sequential pass still cost
++6%. `SecretVec` therefore wipes once, one write per element, in parallel.
+
 ## 3. Response statement and `ResponseProver`
 
 ### 3.1 The boundary

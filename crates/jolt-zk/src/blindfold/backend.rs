@@ -13,15 +13,17 @@ use super::{prove, BlindFoldProtocol, BlindFoldWitness};
 use crate::masking::{
     CommittedPads, CommittedPadsView, OperandRule, PadLayout, ResidualRelation, ZkBackend, ZkError,
 };
+use crate::secret::SecretVec;
 
 /// The curve back end over the vector commitment `VC`.
 pub struct BlindFold<VC>(PhantomData<VC>);
 
 /// The pad commitment's opening: one independent blind per pad row (a shared
 /// blind would make `C_i − C_j` an unblinded commitment to `p_i − p_j`), and
-/// the row commitments the instance reuses.
+/// the row commitments the instance reuses. The blinds are zeroed when it is
+/// dropped.
 pub struct BlindFoldPadOpening<F, Com> {
-    pub row_blinds: Vec<F>,
+    row_blinds: SecretVec<F>,
     pub row_commitments: Vec<Com>,
 }
 
@@ -87,7 +89,7 @@ where
             layout.clone(),
             pads,
             BlindFoldPadOpening {
-                row_blinds,
+                row_blinds: row_blinds.into(),
                 row_commitments,
             },
         )
@@ -140,7 +142,7 @@ where
                 row
             })
             .collect();
-        let mut blindings = opening.row_blinds.clone();
+        let mut blindings = opening.row_blinds.to_vec();
         for value in [witness.evaluation, witness.blind] {
             let mut row = vec![VC::Field::zero(); row_len];
             if let Some(first) = row.first_mut() {

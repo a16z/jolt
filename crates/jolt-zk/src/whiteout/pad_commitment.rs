@@ -17,6 +17,8 @@ use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::CyclotomicRing;
 use jolt_algebra::JoltField;
 use jolt_crypto::lattice::{MatrixShape, MatrixView, PreparedMatrix, CHALLENGE_RING_DIM};
+#[cfg(feature = "whiteout-prover")]
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[cfg(feature = "whiteout-prover")]
 use super::dit::with_dit;
@@ -27,6 +29,8 @@ use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
 use super::WhiteoutError;
 #[cfg(feature = "whiteout-prover")]
 use crate::masking::PadIndex;
+#[cfg(feature = "whiteout-prover")]
+use crate::secret::SecretVec;
 
 /// Radix of the hiding randomness digits.
 pub(crate) const RANDOMNESS_LOG_BASIS: u32 = 4;
@@ -34,7 +38,8 @@ pub(crate) const RANDOMNESS_LOG_BASIS: u32 = 4;
 #[cfg(feature = "whiteout-prover")]
 /// The prover's opening of a pad commitment: the committed digits, which are
 /// the pad segments of `s` in native order. Opaque and without `Debug`: it
-/// holds the pads, g and the hiding randomness.
+/// holds the pads, g and the hiding randomness, and is zeroed when dropped.
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct LatticePadOpening {
     pub(crate) digits: Vec<i64>,
 }
@@ -194,8 +199,10 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
                 "pads or randomness differ from the commitment's layout",
             ));
         }
-        let mut regular = vec![F::zero(); self.placement.regular_groups() * CHALLENGE_RING_DIM];
-        let mut operands = vec![F::zero(); self.placement.num_operands()];
+        // g is the group after the regular ones (`PadPlacement::g_ring`).
+        let g_start = self.placement.regular_groups() * CHALLENGE_RING_DIM;
+        let mut regular = SecretVec::from(vec![F::zero(); g_start + CHALLENGE_RING_DIM]);
+        let mut operands = SecretVec::from(vec![F::zero(); self.placement.num_operands()]);
         for (pad, &value) in pads.iter().enumerate() {
             let slot = match self.placement.place(PadIndex(pad))? {
                 PadPlace::Regular { group, position } => {
@@ -207,12 +214,17 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
                 "pad placed outside its group",
             ))? = value;
         }
-        // g is the group after the regular ones (`PadPlacement::g_ring`).
-        regular.extend_from_slice(g.coefficients());
+        regular
+            .get_mut(g_start..)
+            .ok_or(WhiteoutError::InvalidRelation("g outside its group"))?
+            .copy_from_slice(g.coefficients());
 
-        let mut rings = vec![[0i64; CHALLENGE_RING_DIM]; self.pad_rings + self.operand_rings];
+        let mut rings = Zeroizing::new(vec![
+            [0i64; CHALLENGE_RING_DIM];
+            self.pad_rings + self.operand_rings
+        ]);
         let pad_params = BalancedDecomposePow2Params::<F>::new(PAD_LEVELS, PAD_LOG_BASIS);
-        let mut planes = vec![0i8; PAD_LEVELS * CHALLENGE_RING_DIM];
+        let mut planes = Zeroizing::new(vec![0i8; PAD_LEVELS * CHALLENGE_RING_DIM]);
         for (group, values) in regular.chunks_exact(CHALLENGE_RING_DIM).enumerate() {
             balanced_decompose_coefficients_pow2_i8_into(values, &mut planes, &pad_params);
             for (level, plane) in planes.chunks_exact(CHALLENGE_RING_DIM).enumerate() {
@@ -226,7 +238,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         }
         let operand_params =
             BalancedDecomposePow2Params::<F>::new(OPERAND_LEVELS, OPERAND_LOG_BASIS);
-        let mut digits = vec![0i8; OPERAND_LEVELS];
+        let mut digits = Zeroizing::new(vec![0i8; OPERAND_LEVELS]);
         for (operand, value) in operands.iter().enumerate() {
             balanced_decompose_coefficients_pow2_i8_into(
                 std::slice::from_ref(value),
@@ -243,20 +255,28 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
             }
         }
 
-        let mut native = pack_native::<D>(&rings);
-        native.extend(randomness.iter().map(|&digit| i64::from(digit)));
-        let image = self.matrix.apply_centered(&native, self.digit_bound())?;
-        Ok((image, LatticePadOpening { digits: native }))
+        let packed_len = rings.len() * CHALLENGE_RING_DIM;
+        let mut opening = LatticePadOpening {
+            digits: vec![0i64; packed_len + randomness.len()],
+        };
+        let (packed, tail) = opening.digits.split_at_mut(packed_len);
+        pack_native::<D>(&rings, packed);
+        for (dst, &digit) in tail.iter_mut().zip(randomness) {
+            *dst = i64::from(digit);
+        }
+        let image = self
+            .matrix
+            .apply_centered(&opening.digits, self.digit_bound())?;
+        Ok((image, opening))
     }
 }
 
 /// Packs challenge-ring elements into native `R_D` elements by stride:
 /// native coefficient `m·i + k` of element `e` is coefficient `i` of ring
-/// `m·e + k`.
+/// `m·e + k`. `native` has `rings.len() · 64` coefficients.
 #[cfg(feature = "whiteout-prover")]
-fn pack_native<const D: usize>(rings: &[[i64; CHALLENGE_RING_DIM]]) -> Vec<i64> {
+fn pack_native<const D: usize>(rings: &[[i64; CHALLENGE_RING_DIM]], native: &mut [i64]) {
     let stride = D / CHALLENGE_RING_DIM;
-    let mut native = vec![0i64; rings.len() * CHALLENGE_RING_DIM];
     for (element, components) in native.chunks_exact_mut(D).zip(rings.chunks_exact(stride)) {
         for (k, ring) in components.iter().enumerate() {
             for (dst, &value) in element.iter_mut().skip(k).step_by(stride).zip(ring) {
@@ -264,5 +284,4 @@ fn pack_native<const D: usize>(rings: &[[i64; CHALLENGE_RING_DIM]]) -> Vec<i64> 
             }
         }
     }
-    native
 }

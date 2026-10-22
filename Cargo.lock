@@ -3245,6 +3245,7 @@ dependencies = [
  "spongefish",
  "subtle",
  "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]
@@ -3941,6 +3942,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]

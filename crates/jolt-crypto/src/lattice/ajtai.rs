@@ -20,6 +20,7 @@ use jolt_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, CanonicalEncoding, CrtNttParamSet,
     CyclotomicCrtNtt, CyclotomicRing, Field,
 };
+use zeroize::Zeroizing;
 
 use super::view::{MatrixShape, MatrixView};
 use crate::CryptoError;
@@ -204,7 +205,8 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         // `rest_j = ⌊(x + h_j)/2^{30j}⌋`, limb `j` is `rest_j`'s low 30 bits
         // sign-extended, and the top limb is `rest_j` itself. Each pass
         // recomputes its limb from `input` into one scratch buffer.
-        let mut limb = vec![0i64; input.len()];
+        // The limbs are as secret as the input (Whiteout's mask).
+        let mut limb = Zeroizing::new(vec![0i64; input.len()].into_boxed_slice());
         let mut output = vec![CyclotomicRing::zero(); self.shape.rows];
         let mut weight = F::one();
         let radix = F::from_u64(1 << LIMB_BITS);
@@ -345,8 +347,9 @@ pub fn commit<F: Field + CanonicalEncoding, const D: usize>(
         });
     }
     let params = level.digits.params::<F>();
-    let mut input = Vec::with_capacity(level.matrix.width * D);
-    let mut ring_digits = vec![0i8; level.digits.levels * D];
+    // `G⁻¹(message)` is as secret as the message (Whiteout's `V`).
+    let mut input = Zeroizing::new(Vec::with_capacity(level.matrix.width * D));
+    let mut ring_digits = Zeroizing::new(vec![0i8; level.digits.levels * D]);
     for ring in message {
         balanced_decompose_coefficients_pow2_i8_into(
             ring.coefficients(),
