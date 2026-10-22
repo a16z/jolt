@@ -32,28 +32,20 @@ pub fn commit_advice<PCS>(
 where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
-    let _commit = tracing::info_span!("akita_advice_commit").entered();
-    let preparation = tracing::info_span!("akita_advice_host_prepare").entered();
-    if advice_bytes.len() > max_advice_bytes {
-        return Err(commit_failed(
-            common::advice::AdviceWordsError::AdviceTooLong {
-                actual: advice_bytes.len(),
-                max: max_advice_bytes,
-            },
-        ));
-    }
-    let word_vars = common::advice::canonical_advice_word_capacity(max_advice_bytes)
-        .map_err(commit_failed)?
-        .ilog2() as usize;
+    let words = common::advice::canonical_advice_words(advice_bytes, max_advice_bytes)
+        .map_err(commit_failed)?;
+    let word_vars = words.len().ilog2() as usize;
     let plan = advice_packing_plan(kind, word_vars).map_err(commit_failed)?;
     let physical_vars = plan.packing().packed_num_vars();
     let (setup, _) =
         PCS::transparent_object_setup(setup_context, physical_vars, plan.layout_digest())
             .map_err(commit_failed)?;
-    drop(preparation);
-    let (commitment, hint) =
-        PCS::commit_packed_words(&setup, advice_bytes, max_advice_bytes, physical_vars)
-            .map_err(commit_failed)?;
+    let mut evaluations = vec![PCS::Field::default(); 1usize << physical_vars];
+    for (evaluation, word) in evaluations.iter_mut().zip(words) {
+        *evaluation = PCS::Field::from_u64(word);
+    }
+    let polynomial = Polynomial::new(evaluations);
+    let (commitment, hint) = PCS::commit(&polynomial, &setup).map_err(commit_failed)?;
     Ok(AdviceObject {
         plan,
         commitment,
@@ -154,44 +146,4 @@ where
         bytecode,
         program_image,
     })
-}
-
-#[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    reason = "oracle tests fail loudly on invalid commitments"
-)]
-mod packed_word_tests {
-    use super::*;
-    use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-
-    #[test]
-    fn advice_hook_matches_canonical_cpu_polynomial_and_preserves_roles() {
-        let artifacts =
-            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
-        for kind in [JoltAdviceKind::Trusted, JoltAdviceKind::Untrusted] {
-            for length in [32, 9, 8, 7, 1, 0] {
-                let bytes: Vec<u8> = (0..length).map(|i| (i * 37 + 255) as u8).collect();
-                let object = commit_advice::<AkitaScheme>(&artifacts, kind, &bytes, 32).unwrap();
-                let n = object.plan.packing().packed_num_vars();
-                let (setup, _) = AkitaScheme::transparent_object_setup(
-                    &artifacts,
-                    n,
-                    object.plan.layout_digest(),
-                )
-                .unwrap();
-                let words = common::advice::canonical_advice_words(&bytes, 32).unwrap();
-                let mut table = vec![AkitaField::default(); 1 << n];
-                for (value, word) in table.iter_mut().zip(words) {
-                    *value = AkitaField::from_u64(word);
-                }
-                let (expected, _) = AkitaScheme::commit(&Polynomial::new(table), &setup).unwrap();
-                assert_eq!(object.commitment, expected);
-            }
-        }
-        assert!(
-            commit_advice::<AkitaScheme>(&artifacts, JoltAdviceKind::Untrusted, &[0; 33], 32)
-                .is_err()
-        );
-    }
 }

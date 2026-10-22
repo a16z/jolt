@@ -3614,7 +3614,6 @@ dependencies = [
 name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
- "common",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
