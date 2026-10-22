@@ -288,13 +288,31 @@ pub struct MaskedVerifier<'a, 'p, H: Sponge> {
     cursor: &'a mut Cursor,
 }
 
-impl<'p, H: Sponge> MaskedVerifier<'_, 'p, H> {
-    /// The transcript underneath, for the public messages a protocol reads
-    /// outside the [`Channel`] seam: Akita's proof-of-work nonces and
-    /// fold-response counters (Akita `specs/whiteout-akita.md` §4.5). A
-    /// private value read here takes no pad.
-    pub fn transcript_mut(&mut self) -> &mut VerifierTranscript<'p, H> {
-        self.transcript
+/// The verifier's reads of the public proof-of-work messages a protocol
+/// interleaves with its masked messages (Akita's grinding nonces and
+/// fold-response counters, `specs/whiteout-akita.md` §4.5). They take no pad.
+impl<H: Sponge> MaskedVerifier<'_, '_, H> {
+    /// [`VerifierTranscript::check_grind`].
+    ///
+    /// # Errors
+    ///
+    /// As [`VerifierTranscript::check_grind`].
+    pub fn check_grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
+        self.transcript.check_grind(bits)
+    }
+
+    /// [`VerifierTranscript::receive_nonce`].
+    ///
+    /// # Errors
+    ///
+    /// As [`VerifierTranscript::receive_nonce`].
+    pub fn receive_nonce(&mut self, nonce_bits: u8) -> Result<u32, TranscriptError> {
+        self.transcript.receive_nonce(nonce_bits)
+    }
+
+    /// The unread proof bytes.
+    pub fn remaining(&self) -> usize {
+        self.transcript.remaining()
     }
 }
 
@@ -402,13 +420,29 @@ pub struct MaskedProver<'a, F, O, H: Sponge> {
     transcript: &'a mut ProverTranscript<H>,
 }
 
+/// The prover's public proof-of-work messages, interleaved with its masked
+/// ones (Akita's grinding nonces and fold-response counters,
+/// `specs/whiteout-akita.md` §4.5). A nonce is found from public transcript
+/// state alone, so it takes no pad; no other unmasked send is offered.
 impl<F, O, H: Sponge> MaskedProver<'_, F, O, H> {
-    /// The transcript underneath, for the public messages a protocol sends
-    /// outside the [`Channel`] seam: Akita's proof-of-work nonces and
-    /// fold-response counters (Akita `specs/whiteout-akita.md` §4.5). A
-    /// private value sent here goes out unmasked.
-    pub fn transcript_mut(&mut self) -> &mut ProverTranscript<H> {
-        self.transcript
+    /// [`ProverTranscript::grind`].
+    ///
+    /// # Errors
+    ///
+    /// As [`ProverTranscript::grind`].
+    pub fn grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
+        self.transcript.grind(bits)
+    }
+
+    /// [`ProverTranscript::send_nonce`]: a counter the verifier rechecks
+    /// against public challenges.
+    pub fn send_nonce(&mut self, nonce: u32) {
+        self.transcript.send_nonce(nonce);
+    }
+
+    /// The length of the argument string so far.
+    pub fn narg_len(&self) -> usize {
+        self.transcript.narg().len()
     }
 }
 
