@@ -11,6 +11,7 @@ use jolt_transcript::{
 };
 
 use super::ZkError;
+use crate::secret::SecretVec;
 
 /// The position of one pad (one base-field coordinate) in the schedule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -96,9 +97,10 @@ impl Cursor {
 
 /// Pads committed before the first challenge, with the back end's opening
 /// data `O`. Only a [`ZkBackend`](super::ZkBackend) builds one, so masking
-/// cannot run before the commitment exists.
+/// cannot run before the commitment exists. The pads are zeroed when it is
+/// dropped; `O` wipes its own secrets.
 pub struct CommittedPads<F, O> {
-    pads: Vec<F>,
+    pads: SecretVec<F>,
     cursor: Cursor,
     opening: O,
 }
@@ -111,7 +113,7 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
             });
         }
         Ok(Self {
-            pads,
+            pads: pads.into(),
             cursor: Cursor { layout, next: 0 },
             opening,
         })
