@@ -36,7 +36,7 @@ use super::compression::ImageCompression;
 use super::lift::{ChallengeRing, LiftedRelation, ProductAdjointWeights};
 use super::linear::BlockTarget;
 use super::params::RESPONSE_LOG_BASIS;
-use super::segments::balanced_range;
+use super::segments::{balanced_range, lift_ct};
 use super::sigma::SigmaSetup;
 use super::WhiteoutError;
 use crate::masking::ZkError;
@@ -147,7 +147,7 @@ impl PlaneLayout {
                 (0..self.planes).rev().try_fold(F::zero(), |value, plane| {
                     digits
                         .get(self.index(k, plane))
-                        .map(|&digit| value * radix + F::from_i64(i64::from(digit)))
+                        .map(|&digit| value * radix + lift_ct::<F>(i64::from(digit)))
                         .ok_or(WhiteoutError::InvalidRelation(
                             "digits shorter than their planes",
                         ))

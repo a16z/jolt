@@ -61,7 +61,9 @@ pub use response::{
 pub use ring::LiftedFunctional;
 #[cfg(feature = "whiteout-prover")]
 pub use sample::sample_zero_constant_term;
-pub use segments::{balanced_range, Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable};
+pub use segments::{
+    balanced_range, lift_ct, Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable,
+};
 #[cfg(feature = "whiteout-prover")]
 pub use sigma::prove_sigma;
 pub use sigma::{verify_sigma, SigmaSetup};
