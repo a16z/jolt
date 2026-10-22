@@ -318,8 +318,14 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
     }
 
     /// The layout of `e`: the response, `V` and `θ`, then the compression
-    /// witness of each compressed target of `N` and of `t_D`.
-    pub(crate) fn response_layout(
+    /// witness of each compressed target of `N` and of `t_D`. A function of
+    /// the public setup, so a response prover's setup can be sized for `e`
+    /// before any proof.
+    ///
+    /// # Errors
+    ///
+    /// The compression's witness-length errors.
+    pub fn response_layout(
         &self,
         compression: &dyn ImageCompression<F>,
     ) -> Result<ResponseLayout, WhiteoutError> {
