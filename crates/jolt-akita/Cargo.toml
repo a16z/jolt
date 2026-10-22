@@ -22,6 +22,9 @@ keccak-inline = ["akita-pcs/keccak-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
 profiling = ["parallel"]
+# L3 recursion experiment (default off): Akita evaluates the compression
+# relation weights by factor (same field values; see akita-types).
+l3-compression-weights = ["akita-types/l3-compression-weights"]
 
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped

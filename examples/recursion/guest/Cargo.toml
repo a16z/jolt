@@ -24,6 +24,8 @@ hash-inlines = [
   "jolt-akita?/blake2-inline",
   "jolt-akita?/keccak-inline",
 ]
+# L3 recursion experiment: factorized compression-weight evaluation.
+l3-compression-weights = ["akita", "jolt-akita/l3-compression-weights"]
 
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
