@@ -34,8 +34,9 @@ pub struct BlindFoldResidualWitness<F> {
 }
 
 impl<VC> BlindFold<VC> {
-    /// An R1CS constraint's A side is any linear combination. Inherent, so
-    /// callers name it without the back end's commitment bounds.
+    /// The masking lowering's operand rule for BlindFold: an R1CS
+    /// constraint's A side is any linear combination. The lattice back end
+    /// keeps the default `MaskedSlot` (W6).
     pub const OPERANDS: OperandRule = OperandRule::Affine;
 }
 
@@ -57,8 +58,6 @@ where
     VC: VectorCommitment,
     VC::Output: Copy + HomomorphicCommitment<VC::Field> + CanonicalDecode,
 {
-    const OPERANDS: OperandRule = Self::OPERANDS;
-
     type Setup = VC::Setup;
     type PadCommitment = Vec<VC::Output>;
     type PadOpening = BlindFoldPadOpening<VC::Field, VC::Output>;

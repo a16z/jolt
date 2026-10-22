@@ -172,13 +172,21 @@ pub struct ProductPair<F> {
     pub y: AffineRow<F>,
 }
 
-/// `Σ_k x_k · y_k = z`. Every row has at least one pair; a back end rejects
-/// one without. With one pair it is the paper's `x · y = z`; several pairs
+/// `Σ_k x_k · y_k = z` over the pairs `first` and `rest`, so a row has at
+/// least one pair. With one pair it is the paper's `x · y = z`; several pairs
 /// land several products on one claim, such as a stage's running claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProductRow<F> {
-    pub pairs: Vec<ProductPair<F>>,
+    pub first: ProductPair<F>,
+    pub rest: Vec<ProductPair<F>>,
     pub z: AffineRow<F>,
+}
+
+impl<F> ProductRow<F> {
+    /// Every pair, `first` then `rest`.
+    pub fn pairs(&self) -> impl Iterator<Item = &ProductPair<F>> {
+        std::iter::once(&self.first).chain(&self.rest)
+    }
 }
 
 impl<F: Field> ProductRow<F> {
@@ -188,8 +196,7 @@ impl<F: Field> ProductRow<F> {
     ///
     /// As [`ResidualVar::value`].
     pub fn evaluate(&self, pads: &[F], witness: &[F]) -> Result<F, ZkError> {
-        self.pairs
-            .iter()
+        self.pairs()
             .try_fold(-self.z.evaluate(pads, witness)?, |sum, pair| {
                 Ok(
                     sum + pair.x.form().evaluate(pads, witness)?

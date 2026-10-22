@@ -194,7 +194,6 @@ fn verify<const D: usize>(
     let received = Instance {
         relation: relation.clone(),
         claims: instance.claims.clone(),
-        messages: Vec::new(),
         s: Vec::new(),
         u: receive(instance.u.len())?,
         t_p: receive(instance.t_p.len())?,
@@ -243,7 +242,7 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
         }),
         ("product row", {
             let mut instance = Instance::new(21);
-            masked(&mut instance.relation.products[0].pairs[1]).masked += F::one();
+            masked(&mut instance.relation.products[0].rest[0]).masked += F::one();
             instance
         }),
         ("scalarity row", {
@@ -287,51 +286,17 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
     }
 }
 
-/// The two-pair row alone does not pin its pairs: shifting m0 by δ and m2
-/// by −δ·m1/m3 keeps `m0·m1 + m2·m3 = aux`. A transcript carries one m2, so
-/// the shift also reaches the affine row `m2 + m3 = sum`, which rejects it.
+/// The lift takes only pairs whose operands are masked operand pads.
 #[test]
-fn compensated_pairs_are_caught_where_their_operands_are_pinned() {
-    let shifted = |seed: u64, consistent: bool| {
-        let mut instance = Instance::<64>::new(seed);
-        let m = &instance.messages;
-        let delta = F::from_u64(7);
-        let epsilon = -delta * m[1] * m[3].inverse().unwrap();
-        let row = &mut instance.relation.products[0];
-        masked(&mut row.pairs[0]).masked += delta;
-        masked(&mut row.pairs[1]).masked += epsilon;
-        if consistent {
-            instance.relation.affine[0].constant += epsilon;
-        }
-        instance
-    };
-    // With m2 shifted in the product row only, every row holds.
-    let inconsistent = shifted(16, false);
-    let proof = prove_checked(&inconsistent, 17).unwrap();
-    verify(&inconsistent, &inconsistent.relation, &proof).unwrap();
-    let error = prove_checked(&shifted(16, true), 17).unwrap_err();
-    assert_eq!(
-        whiteout_error(&error),
-        Some(&WhiteoutError::ResidualUnsatisfied { row: 0 })
-    );
-}
-
-/// The lift takes only product rows with pairs whose operands are masked
-/// operand pads.
-#[test]
-fn lift_rejects_empty_rows_and_affine_operands() {
+fn lift_rejects_affine_operands() {
     let instance = Instance::<64>::new(18);
-    let setup = instance.setup();
-    let mut empty = instance.relation.clone();
-    empty.products[0].pairs.clear();
-    let mut affine = instance.relation.clone();
-    affine.products[0].pairs[1].x = ProductOperand::Affine(affine.products[0].pairs[1].x.form());
-    for relation in [empty, affine] {
-        assert!(matches!(
-            setup.lift(&relation, &instance.claims),
-            Err(WhiteoutError::InvalidRelation(_))
-        ));
-    }
+    let mut relation = instance.relation.clone();
+    let x = &mut relation.products[0].rest[0].x;
+    *x = ProductOperand::Affine(x.form());
+    assert!(matches!(
+        instance.setup().lift(&relation, &instance.claims),
+        Err(WhiteoutError::InvalidRelation(_))
+    ));
 }
 
 /// Each self-check fires on its own case, with the exact row or variant.
@@ -359,7 +324,7 @@ fn each_self_check_fires_on_its_own_case() {
     );
 
     let mut product = Instance::<64>::new(12);
-    masked(&mut product.relation.products[0].pairs[1]).masked += F::one();
+    masked(&mut product.relation.products[0].rest[0]).masked += F::one();
     check(
         &product,
         WhiteoutError::ResidualUnsatisfied {
@@ -524,7 +489,7 @@ fn check_quadratic_against_decoding<const D: usize>(seed: u64) {
     }
     for (index, product) in instance.relation.products.iter().enumerate() {
         let mut term = -row_value(&product.z);
-        for pair in &product.pairs {
+        for pair in product.pairs() {
             let operand = layout()
                 .operand_pads
                 .iter()

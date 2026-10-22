@@ -506,7 +506,7 @@ fn lowering_domains_agree_on_random_formulas() {
         let pinned: Vec<PadIndex> = relation
             .products
             .iter()
-            .flat_map(|row| row.pairs.iter().map(|pair| pair.x.masked().unwrap().pad))
+            .flat_map(|row| row.pairs().map(|pair| pair.x.masked().unwrap().pad))
             .collect();
         assert!(pinned
             .iter()
@@ -570,7 +570,7 @@ fn operand_rules_decide_the_defining_slot() {
         .unwrap();
         rows.finish().unwrap();
         assert_eq!(relation.first_violation(&pads, &[]).unwrap(), None);
-        let operand = &relation.products.last().unwrap().pairs[0].x;
+        let operand = &relation.products.last().unwrap().first.x;
         assert_eq!(
             matches!(operand, ProductOperand::Affine(_)),
             rule == OperandRule::Affine
@@ -579,7 +579,8 @@ fn operand_rules_decide_the_defining_slot() {
             let mut relation = ResidualRelation::new(layout.clone(), 0);
             assert!(matches!(
                 RowsDomain::new(&mut relation, &[]).products_into(
-                    vec![(x.clone(), AffineRow::constant(fr(1)))],
+                    (x.clone(), AffineRow::constant(fr(1))),
+                    Vec::new(),
                     AffineRow::constant(fr(0))
                 ),
                 Err(ZkError::InvalidRelation { .. })
@@ -588,8 +589,7 @@ fn operand_rules_decide_the_defining_slot() {
     }
 }
 
-/// A multi-pair row checks the sum of its pairs, and every lowering domain
-/// rejects a row with no pair.
+/// A multi-pair row checks the sum of its pairs.
 #[test]
 fn product_rows_check_the_sum_of_their_pairs() {
     let pads = [fr(11), fr(13), fr(17), fr(19)];
@@ -599,27 +599,14 @@ fn product_rows_check_the_sum_of_their_pairs() {
         y: slot(y, yp),
     };
     let row = ProductRow {
-        pairs: vec![pair(2, 0, 3, 1), pair(5, 2, 7, 3)],
+        first: pair(2, 0, 3, 1),
+        rest: vec![pair(5, 2, 7, 3)],
         z: AffineRow::constant(fr(2 * 3 + 5 * 7)),
     };
     assert_eq!(row.evaluate(&pads, &[]).unwrap(), fr(0));
     let mut tampered = row.clone();
-    tampered.pairs[1].y = slot(8, 3);
+    tampered.rest[0].y = slot(8, 3);
     assert_eq!(tampered.evaluate(&pads, &[]).unwrap(), fr(5));
-
-    let layout = PadLayout::new(4, 0).unwrap();
-    let mut relation = ResidualRelation::new(layout, 0);
-    let target = AffineRow::constant(fr(0));
-    assert!(RowsDomain::new(&mut relation, &[])
-        .products_into(Vec::new(), target)
-        .is_err());
-    assert!(ValuesDomain::<Fr>::default()
-        .products_into(Vec::new(), fr(0))
-        .is_err());
-    assert!(
-        ClaimDomain::<Fr>::products_into(&mut OperandShapeDomain::new(4), Vec::new(), None)
-            .is_err()
-    );
 }
 
 #[test]

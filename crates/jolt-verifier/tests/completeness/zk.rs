@@ -78,7 +78,7 @@ fn zk_muldiv_masked_shape_matches_golden() {
     let pairs: Vec<usize> = relation
         .products
         .iter()
-        .map(|row| row.pairs.len())
+        .map(|row| row.pairs().count())
         .collect();
     assert_eq!(pairs.iter().sum::<usize>(), 92);
     // Stages 2–6 land their output products on one row each.
@@ -126,7 +126,7 @@ fn zk_muldiv_every_masked_value_is_constrained() {
         add_row(row);
     }
     for row in &relation.products {
-        for pair in &row.pairs {
+        for pair in row.pairs() {
             add_row(&pair.x.form());
             add_row(&pair.y);
         }

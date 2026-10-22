@@ -309,7 +309,7 @@ impl<F: JoltField> LiftedRelation<F> {
         let mut products = Vec::new();
         for (index, row) in relation.products.iter().enumerate() {
             let z = context.weights(&row.z)?;
-            for (k, pair) in row.pairs.iter().enumerate() {
+            for (k, pair) in row.pairs().enumerate() {
                 let not_an_operand =
                     WhiteoutError::InvalidRelation("a product's operand is not an operand pad");
                 let x = pair.x.masked().ok_or(not_an_operand.clone())?;

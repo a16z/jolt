@@ -148,7 +148,7 @@ fn residual(
     .unwrap();
     output.check_equals(running, &mut rows).unwrap();
     rows.finish().unwrap();
-    let pairs = &relation.products[0].pairs;
+    let pairs: Vec<_> = relation.products[0].pairs().collect();
     assert_eq!(pairs.len(), 5);
     assert!(matches!(pairs[2].x, ProductOperand::Affine(_)));
     assert!(view.layout().auxiliary.is_empty());

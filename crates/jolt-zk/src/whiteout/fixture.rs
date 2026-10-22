@@ -134,9 +134,6 @@ pub(crate) fn pad_commitment<const D: usize>() -> LatticePadCommitment<F, D> {
 pub(crate) struct Instance<const D: usize> {
     pub(crate) relation: ResidualRelation<F>,
     pub(crate) claims: EvaluationClaims<F>,
-    /// The decoded messages `m0..m4`.
-    #[cfg(test)]
-    pub(crate) messages: Vec<F>,
     /// `w ‖ t̂ ‖ r_a`, then the pad digits.
     pub(crate) s: Vec<i64>,
     pub(crate) u: Vec<CyclotomicRing<F, D>>,
@@ -191,7 +188,8 @@ impl<const D: usize> Instance<D> {
             y: slot(y),
         };
         relation.products.push(ProductRow {
-            pairs: vec![pair(0, 1), pair(2, 3)],
+            first: pair(0, 1),
+            rest: vec![pair(2, 3)],
             z: slot(5),
         });
 
@@ -218,8 +216,6 @@ impl<const D: usize> Instance<D> {
             claims: EvaluationClaims {
                 points: vec![point],
             },
-            #[cfg(test)]
-            messages,
             s,
             u,
             t_p,

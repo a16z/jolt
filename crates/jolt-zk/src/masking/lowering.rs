@@ -43,10 +43,6 @@ const NOT_A_MASKED_SLOT: ZkError = ZkError::InvalidRelation {
     reason: "product operand is not a single masked slot",
 };
 
-const EMPTY_PRODUCT_ROW: ZkError = ZkError::InvalidRelation {
-    reason: "a product row has no pair",
-};
-
 /// The numbering of auxiliary slots: slot `k` of the block is pad
 /// `start + k`. [`RowsDomain`] and [`OperandShapeDomain`] both take slots
 /// through it, so the shape routine names the pads the rows use.
@@ -168,14 +164,12 @@ impl<F> ClaimDomain<F> for OperandShapeDomain {
 
     fn products_into(
         &mut self,
-        pairs: Vec<(Option<PadIndex>, Option<PadIndex>)>,
+        first: (Option<PadIndex>, Option<PadIndex>),
+        rest: Vec<(Option<PadIndex>, Option<PadIndex>)>,
         _target: Option<PadIndex>,
     ) -> Result<(), ZkError> {
-        if pairs.is_empty() {
-            return Err(EMPTY_PRODUCT_ROW);
-        }
-        pairs
-            .into_iter()
+        std::iter::once(first)
+            .chain(rest)
             .try_for_each(|(x, _)| self.record_operand(x))
     }
 
@@ -235,11 +229,13 @@ impl<F: Field> ClaimDomain<F> for ValuesDomain<F> {
         Ok(z)
     }
 
-    fn products_into(&mut self, pairs: Vec<(F, F)>, target: F) -> Result<(), ZkError> {
-        if pairs.is_empty() {
-            return Err(EMPTY_PRODUCT_ROW);
-        }
-        Ok(ClearDomain.products_into(pairs, target)?)
+    fn products_into(
+        &mut self,
+        first: (F, F),
+        rest: Vec<(F, F)>,
+        target: F,
+    ) -> Result<(), ZkError> {
+        Ok(ClearDomain.products_into(first, rest, target)?)
     }
 
     fn check_zero(&mut self, value: F) -> Result<(), ZkError> {
@@ -353,22 +349,23 @@ impl<F: Field> ClaimDomain<F> for RowsDomain<'_, F> {
 
     fn products_into(
         &mut self,
-        pairs: Vec<(AffineRow<F>, AffineRow<F>)>,
+        first: (AffineRow<F>, AffineRow<F>),
+        rest: Vec<(AffineRow<F>, AffineRow<F>)>,
         target: AffineRow<F>,
     ) -> Result<(), ZkError> {
-        if pairs.is_empty() {
-            return Err(EMPTY_PRODUCT_ROW);
-        }
-        let pairs = pairs
-            .into_iter()
-            .map(|(x, y)| {
-                Ok(ProductPair {
-                    x: self.operand(x)?,
-                    y,
-                })
+        let pair = |(x, y)| {
+            Ok::<_, ZkError>(ProductPair {
+                x: self.operand(x)?,
+                y,
             })
-            .collect::<Result<Vec<_>, ZkError>>()?;
-        self.relation.products.push(ProductRow { pairs, z: target });
+        };
+        let first = pair(first)?;
+        let rest = rest.into_iter().map(pair).collect::<Result<Vec<_>, _>>()?;
+        self.relation.products.push(ProductRow {
+            first,
+            rest,
+            z: target,
+        });
         Ok(())
     }
 
@@ -483,10 +480,10 @@ impl<V: Clone> ProductSum<V> {
         D: ClaimDomain<F, Value = V>,
     {
         let rest = domain.add(&target, &domain.scale(&self.affine, -F::one()));
-        if self.pairs.is_empty() {
-            domain.check_zero(rest)
-        } else {
-            domain.products_into(self.pairs, rest)
+        let mut pairs = self.pairs.into_iter();
+        match pairs.next() {
+            None => domain.check_zero(rest),
+            Some(first) => domain.products_into(first, pairs.collect(), rest),
         }
     }
 }

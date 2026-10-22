@@ -81,8 +81,8 @@ pub fn pad_row_count(num_pads: usize, row_len: usize) -> usize {
 
 /// The pairs of `row` that take a witness-only intermediate: all but the
 /// last.
-fn intermediates<F>(row: &ProductRow<F>) -> &[ProductPair<F>] {
-    row.pairs.split_last().map_or(&[], |(_, rest)| rest)
+fn intermediates<F>(row: &ProductRow<F>) -> impl Iterator<Item = &ProductPair<F>> {
+    row.pairs().take(row.rest.len())
 }
 
 /// The intermediates of `relation`'s multi-pair product rows on an
@@ -142,7 +142,7 @@ impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
         let num_intermediates = relation
             .products
             .iter()
-            .map(|row| intermediates(row).len())
+            .map(|row| row.rest.len())
             .try_fold(0usize, |sum, count| sum.checked_add(count))
             .ok_or(RelaxedError::DimensionOverflow {
                 name: "product intermediates",
@@ -178,13 +178,7 @@ impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
                     c.push(LinearCombination::zero().into_sparse_row());
                 }
                 Row::Product(row) => {
-                    let Some(last) = row.pairs.last() else {
-                        return Err(RelaxedError::LengthMismatch {
-                            name: "product row pairs",
-                            expected: 1,
-                            actual: 0,
-                        });
-                    };
+                    let last = row.rest.last().unwrap_or(&row.first);
                     let mut z = variables.lower(&row.z)?;
                     for pair in intermediates(row) {
                         let w =
