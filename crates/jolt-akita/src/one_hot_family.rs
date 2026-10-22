@@ -1,8 +1,7 @@
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier};
 use akita_types::AkitaVerifierSetup;
 
-use crate::adapters::AkitaScheduleArtifacts;
 use crate::configs::{AkitaChunkProfile, JoltOneHotK16};
 use crate::family_contract::OneHotFamilyContract;
 pub use crate::family_contract::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
@@ -11,24 +10,24 @@ macro_rules! one_hot_families {
     ($callback:ident { $($args:tt)* }) => {
         $callback! {
             $($args)*;
-            (K16Single, $crate::one_hot_family::AKITA_ONE_HOT_K16, Single, $crate::configs::JoltOneHotK16, $crate::configs::JoltOneHotK16Direct, one_hot_k16),
-            (K256Single, $crate::one_hot_family::AKITA_ONE_HOT_K256, Single, $crate::configs::JoltOneHotK256, $crate::configs::JoltOneHotK256Direct, one_hot_k256),
-            (K16W2R2, $crate::one_hot_family::AKITA_ONE_HOT_K16, Two, $crate::configs::JoltOneHotK16W2R2, $crate::configs::JoltOneHotK16W2R2Direct, one_hot_k16_w2r2),
-            (K256W2R2, $crate::one_hot_family::AKITA_ONE_HOT_K256, Two, $crate::configs::JoltOneHotK256W2R2, $crate::configs::JoltOneHotK256W2R2Direct, one_hot_k256_w2r2),
-            (K16W4R2, $crate::one_hot_family::AKITA_ONE_HOT_K16, Four, $crate::configs::JoltOneHotK16W4R2, $crate::configs::JoltOneHotK16W4R2Direct, one_hot_k16_w4r2),
-            (K256W4R2, $crate::one_hot_family::AKITA_ONE_HOT_K256, Four, $crate::configs::JoltOneHotK256W4R2, $crate::configs::JoltOneHotK256W4R2Direct, one_hot_k256_w4r2),
-            (K16W8R2, $crate::one_hot_family::AKITA_ONE_HOT_K16, Eight, $crate::configs::JoltOneHotK16W8R2, $crate::configs::JoltOneHotK16W8R2Direct, one_hot_k16_w8r2),
-            (K256W8R2, $crate::one_hot_family::AKITA_ONE_HOT_K256, Eight, $crate::configs::JoltOneHotK256W8R2, $crate::configs::JoltOneHotK256W8R2Direct, one_hot_k256_w8r2),
+            (K16, $crate::one_hot_family::AKITA_ONE_HOT_K16, $crate::configs::JoltOneHotK16),
+            (K256, $crate::one_hot_family::AKITA_ONE_HOT_K256, $crate::configs::JoltOneHotK256),
         }
     };
 }
 pub(crate) use one_hot_families;
 
 macro_rules! define_family_types {
-    (; $(($variant:ident, $k:path, $profile:ident, $cfg:ty, $direct:ty, $artifact:ident)),+ $(,)?) => {
+    (; $(($variant:ident, $k:path, $cfg:ty)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum OneHotFamily {
+        pub(crate) enum OneHotFamilyKind {
             $($variant),+
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(crate) struct OneHotFamily {
+            pub(crate) kind: OneHotFamilyKind,
+            profile: AkitaChunkProfile,
         }
 
         pub(crate) enum AkitaOneHotBackendScheme {
@@ -40,14 +39,13 @@ macro_rules! define_family_types {
         }
 
         impl OneHotFamily {
-            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant),+];
-
             pub(crate) fn from_parts(
                 k: usize,
                 profile: AkitaChunkProfile,
             ) -> Result<Self, AkitaError> {
-                match (k, profile) {
-                    $(($k, AkitaChunkProfile::$profile) => Ok(Self::$variant)),+,
+                profile.witness_cfg().validate()?;
+                match k {
+                    $($k => Ok(Self { kind: OneHotFamilyKind::$variant, profile })),+,
                     _ => Err(AkitaError::InvalidSetup(format!(
                         "unsupported Akita one-hot K={k} with profile {profile:?}"
                     ))),
@@ -55,15 +53,13 @@ macro_rules! define_family_types {
             }
 
             pub(crate) const fn k(self) -> usize {
-                match self {
-                    $(Self::$variant => $k),+
+                match self.kind {
+                    $(OneHotFamilyKind::$variant => $k),+
                 }
             }
 
             pub(crate) const fn profile(self) -> AkitaChunkProfile {
-                match self {
-                    $(Self::$variant => AkitaChunkProfile::$profile),+
-                }
+                self.profile
             }
 
             pub(crate) fn num_vars_range(self, num_polys: usize) -> (usize, usize) {
@@ -90,17 +86,7 @@ macro_rules! define_family_types {
                 Ok(())
             }
 
-            pub(crate) fn family_name(self) -> &'static str {
-                match self {
-                    $(Self::$variant => <$cfg>::schedule_family_name()),+
-                }
-            }
 
-            pub(crate) fn artifact(self, artifacts: &AkitaScheduleArtifacts) -> &[u8] {
-                match self {
-                    $(Self::$variant => &artifacts.$artifact),+
-                }
-            }
         }
 
         impl AkitaOneHotBackendScheme {
@@ -108,10 +94,11 @@ macro_rules! define_family_types {
                 family: OneHotFamily,
                 bytes: &[u8],
             ) -> Result<Self, AkitaError> {
-                match family {
-                    $(OneHotFamily::$variant =>
-                        AkitaCommitmentScheme::<$cfg>::from_schedule_artifact(bytes)
-                            .map(Self::$variant)),+
+                match family.kind {
+                    $(OneHotFamilyKind::$variant =>
+                        TrustedScheduleCatalog::<$cfg>::from_artifact_bytes(
+                            bytes, family.profile().witness_cfg(),
+                        ).map(AkitaCommitmentScheme::new).map(Self::$variant)),+
                 }
             }
 
@@ -130,39 +117,29 @@ macro_rules! define_family_types {
 one_hot_families!(define_family_types {});
 
 macro_rules! dispatch_family {
-    ($family:expr, |$cfg:ident| $body:expr; $(($variant:ident, $k:path, $profile:ident, $family_cfg:ty, $direct:ty, $artifact:ident)),+ $(,)?) => {{
-        match $family {
+    ($family:expr, |$cfg:ident| $body:expr; $(($variant:ident, $k:path, $family_cfg:ty)),+ $(,)?) => {{
+        match $family.kind {
             $(
-                $crate::one_hot_family::OneHotFamily::$variant => {
+                $crate::one_hot_family::OneHotFamilyKind::$variant => {
                     type $cfg = $family_cfg;
                     $body
                 }
             ),+
         }
     }};
-    ($family:expr, |$cfg:ident, $direct_cfg:ident| $body:expr; $(($variant:ident, $k:path, $profile:ident, $family_cfg:ty, $direct:ty, $artifact:ident)),+ $(,)?) => {{
-        match $family {
-            $(
-                $crate::one_hot_family::OneHotFamily::$variant => {
-                    type $cfg = $family_cfg;
-                    type $direct_cfg = $direct;
-                    $body
-                }
-            ),+
-        }
-    }};
+
 }
 pub(crate) use dispatch_family;
 
 macro_rules! dispatch_scheme {
-    ($scheme:expr, |$typed:ident| $body:expr; $(($variant:ident, $k:path, $profile:ident, $family_cfg:ty, $direct:ty, $artifact:ident)),+ $(,)?) => {{
+    ($scheme:expr, |$typed:ident| $body:expr; $(($variant:ident, $k:path, $family_cfg:ty)),+ $(,)?) => {{
         match $scheme {
             $(
                 $crate::one_hot_family::AkitaOneHotBackendScheme::$variant($typed) => $body
             ),+
         }
     }};
-    ($scheme:expr, |$typed:ident, $cfg:ident| $body:expr; $(($variant:ident, $k:path, $profile:ident, $family_cfg:ty, $direct:ty, $artifact:ident)),+ $(,)?) => {{
+    ($scheme:expr, |$typed:ident, $cfg:ident| $body:expr; $(($variant:ident, $k:path, $family_cfg:ty)),+ $(,)?) => {{
         match $scheme {
             $(
                 $crate::one_hot_family::AkitaOneHotBackendScheme::$variant($typed) => {
@@ -176,7 +153,7 @@ macro_rules! dispatch_scheme {
 pub(crate) use dispatch_scheme;
 
 macro_rules! dispatch_verifier {
-    ($verifier:expr, |$typed:ident| $body:expr; $(($variant:ident, $k:path, $profile:ident, $family_cfg:ty, $direct:ty, $artifact:ident)),+ $(,)?) => {{
+    ($verifier:expr, |$typed:ident| $body:expr; $(($variant:ident, $k:path, $family_cfg:ty)),+ $(,)?) => {{
         match $verifier {
             $(
                 $crate::one_hot_family::AkitaOneHotBackendVerifier::$variant($typed) => $body
@@ -190,10 +167,6 @@ macro_rules! with_one_hot_family {
     ($family:expr, |$cfg:ident| $body:expr) => {{
         use $crate::one_hot_family::dispatch_family;
         $crate::one_hot_family::one_hot_families!(dispatch_family { $family, |$cfg| $body })
-    }};
-    ($family:expr, |$cfg:ident, $direct_cfg:ident| $body:expr) => {{
-        use $crate::one_hot_family::dispatch_family;
-        $crate::one_hot_family::one_hot_families!(dispatch_family { $family, |$cfg, $direct_cfg| $body })
     }};
     (scheme $scheme:expr, |$typed:ident| $body:expr) => {{
         use $crate::one_hot_family::dispatch_scheme;
@@ -209,19 +182,3 @@ macro_rules! with_one_hot_family {
     }};
 }
 pub(crate) use with_one_hot_family;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn family_parts_round_trip() {
-        for family in OneHotFamily::ALL.iter().copied() {
-            assert_eq!(
-                OneHotFamily::from_parts(family.k(), family.profile()),
-                Ok(family)
-            );
-            assert!(!family.family_name().is_empty());
-        }
-    }
-}

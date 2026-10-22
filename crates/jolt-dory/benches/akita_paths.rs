@@ -45,8 +45,8 @@ use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
     configs::{JoltDenseBounded as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
-    jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
+    jolt_to_akita_evals, reverse_point, AkitaChunkProfile, AkitaField, AkitaNativeBatching,
+    AkitaProverHint, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
 use jolt_field::{Fr, JoltField, Ring, Zero};
@@ -319,7 +319,8 @@ fn akita_case(num_vars: usize) -> AkitaCase {
     let dense_eval = dense_poly.evaluate(&point);
     let sparse_eval =
         <OneHotPolynomial as MultilinearPoly<AkitaField>>::evaluate(&sparse_one_hot, &point);
-    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let artifacts =
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let (setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
         num_vars,
         NUM_POLYS,
@@ -328,14 +329,18 @@ fn akita_case(num_vars: usize) -> AkitaCase {
     ))
     .unwrap();
     let dense_scheme = BackendScheme::new(
-        TrustedScheduleCatalog::new(artifacts.dense_catalog().expect("dense catalog"))
-            .expect("dense scheme"),
+        TrustedScheduleCatalog::new(
+            artifacts.dense_catalog().expect("dense catalog"),
+            artifacts.dense_profile().witness_cfg(),
+        )
+        .expect("dense scheme"),
     );
     let one_hot_scheme = OneHotBackendScheme::new(
         TrustedScheduleCatalog::new(
             artifacts
                 .one_hot_catalog(AKITA_ONE_HOT_K256)
                 .expect("one-hot catalog"),
+            AkitaChunkProfile::default().witness_cfg(),
         )
         .expect("one-hot scheme"),
     );
@@ -425,7 +430,8 @@ fn akita_batch_case(logical_num_vars: usize) -> AkitaBatchCase {
     assert_eq!(packing.packed_num_vars(), physical_num_vars);
     let packed_claims =
         PrefixPackedClaims::new(LAYOUT_DIGEST, logical_point.clone(), evaluations.clone());
-    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let artifacts =
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let (native_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
         logical_num_vars,
         BATCH_POLYS,

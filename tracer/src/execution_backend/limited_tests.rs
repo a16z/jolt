@@ -692,21 +692,26 @@ fn uncounted_cycles_fail_the_run() {
 #[test]
 fn planned_windows_hold_their_batch_and_one_tick() {
     let bytecode = BytecodePCMapper::try_new(&[]).unwrap();
+    // A CPU at its PC stall, whose next tick emits no row.
     let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+    cpu.get_mut_mmu().init_memory(64);
+    cpu.get_mut_mmu().store_word(DRAM_BASE, STALL).unwrap();
+    cpu.update_pc(DRAM_BASE);
+    cpu.tick(None);
     let mut trace = storage(usize::MAX, vec![Cycle::NoOp; 100], Vec::new());
     trace.start_batches(&bytecode, 0, 1 << 18, 0).unwrap();
     assert_eq!((trace.rows.len(), trace.rows.capacity()), (100, 1 << 18));
     assert_eq!(trace.cycles.capacity(), MAX_EXPANDED_ROWS_PER_SOURCE);
     let held = heap_bytes(&trace.rows) + heap_bytes(&trace.chunks);
     trace.limit = held + ((size_of::<Cycle>() + FIELD_EVENT_BYTES) << 17);
-    let batch = trace.plan_batch(&mut cpu, 0).unwrap();
+    let batch = trace.plan_batch(&mut cpu).unwrap();
     assert!(1 < batch && batch < SERIAL_BATCH_ROWS, "{batch}");
     assert_eq!(trace.cycles.capacity(), pending_window(batch).unwrap());
     assert!(trace.rows.len() + trace.cycles.capacity() <= trace.rows.capacity());
     let window = MAX_EXPANDED_ROWS_PER_SOURCE * size_of::<Cycle>();
     trace.limit = held + window - 1;
     assert_eq!(
-        rejection(trace.plan_batch(&mut cpu, 0)),
+        rejection(trace.plan_batch(&mut cpu)),
         Some((TraceAllocationPhase::CycleBuffer, held + window))
     );
 }

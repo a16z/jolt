@@ -196,7 +196,6 @@ impl TracerBackend {
         let resident = setup
             .reserve_device(&mut emulator)?
             .saturating_add(bytecode.heap_bytes());
-        let mut prev_pc = 0;
         let accumulated = match batched {
             Some(batched) => {
                 let cpu = emulator.get_mut_cpu();
@@ -214,7 +213,7 @@ impl TracerBackend {
         let (mut trace, mut batch_rows, planned) = match accumulated {
             Some((mut trace, peeked)) => {
                 let mut events = 0;
-                match trace.accumulate(&mut emulator, &mut prev_pc, &mut events, peeked)? {
+                match trace.accumulate(&mut emulator, &mut events, peeked)? {
                     Some(next) => {
                         let phase = TraceAllocationPhase::RowGrowth;
                         let anchor = trace
@@ -239,7 +238,7 @@ impl TracerBackend {
         cpu.set_advice_write_allowance(trace.advice_write_allowance(0));
         while accumulated_events.is_none() {
             let pending = trace.cycles.len();
-            crate::step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace.cycles));
+            crate::step_emulator(&mut emulator, Some(&mut trace.cycles));
             if let Some(refusal) = emulator.get_cpu().advice_write_refusal() {
                 return Err(refusal.into());
             }
@@ -252,7 +251,7 @@ impl TracerBackend {
                 trace.convert_pending(&bytecode, tape)?;
                 let cpu = emulator.get_mut_cpu();
                 if planned {
-                    batch_rows = trace.plan_batch(cpu, prev_pc)?;
+                    batch_rows = trace.plan_batch(cpu)?;
                 }
                 cpu.set_advice_write_allowance(trace.advice_write_allowance(0));
             }
@@ -399,8 +398,8 @@ const TICK_BOUND: Emission = Emission {
 
 /// What the next tick emits: nothing at a PC stall, while the CPU waits for
 /// an interrupt or where its fetch traps, else its instruction's emission.
-fn next_emission(cpu: &mut Cpu, prev_pc: u64) -> Result<Emission, TraceError> {
-    if prev_pc == cpu.read_pc() {
+fn next_emission(cpu: &mut Cpu) -> Result<Emission, TraceError> {
+    if cpu.has_stalled() {
         return Ok(Emission::default());
     }
     match cpu.peek_instruction() {
@@ -797,7 +796,7 @@ impl LimitedTrace {
         cpu: &mut Cpu,
     ) -> Result<Option<(Self, Option<Emission>)>, TraceError> {
         let mut trace = Self::reserve(limit, resident, 0, 0)?;
-        let Next::Tick(tick) = trace.next_tick(cpu, 0, 0, initial, None)? else {
+        let Next::Tick(tick) = trace.next_tick(cpu, 0, initial, None)? else {
             return Ok(None);
         };
         let phase = TraceAllocationPhase::Initial;
@@ -816,14 +815,13 @@ impl LimitedTrace {
     fn accumulate(
         &mut self,
         emulator: &mut Emulator,
-        prev_pc: &mut u64,
         events: &mut usize,
         mut peeked: Option<Emission>,
     ) -> Result<Option<Emission>, TraceError> {
         loop {
             let cpu = emulator.get_mut_cpu();
             let capacity = self.cycles.capacity();
-            let tick = match self.next_tick(cpu, *prev_pc, *events, capacity, peeked.take())? {
+            let tick = match self.next_tick(cpu, *events, capacity, peeked.take())? {
                 Next::Tick(tick) => tick,
                 Next::Convert(emission) => return Ok(Some(emission)),
             };
@@ -842,7 +840,7 @@ impl LimitedTrace {
             }
             cpu.set_advice_write_allowance(self.advice_write_allowance(reserved));
             let (pending, capacity) = (self.cycles.len(), self.cycles.capacity());
-            crate::step_emulator(emulator, prev_pc, Some(&mut self.cycles));
+            crate::step_emulator(emulator, Some(&mut self.cycles));
             if let Some(refusal) = emulator.get_cpu().advice_write_refusal() {
                 return Err(refusal.into());
             }
@@ -867,7 +865,6 @@ impl LimitedTrace {
     fn next_tick(
         &self,
         cpu: &mut Cpu,
-        prev_pc: u64,
         events: usize,
         capacity: usize,
         peeked: Option<Emission>,
@@ -889,7 +886,7 @@ impl LimitedTrace {
                         reserved,
                     }));
                 }
-                next_emission(cpu, prev_pc)?
+                next_emission(cpu)?
             }
         };
         let phase = TraceAllocationPhase::CycleBuffer;
@@ -1036,7 +1033,7 @@ impl LimitedTrace {
     /// metadata fit beside every other buffer with the rows grown for it; else
     /// the longest within the rows' capacity; else one tick, for which rows
     /// that [`next_emission`] overruns grow while no window is live.
-    fn plan_batch(&mut self, cpu: &mut Cpu, prev_pc: u64) -> Result<usize, TraceError> {
+    fn plan_batch(&mut self, cpu: &mut Cpu) -> Result<usize, TraceError> {
         let tape = cpu.advice_tape.capacity();
         let phase = TraceAllocationPhase::CycleBuffer;
         let full = pending_window(SERIAL_BATCH_ROWS)
@@ -1065,7 +1062,7 @@ impl LimitedTrace {
         }
         if window < MAX_EXPANDED_ROWS_PER_SOURCE {
             window = MAX_EXPANDED_ROWS_PER_SOURCE;
-            if let Some(rows) = self.row_target(next_emission(cpu, prev_pc)?.rows)? {
+            if let Some(rows) = self.row_target(next_emission(cpu)?.rows)? {
                 self.cycles = Vec::new();
                 self.grow_rows(rows, tape)?;
             }

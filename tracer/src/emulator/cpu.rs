@@ -336,6 +336,10 @@ pub struct Cpu {
     #[allow(dead_code)]
     f: [f64; 32],
     pub(crate) pc: u64,
+    /// Whether the last tick reached the PC-stall fixed point that ends a
+    /// guest: it left the PC where it was, and re-running it would too
+    /// (`JoltInstructionRow::self_jump_repeats`).
+    stalled: bool,
     csr: [u64; CSR_CAPACITY],
     pub mmu: Mmu,
     reservation: u64,
@@ -464,6 +468,7 @@ impl Cpu {
             x: [0; REGISTER_COUNT as usize],
             f: [0.0; 32],
             pc: 0,
+            stalled: false,
             csr: [0; CSR_CAPACITY],
             mmu: Mmu::new(terminal),
             reservation: 0,
@@ -534,6 +539,10 @@ impl Cpu {
         self.pc
     }
 
+    pub fn has_stalled(&self) -> bool {
+        self.stalled
+    }
+
     pub fn set_reservation(&mut self, address: u64, width: ReservationWidth) {
         self.reservation = address;
         self.is_reservation_set = true;
@@ -565,10 +574,13 @@ impl Cpu {
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
     pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
         let instruction_address = self.pc;
-        match self.tick_operate(trace) {
-            Ok(()) => {}
-            Err(e) => self.handle_exception(e, instruction_address),
-        }
+        let executed = match self.tick_operate(trace) {
+            Ok(executed) => executed,
+            Err(e) => {
+                self.handle_exception(e, instruction_address);
+                None
+            }
+        };
         // Jolt guests have no interrupt sources (no CLINT/PLIC) and cannot
         // write MIP (unsupported CSR rejected at decode), so pending-interrupt
         // handling is gated on a single always-zero load. handle_interrupt is
@@ -576,15 +588,26 @@ impl Cpu {
         if self.read_csr_raw(CSR_MIP_ADDRESS) != 0 {
             self.handle_interrupt(self.pc);
         }
+        self.stalled = self.pc == instruction_address
+            && executed.is_none_or(|instr| {
+                instr
+                    .try_jolt_instruction_row()
+                    .map_or(true, |row| row.self_jump_repeats())
+            });
         self.clock = self.clock.wrapping_add(1);
     }
 
-    fn tick_operate(&mut self, trace: Option<&mut Vec<Cycle>>) -> Result<(), Trap> {
+    /// Returns the instruction executed, or `None` for a tick spent waiting
+    /// for an interrupt.
+    fn tick_operate(
+        &mut self,
+        trace: Option<&mut Vec<Cycle>>,
+    ) -> Result<Option<Instruction>, Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
             }
-            return Ok(());
+            return Ok(None);
         }
 
         let instr = match self.mmu.decode_cache.lookup(self.pc) {
@@ -615,7 +638,7 @@ impl Cpu {
         }
         self.x[0] = 0; // hardwired zero
 
-        Ok(())
+        Ok(Some(instr))
     }
 
     /// Runs `f` with `source`'s inline sequence, cached per PC alongside the
@@ -1275,6 +1298,7 @@ impl Cpu {
             x: self.x,
             f: self.f,
             pc: self.pc,
+            stalled: self.stalled,
             csr: self.csr,
             mmu: self.mmu.save_state_with_empty_memory(),
             reservation: self.reservation,
@@ -1308,6 +1332,8 @@ impl Cpu {
             x,
             f,
             pc,
+            // Pass 1 owns termination; workers replay counted ticks.
+            stalled: _,
             csr,
             // Memory image, JoltDevice and decode cache are captured by the
             // checkpoint layer (see `parallel::ChunkCheckpoint`).
@@ -1690,6 +1716,59 @@ mod test_cpu {
         assert_eq!(0, cpu.read_register(1));
         cpu.tick(None);
         assert_eq!(1, cpu.read_register(1));
+    }
+
+    /// Places `code` at `DRAM_BASE` and ticks until the PC-stall stop,
+    /// returning the rows traced.
+    fn run_until_stalled(cpu: &mut Cpu, code: &[u8]) -> usize {
+        cpu.get_mut_mmu().init_memory(1 << 16);
+        for (i, byte) in code.iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        cpu.update_pc(DRAM_BASE);
+        let mut rows = Vec::new();
+        for _ in 0..4 {
+            if cpu.has_stalled() {
+                break;
+            }
+            cpu.tick(Some(&mut rows));
+        }
+        assert!(cpu.has_stalled(), "no PC stall");
+        rows.len()
+    }
+
+    #[test]
+    fn jalr_overwriting_its_base_runs_again() {
+        // jalr x5, 0(x5); beq x0, x0, 0. The second run targets the link.
+        let mut cpu = create_cpu();
+        cpu.x[5] = DRAM_BASE as i64;
+        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0x02, 0x00, 0x63, 0, 0, 0]);
+        assert_eq!(
+            (rows, cpu.read_pc(), cpu.x[5] as u64),
+            (3, DRAM_BASE + 4, DRAM_BASE + 4)
+        );
+
+        // c.jalr ra; beq x0, x0, 0
+        let mut cpu = create_cpu();
+        cpu.x[1] = DRAM_BASE as i64;
+        let rows = run_until_stalled(&mut cpu, &[0x82, 0x90, 0x63, 0, 0, 0]);
+        assert_eq!(
+            (rows, cpu.read_pc(), cpu.x[1] as u64),
+            (3, DRAM_BASE + 2, DRAM_BASE + 2)
+        );
+    }
+
+    #[test]
+    fn jalr_at_its_fixed_point_stops_after_one_run() {
+        // jalr x5, -4(x5); beq x0, x0, 0. The link it writes leads back to
+        // DRAM_BASE.
+        let mut cpu = create_cpu();
+        cpu.x[5] = (DRAM_BASE + 4) as i64;
+        let rows = run_until_stalled(&mut cpu, &[0xe7, 0x82, 0xc2, 0xff, 0x63, 0, 0, 0]);
+        assert_eq!(
+            (rows, cpu.read_pc(), cpu.x[5] as u64),
+            (1, DRAM_BASE, DRAM_BASE + 4)
+        );
     }
 
     #[test]

@@ -320,7 +320,7 @@ mod matrix {
 
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     mod mode {
-        use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+        use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_prover::akita;
         use jolt_prover::akita::preprocessing::{self, AkitaTranscript, AkitaVc};
         use jolt_prover::JoltBackend;
@@ -344,7 +344,9 @@ mod matrix {
             let untrusted_advice = !case.untrusted_advice.is_empty();
             let trusted_advice = !case.trusted_advice.is_empty();
             let preprocessing = preprocessing::preprocess_full_with_advice(
-                &AkitaScheduleArtifacts::shared_from_default_directory(),
+                &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(
+                    8, 2,
+                )),
                 prepared.preprocessing,
                 &config,
                 untrusted_advice,

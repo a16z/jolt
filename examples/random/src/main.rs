@@ -30,8 +30,7 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove(a, b);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify(a, b, output, program_io.panic, proof);
+    verify(a, b, output, program_io.panic, proof).expect("proof verification failed");
 
     info!("output: {output}");
-    info!("valid: {is_valid}");
 }

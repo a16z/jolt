@@ -265,13 +265,21 @@ impl BackendKind {
 
 #[cfg(feature = "akita")]
 fn parse_akita_chunk_profile(value: &str) -> ParseResult<AkitaChunkProfile, String> {
-    match value {
-        "single" => Ok(AkitaChunkProfile::Single),
-        "w2r2" => Ok(AkitaChunkProfile::Two),
-        "w4r2" => Ok(AkitaChunkProfile::Four),
-        "w8r2" => Ok(AkitaChunkProfile::Eight),
-        _ => Err("expected single, w2r2, w4r2, or w8r2".into()),
-    }
+    let (chunks, levels) = value
+        .strip_prefix('w')
+        .and_then(|value| value.split_once('r'))
+        .ok_or("expected w<chunks>r<levels>, for example w2r3")?;
+    let profile = AkitaChunkProfile::new(
+        chunks.parse().map_err(|_| "invalid Akita chunk count")?,
+        levels
+            .parse()
+            .map_err(|_| "invalid Akita chunked fold count")?,
+    );
+    profile
+        .witness_cfg()
+        .validate()
+        .map_err(|error| error.to_string())?;
+    Ok(profile)
 }
 
 /// `profile` subcommand arguments.
@@ -292,9 +300,9 @@ pub struct ProfileArgs {
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
 
-    /// Akita witness chunk profile: single, w2r2, w4r2, or w8r2.
+    /// Akita witness geometry as w<chunks>r<levels>, for example w2r3.
     #[cfg(feature = "akita")]
-    #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "single")]
+    #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "w1r0")]
     pub akita_chunk_profile: AkitaChunkProfile,
 
     /// Explicit memory budget in bytes: an integer with an optional binary
@@ -344,8 +352,11 @@ impl ProfileArgs {
     #[cfg(feature = "akita")]
     fn chunk_profile_suffix(&self) -> String {
         match self.akita_chunk_profile {
-            AkitaChunkProfile::Single => String::new(),
-            profile => format!("_w{}r2", profile.num_chunks()),
+            AkitaChunkProfile {
+                chunks: 1,
+                levels: 0,
+            } => String::new(),
+            profile => format!("_w{}r{}", profile.chunks, profile.levels),
         }
     }
 
@@ -1022,7 +1033,8 @@ fn prove_workload(
             .check_known_eager::<AkitaField>(&config, &trace_output.trace)
             .expect("memory budget covers the known eager reservation");
     }
-    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let schedule_artifacts =
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let params = crate::akita::preprocessing::grouped_setup_params(
         &schedule_artifacts,
         &program_preprocessing,

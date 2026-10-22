@@ -7,8 +7,8 @@
 mod support;
 
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
-    AKITA_ONE_HOT_K16,
+    AkitaBackendFlavor, AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaSetupParams, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
@@ -41,7 +41,7 @@ fn k16_setup() -> (
         1,
         layout(2),
         AKITA_ONE_HOT_K16,
-        AkitaScheduleArtifacts::shared_from_default_directory(),
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
     ))
     .expect("one-hot setup should build")
 }
@@ -54,7 +54,7 @@ fn setup_rejects_unsupported_one_hot_chunk_sizes() {
             1,
             layout(1),
             bad_k,
-            AkitaScheduleArtifacts::shared_from_default_directory(),
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         ))
         .expect_err("only K=16 and K=256 are supported");
         assert!(

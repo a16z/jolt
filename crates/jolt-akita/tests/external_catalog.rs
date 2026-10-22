@@ -9,9 +9,8 @@ use akita_config::{policy_of, CommitmentConfig};
 use akita_params::{
     CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey,
 };
-use akita_pcs::AkitaError;
 use akita_schedules::ValidatedScheduleCatalog;
-use jolt_akita::configs::{JoltOneHotK16W2R2, JoltOneHotK16W2R2Direct};
+use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK16Direct};
 use jolt_akita::{
     AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaNativeBatching,
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
@@ -44,10 +43,21 @@ fn external_multichunk_catalog_survives_transport() {
         ) = serde_json::from_slice(&fs::read(path).expect("read public verification inputs"))
             .expect("restore verifier without source catalogs");
         let mut statement = support::single_statement(commitment, &point, evaluation);
-        assert_eq!(setup.akita_chunk_profile(), AkitaChunkProfile::Two);
+        assert_eq!(setup.akita_chunk_profile(), AkitaChunkProfile::new(2, 4));
         let mut transcript = Blake2bTranscript::new(DOMAIN);
         AkitaNativeBatching::verify_batch(&setup, &statement, &proof, &mut transcript)
             .expect("upstream verifier accepts the transported multi-chunk proof");
+        let mut wrong = serde_json::to_value(&setup).expect("encode trusted setup");
+        wrong["schedule_artifacts"]["one_hot"]["profile"]["levels"] = serde_json::json!(2);
+        let wrong: AkitaVerifierSetup =
+            serde_json::from_value(wrong).expect("decode altered setup");
+        assert!(AkitaNativeBatching::verify_batch(
+            &wrong,
+            &statement,
+            &proof,
+            &mut Blake2bTranscript::new(DOMAIN)
+        )
+        .is_err());
         statement[0].evaluation.value += support::f(1);
         let mut transcript = Blake2bTranscript::new(DOMAIN);
         assert!(
@@ -66,22 +76,23 @@ fn external_multichunk_catalog_survives_transport() {
             .expect("install application-supplied catalogs");
     }
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::new(NUM_VARS, 1));
-    let packaged =
-        AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
-            .expect("load packaged fixture catalogs");
-    assert!(matches!(
+    let packaged = AkitaScheduleArtifacts::from_directory(
+        AkitaScheduleArtifacts::packaged_directory(),
+        AkitaChunkProfile::new(8, 2),
+    )
+    .expect("load packaged fixture catalogs");
+    assert!(
         packaged
-            .one_hot_catalog_for_profile(16, AkitaChunkProfile::Two)
-            .expect("load packaged two-chunk catalog")
-            .resolve_key(&key),
-        Err(AkitaError::UnsupportedSchedule(_))
-    ));
+            .one_hot_catalog_for_profile(16, AkitaChunkProfile::new(2, 4))
+            .is_err(),
+        "the external geometry must be absent from the packaged fixtures"
+    );
     let schedule = akita_planner::find_schedule(
         &key,
-        JoltOneHotK16W2R2Direct::committed_source_contract().expect("direct source contract"),
+        JoltOneHotK16Direct::committed_source_contract().expect("direct source contract"),
         &[],
-        &policy_of::<JoltOneHotK16W2R2Direct>(),
-        JoltOneHotK16W2R2Direct::ring_challenge_config,
+        &policy_of::<JoltOneHotK16Direct>(AkitaChunkProfile::new(2, 4).witness_cfg()),
+        JoltOneHotK16Direct::ring_challenge_config,
     )
     .expect("plan external-only shape")
     .schedule;
@@ -94,25 +105,26 @@ fn external_multichunk_catalog_survives_transport() {
         precommitteds: Vec::new(),
     };
     let external = ValidatedScheduleCatalog::try_new(
-        JoltOneHotK16W2R2::schedule_family_name(),
+        JoltOneHotK16::schedule_family_name(),
         vec![(profile, schedule)],
-        &policy_of::<JoltOneHotK16W2R2>(),
-        JoltOneHotK16W2R2::ring_challenge_config,
+        &policy_of::<JoltOneHotK16>(AkitaChunkProfile::new(2, 4).witness_cfg()),
+        JoltOneHotK16::ring_challenge_config,
     )
     .expect("admit external-only catalog");
     fs::write(
-        directory.join("jolt-fp128-onehot-k16-w2r2.aks"),
+        directory.join("jolt-fp128-onehot-k16-w2r4.aks"),
         external
             .to_artifact_bytes()
             .expect("encode external catalog"),
     )
     .expect("install external-only catalog");
     let artifacts = Arc::new(
-        AkitaScheduleArtifacts::from_directory(&directory).expect("load external catalogs"),
+        AkitaScheduleArtifacts::from_directory(&directory, AkitaChunkProfile::new(8, 2))
+            .expect("load external catalogs"),
     );
     let (prover, verifier) = AkitaScheme::setup(
         AkitaSetupParams::one_hot_only(NUM_VARS, 1, support::layout(3), 16, artifacts)
-            .with_akita_chunk_profile(AkitaChunkProfile::Two),
+            .with_akita_chunk_profile(AkitaChunkProfile::new(2, 4)),
     )
     .expect("prepare multi-chunk setup");
     let polynomials = vec![OneHotPolynomial::new(

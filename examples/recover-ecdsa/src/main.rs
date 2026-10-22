@@ -61,7 +61,7 @@ pub fn main() {
     let (output, proof, io_device) = prove_recover(&sig_bytes, msg_digest);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
-    let is_valid = verify_recover(&sig_bytes, msg_digest, output, io_device.panic, proof);
+    verify_recover(&sig_bytes, msg_digest, output, io_device.panic, proof)
+        .expect("proof verification failed");
     info!("output: {output}");
-    info!("valid: {is_valid}");
 }

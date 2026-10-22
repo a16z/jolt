@@ -57,7 +57,7 @@ pub use legacy::{
     MAX_LABEL_LEN,
 };
 #[cfg(feature = "spongefish")]
-pub use setup::{prover_transcript, transcript_builder, verifier_transcript, PROTOCOL_ID};
+pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
 
 /// Source-compatible re-exports of legacy label / count / word helpers
 /// under their `jolt_transcript::domain::*` path (matches the path used
@@ -76,7 +76,7 @@ pub use prover::ProverTranscript;
 pub use verifier::VerifierTranscript;
 
 #[cfg(feature = "transcript-blake2b")]
-use blake2::{digest::consts::U32, Blake2b};
+use blake2::{digest::consts::U32, Blake2b, Blake2b512 as Blake2b512Digest};
 #[cfg(all(
     feature = "bn254",
     any(
@@ -87,9 +87,13 @@ use blake2::{digest::consts::U32, Blake2b};
 ))]
 use jolt_field::Fr;
 #[cfg(feature = "transcript-blake2b")]
-use spongefish::instantiations::Blake2b512;
+use spongefish::instantiations::Hash;
 #[cfg(feature = "transcript-keccak")]
 use spongefish::instantiations::Keccak;
+
+/// Spongefish's fixed-output hash bridge instantiated with Blake2b-512.
+#[cfg(feature = "transcript-blake2b")]
+pub type Blake2b512 = Hash<Blake2b512Digest>;
 
 /// Fiat-Shamir transcript backed by Blake2b-512 (spongefish duplex sponge).
 #[cfg(all(feature = "transcript-blake2b", feature = "bn254"))]
