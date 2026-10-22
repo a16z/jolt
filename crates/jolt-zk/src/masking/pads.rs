@@ -197,6 +197,20 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
     }
 }
 
+impl<F: Field + CanonicalEncoding> CommittedPads<F, ()> {
+    /// `pads` under `layout` with no commitment, for tests of protocols
+    /// written over the masked channel (Akita's masked levels). It hides
+    /// nothing a verifier could check, and no back end opens it.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::InvalidLayout`] if `pads` does not fill `layout`.
+    #[cfg(feature = "test-support")]
+    pub fn uncommitted(layout: PadLayout, pads: Vec<F>) -> Result<Self, ZkError> {
+        Self::new(layout, pads, ())
+    }
+}
+
 /// The verifier's view of the pad commitment `C`: the commitment and a
 /// cursor, no opening data. Only a [`ZkBackend`](super::ZkBackend) builds
 /// one, at the transcript position of the commitment.
@@ -272,6 +286,16 @@ impl<C> CommittedPadsView<C> {
 pub struct MaskedVerifier<'a, 'p, H: Sponge> {
     transcript: &'a mut VerifierTranscript<'p, H>,
     cursor: &'a mut Cursor,
+}
+
+impl<'p, H: Sponge> MaskedVerifier<'_, 'p, H> {
+    /// The transcript underneath, for the public messages a protocol reads
+    /// outside the [`Channel`] seam: Akita's proof-of-work nonces and
+    /// fold-response counters (Akita `specs/whiteout-akita.md` §4.5). A
+    /// private value read here takes no pad.
+    pub fn transcript_mut(&mut self) -> &mut VerifierTranscript<'p, H> {
+        self.transcript
+    }
 }
 
 /// Public messages and challenges pass through to the transcript.
@@ -376,6 +400,16 @@ impl<H: Sponge> PrivateChannel for MaskedVerifier<'_, '_, H> {
 pub struct MaskedProver<'a, F, O, H: Sponge> {
     pads: &'a mut CommittedPads<F, O>,
     transcript: &'a mut ProverTranscript<H>,
+}
+
+impl<F, O, H: Sponge> MaskedProver<'_, F, O, H> {
+    /// The transcript underneath, for the public messages a protocol sends
+    /// outside the [`Channel`] seam: Akita's proof-of-work nonces and
+    /// fold-response counters (Akita `specs/whiteout-akita.md` §4.5). A
+    /// private value sent here goes out unmasked.
+    pub fn transcript_mut(&mut self) -> &mut ProverTranscript<H> {
+        self.transcript
+    }
 }
 
 /// `value` as a `T`, if `S` is `T`.
