@@ -1,0 +1,780 @@
+use std::sync::Arc;
+
+use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
+use jolt_field::{Fr, JoltField};
+use jolt_poly::BindingOrder;
+
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
+use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
+use crate::cuda::common::error::CudaError;
+use crate::cuda::common::split_eq::DeviceSplitEq;
+
+pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
+
+pub struct DevicePackedRa {
+    packed: Arc<CudaSlice<u64>>,
+    tables: DeviceFrVec,
+    dense: Vec<DeviceFrVec>,
+    polys: usize,
+    addresses: usize,
+    chunk_bits: usize,
+    cycles: usize,
+    rounds_bound: usize,
+}
+
+impl DevicePackedRa {
+    pub fn new<F: JoltField>(
+        context: &CudaKernelContext,
+        packed: Arc<CudaSlice<u64>>,
+        cycles: usize,
+        chunk_bits: usize,
+        address_point: &[F],
+        seeds: &[F],
+    ) -> Result<Self, CudaError> {
+        let polys = seeds.len();
+        if !cycles.is_power_of_two() || chunk_bits == 0 || !64usize.is_multiple_of(chunk_bits) {
+            return Err(CudaError::InvariantViolation {
+                reason: "a packed one-hot family needs a power-of-two cycle count and a chunk \
+                         width dividing 64, so no chunk straddles a word boundary",
+            });
+        }
+        if packed.len() < cycles * 2 {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles * 2,
+                got: packed.len(),
+            });
+        }
+        if address_point.len() != polys * chunk_bits {
+            return Err(CudaError::LengthMismatch {
+                expected: polys * chunk_bits,
+                got: address_point.len(),
+            });
+        }
+
+        let point = context.upload(require_fr_slice(address_point)?)?;
+        let mut tables = context.upload(require_fr_slice(seeds)?)?;
+        for level in 0..chunk_bits {
+            let prev_len = 1usize << level;
+            let mut next = context.alloc(polys * prev_len * 2)?;
+            let count = CudaKernelContext::count_of(polys * prev_len)?;
+            let poly_count = CudaKernelContext::count_of(polys)?;
+            let prev = CudaKernelContext::count_of(prev_len)?;
+            let level_arg = CudaKernelContext::count_of(level)?;
+            let bits = CudaKernelContext::count_of(chunk_bits)?;
+            let mut builder = context.stream().launch_builder(context.irv_eq_double());
+            let _ = builder.arg(tables.limbs());
+            let _ = builder.arg(point.limbs());
+            let _ = builder.arg(next.limbs_mut());
+            let _ = builder.arg(&poly_count);
+            let _ = builder.arg(&prev);
+            let _ = builder.arg(&level_arg);
+            let _ = builder.arg(&bits);
+            // SAFETY: thread `idx < polys * prev_len` reads `in[idx]` and
+            // `point[(idx / prev_len) * chunk_bits + level]` — inside `point`'s
+            // `polys * chunk_bits` because `level < chunk_bits` — and writes
+            // `out[2 * idx]` and `out[2 * idx + 1]` after remapping through the
+            // per-poly stride, both inside `out`'s `2 * polys * prev_len`. Index
+            // sets are disjoint across threads and `out` is a fresh allocation.
+            let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+            context.stream().synchronize()?;
+            tables = next;
+        }
+
+        Ok(Self {
+            packed,
+            tables,
+            dense: Vec::new(),
+            polys,
+            addresses: 1usize << chunk_bits,
+            chunk_bits,
+            cycles,
+            rounds_bound: 0,
+        })
+    }
+
+    fn from_dense(
+        context: &CudaKernelContext,
+        dense: Vec<DeviceFrVec>,
+        chunk_bits: usize,
+        tail_rounds: usize,
+    ) -> Result<Self, CudaError> {
+        let cycles = 1usize << tail_rounds;
+        if dense.iter().any(|table| table.len() != cycles) {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: dense.first().map_or(0, DeviceFrVec::len),
+            });
+        }
+        if dense.is_empty() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a collapsed one-hot family needs at least one dense column",
+            });
+        }
+        Ok(Self {
+            packed: Arc::new(context.alloc_u64(0)?),
+            tables: context.alloc(0)?,
+            polys: dense.len(),
+            dense,
+            addresses: 1usize << chunk_bits,
+            chunk_bits,
+            cycles,
+            rounds_bound: 0,
+        })
+    }
+
+    pub const fn len(&self) -> usize {
+        self.cycles >> self.rounds_bound
+    }
+
+    #[expect(
+        dead_code,
+        reason = "shape accessor kept alongside the sibling one-hot types"
+    )]
+    pub const fn polys(&self) -> usize {
+        self.polys
+    }
+
+    #[expect(
+        dead_code,
+        reason = "shape accessor kept alongside the sibling one-hot types"
+    )]
+    pub const fn rounds_bound(&self) -> usize {
+        self.rounds_bound
+    }
+
+    pub const fn is_collapsed(&self) -> bool {
+        !self.dense.is_empty()
+    }
+
+    const fn slots(&self) -> usize {
+        1usize << self.rounds_bound
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the equivalence tests are the only consumer")
+    )]
+    pub fn coefficients(&self, context: &CudaKernelContext) -> Result<Vec<DeviceFrVec>, CudaError> {
+        if self.is_collapsed() {
+            return self.dense.iter().map(DeviceFrVec::try_clone).collect();
+        }
+        self.gather(context)
+    }
+
+    fn gather(&self, context: &CudaKernelContext) -> Result<Vec<DeviceFrVec>, CudaError> {
+        let len = self.len();
+        let mut outputs = Vec::with_capacity(self.polys);
+        for _ in 0..self.polys {
+            outputs.push(context.alloc(len)?);
+        }
+        if len == 0 {
+            return Ok(outputs);
+        }
+        let pointers = {
+            let refs: Vec<&DeviceFrVec> = outputs.iter().collect();
+            context.device_pointers(&refs)?
+        };
+
+        let addresses = CudaKernelContext::count_of(self.addresses)?;
+        let slots = CudaKernelContext::count_of(self.slots())?;
+        let bits = CudaKernelContext::count_of(self.chunk_bits)?;
+        let committed = CudaKernelContext::count_of(self.polys)?;
+        let count = CudaKernelContext::count_of(len)?;
+        let mut builder = context.stream().launch_builder(context.irv_gather());
+        let _ = builder.arg(self.packed.as_ref());
+        let _ = builder.arg(self.tables.limbs());
+        let _ = builder.arg(&pointers);
+        let _ = builder.arg(&addresses);
+        let _ = builder.arg(&slots);
+        let _ = builder.arg(&bits);
+        let _ = builder.arg(&committed);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `(p = blockIdx.y < polys, j < len)` reads
+        // `packed[2 * (j * slots + s)]` and its `+1` mate for `s < slots` — every
+        // cycle index is below `len * slots == cycles`, so inside `packed`'s
+        // `2 * cycles` — and `tables[p * slots * addresses + s * addresses + a]`
+        // with `a` masked below `addresses`, inside `tables`'s
+        // `polys * slots * addresses`. It writes only `out[p][j]`, one slot per
+        // (poly, index) pair, and each `out[p]` is a distinct fresh allocation of
+        // `len` elements whose device address is `pointers[p]`.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (count.div_ceil(BLOCK).max(1), committed, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: 0,
+            })
+        }?;
+        context.stream().synchronize()?;
+        Ok(outputs)
+    }
+
+    fn split_tables(
+        &mut self,
+        context: &CudaKernelContext,
+        challenge: Fr,
+    ) -> Result<(), CudaError> {
+        let eq_zero = context.upload(&[Fr::from(1u64) - challenge])?;
+        let eq_one = context.upload(&[challenge])?;
+        let len = self.slots() * self.addresses;
+        let mut next = context.alloc(self.polys * len * 2)?;
+        let count = CudaKernelContext::count_of(self.polys * len)?;
+        let poly_count = CudaKernelContext::count_of(self.polys)?;
+        let width = CudaKernelContext::count_of(len)?;
+        let mut builder = context.stream().launch_builder(context.irv_tables_split());
+        let _ = builder.arg(self.tables.limbs());
+        let _ = builder.arg(eq_zero.limbs());
+        let _ = builder.arg(eq_one.limbs());
+        let _ = builder.arg(next.limbs_mut());
+        let _ = builder.arg(&poly_count);
+        let _ = builder.arg(&width);
+        // SAFETY: thread `idx < polys * len` reads `in[idx]` plus the two
+        // single-element challenges, and writes `out[p * 2 * len + i]` and
+        // `out[p * 2 * len + len + i]` for `p = idx / len`, `i = idx % len` —
+        // disjoint across threads and inside `out`'s `2 * polys * len`. `out` is a
+        // fresh allocation, so no thread reads another's write.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        context.stream().synchronize()?;
+        self.tables = next;
+        Ok(())
+    }
+
+    pub fn bind<F: JoltField>(
+        &mut self,
+        context: &CudaKernelContext,
+        challenge: F,
+    ) -> Result<(), CudaError> {
+        let challenge = require_fr(challenge)?;
+        if self.is_collapsed() {
+            for table in &mut self.dense {
+                *table = context.bind(table, challenge, BindingOrder::LowToHigh)?;
+            }
+            self.rounds_bound += 1;
+            return Ok(());
+        }
+        if self.len() < 2 {
+            return Err(CudaError::LengthMismatch {
+                expected: 2,
+                got: self.len(),
+            });
+        }
+        self.split_tables(context, challenge)?;
+        self.rounds_bound += 1;
+        if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS && self.len() > 1 {
+            self.dense = self.gather(context)?;
+            self.tables = context.alloc(0)?;
+            self.packed = Arc::new(context.alloc_u64(0)?);
+        }
+        Ok(())
+    }
+
+    fn window_scalars(&self, context: &CudaKernelContext) -> Result<Vec<Fr>, CudaError> {
+        if self.len() != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len(),
+            });
+        }
+        if self.is_collapsed() {
+            return self.dense.iter().map(DeviceFrVec::first).collect();
+        }
+        self.gather(context)?
+            .iter()
+            .map(DeviceFrVec::first)
+            .collect()
+    }
+
+    pub fn final_claims<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Vec<F>, CudaError> {
+        if self.len() != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len(),
+            });
+        }
+        let values: Result<Vec<Fr>, CudaError> = if self.is_collapsed() {
+            self.dense.iter().map(DeviceFrVec::first).collect()
+        } else {
+            self.gather(context)?
+                .iter()
+                .map(DeviceFrVec::first)
+                .collect()
+        };
+        values?
+            .into_iter()
+            .map(|value| {
+                crate::cuda::common::device::fr_into(value).ok_or(CudaError::NotImplemented {
+                    kernel: "CUDA kernels support only the BN254 scalar field",
+                })
+            })
+            .collect()
+    }
+
+    pub fn round_evals<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+        virtual_polys: usize,
+        eq: &DeviceSplitEq<F>,
+    ) -> Result<[F; 5], CudaError> {
+        let half = self.len() / 2;
+        if half == 0 {
+            return Err(CudaError::LengthMismatch {
+                expected: 2,
+                got: self.len(),
+            });
+        }
+        let e_in_len = eq.e_in_len();
+        if eq.e_out_current().len() * e_in_len != half {
+            return Err(CudaError::LengthMismatch {
+                expected: half,
+                got: eq.e_out_current().len() * e_in_len,
+            });
+        }
+
+        let half_count = CudaKernelContext::count_of(half)?;
+        let blocks = half_count.div_ceil(BLOCK).max(1);
+        let mut partials = context.alloc(5 * blocks as usize)?;
+        let groups = CudaKernelContext::count_of(virtual_polys)?;
+        let e_in_arg = CudaKernelContext::count_of(e_in_len)?;
+        let num_x_in_bits = e_in_len.max(1).ilog2();
+        let e_in = eq.e_in_current();
+        let e_out = eq.e_out_current();
+        let config = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+        };
+
+        if self.is_collapsed() {
+            let refs: Vec<&DeviceFrVec> = self.dense.iter().collect();
+            let pointers = context.device_pointers(&refs)?;
+            let mut builder = context.stream().launch_builder(context.irv_message_dense());
+            let _ = builder.arg(&pointers);
+            let _ = builder.arg(&groups);
+            let _ = builder.arg(&half_count);
+            let _ = builder.arg(e_in.limbs());
+            let _ = builder.arg(&e_in_arg);
+            let _ = builder.arg(e_out.limbs());
+            let _ = builder.arg(&num_x_in_bits);
+            let _ = builder.arg(partials.limbs_mut());
+            // SAFETY: thread `g < half` reads `dense[p][2g]` and `dense[p][2g+1]`
+            // for every `p < 4 * virtual_polys` — each `dense[p]` holds
+            // `2 * half` elements — plus `e_in[g & mask]` and
+            // `e_out[g >> num_x_in_bits]`, both bounded because
+            // `e_out.len() * e_in.len() == half` is checked above. It writes only
+            // `partials[lane * gridDim.x + blockIdx.x]` of `4 * blocks`. Shared
+            // memory is `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`, and the
+            // block reduction sits outside the `g < half` guard so every thread
+            // reaches each `__syncthreads()`.
+            let _ = unsafe { builder.launch(config) }?;
+        } else {
+            let addresses = CudaKernelContext::count_of(self.addresses)?;
+            let slots = CudaKernelContext::count_of(self.slots())?;
+            let bits = CudaKernelContext::count_of(self.chunk_bits)?;
+            let committed = CudaKernelContext::count_of(self.polys)?;
+            let mut builder = context
+                .stream()
+                .launch_builder(context.irv_message_sparse());
+            let _ = builder.arg(self.packed.as_ref());
+            let _ = builder.arg(self.tables.limbs());
+            let _ = builder.arg(&groups);
+            let _ = builder.arg(&addresses);
+            let _ = builder.arg(&slots);
+            let _ = builder.arg(&bits);
+            let _ = builder.arg(&committed);
+            let _ = builder.arg(&half_count);
+            let _ = builder.arg(e_in.limbs());
+            let _ = builder.arg(&e_in_arg);
+            let _ = builder.arg(e_out.limbs());
+            let _ = builder.arg(&num_x_in_bits);
+            let _ = builder.arg(partials.limbs_mut());
+            // SAFETY: thread `g < half` reads `packed` at cycle indices
+            // `2 * g * slots + t` for `t < 2 * slots`, all below
+            // `2 * half * slots == cycles`, and `tables` at
+            // `p * slots * addresses + s * addresses + a` with `a` masked below
+            // `addresses` and `p < polys`, inside `tables`'s
+            // `polys * slots * addresses`. `e_in`/`e_out` are indexed as in the
+            // dense arm, bounded by the same check. It writes only
+            // `partials[lane * gridDim.x + blockIdx.x]` of `4 * blocks`. Shared
+            // memory matches `shared_mem_bytes` and the block reduction sits
+            // outside the `g < half` guard.
+            let _ = unsafe { builder.launch(config) }?;
+        }
+        context.stream().synchronize()?;
+
+        let totals = crate::cuda::common::primitives::reduce_lanes(context, partials, 5, blocks)?;
+        let host = totals.to_host()?;
+        let mut evals = [F::from_u64(0); 5];
+        for (slot, value) in evals.iter_mut().zip(host) {
+            *slot =
+                crate::cuda::common::device::fr_into(value).ok_or(CudaError::NotImplemented {
+                    kernel: "CUDA kernels support only the BN254 scalar field",
+                })?;
+        }
+        Ok(evals)
+    }
+}
+
+pub(crate) struct PackedRaShard<F: JoltField> {
+    pub(crate) ordinal: usize,
+    pub(crate) one_hot: DevicePackedRa,
+    pub(crate) eq: DeviceSplitEq<F>,
+}
+
+pub(crate) struct ShardedPackedRa<F: JoltField> {
+    shards: Vec<PackedRaShard<F>>,
+    collapsed: Option<DevicePackedRa>,
+    chunk_bits: usize,
+    local_rounds: usize,
+    tail_rounds: usize,
+}
+
+impl<F: JoltField> ShardedPackedRa<F> {
+    pub(crate) fn new(shards: Vec<PackedRaShard<F>>, log_t: usize) -> Result<Self, CudaError> {
+        let count = shards.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded one-hot family needs a power-of-two shard count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        let chunk_bits = shards.first().map(|shard| shard.one_hot.chunk_bits).ok_or(
+            CudaError::InvariantViolation {
+                reason: "a sharded one-hot family needs at least one shard",
+            },
+        )?;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded one-hot family cannot split more windows than cycle rounds",
+            });
+        }
+        if count == 1 {
+            let shard = shards
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-shard one-hot family lost its state",
+                })?;
+            return Ok(Self {
+                shards: Vec::new(),
+                collapsed: Some(shard.one_hot),
+                chunk_bits,
+                local_rounds: log_t,
+                tail_rounds: 0,
+            });
+        }
+        Ok(Self {
+            shards,
+            collapsed: None,
+            chunk_bits,
+            local_rounds: log_t - tail_rounds,
+            tail_rounds,
+        })
+    }
+
+    pub(crate) fn round_evals(
+        &self,
+        virtual_polys: usize,
+        whole_eq: &DeviceSplitEq<F>,
+    ) -> Result<[F; 5], CudaError> {
+        if let Some(collapsed) = &self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.round_evals(context, virtual_polys, whole_eq);
+        }
+        let tasks: Vec<DeviceTask<'_, [F; 5], CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, [F; 5], CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.round_evals(context, virtual_polys, &shard.eq)
+                });
+                task
+            })
+            .collect();
+        let mut total = [F::zero(); 5];
+        for part in fan_out(tasks)? {
+            for (lane, addend) in total.iter_mut().zip(part) {
+                *lane += addend;
+            }
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn bind(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+        if let Some(collapsed) = &mut self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.bind(context, challenge);
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.bind(context, challenge)?;
+                    shard.eq.bind(challenge);
+                    Ok(())
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let shards = std::mem::take(&mut self.shards);
+        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.window_scalars(context)
+                });
+                task
+            })
+            .collect();
+        let mut columns: Vec<Vec<Fr>> = Vec::new();
+        for scalars in fan_out(tasks)? {
+            if columns.is_empty() {
+                columns = scalars.iter().map(|_| Vec::new()).collect();
+            }
+            if scalars.len() != columns.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: columns.len(),
+                    got: scalars.len(),
+                });
+            }
+            for (column, value) in columns.iter_mut().zip(&scalars) {
+                column.push(*value);
+            }
+        }
+        let dense = columns
+            .iter()
+            .map(|column| context.upload(column))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.collapsed = Some(DevicePackedRa::from_dense(
+            context,
+            dense,
+            self.chunk_bits,
+            self.tail_rounds,
+        )?);
+        Ok(())
+    }
+
+    pub(crate) fn final_claims(&self) -> Result<Vec<F>, CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        self.collapsed
+            .as_ref()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded one-hot family was asked for claims before its tail rounds",
+            })?
+            .final_claims(context)
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a sharded one-hot window names an absent device",
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test module: device operations fail loudly"
+)]
+mod tests {
+    use super::PackedRaShard;
+    use super::ShardedPackedRa;
+    use std::sync::Arc;
+
+    use jolt_field::Fr;
+    use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
+    use proptest::prelude::*;
+
+    use super::{DevicePackedRa, COLLAPSE_AFTER_ROUNDS};
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::split_eq::DeviceSplitEq;
+    use crate::cuda::common::testing::{arb_point, fr};
+
+    fn packed_index(seed: u64, cycle: usize) -> u128 {
+        let mix = seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(cycle as u64 + 1);
+        let lo = mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29);
+        let hi = mix.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (mix >> 31);
+        (u128::from(hi) << 64) | u128::from(lo)
+    }
+
+    #[test]
+    fn sharded_packed_ra_matches_the_whole_domain_round_for_round() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        const LOG_T: usize = 8;
+        const CHUNK_BITS: usize = 4;
+        const POLYS: usize = 4;
+        let cycles = 1usize << LOG_T;
+        let seed = 0x5EED_u64;
+        let words: Vec<u64> = (0..cycles)
+            .flat_map(|cycle| {
+                let index = packed_index(seed, cycle);
+                [index as u64, (index >> 64) as u64]
+            })
+            .collect();
+        let point: Vec<Fr> = (0..POLYS * CHUNK_BITS)
+            .map(|i| fr(71 + i as u64 * 13))
+            .collect();
+        let seeds: Vec<Fr> = (0..POLYS).map(|p| fr(101 + p as u64 * 7)).collect();
+        let cycle_point: Vec<Fr> = (0..LOG_T).map(|i| fr(29 + i as u64 * 11)).collect();
+
+        let build = |base: usize, len: usize| {
+            let packed = Arc::new(
+                context
+                    .upload_u64_slice(&words[base * 2..(base + len) * 2])
+                    .expect("upload window index"),
+            );
+            DevicePackedRa::new(context, packed, len, CHUNK_BITS, &point, &seeds)
+                .expect("window one-hot family")
+        };
+
+        for shards in [2usize, 4] {
+            let mut expected = build(0, cycles);
+            let mut expected_eq =
+                DeviceSplitEq::<Fr>::new(context, &cycle_point, BindingOrder::LowToHigh)
+                    .expect("whole split-eq");
+            let len = cycles / shards;
+            let windows: Vec<PackedRaShard<Fr>> = (0..shards)
+                .map(|shard| PackedRaShard {
+                    ordinal: 0,
+                    one_hot: build(shard * len, len),
+                    eq: DeviceSplitEq::<Fr>::new_window(
+                        context,
+                        &cycle_point,
+                        BindingOrder::LowToHigh,
+                        shard,
+                        shards,
+                    )
+                    .expect("window split-eq"),
+                })
+                .collect();
+            let mut got = ShardedPackedRa::new(windows, LOG_T).expect("sharded one-hot");
+            let mut got_eq =
+                DeviceSplitEq::<Fr>::new(context, &cycle_point, BindingOrder::LowToHigh)
+                    .expect("tail split-eq");
+
+            for round in 0..LOG_T {
+                let want: [Fr; 5] = expected
+                    .round_evals(context, POLYS / 4, &expected_eq)
+                    .expect("whole round evals");
+                let have: [Fr; 5] = got
+                    .round_evals(POLYS / 4, &got_eq)
+                    .expect("sharded round evals");
+                assert_eq!(
+                    have, want,
+                    "shards={shards} round {round}: a one-hot window's eq-weighted lane sums must \
+                     add to the whole domain's",
+                );
+                let challenge = fr(500 + 19 * round as u64);
+                expected.bind(context, challenge).expect("whole bind");
+                expected_eq.bind(challenge);
+                got.bind(challenge, round).expect("sharded bind");
+                got_eq.bind(challenge);
+            }
+
+            let want: Vec<Fr> = expected.final_claims(context).expect("whole final claims");
+            let have: Vec<Fr> = got.final_claims().expect("sharded final claims");
+            assert_eq!(have, want, "shards={shards}: the final claims diverged");
+            assert_ne!(
+                want.first().copied(),
+                Some(fr(0)),
+                "a degenerate fixture would hide a divergence",
+            );
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(6))]
+        #[test]
+        fn device_packed_ra_matches_cpu_round_for_round(
+            log_t in (COLLAPSE_AFTER_ROUNDS + 1)..7usize,
+            chunk_bits in prop::sample::select(vec![4usize, 8]),
+            polys in 1usize..5,
+            seed in any::<u64>(),
+            challenges in arb_point(8),
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            let cycles = 1usize << log_t;
+            let addresses = 1usize << chunk_bits;
+
+            let words: Vec<u64> = (0..cycles)
+                .flat_map(|cycle| {
+                    let index = packed_index(seed, cycle);
+                    [index as u64, (index >> 64) as u64]
+                })
+                .collect();
+            let point: Vec<Fr> = (0..polys * chunk_bits)
+                .map(|i| fr(seed ^ (i as u64 * 37 + 11)))
+                .collect();
+            let seeds: Vec<Fr> = (0..polys)
+                .map(|p| fr(seed ^ (p as u64 * 911 + 3)))
+                .collect();
+
+            let mut expected: Vec<Polynomial<Fr>> = (0..polys)
+                .map(|p| {
+                    let chunk_point = &point[p * chunk_bits..(p + 1) * chunk_bits];
+                    let table = EqPolynomial::<Fr>::evals(chunk_point, Some(seeds[p]));
+                    let shift = chunk_bits * (polys - 1 - p);
+                    Polynomial::new(
+                        (0..cycles)
+                            .map(|cycle| {
+                                let index = packed_index(seed, cycle);
+                                let address =
+                                    ((index >> shift) & (addresses as u128 - 1)) as usize;
+                                table[address]
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+
+            let packed =
+                Arc::new(context.upload_u64_slice(&words).expect("upload packed index"));
+            let mut got = DevicePackedRa::new(context, packed, cycles, chunk_bits, &point, &seeds)
+                .expect("device packed one-hot family");
+
+            for (round, &challenge) in challenges.iter().enumerate().take(log_t) {
+                let coefficients = got.coefficients(context).expect("gather coefficients");
+                for (p, table) in coefficients.iter().enumerate() {
+                    prop_assert_eq!(
+                        table.to_host().expect("download coefficients"),
+                        expected[p].evals()[..got.len()].to_vec(),
+                        "poly {} diverged at round {}", p, round
+                    );
+                }
+                for poly in &mut expected {
+                    poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+                }
+                got.bind(context, challenge).expect("device bind");
+            }
+
+            prop_assert_eq!(
+                got.final_claims::<Fr>(context).expect("device final claims"),
+                expected
+                    .iter()
+                    .map(|poly| poly.evals()[0])
+                    .collect::<Vec<Fr>>(),
+                "final claims diverged"
+            );
+            prop_assert!(got.is_collapsed(), "the family never collapsed to dense arrays");
+        }
+    }
+}

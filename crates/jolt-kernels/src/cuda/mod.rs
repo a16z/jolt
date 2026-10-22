@@ -155,6 +155,7 @@ mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
 mod instruction_claim_reduction;
 mod instruction_input;
+mod instruction_ra_virtualization;
 #[cfg(test)]
 mod instruction_read_raf;
 mod program_image_claim_reduction;
@@ -207,8 +208,9 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Replace supported claim reductions, instruction-input checking, RAM output
-    /// and value checking, RAM hamming booleanity, hamming-weight claim reduction,
+    /// Replace supported claim reductions, instruction-input checking, instruction
+    /// RA virtualization, RAM output and value checking, RAM hamming booleanity,
+    /// hamming-weight claim reduction,
     /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
     /// reduction and virtualization, and RV64 Spartan outer and product kernels with
     /// CUDA implementations.
@@ -233,6 +235,7 @@ where
         backend.registers_claim_reduction = Box::new(CudaBackend);
         backend.instruction_claim_reduction = Box::new(CudaBackend);
         backend.instruction_input = Box::new(CudaBackend);
+        backend.instruction_ra_virtualization = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
         backend.ram_raf_evaluation = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);

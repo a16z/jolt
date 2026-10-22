@@ -163,6 +163,86 @@ pub(crate) fn synthetic_row(
     TraceRow::new(instruction, registers, access, pc.max(1)).expect("checked synthetic row")
 }
 
+fn instruction_rows(instruction: JoltInstructionRow, log_t: usize, seed: u64) -> Vec<TraceRow> {
+    (0..1usize << log_t)
+        .map(|cycle| {
+            let mix = seed
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(cycle as u64 + 1);
+            synthetic_row(
+                instruction,
+                RegisterState {
+                    rs1: instruction.operands.rs1.map(|register| RegisterRead {
+                        register,
+                        value: mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29),
+                    }),
+                    rs2: instruction.operands.rs2.map(|register| RegisterRead {
+                        register,
+                        value: mix.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (mix >> 31),
+                    }),
+                    ..Default::default()
+                },
+                RamAccess::NoOp,
+                1,
+            )
+        })
+        .collect()
+}
+
+pub fn with_instruction_witness<R>(
+    log_t: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend) -> R,
+) -> R {
+    with_instruction_kind_witness(JoltInstructionKind::XOR, log_t, one_hot, seed, body)
+}
+
+pub fn with_instruction_kind_witness<R>(
+    instruction_kind: JoltInstructionKind,
+    log_t: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend) -> R,
+) -> R {
+    let instruction = JoltInstructionRow {
+        instruction_kind,
+        address: 0x8000_0000,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    };
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(
+            vec![instruction],
+            instruction.address as u64,
+            RV64IMAC_JOLT,
+        )
+        .expect("instruction bytecode fixture"),
+        ram: RAMPreprocessing::default(),
+        memory_layout: MemoryLayout::default(),
+        max_padded_trace_length: 1usize << log_t,
+    });
+    let program = Arc::new(JoltProgram::default());
+    let trace = TraceOutput::new(
+        TraceData::new(instruction_rows(instruction, log_t, seed)),
+        Default::default(),
+        None,
+        None,
+    );
+    let backend = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, 64, one_hot),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+    );
+    body(&backend)
+}
+
 const RAM_FIXTURE_PATTERN: usize = 6;
 
 const fn ram_fixture_padding(log_t: usize) -> usize {

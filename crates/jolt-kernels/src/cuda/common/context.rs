@@ -68,6 +68,9 @@ pub struct CudaKernelContext {
     ram_ra_phase1_round: CudaFunction,
     irv_eq_double: CudaFunction,
     irv_tables_split: CudaFunction,
+    irv_gather: CudaFunction,
+    irv_message_sparse: CudaFunction,
+    irv_message_dense: CudaFunction,
     rrv_gather: CudaFunction,
     rrv_message_sparse: CudaFunction,
     rrv_message_dense: CudaFunction,
@@ -299,6 +302,9 @@ impl CudaKernelContext {
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
             irv_eq_double: module.load_function("irv_eq_double_kernel")?,
             irv_tables_split: module.load_function("irv_tables_split_kernel")?,
+            irv_gather: module.load_function("irv_gather_kernel")?,
+            irv_message_sparse: module.load_function("irv_message_sparse_kernel")?,
+            irv_message_dense: module.load_function("irv_message_dense_kernel")?,
             rrv_gather: module.load_function("rrv_gather_kernel")?,
             rrv_message_sparse: module.load_function("rrv_message_sparse_kernel")?,
             rrv_message_dense: module.load_function("rrv_message_dense_kernel")?,
@@ -880,6 +886,18 @@ impl CudaKernelContext {
 
     pub(crate) const fn irv_tables_split(&self) -> &CudaFunction {
         &self.irv_tables_split
+    }
+
+    pub(crate) const fn irv_gather(&self) -> &CudaFunction {
+        &self.irv_gather
+    }
+
+    pub(crate) const fn irv_message_sparse(&self) -> &CudaFunction {
+        &self.irv_message_sparse
+    }
+
+    pub(crate) const fn irv_message_dense(&self) -> &CudaFunction {
+        &self.irv_message_dense
     }
 
     pub(crate) const fn rrv_gather(&self) -> &CudaFunction {
