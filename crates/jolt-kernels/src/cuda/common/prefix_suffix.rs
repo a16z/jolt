@@ -62,7 +62,6 @@ pub fn eq_pair<F: JoltField>(
     })
 }
 
-#[cfg(test)]
 pub fn eq_plus_one_pairs<F: JoltField>(
     point: &[F],
     prefix_rounds: usize,
@@ -84,7 +83,6 @@ pub fn eq_plus_one_pairs<F: JoltField>(
     ])
 }
 
-#[cfg(test)]
 fn shifted<F: JoltField>(table: &[F]) -> Vec<F> {
     let mut out = vec![F::zero(); table.len()];
     out[1..].copy_from_slice(&table[..table.len() - 1]);

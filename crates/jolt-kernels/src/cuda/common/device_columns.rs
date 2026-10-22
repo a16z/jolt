@@ -7,53 +7,35 @@
 //! the cache. Shared ownership keeps buffers alive while kernels use them.
 
 #[cfg(feature = "allocative")]
-#[cfg(any(test, not(feature = "field-inline")))]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
-#[cfg(any(test, not(feature = "field-inline")))]
 use allocative::Key;
 #[cfg(feature = "allocative")]
-#[cfg(any(test, not(feature = "field-inline")))]
 use allocative::Visitor;
-#[cfg(any(test, not(feature = "field-inline")))]
 use std::any::Any;
-#[cfg(any(test, not(feature = "field-inline")))]
 use std::collections::HashMap;
-#[cfg(any(test, not(feature = "field-inline")))]
 use std::sync::Arc;
 
-#[cfg(any(test, not(feature = "field-inline")))]
 use cudarc::driver::CudaSlice;
 #[cfg(test)]
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
-#[cfg(any(test, not(feature = "field-inline")))]
 use jolt_field::JoltField;
-#[cfg(any(test, not(feature = "field-inline")))]
 use jolt_witness::backend::cuda::DeviceTrace;
-#[cfg(any(test, not(feature = "field-inline")))]
 use jolt_witness::JoltWitnessPlane;
 
 #[cfg(test)]
 use super::context::current_device;
-#[cfg(any(test, not(feature = "field-inline")))]
 use super::context::CudaKernelContext;
-#[cfg(any(test, not(feature = "field-inline")))]
 use super::device::{DeviceFrVec, LIMBS};
-#[cfg(any(test, not(feature = "field-inline")))]
 use crate::cuda::common::devices::CycleWindow;
-#[cfg(any(test, not(feature = "field-inline")))]
 use crate::cuda::witness::session_device_trace_window;
-#[cfg(any(test, not(feature = "field-inline")))]
 use crate::{KernelError, ProofSession};
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) const ANY_SPAN: usize = usize::MAX;
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) const NO_SPAN: usize = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) enum DeviceColumn {
     #[cfg(test)]
     CommittedHot(JoltCommittedPolynomial),
@@ -62,40 +44,34 @@ pub(crate) enum DeviceColumn {
     RemappedRamWord,
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) trait DeviceBytes: Any + Send + Sync {
     fn device_bytes(&self) -> usize;
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 impl DeviceBytes for CudaSlice<u8> {
     fn device_bytes(&self) -> usize {
         self.len()
     }
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 impl DeviceBytes for CudaSlice<u32> {
     fn device_bytes(&self) -> usize {
         self.len() * size_of::<u32>()
     }
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 impl DeviceBytes for CudaSlice<u64> {
     fn device_bytes(&self) -> usize {
         self.len() * size_of::<u64>()
     }
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 impl DeviceBytes for DeviceFrVec {
     fn device_bytes(&self) -> usize {
         self.len() * LIMBS * size_of::<u64>()
     }
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 struct Entry {
     value: Arc<dyn Any + Send + Sync>,
     cycles: usize,
@@ -111,7 +87,6 @@ struct Entry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg(any(test, not(feature = "field-inline")))]
 struct ColumnKey {
     ordinal: usize,
     column: DeviceColumn,
@@ -119,13 +94,11 @@ struct ColumnKey {
 }
 
 #[derive(Default)]
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) struct DeviceColumns {
     source: usize,
     entries: HashMap<ColumnKey, Entry>,
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 impl DeviceColumns {
     fn retarget(&mut self, source: usize) {
         if self.source != source {
@@ -170,7 +143,6 @@ impl DeviceColumns {
 }
 
 #[cfg(feature = "allocative")]
-#[cfg(any(test, not(feature = "field-inline")))]
 impl Allocative for DeviceColumns {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -182,7 +154,6 @@ impl Allocative for DeviceColumns {
 }
 
 #[cfg(feature = "allocative")]
-#[cfg(any(test, not(feature = "field-inline")))]
 const fn column_key(column: DeviceColumn) -> &'static str {
     match column {
         #[cfg(test)]
@@ -197,7 +168,6 @@ pub(crate) fn witness_identity<T: ?Sized>(witness: &T) -> usize {
     std::ptr::from_ref(witness).cast::<()>() as usize
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) fn device_columns_for<'a, T: ?Sized>(
     session: &'a mut ProofSession,
     source: &T,
@@ -208,7 +178,6 @@ pub(crate) fn device_columns_for<'a, T: ?Sized>(
     columns
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) fn park_device_column<S: ?Sized, T: DeviceBytes>(
     session: &mut ProofSession,
     source: &S,
@@ -226,7 +195,6 @@ pub(crate) fn park_device_column<S: ?Sized, T: DeviceBytes>(
     device_columns_for(session, source).put(key, window.len, span, value);
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) fn device_column<S, T, E>(
     session: &mut ProofSession,
     source: &S,
@@ -278,28 +246,20 @@ pub(crate) const fn whole_domain(cycles: usize) -> CycleWindow {
     }
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) struct DeviceTraceColumns {
     #[cfg_attr(
         not(test),
-        expect(
-            dead_code,
-            reason = "the Spartan outer consumer uses only the PC column"
-        )
+        expect(dead_code, reason = "the Spartan consumers use only the PC column")
     )]
     pub(crate) lookup: Arc<CudaSlice<u64>>,
     pub(crate) pc: Arc<CudaSlice<u32>>,
     #[cfg_attr(
         not(test),
-        expect(
-            dead_code,
-            reason = "the Spartan outer consumer uses only the PC column"
-        )
+        expect(dead_code, reason = "the Spartan consumers use only the PC column")
     )]
     pub(crate) ram: Arc<CudaSlice<u32>>,
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 fn resident_window<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
@@ -318,7 +278,6 @@ where
     Ok((trace, resident))
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) fn device_lookup_limbs<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
@@ -341,7 +300,6 @@ where
     )
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) fn device_pc_words<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
@@ -364,7 +322,6 @@ where
     )
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) fn device_ram_words<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
@@ -388,7 +345,6 @@ where
     )
 }
 
-#[cfg(any(test, not(feature = "field-inline")))]
 pub(crate) fn device_trace_columns<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,

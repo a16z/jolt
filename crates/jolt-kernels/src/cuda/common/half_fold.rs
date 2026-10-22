@@ -27,7 +27,6 @@ pub enum NarrowKind {
     U64,
     U128,
     TwosI128,
-    #[cfg(test)]
     U32,
     Bit(u32),
 }
@@ -36,7 +35,6 @@ impl NarrowKind {
     const fn words(self) -> usize {
         match self {
             Self::U64 | Self::Bit(_) => 1,
-            #[cfg(test)]
             Self::U32 => 1,
             Self::U128 | Self::TwosI128 => 2,
         }
@@ -47,7 +45,6 @@ impl NarrowKind {
             Self::U64 => 0,
             Self::U128 => 1,
             Self::TwosI128 => 2,
-            #[cfg(test)]
             Self::U32 => 4,
             Self::Bit(_) => 5,
         }
@@ -56,7 +53,6 @@ impl NarrowKind {
     const fn bit(self) -> u32 {
         match self {
             Self::Bit(bit) => bit,
-            #[cfg(test)]
             Self::U32 => 0,
             Self::U64 | Self::U128 | Self::TwosI128 => 0,
         }

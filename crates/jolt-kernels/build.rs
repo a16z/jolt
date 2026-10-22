@@ -31,6 +31,7 @@ const KERNEL_FILES: &[&str] = &[
     "ram_output_check.cu",
     "spartan_product.cu",
     "instruction_input.cu",
+    "spartan_shift.cu",
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {

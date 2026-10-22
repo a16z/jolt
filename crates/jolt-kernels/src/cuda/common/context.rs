@@ -60,6 +60,7 @@ pub struct CudaKernelContext {
     sop_round: CudaFunction,
     sopg_round: CudaFunction,
     ii_flag_words: CudaFunction,
+    ss_packed_columns: CudaFunction,
     #[cfg(test)]
     ra_split_tables: CudaFunction,
     #[cfg(test)]
@@ -285,6 +286,7 @@ impl CudaKernelContext {
             sop_round: module.load_function("sop_round_kernel")?,
             sopg_round: module.load_function("sopg_round_kernel")?,
             ii_flag_words: module.load_function("ii_flag_words_kernel")?,
+            ss_packed_columns: module.load_function("ss_packed_columns_kernel")?,
             #[cfg(test)]
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             #[cfg(test)]
@@ -618,7 +620,6 @@ impl CudaKernelContext {
         Ok(self.stream.alloc_zeros::<u64>(len)?)
     }
 
-    #[cfg(any(test, not(feature = "field-inline")))]
     pub(crate) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
@@ -733,6 +734,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn ii_flag_words(&self) -> &CudaFunction {
         &self.ii_flag_words
+    }
+
+    pub(crate) const fn ss_packed_columns(&self) -> &CudaFunction {
+        &self.ss_packed_columns
     }
 
     #[cfg(not(feature = "field-inline"))]
