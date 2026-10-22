@@ -28,7 +28,7 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_witness::__private::TraceRow;
-use jolt_witness::witnesses::{Extract, RamInc, ToField, WitnessEnv};
+use jolt_witness::witnesses::{Extract, RamInc, RdInc, ToField, WitnessEnv};
 use jolt_witness::{
     ChunkVisitor, FixedBackend, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
     JoltWitnessPlane, PolynomialEncoding, ProgramSource, RowSource, Shape, TraceBackend,
@@ -712,6 +712,87 @@ pub fn ram_rows_with_grid(log_t: usize, ram_log_k: usize, seed: u64) -> RamRowFi
         .collect();
 
     RamRowFixture { rows, ra, inc }
+}
+
+pub type RegisterActivity = (Option<u8>, Option<u8>, Option<u8>);
+
+pub const REGISTER_ACTIVITY: [RegisterActivity; 12] = [
+    (None, None, None),
+    (Some(3), None, None),
+    (None, Some(5), None),
+    (None, None, Some(7)),
+    (Some(9), Some(9), None),
+    (Some(11), None, Some(11)),
+    (None, Some(13), Some(13)),
+    (Some(2), Some(4), Some(6)),
+    (Some(6), Some(6), Some(6)),
+    (Some(1), Some(2), Some(1)),
+    (Some(1), Some(2), Some(2)),
+    (Some(120), Some(121), Some(122)),
+];
+
+pub struct RegisterFixture {
+    pub rows: Vec<TraceRow>,
+    pub rd_wa: Vec<Fr>,
+    pub inc: Vec<Fr>,
+}
+
+pub fn register_rows(log_t: usize, log_k: usize, seed: u64) -> RegisterFixture {
+    let cycles = 1usize << log_t;
+    let registers = 1usize << log_k;
+    let mut state = vec![0u64; registers];
+    let mut rows = Vec::with_capacity(cycles);
+    let mut rd_wa = vec![Fr::from_u64(0); registers * cycles];
+
+    for cycle in 0..cycles {
+        let (rs1, rs2, rd) = REGISTER_ACTIVITY[(cycle + seed as usize) % REGISTER_ACTIVITY.len()];
+        let mut registers_state = RegisterState::default();
+        if let Some(register) = rs1 {
+            registers_state.rs1 = Some(RegisterRead {
+                register,
+                value: state[register as usize],
+            });
+        }
+        if let Some(register) = rs2 {
+            registers_state.rs2 = Some(RegisterRead {
+                register,
+                value: state[register as usize],
+            });
+        }
+        if let Some(register) = rd {
+            let pre_value = state[register as usize];
+            let post_value = pre_value
+                .wrapping_add(seed.wrapping_mul(cycle as u64 + 1))
+                .wrapping_add(u64::from(register));
+            registers_state.rd = Some(RegisterWrite {
+                register,
+                pre_value,
+                post_value,
+            });
+            rd_wa[register as usize * cycles + cycle] = Fr::from_u64(1);
+            state[register as usize] = post_value;
+        }
+        rows.push(synthetic_row(
+            JoltInstructionRow::default(),
+            registers_state,
+            RamAccess::NoOp,
+            1,
+        ));
+    }
+
+    let probe = FixedPlane::with_log_t(FixedBackend::new(), "inc probe", Some(log_t));
+    let env = WitnessEnv::new(ProgramSource::program_preprocessing(&probe));
+    let inc: Vec<Fr> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            RdInc::extract(row, rows.get(index + 1), &env)
+                .expect("rd increment")
+                .to_field()
+        })
+        .collect();
+
+    RegisterFixture { rows, rd_wa, inc }
 }
 
 pub fn reference_input_claim<'a, R>(

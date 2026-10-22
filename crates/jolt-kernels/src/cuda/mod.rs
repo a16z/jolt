@@ -1,13 +1,13 @@
 //! CUDA precommitted, increment, register and instruction claim reductions.
 //! Also provides instruction-input checking, RAM output and value checking,
-//! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization
-//! and shift checking.
+//! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization,
+//! shift checking, and register-value evaluation.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
-//! reduction, instruction operand reduction, instruction-input checking and
-//! RAM output and value checking, hamming-weight booleanity and Spartan shift
-//! checking in the optimized registry.
+//! reduction, instruction operand reduction, instruction-input checking,
+//! RAM output and value checking, hamming-weight booleanity, Spartan shift
+//! checking, and register-value evaluation in the optimized registry.
 //! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
 //! field-inline retains the optimized implementations.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
@@ -163,6 +163,7 @@ mod ram_val_check;
 mod registers_claim_reduction;
 #[cfg(test)]
 mod registers_read_write;
+mod registers_val_evaluation;
 #[cfg(not(feature = "field-inline"))]
 mod spartan_outer;
 #[cfg(not(feature = "field-inline"))]
@@ -202,9 +203,9 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Replace supported claim reductions, instruction-input, RAM output and
-    /// value checking, RAM hamming booleanity, Spartan shift, and RV64 Spartan outer
-    /// and product kernels with CUDA implementations.
+    /// Replace supported claim reductions, instruction-input checking, RAM output
+    /// and value checking, RAM hamming booleanity, register-value evaluation, Spartan
+    /// shift, and RV64 Spartan outer and product kernels with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -227,6 +228,7 @@ where
         backend.instruction_input = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);
+        backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.spartan_shift = Box::new(CudaBackend);
         #[cfg(not(feature = "field-inline"))]
         {

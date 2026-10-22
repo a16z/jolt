@@ -627,7 +627,6 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn clone_u32(&self, buffer: &CudaSlice<u32>) -> Result<CudaSlice<u32>, CudaError> {
         xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u32>(), || {
             Ok(self.stream.clone_dtod(buffer)?)

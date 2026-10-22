@@ -18,7 +18,6 @@ use super::error::CudaError;
 
 pub const COLLAPSE_AFTER_ROUNDS: usize = 3;
 
-#[cfg(test)]
 pub use crate::cuda::common::pack::COLD;
 
 pub struct DeviceRaPolynomial {

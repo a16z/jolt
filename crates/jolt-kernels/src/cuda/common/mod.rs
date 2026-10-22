@@ -17,7 +17,6 @@ pub(crate) mod msm;
 pub(crate) mod one_hot_fold;
 #[cfg(test)]
 pub(crate) mod one_hot_witness;
-#[cfg(test)]
 pub(crate) mod pack;
 #[cfg(test)]
 pub(crate) mod pairing;
