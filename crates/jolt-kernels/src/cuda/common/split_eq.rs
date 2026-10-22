@@ -248,6 +248,19 @@ impl<F: JoltField> DeviceSplitEq<F> {
             })
     }
 
+    pub fn gruen_poly_from_evals(
+        &self,
+        q_evals: &[F],
+        previous_claim: F,
+        q0: F,
+    ) -> Result<UnivariatePoly<F>, CudaError> {
+        self.host
+            .gruen_poly_from_evals(q_evals, previous_claim, || q0)
+            .map_err(|_| CudaError::InvariantViolation {
+                reason: "the Toom quotient disagrees with the sumcheck claim",
+            })
+    }
+
     #[cfg(test)]
     pub fn merge(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         context.upload(super::device::require_fr_slice(self.host.merge().evals())?)

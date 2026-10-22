@@ -66,6 +66,11 @@ pub struct CudaKernelContext {
     ram_ra_fold_suffix: CudaFunction,
     ram_ra_fold_prefix: CudaFunction,
     ram_ra_phase1_round: CudaFunction,
+    irv_eq_double: CudaFunction,
+    irv_tables_split: CudaFunction,
+    rrv_gather: CudaFunction,
+    rrv_message_sparse: CudaFunction,
+    rrv_message_dense: CudaFunction,
     #[cfg(test)]
     sfx_eval_batch: CudaFunction,
     #[cfg(test)]
@@ -292,6 +297,11 @@ impl CudaKernelContext {
             ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
             ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
+            irv_eq_double: module.load_function("irv_eq_double_kernel")?,
+            irv_tables_split: module.load_function("irv_tables_split_kernel")?,
+            rrv_gather: module.load_function("rrv_gather_kernel")?,
+            rrv_message_sparse: module.load_function("rrv_message_sparse_kernel")?,
+            rrv_message_dense: module.load_function("rrv_message_dense_kernel")?,
             #[cfg(test)]
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
             #[cfg(test)]
@@ -862,6 +872,26 @@ impl CudaKernelContext {
 
     pub(crate) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
         &self.ram_ra_phase1_round
+    }
+
+    pub(crate) const fn irv_eq_double(&self) -> &CudaFunction {
+        &self.irv_eq_double
+    }
+
+    pub(crate) const fn irv_tables_split(&self) -> &CudaFunction {
+        &self.irv_tables_split
+    }
+
+    pub(crate) const fn rrv_gather(&self) -> &CudaFunction {
+        &self.rrv_gather
+    }
+
+    pub(crate) const fn rrv_message_sparse(&self) -> &CudaFunction {
+        &self.rrv_message_sparse
+    }
+
+    pub(crate) const fn rrv_message_dense(&self) -> &CudaFunction {
+        &self.rrv_message_dense
     }
 
     #[cfg(test)]
