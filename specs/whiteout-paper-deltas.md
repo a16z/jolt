@@ -1118,14 +1118,15 @@ and Akita's own opening error are separate.
 | α | Item 4's product lift `Σμ_i X_iY_i − H_e = θ·(X^64 + 1)` at `α`, with the chain rows (D9) at the same `α` | the lift's residual has degree ≤ 126 in `X` (products of degree < 64); a chain row's ≤ 15 | `126/q`, no union: every violated row must vanish |
 | product sumcheck | `Σ_i U_iW_i = t_×` | degree 2, `⌈log₂ n_×⌉` rounds | `2⌈log₂ n_×⌉/q` |
 | η | row batch `⟨A, e⟩ = b_η` | multilinear in `η` | `⌈log₂ m⌉/q` |
-| δ, τ_pad | padding term (Akita spec §5.7, W5-P1) | multilinear in `τ_pad`, linear in `δ` | `(ν + 1)/q` |
+| τ_pad | padding term `Σ_{j ≥ |e|} eq(τ_pad, j)·e_j` (Akita spec §5.7, W5-P1), added to the η batch | multilinear in `τ_pad`; jointly with `η`, one multilinear polynomial in disjoint variables | `ν/q` |
 | τ and Stage 1 | digit range at radix 16 | Akita's stage-1 reduction, with its grinding | Akita's stage-1 error at `log_basis = 4` (akita spec §5.2; not restated here) |
 | γ, ζ | range image and binary constraint into `B` | linear in each | `2/q` |
+| binary constraint | `Σ_j eq(τ, j)·1_{I_bin}(j)·e_j(e_j + 1) = 0` at the Stage-1 point `τ` | multilinear in `τ` | `ν/q` |
 | fused sumcheck | `A·E + B·E(E + 1)` | degree 3, `ν` rounds | `3ν/q` |
 
 At the headline (`ν = 27`, `⌈log₂ m⌉ ≤ 27`, `⌈log₂ n_×⌉ ≤ 10`) the explicit
-rows sum to at most `(126 + 20 + 27 + 28 + 2 + 81)/q = 284/q ≈ 2^−119.8`,
-before Stage 1. The α round alone is `126/q ≈ 2^−121`.
+rows sum to at most `(126 + 20 + 27 + 27 + 2 + 27 + 81)/q = 310/q ≈
+2^−119.7`, before Stage 1. The α round alone is `126/q ≈ 2^−121`.
 
 **Open (for the authors).** The response proof is below 128 bits over a
 single `F_q128`. Options: draw `α` (and the sumcheck challenges) from an
