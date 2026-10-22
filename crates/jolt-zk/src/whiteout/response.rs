@@ -22,9 +22,6 @@ use jolt_algebra::{CyclotomicRing, JoltField};
 use jolt_crypto::challenge::SparseChallenge;
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
-#[cfg(feature = "whiteout-prover")]
-use zeroize::Zeroizing;
-use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use super::challenge::{challenge_ring, challenge_times_ring};
 use super::lift::{ChallengeRing, LiftedRelation};
@@ -33,6 +30,7 @@ use super::segments::balanced_range;
 use super::sigma::SigmaSetup;
 use super::WhiteoutError;
 use crate::masking::ZkError;
+use crate::secret::wipe;
 
 /// Radix-16 digits of a field element of `V` or `θ`.
 pub const FIELD_LEVELS: usize = 32;
@@ -86,9 +84,17 @@ impl ResponseLayout {
 }
 
 /// `e` in digit form, in [`ResponseLayout`] order. Zeroed when dropped.
-#[derive(Clone, Debug, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResponseWitness {
     pub digits: Vec<i8>,
+}
+
+// Hand-written: the derived `ZeroizeOnDrop` wipes a `Vec` twice, byte by
+// byte, and `e` is the largest buffer of a proof.
+impl Drop for ResponseWitness {
+    fn drop(&mut self) {
+        wipe(&mut self.digits);
+    }
 }
 
 /// What the response proof certifies.
@@ -232,18 +238,17 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
     }
 }
 
-/// The balanced radix-16 digits of every integer in `values` with
-/// `levels` digits each, digit plane by digit plane, zeroed when dropped.
+/// Writes the balanced radix-16 digits of every integer in `values` with
+/// `levels` digits each, digit plane by digit plane, to `digits`.
 #[cfg(feature = "whiteout-prover")]
-pub(crate) fn integer_digits(
-    values: &[i64],
-    levels: usize,
-) -> Result<Zeroizing<Vec<i8>>, WhiteoutError> {
+fn integer_digits(values: &[i64], levels: usize, digits: &mut [i8]) -> Result<(), WhiteoutError> {
     let radix = 1i128 << RESPONSE_LOG_BASIS;
     let (min, top) = balanced_range(RESPONSE_LOG_BASIS, levels)
         .ok_or(WhiteoutError::InvariantViolation("response digit range"))?;
     let offset = -min;
-    let mut digits = Zeroizing::new(vec![0i8; values.len() * levels]);
+    if digits.len() != values.len() * levels {
+        return Err(WhiteoutError::InvariantViolation("response digit count"));
+    }
     for (index, &value) in values.iter().enumerate() {
         let value = i128::from(value);
         if !(-offset..=top).contains(&value) {
@@ -259,7 +264,7 @@ pub(crate) fn integer_digits(
             shifted /= radix;
         }
     }
-    Ok(digits)
+    Ok(())
 }
 
 /// The integers whose `levels` balanced radix-16 digits per coefficient are
@@ -291,13 +296,15 @@ fn field_from_planes<F: JoltField>(planes: &[i8], coefficients: usize) -> Vec<F>
     values
 }
 
-/// The 32 balanced radix-16 digit planes of `values`, zeroed when dropped.
+/// Writes the 32 balanced radix-16 digit planes of `values` to `digits`.
 #[cfg(feature = "whiteout-prover")]
-pub(crate) fn field_digits<F: JoltField>(values: &[F]) -> Zeroizing<Vec<i8>> {
+fn field_digits<F: JoltField>(values: &[F], digits: &mut [i8]) -> Result<(), WhiteoutError> {
+    if digits.len() != values.len() * FIELD_LEVELS {
+        return Err(WhiteoutError::InvariantViolation("field digit count"));
+    }
     let params = BalancedDecomposePow2Params::<F>::new(FIELD_LEVELS, RESPONSE_LOG_BASIS);
-    let mut digits = Zeroizing::new(vec![0i8; values.len() * FIELD_LEVELS]);
-    balanced_decompose_coefficients_pow2_i8_into(values, &mut digits, &params);
-    digits
+    balanced_decompose_coefficients_pow2_i8_into(values, digits, &params);
+    Ok(())
 }
 
 #[cfg(feature = "whiteout-prover")]
@@ -310,9 +317,17 @@ impl ResponseWitness {
         v: &[F],
         theta: &[F],
     ) -> Result<Self, WhiteoutError> {
-        let mut digits = Zeroizing::new(Vec::with_capacity(setup.response_layout().len()));
+        let layout = setup.response_layout();
+        let mut witness = Self {
+            digits: vec![0i8; layout.len()],
+        };
+        let mut out = witness.digits.as_mut_slice();
         let mut rest = z;
-        for segment in setup.response_layout().segments {
+        for segment in layout.segments {
+            let (digits, tail) = std::mem::take(&mut out)
+                .split_at_mut_checked(segment.len())
+                .ok_or(WhiteoutError::InvariantViolation("response layout length"))?;
+            out = tail;
             match segment {
                 ResponseSegment::Response {
                     coefficients,
@@ -321,18 +336,19 @@ impl ResponseWitness {
                 } => {
                     let (values, tail) = rest.split_at(coefficients);
                     rest = tail;
-                    digits.extend_from_slice(&integer_digits(values, levels)?);
+                    integer_digits(values, levels, digits)?;
                 }
                 ResponseSegment::V { .. } => {
-                    for ring in v.chunks_exact(CHALLENGE_RING_DIM) {
-                        digits.extend_from_slice(&field_digits(ring));
+                    for (ring, digits) in v
+                        .chunks_exact(CHALLENGE_RING_DIM)
+                        .zip(digits.chunks_exact_mut(CHALLENGE_RING_DIM * FIELD_LEVELS))
+                    {
+                        field_digits(ring, digits)?;
                     }
                 }
-                ResponseSegment::Theta => digits.extend_from_slice(&field_digits(theta)),
+                ResponseSegment::Theta => field_digits(theta, digits)?,
             }
         }
-        Ok(Self {
-            digits: std::mem::take(&mut digits),
-        })
+        Ok(witness)
     }
 }

@@ -32,8 +32,6 @@ use jolt_crypto::lattice::{
 use jolt_transcript::{
     Channel, Fork, Sponge, VerifierTranscript, ATTEMPT_NONCE_LEN, FORK_SEED_LEN,
 };
-#[cfg(feature = "whiteout-prover")]
-use zeroize::Zeroizing;
 
 use super::lift::{ChallengeRing, EvaluationClaims, LiftedRelation};
 use super::linear::{GadgetTerm, LRow, LinearBlock, ResidualBlock, RingLinearMap};
@@ -48,6 +46,8 @@ use super::response::{
 use super::segments::{Segment, SegmentRole, SegmentTable};
 use super::WhiteoutError;
 use crate::masking::{ResidualRelation, ZkError};
+#[cfg(feature = "whiteout-prover")]
+use crate::secret::SecretVec;
 
 /// The public setup of one Σ-protocol shape. Every position in `s` is
 /// derived here from the segment table and the pad placement; callers never
@@ -237,22 +237,24 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         &self,
         residual: &[i64],
         pads: &LatticePadOpening,
-    ) -> Result<Zeroizing<Vec<i64>>, WhiteoutError> {
+    ) -> Result<SecretVec<i64>, WhiteoutError> {
         if residual.len() != self.residual_len {
             return Err(WhiteoutError::WitnessLength {
                 expected: self.residual_len,
                 actual: residual.len(),
             });
         }
-        let mut s = Zeroizing::new(Vec::with_capacity(self.table.num_coefficients()));
-        s.extend_from_slice(residual);
-        s.extend_from_slice(&pads.digits);
-        if s.len() != self.table.num_coefficients() {
+        let len = residual.len() + pads.digits.len();
+        if len != self.table.num_coefficients() {
             return Err(WhiteoutError::WitnessLength {
                 expected: self.table.num_coefficients(),
-                actual: s.len(),
+                actual: len,
             });
         }
+        let mut s = SecretVec::from(vec![0i64; len]);
+        let (head, tail) = s.split_at_mut(residual.len());
+        head.copy_from_slice(residual);
+        tail.copy_from_slice(&pads.digits);
         Ok(s)
     }
 
@@ -367,7 +369,7 @@ mod prover {
     use jolt_crypto::sample::{GaussianSampler, GaussianWidth, JointRejection, SampleError};
     use jolt_transcript::{Channel, ProverTranscript, Sponge, ATTEMPT_NONCE_LEN, FORK_SEED_LEN};
     use rand_core::{CryptoRng, RngCore};
-    use zeroize::{Zeroize, Zeroizing};
+    use zeroize::Zeroize;
 
     use super::super::challenge::{challenge_ring, challenge_times_i64_into};
     use super::super::dit::with_dit;
@@ -448,10 +450,10 @@ mod prover {
         tail_bound: u64,
         sigma: [u8; FORK_SEED_LEN],
         /// The mask, zero on public coordinates.
-        y: Zeroizing<Vec<i64>>,
+        y: SecretVec<i64>,
         /// `z` and the shift `v = c·s` on the Gaussian coordinates, block-major.
-        z_gaussian: Zeroizing<Vec<i64>>,
-        v_gaussian: Zeroizing<Vec<i64>>,
+        z_gaussian: SecretVec<i64>,
+        v_gaussian: SecretVec<i64>,
     }
 
     /// Proves the residual relation for the residual opening `residual` and
@@ -593,9 +595,9 @@ mod prover {
             sampler: GaussianSampler::new(width),
             tail_bound: width.tail_bound(),
             sigma: transcript.challenge_bytes(),
-            y: Zeroizing::new(vec![0i64; table.num_coefficients()]),
-            z_gaussian: Zeroizing::new(vec![0i64; gaussian_len]),
-            v_gaussian: Zeroizing::new(vec![0i64; gaussian_len]),
+            y: SecretVec::from(vec![0i64; table.num_coefficients()]),
+            z_gaussian: SecretVec::from(vec![0i64; gaussian_len]),
+            v_gaussian: SecretVec::from(vec![0i64; gaussian_len]),
         };
         let rejection = setup.params().rejection()?;
         let max_attempts = setup.params().max_attempts()?;
@@ -649,8 +651,7 @@ mod prover {
             let e0 = self.setup.l_row().apply(&self.y, self.tail_bound)?
                 + self.aggregated.quadratic_at_zero(&parts_y);
             let e1 = self.l_s + self.aggregated.polar(&self.parts_s, &parts_y);
-            let mut v =
-                Vec::with_capacity(self.setup.v_level().message_rings * CHALLENGE_RING_DIM);
+            let mut v = Vec::with_capacity(self.setup.v_level().message_rings * CHALLENGE_RING_DIM);
             v.extend(
                 f.iter()
                     .flat_map(|ring| ring.coefficients().iter().copied()),
@@ -726,9 +727,10 @@ mod prover {
                 }
                 // Wiped now rather than when the next attempt overwrites
                 // them. The attempt's own buffers are zeroed as they drop.
-                self.y.as_mut_slice().zeroize();
-                self.z_gaussian.as_mut_slice().zeroize();
-                self.v_gaussian.as_mut_slice().zeroize();
+                // In place: y stays zero on public coordinates.
+                self.y.zeroize();
+                self.z_gaussian.zeroize();
+                self.v_gaussian.zeroize();
                 nonce.zeroize();
                 c.zeroize();
                 return Ok(None);
@@ -746,10 +748,10 @@ mod prover {
         fn witness(&self, accepted: &Accepted<F>) -> Result<ResponseWitness, WhiteoutError> {
             let table = self.setup.table();
             let c = accepted.challenge.to_dense_ct()?;
-            let mut z = self.y.clone();
+            let mut z = SecretVec::from(self.y.to_vec());
             for placed in table.placed() {
                 let range = placed.coefficients();
-                let mut shift = Zeroizing::new(vec![0i64; range.len()]);
+                let mut shift = SecretVec::from(vec![0i64; range.len()]);
                 challenge_times_i64_into(
                     &c,
                     placed.segment.native_dim,

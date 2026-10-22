@@ -206,7 +206,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         // sign-extended, and the top limb is `rest_j` itself. Each pass
         // recomputes its limb from `input` into one scratch buffer.
         // The limbs are as secret as the input (Whiteout's mask).
-        let mut limb = Zeroizing::new(vec![0i64; input.len()]);
+        let mut limb = Zeroizing::new(vec![0i64; input.len()].into_boxed_slice());
         let mut output = vec![CyclotomicRing::zero(); self.shape.rows];
         let mut weight = F::one();
         let radix = F::from_u64(1 << LIMB_BITS);

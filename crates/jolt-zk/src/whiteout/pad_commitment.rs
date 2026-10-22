@@ -201,8 +201,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         }
         // g is the group after the regular ones (`PadPlacement::g_ring`).
         let g_start = self.placement.regular_groups() * CHALLENGE_RING_DIM;
-        let mut regular =
-            SecretVec::from(vec![F::zero(); g_start + CHALLENGE_RING_DIM]);
+        let mut regular = SecretVec::from(vec![F::zero(); g_start + CHALLENGE_RING_DIM]);
         let mut operands = SecretVec::from(vec![F::zero(); self.placement.num_operands()]);
         for (pad, &value) in pads.iter().enumerate() {
             let slot = match self.placement.place(PadIndex(pad))? {
