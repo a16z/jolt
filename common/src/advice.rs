@@ -9,11 +9,13 @@ use crate::jolt_device::bytes_to_words_le;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdviceWordsError {
     AdviceTooLong { actual: usize, max: usize },
+    CapacityOverflow,
 }
 
 impl Display for AdviceWordsError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         match self {
+            Self::CapacityOverflow => write!(formatter, "advice word capacity overflows"),
             Self::AdviceTooLong { actual, max } => {
                 write!(
                     formatter,
@@ -27,12 +29,19 @@ impl Display for AdviceWordsError {
 #[cfg(feature = "std")]
 impl Error for AdviceWordsError {}
 
+/// The existing canonical capacity rule, without constructing the padded table.
+pub fn canonical_advice_word_capacity(max_bytes: usize) -> Result<usize, AdviceWordsError> {
+    (max_bytes / 8)
+        .checked_next_power_of_two()
+        .ok_or(AdviceWordsError::CapacityOverflow)
+}
+
 /// Packs bytes into the canonical zero-padded little-endian advice word table.
 pub fn canonical_advice_words(
     bytes: &[u8],
     max_bytes: usize,
 ) -> Result<Vec<u64>, AdviceWordsError> {
-    let word_capacity = (max_bytes / 8).next_power_of_two();
+    let word_capacity = canonical_advice_word_capacity(max_bytes)?;
     if bytes.len() > max_bytes {
         return Err(AdviceWordsError::AdviceTooLong {
             actual: bytes.len(),
@@ -59,6 +68,26 @@ mod tests {
             canonical_advice_words(&[u8::MAX; 8], 16),
             Ok(vec![u64::MAX, 0])
         );
+    }
+
+    #[test]
+    fn capacity_without_materialization_matches_the_reference() {
+        for max in [
+            0,
+            7,
+            8,
+            9,
+            16,
+            24,
+            (1 << 13) * 8,
+            (1 << 14) * 8,
+            (1 << 15) * 8,
+        ] {
+            assert_eq!(
+                canonical_advice_word_capacity(max).unwrap(),
+                canonical_advice_words(&[], max).unwrap().len()
+            );
+        }
     }
 
     #[test]

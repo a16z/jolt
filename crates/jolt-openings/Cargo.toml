@@ -9,6 +9,7 @@ description = "Polynomial commitment scheme traits and batch openings for the Jo
 workspace = true
 
 [dependencies]
+common = { path = "../../common" }
 jolt-crypto = { path = "../jolt-crypto", default-features = false }
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false, features = [

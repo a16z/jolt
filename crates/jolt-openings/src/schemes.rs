@@ -161,6 +161,33 @@ pub trait TransparentObjectSetup: CommitmentScheme {
         layout_digest: [u8; 32],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
+    /// Commit canonical little-endian words in prefix slot zero. Backends can
+    /// consume the compact bytes before any capacity-sized polynomial exists.
+    /// `num_vars` describes the physical domain; capacity fixes the logical domain.
+    fn commit_packed_words(
+        setup: &Self::ProverSetup,
+        bytes: &[u8],
+        max_bytes: usize,
+        num_vars: usize,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        let words = common::advice::canonical_advice_words(bytes, max_bytes)
+            .map_err(|e| OpeningsError::CommitFailed(e.to_string()))?;
+        let count = u32::try_from(num_vars)
+            .ok()
+            .and_then(|n| 1usize.checked_shl(n))
+            .ok_or_else(|| OpeningsError::CommitFailed("packed word arity overflows".into()))?;
+        if words.len() > count {
+            return Err(OpeningsError::CommitFailed(
+                "packed word domain exceeds physical domain".into(),
+            ));
+        }
+        let mut evaluations = vec![Self::Field::default(); count];
+        for (destination, word) in evaluations.iter_mut().zip(words) {
+            *destination = Self::Field::from_u64(word);
+        }
+        Self::commit(&jolt_poly::Polynomial::new(evaluations), setup)
+    }
+
     /// Return the immutable context that admitted `setup`, for objects created
     /// later in the same preprocessing/proving run.
     fn transparent_setup_context(setup: &Self::ProverSetup) -> &Self::SetupContext;
