@@ -1,30 +1,39 @@
 //! The response statement (Whiteout §4.3) and the `ResponseProver` seam.
 //!
-//! After an accepted attempt, the verifier holds `(c, ρ, t_D)` and the
-//! commitment images, but never `z`, `V` or `θ`. The response proof certifies
-//! the vector `e = (G_z⁻¹(z), G⁻¹(V), G⁻¹(θ))`:
+//! After an accepted attempt, the verifier holds `(c, ρ, cm(t_D))` and the
+//! compressed commitment images, but never `z`, `V` or `θ`. The response
+//! proof certifies the vector `e = (G_z⁻¹(z), G⁻¹(V), G⁻¹(θ), ξ)`, with `ξ`
+//! the compression witnesses of the compressed targets of `N` and of `t_D`:
 //!
 //! 1. every digit of `e` lies in the balanced radix-16 alphabet;
-//! 2. `t_D = A_D G⁻¹(V)`;
+//! 2. `t_D = A_D G⁻¹(V)`, and every `ξ` opens its payload under the response
+//!    prover's compression map (Whiteout §2);
 //! 3. `N z = f + c t`, on Gaussian and public coordinates alike;
+//!
+//! where every compressed image (`t_D` and the compressed `t`) is the one
+//! its `ξ` reconstructs;
 //! 4. `Q_μ(c, z) + L z = E_0 + c E_1 + c² h`, with `θ` the quotient of
 //!    `Σ μ_i [X_i(c,z)][Y_i(c,z)]` by `X^64 + 1`;
 //! 5. `ct(h) = 0`.
 //!
-//! The compression digits ξ join `e` with W5's compression. Akita proves the
-//! statement (W5); [`ResponseStatement::check_witness`] is its definition.
+//! Akita proves the statement (W5); [`ResponseStatement::check_witness`] is
+//! its definition.
 
 #[cfg(feature = "whiteout-prover")]
 use jolt_algebra::balanced_decompose_coefficients_pow2_i8_into;
 #[cfg(feature = "whiteout-prover")]
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
+use std::ops::Range;
+
 use jolt_algebra::{CyclotomicRing, JoltField};
 use jolt_crypto::challenge::SparseChallenge;
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 
-use super::challenge::{challenge_ring, challenge_times_ring};
+use super::challenge::{challenge_ring, challenge_times_ring, challenge_times_ring_transpose};
+use super::compression::ImageCompression;
 use super::lift::{ChallengeRing, LiftedRelation, ProductAdjointWeights};
+use super::linear::BlockTarget;
 use super::params::RESPONSE_LOG_BASIS;
 use super::segments::balanced_range;
 use super::sigma::SigmaSetup;
@@ -50,6 +59,14 @@ pub enum ResponseSegment {
     V { coefficients: usize },
     /// `G⁻¹(θ)`: 32 digit planes of the 63 coefficients.
     Theta,
+    /// The compression witness of compressed image `image`, of
+    /// `coefficients` coefficients: the compressed targets of `N` in block
+    /// order, then `t_D`.
+    Compression {
+        image: usize,
+        coefficients: usize,
+        digits: usize,
+    },
 }
 
 impl ResponseSegment {
@@ -63,6 +80,7 @@ impl ResponseSegment {
             } => coefficients * digits,
             Self::V { coefficients } => coefficients * FIELD_LEVELS,
             Self::Theta => THETA_COEFFICIENTS * FIELD_LEVELS,
+            Self::Compression { digits, .. } => digits,
         }
     }
 }
@@ -93,14 +111,29 @@ pub struct ResponseWitness {
 pub struct ResponseStatement<'a, F: JoltField, const D: usize> {
     pub(crate) setup: &'a SigmaSetup<F, D>,
     pub(crate) relation: &'a LiftedRelation<F>,
+    /// The response prover's compression map.
+    pub(crate) compression: &'a dyn ImageCompression<F>,
     pub(crate) challenge: SparseChallenge,
     /// The aggregation challenges; `μ` follows from the relation's labels.
     pub(crate) rho: Vec<F>,
-    pub(crate) v_image: Vec<ChallengeRing<F>>,
+    /// `cm(t_D)`.
+    pub(crate) v_payload: Vec<F>,
+}
+
+/// A compressed image of the statement: where its witness sits in `e`,
+/// its length, and its payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompressedTarget<'a, F> {
+    pub digits: Range<usize>,
+    pub image_len: usize,
+    pub payload: &'a [F],
 }
 
 /// Proves the response statement. Akita implements it (W5).
 pub trait ResponseProver<F: JoltField, const D: usize> {
+    /// The compression map of the statement's images.
+    fn compression(&self) -> &dyn ImageCompression<F>;
+
     fn prove_response<H: Sponge>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
@@ -116,8 +149,8 @@ pub trait ResponseProver<F: JoltField, const D: usize> {
 }
 
 impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
-    pub fn layout(&self) -> ResponseLayout {
-        self.setup.response_layout()
+    pub fn layout(&self) -> Result<ResponseLayout, WhiteoutError> {
+        self.setup.response_layout(self.compression)
     }
 
     /// `log₂` of `e`'s digit radix: Item 1 puts every digit in the
@@ -136,9 +169,49 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         &self.rho
     }
 
-    /// The commitment `t_D` to `V`.
-    pub fn v_image(&self) -> &[ChallengeRing<F>] {
-        &self.v_image
+    /// `cm(t_D)`, the compressed commitment to `V`.
+    pub fn v_payload(&self) -> &[F] {
+        &self.v_payload
+    }
+
+    /// The compressed images, in layout order.
+    pub fn compressed_targets(&self) -> Result<Vec<CompressedTarget<'_, F>>, WhiteoutError> {
+        let layout = self.layout()?;
+        let payloads: Vec<(usize, &[F])> = self
+            .setup
+            .compressed_targets()
+            .chain(std::iter::once((
+                self.setup.v_image_len(),
+                self.v_payload.as_slice(),
+            )))
+            .collect();
+        let mut offset = 0;
+        let mut targets = Vec::with_capacity(payloads.len());
+        for segment in &layout.segments {
+            let len = segment.num_digits();
+            if let ResponseSegment::Compression {
+                image,
+                coefficients,
+                ..
+            } = *segment
+            {
+                let (image_len, payload) = *payloads
+                    .get(image)
+                    .ok_or(WhiteoutError::InvalidRelation("compressed image missing"))?;
+                if image_len != coefficients {
+                    return Err(WhiteoutError::InvalidRelation(
+                        "compressed image length differs from its segment",
+                    ));
+                }
+                targets.push(CompressedTarget {
+                    digits: offset..offset + len,
+                    image_len,
+                    payload,
+                });
+            }
+            offset += len;
+        }
+        Ok(targets)
     }
 
     /// Whether `witness` satisfies items 1–5: the statement's definition.
@@ -146,12 +219,20 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         let decoded = self.decode(&witness.digits)?;
         let (z, v) = (&decoded.z, &decoded.v);
 
-        // Item 2: t_D = A_D G⁻¹(V), A_D applied to e's V digits as given.
+        // Item 2: every ξ opens its payload, and t_D = A_D G⁻¹(V), A_D
+        // applied to e's V digits as given.
+        for (target, witness) in self.compressed_targets()?.iter().zip(&decoded.witnesses) {
+            self.compression.check(target.payload, witness)?;
+        }
         let t_d = self
             .setup
             .v_matrix()
             .apply_centered(&decoded.v_digits, RESPONSE_DIGIT_BOUND)?;
-        if t_d != self.v_image {
+        if t_d
+            .iter()
+            .flat_map(|ring| ring.coefficients())
+            .ne(decoded.v_image()?)
+        {
             return Err(WhiteoutError::ResponseRejected("V commitment"));
         }
 
@@ -160,7 +241,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         let bound = self.setup.params().response_bound();
         let nz = self.setup.linear().apply(z, bound)?;
         let f = v.chunks_exact(D).map(CyclotomicRing::<F, D>::from_slice);
-        for ((nz, f), t) in nz.iter().zip(f).zip(self.setup.linear().targets()) {
+        for ((nz, f), t) in nz.iter().zip(f).zip(self.targets(&decoded)?.iter()) {
             if *nz != f + challenge_times_ring(&c, t) {
                 return Err(WhiteoutError::ResponseRejected("ring-linear rows"));
             }
@@ -217,10 +298,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             .iter()
             .flat_map(|ring| ring.coefficients().iter().copied())
             .collect::<Vec<F>>();
-        for (value, target) in v_image
-            .iter_mut()
-            .zip(self.v_image.iter().flat_map(|ring| ring.coefficients()))
-        {
+        for (value, target) in v_image.iter_mut().zip(decoded.v_image()?) {
             *value -= *target;
         }
 
@@ -228,9 +306,8 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         let bound = self.setup.params().response_bound();
         let mut linear = flat(self.setup.linear().apply(z, bound)?);
         let shifts = self
-            .setup
-            .linear()
-            .targets()
+            .targets(&decoded)?
+            .iter()
             .map(|t| challenge_times_ring(&c, t))
             .collect();
         for ((value, f), shift) in linear.iter_mut().zip(v).zip(flat(shifts)) {
@@ -285,10 +362,34 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                 "row weights differ from the statement's rows",
             ));
         }
-        let layout = self.layout();
+        let layout = self.layout()?;
         let c = self.challenge.to_dense_ct()?;
         let c_ring: ChallengeRing<F> = challenge_ring(&c);
         let n_out = self.setup.linear().num_outputs() * D;
+        // Weights on each compressed image, in layout order: Item 3's
+        // `−c·t` on the compressed targets of `N`, then Item 2's `−t_D`.
+        let mut images: Vec<Vec<F>> = Vec::new();
+        let mut rest = weights.linear.as_slice();
+        for (rows, target) in self.setup.linear().targets() {
+            let (block, tail) = rest.split_at((rows * D).min(rest.len()));
+            rest = tail;
+            if let BlockTarget::Compressed { .. } = target {
+                images.push(
+                    block
+                        .chunks_exact(D)
+                        .flat_map(|ring| {
+                            (-challenge_times_ring_transpose(
+                                &c,
+                                &CyclotomicRing::<F, D>::from_slice(ring),
+                            ))
+                            .coefficients()
+                            .to_vec()
+                        })
+                        .collect(),
+                );
+            }
+        }
+        images.push(weights.v_image.iter().map(|w| -*w).collect());
         let mut z = vec![F::zero(); self.setup.table().num_coefficients()];
         let mut v = vec![F::zero(); n_out + 3 * CHALLENGE_RING_DIM];
         let mut theta = vec![F::zero(); THETA_COEFFICIENTS];
@@ -395,6 +496,18 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                     }
                 }
                 ResponseSegment::Theta => push_planes(&mut a, &theta, FIELD_LEVELS, radix),
+                ResponseSegment::Compression {
+                    image,
+                    coefficients,
+                    ..
+                } => a.extend(
+                    self.compression.reconstruct_transpose(
+                        coefficients,
+                        images
+                            .get(image)
+                            .ok_or(WhiteoutError::InvalidRelation("compressed image missing"))?,
+                    )?,
+                ),
             }
         }
         if a.len() != layout.len() {
@@ -406,8 +519,8 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 
     /// `e`'s decoded parts: `z`, `V` as field coefficients and as digits,
     /// and `θ`. Checks the length and Item 1.
-    fn decode(&self, digits: &[i8]) -> Result<Decoded<F>, WhiteoutError> {
-        let layout = self.layout();
+    fn decode<'d>(&self, digits: &'d [i8]) -> Result<Decoded<'d, F>, WhiteoutError> {
+        let layout = self.layout()?;
         if digits.len() != layout.len() {
             return Err(WhiteoutError::ResponseRejected("response length"));
         }
@@ -427,6 +540,8 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             v: Vec::new(),
             v_digits: Vec::new(),
             theta: Vec::new(),
+            images: Vec::new(),
+            witnesses: Vec::new(),
         };
         let mut rest = digits;
         for segment in &layout.segments {
@@ -452,9 +567,38 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                 ResponseSegment::Theta => {
                     decoded.theta = field_from_planes::<F>(digits, THETA_COEFFICIENTS);
                 }
+                ResponseSegment::Compression { coefficients, .. } => {
+                    decoded
+                        .images
+                        .push(self.compression.reconstruct(coefficients, digits)?);
+                    decoded.witnesses.push(digits);
+                }
             }
         }
         Ok(decoded)
+    }
+
+    /// Every target of `N`: the public ones, and the compressed ones as
+    /// `e` reconstructs them.
+    fn targets(
+        &self,
+        decoded: &Decoded<'_, F>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
+        let mut images = decoded.images.iter();
+        let mut targets = Vec::with_capacity(self.setup.linear().num_outputs());
+        for (_, target) in self.setup.linear().targets() {
+            match target {
+                BlockTarget::Public(image) => targets.extend_from_slice(image),
+                BlockTarget::Compressed { .. } => targets.extend(
+                    images
+                        .next()
+                        .ok_or(WhiteoutError::InvalidRelation("compressed image missing"))?
+                        .chunks_exact(D)
+                        .map(CyclotomicRing::from_slice),
+                ),
+            }
+        }
+        Ok(targets)
     }
 
     /// `(E_0, E_1, h)`, the last three challenge-ring elements of `V`.
@@ -476,11 +620,25 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 const RESPONSE_DIGIT_BOUND: u64 = 1 << (RESPONSE_LOG_BASIS - 1);
 
 /// `e`'s decoded parts.
-struct Decoded<F> {
+struct Decoded<'d, F> {
     z: Vec<i64>,
     v: Vec<F>,
     v_digits: Vec<i64>,
     theta: Vec<F>,
+    /// Each compressed image as its witness reconstructs it, in layout
+    /// order; `t_D` is last.
+    images: Vec<Vec<F>>,
+    witnesses: Vec<&'d [i8]>,
+}
+
+impl<F> Decoded<'_, F> {
+    /// `t_D`, as its witness reconstructs it.
+    fn v_image(&self) -> Result<&[F], WhiteoutError> {
+        self.images
+            .last()
+            .map(Vec::as_slice)
+            .ok_or(WhiteoutError::InvalidRelation("t_D's compression missing"))
+    }
 }
 
 /// The row counts of a [`ResponseStatement`].
@@ -551,7 +709,7 @@ fn alpha_pow_ring_dim<F: JoltField>(alpha: F) -> F {
 
 /// Appends the digit weights of `values` reconstructed from `levels`
 /// radix planes, plane-major: plane `j` of value `k` takes `radix^j · w_k`.
-fn push_planes<F: JoltField>(out: &mut Vec<F>, values: &[F], levels: usize, radix: F) {
+pub(crate) fn push_planes<F: JoltField>(out: &mut Vec<F>, values: &[F], levels: usize, radix: F) {
     let mut power = F::one();
     for _ in 0..levels {
         out.extend(values.iter().map(|value| *value * power));
@@ -600,7 +758,7 @@ fn integers_from_digits(digits: &[i8], coefficients: usize, levels: usize) -> Ve
 
 /// The field elements whose 32 balanced radix-16 digit planes over
 /// `coefficients` values are `planes`.
-fn field_from_planes<F: JoltField>(planes: &[i8], coefficients: usize) -> Vec<F> {
+pub(crate) fn field_from_planes<F: JoltField>(planes: &[i8], coefficients: usize) -> Vec<F> {
     let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
     let mut values = vec![F::zero(); coefficients];
     for plane in planes
@@ -627,16 +785,42 @@ pub(crate) fn field_digits<F: JoltField>(values: &[F]) -> Vec<i8> {
 #[cfg(feature = "whiteout-prover")]
 impl ResponseWitness {
     /// `e` for the accepted response `z`, the first message `V` (as flat
-    /// coefficients) and `θ`.
+    /// coefficients), `θ`, and `t_D`'s compression witness; the compressed
+    /// targets' witnesses come from their images.
     pub(crate) fn new<F: JoltField, const D: usize>(
         setup: &SigmaSetup<F, D>,
+        compression: &dyn ImageCompression<F>,
         z: &[i64],
         v: &[F],
         theta: &[F],
+        t_d_witness: &[i8],
     ) -> Result<Self, WhiteoutError> {
-        let mut digits = Vec::with_capacity(setup.response_layout().len());
+        let layout = setup.response_layout(compression)?;
+        let mut witnesses = Vec::new();
+        for (_, target) in setup.linear().targets() {
+            if let BlockTarget::Compressed { payload, image } = target {
+                let image: Vec<F> = image
+                    .as_ref()
+                    .ok_or(WhiteoutError::InvalidRelation(
+                        "the prover's setup lacks a compressed target's image",
+                    ))?
+                    .iter()
+                    .flat_map(|ring| ring.coefficients().iter().copied())
+                    .collect();
+                let compressed = compression.compress(&image)?;
+                if compressed.payload != *payload {
+                    return Err(WhiteoutError::InvariantViolation(
+                        "a compressed target differs from its image",
+                    ));
+                }
+                witnesses.push(compressed.witness);
+            }
+        }
+        witnesses.push(t_d_witness.to_vec());
+        let mut witnesses = witnesses.into_iter();
+        let mut digits = Vec::with_capacity(layout.len());
         let mut rest = z;
-        for segment in setup.response_layout().segments {
+        for segment in layout.segments {
             match segment {
                 ResponseSegment::Response {
                     coefficients,
@@ -653,6 +837,19 @@ impl ResponseWitness {
                     }
                 }
                 ResponseSegment::Theta => digits.extend(field_digits(theta)),
+                ResponseSegment::Compression {
+                    digits: expected, ..
+                } => {
+                    let witness = witnesses.next().ok_or(WhiteoutError::InvariantViolation(
+                        "compression witness missing",
+                    ))?;
+                    if witness.len() != expected {
+                        return Err(WhiteoutError::InvariantViolation(
+                            "compression witness length",
+                        ));
+                    }
+                    digits.extend(witness);
+                }
             }
         }
         Ok(Self { digits })

@@ -4,16 +4,18 @@
 //! inside `prove_response`, so these run the whole Σ-protocol on the
 //! synthetic instance of the crate's own tests. Test support only.
 
-use jolt_algebra::{CyclotomicRing, One};
+use jolt_algebra::One;
 use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, Sponge, VerifierTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
+use super::compression::ImageCompression;
 use super::fixture::Instance;
+pub use super::fixture::RawImages;
 pub use super::fixture::F;
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
 use super::sigma::{prove_sigma_with, SelfChecks};
-use super::{verify_sigma, LiftedRelation, SigmaSetup};
+use super::{verify_sigma, BlockTarget, LiftedRelation, SigmaSetup};
 use crate::masking::{ResidualRelation, ZkError};
 
 const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-sigma");
@@ -23,6 +25,10 @@ const LABEL: &[u8] = b"whiteout-sigma";
 pub struct CheckingResponseProver;
 
 impl<const D: usize> ResponseProver<F, D> for CheckingResponseProver {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        &RawImages
+    }
+
     fn prove_response<H: Sponge>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
@@ -38,7 +44,7 @@ impl<const D: usize> ResponseProver<F, D> for CheckingResponseProver {
         statement: &ResponseStatement<'_, F, D>,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), ZkError> {
-        let bytes = transcript.receive_bytes(statement.layout().len())?;
+        let bytes = transcript.receive_bytes(statement.layout()?.len())?;
         let witness = ResponseWitness {
             digits: bytes.iter().map(|&byte| byte as i8).collect(),
         };
@@ -50,6 +56,10 @@ impl<const D: usize> ResponseProver<F, D> for CheckingResponseProver {
 pub(crate) struct SendingResponseProver;
 
 impl<const D: usize> ResponseProver<F, D> for SendingResponseProver {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        &RawImages
+    }
+
     fn prove_response<H: Sponge>(
         &self,
         _statement: &ResponseStatement<'_, F, D>,
@@ -100,9 +110,13 @@ impl<const D: usize> SyntheticSigma<D> {
         }
     }
 
-    /// The length of `e`, the response statement's committed vector.
-    pub fn response_len(&self) -> usize {
-        self.instance.setup().response_layout().len()
+    /// The length of `e`, the response statement's committed vector, under
+    /// `compression`.
+    pub fn response_len(&self, compression: &dyn ImageCompression<F>) -> usize {
+        self.instance
+            .setup_with(self.instance.targets(compression))
+            .response_layout(compression)
+            .map_or(0, |layout| layout.len())
     }
 
     /// The images, then the Σ-protocol with `response` proving the
@@ -112,7 +126,9 @@ impl<const D: usize> SyntheticSigma<D> {
         response: &P,
         seed: u64,
     ) -> Result<Vec<u8>, ZkError> {
-        let setup = self.instance.setup();
+        let setup = self
+            .instance
+            .setup_with(self.instance.targets(response.compression()));
         let lifted = setup.lift(&self.instance.relation, &self.instance.claims)?;
         prove_instance(&self.instance, &setup, &lifted, response, self.checks, seed)
             .map(|(proof, _)| proof)
@@ -140,8 +156,8 @@ pub(crate) fn prove_instance<const D: usize, P: ResponseProver<F, D> + Sync>(
     seed: u64,
 ) -> Result<(Vec<u8>, usize), ZkError> {
     let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, LABEL);
-    for ring in instance.u.iter().chain(&instance.t_p) {
-        transcript.send_all(ring.coefficients());
+    for (_, payload) in setup.compressed_targets() {
+        transcript.send_all(payload);
     }
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let attempts = prove_sigma_with(
@@ -164,20 +180,15 @@ pub(crate) fn verify_instance<const D: usize, P: ResponseProver<F, D>>(
     response: &P,
 ) -> Result<(), ZkError> {
     let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, proof);
-    let mut receive = |count: usize| -> Result<Vec<CyclotomicRing<F, D>>, ZkError> {
-        (0..count)
-            .map(|_| Ok(CyclotomicRing::from_slice(&transcript.receive_n::<F>(D)?)))
-            .collect()
+    let compression = response.compression();
+    let mut receive = |rings: usize| -> Result<BlockTarget<F, D>, ZkError> {
+        Ok(BlockTarget::Compressed {
+            payload: transcript.receive_n::<F>(compression.payload_len(rings * D)?)?,
+            image: None,
+        })
     };
-    let received = Instance {
-        relation: relation.clone(),
-        claims: instance.claims.clone(),
-        s: Vec::new(),
-        u: receive(instance.u.len())?,
-        t_p: receive(instance.t_p.len())?,
-        scale: instance.scale,
-    };
-    let setup = received.setup();
+    let targets = [receive(instance.u.len())?, receive(instance.t_p.len())?];
+    let setup = instance.setup_with(targets);
     let lifted = setup.lift(relation, &instance.claims)?;
     verify_sigma(&setup, &lifted, &mut transcript, response)?;
     Ok(transcript.finish()?)

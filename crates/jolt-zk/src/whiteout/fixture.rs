@@ -22,11 +22,14 @@ use jolt_poly::EqPolynomial;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
+use super::compression::{CompressedImage, ImageCompression};
+use super::params::RESPONSE_LOG_BASIS;
 use super::placement::PadPlacement;
+use super::response::{field_digits, field_from_planes, push_planes};
 use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
 use super::{
-    sample_zero_constant_term, EvaluationClaims, LatticePadCommitment, ResidualBlock,
-    ResidualGadget, SigmaSetup, FIELD_LEVELS,
+    sample_zero_constant_term, BlockTarget, EvaluationClaims, LatticePadCommitment, ResidualBlock,
+    ResidualGadget, SigmaSetup, WhiteoutError, FIELD_LEVELS,
 };
 use crate::masking::{
     AffineRow, MaskedOperand, PadIndex, PadLayout, ProductOperand, ProductPair, ProductRow,
@@ -223,7 +226,28 @@ impl<const D: usize> Instance<D> {
         }
     }
 
+    /// The prover's setup with raw images.
+    #[cfg(any(test, feature = "whiteout-diagnostics"))]
     pub(crate) fn setup(&self) -> SigmaSetup<F, D> {
+        self.setup_with(self.targets(&RawImages))
+    }
+
+    /// The prover's targets `u` and `t_p`, compressed by `compression`.
+    pub(crate) fn targets(&self, compression: &dyn ImageCompression<F>) -> [BlockTarget<F, D>; 2] {
+        [&self.u, &self.t_p].map(|image| {
+            let flat: Vec<F> = image
+                .iter()
+                .flat_map(|ring| ring.coefficients().iter().copied())
+                .collect();
+            BlockTarget::Compressed {
+                payload: compression.compress(&flat).unwrap().payload,
+                image: Some(image.clone()),
+            }
+        })
+    }
+
+    /// The setup with targets `u` and `t_p`.
+    pub(crate) fn setup_with(&self, [u, t_p]: [BlockTarget<F, D>; 2]) -> SigmaSetup<F, D> {
         let (a, b) = residual_matrices::<D>(self.scale);
         let blocks = vec![
             ResidualBlock {
@@ -234,20 +258,20 @@ impl<const D: usize> Instance<D> {
                     log_basis: 4,
                     levels: FIELD_LEVELS,
                 }),
-                target: vec![CyclotomicRing::zero()],
+                target: BlockTarget::Public(vec![CyclotomicRing::zero()]),
             },
             ResidualBlock {
                 matrix: b,
                 input: 2..4,
                 gadget: None,
-                target: self.u.clone(),
+                target: u,
             },
         ];
         SigmaSetup::new(
             residual_segments::<D>(self.scale),
             blocks,
             &pad_commitment::<D>(),
-            self.t_p.clone(),
+            t_p,
             1,
             &stream(1 << 18, 31),
         )
@@ -268,5 +292,61 @@ impl<const D: usize> Instance<D> {
     #[cfg(test)]
     pub(crate) fn start(&self, role: SegmentRole) -> usize {
         self.setup().table().unique(role).unwrap().coefficient
+    }
+}
+
+/// The identity compression: the payload is the image and the witness its
+/// radix-16 digit planes, as the statement held images before compression.
+pub struct RawImages;
+
+impl ImageCompression<F> for RawImages {
+    fn payload_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        Ok(image_len)
+    }
+
+    fn witness_len(&self, image_len: usize) -> Result<usize, WhiteoutError> {
+        Ok(image_len * FIELD_LEVELS)
+    }
+
+    fn compress(&self, image: &[F]) -> Result<CompressedImage<F>, WhiteoutError> {
+        Ok(CompressedImage {
+            payload: image.to_vec(),
+            witness: field_digits(image),
+        })
+    }
+
+    fn reconstruct(&self, image_len: usize, witness: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        if witness.len() != image_len * FIELD_LEVELS {
+            return Err(WhiteoutError::ResponseRejected(
+                "compression witness length",
+            ));
+        }
+        Ok(field_from_planes(witness, image_len))
+    }
+
+    fn reconstruct_transpose(
+        &self,
+        image_len: usize,
+        weights: &[F],
+    ) -> Result<Vec<F>, WhiteoutError> {
+        if weights.len() != image_len {
+            return Err(WhiteoutError::InvalidRelation("image weights length"));
+        }
+        let mut out = Vec::with_capacity(image_len * FIELD_LEVELS);
+        push_planes(
+            &mut out,
+            weights,
+            FIELD_LEVELS,
+            F::from_u64(1 << RESPONSE_LOG_BASIS),
+        );
+        Ok(out)
+    }
+
+    fn check(&self, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
+        if self.reconstruct(payload.len(), witness)? == payload {
+            Ok(())
+        } else {
+            Err(WhiteoutError::ResponseRejected("compressed image"))
+        }
     }
 }

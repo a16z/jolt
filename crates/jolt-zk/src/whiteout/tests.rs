@@ -20,6 +20,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
 use super::challenge::{challenge_ring, challenge_times_i64, challenge_times_ring};
+use super::fixture::RawImages;
 use super::fixture::{
     digits, layout, lengths, pad_commitment, residual_matrices, residual_segments, stream,
     Instance, F, PAD_RANDOMNESS_COLUMNS, PAD_RANK,
@@ -34,7 +35,10 @@ use super::sigma::{take_rejected, SelfChecks};
 use super::test_support::{
     prove_instance as prove, verify_instance, CheckingResponseProver, SendingResponseProver,
 };
-use super::{ResidualBlock, ResponseSegment, SegmentTable, SigmaParams, SigmaSetup, WhiteoutError};
+use super::{
+    BlockTarget, ImageCompression, ResidualBlock, ResponseSegment, SegmentTable, SigmaParams,
+    SigmaSetup, WhiteoutError,
+};
 use crate::masking::{
     AffineRow, MaskedOperand, PadIndex, ProductOperand, ProductPair, ResidualRelation, ResidualVar,
     ZkError,
@@ -70,6 +74,10 @@ struct CapturingResponseProver {
 }
 
 impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        &RawImages
+    }
+
     fn prove_response<H: Sponge>(
         &self,
         statement: &ResponseStatement<'_, F, D>,
@@ -78,7 +86,7 @@ impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
     ) -> Result<(), ZkError> {
         let mut z = Vec::new();
         let mut rest = witness.digits.as_slice();
-        for segment in statement.layout().segments {
+        for segment in statement.layout()?.segments {
             if let ResponseSegment::Response {
                 coefficients,
                 digits,
@@ -509,10 +517,10 @@ fn setups_reject_mixed_ring_dimensions() {
             matrix: a,
             input: 0..2,
             gadget: None,
-            target: vec![CyclotomicRing::zero()],
+            target: BlockTarget::Public(vec![CyclotomicRing::zero()]),
         }],
         &pad_commitment::<64>(),
-        vec![CyclotomicRing::zero(); PAD_RANK],
+        BlockTarget::Public(vec![CyclotomicRing::zero(); PAD_RANK]),
         1,
         &stream(1 << 18, 31),
     );
@@ -691,6 +699,10 @@ fn widths_past_every_digit_count_are_rejected() {
 struct RowCheckingResponseProver;
 
 impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        &RawImages
+    }
+
     #[expect(clippy::panic_in_result_fn, reason = "the checks are the test")]
     fn prove_response<H: Sponge>(
         &self,

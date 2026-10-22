@@ -26,7 +26,20 @@ pub struct ResidualBlock<F: Field, const D: usize> {
     /// Consecutive residual segments the matrix reads.
     pub input: Range<usize>,
     pub gadget: Option<ResidualGadget>,
-    pub target: Vec<CyclotomicRing<F, D>>,
+    pub target: BlockTarget<F, D>,
+}
+
+/// What a block of `N` must reach, as the verifier holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BlockTarget<F: Field, const D: usize> {
+    /// A public image, such as the inner rows' zero.
+    Public(Vec<CyclotomicRing<F, D>>),
+    /// A commitment image the verifier holds only as its compressed payload
+    /// (Whiteout §2); the prover also holds the image.
+    Compressed {
+        payload: Vec<F>,
+        image: Option<Vec<CyclotomicRing<F, D>>>,
+    },
 }
 
 /// The gadget term of a [`ResidualBlock`]: the residual segment holding the
@@ -55,7 +68,7 @@ pub(crate) struct LinearBlock<F: Field, const D: usize> {
     /// Native coefficient range of `s`, `matrix.width · D` long.
     pub input: Range<usize>,
     pub gadget: Option<GadgetTerm>,
-    pub target: Vec<CyclotomicRing<F, D>>,
+    pub target: BlockTarget<F, D>,
 }
 
 /// `N` and its targets `t`.
@@ -68,7 +81,13 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         for block in &blocks {
             let shape = block.matrix.shape();
             let columns = block.input.len();
-            let rows_ok = block.target.len() == shape.rows;
+            let rows_ok = match &block.target {
+                BlockTarget::Public(image)
+                | BlockTarget::Compressed {
+                    image: Some(image), ..
+                } => image.len() == shape.rows,
+                BlockTarget::Compressed { image: None, .. } => true,
+            };
             let width_ok = columns == shape.width * D;
             let gadget_ok = block.gadget.as_ref().is_none_or(|gadget| {
                 gadget.input.len() == shape.rows * gadget.levels * D
@@ -85,7 +104,10 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
 
     /// Number of output ring elements of `N`.
     pub fn num_outputs(&self) -> usize {
-        self.blocks.iter().map(|block| block.target.len()).sum()
+        self.blocks
+            .iter()
+            .map(|block| block.matrix.shape().rows)
+            .sum()
     }
 
     /// `N·x` for centered coefficients `x` laid out like `s`, each at most
@@ -133,7 +155,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         }
         let mut rest = weights;
         for block in &self.blocks {
-            let (block_weights, tail) = rest.split_at(block.target.len() * D);
+            let (block_weights, tail) = rest.split_at(block.matrix.shape().rows * D);
             rest = tail;
             let rows: Vec<CyclotomicRing<F, D>> = block_weights
                 .chunks_exact(D)
@@ -159,9 +181,11 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         Ok(())
     }
 
-    /// The targets `t`, block by block.
-    pub fn targets(&self) -> impl Iterator<Item = &CyclotomicRing<F, D>> {
-        self.blocks.iter().flat_map(|block| block.target.iter())
+    /// Each block's output count and target, in block order.
+    pub fn targets(&self) -> impl Iterator<Item = (usize, &BlockTarget<F, D>)> {
+        self.blocks
+            .iter()
+            .map(|block| (block.matrix.shape().rows, &block.target))
     }
 }
 

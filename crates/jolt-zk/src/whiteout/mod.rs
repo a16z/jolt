@@ -11,6 +11,7 @@
 //! Randomness here comes from a caller-supplied cryptographic RNG.
 
 mod challenge;
+mod compression;
 #[cfg(feature = "whiteout-diagnostics")]
 pub mod diagnostics;
 #[cfg(feature = "whiteout-prover")]
@@ -41,9 +42,10 @@ mod sigma;
 pub mod test_support;
 
 pub use challenge::{challenge_times_i64, DenseChallenge};
+pub use compression::{CompressedImage, ImageCompression};
 pub use error::WhiteoutError;
 pub use lift::{ChallengeRing, EvaluationClaims, LiftedRelation};
-pub use linear::{ResidualBlock, ResidualGadget};
+pub use linear::{BlockTarget, ResidualBlock, ResidualGadget};
 pub use pad_commitment::LatticePadCommitment;
 #[cfg(feature = "whiteout-prover")]
 pub use pad_commitment::LatticePadOpening;

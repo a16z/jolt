@@ -22,7 +22,9 @@
 
 use std::ops::Range;
 
-use jolt_algebra::{CyclotomicRing, JoltField};
+#[cfg(feature = "whiteout-prover")]
+use jolt_algebra::CyclotomicRing;
+use jolt_algebra::JoltField;
 use jolt_crypto::challenge::{
     sample_indexed_challenges_from_seed, OperatorNormRejection, D64_SELECTIVE_L2_CHALLENGE_CONFIG,
 };
@@ -33,8 +35,9 @@ use jolt_transcript::{
     Channel, Fork, Sponge, VerifierTranscript, ATTEMPT_NONCE_LEN, FORK_SEED_LEN,
 };
 
-use super::lift::{ChallengeRing, EvaluationClaims, LiftedRelation};
-use super::linear::{GadgetTerm, LRow, LinearBlock, ResidualBlock, RingLinearMap};
+use super::compression::ImageCompression;
+use super::lift::{EvaluationClaims, LiftedRelation};
+use super::linear::{BlockTarget, GadgetTerm, LRow, LinearBlock, ResidualBlock, RingLinearMap};
 use super::pad_commitment::LatticePadCommitment;
 #[cfg(feature = "whiteout-prover")]
 use super::pad_commitment::LatticePadOpening;
@@ -75,7 +78,7 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         residual: Vec<Segment>,
         blocks: Vec<ResidualBlock<F, D>>,
         pads: &LatticePadCommitment<F, D>,
-        pad_image: Vec<CyclotomicRing<F, D>>,
+        pad_image: BlockTarget<F, D>,
         v_rank: usize,
         v_stream: &[F],
     ) -> Result<Self, WhiteoutError> {
@@ -264,8 +267,48 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         }
     }
 
-    /// The layout of `e`.
-    pub(crate) fn response_layout(&self) -> ResponseLayout {
+    /// The compressed targets of `N`, in block order: each image's length
+    /// and payload.
+    pub(crate) fn compressed_targets(&self) -> impl Iterator<Item = (usize, &[F])> {
+        self.linear
+            .targets()
+            .filter_map(|(rows, target)| match target {
+                BlockTarget::Compressed { payload, .. } => Some((rows * D, payload.as_slice())),
+                BlockTarget::Public(_) => None,
+            })
+    }
+
+    /// Every target of `N` as an image: the prover's view.
+    #[cfg(feature = "whiteout-prover")]
+    pub(crate) fn target_images(&self) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
+        let mut images = Vec::with_capacity(self.linear.num_outputs());
+        for (_, target) in self.linear.targets() {
+            match target {
+                BlockTarget::Public(image)
+                | BlockTarget::Compressed {
+                    image: Some(image), ..
+                } => images.extend_from_slice(image),
+                BlockTarget::Compressed { image: None, .. } => {
+                    return Err(WhiteoutError::InvalidRelation(
+                        "the prover's setup lacks a compressed target's image",
+                    ))
+                }
+            }
+        }
+        Ok(images)
+    }
+
+    /// The length of `t_D`.
+    pub(crate) fn v_image_len(&self) -> usize {
+        self.v_level.matrix.rows * CHALLENGE_RING_DIM
+    }
+
+    /// The layout of `e`: the response, `V` and `θ`, then the compression
+    /// witness of each compressed target of `N` and of `t_D`.
+    pub(crate) fn response_layout(
+        &self,
+        compression: &dyn ImageCompression<F>,
+    ) -> Result<ResponseLayout, WhiteoutError> {
         let mut segments: Vec<ResponseSegment> = self
             .table
             .segments()
@@ -281,26 +324,37 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
             coefficients: self.v_level.message_rings * CHALLENGE_RING_DIM,
         });
         segments.push(ResponseSegment::Theta);
-        ResponseLayout { segments }
+        let images = self
+            .compressed_targets()
+            .map(|(len, _)| len)
+            .chain(std::iter::once(self.v_image_len()));
+        for (image, coefficients) in images.enumerate() {
+            segments.push(ResponseSegment::Compression {
+                image,
+                coefficients,
+                digits: compression.witness_len(coefficients)?,
+            });
+        }
+        Ok(ResponseLayout { segments })
     }
 }
 
-/// The attempt seed: `(σ, n, t_D)` through the attempt fork.
+/// The attempt seed: `(σ, n, cm(t_D))` through the attempt fork.
 pub(crate) fn attempt_seed<H: Sponge, F: JoltField>(
     sigma: &[u8; FORK_SEED_LEN],
     nonce: &[u8; ATTEMPT_NONCE_LEN],
-    t_d: &[ChallengeRing<F>],
+    t_d: &[F],
 ) -> [u8; 32] {
     let mut fork = Fork::<H>::attempt(sigma, nonce);
     let mut bytes = vec![0u8; F::NUM_BYTES];
-    for coefficient in t_d.iter().flat_map(|ring| ring.coefficients()) {
+    for coefficient in t_d {
         coefficient.to_bytes_le(&mut bytes);
         fork.absorb(&bytes);
     }
     fork.squeeze()
 }
 
-/// Verifies the Σ-protocol: squeezes `ρ` and `σ`, reads `t_D` and the
+/// Verifies the Σ-protocol: squeezes `ρ` and `σ`, reads `cm(t_D)` and the
 /// nonce, rebuilds `c`, and has `response` verify the response statement.
 pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F, D>>(
     setup: &SigmaSetup<F, D>,
@@ -313,16 +367,13 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
         .map(|_| transcript.challenge::<F>())
         .collect();
     let sigma: [u8; FORK_SEED_LEN] = transcript.challenge_bytes();
-    let t_d: Vec<F> = transcript.receive_n(setup.v_level.matrix.rows * CHALLENGE_RING_DIM)?;
+    let compression = response.compression();
+    let v_payload: Vec<F> = transcript.receive_n(compression.payload_len(setup.v_image_len())?)?;
     let nonce: [u8; ATTEMPT_NONCE_LEN] = transcript
         .receive_bytes(ATTEMPT_NONCE_LEN)?
         .try_into()
         .map_err(|_| WhiteoutError::ResponseRejected("nonce length"))?;
-    let v_image: Vec<ChallengeRing<F>> = t_d
-        .chunks_exact(CHALLENGE_RING_DIM)
-        .map(CyclotomicRing::from_slice)
-        .collect();
-    let seed = attempt_seed::<H, F>(&sigma, &nonce, &v_image);
+    let seed = attempt_seed::<H, F>(&sigma, &nonce, &v_payload);
     let challenge = sample_indexed_challenges_from_seed(
         &seed,
         CHALLENGE_RING_DIM,
@@ -337,9 +388,10 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
     let statement = ResponseStatement {
         setup,
         relation,
+        compression,
         challenge,
         rho,
-        v_image,
+        v_payload,
     };
     response.verify_response(&statement, transcript)
 }
@@ -367,6 +419,7 @@ mod prover {
     use rand_core::{CryptoRng, RngCore};
 
     use super::super::challenge::{challenge_ring, challenge_times_i64_into};
+    use super::super::compression::{CompressedImage, ImageCompression};
     use super::super::dit::with_dit;
     use super::super::lift::{
         constant_ring, AggregatedRelation, ChallengeRing, ClaimTables, LiftedRelation, LinearParts,
@@ -421,7 +474,8 @@ mod prover {
 
     /// What an accepted attempt hands on.
     struct Accepted<F: JoltField> {
-        t_d: Vec<ChallengeRing<F>>,
+        /// `cm(t_D)` and its witness.
+        t_d: CompressedImage<F>,
         nonce: [u8; ATTEMPT_NONCE_LEN],
         challenge: SparseChallenge,
         v: Vec<F>,
@@ -431,6 +485,7 @@ mod prover {
     /// buffers.
     struct Prover<'a, F: JoltField, const D: usize> {
         setup: &'a SigmaSetup<F, D>,
+        compression: &'a dyn ImageCompression<F>,
         aggregated: AggregatedRelation<'a, F>,
         tables: ClaimTables<F>,
         s: &'a [i64],
@@ -549,12 +604,7 @@ mod prover {
             if let Some(row) = relation.first_violation(&tables, s)? {
                 return Err(WhiteoutError::ResidualUnsatisfied { row }.into());
             }
-            if !setup
-                .linear()
-                .apply(s, digit_bound)?
-                .iter()
-                .eq(setup.linear().targets())
-            {
+            if setup.linear().apply(s, digit_bound)? != setup.target_images()? {
                 return Err(WhiteoutError::ResidualOpeningMismatch.into());
             }
             table.check_private_vector(s)?;
@@ -585,6 +635,7 @@ mod prover {
         let gaussian_len = blocks.iter().map(|(range, _)| range.len()).sum();
         let mut prover = Prover {
             setup,
+            compression: response.compression(),
             l_s: setup.l_row().apply(s, digit_bound)?,
             aggregated,
             tables,
@@ -607,20 +658,16 @@ mod prover {
             let Some(accepted) = prover.attempt::<H, R>(&rejection, rng)? else {
                 continue;
             };
-            let flat: Vec<F> = accepted
-                .t_d
-                .iter()
-                .flat_map(|ring| ring.coefficients().iter().copied())
-                .collect();
-            transcript.send_all(&flat);
+            transcript.send_all(&accepted.t_d.payload);
             transcript.send_bytes(&accepted.nonce);
             let witness = prover.witness(&accepted)?;
             let statement = ResponseStatement {
                 setup,
                 relation,
+                compression: prover.compression,
                 challenge: accepted.challenge,
                 rho,
-                v_image: accepted.t_d,
+                v_payload: accepted.t_d.payload,
             };
             response.prove_response(&statement, &witness, transcript)?;
             return Ok(attempt);
@@ -665,11 +712,16 @@ mod prover {
                 .chunks_exact(CHALLENGE_RING_DIM)
                 .map(CyclotomicRing::from_slice)
                 .collect();
-            let t_d = commit(self.setup.v_level(), self.setup.v_matrix(), &v_rings, &[])?;
+            let t_d: Vec<F> = commit(self.setup.v_level(), self.setup.v_matrix(), &v_rings, &[])?
+                .iter()
+                .flat_map(|ring| ring.coefficients().iter().copied())
+                .collect();
+            let t_d = self.compression.compress(&t_d)?;
 
             let mut nonce = [0u8; ATTEMPT_NONCE_LEN];
             rng.fill_bytes(&mut nonce);
-            let challenge = sample_challenge_ct(&attempt_seed::<H, F>(&self.sigma, &nonce, &t_d))?;
+            let challenge =
+                sample_challenge_ct(&attempt_seed::<H, F>(&self.sigma, &nonce, &t_d.payload))?;
             let c = challenge.to_dense_ct()?;
 
             let mut offset = 0;
@@ -713,7 +765,7 @@ mod prover {
                 if let (Some(caller), Ok(mut rejected)) = (CALLER.get(), REJECTED.lock()) {
                     let mut bytes = vec![0u8; F::NUM_BYTES];
                     let mut flat = Vec::new();
-                    for coefficient in t_d.iter().flat_map(|ring| ring.coefficients()) {
+                    for coefficient in &t_d.payload {
                         coefficient.to_bytes_le(&mut bytes);
                         flat.extend_from_slice(&bytes);
                     }
@@ -759,7 +811,14 @@ mod prover {
             let parts_z = self.aggregated.linear_parts(&self.tables, &z, false)?;
             let product = self.aggregated.product_polynomial(&c_ring, &parts_z);
             let theta = product.get(CHALLENGE_RING_DIM..).unwrap_or_default();
-            ResponseWitness::new(self.setup, &z, &accepted.v, theta)
+            ResponseWitness::new(
+                self.setup,
+                self.compression,
+                &z,
+                &accepted.v,
+                theta,
+                &accepted.t_d.witness,
+            )
         }
     }
 }
