@@ -178,20 +178,43 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 actual: scales.len(),
             });
         }
-        let coefficients = self.coefficients.get_or_init(|| {
+        let coefficients = self.field_entries();
+        // Parallel over column chunks as well as rows: matrices are a few
+        // rows by thousands of columns.
+        const COLUMN_CHUNK: usize = 256;
+        let width = self.shape.width;
+        Ok((0..self.shape.rows)
+            .map(|row| {
+                let row_entries = coefficients
+                    .get(row * width..(row + 1) * width)
+                    .unwrap_or_default();
+                cfg_into_iter!(0..width.div_ceil(COLUMN_CHUNK))
+                    .map(|chunk| {
+                        let range = chunk * COLUMN_CHUNK..((chunk + 1) * COLUMN_CHUNK).min(width);
+                        let mut sum = CyclotomicRing::zero();
+                        for (entry, scale) in row_entries
+                            .get(range.clone())
+                            .unwrap_or_default()
+                            .iter()
+                            .zip(scales.get(range).unwrap_or_default())
+                        {
+                            entry.scale_accumulate_into(&mut sum, *scale);
+                        }
+                        sum
+                    })
+                    .reduce(CyclotomicRing::zero, |a, b| a + b)
+            })
+            .collect())
+    }
+
+    /// The entries over `F`, built on first use: once per matrix, so a
+    /// verifier that keeps its setup pays for it once, not per proof.
+    fn field_entries(&self) -> &[CyclotomicRing<F, D>] {
+        self.coefficients.get_or_init(|| {
             cfg_iter!(self.entries)
                 .map(|entry| entry.to_ring(&self.params))
                 .collect()
-        });
-        Ok(cfg_into_iter!(0..self.shape.rows)
-            .map(|row| {
-                let mut sum = CyclotomicRing::zero();
-                for (entry, scale) in coefficients.iter().skip(row * self.shape.width).zip(scales) {
-                    entry.scale_accumulate_into(&mut sum, *scale);
-                }
-                sum
-            })
-            .collect())
+        })
     }
 
     /// `M · x` for centered integer columns `x`, laid out column by column

@@ -11,6 +11,7 @@
 use jolt_algebra::{CyclotomicRing, JoltField};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_poly::EqPolynomial;
+use rayon::prelude::*;
 
 use super::challenge::{challenge_ring, challenge_times_ring, challenge_times_ring_transpose};
 use super::lift::{ChallengeRing, ClaimTable, SValues, WitnessShape};
@@ -380,7 +381,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         for segment in &layout.segments {
             // `Σ_p radix^p·eq(point, offset + index(k, p))`, through the
             // segment's position law.
-            let planar = |planes: PlaneLayout, k: usize, at: &dyn Fn(usize) -> F| {
+            let planar = |planes: PlaneLayout, k: usize, at: &(dyn Fn(usize) -> F + Sync)| {
                 let mut power = F::one();
                 let mut value = F::zero();
                 for plane in 0..planes.planes {
@@ -399,11 +400,11 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                             "a response segment is not on native elements",
                         ));
                     }
-                    for element in 0..coefficients / D {
-                        dual.z
-                            .scales
-                            .push(planar(planes, element * D, &|j| eq.high(j)));
-                    }
+                    dual.z.scales.par_extend(
+                        (0..coefficients / D)
+                            .into_par_iter()
+                            .map(|element| planar(planes, element * D, &|j| eq.high(j))),
+                    );
                 }
                 (ResponseSegment::V { coefficients }, Some(planes)) => {
                     // A_D reads V's digits one 64-digit ring per column, each
@@ -413,8 +414,11 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                             "V's digits do not start on a challenge ring",
                         ));
                     }
-                    dual.v
-                        .extend((0..coefficients).map(|k| planar(planes, k, &|j| eq.at(j))));
+                    dual.v.par_extend(
+                        (0..coefficients)
+                            .into_par_iter()
+                            .map(|k| planar(planes, k, &|j| eq.at(j))),
+                    );
                     for column in
                         (offset..offset + segment.num_digits()).step_by(CHALLENGE_RING_DIM)
                     {
@@ -427,9 +431,12 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                         *dst = planar(planes, k, &|j| eq.at(j));
                     }
                 }
-                (ResponseSegment::Compression { digits, .. }, _) => dual
-                    .compression
-                    .push((offset..offset + digits).map(|j| eq.at(j)).collect()),
+                (ResponseSegment::Compression { digits, .. }, _) => dual.compression.push(
+                    (offset..offset + digits)
+                        .into_par_iter()
+                        .map(|j| eq.at(j))
+                        .collect(),
+                ),
                 (_, None) => {
                     return Err(WhiteoutError::InvariantViolation(
                         "a planar segment without planes",
