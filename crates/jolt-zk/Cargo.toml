@@ -19,6 +19,9 @@ whiteout = ["jolt-algebra/solinas", "jolt-crypto/lattice"]
 whiteout-prover = ["dep:jolt-dit", "jolt-crypto/sample", "whiteout"]
 # Timing harness for examples/sigma_dudect.rs: exposes the Σ-protocol
 # attempt's steps on a synthetic instance. Diagnostics only.
+# `CommittedPads::uncommitted`, for tests of protocols written over the
+# masked channel in other crates (Akita's masked levels).
+test-support = []
 whiteout-diagnostics = [
   "dep:rand_chacha",
   "jolt-crypto/sample-diagnostics",
