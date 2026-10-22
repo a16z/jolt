@@ -36,6 +36,15 @@ impl<T> DerefMut for SecretVec<T> {
     }
 }
 
+impl<'a, T> IntoIterator for &'a SecretVec<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
 impl<T> Drop for SecretVec<T> {
     fn drop(&mut self) {
         // `clear` drops no heap (`T: Copy`) and writes nothing; the whole

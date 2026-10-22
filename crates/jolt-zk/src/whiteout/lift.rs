@@ -33,6 +33,7 @@ use super::placement::{
 use super::segments::{lift_ct, Placed, SegmentMask, SegmentRole, SegmentTable};
 use super::WhiteoutError;
 use crate::masking::{AffineRow, ResidualRelation, ResidualVar};
+use crate::secret::SecretVec;
 
 /// An element of the challenge ring.
 pub type ChallengeRing<F> = CyclotomicRing<F, CHALLENGE_RING_DIM>;
@@ -644,13 +645,14 @@ pub(crate) struct AggregatedRelation<'a, F: JoltField> {
     lambda: Form<F>,
 }
 
-/// The `s`-linear parts of every form at one vector: `u = 0`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The `s`-linear parts of every form at one vector: `u = 0`. As secret as
+/// the vector (`s`, a mask or a response), so the per-product parts are
+/// zeroed when dropped.
 pub(crate) struct LinearParts<F: JoltField> {
     /// `−P_x` per product.
-    x: Vec<ChallengeRing<F>>,
-    y: Vec<ChallengeRing<F>>,
-    z: Vec<ChallengeRing<F>>,
+    x: SecretVec<ChallengeRing<F>>,
+    y: SecretVec<ChallengeRing<F>>,
+    z: SecretVec<ChallengeRing<F>>,
     lambda: ChallengeRing<F>,
     g: ChallengeRing<F>,
 }
@@ -665,22 +667,25 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
         skip_public: bool,
     ) -> Result<LinearParts<F>, WhiteoutError> {
         let table = &self.relation.table;
-        let claims = tables.terms(x, skip_public)?;
-        let mut parts = LinearParts {
-            x: Vec::with_capacity(self.relation.products.len()),
-            y: Vec::with_capacity(self.relation.products.len()),
-            z: Vec::with_capacity(self.relation.products.len()),
+        let claims = SecretVec::from(tables.terms(x, skip_public)?);
+        let products = self.relation.products.len();
+        let (mut parts_x, mut parts_y, mut parts_z) = (
+            Vec::with_capacity(products),
+            Vec::with_capacity(products),
+            Vec::with_capacity(products),
+        );
+        for product in &self.relation.products {
+            parts_x.push(-self.relation.operand(product.operand)?.evaluate(table, x)?);
+            parts_y.push(product.y_form.linear(table, x, &claims)?);
+            parts_z.push(product.z_form.linear(table, x, &claims)?);
+        }
+        Ok(LinearParts {
+            x: parts_x.into(),
+            y: parts_y.into(),
+            z: parts_z.into(),
             lambda: self.lambda.linear(table, x, &claims)?,
             g: self.relation.g.evaluate(table, x)?,
-        };
-        for product in &self.relation.products {
-            parts
-                .x
-                .push(-self.relation.operand(product.operand)?.evaluate(table, x)?);
-            parts.y.push(product.y_form.linear(table, x, &claims)?);
-            parts.z.push(product.z_form.linear(table, x, &claims)?);
-        }
-        Ok(parts)
+        })
     }
 
     /// `Q_μ(u, ·)` from the linear parts of `·`.
