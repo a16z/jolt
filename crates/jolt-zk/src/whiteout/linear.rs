@@ -14,6 +14,8 @@ use std::sync::Arc;
 use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Field};
 use jolt_crypto::lattice::{PreparedMatrix, CHALLENGE_RING_DIM};
 
+use rayon::prelude::*;
+
 use super::segments::lift_ct;
 use super::WhiteoutError;
 use crate::secret::SecretVec;
@@ -219,34 +221,40 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         scales: &[F],
         lo: &CyclotomicRing<F, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
-        let mut out = Vec::with_capacity(self.num_outputs());
-        for block in &self.blocks {
-            let columns = scales
-                .get(block.input.start / D..block.input.end / D)
-                .ok_or(WhiteoutError::InvalidRelation(
-                    "linear block reads outside s",
-                ))?;
-            let mut rows: Vec<CyclotomicRing<F, D>> = block
-                .matrix
-                .combine_columns(columns)?
-                .into_iter()
-                .map(|row| row * *lo)
-                .collect();
-            if let Some(gadget) = &block.gadget {
-                // Each plane is one native element: `scale·lo`.
-                for (row, power, range) in gadget.planes::<F>(D) {
-                    let scale = scales
-                        .get(range.start / D)
-                        .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
-                    let row = rows.get_mut(row).ok_or(WhiteoutError::InvalidRelation(
-                        "gadget rows differ from M's",
-                    ))?;
-                    *row -= lo.scale(&(*scale * power));
-                }
-            }
-            out.extend(rows);
-        }
-        Ok(out)
+        // Blocks run in parallel: a matrix is shared by many blocks.
+        let blocks: Vec<Vec<CyclotomicRing<F, D>>> = self
+            .blocks
+            .par_iter()
+            .map(
+                |block| -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
+                    let columns = scales
+                        .get(block.input.start / D..block.input.end / D)
+                        .ok_or(WhiteoutError::InvalidRelation(
+                            "linear block reads outside s",
+                        ))?;
+                    let mut rows: Vec<CyclotomicRing<F, D>> = block
+                        .matrix
+                        .combine_columns(columns)?
+                        .into_iter()
+                        .map(|row| row * *lo)
+                        .collect();
+                    if let Some(gadget) = &block.gadget {
+                        // Each plane is one native element: `scale·lo`.
+                        for (row, power, range) in gadget.planes::<F>(D) {
+                            let scale = scales
+                                .get(range.start / D)
+                                .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
+                            let row = rows.get_mut(row).ok_or(WhiteoutError::InvalidRelation(
+                                "gadget rows differ from M's",
+                            ))?;
+                            *row -= lo.scale(&(*scale * power));
+                        }
+                    }
+                    Ok(rows)
+                },
+            )
+            .collect::<Result<_, _>>()?;
+        Ok(blocks.into_iter().flatten().collect())
     }
 
     /// Each block's output count and target, in block order.
