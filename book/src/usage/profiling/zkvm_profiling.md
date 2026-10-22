@@ -25,21 +25,23 @@ at compile time. Jolt's Akita integration currently supports
 non-zero-knowledge proofs only; `akita` and `zk` cannot be enabled together.
 The Akita harness loads its schedule catalogs from
 `crates/jolt-akita/schedules/` by default. Set `JOLT_AKITA_SCHEDULE_DIR` to
-use another directory containing those `.aks` files.
+use another directory containing those `.aks` files. Packaged multichunk catalogs
+cover only small test fixtures. Multichunk profiling requires a catalog bundle
+generated for the selected geometry and workload, supplied through that environment variable.
 
 For `profile` with the `akita` feature, `--akita-chunk-profile` selects
-`single` (default), `w2r2`, `w4r2`, or `w8r2`. For example:
+`w<chunks>r<levels>` (`w1r0` by default). For example:
 
 ```bash
 cargo run --release -p jolt-prover --features profiling,akita -- \
     profile --name fibonacci --backend optimized --akita-chunk-profile w4r2
 ```
 
-Chunked profiles append `_w2r2`, `_w4r2`, or `_w8r2` to the artifact name,
+Chunked profiles append `_w<chunks>r<levels>` to the artifact name,
 after the optional `_optimized` suffix, so their latest symlinks remain
 independent. The CSV workload name and `summary.json`'s `run.workload`
-also carry the chunk-profile suffix. Single keeps its existing names.
-The `benchmark` sweep uses Single.
+also carry the chunk-profile suffix. `w1r0` has no workload suffix.
+The `benchmark` sweep uses `w1r0`.
 
 Workloads and default scales (`--scale <log2 trace length>` overrides):
 
@@ -124,7 +126,7 @@ cargo run --release -p jolt-prover --features profiling,akita -- \
 
 Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
 in the run directories). Akita Single rows append `_akita` to the workload
-name; chunked rows also append `_w2r2`, `_w4r2`, or `_w8r2`, for example
+name; chunked rows also append `_w<chunks>r<levels>`, for example
 `fibonacci_akita_w4r2`. The summary table defaults to Single; select a
 chunked profile with `--protocol akita --akita-chunk-profile w4r2`.
 `--resume` checks the selected protocol and kernel implementation's

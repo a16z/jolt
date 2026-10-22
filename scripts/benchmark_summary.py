@@ -46,10 +46,10 @@ def main():
     parser.add_argument('--protocol', choices=['dory', 'akita'], default='dory',
                         help='Protocol rows to display (default: dory)')
     parser.add_argument('--akita-chunk-profile',
-                        choices=['single', 'w2r2', 'w4r2', 'w8r2'], default='single',
-                        help='Akita chunk profile to display (default: single)')
+                        metavar='w<chunks>r<levels>', default='w1r0',
+                        help='Akita chunk geometry to display (default: w1r0)')
     args = parser.parse_args()
-    if args.protocol != 'akita' and args.akita_chunk_profile != 'single':
+    if args.protocol != 'akita' and args.akita_chunk_profile != 'w1r0':
         parser.error('--akita-chunk-profile requires --protocol akita')
     profile_label = (f", {args.akita_chunk_profile}"
                      if args.protocol == 'akita' else '')
@@ -92,7 +92,7 @@ def main():
         values = []
         for bench in BENCHMARKS:
             row_name = bench if args.protocol == 'dory' else f'{bench}_akita'
-            if args.protocol == 'akita' and args.akita_chunk_profile != 'single':
+            if args.protocol == 'akita' and args.akita_chunk_profile != 'w1r0':
                 row_name += f'_{args.akita_chunk_profile}'
             if row_name in row_data:
                 formatted = format_value(row_data[row_name], args.metric)

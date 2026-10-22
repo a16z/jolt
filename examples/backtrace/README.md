@@ -25,7 +25,6 @@ cargo run --release -p backtrace --no-default-features --features std
 
 ```
 nostd panicked: true
-nostd proof valid: true
 ```
 
 The `panicked: true` indicates Jolt successfully detected the guest panic through `JoltCommitments::has_panic()`.

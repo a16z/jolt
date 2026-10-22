@@ -3,8 +3,8 @@
 
 use jolt_field::signed::S256;
 use jolt_field::{
-    Accumulator, CanonicalEncoding, ExtField, Field, JoltField, NaiveAccumulator, One, Ring,
-    WithAccumulator, Zero, F128, F192, F64,
+    Accumulator, CanonicalEncoding, ExtField, Field, JoltField, One, Ring, WithAccumulator, Zero,
+    F128, F192, F64,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -15,9 +15,8 @@ fn assert_field_bounds<F>()
 where
     F: JoltField
         + WithAccumulator<
-            Accumulator = NaiveAccumulator<F>,
-            SmallScalarAccumulator = NaiveAccumulator<F>,
-            SignedProductAccumulator = NaiveAccumulator<F>,
+            SmallScalarAccumulator = <F as WithAccumulator>::Accumulator,
+            SignedProductAccumulator = <F as WithAccumulator>::Accumulator,
         >,
 {
 }
@@ -113,35 +112,108 @@ fn integer_maps_and_characteristic_two_defaults() {
 }
 
 fn check_signed_accumulator<A: Accumulator>(value: A::Element) {
-    for (scalar, odd) in [
-        (1, true),
-        (2, false),
-        (-1, true),
-        (-2, false),
-        (1 << 64, false),
-        ((1 << 64) + 1, true),
-        (i128::MIN, false),
-    ] {
-        let mut acc = A::default();
-        acc.fmadd_i128(value, scalar);
-        assert_eq!(acc.reduce(), if odd { value } else { A::Element::zero() });
-    }
-    for is_positive in [true, false] {
-        for (magnitude, odd) in [(1, true), (2, false), (u64::MAX, true)] {
-            let mut acc = A::default();
-            acc.fmadd_signed_u64(value, magnitude, is_positive);
-            assert_eq!(acc.reduce(), if odd { value } else { A::Element::zero() });
-        }
-        for (limbs, odd) in [
-            ([1, 0, 0, 0], true),
-            ([2, 0, 0, 0], false),
-            ([0, 1, 0, 0], false),
-            ([0, 0, 0, 1], false),
-            ([1, u64::MAX, u64::MAX, u64::MAX], true),
+    for initial in [A::Element::zero(), A::Element::one()] {
+        for (scalar, odd) in [
+            (1, true),
+            (2, false),
+            (-1, true),
+            (-2, false),
+            (1 << 64, false),
+            ((1 << 64) + 1, true),
+            (i128::MIN, false),
         ] {
             let mut acc = A::default();
-            acc.fmadd_s256(value, &S256::new(limbs, is_positive));
-            assert_eq!(acc.reduce(), if odd { value } else { A::Element::zero() });
+            acc.add(initial);
+            acc.fmadd_i128(value, scalar);
+            assert_eq!(
+                acc.reduce(),
+                initial + if odd { value } else { A::Element::zero() }
+            );
+        }
+        for is_positive in [true, false] {
+            for (magnitude, odd) in [(1, true), (2, false), (u64::MAX, true)] {
+                let mut acc = A::default();
+                acc.add(initial);
+                acc.fmadd_signed_u64(value, magnitude, is_positive);
+                assert_eq!(
+                    acc.reduce(),
+                    initial + if odd { value } else { A::Element::zero() }
+                );
+            }
+            for (limbs, odd) in [
+                ([1, 0, 0, 0], true),
+                ([2, 0, 0, 0], false),
+                ([0, 1, 0, 0], false),
+                ([0, 0, 0, 1], false),
+                ([1, u64::MAX, u64::MAX, u64::MAX], true),
+            ] {
+                let mut acc = A::default();
+                acc.add(initial);
+                acc.fmadd_s256(value, &S256::new(limbs, is_positive));
+                assert_eq!(
+                    acc.reduce(),
+                    initial + if odd { value } else { A::Element::zero() }
+                );
+            }
+        }
+        for (scalar, odd) in [(0, false), (1, true), (2, false), (u8::MAX, true)] {
+            let mut acc = A::default();
+            acc.add(initial);
+            acc.fmadd_u8(value, scalar);
+            assert_eq!(
+                acc.reduce(),
+                initial + if odd { value } else { A::Element::zero() }
+            );
+        }
+        for (scalar, odd) in [(0, false), (1, true), (2, false), (u64::MAX, true)] {
+            let mut acc = A::default();
+            acc.add(initial);
+            acc.fmadd_u64(value, scalar);
+            assert_eq!(
+                acc.reduce(),
+                initial + if odd { value } else { A::Element::zero() }
+            );
+        }
+        for (scalar, odd) in [
+            (0, false),
+            (1, true),
+            (2, false),
+            (1 << 100, false),
+            ((1 << 100) + 1, true),
+            (u128::MAX, true),
+        ] {
+            let mut acc = A::default();
+            acc.add(initial);
+            acc.fmadd_u128(value, scalar);
+            assert_eq!(
+                acc.reduce(),
+                initial + if odd { value } else { A::Element::zero() }
+            );
+        }
+        for (scalar, odd) in [
+            (0, false),
+            (1, true),
+            (-1, true),
+            (-2, false),
+            (i64::MIN, false),
+            (i64::MAX, true),
+        ] {
+            let mut acc = A::default();
+            acc.add(initial);
+            acc.fmadd_i64(value, scalar);
+            assert_eq!(
+                acc.reduce(),
+                initial + if odd { value } else { A::Element::zero() }
+            );
+        }
+        for (scalar, odd) in [(false, false), (true, true)] {
+            let mut acc = A::default();
+            acc.add(initial);
+            acc.fmadd_bool(value, scalar);
+            assert_eq!(
+                acc.reduce(),
+                initial + if odd { value } else { A::Element::zero() }
+            );
         }
     }
 }
