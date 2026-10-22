@@ -7,6 +7,8 @@
 
 #[cfg(feature = "sample")]
 use rand_core::{CryptoRng, RngCore};
+#[cfg(feature = "sample")]
+use zeroize::Zeroizing;
 
 use super::ajtai::field_bits;
 use crate::CryptoError;
@@ -20,13 +22,14 @@ pub const HIDING_SECURITY_BITS: usize = 128;
 /// `[−2^{log_basis−1}, 2^{log_basis−1} − 1]`.
 ///
 /// Each digit is one masked byte of `rng` output: no rejection, no branch
-/// and no table, so the running time is independent of the digits.
+/// and no table, so the running time is independent of the digits. The
+/// digits and the bytes they come from are zeroed when freed.
 #[cfg(feature = "sample")]
 pub fn sample_box_digits<R: RngCore + CryptoRng>(
     rng: &mut R,
     len: usize,
     log_basis: u32,
-) -> Result<Vec<i8>, CryptoError> {
+) -> Result<Zeroizing<Vec<i8>>, CryptoError> {
     if !(1..=8).contains(&log_basis) {
         return Err(CryptoError::InvalidInput(format!(
             "box digits need log_basis in 1..=8, got {log_basis}"
@@ -34,12 +37,14 @@ pub fn sample_box_digits<R: RngCore + CryptoRng>(
     }
     let mask = ((1u16 << log_basis) - 1) as u8;
     let half = 1i16 << (log_basis - 1);
-    let mut bytes = vec![0u8; len];
+    let mut bytes = Zeroizing::new(vec![0u8; len]);
     rng.fill_bytes(&mut bytes);
-    Ok(bytes
-        .into_iter()
-        .map(|byte| (i16::from(byte & mask) - half) as i8)
-        .collect())
+    Ok(Zeroizing::new(
+        bytes
+            .iter()
+            .map(|&byte| (i16::from(byte & mask) - half) as i8)
+            .collect(),
+    ))
 }
 
 /// The fewest whole ring columns of balanced `2^log_basis` digits whose

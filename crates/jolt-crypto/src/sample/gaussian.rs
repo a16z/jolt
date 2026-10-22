@@ -14,6 +14,7 @@ use jolt_algebra::parallel::*;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+use zeroize::{zeroize_flat_type, Zeroizing};
 
 use super::fixed::{binary_gaussian_cdt, pow2_neg_table, Fix192};
 use super::SampleError;
@@ -113,17 +114,19 @@ impl GaussianSampler {
     /// the thread count or scheduling, and the work split depends only on
     /// `out.len()`. Replacing `rng`'s coins by ChaCha20 streams adds a PRG
     /// assumption on ChaCha20 to any statistical argument about the output.
+    ///
+    /// The seeds and every chunk's ChaCha20 state are overwritten with
+    /// zeros before they are freed.
     pub fn fill_parallel<R: RngCore + CryptoRng>(&self, rng: &mut R, out: &mut [i64]) {
-        let seeds: Vec<[u8; 32]> = (0..out.len().div_ceil(FILL_CHUNK))
-            .map(|_| {
-                let mut seed = [0u8; 32];
-                rng.fill_bytes(&mut seed);
-                seed
-            })
-            .collect();
+        let mut seeds = Zeroizing::new(vec![[0u8; 32]; out.len().div_ceil(FILL_CHUNK)]);
+        for seed in seeds.iter_mut() {
+            rng.fill_bytes(seed);
+        }
         cfg_chunks_mut!(out, FILL_CHUNK)
-            .zip(cfg_iter!(seeds))
-            .for_each(|(chunk, seed)| self.fill(&mut ChaCha20Rng::from_seed(*seed), chunk));
+            .zip(cfg_iter!(seeds.as_slice()))
+            .for_each(|(chunk, seed)| {
+                self.fill(&mut ChunkRng(ChaCha20Rng::from_seed(*seed)).0, chunk);
+            });
     }
 
     // Kept out of line so the reviewed constant-time code is the code that
@@ -148,6 +151,21 @@ impl GaussianSampler {
             i64::conditional_select(&z, &z.wrapping_neg(), negate),
             accept,
         )
+    }
+}
+
+/// One chunk's ChaCha20 stream, zeroed when dropped: its state holds the
+/// chunk seed as the key, and its buffer the current keystream block.
+struct ChunkRng(ChaCha20Rng);
+
+impl Drop for ChunkRng {
+    fn drop(&mut self) {
+        // SAFETY: rand_chacha 0.3's `ChaCha20Rng` is plain data (`u32`
+        // words, unions of integer lanes, a `[u32; 64]` buffer and a `usize`
+        // index) with no pointer and no `Drop` impl, so all-zero bytes are a
+        // valid value; it is not used afterwards. WARNING: recheck this when
+        // bumping rand_chacha.
+        unsafe { zeroize_flat_type(&raw mut self.0) }
     }
 }
 

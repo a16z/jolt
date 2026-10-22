@@ -355,6 +355,10 @@ rand_chacha = { version = "0.3.0", default-features = false }
 rand_core = { version = "0.6.4", default-features = false }
 rand_distr = "0.4.3"
 subtle = { version = "2.6.1", default-features = false, features = ["i128"] }
+zeroize = { version = "1.8.2", default-features = false, features = [
+  "alloc",
+  "zeroize_derive",
+] }
 
 # Serialization
 serde = { version = "1.0", default-features = false, features = [

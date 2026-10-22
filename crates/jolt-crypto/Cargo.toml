@@ -41,11 +41,12 @@ lattice = [
   "dep:shake",
   "dep:smallvec",
   "dep:thiserror",
+  "dep:zeroize",
   "jolt-algebra/solinas",
 ]
 # Whiteout's constant-time Gaussian sampler and joint rejection rule. Prover-only,
 # so separate from `lattice` and kept out of every verifier build.
-sample = ["dep:subtle", "dep:num-bigint", "dep:rand_chacha"]
+sample = ["dep:subtle", "dep:num-bigint", "dep:rand_chacha", "dep:zeroize"]
 # Exposes the constant-time challenge sampler's candidate count, which
 # jolt-zk's timing diagnostics condition on. Diagnostics only.
 sample-diagnostics = ["sample"]
@@ -58,6 +59,7 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true, optional = true }
 subtle = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 keccak = { version = "0.1.6", features = ["asm"], optional = true }
 shake = { version = "0.1.0", optional = true }
