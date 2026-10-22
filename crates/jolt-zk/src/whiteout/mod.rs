@@ -54,8 +54,8 @@ pub use placement::{
     PadPlace, PadPlacement, OPERAND_LEVELS, OPERAND_LOG_BASIS, PAD_LEVELS, PAD_LOG_BASIS,
 };
 pub use response::{
-    ResponseLayout, ResponseProver, ResponseRowShape, ResponseRows, ResponseSegment,
-    ResponseStatement, ResponseWitness, FIELD_LEVELS,
+    CompressedTarget, ResponseLayout, ResponseProver, ResponseRowShape, ResponseRows,
+    ResponseSegment, ResponseStatement, ResponseWitness, FIELD_LEVELS,
 };
 pub use ring::LiftedFunctional;
 #[cfg(feature = "whiteout-prover")]
