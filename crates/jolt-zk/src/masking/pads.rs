@@ -142,8 +142,9 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
         values: &[F],
         transcript: &mut ProverTranscript<H>,
     ) -> Result<Vec<F>, ZkError> {
-        let (_, mut masked) = self.mask(values)?;
+        let (slots, mut masked) = self.mask(values)?;
         transcript.exchange_all(&mut masked)?;
+        transcript.mark_masked(slots);
         Ok(masked)
     }
 
@@ -379,7 +380,9 @@ impl<H: Sponge> PrivateChannel for MaskedVerifier<'_, '_, H> {
                 reason: "extension pad count overflows usize",
             })?;
         self.transcript.exchange_all(values)?;
-        self.cursor.take(len)
+        let slots = self.cursor.take(len)?;
+        self.transcript.mark_masked(slots);
+        Ok(slots)
     }
 
     fn bind_derived<F, E>(&mut self, _claim: &E) -> Result<(), ZkError>
@@ -395,7 +398,9 @@ impl<H: Sponge> PrivateChannel for MaskedVerifier<'_, '_, H> {
         F: Field + CanonicalEncoding,
     {
         self.transcript.exchange_all(values)?;
-        self.cursor.take(values.len())
+        let slots = self.cursor.take(values.len())?;
+        self.transcript.mark_masked(slots);
+        Ok(slots)
     }
 
     fn bind_derived_base<F>(&mut self, _claim: &F) -> Result<(), ZkError>
@@ -535,6 +540,7 @@ where
             .map(|chunk| E::from_base_fn(|index| chunk[index]))
             .collect();
         self.transcript.exchange_all(&mut masked)?;
+        self.transcript.mark_masked(slots);
         Ok(slots)
     }
 
@@ -557,6 +563,7 @@ where
             .collect::<Result<Vec<P>, ZkError>>()?;
         let (slots, mut masked) = self.pads.mask(&values)?;
         self.transcript.exchange_all(&mut masked)?;
+        self.transcript.mark_masked(slots);
         Ok(slots)
     }
 

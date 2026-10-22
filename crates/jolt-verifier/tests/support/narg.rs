@@ -587,14 +587,16 @@ pub fn assert_coverage_closure(trace: &Trace, narg_len: usize) {
                 TranscriptOp::Public
                 | TranscriptOp::Challenge
                 | TranscriptOp::ForkAbsorb
-                | TranscriptOp::ForkSqueeze,
+                | TranscriptOp::ForkSqueeze
+                | TranscriptOp::Masked { .. },
                 None,
             ) => {}
             (
                 TranscriptOp::Public
                 | TranscriptOp::Challenge
                 | TranscriptOp::ForkAbsorb
-                | TranscriptOp::ForkSqueeze,
+                | TranscriptOp::ForkSqueeze
+                | TranscriptOp::Masked { .. },
                 Some(_),
             ) => {
                 panic!("non-message event carries an argument-string range: {event:?}")

@@ -49,6 +49,14 @@ pub enum TranscriptOp {
     ForkAbsorb,
     /// Squeezed a draw seed from an accepted [`Fork`](crate::Fork). Event log only.
     ForkSqueeze,
+    /// The message recorded just before this event went out masked, over
+    /// `len` pads from `first_pad`. Event log only; recorded by a masked
+    /// private channel through `mark_masked`, never by a clear transcript, so
+    /// a private message sent in the clear has no such event.
+    Masked {
+        /// The first pad of the masked message.
+        first_pad: usize,
+    },
 }
 
 /// One recorded transcript operation.

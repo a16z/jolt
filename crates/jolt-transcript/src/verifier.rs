@@ -13,7 +13,7 @@ use crate::state::SMALL_CHALLENGE_BYTES;
 use crate::state::{domain, Framed, Squeeze, BYTE_BLOCK};
 #[cfg(feature = "logging")]
 use crate::TranscriptEvent;
-use crate::{Channel, Nonce, ProtocolId, SiteId, Sponge, TranscriptError};
+use crate::{Channel, Nonce, PadSlots, ProtocolId, SiteId, Sponge, TranscriptError};
 use core::fmt::Debug;
 use core::fmt::Formatter;
 
@@ -217,6 +217,19 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
     #[must_use]
     pub fn remaining(&self) -> usize {
         self.narg.len() - self.consumed
+    }
+
+    /// Records that the message just received went out masked by `slots`
+    /// ([`TranscriptOp::Masked`]). Event log only: the sponge is untouched,
+    /// and without the `logging` feature this does nothing.
+    pub fn mark_masked(&mut self, slots: PadSlots) {
+        self.log.record(
+            TranscriptOp::Masked {
+                first_pad: slots.start,
+            },
+            slots.len,
+            None,
+        );
     }
 
     /// Recorded operations, in order.
