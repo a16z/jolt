@@ -361,6 +361,11 @@ pub(crate) fn attempt_seed<H: Sponge, F: JoltField>(
 
 /// Verifies the Σ-protocol: squeezes `ρ` and `σ`, reads `cm(t_D)` and the
 /// nonce, rebuilds `c`, and has `response` verify the response statement.
+///
+/// The caller must already have absorbed, in `transcript`, the payload of
+/// every compressed target of `setup` (`u_a` and `t_p`), in target order,
+/// before this call: `ρ` is squeezed from that state, and nothing here
+/// absorbs them. The response statement and its prover rely on it.
 pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F, D>>(
     setup: &SigmaSetup<F, D>,
     relation: &LiftedRelation<F>,
@@ -516,6 +521,10 @@ mod prover {
     /// the pad opening `pads`, returning the number of attempts (independent
     /// of the witness; the only attempt-dependent value that may leave).
     /// Runs on a fresh rayon pool whose workers all have DIT set (A11).
+    ///
+    /// The caller must already have sent, in `transcript`, the payload of
+    /// every compressed target of `setup`, in target order, as
+    /// [`verify_sigma`] requires.
     pub fn prove_sigma<F, const D: usize, H, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
