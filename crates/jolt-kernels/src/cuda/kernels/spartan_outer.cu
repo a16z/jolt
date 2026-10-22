@@ -1,4 +1,5 @@
 #define SO_NARROW 13
+#define SO_CLAIM_LANES 4
 #define SO_WIDE 4
 #define SO_SIGN_BASE 24
 #define SO_KIND_NARROW 0u
@@ -244,6 +245,26 @@ extern "C" __global__ void so_uniskip_kernel(
     so_block_reduce(scratch, 1, acc, lane_partials);
 }
 
+extern "C" __global__ void so_factors_kernel(
+    const u64 *__restrict__ narrow, const u64 *__restrict__ wide,
+    const unsigned int *__restrict__ flags, const unsigned int *__restrict__ offsets,
+    const unsigned int *__restrict__ counts, const u64 *__restrict__ constants,
+    const unsigned int *__restrict__ terms, const u64 *__restrict__ coeffs, unsigned int cycles,
+    u64 *__restrict__ az, u64 *__restrict__ bz) {
+    unsigned long long t = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= cycles) return;
+
+    unsigned int mask = flags[t];
+    for (unsigned int stream = 0; stream < 2; stream++) {
+        u64 value[LIMBS];
+        so_form(narrow, wide, mask, t, offsets, counts, constants, terms, coeffs, stream * 2, value);
+        store4(az + ((t << 1) | stream) * LIMBS, value);
+        so_form(narrow, wide, mask, t, offsets, counts, constants, terms, coeffs, stream * 2 + 1,
+                value);
+        store4(bz + ((t << 1) | stream) * LIMBS, value);
+    }
+}
+
 extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
                                              const u64 *__restrict__ bz,
                                              const u64 *__restrict__ e_in,
@@ -296,4 +317,63 @@ extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
     }
 
     so_block_reduce(scratch, 3, acc, partials);
+}
+
+extern "C" __global__ void so_claims_kernel(
+    const u64 *__restrict__ narrow, const u64 *__restrict__ wide,
+    const unsigned int *__restrict__ flags, const unsigned int *__restrict__ layout,
+    const u64 *__restrict__ e_in, const u64 *__restrict__ e_out, unsigned int in_bits,
+    unsigned int first, unsigned int lanes, unsigned int cycles, unsigned int strip,
+    u64 *__restrict__ partials) {
+    extern __shared__ u64 scratch[];
+    unsigned long long base =
+        ((unsigned long long)blockIdx.x * blockDim.x + threadIdx.x) * (unsigned long long)strip;
+
+    u64 folded[SO_CLAIM_LANES][2 * UNR_SLOTS];
+    for (unsigned int lane = 0; lane < lanes; lane++) unr_zero(folded[lane]);
+    const u64 zero[LIMBS] = {0, 0, 0, 0};
+
+    for (unsigned int step = 0; step < strip; step++) {
+        unsigned long long t = base + step;
+        if (t >= cycles) break;
+
+        unsigned int mask = flags[t];
+        const u64 *row = narrow + t * SO_NARROW;
+        const u64 *row_wide = wide + t * (SO_WIDE * 2);
+        u64 weight[LIMBS];
+        so_split_eq(e_in, e_out, in_bits, t, weight);
+
+        for (unsigned int lane = 0; lane < lanes; lane++) {
+            unsigned int term = layout[first + lane];
+            unsigned int slot = term & 0xFFu;
+            unsigned int kind = (term >> 8) & 3u;
+            if (kind == SO_KIND_FLAG) {
+                if ((mask >> slot) & 1u) unr_add_field(folded[lane], weight);
+                continue;
+            }
+            if (kind == SO_KIND_NARROW) {
+                unsigned long long word = row[slot];
+                if (word != 0ULL) unr_mul_words(weight, &word, 1, folded[lane]);
+                continue;
+            }
+            unsigned long long words[2];
+            words[0] = row_wide[2 * slot];
+            words[1] = row_wide[2 * slot + 1];
+            if (words[0] == 0ULL && words[1] == 0ULL) continue;
+            if ((mask >> (SO_SIGN_BASE + slot)) & 1u) {
+                u64 flipped[LIMBS];
+                fr_sub(zero, weight, flipped);
+                unr_mul_words(flipped, words, 2, folded[lane]);
+            } else {
+                unr_mul_words(weight, words, 2, folded[lane]);
+            }
+        }
+    }
+
+    u64 acc[SO_CLAIM_LANES][LIMBS];
+    for (unsigned int lane = 0; lane < lanes; lane++) unr_finalize(folded[lane], acc[lane]);
+    for (unsigned int lane = lanes; lane < SO_CLAIM_LANES; lane++)
+        for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
+
+    so_block_reduce(scratch, lanes, acc, partials);
 }

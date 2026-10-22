@@ -1,18 +1,20 @@
-use super::witness::{LAYOUT, VARIABLES};
 use crate::cuda::common::device::DeviceFrVec;
 use cudarc::driver::LaunchArgs;
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::{Fr, JoltField};
+use jolt_field::Fr;
+use jolt_field::JoltField;
 use jolt_riscv::CircuitFlags;
 use jolt_witness::backend::cuda::{
     circuit_flag_bit, DeviceAtomColumns, DeviceTrace, FLAG_BIT_PRODUCT_NEGATIVE,
     FLAG_BIT_SHOULD_BRANCH, FLAG_BIT_SHOULD_JUMP,
 };
+use witness::LAYOUT;
+use witness::VARIABLES;
 
 #[cfg(test)]
 use super::witness::Packed;
 use super::witness::{
-    FIRST_IN_SEQUENCE_BIT, NARROW, NEXT_IS_FIRST_IN_SEQUENCE_BIT, NEXT_IS_VIRTUAL_BIT,
+    self, FIRST_IN_SEQUENCE_BIT, NARROW, NEXT_IS_FIRST_IN_SEQUENCE_BIT, NEXT_IS_VIRTUAL_BIT,
     NEXT_PC_SLOT, NEXT_UNEXPANDED_PC_SLOT, PC_SLOT, SIGN_BIT_BASE, UNEXPANDED_PC_SLOT,
     VIRTUAL_INSTRUCTION_BIT, WIDE,
 };
@@ -42,10 +44,17 @@ pub struct DeviceR1csInputs {
     narrow: CudaSlice<u64>,
     wide: CudaSlice<u64>,
     flags: CudaSlice<u32>,
+    layout: CudaSlice<u32>,
     cycles: usize,
 }
 
 impl DeviceR1csInputs {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        (self.narrow.len() + self.wide.len()) * size_of::<u64>()
+            + (self.flags.len() + self.layout.len()) * size_of::<u32>()
+    }
+
     #[cfg(test)]
     pub fn new(context: &CudaKernelContext, packed: &Packed) -> Result<Self, CudaError> {
         let cycles = packed.flags.len();
@@ -151,6 +160,7 @@ impl DeviceR1csInputs {
         raw: CudaSlice<u32>,
         cycles: usize,
     ) -> Result<Self, CudaError> {
+        let layout = context.upload_u32_slice(&LAYOUT)?;
         let mut flags = context.alloc_u32(cycles)?;
 
         let count = CudaKernelContext::count_of(cycles)?;
@@ -185,6 +195,7 @@ impl DeviceR1csInputs {
             narrow,
             wide,
             flags,
+            layout,
             cycles,
         })
     }
@@ -203,6 +214,10 @@ impl DeviceR1csInputs {
 
     pub const fn flags(&self) -> &CudaSlice<u32> {
         &self.flags
+    }
+
+    pub const fn layout(&self) -> &CudaSlice<u32> {
+        &self.layout
     }
 }
 
