@@ -160,6 +160,7 @@ mod instruction_read_raf;
 mod program_image_claim_reduction;
 mod ram_hamming_booleanity;
 mod ram_output_check;
+mod ram_ra_claim_reduction;
 mod ram_raf_evaluation;
 mod ram_val_check;
 mod registers_claim_reduction;
@@ -207,8 +208,8 @@ where
 {
     /// Replace supported claim reductions, instruction-input checking, RAM output
     /// and value checking, RAM hamming booleanity, hamming-weight claim reduction,
-    /// register-value evaluation, Spartan shift, RAM RAF evaluation, and RV64 Spartan
-    /// outer and product kernels with CUDA implementations.
+    /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
+    /// reduction, and RV64 Spartan outer and product kernels with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -232,6 +233,7 @@ where
         backend.instruction_input = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
         backend.ram_raf_evaluation = Box::new(CudaBackend);
+        backend.ram_ra_claim_reduction = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.spartan_shift = Box::new(CudaBackend);

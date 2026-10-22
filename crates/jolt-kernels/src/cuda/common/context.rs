@@ -62,6 +62,10 @@ pub struct CudaKernelContext {
     ss_packed_columns: CudaFunction,
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
+    ram_ra_gather_h: CudaFunction,
+    ram_ra_fold_suffix: CudaFunction,
+    ram_ra_fold_prefix: CudaFunction,
+    ram_ra_phase1_round: CudaFunction,
     #[cfg(test)]
     sfx_eval_batch: CudaFunction,
     #[cfg(test)]
@@ -284,6 +288,10 @@ impl CudaKernelContext {
             ss_packed_columns: module.load_function("ss_packed_columns_kernel")?,
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
+            ram_ra_gather_h: module.load_function("ram_ra_gather_h_kernel")?,
+            ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
+            ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
+            ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
             #[cfg(test)]
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
             #[cfg(test)]
@@ -838,6 +846,22 @@ impl CudaKernelContext {
 
     pub(crate) const fn ra_gather(&self) -> &CudaFunction {
         &self.ra_gather
+    }
+
+    pub(crate) const fn ram_ra_gather_h(&self) -> &CudaFunction {
+        &self.ram_ra_gather_h
+    }
+
+    pub(crate) const fn ram_ra_fold_suffix(&self) -> &CudaFunction {
+        &self.ram_ra_fold_suffix
+    }
+
+    pub(crate) const fn ram_ra_fold_prefix(&self) -> &CudaFunction {
+        &self.ram_ra_fold_prefix
+    }
+
+    pub(crate) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
+        &self.ram_ra_phase1_round
     }
 
     #[cfg(test)]

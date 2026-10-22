@@ -18,6 +18,7 @@ const KERNEL_FILES: &[&str] = &[
     "half_fold.cu",
     "dense_product.cu",
     "ra_poly.cu",
+    "ram_ra_reduction.cu",
     "suffixes.cu",
     "prefix_mle.cu",
     "unreduced.cu",
