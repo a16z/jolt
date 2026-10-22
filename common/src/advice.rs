@@ -71,6 +71,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::unwrap_used, reason = "test capacities must be valid")]
     fn capacity_without_materialization_matches_the_reference() {
         for max in [
             0,

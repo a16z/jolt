@@ -154,6 +154,10 @@ where
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "oracle tests fail loudly on invalid commitments"
+)]
 mod packed_word_tests {
     use super::*;
     use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
