@@ -63,6 +63,28 @@ pub(crate) struct GadgetTerm {
     pub levels: usize,
 }
 
+impl GadgetTerm {
+    /// `G`'s reconstruction law: output ring `row` is `Σ_p radix^p·x[range]`
+    /// over its planes `(row, radix^p, range)`, plane `p` of row `row` being
+    /// the `d` native coefficients of `s` at `input.start + (row·levels +
+    /// p)·d`. [`RingLinearMap::apply`], its adjoint and its factored form
+    /// all read `G` here.
+    fn planes<F: Field>(&self, d: usize) -> Vec<(usize, F, Range<usize>)> {
+        let radix = F::from_u64(1 << self.log_basis);
+        let rows = self.input.len() / (self.levels * d).max(1);
+        let mut out = Vec::with_capacity(rows * self.levels);
+        for row in 0..rows {
+            let mut power = F::one();
+            for plane in 0..self.levels {
+                let start = self.input.start + (row * self.levels + plane) * d;
+                out.push((row, power, start..start + d));
+                power *= radix;
+            }
+        }
+        out
+    }
+}
+
 /// One block `M·x[input] − G(x[gadget]) = target`.
 pub(crate) struct LinearBlock<F: Field, const D: usize> {
     pub matrix: Arc<PreparedMatrix<F, D>>,
@@ -133,17 +155,15 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
                 ))?;
             let mut rows = SecretVec::from(block.matrix.apply_centered(input, bound)?);
             if let Some(gadget) = &block.gadget {
-                let digits = x
-                    .get(gadget.input.clone())
-                    .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
-                let radix = F::from_u64(1 << gadget.log_basis);
-                for (row, planes) in rows.iter_mut().zip(digits.chunks_exact(gadget.levels * D)) {
-                    let mut power = F::one();
-                    for plane in planes.chunks_exact(D) {
-                        for (dst, &value) in row.coefficients_mut().iter_mut().zip(plane) {
-                            *dst -= lift_ct::<F>(value) * power;
-                        }
-                        power *= radix;
+                for (row, power, range) in gadget.planes::<F>(D) {
+                    let plane = x
+                        .get(range)
+                        .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
+                    let row = rows.get_mut(row).ok_or(WhiteoutError::InvalidRelation(
+                        "gadget rows differ from M's",
+                    ))?;
+                    for (dst, &value) in row.coefficients_mut().iter_mut().zip(plane) {
+                        *dst -= lift_ct::<F>(value) * power;
                     }
                 }
             }
@@ -175,17 +195,15 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
                 .collect();
             matrix_adjoint(&block.matrix, &rows, block.input.clone(), out)?;
             if let Some(gadget) = &block.gadget {
-                let targets = out
-                    .get_mut(gadget.input.clone())
-                    .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
-                let radix = F::from_u64(1 << gadget.log_basis);
-                for (row, planes) in rows.iter().zip(targets.chunks_exact_mut(gadget.levels * D)) {
-                    let mut power = F::one();
-                    for plane in planes.chunks_exact_mut(D) {
-                        for (dst, weight) in plane.iter_mut().zip(row.coefficients()) {
-                            *dst -= *weight * power;
-                        }
-                        power *= radix;
+                for (row, power, range) in gadget.planes::<F>(D) {
+                    let row = rows.get(row).ok_or(WhiteoutError::InvalidRelation(
+                        "gadget rows differ from M's",
+                    ))?;
+                    let plane = out
+                        .get_mut(range)
+                        .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
+                    for (dst, weight) in plane.iter_mut().zip(row.coefficients()) {
+                        *dst -= *weight * power;
                     }
                 }
             }
@@ -215,18 +233,15 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
                 .map(|row| row * *lo)
                 .collect();
             if let Some(gadget) = &block.gadget {
-                let planes = scales
-                    .get(gadget.input.start / D..gadget.input.end / D)
-                    .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
-                let radix = F::from_u64(1 << gadget.log_basis);
-                for (row, planes) in rows.iter_mut().zip(planes.chunks_exact(gadget.levels)) {
-                    let mut power = F::one();
-                    let mut sum = F::zero();
-                    for scale in planes {
-                        sum += *scale * power;
-                        power *= radix;
-                    }
-                    *row -= lo.scale(&sum);
+                // Each plane is one native element: `scale·lo`.
+                for (row, power, range) in gadget.planes::<F>(D) {
+                    let scale = scales
+                        .get(range.start / D)
+                        .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
+                    let row = rows.get_mut(row).ok_or(WhiteoutError::InvalidRelation(
+                        "gadget rows differ from M's",
+                    ))?;
+                    *row -= lo.scale(&(*scale * power));
                 }
             }
             out.extend(rows);

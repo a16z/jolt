@@ -780,6 +780,14 @@ pub(crate) struct AggregatedRelation<'a, F: JoltField> {
 /// The `s`-linear parts of every form at one vector: `u = 0`. As secret as
 /// the vector (`s`, a mask or a response), so the per-product parts are
 /// zeroed when dropped.
+/// A term of the reduced target's `s`-linear part.
+#[derive(Clone, Copy)]
+enum TargetTerm {
+    Z(usize),
+    Lambda,
+    G,
+}
+
 pub(crate) struct LinearParts<F: JoltField> {
     /// `−P_x` per product.
     x: SecretVec<ChallengeRing<F>>,
@@ -924,12 +932,31 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
         &self,
         u: &ChallengeRing<F>,
         parts: &LinearParts<F>,
-    ) -> ChallengeRing<F> {
-        let mut z = CyclotomicRing::zero();
-        for (weight, part) in self.product_weights.iter().zip(parts.z.iter()) {
-            part.scale_accumulate_into(&mut z, *weight);
+    ) -> Result<ChallengeRing<F>, WhiteoutError> {
+        let mut sum = CyclotomicRing::zero();
+        for (term, weight) in self.target_terms() {
+            let part = match term {
+                TargetTerm::Z(i) => parts
+                    .z
+                    .get(i)
+                    .ok_or(WhiteoutError::InvalidRelation("product parts"))?,
+                TargetTerm::Lambda => &parts.lambda,
+                TargetTerm::G => &parts.g,
+            };
+            part.scale_accumulate_into(&mut sum, weight);
         }
-        *u * (z - parts.lambda - parts.g)
+        Ok(*u * sum)
+    }
+
+    /// The terms of `Σ μ_i Z_i − λ − g` with their weights, which
+    /// [`Self::target_linear`] and [`Self::product_adjoint`] both read:
+    /// that sum times `u` is the `s`-linear part of the reduced target.
+    fn target_terms(&self) -> impl Iterator<Item = (TargetTerm, F)> + '_ {
+        self.product_weights
+            .iter()
+            .enumerate()
+            .map(|(i, mu)| (TargetTerm::Z(i), *mu))
+            .chain([(TargetTerm::Lambda, -F::one()), (TargetTerm::G, -F::one())])
     }
 
     /// The linear parts of the zero vector.
@@ -965,6 +992,20 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
         }
         // ω ↦ σ(σ(ω)·u), the transpose of multiplication by u.
         let times_u = (weights.target.sigma_m1() * *u).sigma_m1();
+        for (term, weight) in self.target_terms() {
+            let scaled = times_u.scale(&weight);
+            match term {
+                TargetTerm::Z(i) => self
+                    .relation
+                    .products
+                    .get(i)
+                    .ok_or(WhiteoutError::InvalidRelation("product parts"))?
+                    .z_form
+                    .adjoint(table, tables, &scaled, out)?,
+                TargetTerm::Lambda => self.lambda.adjoint(table, tables, &scaled, out)?,
+                TargetTerm::G => self.relation.g.adjoint(table, &scaled, out)?,
+            }
+        }
         for (((product, mu), x), y) in self
             .relation
             .products
@@ -973,16 +1014,12 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
             .zip(weights.x)
             .zip(weights.y)
         {
-            product
-                .z_form
-                .adjoint(table, tables, &times_u.scale(mu), out)?;
             self.relation
                 .operand(product.operand)?
                 .adjoint(table, &(-x.scale(mu)), out)?;
             product.y_form.adjoint(table, tables, y, out)?;
         }
-        self.lambda.adjoint(table, tables, &(-times_u), out)?;
-        self.relation.g.adjoint(table, &(-times_u), out)
+        Ok(())
     }
 }
 

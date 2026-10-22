@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use jolt_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, ring::cyclotomic::BalancedDecomposePow2Params,
-    CyclotomicRing, Field, One, Prime128OffsetA7F7, Ring,
+    CyclotomicRing, Field, One, Prime128OffsetA7F7, Ring, Zero,
 };
 use jolt_crypto::lattice::{
     derive_public_matrix_prefix, sample_box_digits, MatrixShape, MatrixView, PreparedMatrix,
@@ -23,9 +23,8 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
 use super::compression::{CompressedImage, ImageCompression};
-use super::params::RESPONSE_LOG_BASIS;
 use super::placement::PadPlacement;
-use super::response::{field_digits, field_from_planes, push_planes};
+use super::response::PlaneLayout;
 use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
 use super::{
     sample_zero_constant_term, BlockTarget, EvaluationClaims, LatticePadCommitment, ResidualBlock,
@@ -313,7 +312,7 @@ impl ImageCompression<F> for RawImages {
             payload: image.to_vec(),
             witness: {
                 let mut digits = vec![0i8; image.len() * FIELD_LEVELS];
-                field_digits(image, &mut digits)?;
+                PlaneLayout::single(image.len(), FIELD_LEVELS).field_digits(image, &mut digits)?;
                 digits
             },
         })
@@ -325,7 +324,7 @@ impl ImageCompression<F> for RawImages {
                 "compression witness length",
             ));
         }
-        Ok(field_from_planes(witness, image_len))
+        PlaneLayout::single(image_len, FIELD_LEVELS).recompose(witness)
     }
 
     fn reconstruct_transpose(
@@ -336,13 +335,8 @@ impl ImageCompression<F> for RawImages {
         if weights.len() != image_len {
             return Err(WhiteoutError::InvalidRelation("image weights length"));
         }
-        let mut out = Vec::with_capacity(image_len * FIELD_LEVELS);
-        push_planes(
-            &mut out,
-            weights,
-            FIELD_LEVELS,
-            F::from_u64(1 << RESPONSE_LOG_BASIS),
-        );
+        let mut out = vec![<F as Zero>::zero(); image_len * FIELD_LEVELS];
+        PlaneLayout::single(image_len, FIELD_LEVELS).transpose(weights, &mut out)?;
         Ok(out)
     }
 

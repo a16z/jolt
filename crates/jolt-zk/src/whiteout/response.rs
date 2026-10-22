@@ -71,6 +71,29 @@ pub enum ResponseSegment {
 }
 
 impl ResponseSegment {
+    /// How this segment stores its coefficients' digits; `None` for a
+    /// compression witness, whose layout is the compression map's.
+    pub(crate) fn planes(&self) -> Option<PlaneLayout> {
+        match *self {
+            Self::Response {
+                coefficients,
+                digits,
+                ..
+            } => Some(PlaneLayout {
+                width: coefficients,
+                planes: digits,
+                coefficients,
+            }),
+            Self::V { coefficients } => Some(PlaneLayout {
+                width: CHALLENGE_RING_DIM,
+                planes: FIELD_LEVELS,
+                coefficients,
+            }),
+            Self::Theta => Some(PlaneLayout::single(THETA_COEFFICIENTS, FIELD_LEVELS)),
+            Self::Compression { .. } => None,
+        }
+    }
+
     /// The number of digits of `e` in this segment.
     pub fn num_digits(&self) -> usize {
         match *self {
@@ -83,6 +106,147 @@ impl ResponseSegment {
             Self::Theta => THETA_COEFFICIENTS * FIELD_LEVELS,
             Self::Compression { digits, .. } => digits,
         }
+    }
+}
+
+/// The position law of a planar segment of `e`: its `coefficients` are cut
+/// into blocks of `width`, and each block is stored as `planes`
+/// consecutive digit planes of `width` digits, plane `p` holding every
+/// coefficient's radix-16 digit `p`. Every reader and writer of `e`'s
+/// digits goes through [`Self::index`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlaneLayout {
+    pub(crate) width: usize,
+    pub(crate) planes: usize,
+    pub(crate) coefficients: usize,
+}
+
+impl PlaneLayout {
+    /// One block of `coefficients`.
+    pub(crate) fn single(coefficients: usize, planes: usize) -> Self {
+        Self {
+            width: coefficients,
+            planes,
+            coefficients,
+        }
+    }
+
+    /// The digit of plane `plane` of coefficient `coefficient`, counted from
+    /// the segment's first digit.
+    pub(crate) fn index(self, coefficient: usize, plane: usize) -> usize {
+        let width = self.width.max(1);
+        (coefficient / width) * width * self.planes + plane * width + coefficient % width
+    }
+
+    /// Every coefficient `Σ_p radix^p·digit[index(k, p)]`, over `F`.
+    pub(crate) fn recompose<F: JoltField>(self, digits: &[i8]) -> Result<Vec<F>, WhiteoutError> {
+        let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
+        (0..self.coefficients)
+            .map(|k| {
+                (0..self.planes).rev().try_fold(F::zero(), |value, plane| {
+                    digits
+                        .get(self.index(k, plane))
+                        .map(|&digit| value * radix + F::from_i64(i64::from(digit)))
+                        .ok_or(WhiteoutError::InvalidRelation(
+                            "digits shorter than their planes",
+                        ))
+                })
+            })
+            .collect()
+    }
+
+    /// Every coefficient `Σ_p 16^p·digit[index(k, p)]`, as an integer.
+    pub(crate) fn recompose_integers(self, digits: &[i8]) -> Result<Vec<i64>, WhiteoutError> {
+        (0..self.coefficients)
+            .map(|k| {
+                (0..self.planes).rev().try_fold(0i64, |value, plane| {
+                    digits
+                        .get(self.index(k, plane))
+                        .map(|&digit| value * (1 << RESPONSE_LOG_BASIS) + i64::from(digit))
+                        .ok_or(WhiteoutError::InvalidRelation(
+                            "digits shorter than their planes",
+                        ))
+                })
+            })
+            .collect()
+    }
+
+    /// The transpose of [`Self::recompose`]: adds `radix^p·weights[k]` to
+    /// `out[index(k, p)]`.
+    pub(crate) fn transpose<F: JoltField>(
+        self,
+        weights: &[F],
+        out: &mut [F],
+    ) -> Result<(), WhiteoutError> {
+        if weights.len() != self.coefficients || out.len() != self.coefficients * self.planes {
+            return Err(WhiteoutError::InvalidRelation("plane weights length"));
+        }
+        let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
+        let mut power = F::one();
+        for plane in 0..self.planes {
+            for (k, weight) in weights.iter().enumerate() {
+                if let Some(dst) = out.get_mut(self.index(k, plane)) {
+                    *dst += *weight * power;
+                }
+            }
+            power *= radix;
+        }
+        Ok(())
+    }
+
+    /// Writes the balanced radix-16 digits of `values` (`planes` per field
+    /// element) at their places. The decomposition kernel writes one block
+    /// plane-major, which is [`Self::index`] within a block.
+    #[cfg(feature = "whiteout-prover")]
+    pub(crate) fn field_digits<F: JoltField>(
+        self,
+        values: &[F],
+        digits: &mut [i8],
+    ) -> Result<(), WhiteoutError> {
+        if values.len() != self.coefficients || digits.len() != self.coefficients * self.planes {
+            return Err(WhiteoutError::InvariantViolation("field digit count"));
+        }
+        let params = BalancedDecomposePow2Params::<F>::new(self.planes, RESPONSE_LOG_BASIS);
+        for (block, out) in values
+            .chunks(self.width.max(1))
+            .zip(digits.chunks_mut(self.width.max(1) * self.planes))
+        {
+            balanced_decompose_coefficients_pow2_i8_into(block, out, &params);
+        }
+        Ok(())
+    }
+
+    /// Writes the balanced radix-16 digits of the integers `values`
+    /// (`planes` each) at their places.
+    #[cfg(feature = "whiteout-prover")]
+    pub(crate) fn integer_digits(
+        self,
+        values: &[i64],
+        digits: &mut [i8],
+    ) -> Result<(), WhiteoutError> {
+        let radix = 1i128 << RESPONSE_LOG_BASIS;
+        let (min, top) = balanced_range(RESPONSE_LOG_BASIS, self.planes)
+            .ok_or(WhiteoutError::InvariantViolation("response digit range"))?;
+        let offset = -min;
+        if values.len() != self.coefficients || digits.len() != values.len() * self.planes {
+            return Err(WhiteoutError::InvariantViolation("response digit count"));
+        }
+        for (index, &value) in values.iter().enumerate() {
+            let value = i128::from(value);
+            if !(-offset..=top).contains(&value) {
+                return Err(WhiteoutError::InvariantViolation(
+                    "response coefficient outside its digit range",
+                ));
+            }
+            let mut shifted = value + offset;
+            for plane in 0..self.planes {
+                if let Some(digit) = digits.get_mut(self.index(index, plane)) {
+                    *digit = ((shifted % radix) - radix / 2) as i8;
+                }
+                shifted /= radix;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -475,54 +639,57 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         )?;
 
         // Back through the digit reconstruction to e.
-        let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
-        let mut a = Vec::with_capacity(layout.len());
+        let mut a = vec![F::zero(); layout.len()];
         let mut z_rest = z.as_slice();
+        let mut offset = 0;
         for segment in &layout.segments {
-            match *segment {
-                ResponseSegment::Response {
-                    coefficients,
-                    digits,
-                    ..
-                } => {
+            let out = a
+                .get_mut(offset..offset + segment.num_digits())
+                .ok_or(WhiteoutError::InvariantViolation("row weights length"))?;
+            offset += segment.num_digits();
+            match (*segment, segment.planes()) {
+                (ResponseSegment::Response { coefficients, .. }, Some(planes)) => {
                     let (values, tail) = z_rest.split_at(coefficients.min(z_rest.len()));
                     z_rest = tail;
-                    push_planes(&mut a, values, digits, radix);
+                    planes.transpose(values, out)?;
                 }
-                ResponseSegment::V { coefficients } => {
-                    let start = a.len();
-                    for ring in v
-                        .get(..coefficients)
-                        .ok_or(WhiteoutError::InvalidRelation("V weights too short"))?
-                        .chunks_exact(CHALLENGE_RING_DIM)
-                    {
-                        push_planes(&mut a, ring, FIELD_LEVELS, radix);
-                    }
-                    let columns = a
-                        .get_mut(start..)
-                        .ok_or(WhiteoutError::InvalidRelation("V weights too short"))?;
+                (ResponseSegment::V { coefficients }, Some(planes)) => {
+                    planes.transpose(
+                        v.get(..coefficients)
+                            .ok_or(WhiteoutError::InvalidRelation("V weights too short"))?,
+                        out,
+                    )?;
+                    // A_D reads V's digits in e's order, one ring per column.
                     for (column, dst) in v_digit_columns
                         .iter()
-                        .zip(columns.chunks_exact_mut(CHALLENGE_RING_DIM))
+                        .zip(out.chunks_exact_mut(CHALLENGE_RING_DIM))
                     {
                         for (dst, w) in dst.iter_mut().zip(column.sigma_m1().coefficients()) {
                             *dst += *w;
                         }
                     }
                 }
-                ResponseSegment::Theta => push_planes(&mut a, &theta, FIELD_LEVELS, radix),
-                ResponseSegment::Compression {
-                    image,
-                    coefficients,
-                    ..
-                } => a.extend(
-                    self.compression.reconstruct_transpose(
+                (ResponseSegment::Theta, Some(planes)) => planes.transpose(&theta, out)?,
+                (
+                    ResponseSegment::Compression {
+                        image,
+                        coefficients,
+                        ..
+                    },
+                    _,
+                ) => out.copy_from_slice(
+                    &self.compression.reconstruct_transpose(
                         coefficients,
                         images
                             .get(image)
                             .ok_or(WhiteoutError::InvalidRelation("compressed image missing"))?,
                     )?,
                 ),
+                (_, None) => {
+                    return Err(WhiteoutError::InvariantViolation(
+                        "a planar segment without planes",
+                    ))
+                }
             }
         }
         if a.len() != layout.len() {
@@ -561,31 +728,27 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         for segment in &layout.segments {
             let (digits, tail) = rest.split_at(segment.num_digits());
             rest = tail;
-            match *segment {
-                ResponseSegment::Response {
-                    coefficients,
-                    digits: levels,
-                    ..
-                } => decoded
-                    .z
-                    .extend(integers_from_digits(digits, coefficients, levels)),
-                ResponseSegment::V { coefficients } => {
-                    for ring in digits.chunks_exact(FIELD_LEVELS * CHALLENGE_RING_DIM) {
-                        decoded
-                            .v
-                            .extend(field_from_planes::<F>(ring, CHALLENGE_RING_DIM));
-                    }
-                    decoded.v.truncate(coefficients);
+            match (*segment, segment.planes()) {
+                (ResponseSegment::Response { .. }, Some(planes)) => {
+                    decoded.z.extend(planes.recompose_integers(digits)?);
+                }
+                (ResponseSegment::V { .. }, Some(planes)) => {
+                    decoded.v = planes.recompose(digits)?;
                     decoded.v_digits = digits.iter().map(|&digit| i64::from(digit)).collect();
                 }
-                ResponseSegment::Theta => {
-                    decoded.theta = field_from_planes::<F>(digits, THETA_COEFFICIENTS);
+                (ResponseSegment::Theta, Some(planes)) => {
+                    decoded.theta = planes.recompose(digits)?;
                 }
-                ResponseSegment::Compression { coefficients, .. } => {
+                (ResponseSegment::Compression { coefficients, .. }, _) => {
                     decoded
                         .images
                         .push(self.compression.reconstruct(coefficients, digits)?);
                     decoded.witnesses.push(digits);
+                }
+                (_, None) => {
+                    return Err(WhiteoutError::InvariantViolation(
+                        "a planar segment without planes",
+                    ))
                 }
             }
         }
@@ -721,88 +884,6 @@ pub(crate) fn alpha_pow_ring_dim<F: JoltField>(alpha: F) -> F {
     (0..CHALLENGE_RING_DIM).fold(F::one(), |power, _| power * alpha)
 }
 
-/// Appends the digit weights of `values` reconstructed from `levels`
-/// radix planes, plane-major: plane `j` of value `k` takes `radix^j · w_k`.
-pub(crate) fn push_planes<F: JoltField>(out: &mut Vec<F>, values: &[F], levels: usize, radix: F) {
-    let mut power = F::one();
-    for _ in 0..levels {
-        out.extend(values.iter().map(|value| *value * power));
-        power *= radix;
-    }
-}
-
-/// Writes the balanced radix-16 digits of every integer in `values` with
-/// `levels` digits each, digit plane by digit plane, to `digits`.
-#[cfg(feature = "whiteout-prover")]
-fn integer_digits(values: &[i64], levels: usize, digits: &mut [i8]) -> Result<(), WhiteoutError> {
-    let radix = 1i128 << RESPONSE_LOG_BASIS;
-    let (min, top) = balanced_range(RESPONSE_LOG_BASIS, levels)
-        .ok_or(WhiteoutError::InvariantViolation("response digit range"))?;
-    let offset = -min;
-    if digits.len() != values.len() * levels {
-        return Err(WhiteoutError::InvariantViolation("response digit count"));
-    }
-    for (index, &value) in values.iter().enumerate() {
-        let value = i128::from(value);
-        if !(-offset..=top).contains(&value) {
-            return Err(WhiteoutError::InvariantViolation(
-                "response coefficient outside its digit range",
-            ));
-        }
-        let mut shifted = value + offset;
-        for level in 0..levels {
-            if let Some(digit) = digits.get_mut(level * values.len() + index) {
-                *digit = ((shifted % radix) - radix / 2) as i8;
-            }
-            shifted /= radix;
-        }
-    }
-    Ok(())
-}
-
-/// The integers whose `levels` balanced radix-16 digits per coefficient are
-/// `digits`, digit plane by digit plane.
-fn integers_from_digits(digits: &[i8], coefficients: usize, levels: usize) -> Vec<i64> {
-    let mut values = vec![0i64; coefficients];
-    for plane in digits.chunks_exact(coefficients.max(1)).take(levels).rev() {
-        for (value, &digit) in values.iter_mut().zip(plane) {
-            *value = *value * (1 << RESPONSE_LOG_BASIS) + i64::from(digit);
-        }
-    }
-    values
-}
-
-/// The field elements whose 32 balanced radix-16 digit planes over
-/// `coefficients` values are `planes`.
-pub(crate) fn field_from_planes<F: JoltField>(planes: &[i8], coefficients: usize) -> Vec<F> {
-    let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
-    let mut values = vec![F::zero(); coefficients];
-    for plane in planes
-        .chunks_exact(coefficients.max(1))
-        .take(FIELD_LEVELS)
-        .rev()
-    {
-        for (value, &digit) in values.iter_mut().zip(plane) {
-            *value = *value * radix + F::from_i64(i64::from(digit));
-        }
-    }
-    values
-}
-
-/// Writes the 32 balanced radix-16 digit planes of `values` to `digits`.
-#[cfg(feature = "whiteout-prover")]
-pub(crate) fn field_digits<F: JoltField>(
-    values: &[F],
-    digits: &mut [i8],
-) -> Result<(), WhiteoutError> {
-    if digits.len() != values.len() * FIELD_LEVELS {
-        return Err(WhiteoutError::InvariantViolation("field digit count"));
-    }
-    let params = BalancedDecomposePow2Params::<F>::new(FIELD_LEVELS, RESPONSE_LOG_BASIS);
-    balanced_decompose_coefficients_pow2_i8_into(values, digits, &params);
-    Ok(())
-}
-
 #[cfg(feature = "whiteout-prover")]
 impl ResponseWitness {
     /// `e` for the accepted response `z`, the first message `V` (as flat
@@ -849,26 +930,21 @@ impl ResponseWitness {
                 .split_at_mut_checked(segment.num_digits())
                 .ok_or(WhiteoutError::InvariantViolation("response layout length"))?;
             out = tail;
-            match segment {
-                ResponseSegment::Response {
-                    coefficients,
-                    digits: levels,
-                    ..
-                } => {
+            match (segment, segment.planes()) {
+                (ResponseSegment::Response { coefficients, .. }, Some(planes)) => {
                     let (values, tail) = rest.split_at(coefficients);
                     rest = tail;
-                    integer_digits(values, levels, digits)?;
+                    planes.integer_digits(values, digits)?;
                 }
-                ResponseSegment::V { .. } => {
-                    for (ring, digits) in v
-                        .chunks_exact(CHALLENGE_RING_DIM)
-                        .zip(digits.chunks_exact_mut(CHALLENGE_RING_DIM * FIELD_LEVELS))
-                    {
-                        field_digits(ring, digits)?;
-                    }
-                }
-                ResponseSegment::Theta => field_digits(theta, digits)?,
-                ResponseSegment::Compression { .. } => {
+                (ResponseSegment::V { coefficients }, Some(planes)) => planes.field_digits(
+                    v.get(..coefficients)
+                        .ok_or(WhiteoutError::InvariantViolation(
+                            "V shorter than its segment",
+                        ))?,
+                    digits,
+                )?,
+                (ResponseSegment::Theta, Some(planes)) => planes.field_digits(theta, digits)?,
+                (ResponseSegment::Compression { .. }, _) => {
                     let witness = witnesses.next().ok_or(WhiteoutError::InvariantViolation(
                         "compression witness missing",
                     ))?;
@@ -878,6 +954,11 @@ impl ResponseWitness {
                         ));
                     }
                     digits.copy_from_slice(&witness);
+                }
+                (_, None) => {
+                    return Err(WhiteoutError::InvariantViolation(
+                        "a planar segment without planes",
+                    ))
                 }
             }
         }

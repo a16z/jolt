@@ -17,8 +17,8 @@ use super::lift::{ChallengeRing, ClaimTable, SValues, WitnessShape};
 use super::linear::BlockTarget;
 use super::params::RESPONSE_LOG_BASIS;
 use super::response::{
-    alpha_pow_ring_dim, alpha_powers, ResponseRows, ResponseSegment, ResponseStatement,
-    FIELD_LEVELS, THETA_COEFFICIENTS,
+    alpha_pow_ring_dim, alpha_powers, PlaneLayout, ResponseRows, ResponseSegment,
+    ResponseStatement, THETA_COEFFICIENTS,
 };
 use super::segments::{SegmentMask, SegmentTable};
 use super::WhiteoutError;
@@ -285,7 +285,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             .setup
             .l_row()
             .apply_factored(&dual.z.scales, &dual.z.lo)?;
-        let h_e = aggregated.target_linear(&c_ring, &parts) - l_z
+        let h_e = aggregated.target_linear(&c_ring, &parts)? - l_z
             + e0
             + c_ring * e1
             + c_ring * c_ring * h;
@@ -378,59 +378,63 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         };
         let mut offset = 0;
         for segment in &layout.segments {
-            match *segment {
-                ResponseSegment::Response {
-                    coefficients,
-                    digits,
-                    ..
-                } => {
-                    if offset % D != 0 || coefficients % D != 0 {
+            // `Σ_p radix^p·eq(point, offset + index(k, p))`, through the
+            // segment's position law.
+            let planar = |planes: PlaneLayout, k: usize, at: &dyn Fn(usize) -> F| {
+                let mut power = F::one();
+                let mut value = F::zero();
+                for plane in 0..planes.planes {
+                    value += power * at(offset + planes.index(k, plane));
+                    power *= radix;
+                }
+                value
+            };
+            match (*segment, segment.planes()) {
+                (ResponseSegment::Response { coefficients, .. }, Some(planes)) => {
+                    // Each native element's D coefficients are D consecutive
+                    // digits of every plane, so its weight is one scale of
+                    // eq(r_hi, ·) times eq(r_lo, ·).
+                    if offset % D != 0 || coefficients % D != 0 || planes.width % D != 0 {
                         return Err(WhiteoutError::InvalidRelation(
                             "a response segment is not on native elements",
                         ));
                     }
                     for element in 0..coefficients / D {
-                        let mut power = F::one();
-                        let mut scale = F::zero();
-                        for plane in 0..digits {
-                            scale += power * eq.high(offset + plane * coefficients + element * D);
-                            power *= radix;
-                        }
-                        dual.z.scales.push(scale);
+                        dual.z
+                            .scales
+                            .push(planar(planes, element * D, &|j| eq.high(j)));
                     }
                 }
-                ResponseSegment::V { coefficients } => {
-                    let plane_len = FIELD_LEVELS * CHALLENGE_RING_DIM;
-                    for ring in 0..coefficients / CHALLENGE_RING_DIM {
-                        let start = offset + ring * plane_len;
-                        for i in 0..CHALLENGE_RING_DIM {
-                            let mut power = F::one();
-                            let mut value = F::zero();
-                            for plane in 0..FIELD_LEVELS {
-                                value += power * eq.at(start + plane * CHALLENGE_RING_DIM + i);
-                                power *= radix;
-                            }
-                            dual.v.push(value);
-                        }
-                        for plane in 0..FIELD_LEVELS {
-                            let column = start + plane * CHALLENGE_RING_DIM;
-                            dual.v_columns
-                                .push((eq.high(column), (column % D) / CHALLENGE_RING_DIM));
-                        }
+                (ResponseSegment::V { coefficients }, Some(planes)) => {
+                    // A_D reads V's digits one 64-digit ring per column, each
+                    // inside one quarter of eq(r_lo, ·).
+                    if offset % CHALLENGE_RING_DIM != 0 {
+                        return Err(WhiteoutError::InvalidRelation(
+                            "V's digits do not start on a challenge ring",
+                        ));
+                    }
+                    dual.v
+                        .extend((0..coefficients).map(|k| planar(planes, k, &|j| eq.at(j))));
+                    for column in
+                        (offset..offset + segment.num_digits()).step_by(CHALLENGE_RING_DIM)
+                    {
+                        dual.v_columns
+                            .push((eq.high(column), (column % D) / CHALLENGE_RING_DIM));
                     }
                 }
-                ResponseSegment::Theta => {
-                    for (i, dst) in dual.theta.iter_mut().enumerate() {
-                        let mut power = F::one();
-                        for plane in 0..FIELD_LEVELS {
-                            *dst += power * eq.at(offset + plane * THETA_COEFFICIENTS + i);
-                            power *= radix;
-                        }
+                (ResponseSegment::Theta, Some(planes)) => {
+                    for (k, dst) in dual.theta.iter_mut().enumerate() {
+                        *dst = planar(planes, k, &|j| eq.at(j));
                     }
                 }
-                ResponseSegment::Compression { digits, .. } => dual
+                (ResponseSegment::Compression { digits, .. }, _) => dual
                     .compression
                     .push((offset..offset + digits).map(|j| eq.at(j)).collect()),
+                (_, None) => {
+                    return Err(WhiteoutError::InvariantViolation(
+                        "a planar segment without planes",
+                    ))
+                }
             }
             offset += segment.num_digits();
         }
