@@ -37,7 +37,7 @@ fn profile_run_emits_conformant_artifacts() {
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
         #[cfg(feature = "akita")]
-        akita_chunk_profile: AkitaChunkProfile::Single,
+        akita_chunk_profile: AkitaChunkProfile::new(1, 0),
         memory_budget: None,
     });
 

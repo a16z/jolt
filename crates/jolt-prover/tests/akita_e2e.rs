@@ -106,7 +106,7 @@ mod akita_tests {
     ) -> ProvedGuest {
         let has_trusted_advice = !trusted_advice.is_empty();
         let preprocessing = preprocessing::preprocess_full_with_advice(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
             untrusted_advice,
@@ -180,7 +180,7 @@ mod akita_tests {
             log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         };
         let preprocessing = preprocessing::preprocess_full_with_advice(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
             false,
@@ -287,7 +287,7 @@ mod akita_tests {
         config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
 
         let result = preprocessing::preprocess_full(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
         );
@@ -298,7 +298,7 @@ mod akita_tests {
 
         let (run, mut config) = muldiv_run();
         let preprocessing = preprocessing::preprocess_full(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
         )
@@ -327,11 +327,13 @@ mod akita_tests {
 
     #[test]
     fn akita_rejects_chunk_profile_mismatch() {
-        for setup_profile in [AkitaChunkProfile::Single, AkitaChunkProfile::Four] {
+        for setup_profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             let (run, mut config) = muldiv_run();
             config.akita_chunk_profile = setup_profile;
             let preprocessing = preprocessing::preprocess_full(
-                &AkitaScheduleArtifacts::shared_from_default_directory(),
+                &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(
+                    8, 2,
+                )),
                 run.preprocessing,
                 &config,
             )
@@ -343,10 +345,9 @@ mod akita_tests {
                 JoltVmWitnessInputs::new(&run.program, &program, run.trace),
             );
             for requested in [
-                AkitaChunkProfile::Single,
-                AkitaChunkProfile::Two,
-                AkitaChunkProfile::Four,
-                AkitaChunkProfile::Eight,
+                AkitaChunkProfile::new(1, 0),
+                AkitaChunkProfile::new(8, 2),
+                AkitaChunkProfile::new(8, 3),
             ] {
                 if requested == setup_profile {
                     continue;
@@ -389,18 +390,8 @@ mod akita_tests {
     }
 
     #[test]
-    fn advice_e2e_akita_two_chunks() {
-        advice_chunk_roundtrip(AkitaChunkProfile::Two);
-    }
-
-    #[test]
-    fn advice_e2e_akita_four_chunks() {
-        advice_chunk_roundtrip(AkitaChunkProfile::Four);
-    }
-
-    #[test]
     fn advice_e2e_akita_eight_chunks() {
-        advice_chunk_roundtrip(AkitaChunkProfile::Eight);
+        advice_chunk_roundtrip(AkitaChunkProfile::new(8, 2));
     }
 
     fn advice_chunk_roundtrip(profile: AkitaChunkProfile) {
@@ -425,7 +416,8 @@ mod akita_tests {
 
     #[test]
     fn trusted_advice_commitment_reused_across_chunk_profiles() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
         let untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
         let trusted = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
@@ -436,12 +428,7 @@ mod akita_tests {
             DEFAULT_MAX_TRUSTED_ADVICE_SIZE as usize,
         )
         .expect("commit trusted advice before selecting a trace chunk profile");
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
             let mut config = derive_config(&run);
             config.akita_chunk_profile = profile;
@@ -498,7 +485,7 @@ mod akita_tests {
         assert!(run.preprocessing.bytecode.bytecode.len() > 2);
         run.preprocessing.bytecode.code_size = 2;
         let error = preprocessing::preprocess_committed(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
         )
@@ -514,7 +501,7 @@ mod akita_tests {
         let (run, mut config) = muldiv_run();
         config.akita_chunk_profile = profile;
         let preprocessing = preprocessing::preprocess_committed(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
         )
@@ -584,12 +571,7 @@ mod akita_tests {
 
     #[test]
     fn muldiv_e2e_akita_committed_program() {
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             committed_e2e(profile);
         }
     }
@@ -602,7 +584,7 @@ mod akita_tests {
         let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
         let config = derive_config(&run);
         let preprocessing = preprocessing::preprocess_committed_with_advice(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
             true,

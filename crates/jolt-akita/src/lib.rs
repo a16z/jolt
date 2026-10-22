@@ -25,7 +25,7 @@ pub mod configs;
 pub mod family_contract;
 mod native_batching;
 mod one_hot_family;
-mod planning;
+mod schedule_artifacts;
 pub mod schedule_registry;
 pub mod schedules;
 mod scheme;
@@ -42,13 +42,14 @@ pub use adapters::{
 };
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupParams,
-    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16,
+    AKITA_ONE_HOT_K256,
 };
 pub use configs::AkitaChunkProfile;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
+pub use schedule_artifacts::{AkitaOneHotScheduleArtifact, AkitaScheduleArtifacts};
 pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};

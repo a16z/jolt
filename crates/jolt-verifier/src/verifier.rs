@@ -22,6 +22,7 @@ use crate::proof::JoltCommitments;
 use crate::{
     config::{
         validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE,
+        MIN_PADDED_TRACE_LENGTH,
     },
     num,
     preprocessing::JoltVerifierPreprocessing,
@@ -375,12 +376,7 @@ where
         });
     }
 
-    if !trace_length.is_power_of_two() || trace_length > program.max_padded_trace_length() {
-        return Err(VerifierError::InvalidTraceLength {
-            got: trace_length,
-            max: program.max_padded_trace_length(),
-        });
-    }
+    validate_trace_length(trace_length, program.max_padded_trace_length())?;
 
     let min_ram_k = compute_min_ram_k(
         program.min_bytecode_address(),
@@ -977,6 +973,23 @@ pub fn absorb_transcript_preamble<T>(
     );
 }
 
+fn validate_trace_length(
+    trace_length: usize,
+    max_padded_trace_length: usize,
+) -> Result<(), VerifierError> {
+    if !trace_length.is_power_of_two()
+        || trace_length < MIN_PADDED_TRACE_LENGTH
+        || trace_length > max_padded_trace_length
+    {
+        return Err(VerifierError::InvalidTraceLength {
+            got: trace_length,
+            min: MIN_PADDED_TRACE_LENGTH,
+            max: max_padded_trace_length,
+        });
+    }
+    Ok(())
+}
+
 /// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
 /// `8k + lowest_address`, and the lattice digit-zero reconstruction relies on
 /// `unmap(0) = lowest_address ≠ 0` to distinguish "no RAM access" from an
@@ -1039,14 +1052,10 @@ where
         });
     }
 
-    if !trace_length.is_power_of_two()
-        || trace_length > preprocessing.program.max_padded_trace_length()
-    {
-        return Err(VerifierError::InvalidTraceLength {
-            got: trace_length,
-            max: preprocessing.program.max_padded_trace_length(),
-        });
-    }
+    validate_trace_length(
+        trace_length,
+        preprocessing.program.max_padded_trace_length(),
+    )?;
 
     let min_ram_k = compute_min_ram_k(
         preprocessing.program.min_bytecode_address(),
@@ -1476,6 +1485,39 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validate_inputs_rejects_trace_length_below_pcs_floor() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        // A power of two below the fixture's maximum, so only the floor rejects it.
+        let undersized = MIN_PADDED_TRACE_LENGTH >> 1;
+        proof.trace_length = undersized;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidTraceLength { got, .. }) if got == undersized
+        ));
+        assert!(matches!(
+            validate_inputs_from_parts(
+                &preprocessing,
+                &public_io,
+                undersized,
+                proof.ram_K,
+                proof.trace_polynomial_order,
+                proof.one_hot_config,
+                false,
+                #[cfg(not(feature = "akita"))]
+                false,
+                false,
+            ),
+            Err(VerifierError::InvalidTraceLength { got, .. }) if got == undersized
+        ));
+    }
+
     /// The field-inline BlindFold generator budget must fit the largest committed round of the
     /// composed protocol: the Spartan outer uni-skip first round (degree
     /// `SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE`, one coefficient more), or `commit_round`
@@ -1547,7 +1589,7 @@ mod tests {
             #[cfg(all(feature = "akita", feature = "field-inline"))]
             field_inc_commitment: Some(TestCommitment),
             claims,
-            trace_length: 1,
+            trace_length: MIN_PADDED_TRACE_LENGTH,
             ram_K: 4,
             rw_config: JoltReadWriteConfig {
                 ram_rw_phase1_num_rounds: 0,
@@ -1880,7 +1922,7 @@ mod tests {
             Vec::new(),
             memory_layout,
             RAM_START_ADDRESS,
-            16,
+            MIN_PADDED_TRACE_LENGTH,
             JOLT_VERIFIER_INSTRUCTION_PROFILE,
         )
         .expect("test program");

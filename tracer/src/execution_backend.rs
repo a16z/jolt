@@ -165,10 +165,9 @@ impl TracerBackend {
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
         let mut trace = setup.reserve(&mut emulator, &bytecode)?;
-        let mut prev_pc = 0;
         loop {
             let pending = trace.cycles.len();
-            crate::step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace.cycles));
+            crate::step_emulator(&mut emulator, Some(&mut trace.cycles));
             // As in `crate::trace`, the first step that emits no row ends the run.
             if trace.cycles.len() == pending {
                 break;

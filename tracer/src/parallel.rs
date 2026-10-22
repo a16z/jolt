@@ -234,7 +234,6 @@ impl ChunkWorker {
 /// state, exposing checkpoint capture at tick boundaries.
 pub struct PassOne {
     emulator: Emulator,
-    prev_pc: u64,
     done: bool,
 }
 
@@ -242,7 +241,6 @@ impl PassOne {
     pub fn new(emulator: Emulator) -> Self {
         Self {
             emulator,
-            prev_pc: 0,
             done: false,
         }
     }
@@ -255,8 +253,7 @@ impl PassOne {
         if self.done {
             return false;
         }
-        let pc = self.emulator.get_cpu().read_pc();
-        if pc == self.prev_pc {
+        if self.emulator.get_cpu().has_stalled() {
             self.done = true;
             return false;
         }
@@ -266,7 +263,6 @@ impl PassOne {
             self.done = true;
             return false;
         }
-        self.prev_pc = pc;
         true
     }
 

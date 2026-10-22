@@ -41,7 +41,6 @@ fn run_case(guest: &str, input: &[u8]) -> Result<usize, String> {
     let mut em_exec = tracer::create_emulator(&elf, None, input, &[], &[], &memory_config, None);
 
     let mut rows: Vec<Cycle> = Vec::new();
-    let mut prev_pc: u64 = 0;
     let mut tick_idx: usize = 0;
     loop {
         let pc = em_trace.get_cpu().read_pc();
@@ -49,7 +48,7 @@ fn run_case(guest: &str, input: &[u8]) -> Result<usize, String> {
         if pc != pc_exec {
             return Err(format!("tick {tick_idx}: pc {pc:#x} vs {pc_exec:#x}"));
         }
-        if pc == prev_pc {
+        if em_trace.get_cpu().has_stalled() {
             break;
         }
         rows.clear();
@@ -61,7 +60,6 @@ fn run_case(guest: &str, input: &[u8]) -> Result<usize, String> {
         if let Some(diff) = em_trace.get_cpu().arch_state_diff(em_exec.get_cpu()) {
             return Err(format!("tick {tick_idx}: {diff}"));
         }
-        prev_pc = pc;
         tick_idx += 1;
     }
     if tick_idx == 0 {
