@@ -18,6 +18,8 @@ akita = [
   "dep:jolt-transcript",
 ]
 fast-alloc = ["jolt_sdk/guest-size-class-alloc"]
+# L2 terminal quotient certificate (see the host feature).
+l2-terminal-quotient = ["akita", "jolt-akita/l2-terminal-quotient"]
 hash-inlines = [
   "jolt_sdk/blake2-inline",
   "jolt-transcript?/blake2-inline",

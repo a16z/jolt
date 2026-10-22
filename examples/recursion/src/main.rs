@@ -115,6 +115,24 @@ enum Commands {
         #[arg(long)]
         output: PathBuf,
     },
+    /// L2 lever: write a proof stream whose first inner Akita proof has its
+    /// terminal quotient or terminal response altered (rejection cases).
+    #[cfg(feature = "l2-terminal-quotient")]
+    TamperL2 {
+        #[arg(long)]
+        example: String,
+        #[arg(long)]
+        workdir: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// quotient-flip, quotient-noncanonical, quotient-extra,
+        /// quotient-short or response-flip
+        #[arg(long)]
+        mode: String,
+        /// Bytes of the quotient at the end of the Akita proof body
+        #[arg(long)]
+        quotient_bytes: usize,
+    },
     /// Generate proofs for guest programs
     Generate {
         /// Example to run (fibonacci or muldiv)
@@ -874,6 +892,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("akita");
     #[cfg(feature = "ntt-inline")]
     program.add_guest_feature("ntt-inline");
+    #[cfg(feature = "l2-terminal-quotient")]
+    program.add_guest_feature("l2-terminal-quotient");
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("hash-inlines");
     #[cfg(all(feature = "akita", feature = "l3-compression-weights"))]
@@ -921,6 +941,101 @@ fn tamper_opening(guest: GuestProgram, workdir: &Path, output: &Path) {
     }
     assert_eq!(offset, bytes.len(), "trailing proof stream bytes");
     // A successful typed decode is distinct from the guest's verification result.
+    assert_eq!(check_data_integrity(&tampered).proof_count, count);
+    std::fs::create_dir(output).expect("fresh tampered proof directory");
+    save_proof_data(guest, &tampered, output);
+}
+
+/// Bincode's standard varint length prefix.
+#[cfg(feature = "l2-terminal-quotient")]
+fn push_varint_len(out: &mut Vec<u8>, len: usize) {
+    let len = len as u64;
+    if len < 251 {
+        out.push(len as u8);
+    } else if len <= u64::from(u16::MAX) {
+        out.push(251);
+        out.extend_from_slice(&(len as u16).to_le_bytes());
+    } else if len <= u64::from(u32::MAX) {
+        out.push(252);
+        out.extend_from_slice(&(len as u32).to_le_bytes());
+    } else {
+        out.push(253);
+        out.extend_from_slice(&len.to_le_bytes());
+    }
+}
+
+/// L2 rejection fixtures. The quotient is the last message of the Akita
+/// proof body (after the terminal `z` payload), `quotient_bytes` long.
+#[cfg(feature = "l2-terminal-quotient")]
+fn tamper_l2(
+    guest: GuestProgram,
+    workdir: &Path,
+    output: &Path,
+    mode: &str,
+    quotient_bytes: usize,
+) {
+    // p = 2^128 - 2^32 + 22537, little endian: a noncanonical encoding of 0.
+    const MODULUS_LE: [u8; 16] = [
+        9, 88, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    ];
+    const ATOM: usize = 16;
+    let bytes = load_proof_data(guest, workdir);
+    let mut offset = 0;
+    let _: GuestVerifierPreprocessing = read_record(&bytes, &mut offset).unwrap();
+    let payloads: u32 = read_record(&bytes, &mut offset).unwrap();
+    for _ in 0..payloads {
+        let _ = read_raw(&bytes, &mut offset).unwrap();
+    }
+    let count: u32 = read_record(&bytes, &mut offset).unwrap();
+    assert!(count > 0, "tamper fixture requires a proof");
+    let mut tampered = bytes[..offset].to_vec();
+    for index in 0..count {
+        let mut proof: GuestProof = read_record(&bytes, &mut offset).unwrap();
+        let device: JoltDevice = read_record(&bytes, &mut offset).unwrap();
+        if index == 0 {
+            let config = bincode::config::standard();
+            let encoded =
+                bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
+            let body_len = proof.joint_opening_proof.backend_proof_body_size();
+            let header_len = encoded.len() - body_len;
+            let mut length_prefix = Vec::new();
+            push_varint_len(&mut length_prefix, body_len);
+            assert!(
+                encoded[..header_len].ends_with(&length_prefix),
+                "Akita batch proof layout is not selection, length, body"
+            );
+            let selection_len = header_len - length_prefix.len();
+            let mut body = encoded[header_len..].to_vec();
+            assert!(
+                quotient_bytes > 0
+                    && quotient_bytes.is_multiple_of(ATOM)
+                    && body.len() > quotient_bytes,
+                "quotient length"
+            );
+            let start = body.len() - quotient_bytes;
+            info!("L2 tamper: body {body_len} bytes, quotient at {start}..{body_len}");
+            match mode {
+                "quotient-flip" => body[start] ^= 1,
+                "quotient-noncanonical" => {
+                    let last = body.len() - ATOM;
+                    body[last..].copy_from_slice(&MODULUS_LE);
+                }
+                "quotient-extra" => body.extend_from_slice(&[0u8; ATOM]),
+                "quotient-short" => body.truncate(body.len() - ATOM),
+                "response-flip" => body[start - 1] ^= 1,
+                other => panic!("unknown tamper-l2 mode {other}"),
+            }
+            let mut rebuilt = encoded[..selection_len].to_vec();
+            push_varint_len(&mut rebuilt, body.len());
+            rebuilt.extend_from_slice(&body);
+            proof.joint_opening_proof = bincode::serde::decode_from_slice(&rebuilt, config)
+                .unwrap()
+                .0;
+        }
+        push_record(&mut tampered, &proof);
+        push_record(&mut tampered, &device);
+    }
+    assert_eq!(offset, bytes.len(), "trailing proof stream bytes");
     assert_eq!(check_data_integrity(&tampered).proof_count, count);
     std::fs::create_dir(output).expect("fresh tampered proof directory");
     save_proof_data(guest, &tampered, output);
@@ -1059,6 +1174,17 @@ fn main() {
         }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
             tamper_opening(guest, workdir, output);
+        }
+        #[cfg(feature = "l2-terminal-quotient")]
+        Some(Commands::TamperL2 {
+            example,
+            workdir,
+            output,
+            mode,
+            quotient_bytes,
+        }) => {
+            let guest = GuestProgram::from_str(example).expect("supported guest example");
+            tamper_l2(guest, workdir, output, mode, *quotient_bytes);
         }
         Some(Commands::Generate {
             example,

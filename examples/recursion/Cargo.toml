@@ -24,6 +24,9 @@ akita = [
 # factor; same field values. Turn it off with --no-default-features.
 default = ["l3-compression-weights"]
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
+# L2 terminal quotient certificate: the inner Akita proofs carry the terminal
+# A-row quotient and the guest verifies it instead of the exact product.
+l2-terminal-quotient = ["akita", "jolt-akita/l2-terminal-quotient"]
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }

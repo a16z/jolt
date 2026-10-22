@@ -21,6 +21,10 @@ ntt-inline = ["akita-pcs/ntt-inline"]
 keccak-inline = ["akita-pcs/keccak-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
+# L2 terminal quotient certificate (recursion lever, default off): the
+# terminal A rows are checked at two points against a sent quotient, under
+# Akita protocol identifier v7-l2tq1.
+l2-terminal-quotient = ["akita-pcs/l2-terminal-quotient"]
 profiling = ["parallel"]
 # L3 recursion experiment (default off): Akita evaluates the compression
 # relation weights by factor (same field values; see akita-types).
