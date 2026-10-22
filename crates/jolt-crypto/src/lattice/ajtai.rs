@@ -12,6 +12,7 @@
 //! over CRT primes.
 
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 
 use jolt_algebra::parallel::*;
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
@@ -120,8 +121,10 @@ pub struct PreparedMatrix<F: Field, const D: usize> {
     shape: MatrixShape,
     /// Row-major entries.
     entries: Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>>,
-    /// The same entries over `F`, for products with public field scalars.
-    coefficients: Vec<CyclotomicRing<F, D>>,
+    /// The same entries over `F`, for products with public field scalars;
+    /// built from `entries` on the first [`Self::combine_columns`], which
+    /// only a verifier calls, so a prover holds no second copy.
+    coefficients: OnceLock<Vec<CyclotomicRing<F, D>>>,
     params: CrtNttParamSet<i32, CRT_PRIMES, D>,
     field: PhantomData<F>,
 }
@@ -141,20 +144,20 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         // The CRT residues read each coefficient as a u128.
         field_bits::<F>().map(|_| ())?;
         let params = CrtNttParamSet::new(q128_primes());
-        let coefficients = cfg_into_iter!(0..shape.rows * shape.width)
+        let entries = cfg_into_iter!(0..shape.rows * shape.width)
             .map(|index| {
-                Ok(CyclotomicRing::from_slice(
-                    view.entry(index / shape.width, index % shape.width)?,
+                Ok(CyclotomicCrtNtt::from_ring(
+                    &CyclotomicRing::<F, D>::from_slice(
+                        view.entry(index / shape.width, index % shape.width)?,
+                    ),
+                    &params,
                 ))
             })
-            .collect::<Result<Vec<CyclotomicRing<F, D>>, CryptoError>>()?;
-        let entries = cfg_iter!(coefficients)
-            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
-            .collect();
+            .collect::<Result<Vec<_>, CryptoError>>()?;
         Ok(Self {
             shape,
             entries,
-            coefficients,
+            coefficients: OnceLock::new(),
             params,
             field: PhantomData,
         })
@@ -175,11 +178,15 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 actual: scales.len(),
             });
         }
+        let coefficients = self.coefficients.get_or_init(|| {
+            cfg_iter!(self.entries)
+                .map(|entry| entry.to_ring(&self.params))
+                .collect()
+        });
         Ok(cfg_into_iter!(0..self.shape.rows)
             .map(|row| {
                 let mut sum = CyclotomicRing::zero();
-                for (entry, scale) in self
-                    .coefficients
+                for (entry, scale) in coefficients
                     .iter()
                     .skip(row * self.shape.width)
                     .zip(scales)
