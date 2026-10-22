@@ -212,6 +212,9 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                         "compressed image length differs from its segment",
                     ));
                 }
+                if payload.len() != self.compression.payload_len(image_len)? {
+                    return Err(WhiteoutError::ResponseRejected("compressed payload length"));
+                }
                 targets.push(CompressedTarget {
                     digits: offset..offset + len,
                     image_len,
@@ -231,7 +234,8 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         // Item 2: every ξ opens its payload, and t_D = A_D G⁻¹(V), A_D
         // applied to e's V digits as given.
         for (target, witness) in self.compressed_targets()?.iter().zip(&decoded.witnesses) {
-            self.compression.check(target.payload, witness)?;
+            self.compression
+                .check(target.image_len, target.payload, witness)?;
         }
         let t_d = self
             .setup

@@ -346,8 +346,8 @@ impl ImageCompression<F> for RawImages {
         Ok(out)
     }
 
-    fn check(&self, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
-        if self.reconstruct(payload.len(), witness)? == payload {
+    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError> {
+        if self.reconstruct(image_len, witness)? == payload {
             Ok(())
         } else {
             Err(WhiteoutError::ResponseRejected("compressed image"))

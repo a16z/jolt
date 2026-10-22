@@ -33,9 +33,10 @@ pub trait ImageCompression<F: JoltField>: Sync {
         weights: &[F],
     ) -> Result<Vec<F>, WhiteoutError>;
 
-    /// Whether `witness` opens `payload`: its digits lie in the map's
-    /// alphabet and its chain equations hold.
-    fn check(&self, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError>;
+    /// Whether `witness` opens `payload` as the compression of an image of
+    /// `image_len` coefficients: its digits lie in the map's alphabet and
+    /// its chain equations hold.
+    fn check(&self, image_len: usize, payload: &[F], witness: &[i8]) -> Result<(), WhiteoutError>;
 }
 
 /// A compressed image and its witness.

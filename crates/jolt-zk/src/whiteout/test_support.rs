@@ -18,8 +18,8 @@ use super::sigma::{prove_sigma_with, SelfChecks};
 use super::{verify_sigma, BlockTarget, LiftedRelation, SigmaSetup};
 use crate::masking::{ResidualRelation, ZkError};
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-sigma");
-const LABEL: &[u8] = b"whiteout-sigma";
+pub(crate) const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-sigma");
+pub(crate) const LABEL: &[u8] = b"whiteout-sigma";
 
 /// Sends `e` in the clear; the verifier checks the statement directly.
 pub struct CheckingResponseProver;

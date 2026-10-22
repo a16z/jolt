@@ -15,7 +15,7 @@ use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
 use jolt_crypto::lattice::{MatrixShape, MatrixView, CHALLENGE_RING_DIM};
 use jolt_crypto::sample::GaussianWidth;
 use jolt_poly::EqPolynomial;
-use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{Blake2b512, ProverTranscript, Sponge, VerifierTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -33,8 +33,10 @@ use super::response::{ResponseProver, ResponseRows, ResponseStatement, ResponseW
 use super::segments::SegmentRole;
 use super::sigma::{take_rejected, SelfChecks};
 use super::test_support::{
-    prove_instance as prove, verify_instance, CheckingResponseProver, SendingResponseProver,
+    prove_instance as prove, verify_instance, CheckingResponseProver, SendingResponseProver, LABEL,
+    PROTOCOL,
 };
+use super::verify_sigma;
 use super::{
     BlockTarget, ImageCompression, ResidualBlock, ResponseSegment, SegmentTable, SigmaParams,
     SigmaSetup, WhiteoutError,
@@ -641,6 +643,39 @@ fn tampered_proofs_are_rejected() {
     let mut relation = instance.relation.clone();
     relation.affine[0].constant += F::one();
     assert!(verify(&instance, &relation, &proof).is_err());
+}
+
+/// A compressed target's payload must have the compression map's length:
+/// one coefficient short or long is rejected, not padded or truncated.
+#[test]
+fn payloads_of_the_wrong_length_are_rejected() {
+    let instance = Instance::<64>::new(72);
+    let proof = prove_checked(&instance, 73).unwrap();
+    for edit in [
+        (|payload: &mut Vec<F>| payload.truncate(payload.len() - 1)) as fn(&mut Vec<F>),
+        |payload| payload.push(F::zero()),
+    ] {
+        let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, &proof);
+        let mut targets =
+            [instance.u.len(), instance.t_p.len()].map(|rings| BlockTarget::Compressed {
+                payload: transcript.receive_n::<F>(rings * 64).unwrap(),
+                image: None,
+            });
+        if let BlockTarget::Compressed { payload, .. } = &mut targets[0] {
+            edit(payload);
+        }
+        let setup = instance.setup_with(targets);
+        let lifted = setup.lift(&instance.relation, &instance.claims).unwrap();
+        let error =
+            verify_sigma(&setup, &lifted, &mut transcript, &CheckingResponseProver).unwrap_err();
+        assert_eq!(
+            whiteout_error(&error),
+            Some(&WhiteoutError::ResponseRejected(
+                "compressed payload length"
+            )),
+            "{error:?}"
+        );
+    }
 }
 
 /// A rejected attempt's `(t_D, n)` with the accepted `z` does not verify.
