@@ -55,3 +55,4 @@ jolt-zk::masking/pads.rs::MaskedProver<'_,F,O,H>::public_bytes::public_bytes#0::
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::public::public#0::self.transcript.public(value)
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::public_all::public_all#0::self.transcript.public_all(values)
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::public_bytes::public_bytes#0::self.transcript.public_bytes(bytes)
+jolt-zk::whiteout/sigma.rs::SigmaSetup<F,D>::absorb_targets::public_all#0::channel.public_all(payload)
