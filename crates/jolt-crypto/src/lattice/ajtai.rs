@@ -188,10 +188,11 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 let row_entries = coefficients
                     .get(row * width..(row + 1) * width)
                     .unwrap_or_default();
-                cfg_into_iter!(0..width.div_ceil(COLUMN_CHUNK))
-                    .map(|chunk| {
+                cfg_fold_reduce!(
+                    0..width.div_ceil(COLUMN_CHUNK),
+                    CyclotomicRing::zero,
+                    |mut sum, chunk| {
                         let range = chunk * COLUMN_CHUNK..((chunk + 1) * COLUMN_CHUNK).min(width);
-                        let mut sum = CyclotomicRing::zero();
                         for (entry, scale) in row_entries
                             .get(range.clone())
                             .unwrap_or_default()
@@ -201,8 +202,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                             entry.scale_accumulate_into(&mut sum, *scale);
                         }
                         sum
-                    })
-                    .reduce(CyclotomicRing::zero, |a, b| a + b)
+                    },
+                    |a, b| a + b
+                )
             })
             .collect())
     }
