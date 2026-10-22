@@ -205,7 +205,7 @@ Jolt pins Akita `dev` at W6b.
 
 ## Ambiguity register and open questions
 
-- **Q1, contradiction with Akita §3.1.** That note gives "precommitted groups" zero randomness. Jolt's per-proof auxiliary groups, untrusted advice and `FieldInc` (`J8:crates/jolt-prover/src/akita/stage8.rs:1-4`), enter Akita as precommitted groups but carry witness data. Until an Akita W1 fixup makes them hiding, W6 rejects ZK proofs that contain them, with a typed `Unsupported` (R6).
+- **Q1, resolved by Akita W2b** (`akita:specs/whiteout-akita.md` §3.5). Jolt's per-proof auxiliary groups, untrusted advice and `FieldInc` (`J8:crates/jolt-prover/src/akita/stage8.rs:1-4`), enter Akita as precommitted groups. Akita admission now requires every precommitted group at a masked level to be hiding, so W6 commits them (and trusted advice or a committed program, when a ZK row consumes them) with `GroupContext::explicit` on a hiding profile from a ZK row of the group's shape (R6), instead of rejecting the proof.
 - **Q2 (Quang).** Do Jolt's stage messages move to the NARG? If yes, `pad_layout`'s zero-filled replay applies unchanged. If no, it needs a zero-valued, shape-correct `JoltProof`, built from `validate_proof_consistency`'s expected shapes so that shape keeps one owner.
 - **Q3 (Quang).** Does he accept `ShapeTranscript` as a third sealed implementation?
 - **Q4.** `ZkBackend`'s `ProverTranscript<H>` signatures (`whiteout/dev:crates/jolt-zk/src/masking/backend.rs:113`) must port to `ProverState`. This is an M6b re-landing item, not W6.

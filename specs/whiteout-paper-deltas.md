@@ -54,7 +54,7 @@ so the authors can fold it into the paper.
 | D21 | Open author questions Q1, Q2 (A7, A8, A9, A14), Q4, Q6, Q7, W6-Q5 | open | open |
 | D22 | Q7: the 1/p clause of Lemma `wo:lem:fold-overflow` holds only for the whole challenge tuple | paper fix | open (authors) |
 | D23 | Bounded rerun (≤ 3 runs) on FoldOverflow or exhausted Σ attempts, where the paper aborts | departure | specified (W6) |
-| D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | open; W6 rejects them under ZK |
+| D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | closed by Akita W2b: every precommitted group at a masked level is hiding |
 | D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
 | D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
 | D27 | Soundness ledger of the response proof: ≈ 2^−119.7 in total; the α round alone 126/q ≈ 2^−121 | accepted for now | accepted for now (user, 2026-10-22); revisit with the paper authors |
@@ -308,9 +308,8 @@ programs are not protected (`03_setting.tex:167-173`). Def.
   unchanged.
 - The terminal check is Def. `wo:def:source-cutoff`'s condition, enforced in
   release with the reason stated.
-- Precommitted groups carry zero randomness. That matches §3.1's exclusion
-  only for trusted advice and committed programs; see D24 for the groups it
-  does not cover.
+- Precommitted groups folded at a masked level carry the same randomness as
+  the root (D24, Akita W2b); the setup-prefix slot carries none.
 - The one-chunk restriction is a simplification. It keeps one randomness vector
   per slice image.
 
@@ -988,32 +987,46 @@ r·δ_fold.
 precommitted, trusted advice and committed programs are outside Whiteout's
 protection (`03_setting.tex:167-173`).
 
-**Implementation.**
+**Implementation** (Akita W2b, `akita:specs/whiteout-akita.md` §3.5).
 
-- Akita W1 gives every precommitted group zero randomness
-  (`akita:crates/akita-params/src/zk.rs:146-190`, "gives a precommitted
-  group"; Akita spec §3.1).
-- Jolt's per-proof auxiliary groups, **untrusted advice and `FieldInc`**, enter
-  Akita as precommitted groups but carry witness data
-  (`J8:crates/jolt-prover/src/akita/stage8.rs:1-4`, per
-  `jolt:specs/whiteout-jolt-integration.md` Q1).
-- Their outer images would therefore be published without hiding.
+- Akita W1 gave every precommitted group zero randomness. Jolt's per-proof
+  auxiliary groups, **untrusted advice and `FieldInc`**, enter Akita as
+  precommitted groups but carry witness data
+  (`J8:crates/jolt-prover/src/akita/stage8.rs:1-4`), so their outer images
+  would have been published without hiding.
+- `ZkOpeningSchedule::admit` now requires every precommitted group folded at
+  a masked level to carry exactly `b_randomness_columns` per B slice, the
+  root's width and alphabet. The width is part of the frozen profile, so Jolt
+  commits each such group under a profile taken from a ZK row of its shape.
+  `CpuBackend::commit` with `GroupContext::explicit` on a hiding profile
+  samples fresh randomness (alphabet b = 8, the only one a masked level
+  opens at) and keeps it in the handle, which places it in level 0's output
+  witness.
+- Each precommitted group's one-shot fold digits are sized by the universal
+  balanced policy on its inner digit alphabet, without its producer contract,
+  and δ_fold is split per witness group:
+  `masked_folds = (cut_level + 1) · W_ℓ`.
+- Akita cannot tell a per-proof group from a statement-fixed one, so the rule
+  covers trusted advice and committed programs too: they must be committed
+  hiding when a ZK row consumes them, and the prover keeps their randomness
+  with its preprocessing.
 
-**Why it is a gap.** "Precommitted" in Akita is a layout notion: a group
+**Why it was a gap.** "Precommitted" in Akita is a layout notion: a group
 committed before the opening. The paper's exclusion is a trust notion: data
 committed outside the proof. The two coincide for trusted advice and committed
 programs, but not for these groups.
 
-**Security impact.** It would leak, since their images are deterministic
-functions of witness data. No ZK claim holds for proofs that contain them.
+**Security impact.** None remaining: each precommitted image is hidden by
+Lemma `wo:lem:stat-hiding` as the root's is. The rule is stricter than the
+paper for statement-fixed groups.
 
-**Status.** Open. An Akita W1 follow-up will give these groups hiding
-randomness. Until then W6 rejects ZK proofs that contain them, with a typed
-`Unsupported` (R6).
+**Status.** Closed by Akita W2b. W6 no longer needs to reject ZK proofs that
+contain these groups; it commits them hiding.
 
 **For the paper.** In §3.1 "Advice and committed programs", state the rule
 by provenance: every group committed during proving gets randomness,
-whatever its place in the PCS's batch layout.
+whatever its place in the PCS's batch layout. An implementation that cannot
+see provenance may hide every group, as Akita does.
 
 ## D25. Statement binding under ZK (#254)
 
