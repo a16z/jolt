@@ -2807,7 +2807,7 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-sdk",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sha3 0.12.0",
 ]
 
@@ -3351,7 +3351,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "spongefish 0.8.0",
  "tempfile",
  "tracer",
@@ -3467,7 +3467,7 @@ dependencies = [
  "jolt-riscv",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tracer",
 ]
 
@@ -3509,7 +3509,7 @@ dependencies = [
  "p256",
  "rand 0.8.7",
  "serde",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tracer",
 ]
 
@@ -3545,7 +3545,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-inlines-sdk",
  "rand 0.8.7",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tracer",
 ]
 
@@ -3716,7 +3716,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "thiserror 2.0.20",
 ]
 
@@ -3756,7 +3756,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sha3 0.12.0",
  "thiserror 2.0.20",
  "tracer",
@@ -5288,7 +5288,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.12.1",
  "log",
  "multimap",
@@ -6343,9 +6343,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -6625,7 +6625,7 @@ dependencies = [
  "digest 0.11.3",
  "p3-koala-bear",
  "rand 0.8.7",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sha3 0.11.0",
 ]
 
@@ -6851,7 +6851,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
