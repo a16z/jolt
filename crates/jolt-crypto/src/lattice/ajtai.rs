@@ -116,10 +116,12 @@ impl AjtaiLevel {
 }
 
 /// A public matrix in CRT+NTT form, ready to apply.
-pub struct PreparedMatrix<F, const D: usize> {
+pub struct PreparedMatrix<F: Field, const D: usize> {
     shape: MatrixShape,
     /// Row-major entries.
     entries: Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>>,
+    /// The same entries over `F`, for products with public field scalars.
+    coefficients: Vec<CyclotomicRing<F, D>>,
     params: CrtNttParamSet<i32, CRT_PRIMES, D>,
     field: PhantomData<F>,
 }
@@ -139,18 +141,20 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         // The CRT residues read each coefficient as a u128.
         field_bits::<F>().map(|_| ())?;
         let params = CrtNttParamSet::new(q128_primes());
-        let entries = cfg_into_iter!(0..shape.rows * shape.width)
+        let coefficients = cfg_into_iter!(0..shape.rows * shape.width)
             .map(|index| {
-                let coefficients = view.entry(index / shape.width, index % shape.width)?;
-                Ok(CyclotomicCrtNtt::from_ring(
-                    &CyclotomicRing::from_slice(coefficients),
-                    &params,
+                Ok(CyclotomicRing::from_slice(
+                    view.entry(index / shape.width, index % shape.width)?,
                 ))
             })
-            .collect::<Result<Vec<_>, CryptoError>>()?;
+            .collect::<Result<Vec<CyclotomicRing<F, D>>, CryptoError>>()?;
+        let entries = cfg_iter!(coefficients)
+            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
+            .collect();
         Ok(Self {
             shape,
             entries,
+            coefficients,
             params,
             field: PhantomData,
         })
@@ -158,6 +162,33 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
 
     pub fn shape(&self) -> MatrixShape {
         self.shape
+    }
+
+    /// `Σ_col scales[col] · M[row][col]` for every row, over `F`: the
+    /// matrix applied to columns that are each a public scalar times one
+    /// common ring element, before that element. Not constant time: the
+    /// scales must be public.
+    pub fn combine_columns(&self, scales: &[F]) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
+        if scales.len() != self.shape.width {
+            return Err(CryptoError::InvalidSize {
+                expected: self.shape.width,
+                actual: scales.len(),
+            });
+        }
+        Ok(cfg_into_iter!(0..self.shape.rows)
+            .map(|row| {
+                let mut sum = CyclotomicRing::zero();
+                for (entry, scale) in self
+                    .coefficients
+                    .iter()
+                    .skip(row * self.shape.width)
+                    .zip(scales)
+                {
+                    entry.scale_accumulate_into(&mut sum, *scale);
+                }
+                sum
+            })
+            .collect())
     }
 
     /// `M · x` for centered integer columns `x`, laid out column by column

@@ -152,6 +152,32 @@ fn check_apply_transposed<const D: usize>(rows: usize, width: usize) {
     assert!(matrix.apply_transposed(&weights[1..]).is_err());
 }
 
+/// `Σ_col s_col·M[row][col]` against the stream's entries.
+#[test]
+fn combine_columns_matches_the_stream() {
+    let shape = MatrixShape {
+        rows: 2,
+        width: 3,
+        ring_dim: 64,
+    };
+    let (data, matrix) = prepared::<64>(shape, 17);
+    let mut rng = ChaCha20Rng::seed_from_u64(18);
+    let scales: Vec<F> = (0..shape.width).map(|_| F::random(&mut rng)).collect();
+    let view = MatrixView::new(shape, &data).unwrap();
+    let expected: Vec<CyclotomicRing<F, 64>> = (0..shape.rows)
+        .map(|row| {
+            let mut out = CyclotomicRing::zero();
+            for (col, scale) in scales.iter().enumerate() {
+                out +=
+                    CyclotomicRing::<F, 64>::from_slice(view.entry(row, col).unwrap()).scale(scale);
+            }
+            out
+        })
+        .collect();
+    assert_eq!(matrix.combine_columns(&scales).unwrap(), expected);
+    assert!(matrix.combine_columns(&scales[1..]).is_err());
+}
+
 #[test]
 fn apply_transposed_matches_schoolbook() {
     check_apply_transposed::<64>(3, 5);
