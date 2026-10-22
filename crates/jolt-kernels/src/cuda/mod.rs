@@ -1,13 +1,13 @@
 //! CUDA precommitted, increment, register and instruction claim reductions.
 //! Also provides instruction-input checking, RAM output and value checking,
 //! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization,
-//! shift checking, and register-value evaluation.
+//! shift checking, register-value evaluation, and RAM RAF evaluation.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
 //! reduction, instruction operand reduction, instruction-input checking,
 //! RAM output and value checking, hamming-weight booleanity, Spartan shift
-//! checking, and register-value evaluation in the optimized registry.
+//! checking, register-value evaluation, and RAM RAF evaluation in the optimized registry.
 //! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
 //! field-inline retains the optimized implementations.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
@@ -159,6 +159,7 @@ mod instruction_read_raf;
 mod program_image_claim_reduction;
 mod ram_hamming_booleanity;
 mod ram_output_check;
+mod ram_raf_evaluation;
 mod ram_val_check;
 mod registers_claim_reduction;
 #[cfg(test)]
@@ -205,7 +206,8 @@ where
 {
     /// Replace supported claim reductions, instruction-input checking, RAM output
     /// and value checking, RAM hamming booleanity, register-value evaluation, Spartan
-    /// shift, and RV64 Spartan outer and product kernels with CUDA implementations.
+    /// shift, RAM RAF evaluation, and RV64 Spartan outer and product kernels with CUDA
+    /// implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -227,6 +229,7 @@ where
         backend.instruction_claim_reduction = Box::new(CudaBackend);
         backend.instruction_input = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
+        backend.ram_raf_evaluation = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.spartan_shift = Box::new(CudaBackend);

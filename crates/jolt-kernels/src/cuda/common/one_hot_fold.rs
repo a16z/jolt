@@ -4,16 +4,24 @@
 //! device cycle-equality table. Block-local buckets use shared memory when the
 //! address domain fits; larger domains accumulate directly into global slots.
 //! Both paths use unreduced integer lanes before field reduction.
+//!
+//! Unlike a host trace walk, folds operate on resident cycle windows. Only
+//! their address-sized results move between devices, through host staging,
+//! and GPU 0 combines them.
 
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::JoltField;
 
-use super::context::{CudaKernelContext, BLOCK};
+use jolt_witness::JoltWitnessPlane;
+
+use super::context::{context_for, CudaKernelContext, BLOCK};
 use super::device::{require_fr_slice, DeviceFrVec};
-use super::device_columns::DeviceTraceColumns;
+use super::device_columns::{device_trace_columns, DeviceTraceColumns};
+use super::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
 use super::error::CudaError;
+use crate::{KernelError, ProofSession};
 
 pub const LANES: usize = 8;
 
@@ -51,7 +59,136 @@ pub struct DeviceOneHotColumns {
     cycles: usize,
 }
 
+pub(crate) struct OneHotShards {
+    windows: Vec<CycleWindow>,
+    columns: Vec<DeviceOneHotColumns>,
+}
+
+enum FoldPart {
+    Resident(DeviceFrVec),
+    Limbs(Vec<u64>),
+}
+
+impl OneHotShards {
+    pub(crate) fn new<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+        families: [usize; 3],
+        chunk_bits: usize,
+        addresses: usize,
+    ) -> Result<Self, KernelError<F>> {
+        let windows = witness_windows(cycles);
+        let mut columns = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a one-hot cycle-fold window names an absent device",
+            })?;
+            let raw = device_trace_columns::<F>(
+                device, session, witness, cycles, window, families, addresses,
+            )?;
+            columns.push(DeviceOneHotColumns::from_device(
+                raw, families, chunk_bits, window.len,
+            )?);
+        }
+        Ok(Self { windows, columns })
+    }
+
+    pub(crate) fn whole(&self) -> Result<&DeviceOneHotColumns, CudaError> {
+        self.columns.first().ok_or(CudaError::InvariantViolation {
+            reason: "a one-hot shard set holds no columns",
+        })
+    }
+
+    pub(crate) fn fold<F: JoltField>(
+        &self,
+        cycle_point: &[F],
+        tuning: FoldTuning,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let shards = self.windows.len();
+        let absent = || CudaError::InvariantViolation {
+            reason: "a one-hot cycle-fold window names an absent device",
+        };
+        if shards <= 1 {
+            let context = context_for(0).ok_or_else(absent)?;
+            return self.whole()?.fold_cycles(context, cycle_point, tuning);
+        }
+        let point = require_fr_slice(cycle_point)?;
+        let tasks: Vec<DeviceTask<'_, FoldPart, CudaError>> = (0..shards)
+            .map(|ordinal| {
+                let task: DeviceTask<'_, FoldPart, CudaError> = Box::new(move || {
+                    let context = context_for(ordinal).ok_or_else(absent)?;
+                    let columns =
+                        self.columns
+                            .get(ordinal)
+                            .ok_or(CudaError::InvariantViolation {
+                                reason: "a one-hot cycle-fold window has no columns",
+                            })?;
+                    let eq = tracing::info_span!(
+                        "cuda_one_hot_fold_eq",
+                        device = ordinal,
+                        cycles = columns.cycles,
+                    )
+                    .in_scope(|| context.eq_evals_shard(point, ordinal, shards))?;
+                    let folded = tracing::info_span!(
+                        "cuda_one_hot_fold_window",
+                        device = ordinal,
+                        addresses = columns.addresses(),
+                        polys = columns.polys(),
+                        cycles = columns.cycles,
+                        shared =
+                            columns.addresses() * LANES * size_of::<u64>() <= tuning.shared_budget,
+                    )
+                    .in_scope(|| columns.fold_cycles_with_eq(context, &eq, tuning))?;
+                    if ordinal == 0 {
+                        return Ok(FoldPart::Resident(folded));
+                    }
+                    tracing::info_span!(
+                        "cuda_one_hot_fold_download",
+                        device = ordinal,
+                        elements = folded.len(),
+                    )
+                    .in_scope(|| Ok(FoldPart::Limbs(context.download_u64(folded.limbs())?)))
+                });
+                task
+            })
+            .collect();
+        let parts = fan_out(tasks)?;
+        tracing::info_span!("cuda_one_hot_fold_reduce", shards).in_scope(
+            || -> Result<DeviceFrVec, CudaError> {
+                let context = context_for(0).ok_or_else(absent)?;
+                let mut parts = parts.into_iter();
+                let mut total = match parts.next() {
+                    Some(FoldPart::Resident(resident)) => resident,
+                    _ => {
+                        return Err(CudaError::InvariantViolation {
+                            reason: "the one-hot cycle fold lost its device-0 window",
+                        })
+                    }
+                };
+                for part in parts {
+                    let FoldPart::Limbs(limbs) = part else {
+                        return Err(CudaError::InvariantViolation {
+                            reason: "a one-hot cycle-fold window past device 0 stayed resident",
+                        });
+                    };
+                    let addend = context.upload_limbs(&limbs)?;
+                    if addend.len() != total.len() {
+                        return Err(CudaError::LengthMismatch {
+                            expected: total.len(),
+                            got: addend.len(),
+                        });
+                    }
+                    total = context.add(&total, &addend)?;
+                }
+                Ok(total)
+            },
+        )
+    }
+}
+
 impl DeviceOneHotColumns {
+    #[cfg(test)]
     pub fn new(
         context: &CudaKernelContext,
         lookup: &[u64],

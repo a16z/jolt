@@ -247,16 +247,8 @@ pub(crate) const fn whole_domain(cycles: usize) -> CycleWindow {
 }
 
 pub(crate) struct DeviceTraceColumns {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the Spartan consumers use only the PC column")
-    )]
     pub(crate) lookup: Arc<CudaSlice<u64>>,
     pub(crate) pc: Arc<CudaSlice<u32>>,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the Spartan consumers use only the PC column")
-    )]
     pub(crate) ram: Arc<CudaSlice<u32>>,
 }
 

@@ -126,11 +126,8 @@ pub struct CudaKernelContext {
     unr_mul_scatter: CudaFunction,
     #[cfg(test)]
     unr_reduce: CudaFunction,
-    #[cfg(test)]
     ohf_fold: CudaFunction,
-    #[cfg(test)]
     ohf_reduce: CudaFunction,
-    #[cfg(test)]
     ohf_affine: CudaFunction,
     #[cfg(test)]
     msm_fq_add: CudaFunction,
@@ -349,11 +346,8 @@ impl CudaKernelContext {
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             #[cfg(test)]
             unr_reduce: module.load_function("unr_reduce_kernel")?,
-            #[cfg(test)]
             ohf_fold: module.load_function("ohf_fold_kernel")?,
-            #[cfg(test)]
             ohf_reduce: module.load_function("ohf_reduce_kernel")?,
-            #[cfg(test)]
             ohf_affine: module.load_function("ohf_affine_kernel")?,
             #[cfg(test)]
             msm_fq_add: module.load_function("msm_fq_add_kernel")?,
@@ -538,6 +532,24 @@ impl CudaKernelContext {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
         })
+    }
+
+    pub(crate) fn upload_limbs(&self, limbs: &[u64]) -> Result<DeviceFrVec, CudaError> {
+        if !limbs.len().is_multiple_of(LIMBS) {
+            return Err(CudaError::LengthMismatch {
+                expected: LIMBS,
+                got: limbs.len() % LIMBS,
+            });
+        }
+        let len = limbs.len() / LIMBS;
+        if limbs.is_empty() {
+            let buffer = self.stream.alloc_zeros::<u64>(0)?;
+            return Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, 0));
+        }
+        let buffer = xfer_stats::timed(Phase::H2d, size_of_val(limbs), || {
+            Ok::<_, CudaError>(self.stream.clone_htod(limbs)?)
+        })?;
+        Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, len))
     }
 
     pub fn alloc(&self, len: usize) -> Result<DeviceFrVec, CudaError> {
@@ -903,17 +915,14 @@ impl CudaKernelContext {
         &self.unr_reduce
     }
 
-    #[cfg(test)]
     pub(crate) const fn ohf_fold(&self) -> &CudaFunction {
         &self.ohf_fold
     }
 
-    #[cfg(test)]
     pub(crate) const fn ohf_reduce(&self) -> &CudaFunction {
         &self.ohf_reduce
     }
 
-    #[cfg(test)]
     pub(crate) const fn ohf_affine(&self) -> &CudaFunction {
         &self.ohf_affine
     }
