@@ -677,11 +677,12 @@ on Apple M4 for the CRT reconstruction, so the prover sets DIT for the
 attempts (A11).
 
 **Memory hygiene.** The prover overwrites its heap secrets with zeros, by
-volatile writes through the `zeroize` crate, before freeing them. Field
-buffers use jolt-zk's `SecretVec`, which zeroes a `Vec`'s whole capacity on
-drop without needing `Zeroize` on the field type; integer and byte buffers
-use `Zeroizing`. The writes are unconditional and run over public lengths,
-so they add no secret-dependent branch. Wiped:
+volatile writes through the `zeroize` crate, before freeing them. jolt-zk's
+`SecretVec` zeroes a `Vec`'s whole capacity on drop, in parallel chunks,
+without needing `Zeroize` on the field type; it holds the large buffers and
+every field buffer, and `ResponseWitness` uses the same wipe. jolt-crypto's
+buffers use `Zeroizing`. The writes are unconditional and run over public
+lengths, so they add no secret-dependent branch. Wiped:
 
 - `s` (`private_vector`), the pad opening's digits (`LatticePadOpening`), and
   the pad commitment's working copies of the pads, g, and their digit planes;
@@ -722,6 +723,15 @@ copies are freed zeroed. Each of the three fails on the code before this
 change, and a positive control in each test shows that the scan finds an
 unwiped buffer. No test covers stack values, and none covers the Σ
 attempt's buffers, since their contents cannot be planted from outside.
+
+Cost: `sigma_timing` at scale 2,960 (3.0M Gaussian coefficients, 16
+threads), before and after binaries interleaved four times at 10 proofs
+each, gives 0.261 and 0.266 s per proof (+1.6%). At scale 5,920, two
+interleaved pairs on a lightly loaded machine give 0.509/0.513 and
+0.516/0.516 s (+1%). The first version wiped through `Zeroizing<Vec<_>>`
+on one thread, in two passes with the second byte by byte, and cost about
++18% at scale 2,960 under heavy load. A single sequential pass still cost
++6%. `SecretVec` therefore wipes once, one write per element, in parallel.
 
 ## 3. Response statement and `ResponseProver`
 
