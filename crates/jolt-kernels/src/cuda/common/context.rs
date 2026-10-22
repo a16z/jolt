@@ -103,15 +103,15 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     amm_lift: CudaFunction,
     brc_message_dense: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     so_gather: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     so_shift: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     so_uniskip: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     so_factors: CudaFunction,
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     so_claims: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
     sp_gather: CudaFunction,
@@ -328,15 +328,15 @@ impl CudaKernelContext {
             #[cfg(test)]
             amm_lift: module.load_function("amm_lift_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             so_gather: module.load_function("so_gather_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             so_shift: module.load_function("so_shift_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             so_uniskip: module.load_function("so_uniskip_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             so_factors: module.load_function("so_factors_kernel")?,
-            #[cfg(all(test, not(feature = "field-inline")))]
+            #[cfg(not(feature = "field-inline"))]
             so_claims: module.load_function("so_claims_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             sp_gather: module.load_function("sp_gather_kernel")?,
@@ -618,7 +618,7 @@ impl CudaKernelContext {
         Ok(self.stream.alloc_zeros::<u64>(len)?)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "field-inline")))]
     pub(crate) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
@@ -764,27 +764,27 @@ impl CudaKernelContext {
         &self.brc_message_dense
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_gather(&self) -> &CudaFunction {
         &self.so_gather
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_shift(&self) -> &CudaFunction {
         &self.so_shift
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_uniskip(&self) -> &CudaFunction {
         &self.so_uniskip
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_factors(&self) -> &CudaFunction {
         &self.so_factors
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_claims(&self) -> &CudaFunction {
         &self.so_claims
     }
