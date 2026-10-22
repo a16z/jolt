@@ -186,11 +186,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         Ok(cfg_into_iter!(0..self.shape.rows)
             .map(|row| {
                 let mut sum = CyclotomicRing::zero();
-                for (entry, scale) in coefficients
-                    .iter()
-                    .skip(row * self.shape.width)
-                    .zip(scales)
-                {
+                for (entry, scale) in coefficients.iter().skip(row * self.shape.width).zip(scales) {
                     entry.scale_accumulate_into(&mut sum, *scale);
                 }
                 sum
