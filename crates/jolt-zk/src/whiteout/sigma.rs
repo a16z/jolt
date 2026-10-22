@@ -698,7 +698,9 @@ mod prover {
                         .ok_or(WhiteoutError::InvalidRelation("block outside s"))?,
                 );
             }
-            let parts_y = self.aggregated.linear_parts(&self.tables, &self.y, true)?;
+            let parts_y = self
+                .aggregated
+                .linear_parts(&self.tables, &self.y[..], true)?;
             let f = self.setup.linear().apply(&self.y, self.tail_bound)?;
             let e0 = self.setup.l_row().apply(&self.y, self.tail_bound)?
                 + self.aggregated.quadratic_at_zero(&parts_y);
@@ -832,7 +834,7 @@ mod prover {
                 }
             }
             let c_ring: ChallengeRing<F> = challenge_ring(&c);
-            let parts_z = self.aggregated.linear_parts(&self.tables, &z, false)?;
+            let parts_z = self.aggregated.linear_parts(&self.tables, &z[..], false)?;
             let product = SecretVec::from(self.aggregated.product_polynomial(&c_ring, &parts_z));
             let theta = product.get(CHALLENGE_RING_DIM..).unwrap_or_default();
             ResponseWitness::new(

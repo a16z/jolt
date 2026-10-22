@@ -161,10 +161,10 @@ impl<F: JoltField> Form<F> {
     /// WARNING: `mul_accumulate_into` skips zero coefficients of its
     /// receiver, so the public weights `σ(ℓ̂)` must stay on that side: with
     /// the secret ring there, the time would depend on its zeros.
-    fn linear(
+    fn linear<X: SValues<F> + ?Sized>(
         &self,
         table: &SegmentTable,
-        x: &[i64],
+        x: &X,
         claims: &[ChallengeRing<F>],
     ) -> Result<ChallengeRing<F>, WhiteoutError> {
         let mut out = self
@@ -172,7 +172,7 @@ impl<F: JoltField> Form<F> {
             .par_iter()
             .map(|(ring, _, weights)| {
                 let mut product = CyclotomicRing::zero();
-                weights.mul_accumulate_into(&table.ring(x, *ring)?, &mut product);
+                weights.mul_accumulate_into(&x.ring(table, *ring)?, &mut product);
                 Ok::<_, WhiteoutError>(product)
             })
             .try_reduce(CyclotomicRing::zero, |a, b| Ok(a + b))?;
@@ -245,11 +245,14 @@ impl<F: JoltField> Reconstruction<F> {
         Ok(())
     }
 
-    fn evaluate(&self, table: &SegmentTable, x: &[i64]) -> Result<ChallengeRing<F>, WhiteoutError> {
+    fn evaluate<X: SValues<F> + ?Sized>(
+        &self,
+        table: &SegmentTable,
+        x: &X,
+    ) -> Result<ChallengeRing<F>, WhiteoutError> {
         let mut out = CyclotomicRing::zero();
         for (ring, scale) in &self.terms {
-            table
-                .ring::<F>(x, *ring)?
+            x.ring(table, *ring)?
                 .scale_accumulate_into(&mut out, *scale);
         }
         Ok(out)
@@ -523,11 +526,90 @@ impl<F: JoltField> LiftedRelation<F> {
     }
 }
 
+/// A vector laid out like `s` that the lifted forms read: the prover's
+/// integers, or the verifier's factored `eq` dual (`weights.rs`).
+pub(crate) trait SValues<F: JoltField>: Sync {
+    /// Challenge-ring element `ring` ([`SegmentTable::ring`]).
+    fn ring(&self, table: &SegmentTable, ring: usize) -> Result<ChallengeRing<F>, WhiteoutError>;
+
+    /// `S(x) = Σ_{E,k} eq(r_E,E) eq(r_k,k) x_{E,k}` for one claim, over the
+    /// witness segments; public segments are skipped when `skip_public` (a
+    /// public decision: the mask is zero there).
+    fn claim_sum(
+        &self,
+        witness: &WitnessShape,
+        table: &ClaimTable<F>,
+        skip_public: bool,
+    ) -> Result<[F; CHALLENGE_RING_DIM], WhiteoutError>;
+}
+
+impl<F: JoltField> SValues<F> for [i64] {
+    fn ring(&self, table: &SegmentTable, ring: usize) -> Result<ChallengeRing<F>, WhiteoutError> {
+        table.ring(self, ring)
+    }
+
+    fn claim_sum(
+        &self,
+        witness: &WitnessShape,
+        table: &ClaimTable<F>,
+        skip_public: bool,
+    ) -> Result<[F; CHALLENGE_RING_DIM], WhiteoutError> {
+        let x = self;
+        let stride = witness.native_dim / CHALLENGE_RING_DIM;
+        let mut element_offset = 0usize;
+        let mut sum = [F::zero(); CHALLENGE_RING_DIM];
+        for placed in &witness.segments {
+            let elements = placed.segment.num_coefficients() / witness.native_dim;
+            let skip = skip_public && placed.segment.mask == SegmentMask::Public;
+            if !skip {
+                let values = x
+                    .get(placed.coefficients())
+                    .ok_or(WhiteoutError::InvalidRelation("witness outside s"))?;
+                let weights = table
+                    .element
+                    .get(element_offset..element_offset + elements)
+                    .ok_or(WhiteoutError::InvalidRelation("claim shorter than w"))?;
+                let partial = values
+                    .par_chunks_exact(witness.native_dim)
+                    .zip(weights.par_iter())
+                    .fold(
+                        || [F::zero(); CHALLENGE_RING_DIM],
+                        |mut acc, (element, &outer)| {
+                            for (k, &inner) in table.component.iter().enumerate() {
+                                let weight = outer * inner;
+                                for (dst, &value) in
+                                    acc.iter_mut().zip(element.iter().skip(k).step_by(stride))
+                                {
+                                    *dst += weight * lift_ct::<F>(value);
+                                }
+                            }
+                            acc
+                        },
+                    )
+                    .reduce(
+                        || [F::zero(); CHALLENGE_RING_DIM],
+                        |mut a, b| {
+                            for (x, y) in a.iter_mut().zip(b) {
+                                *x += y;
+                            }
+                            a
+                        },
+                    );
+                for (dst, value) in sum.iter_mut().zip(partial) {
+                    *dst += value;
+                }
+            }
+            element_offset += elements;
+        }
+        Ok(sum)
+    }
+}
+
 /// The witness part of `s`: its segments and the claim index geometry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WitnessShape {
-    segments: Vec<Placed>,
-    native_dim: usize,
+    pub(crate) segments: Vec<Placed>,
+    pub(crate) native_dim: usize,
     num_vars: usize,
 }
 
@@ -579,11 +661,11 @@ impl WitnessShape {
 
 /// One claim's factored weights.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ClaimTable<F: JoltField> {
+pub(crate) struct ClaimTable<F: JoltField> {
     /// `eq(r_E, E)` per native element of `w`.
-    element: Vec<F>,
+    pub(crate) element: Vec<F>,
     /// `eq(r_k, k)` per stride component.
-    component: Vec<F>,
+    pub(crate) component: Vec<F>,
     /// `Ê = eq(r_i, ·)` and `σ(Ê)`.
     position: [F; CHALLENGE_RING_DIM],
     sigma: ChallengeRing<F>,
@@ -599,63 +681,14 @@ impl<F: JoltField> ClaimTables<F> {
     /// `S_j(x) = Σ_{E,k} eq(r_E,E) eq(r_k,k) x_{E,k}` for every claim, over the
     /// witness segments of `x`; public segments are skipped when
     /// `skip_public` (a public decision: the mask is zero there).
-    fn sums(
+    fn sums<X: SValues<F> + ?Sized>(
         &self,
-        x: &[i64],
+        x: &X,
         skip_public: bool,
     ) -> Result<Vec<[F; CHALLENGE_RING_DIM]>, WhiteoutError> {
-        let stride = self.witness.native_dim / CHALLENGE_RING_DIM;
         self.tables
             .iter()
-            .map(|table| {
-                let mut element_offset = 0usize;
-                let mut sum = [F::zero(); CHALLENGE_RING_DIM];
-                for placed in &self.witness.segments {
-                    let elements = placed.segment.num_coefficients() / self.witness.native_dim;
-                    let skip = skip_public && placed.segment.mask == SegmentMask::Public;
-                    if !skip {
-                        let values = x
-                            .get(placed.coefficients())
-                            .ok_or(WhiteoutError::InvalidRelation("witness outside s"))?;
-                        let weights = table
-                            .element
-                            .get(element_offset..element_offset + elements)
-                            .ok_or(WhiteoutError::InvalidRelation("claim shorter than w"))?;
-                        let partial = values
-                            .par_chunks_exact(self.witness.native_dim)
-                            .zip(weights.par_iter())
-                            .fold(
-                                || [F::zero(); CHALLENGE_RING_DIM],
-                                |mut acc, (element, &outer)| {
-                                    for (k, &inner) in table.component.iter().enumerate() {
-                                        let weight = outer * inner;
-                                        for (dst, &value) in acc
-                                            .iter_mut()
-                                            .zip(element.iter().skip(k).step_by(stride))
-                                        {
-                                            *dst += weight * lift_ct::<F>(value);
-                                        }
-                                    }
-                                    acc
-                                },
-                            )
-                            .reduce(
-                                || [F::zero(); CHALLENGE_RING_DIM],
-                                |mut a, b| {
-                                    for (x, y) in a.iter_mut().zip(b) {
-                                        *x += y;
-                                    }
-                                    a
-                                },
-                            );
-                        for (dst, value) in sum.iter_mut().zip(partial) {
-                            *dst += value;
-                        }
-                    }
-                    element_offset += elements;
-                }
-                Ok(sum)
-            })
+            .map(|table| x.claim_sum(&self.witness, table, skip_public))
             .collect()
     }
 
@@ -705,7 +738,11 @@ impl<F: JoltField> ClaimTables<F> {
     }
 
     /// The claim terms `T_j = σ(Ê_j)·S_j(x)`.
-    fn terms(&self, x: &[i64], skip_public: bool) -> Result<Vec<ChallengeRing<F>>, WhiteoutError> {
+    fn terms<X: SValues<F> + ?Sized>(
+        &self,
+        x: &X,
+        skip_public: bool,
+    ) -> Result<Vec<ChallengeRing<F>>, WhiteoutError> {
         Ok(self
             .sums(x, skip_public)?
             .into_iter()
@@ -755,10 +792,10 @@ pub(crate) struct LinearParts<F: JoltField> {
 impl<F: JoltField> AggregatedRelation<'_, F> {
     /// The linear parts at `x` (laid out like `s`). With `skip_public`, the
     /// witness claims skip public segments, where a mask is zero.
-    pub(crate) fn linear_parts(
+    pub(crate) fn linear_parts<X: SValues<F> + ?Sized>(
         &self,
         tables: &ClaimTables<F>,
-        x: &[i64],
+        x: &X,
         skip_public: bool,
     ) -> Result<LinearParts<F>, WhiteoutError> {
         let table = &self.relation.table;
@@ -878,6 +915,33 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
             }
         }
         out
+    }
+
+    /// The `s`-linear part of `reduce(Σ μ_i X_i Y_i) − Q_μ(u, ·)` from the
+    /// linear parts of `·`: `Σ μ_i u Z_i − u(λ + g)`, whose transpose is
+    /// [`Self::product_adjoint`]'s first term.
+    pub(crate) fn target_linear(
+        &self,
+        u: &ChallengeRing<F>,
+        parts: &LinearParts<F>,
+    ) -> ChallengeRing<F> {
+        let mut z = CyclotomicRing::zero();
+        for (weight, part) in self.product_weights.iter().zip(parts.z.iter()) {
+            part.scale_accumulate_into(&mut z, *weight);
+        }
+        *u * (z - parts.lambda - parts.g)
+    }
+
+    /// The linear parts of the zero vector.
+    pub(crate) fn zero_parts(&self) -> LinearParts<F> {
+        let products = self.relation.products.len();
+        LinearParts {
+            x: SecretVec::from(vec![CyclotomicRing::zero(); products]),
+            y: SecretVec::from(vec![CyclotomicRing::zero(); products]),
+            z: SecretVec::from(vec![CyclotomicRing::zero(); products]),
+            lambda: CyclotomicRing::zero(),
+            g: CyclotomicRing::zero(),
+        }
     }
 
     /// Adds to `out` (laid out like `s`) the weights of the `s`-linear part

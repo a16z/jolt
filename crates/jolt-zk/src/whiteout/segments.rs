@@ -258,7 +258,7 @@ impl SegmentTable {
     }
 
     /// The first native coefficient of ring `ring` and its stride.
-    fn ring_position(&self, ring: usize) -> Result<(usize, usize), WhiteoutError> {
+    pub(crate) fn ring_position(&self, ring: usize) -> Result<(usize, usize), WhiteoutError> {
         let placed = self
             .placed
             .iter()

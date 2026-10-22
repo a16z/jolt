@@ -122,7 +122,7 @@ impl<const D: usize> AttemptHarness<D> {
         with_dit(|| {
             let aggregated = self.lifted.aggregate(&self.rho)?;
             let tables = self.lifted.claim_tables()?;
-            let parts_s = aggregated.linear_parts(&tables, &self.instance.s, false)?;
+            let parts_s = aggregated.linear_parts(&tables, &self.instance.s[..], false)?;
             run(&AttemptSteps {
                 harness: self,
                 aggregated,

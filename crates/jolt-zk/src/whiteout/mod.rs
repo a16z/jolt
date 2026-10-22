@@ -40,6 +40,7 @@ mod sigma;
     feature = "whiteout-test-support"
 ))]
 pub mod test_support;
+mod weights;
 
 pub use challenge::{challenge_times_i64, DenseChallenge};
 pub use compression::{CompressedImage, ImageCompression};

@@ -296,7 +296,7 @@ fn check_quadratic_against_decoding<const D: usize>(seed: u64) {
 
     let aggregated = lifted.aggregate(&rho).unwrap();
     let tables = lifted.claim_tables().unwrap();
-    let parts = aggregated.linear_parts(&tables, &s, false).unwrap();
+    let parts = aggregated.linear_parts(&tables, &s[..], false).unwrap();
     let actual = aggregated
         .quadratic(&constant_ring(F::one()), &parts)
         .constant_term();
@@ -488,9 +488,9 @@ fn quadratic_polar_quotient_and_linearity_identities() {
     let shift = challenge_times_i64(&c, 256, s).unwrap();
     let z: Vec<i64> = y.iter().zip(&shift).map(|(y, v)| y + v).collect();
     let c_ring = challenge_ring::<F>(&c);
-    let parts_s = aggregated.linear_parts(&tables, s, false).unwrap();
-    let parts_y = aggregated.linear_parts(&tables, &y, false).unwrap();
-    let parts_z = aggregated.linear_parts(&tables, &z, false).unwrap();
+    let parts_s = aggregated.linear_parts(&tables, &s[..], false).unwrap();
+    let parts_y = aggregated.linear_parts(&tables, &y[..], false).unwrap();
+    let parts_z = aggregated.linear_parts(&tables, &z[..], false).unwrap();
     let h = aggregated.quadratic(&constant_ring(F::one()), &parts_s);
     assert_eq!(
         aggregated.quadratic(&c_ring, &parts_z),
@@ -825,9 +825,23 @@ impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
             },
         ];
         let honest = statement.rows(&witness.digits, alpha)?;
-        for family in &families {
+        for family in families.iter().chain(std::iter::once(&weights)) {
             let (a, b) = statement.weigh(family, alpha)?;
             assert!(a.iter().any(|a| !a.is_zero()));
+            // The factored row at a point against the dense weights' MLE,
+            // over one variable past `e`'s length.
+            let point: Vec<F> = (0..=a.len().next_power_of_two().trailing_zeros())
+                .map(|_| F::random(&mut rng))
+                .collect();
+            let eq = EqPolynomial::new(point.iter().rev().copied().collect()).evaluations();
+            let dense: F = a.iter().zip(&eq).map(|(a, eq)| *a * *eq).sum();
+            assert_eq!(statement.weight_at(family, alpha, &point)?, dense);
+            assert_eq!(
+                b,
+                family
+                    .dot(&statement.rows(&vec![0; a.len()], alpha)?)
+                    .unwrap()
+            );
             let change = contract(&a, b, &arbitrary) - contract(&a, b, &witness.digits);
             assert!(!change.is_zero());
             assert_eq!(

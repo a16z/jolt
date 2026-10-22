@@ -268,7 +268,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         let c_ring: ChallengeRing<F> = challenge_ring(&c);
         let aggregated = self.relation.aggregate(&self.rho)?;
         let tables = self.relation.claim_tables()?;
-        let parts = aggregated.linear_parts(&tables, z, false)?;
+        let parts = aggregated.linear_parts(&tables, &z[..], false)?;
         let lhs = aggregated.quadratic(&c_ring, &parts) + self.setup.l_row().apply(z, bound)?;
         if lhs != e0 + c_ring * e1 + c_ring * c_ring * h {
             return Err(WhiteoutError::ResponseRejected("ring-quadratic identity"));
@@ -331,7 +331,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         let c_ring: ChallengeRing<F> = challenge_ring(&c);
         let aggregated = self.relation.aggregate(&self.rho)?;
         let tables = self.relation.claim_tables()?;
-        let parts = aggregated.linear_parts(&tables, z, false)?;
+        let parts = aggregated.linear_parts(&tables, &z[..], false)?;
         let operands = aggregated.product_operands(&c_ring, &parts);
         let reduced = operands
             .iter()
@@ -526,8 +526,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         if a.len() != layout.len() {
             return Err(WhiteoutError::InvariantViolation("row weights length"));
         }
-        let constant = weights.dot(&self.rows(&vec![0; layout.len()], alpha)?)?;
-        Ok((a, constant))
+        Ok((a, self.constant(weights, alpha)?))
     }
 
     /// `e`'s decoded parts: `z`, `V` as field coefficients and as digits,
@@ -706,7 +705,7 @@ impl<F: JoltField> ResponseRows<F> {
 }
 
 /// `(1, α, …, α^63)` as a challenge-ring element: `[r](α) = ⟨r, powers⟩`.
-fn alpha_powers<F: JoltField>(alpha: F) -> ChallengeRing<F> {
+pub(crate) fn alpha_powers<F: JoltField>(alpha: F) -> ChallengeRing<F> {
     let mut power = F::one();
     CyclotomicRing::from_coefficients(std::array::from_fn(|_| {
         let current = power;
@@ -716,7 +715,7 @@ fn alpha_powers<F: JoltField>(alpha: F) -> ChallengeRing<F> {
 }
 
 /// `α^64`.
-fn alpha_pow_ring_dim<F: JoltField>(alpha: F) -> F {
+pub(crate) fn alpha_pow_ring_dim<F: JoltField>(alpha: F) -> F {
     (0..CHALLENGE_RING_DIM).fold(F::one(), |power, _| power * alpha)
 }
 
