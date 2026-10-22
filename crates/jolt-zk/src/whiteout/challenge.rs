@@ -86,6 +86,26 @@ pub(crate) fn challenge_times_ring<F: Field, const D: usize>(
     c: &DenseChallenge,
     a: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
+    let c = challenge_ring::<F>(c);
+    componentwise(a, |component| c * component)
+}
+
+/// The transpose of [`challenge_times_ring`]: the weights on `a` of
+/// `⟨w, c(Y^m)·a⟩`. Per stride component, multiplication by `c` transposes
+/// to `σ(σ(·)·c)`, since `⟨w, c·x⟩ = ct(σ(w)·c·x)`.
+pub(crate) fn challenge_times_ring_transpose<F: Field, const D: usize>(
+    c: &DenseChallenge,
+    w: &CyclotomicRing<F, D>,
+) -> CyclotomicRing<F, D> {
+    let c = challenge_ring::<F>(c);
+    componentwise(w, |component| (component.sigma_m1() * c).sigma_m1())
+}
+
+/// `map` applied to each stride component of a native ring element.
+fn componentwise<F: Field, const D: usize>(
+    a: &CyclotomicRing<F, D>,
+    map: impl Fn(CyclotomicRing<F, CHALLENGE_RING_DIM>) -> CyclotomicRing<F, CHALLENGE_RING_DIM>,
+) -> CyclotomicRing<F, D> {
     let stride = D / CHALLENGE_RING_DIM;
     let mut out = CyclotomicRing::zero();
     for k in 0..stride {
@@ -96,8 +116,7 @@ pub(crate) fn challenge_times_ring<F: Field, const D: usize>(
             .step_by(stride)
             .copied()
             .collect();
-        let product = challenge_ring::<F>(c)
-            * CyclotomicRing::<F, CHALLENGE_RING_DIM>::from_slice(&component);
+        let product = map(CyclotomicRing::from_slice(&component));
         for (dst, value) in out
             .coefficients_mut()
             .iter_mut()

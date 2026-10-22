@@ -39,7 +39,7 @@ so the authors can fold it into the paper.
 | D6 | Per-round degree schedule for batched sumchecks | extension | implemented |
 | D7 | Shared stage checks over `ClaimDomain`; stage-2 row has no constant term; Q3 answered | clarification | implemented |
 | D8 | BlindFold stays curve-based, over pads committed up front | alternative back end | implemented |
-| D9 | Images u_a, t_p, t_D sent raw until W5c; compression in RP4 | temporary departure | in progress |
+| D9 | Compressed images: chunked two-map chains, one row per map evaluated at α | departure | implemented (W5c, `wo/akita-w5`) |
 | D10 | Akita #255: public retry of the fold-response nonce at operator-norm masked levels (Lemmas 2.5a/2.5b) | extension, fix (Q7) | argued, under independent review; implementation at the port |
 | D11 | Uni-skip rounds send every coefficient plus an explicit sum row | departure | implemented |
 | D12 | One auxiliary slot per intermediate product; auxiliary block after the base protocol | departure | implemented |
@@ -57,6 +57,7 @@ so the authors can fold it into the paper.
 | D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | open; W6 rejects them under ZK |
 | D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
 | D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
+| D27 | Soundness ledger of the response proof: ≈ 2^−119.7 in total; the α round alone 126/q ≈ 2^−121 | accepted for now | accepted for now (user, 2026-10-22); revisit with the paper authors |
 
 ## D1. Constant-time Σ attempt
 
@@ -506,10 +507,24 @@ functions of the raw images, which H4 and H8 already replace by uniform ones.
 Soundness: the split chain needs a norm-one-kernel argument per chunk, as in
 Lemma `wo:lem:compressed-binding`.
 
-**Status.** Raw images implemented; compression in progress (W5c).
+**Status.** Implemented in W5c (`akita:crates/akita-pcs/src/zk/compression.rs`
+on `wo/akita-w5`; jolt `ImageCompression`). The verifier checks `t = G₁ξ₁`
+inside Items 2 and 3, coefficient by coefficient. Each chain equation
+`K₁ξ₁ − G₂ξ₂ = 0`, `K₂ξ₂ − cm = 0` is one row: its negacyclically reduced
+residual evaluated at the product challenge `α`, as Akita's
+`ReducedEvaluation` relation evaluates its own maps
+(`ReducedCompressionRelationWeights::for_standalone_chains`). A nonzero
+residual has degree at most `d − 1`, so a violated row survives with
+probability at most `(d − 1)/q` (`d = 16`: `15/q`); `α` is drawn after `e`
+and every `cm` are fixed. The binary constraint `ζ·1_{I_bin}` is
+load-bearing: the prover chooses `cm`, and a carry inside `ξ₁` (bits
+`(0, −1)` → `(−2, 0)`, then `ξ₂` and `cm` recomputed) passes everything
+else (Akita spec §5.7).
 
 **For the paper.** See Q4: the cost model's `FCHAIN_MAX_IMAGE = 884`
-disagrees with Akita's 512 cap. Price the split chain.
+disagrees with Akita's 512 cap. Price the split chain, and state the rows
+as reduced evaluations at `α` (or the paper's coefficient rows, at the cost
+of `d` rows per map).
 
 ## D10. Akita #255: public retry of the fold-response nonce
 
@@ -1086,4 +1101,37 @@ product count at T = 2^24 has not been measured.
   pairs and U_e = μ_{row(e)}[X_e](α).
 - Say that a stage's last products land in its claim check.
 - Say that the 28 assumes merged repeated products.
+
+## D27. Soundness ledger of the response proof
+
+**Paper says.** The 128-bit headline (`06_evaluation.tex`) covers
+zero-knowledge, rejection sampling and fold overflow. The response proof's
+challenge rounds (`04_protocol.tex:339-506`) have no stated total.
+
+**Ledger.** Over `F_q`, `q ≈ 2^128` (A7F7), at `ν = ⌈log₂|e|⌉`, `m` batched
+rows and `n_×` product pairs. Each round's error is the probability that a
+false statement survives it; computational binding of the Akita commitment
+and Akita's own opening error are separate.
+
+| Round | Check | Degree / structure | Error |
+|---|---|---|---|
+| α | Item 4's product lift `Σμ_i X_iY_i − H_e = θ·(X^64 + 1)` at `α`, with the chain rows (D9) at the same `α` | the lift's residual has degree ≤ 126 in `X` (products of degree < 64); a chain row's ≤ 15 | `126/q`, no union: every violated row must vanish |
+| product sumcheck | `Σ_i U_iW_i = t_×` | degree 2, `⌈log₂ n_×⌉` rounds | `2⌈log₂ n_×⌉/q` |
+| η | row batch `⟨A, e⟩ = b_η` | multilinear in `η` | `⌈log₂ m⌉/q` |
+| τ_pad | padding term `Σ_{j ≥ |e|} eq(τ_pad, j)·e_j` (Akita spec §5.7, W5-P1), added to the η batch | multilinear in `τ_pad`; jointly with `η`, one multilinear polynomial in disjoint variables | `ν/q` |
+| τ and Stage 1 | digit range at radix 16 | Akita's stage-1 reduction, with its grinding | Akita's stage-1 error at `log_basis = 4` (akita spec §5.2; not restated here) |
+| γ, ζ | range image and binary constraint into `B` | linear in each | `2/q` |
+| binary constraint | `Σ_j eq(τ, j)·1_{I_bin}(j)·e_j(e_j + 1) = 0` at the Stage-1 point `τ` | multilinear in `τ` | `ν/q` |
+| fused sumcheck | `A·E + B·E(E + 1)` | degree 3, `ν` rounds | `3ν/q` |
+
+At the headline (`ν = 27`, `⌈log₂ m⌉ ≤ 27`, `⌈log₂ n_×⌉ ≤ 10`) the explicit
+rows sum to at most `(126 + 20 + 27 + 27 + 2 + 27 + 81)/q = 310/q ≈
+2^−119.7`, before Stage 1. The α round alone is `126/q ≈ 2^−121`.
+
+**Status.** Accepted for now (user, 2026-10-22); revisit with the paper
+authors. The response proof is below 128 bits over a single `F_q128`.
+Options if the headline must hold: draw `α` (and the sumcheck challenges)
+from an extension field, repeat the α round, or state the headline as
+about 2^−119.7 for this component. The product and fused sumchecks also carry no proof of
+work (Akita spec A34).
 

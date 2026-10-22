@@ -11,6 +11,7 @@
 //! Randomness here comes from a caller-supplied cryptographic RNG.
 
 mod challenge;
+mod compression;
 #[cfg(feature = "whiteout-diagnostics")]
 pub mod diagnostics;
 #[cfg(feature = "whiteout-prover")]
@@ -18,7 +19,8 @@ mod dit;
 mod error;
 #[cfg(any(
     all(test, feature = "whiteout-prover"),
-    feature = "whiteout-diagnostics"
+    feature = "whiteout-diagnostics",
+    feature = "whiteout-test-support"
 ))]
 mod fixture;
 mod labels;
@@ -33,11 +35,18 @@ mod ring;
 mod sample;
 mod segments;
 mod sigma;
+#[cfg(any(
+    all(test, feature = "whiteout-prover"),
+    feature = "whiteout-test-support"
+))]
+pub mod test_support;
+mod weights;
 
 pub use challenge::{challenge_times_i64, DenseChallenge};
+pub use compression::{CompressedImage, ImageCompression};
 pub use error::WhiteoutError;
 pub use lift::{ChallengeRing, EvaluationClaims, LiftedRelation};
-pub use linear::{ResidualBlock, ResidualGadget};
+pub use linear::{BlockTarget, ResidualBlock, ResidualGadget};
 pub use pad_commitment::LatticePadCommitment;
 #[cfg(feature = "whiteout-prover")]
 pub use pad_commitment::LatticePadOpening;
@@ -46,13 +55,15 @@ pub use placement::{
     PadPlace, PadPlacement, OPERAND_LEVELS, OPERAND_LOG_BASIS, PAD_LEVELS, PAD_LOG_BASIS,
 };
 pub use response::{
-    ResponseLayout, ResponseProver, ResponseSegment, ResponseStatement, ResponseWitness,
-    FIELD_LEVELS,
+    CompressedTarget, ResponseLayout, ResponseProver, ResponseRowShape, ResponseRows,
+    ResponseSegment, ResponseStatement, ResponseWitness, FIELD_LEVELS,
 };
 pub use ring::LiftedFunctional;
 #[cfg(feature = "whiteout-prover")]
 pub use sample::sample_zero_constant_term;
-pub use segments::{balanced_range, Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable};
+pub use segments::{
+    balanced_range, lift_ct, Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable,
+};
 #[cfg(feature = "whiteout-prover")]
 pub use sigma::prove_sigma;
 pub use sigma::{verify_sigma, SigmaSetup};

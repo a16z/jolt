@@ -217,15 +217,7 @@ impl SegmentTable {
         coefficients: &[i64],
         ring: usize,
     ) -> Result<CyclotomicRing<F, CHALLENGE_RING_DIM>, WhiteoutError> {
-        let placed = self
-            .placed
-            .iter()
-            .find(|placed| placed.rings().contains(&ring))
-            .ok_or(WhiteoutError::InvalidRelation("ring outside s"))?;
-        let stride = placed.stride();
-        let local = ring - placed.ring;
-        let start =
-            placed.coefficient + (local / stride) * placed.segment.native_dim + local % stride;
+        let (start, stride) = self.ring_position(ring)?;
         let values = coefficients
             .get(start..start + (CHALLENGE_RING_DIM - 1) * stride + 1)
             .ok_or(WhiteoutError::WitnessLength {
@@ -241,6 +233,43 @@ impl SegmentTable {
             *dst = lift_ct(value);
         }
         Ok(out)
+    }
+
+    /// The adjoint of [`Self::ring`]: adds `weights` to the native
+    /// coefficients of `out` (laid out like `s`) that ring `ring` reads.
+    pub(crate) fn scatter_ring<F: Field>(
+        &self,
+        out: &mut [F],
+        ring: usize,
+        weights: &CyclotomicRing<F, CHALLENGE_RING_DIM>,
+    ) -> Result<(), WhiteoutError> {
+        let (start, stride) = self.ring_position(ring)?;
+        let targets = out
+            .get_mut(start..start + (CHALLENGE_RING_DIM - 1) * stride + 1)
+            .ok_or(WhiteoutError::InvalidRelation("ring outside s"))?;
+        for (dst, weight) in targets
+            .iter_mut()
+            .step_by(stride)
+            .zip(weights.coefficients())
+        {
+            *dst += *weight;
+        }
+        Ok(())
+    }
+
+    /// The first native coefficient of ring `ring` and its stride.
+    pub(crate) fn ring_position(&self, ring: usize) -> Result<(usize, usize), WhiteoutError> {
+        let placed = self
+            .placed
+            .iter()
+            .find(|placed| placed.rings().contains(&ring))
+            .ok_or(WhiteoutError::InvalidRelation("ring outside s"))?;
+        let stride = placed.stride();
+        let local = ring - placed.ring;
+        Ok((
+            placed.coefficient + (local / stride) * placed.segment.native_dim + local % stride,
+            stride,
+        ))
     }
 
     /// Release check that every coefficient of `s` lies in its segment's
@@ -294,8 +323,8 @@ impl SegmentTable {
 }
 
 /// `x` as a field element, from its magnitude and sign by arithmetic: no
-/// branch on `x`, unlike `Field::from_i64`.
-pub(crate) fn lift_ct<F: Field>(x: i64) -> F {
+/// branch on `x`, unlike `Field::from_i64`. The lift for secret digits.
+pub fn lift_ct<F: Field>(x: i64) -> F {
     let sign = x >> 63;
     let magnitude = F::from_u64(((x ^ sign).wrapping_sub(sign)) as u64);
     magnitude - (magnitude + magnitude) * F::from_u64((sign & 1) as u64)

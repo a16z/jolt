@@ -1,7 +1,7 @@
 #![expect(clippy::indexing_slicing, clippy::unwrap_used, reason = "test code")]
 
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use jolt_algebra::{CanonicalBytes, CyclotomicRing, Field, Prime128OffsetA7F7, Ring};
+use jolt_algebra::{CanonicalBytes, CyclotomicRing, Field, One, Prime128OffsetA7F7, Ring};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use shake::digest::{ExtendableOutput, Update, XofReader};
@@ -121,6 +121,67 @@ fn apply_centered_matches_schoolbook_across_chunks() {
     ] {
         assert_eq!(hex(digest), expected);
     }
+}
+
+/// `Mᵀ·w` on full-width field weights against schoolbook products of the
+/// stream's entries.
+fn check_apply_transposed<const D: usize>(rows: usize, width: usize) {
+    let shape = MatrixShape {
+        rows,
+        width,
+        ring_dim: D,
+    };
+    let (data, matrix) = prepared::<D>(shape, 15);
+    let mut rng = ChaCha20Rng::seed_from_u64(16);
+    let mut weights: Vec<CyclotomicRing<F, D>> = (0..rows)
+        .map(|_| CyclotomicRing::from_coefficients(std::array::from_fn(|_| F::random(&mut rng))))
+        .collect();
+    weights[0].coefficients_mut()[1] = -F::one();
+    let view = MatrixView::new(shape, &data).unwrap();
+    let expected: Vec<CyclotomicRing<F, D>> = (0..width)
+        .map(|col| {
+            let mut out = CyclotomicRing::zero();
+            for (row, weight) in weights.iter().enumerate() {
+                CyclotomicRing::<F, D>::from_slice(view.entry(row, col).unwrap())
+                    .mul_accumulate_into(weight, &mut out);
+            }
+            out
+        })
+        .collect();
+    assert_eq!(matrix.apply_transposed(&weights).unwrap(), expected);
+    assert!(matrix.apply_transposed(&weights[1..]).is_err());
+}
+
+/// `Σ_col s_col·M[row][col]` against the stream's entries.
+#[test]
+fn combine_columns_matches_the_stream() {
+    let shape = MatrixShape {
+        rows: 2,
+        width: 3,
+        ring_dim: 64,
+    };
+    let (data, matrix) = prepared::<64>(shape, 17);
+    let mut rng = ChaCha20Rng::seed_from_u64(18);
+    let scales: Vec<F> = (0..shape.width).map(|_| F::random(&mut rng)).collect();
+    let view = MatrixView::new(shape, &data).unwrap();
+    let expected: Vec<CyclotomicRing<F, 64>> = (0..shape.rows)
+        .map(|row| {
+            let mut out = CyclotomicRing::zero();
+            for (col, scale) in scales.iter().enumerate() {
+                out +=
+                    CyclotomicRing::<F, 64>::from_slice(view.entry(row, col).unwrap()).scale(scale);
+            }
+            out
+        })
+        .collect();
+    assert_eq!(matrix.combine_columns(&scales).unwrap(), expected);
+    assert!(matrix.combine_columns(&scales[1..]).is_err());
+}
+
+#[test]
+fn apply_transposed_matches_schoolbook() {
+    check_apply_transposed::<64>(3, 5);
+    check_apply_transposed::<256>(2, 3);
 }
 
 /// Bounds past the `i32` lift take the limb split; schoolbook is the oracle,

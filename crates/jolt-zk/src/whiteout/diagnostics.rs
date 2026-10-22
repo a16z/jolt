@@ -16,8 +16,9 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 use super::challenge::{challenge_times_i64_into, DenseChallenge};
+use super::compression::ImageCompression;
 pub use super::dit::with_dit;
-use super::fixture::{Instance, F};
+use super::fixture::{Instance, RawImages, F};
 use super::lift::{AggregatedRelation, ChallengeRing, ClaimTables, LiftedRelation, LinearParts};
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
 use super::sigma::{attempt_seed, prove_sigma_with, SelfChecks};
@@ -99,8 +100,8 @@ impl<const D: usize> AttemptHarness<D> {
     pub fn prove(&self, seed: u64) -> Result<usize, ZkError> {
         let protocol = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-diagnostics");
         let mut transcript = ProverTranscript::<Blake2b512>::new(&protocol, b"sigma");
-        for ring in self.instance.u.iter().chain(&self.instance.t_p) {
-            transcript.send_all(ring.coefficients());
+        for (_, payload) in self.setup.compressed_targets() {
+            transcript.send_all(payload);
         }
         prove_sigma_with(
             &self.setup,
@@ -121,7 +122,7 @@ impl<const D: usize> AttemptHarness<D> {
         with_dit(|| {
             let aggregated = self.lifted.aggregate(&self.rho)?;
             let tables = self.lifted.claim_tables()?;
-            let parts_s = aggregated.linear_parts(&tables, &self.instance.s, false)?;
+            let parts_s = aggregated.linear_parts(&tables, &self.instance.s[..], false)?;
             run(&AttemptSteps {
                 harness: self,
                 aggregated,
@@ -165,9 +166,13 @@ impl<const D: usize> AttemptSteps<'_, D> {
         Ok(commit(setup.v_level(), setup.v_matrix(), v, &[])?)
     }
 
-    /// The attempt fork's seed for `(σ, n, t_D)`.
+    /// The attempt fork's seed for `(σ, n, cm(t_D))`, with raw images.
     pub fn seed(&self, nonce: &[u8; ATTEMPT_NONCE_LEN], t_d: &[ChallengeRing<F>]) -> [u8; 32] {
-        attempt_seed::<Blake2b512, F>(&[5; FORK_SEED_LEN], nonce, t_d)
+        let payload: Vec<F> = t_d
+            .iter()
+            .flat_map(|ring| ring.coefficients().iter().copied())
+            .collect();
+        attempt_seed::<Blake2b512, F>(&[5; FORK_SEED_LEN], nonce, &payload)
     }
 
     /// `z = y + c·s` and `v = c·s` on the Gaussian coordinates, into the
@@ -204,6 +209,10 @@ impl<const D: usize> AttemptSteps<'_, D> {
 struct NoResponse;
 
 impl<const D: usize> ResponseProver<F, D> for NoResponse {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        &RawImages
+    }
+
     fn prove_response<H: Sponge>(
         &self,
         _statement: &ResponseStatement<'_, F, D>,

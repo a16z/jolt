@@ -27,7 +27,20 @@ pub struct ResidualBlock<F: Field, const D: usize> {
     /// Consecutive residual segments the matrix reads.
     pub input: Range<usize>,
     pub gadget: Option<ResidualGadget>,
-    pub target: Vec<CyclotomicRing<F, D>>,
+    pub target: BlockTarget<F, D>,
+}
+
+/// What a block of `N` must reach, as the verifier holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BlockTarget<F: Field, const D: usize> {
+    /// A public image, such as the inner rows' zero.
+    Public(Vec<CyclotomicRing<F, D>>),
+    /// A commitment image the verifier holds only as its compressed payload
+    /// (Whiteout §2); the prover also holds the image.
+    Compressed {
+        payload: Vec<F>,
+        image: Option<Vec<CyclotomicRing<F, D>>>,
+    },
 }
 
 /// The gadget term of a [`ResidualBlock`]: the residual segment holding the
@@ -50,13 +63,35 @@ pub(crate) struct GadgetTerm {
     pub levels: usize,
 }
 
+impl GadgetTerm {
+    /// `G`'s reconstruction law: output ring `row` is `Σ_p radix^p·x[range]`
+    /// over its planes `(row, radix^p, range)`, plane `p` of row `row` being
+    /// the `d` native coefficients of `s` at `input.start + (row·levels +
+    /// p)·d`. [`RingLinearMap::apply`], its adjoint and its factored form
+    /// all read `G` here.
+    fn planes<F: Field>(&self, d: usize) -> Vec<(usize, F, Range<usize>)> {
+        let radix = F::from_u64(1 << self.log_basis);
+        let rows = self.input.len() / (self.levels * d).max(1);
+        let mut out = Vec::with_capacity(rows * self.levels);
+        for row in 0..rows {
+            let mut power = F::one();
+            for plane in 0..self.levels {
+                let start = self.input.start + (row * self.levels + plane) * d;
+                out.push((row, power, start..start + d));
+                power *= radix;
+            }
+        }
+        out
+    }
+}
+
 /// One block `M·x[input] − G(x[gadget]) = target`.
 pub(crate) struct LinearBlock<F: Field, const D: usize> {
     pub matrix: Arc<PreparedMatrix<F, D>>,
     /// Native coefficient range of `s`, `matrix.width · D` long.
     pub input: Range<usize>,
     pub gadget: Option<GadgetTerm>,
-    pub target: Vec<CyclotomicRing<F, D>>,
+    pub target: BlockTarget<F, D>,
 }
 
 /// `N` and its targets `t`.
@@ -69,7 +104,13 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         for block in &blocks {
             let shape = block.matrix.shape();
             let columns = block.input.len();
-            let rows_ok = block.target.len() == shape.rows;
+            let rows_ok = match &block.target {
+                BlockTarget::Public(image)
+                | BlockTarget::Compressed {
+                    image: Some(image), ..
+                } => image.len() == shape.rows,
+                BlockTarget::Compressed { image: None, .. } => true,
+            };
             let width_ok = columns == shape.width * D;
             let gadget_ok = block.gadget.as_ref().is_none_or(|gadget| {
                 gadget.input.len() == shape.rows * gadget.levels * D
@@ -86,7 +127,10 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
 
     /// Number of output ring elements of `N`.
     pub fn num_outputs(&self) -> usize {
-        self.blocks.iter().map(|block| block.target.len()).sum()
+        self.blocks
+            .iter()
+            .map(|block| block.matrix.shape().rows)
+            .sum()
     }
 
     /// `N·x` for centered coefficients `x` laid out like `s`, each at most
@@ -111,17 +155,15 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
                 ))?;
             let mut rows = SecretVec::from(block.matrix.apply_centered(input, bound)?);
             if let Some(gadget) = &block.gadget {
-                let digits = x
-                    .get(gadget.input.clone())
-                    .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
-                let radix = F::from_u64(1 << gadget.log_basis);
-                for (row, planes) in rows.iter_mut().zip(digits.chunks_exact(gadget.levels * D)) {
-                    let mut power = F::one();
-                    for plane in planes.chunks_exact(D) {
-                        for (dst, &value) in row.coefficients_mut().iter_mut().zip(plane) {
-                            *dst -= lift_ct::<F>(value) * power;
-                        }
-                        power *= radix;
+                for (row, power, range) in gadget.planes::<F>(D) {
+                    let plane = x
+                        .get(range)
+                        .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
+                    let row = rows.get_mut(row).ok_or(WhiteoutError::InvalidRelation(
+                        "gadget rows differ from M's",
+                    ))?;
+                    for (dst, &value) in row.coefficients_mut().iter_mut().zip(plane) {
+                        *dst -= lift_ct::<F>(value) * power;
                     }
                 }
             }
@@ -135,9 +177,83 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         Ok(out)
     }
 
-    /// The targets `t`, block by block.
-    pub fn targets(&self) -> impl Iterator<Item = &CyclotomicRing<F, D>> {
-        self.blocks.iter().flat_map(|block| block.target.iter())
+    /// Adds to `out` (laid out like `s`) the weights of `⟨ω, N·x⟩` for output
+    /// weights `weights`, `D` per output ring in [`Self::apply`]'s order.
+    pub fn adjoint(&self, weights: &[F], out: &mut [F]) -> Result<(), WhiteoutError> {
+        if weights.len() != self.num_outputs() * D {
+            return Err(WhiteoutError::InvalidRelation(
+                "linear weights differ from N's outputs",
+            ));
+        }
+        let mut rest = weights;
+        for block in &self.blocks {
+            let (block_weights, tail) = rest.split_at(block.matrix.shape().rows * D);
+            rest = tail;
+            let rows: Vec<CyclotomicRing<F, D>> = block_weights
+                .chunks_exact(D)
+                .map(CyclotomicRing::from_slice)
+                .collect();
+            matrix_adjoint(&block.matrix, &rows, block.input.clone(), out)?;
+            if let Some(gadget) = &block.gadget {
+                for (row, power, range) in gadget.planes::<F>(D) {
+                    let row = rows.get(row).ok_or(WhiteoutError::InvalidRelation(
+                        "gadget rows differ from M's",
+                    ))?;
+                    let plane = out
+                        .get_mut(range)
+                        .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
+                    for (dst, weight) in plane.iter_mut().zip(row.coefficients()) {
+                        *dst -= *weight * power;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `N·x` for `x` laid out like `s` whose native element `E` is
+    /// `scales[E]·lo`: a column combination and one ring product per row,
+    /// with no product per matrix entry.
+    pub fn apply_factored(
+        &self,
+        scales: &[F],
+        lo: &CyclotomicRing<F, D>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
+        let mut out = Vec::with_capacity(self.num_outputs());
+        for block in &self.blocks {
+            let columns = scales
+                .get(block.input.start / D..block.input.end / D)
+                .ok_or(WhiteoutError::InvalidRelation(
+                    "linear block reads outside s",
+                ))?;
+            let mut rows: Vec<CyclotomicRing<F, D>> = block
+                .matrix
+                .combine_columns(columns)?
+                .into_iter()
+                .map(|row| row * *lo)
+                .collect();
+            if let Some(gadget) = &block.gadget {
+                // Each plane is one native element: `scale·lo`.
+                for (row, power, range) in gadget.planes::<F>(D) {
+                    let scale = scales
+                        .get(range.start / D)
+                        .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
+                    let row = rows.get_mut(row).ok_or(WhiteoutError::InvalidRelation(
+                        "gadget rows differ from M's",
+                    ))?;
+                    *row -= lo.scale(&(*scale * power));
+                }
+            }
+            out.extend(rows);
+        }
+        Ok(out)
+    }
+
+    /// Each block's output count and target, in block order.
+    pub fn targets(&self) -> impl Iterator<Item = (usize, &BlockTarget<F, D>)> {
+        self.blocks
+            .iter()
+            .map(|block| (block.matrix.shape().rows, &block.target))
     }
 }
 
@@ -166,14 +282,76 @@ impl<F: Field + CanonicalEncoding, const D: usize> LRow<F, D> {
         let [row] = &*rows else {
             return Err(WhiteoutError::InvalidRelation("L is not one row"));
         };
-        let stride = D / CHALLENGE_RING_DIM;
-        let component = SecretVec::from(
-            row.coefficients()
-                .iter()
-                .step_by(stride.max(1))
-                .copied()
-                .collect::<Vec<F>>(),
-        );
-        Ok(CyclotomicRing::from_slice(&component))
+        Ok(stride_component(row))
     }
+
+    /// `L·x` for `x` factored as in [`RingLinearMap::apply_factored`].
+    pub fn apply_factored(
+        &self,
+        scales: &[F],
+        lo: &CyclotomicRing<F, D>,
+    ) -> Result<CyclotomicRing<F, CHALLENGE_RING_DIM>, WhiteoutError> {
+        let columns = scales
+            .get(self.input.start / D..self.input.end / D)
+            .ok_or(WhiteoutError::InvalidRelation("L reads outside s"))?;
+        let [row] = <[CyclotomicRing<F, D>; 1]>::try_from(self.matrix.combine_columns(columns)?)
+            .map_err(|_| WhiteoutError::InvalidRelation("L is not one row"))?;
+        Ok(stride_component(&(row * *lo)))
+    }
+
+    /// Adds to `out` (laid out like `s`) the weights of `⟨ω, L·x⟩`.
+    pub fn adjoint(
+        &self,
+        weight: &CyclotomicRing<F, CHALLENGE_RING_DIM>,
+        out: &mut [F],
+    ) -> Result<(), WhiteoutError> {
+        let stride = (D / CHALLENGE_RING_DIM).max(1);
+        let mut native = CyclotomicRing::<F, D>::zero();
+        for (dst, w) in native
+            .coefficients_mut()
+            .iter_mut()
+            .step_by(stride)
+            .zip(weight.coefficients())
+        {
+            *dst = *w;
+        }
+        matrix_adjoint(&self.matrix, &[native], self.input.clone(), out)
+    }
+}
+
+/// Stride component 0 of a native element: `π_0`.
+fn stride_component<F: Field, const D: usize>(
+    row: &CyclotomicRing<F, D>,
+) -> CyclotomicRing<F, CHALLENGE_RING_DIM> {
+    let mut out = CyclotomicRing::zero();
+    for (dst, value) in out.coefficients_mut().iter_mut().zip(
+        row.coefficients()
+            .iter()
+            .step_by((D / CHALLENGE_RING_DIM).max(1)),
+    ) {
+        *dst = *value;
+    }
+    out
+}
+
+/// Adds to `out[input]` the weights of `⟨ω, M·x[input]⟩`, `ω` one ring per
+/// row: column `j` takes `σ(Σ_r σ(ω_r)·M[r][j])`, since
+/// `⟨ω, m·x⟩ = ct(σ(ω)·m·x)`.
+fn matrix_adjoint<F: Field + CanonicalEncoding, const D: usize>(
+    matrix: &PreparedMatrix<F, D>,
+    weights: &[CyclotomicRing<F, D>],
+    input: Range<usize>,
+    out: &mut [F],
+) -> Result<(), WhiteoutError> {
+    let sigma: Vec<CyclotomicRing<F, D>> = weights.iter().map(CyclotomicRing::sigma_m1).collect();
+    let columns = matrix.apply_transposed(&sigma)?;
+    let targets = out
+        .get_mut(input)
+        .ok_or(WhiteoutError::InvalidRelation("matrix reads outside s"))?;
+    for (column, dst) in columns.iter().zip(targets.chunks_exact_mut(D)) {
+        for (dst, w) in dst.iter_mut().zip(column.sigma_m1().coefficients()) {
+            *dst += *w;
+        }
+    }
+    Ok(())
 }
