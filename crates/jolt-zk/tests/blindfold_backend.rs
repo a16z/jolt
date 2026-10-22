@@ -19,8 +19,8 @@ use jolt_transcript::{
 use jolt_zk::blindfold::{BlindFold, BlindFoldResidualWitness};
 use jolt_zk::masking::{
     lower_factored, sumcheck_rows, AffineRow, CommittedPadsView, MaskingRecorder,
-    OperandShapeDomain, PadIndex, PadLayout, ResidualRelation, ResidualVar, RoundFormat,
-    RowsDomain, ValuesDomain, ZkBackend, ZkError,
+    OperandShapeDomain, PadIndex, PadLayout, ProductOperand, ResidualRelation, ResidualVar,
+    RoundFormat, RowsDomain, ValuesDomain, ZkBackend, ZkError,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -42,8 +42,19 @@ fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
+/// `a·b`, as `3·a·b − 2·a·b + (a + b)·(a − b) − a·a + b·b`: five terms whose
+/// products land on one five-pair row, which BlindFold lowers with four
+/// intermediates. Under BlindFold's affine operands, `(a + b)` is an operand
+/// with no defining slot.
 fn product() -> FactoredExpr<Fr, Opening, (), ()> {
-    FactoredExpr::product(vec![opening(Opening::A), opening(Opening::B)])
+    let a = || opening(Opening::A);
+    let b = || opening(Opening::B);
+    let ab = || FactoredExpr::product(vec![a(), b()]);
+    ab().scale(fr(3))
+        + ab().scale(-fr(2))
+        + FactoredExpr::product(vec![a() + b(), a() - b()])
+        + FactoredExpr::product(vec![a(), a()]).scale(-fr(1))
+        + FactoredExpr::product(vec![b(), b()])
 }
 
 fn setup() -> PedersenSetup<Bn254G1> {
@@ -54,13 +65,15 @@ fn setup() -> PedersenSetup<Bn254G1> {
 
 fn layout() -> PadLayout {
     let base = NUM_VARS * DEGREE + 2;
-    let mut shape = OperandShapeDomain::new(base);
-    let _ = lower_factored(
+    let mut shape = OperandShapeDomain::new(base).with_operands(Backend::OPERANDS);
+    lower_factored(
         &product(),
         &mut shape,
         &mut |id| Ok(Some(PadIndex(base - 2 + *id as usize))),
         &mut |_| Ok(fr(0)),
     )
+    .unwrap()
+    .check_equals::<Fr, _>(None, &mut shape)
     .unwrap();
     shape.layout().unwrap()
 }
@@ -120,7 +133,7 @@ fn residual(
     .unwrap();
     let a = AffineRow::masked(claims[0], PadIndex(slots.start));
     let b = AffineRow::masked(claims[1], PadIndex(slots.start + 1));
-    let mut rows = RowsDomain::new(&mut relation, &auxiliary);
+    let mut rows = RowsDomain::new(&mut relation, &auxiliary).with_operands(Backend::OPERANDS);
     let output = lower_factored(
         &product(),
         &mut rows,
@@ -133,8 +146,12 @@ fn residual(
         &mut |_: &Source<Opening, (), ()>| -> Result<Fr, ZkError> { unreachable!() },
     )
     .unwrap();
+    output.check_equals(running, &mut rows).unwrap();
     rows.finish().unwrap();
-    relation.affine.push(running.add_scaled(&output, -fr(1)));
+    let pairs: Vec<_> = relation.products[0].pairs().collect();
+    assert_eq!(pairs.len(), 5);
+    assert!(matches!(pairs[2].x, ProductOperand::Affine(_)));
+    assert!(view.layout().auxiliary.is_empty());
     relation.affine.push(
         AffineRow::variable(ResidualVar::Witness(0))
             .add_scaled(&a, -fr(1))
@@ -161,7 +178,7 @@ fn prove(y_offset: Fr) -> Result<Vec<u8>, ZkError> {
         b = fold(&b, r);
     }
     recorder.finish(&[a[0], b[0]], &mut transcript).unwrap();
-    let mut values = ValuesDomain::default();
+    let mut values = ValuesDomain::with_operands(Backend::OPERANDS);
     let _ = lower_factored(
         &product(),
         &mut values,

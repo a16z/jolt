@@ -29,7 +29,7 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 /// [`SampleError::ShiftOutOfRange`] concerns public parameters or shapes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SampleError {
-    /// A Gaussian width multiplier outside `[1, 2^31]`, or a requested width
+    /// A Gaussian width multiplier outside `[1, 2^58]`, or a requested width
     /// that is not a positive finite number.
     WidthOutOfRange,
     /// A rejection rule with no Gaussian-masked block.

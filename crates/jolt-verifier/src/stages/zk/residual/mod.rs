@@ -7,9 +7,10 @@
 //! - each stage's sumcheck rounds reduce its batched input claim to a running
 //!   claim, an affine form in the pads ([`sumcheck_rows`]; uni-skip rounds
 //!   add their explicit round-sum row);
-//! - one row equates that running claim with the batched output claim;
+//! - one row equates that running claim with the batched output claim; each
+//!   output term's last product lands in that row as one of its pairs;
 //! - claim formulas come from `jolt-claims` in factored form and lower through
-//!   [`lower_factored`], one auxiliary slot per intermediate product;
+//!   [`lower_factored`], one auxiliary slot per other intermediate product;
 //! - runtime claim aliases, which a masked proof sends, become equality rows.
 //!
 //! Each stage file computes the stage's public values (eq/lt evaluations,
@@ -86,8 +87,9 @@ use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDomainSpec};
 use jolt_transcript::ClaimDomain;
 use jolt_zk::masking::{
-    lower_factored, sumcheck_rows, AffineRow, MaskedOperand, OperandShapeDomain, PadLayout,
-    ResidualRelation, ResidualRows, RoundFormat, RowsDomain, ValuesDomain, ZkError,
+    lower_factored, sumcheck_rows, AffineRow, LoweringDomain, MaskedOperand, OperandRule,
+    OperandShapeDomain, PadLayout, ProductSum, ResidualRelation, ResidualRows, RoundFormat,
+    RowsDomain, ValuesDomain, ZkError,
 };
 use std::collections::BTreeMap;
 
@@ -195,6 +197,9 @@ where
     pub stage6a: &'a Stage6aZkOutput<PCS::Field>,
     pub stage6b: &'a Stage6bZkOutput<PCS::Field>,
     pub stage7: &'a Stage7ZkOutput<PCS::Field>,
+    /// The back end's operand rule, which every lowering of the relation
+    /// allocates its slots by.
+    pub operands: OperandRule,
 }
 
 /// One batch member: its round count and its factored input and output
@@ -251,6 +256,7 @@ pub struct JoltResidual<F: JoltField> {
     aliases: BTreeMap<ComposedOpeningId, ComposedOpeningId>,
     equalities: Vec<(ComposedOpeningId, ComposedOpeningId)>,
     publics: SourceValues<F>,
+    operands: OperandRule,
 }
 
 impl<F: JoltField> JoltResidual<F> {
@@ -283,6 +289,7 @@ impl<F: JoltField> JoltResidual<F> {
             aliases: builder.aliases,
             equalities: builder.equalities,
             publics: values,
+            operands: input.operands,
         })
     }
 
@@ -315,8 +322,8 @@ impl<F: JoltField> JoltResidual<F> {
     ///
     /// [`VerifierError`] if a formula does not lower.
     pub fn pad_layout(&self, base: usize) -> Result<PadLayout, VerifierError> {
-        let mut shape = OperandShapeDomain::new(base);
-        let _ = self.lower_claims(&mut shape, &mut |id| {
+        let mut shape = OperandShapeDomain::new(base).with_operands(self.operands);
+        let claims = self.lower_claims(&mut shape, &mut |id| {
             Ok(Some(
                 self.opening(id)
                     .map_err(|_| ZkError::InvalidRelation {
@@ -325,6 +332,7 @@ impl<F: JoltField> JoltResidual<F> {
                     .pad,
             ))
         })?;
+        self.check_stages(&mut shape, claims, |_, _, input| Ok(input))?;
         Ok(shape.layout()?)
     }
 
@@ -338,7 +346,7 @@ impl<F: JoltField> JoltResidual<F> {
         &self,
         decode: impl Fn(MaskedOperand<F>) -> Result<F, ZkError>,
     ) -> Result<Vec<F>, VerifierError> {
-        let mut values = ValuesDomain::default();
+        let mut values = ValuesDomain::with_operands(self.operands);
         let _ = self.lower_claims(&mut values, &mut |id| {
             decode(self.opening(id).map_err(|_| ZkError::InvalidRelation {
                 reason: "a claim formula names an opening no stage received",
@@ -358,7 +366,7 @@ impl<F: JoltField> JoltResidual<F> {
     /// Each stage's batched input and output claims, in one fixed order
     /// (stage by stage; inputs, then outputs, member by member) so every
     /// domain allocates the same auxiliary slots.
-    fn lower_claims<D: ClaimDomain<F, Error = ZkError>>(
+    fn lower_claims<D: LoweringDomain<F, Error = ZkError>>(
         &self,
         domain: &mut D,
         opening: &mut impl FnMut(&ComposedOpeningId) -> Result<D::Value, ZkError>,
@@ -383,27 +391,45 @@ impl<F: JoltField> JoltResidual<F> {
                         stage.name, member.rounds
                     ))
                 })?;
-                let value = lower_factored(&member.input, domain, opening, &mut public)?;
+                let value = lower_factored(&member.input, domain, opening, &mut public)?
+                    .into_value(domain)?;
                 input = domain.add(
                     &input,
                     &domain.scale(&value, member.coefficient * F::pow2(extra)),
                 );
             }
-            let mut output = domain.constant(F::zero());
+            let mut output = ProductSum::zero(domain);
             for member in &stage.members {
                 let value = lower_factored(&member.output, domain, opening, &mut public)?;
-                output = domain.add(&output, &domain.scale(&value, member.coefficient));
+                output = output.add(value.scale(member.coefficient, domain), domain);
             }
             claims.push(StageClaims { input, output });
         }
         Ok(claims)
+    }
+
+    /// Each stage's check, running claim = batched output: one row whose
+    /// pairs are the output terms' last products. `running` reduces a
+    /// stage's input claim to its running claim. The pad layout and the rows
+    /// both state the checks here, so the operand pads they record agree.
+    fn check_stages<D: ClaimDomain<F, Error = ZkError>>(
+        &self,
+        domain: &mut D,
+        claims: Vec<StageClaims<D::Value>>,
+        mut running: impl FnMut(&mut D, &Stage<F>, D::Value) -> Result<D::Value, ZkError>,
+    ) -> Result<(), VerifierError> {
+        for (stage, StageClaims { input, output }) in self.stages.iter().zip(claims) {
+            let running = running(domain, stage, input)?;
+            output.check_equals(running, domain)?;
+        }
+        Ok(())
     }
 }
 
 /// One stage's batched input and output claims in a lowering domain.
 struct StageClaims<V> {
     input: V,
-    output: V,
+    output: ProductSum<V>,
 }
 
 /// [`JoltResidual`]'s rows over a received auxiliary block.
@@ -417,7 +443,8 @@ impl<F: JoltField> ResidualRows<F> for JoltResidualRows<'_, F> {
 
     fn append_rows(&self, relation: &mut ResidualRelation<F>) -> Result<(), VerifierError> {
         let residual = self.residual;
-        let mut rows = RowsDomain::new(relation, self.masked_auxiliary);
+        let mut rows =
+            RowsDomain::new(relation, self.masked_auxiliary).with_operands(residual.operands);
         let claims = residual.lower_claims(&mut rows, &mut |id| {
             residual
                 .opening_form(id)
@@ -426,16 +453,15 @@ impl<F: JoltField> ResidualRows<F> for JoltResidualRows<'_, F> {
                 })
         })?;
         rows.finish()?;
-        for (stage, StageClaims { input, output }) in residual.stages.iter().zip(claims) {
-            let running = sumcheck_rows(
+        residual.check_stages(&mut rows, claims, |rows, stage, input| {
+            sumcheck_rows(
                 rows.relation(),
                 input,
                 &stage.rounds,
                 &stage.degrees,
                 &stage.format,
-            )?;
-            rows.check_zero(running.add_scaled(&output, -F::one()))?;
-        }
+            )
+        })?;
         for (cell, source) in &residual.equalities {
             rows.check_zero(
                 residual

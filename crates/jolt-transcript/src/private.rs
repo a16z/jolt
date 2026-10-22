@@ -157,16 +157,34 @@ pub trait ClaimDomain<F> {
 
     /// The check `x · y = target`, with no new slot: the product lands on an
     /// existing value, such as a sumcheck's running claim. `x` is as for
-    /// [`product`](Self::product).
+    /// [`product`](Self::product). One pair of
+    /// [`products_into`](Self::products_into).
     ///
     /// # Errors
     ///
-    /// The domain's error if the check fails where it is evaluated, or `x`
-    /// is not a single slot.
+    /// As [`products_into`](Self::products_into).
     fn product_into(
         &mut self,
         x: Self::Value,
         y: Self::Value,
+        target: Self::Value,
+    ) -> Result<(), Self::Error> {
+        self.products_into((x, y), Vec::new(), target)
+    }
+
+    /// The check `Σ_k x_k · y_k = target` over the pairs `first` and
+    /// `rest`, with no new slot: several products land on one existing
+    /// value, such as a stage's running claim. Each `x_k` is as for
+    /// [`product`](Self::product).
+    ///
+    /// # Errors
+    ///
+    /// The domain's error if the check fails where it is evaluated or an
+    /// `x_k` is not a single slot.
+    fn products_into(
+        &mut self,
+        first: (Self::Value, Self::Value),
+        rest: Vec<(Self::Value, Self::Value)>,
         target: Self::Value,
     ) -> Result<(), Self::Error>;
 
@@ -212,8 +230,16 @@ impl<F: Field> ClaimDomain<F> for ClearDomain {
         Ok(x * y)
     }
 
-    fn product_into(&mut self, x: F, y: F, target: F) -> Result<(), ClaimMismatch> {
-        self.check_zero(x * y - target)
+    fn products_into(
+        &mut self,
+        first: (F, F),
+        rest: Vec<(F, F)>,
+        target: F,
+    ) -> Result<(), ClaimMismatch> {
+        let sum = rest
+            .iter()
+            .fold(first.0 * first.1, |sum, (x, y)| sum + *x * *y);
+        self.check_zero(sum - target)
     }
 
     fn check_zero(&mut self, value: F) -> Result<(), ClaimMismatch> {

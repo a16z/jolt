@@ -125,12 +125,85 @@ impl<F: Field> MaskedOperand<F> {
     }
 }
 
-/// x · y = z.
+/// What a back end accepts as a product's operand `x`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OperandRule {
+    /// A single masked slot, whose pad a lattice back end commits as a
+    /// constant digit polynomial (Whiteout §3.2). A product with no
+    /// single-opening factor first gives one factor a defining slot.
+    #[default]
+    MaskedSlot,
+    /// Any affine form: an R1CS constraint's A side is a linear combination,
+    /// so a curve back end needs no defining slot.
+    Affine,
+}
+
+/// A product's operand `x`: a single masked slot, or, under
+/// [`OperandRule::Affine`], an affine form that is not one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProductOperand<F> {
+    Masked(MaskedOperand<F>),
+    Affine(AffineRow<F>),
+}
+
+impl<F: Field> ProductOperand<F> {
+    pub fn form(&self) -> AffineRow<F> {
+        match self {
+            Self::Masked(operand) => operand.form(),
+            Self::Affine(form) => form.clone(),
+        }
+    }
+}
+
+impl<F: Copy> ProductOperand<F> {
+    /// The operand as a single masked slot, if it is one.
+    pub fn masked(&self) -> Option<MaskedOperand<F>> {
+        match self {
+            Self::Masked(operand) => Some(*operand),
+            Self::Affine(_) => None,
+        }
+    }
+}
+
+/// One product `x · y` of a [`ProductRow`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductPair<F> {
+    pub x: ProductOperand<F>,
+    pub y: AffineRow<F>,
+}
+
+/// `Σ_k x_k · y_k = z` over the pairs `first` and `rest`, so a row has at
+/// least one pair. With one pair it is the paper's `x · y = z`; several pairs
+/// land several products on one claim, such as a stage's running claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProductRow<F> {
-    pub x: MaskedOperand<F>,
-    pub y: AffineRow<F>,
+    pub first: ProductPair<F>,
+    pub rest: Vec<ProductPair<F>>,
     pub z: AffineRow<F>,
+}
+
+impl<F> ProductRow<F> {
+    /// Every pair, `first` then `rest`.
+    pub fn pairs(&self) -> impl Iterator<Item = &ProductPair<F>> {
+        std::iter::once(&self.first).chain(&self.rest)
+    }
+}
+
+impl<F: Field> ProductRow<F> {
+    /// `Σ_k x_k · y_k − z` under an assignment.
+    ///
+    /// # Errors
+    ///
+    /// As [`ResidualVar::value`].
+    pub fn evaluate(&self, pads: &[F], witness: &[F]) -> Result<F, ZkError> {
+        self.pairs()
+            .try_fold(-self.z.evaluate(pads, witness)?, |sum, pair| {
+                Ok(
+                    sum + pair.x.form().evaluate(pads, witness)?
+                        * pair.y.evaluate(pads, witness)?,
+                )
+            })
+    }
 }
 
 /// The rows a masked transcript must satisfy. Rows are never dropped: one
@@ -178,10 +251,7 @@ impl<F: Field> ResidualRelation<F> {
         for (index, row) in self.rows().enumerate() {
             let satisfied = match row {
                 Row::Affine(row) => row.evaluate(pads, witness)?.is_zero(),
-                Row::Product(row) => {
-                    row.x.form().evaluate(pads, witness)? * row.y.evaluate(pads, witness)?
-                        == row.z.evaluate(pads, witness)?
-                }
+                Row::Product(row) => row.evaluate(pads, witness)?.is_zero(),
             };
             if !satisfied {
                 return Ok(Some(index));

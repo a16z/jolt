@@ -369,6 +369,7 @@ impl<F: JoltField> StageOutputs<F> {
             stage6a: self.stage6a.zk()?,
             stage6b: self.stage6b.zk()?,
             stage7: self.stage7.zk()?,
+            operands: BlindFold::<VC>::OPERANDS,
         })
     }
 }

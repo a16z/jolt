@@ -1,0 +1,1089 @@
+# Whiteout paper deltas
+
+| Field   | Value |
+| ------- | ----- |
+| Status  | living log; append new entries at the end, keep the summary table in sync |
+| Created | 2026-10-21 |
+| Siblings | `specs/whiteout-sigma.md` (W4, A1–A23), `specs/whiteout-masking.md` (M6b/M6c), `specs/whiteout-interfaces.md`, `specs/whiteout-gaussian.md` (M5a), `specs/whiteout-jolt-integration.md` (W6), Akita `specs/whiteout-akita.md` (RP4, A24–A30, Q1–Q6) |
+
+Every place where the implementation departs from the Whiteout paper, extends
+it, or fixes a parameter the paper leaves open. Each entry states the argument,
+so the authors can fold it into the paper.
+
+**Pins.**
+
+- Paper: `akita-paper/sections/whiteout/*.tex` as read on 2026-10-21. Paper
+  references are `file:line` relative to that directory.
+- jolt: `whiteout/dev` at `2cc2502ed`. Paths are written `jolt:`.
+- Akita: `whiteout/dev` at `fe57e2446`, written `akita:`. The W2 branch
+  `wo/akita-w2` at `68c76dbd0` is written `akita-w2:`.
+- Indexing: the paper's fold j is Akita level j − 1. The paper's k = 2 is
+  `cut_level = 1`.
+
+**Evidence labels.**
+
+- *Verified*: read in the code or a committed spec at the pins above.
+- *Reported*: a figure from a test run or review that this log could not
+  reproduce. No cargo was run for this log.
+- *Draft*: uncommitted work on a branch.
+
+## Summary
+
+| # | Delta | Kind | Status |
+|---|---|---|---|
+| D1 | Σ attempt runs in constant time: DIT on M4, masked challenge sampler, `Fork::attempt` | extension (outside the paper's model) | implemented |
+| D2 | Σ near-zero rejection: σ grows so one attempt almost always accepts | parameter change | in progress (`wo/sigma-norej`) |
+| D3 | One-shot fold responses sized to 2^−136 in total, not "one extra digit, 2^−950" | parameter change, fix | implemented on `wo/akita-w2` |
+| D4 | Hiding randomness: sizing owner, open alphabet, cut before the terminal, trusted catalogs reject it | clarification, extension | implemented |
+| D5 | The cut is k = 2 only (`cut_level = 1`, `masked_folds = 2`) | parameter fixed | implemented |
+| D6 | Per-round degree schedule for batched sumchecks | extension | implemented |
+| D7 | Shared stage checks over `ClaimDomain`; stage-2 row has no constant term; Q3 answered | clarification | implemented |
+| D8 | BlindFold stays curve-based, over pads committed up front | alternative back end | implemented |
+| D9 | Images u_a, t_p, t_D sent raw until W5c; compression in RP4 | temporary departure | in progress |
+| D10 | Akita #255: public retry of the fold-response nonce at operator-norm masked levels (Lemmas 2.5a/2.5b) | extension, fix (Q7) | argued, under independent review; implementation at the port |
+| D11 | Uni-skip rounds send every coefficient plus an explicit sum row | departure | implemented |
+| D12 | One auxiliary slot per intermediate product; auxiliary block after the base protocol | departure | implemented |
+| D13 | Σ oracle input is (σ, t_D, n) with σ a squeeze of τ; full transcript order | clarification | implemented |
+| D14 | Gaussian widths by closed form; 7 digits on every block; randomness rounded to R_256 | parameter change | implemented |
+| D15 | Measured Gaussian sample cost is about 40× the paper's 10 ns | evaluation input | measured |
+| D16 | Sampler precision term 2^−149; CSPRNG coins | parameter left open | implemented |
+| D17 | Σ challenge budget exhaustion is fatal; ⊥ after T_att is an error the caller may rerun | clarification | implemented |
+| D18 | Masked-level structural constraints (Linf route, E = F, one chunk, d_A = d_B) | clarification | implemented / specified |
+| D19 | Headline fold shapes: level 1 uses d = 512 challenges (η² = 19), not d = 64 (η² = 71) | evaluation input | verified in tests, unexplained |
+| D20 | Setup offloading of the response root is conditional (W5b) | evaluation config | proposed |
+| D21 | Open author questions Q1, Q2 (A7, A8, A9, A14), Q4, Q6, Q7, W6-Q5 | open | open |
+| D22 | Q7: the 1/p clause of Lemma `wo:lem:fold-overflow` holds only for the whole challenge tuple | paper fix | open (authors) |
+| D23 | Bounded rerun (≤ 3 runs) on FoldOverflow or exhausted Σ attempts, where the paper aborts | departure | specified (W6) |
+| D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | open; W6 rejects them under ZK |
+| D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
+| D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
+
+## D1. Constant-time Σ attempt
+
+**Paper says.** Timing is outside the model. H2 requires that the oracle
+answers at rejected inputs are never observed (`05_security.tex:352-362`), and
+the attempt nonce is "a uniform ν-bit nonce in a separate domain of the
+oracle" (`05_security.tex:314-317`). No implementation rule is given.
+
+**Implementation.**
+
+- **Rule** (jolt `specs/whiteout-sigma.md` §2.8). Every step before an
+  attempt's accept bit runs in time and with memory addresses independent of
+  the attempt's fresh secrets (y, n, c and their derivatives).
+- **DIT on Apple M4.** dudect found `CyclotomicCrtNtt::to_ring_ct` leaking a
+  zero output without DIT (|t| up to 190 at D = 256), although the code and its
+  asm are branch-free. With PSTATE.DIT set on every worker thread the leak is
+  gone (|t| ≤ 2.0); a positive control with DIT cleared fails at |t| = 9.8.
+  - `jolt:crates/jolt-dit/src/lib.rs:33` (`DitGuard`), `:78` (`install`, one
+    rayon pool whose workers hold the guard).
+  - `jolt:crates/jolt-zk/src/whiteout/sigma.rs:471,503` and
+    `pad_commitment.rs:180` run `prove_sigma` and the pad commitment inside it.
+  - Record and residual analysis: `whiteout-sigma.md` §2.8 and A11. The early
+    residual under DIT was the dudect harness's allocation pattern, not the
+    arithmetic.
+- **Masked challenge sampler.**
+  `jolt:crates/jolt-crypto/src/challenge/sampler/constant_time.rs:45`
+  (`sample_challenge_ct`). It is byte-identical to the verifier's sampler. It
+  replaces Fisher–Yates swaps at secret indices with full masked scans, builds
+  the dense challenge by a masked scatter, and always runs the exact certified
+  operator-norm evaluation.
+- **`Fork::attempt`.** `jolt:crates/jolt-transcript/src/fork.rs:18,70`. It is
+  a fresh sponge that absorbs the tag `jolt-transcript/fork/attempt/v1`, then σ,
+  then a 32-byte nonce drawn from the prover's RNG. It never uses a counter
+  and records no transcript event.
+
+**Why.** A rejected attempt's (y, c, z, V, t_D) is correlated with the witness
+through the rejection event. A timing leak of any of them defeats H2 exactly as
+an observed oracle answer would.
+
+**Argument / security impact.** No change to Theorem `wo:thm:zk`. The
+constant-time rule is what makes H2's "never observed" hold against a timing
+adversary. The tag makes the attempt queries a domain of the oracle disjoint
+from the challenge queries and from Akita's grinding forks, which are keyed by
+a `u32` counter. A counter would not do: H2 needs the nonce uniform and secret
+until it is published.
+
+**Status.** Implemented (W4, A11). Still open: the NEON/AVX NTT kernels were
+not audited line by line; Intel DOITM is out of scope; whether DIT disables the
+data-memory-dependent prefetcher on M4 is not checked (`whiteout-sigma.md` A11,
+"DMP").
+
+**For the paper.** Add a remark after Theorem `wo:thm:zk` that H2 assumes
+the rejected attempts leave no timing trace. State the requirement that this
+places on implementations: constant-time sampling, mask arithmetic and
+challenge derivation, and DIT or DOITM where the core's multiply/add timing
+depends on its operands. Optionally cite the M4 measurement.
+
+## D2. Σ near-zero rejection (placeholder)
+
+**Paper says.** α = 16, ε = 2^−137, M ≈ 2.37, p_𝓑 ≥ 0.999, seven radix-16
+digits, T_att = 163, about 2.37 attempts (`02_preliminaries.tex:272`,
+`06_evaluation.tex:93-107`).
+
+**Implementation.** Reviewer steering (2026-10-21, recorded in jolt
+`specs/shared-primitive-layer.md`, commit `2cc2502ed`): σ grows so that one
+attempt almost always accepts. This replaces the planned parallel Gaussian
+sampler as the answer to the prover-time gap (D15). The attempt loop, the
+nonce and the constant-time rule stay (D1). Rejected attempts still occur, and
+an accepted attempt's y = z − c·s would reveal s.
+
+**Numbers: TBD from `wo/sigma-norej`.** *Draft*, uncommitted on that branch
+(`specs/whiteout-sigma.md` §5.1), not yet reviewed:
+
+- default D = 10 digits, α = 2^17, p_𝓑 ≥ 1 − 2^−20;
+- per-attempt rejection ≤ 2^−13.2, T_att = 10;
+- one common width in place of per-block widths;
+- ranks 5 / 5 / 5 over R_256;
+- e ≈ 90M cells (2^27), proof +9.66 KB, verifier scans +23%.
+
+None of these numbers should go into the paper until that branch lands.
+
+**Why.** It gives a predictable prover time of one attempt and removes the
+need for a parallel sampler.
+
+**Argument / security impact.** Theorem `wo:thm:zk` is unchanged in form; only
+T_att, M and the box move. The precondition ‖cs‖_σ ≤ 1/α still holds at the
+larger width. Binding radii grow with the digit count, so the ranks grow.
+
+**Status.** In progress.
+
+**For the paper.** Pending. The likely change is §6.2's α, widths, box, digits,
+T_att, the ranks of §6.2 "Commitment ranks", and Table `wo:tab:overheads`.
+
+## D3. One-shot fold responses at levels ≤ cut (W2)
+
+**Paper says.** Fold responses are sized so an honest response overflows with
+probability ≤ 2^−λ, and the prover aborts on overflow
+(`04_protocol.tex:97-104`). Lemma `wo:lem:fold-overflow` gives a Hoeffding
+bound over the challenge signs with a 1/p factor for filtered families
+(`04_protocol.tex:106-131`). The evaluation adds one response digit per masked
+fold and reports δ_fold < 2^−950 per fold (`06_evaluation.tex:110,143-150`).
+2δ_fold enters Theorem `wo:thm:zk` (`05_security.tex:337,344-350`).
+
+**Implementation** (*verified* at `akita-w2:`).
+
+- **Encoding.** At each level ≤ cut, the fold-response run has
+  `nonce_bits = 0`. No nonce is sent, the challenges come from the fork at
+  counter 0, the response is probed once, and overflow returns
+  `AkitaError::FoldOverflow { level }` (Akita spec §2.2).
+- **Target.** `FoldFailureTarget::OneShot { security_bits, masked_folds }`
+  (`akita-w2:crates/akita-params/src/sis/honest_fold_policy.rs:19-29`) asks for
+  failure ≤ 2^−security_bits / masked_folds per fold. Here security_bits = 136
+  and masked_folds = cut_level + 1 = 2
+  (`akita-w2:crates/akita-params/src/zk.rs:38-52`). So δ_fold ≤ 2^−136 in total,
+  and 2δ_fold ≤ 2^−135.
+- **Balanced policy** (levels ≥ 1). The cap is the least t with
+  t² ≥ 2·(claims·blocks)·η²_max·β²·L, where
+  L = ⌈(⌈log₂ 2N⌉ + 136 + ⌈log₂ 2⌉)·71/100⌉
+  (`akita-w2:crates/akita-params/src/sis/fold_linf_cap.rs:18-19,63-87`).
+  - N counts every *physical* response coefficient: response windows × rows ×
+    ring coefficients, times the number of witness chunks.
+  - 71/100 ≥ ln 2 and ⌈log₂ x⌉ ≥ log₂ x, so L ≥ ln(2N·masked_folds·2^136) in
+    checked integer arithmetic.
+  - The test (`honest_fold_policy.rs:714-731`) checks the headline level-1 cap
+    against the tail bound with ln 2 < 6932/10000, in exact rationals.
+- **One-hot root** (level 0). The same Chernoff solve as per-attempt sizing,
+  2N·exp(m log M_X(λ) − λt) ≤ target, over the λ grid 2^−12..2^2, with the
+  target 2^−136/2 in place of 7/8 (`honest_fold_policy.rs:236-258`). Frozen
+  headline thresholds are 564 per attempt and 1,469 one-shot
+  (`honest_fold_policy.rs:733-748`).
+- **Modeled cap dropped.** The planner's modeled ∞-norm cap (1/40 per
+  attempt) is ignored for one-shot targets
+  (`akita-w2:crates/akita-planner/src/schedule_params/candidate.rs:258-262`).
+- **Admission.** `ZkOpeningSchedule::for_tests` rejects a schedule whose
+  masked level has fewer fold digits than the one-shot policy derives
+  (`akita-w2:crates/akita-params/src/zk.rs:120-153`). The test
+  `zero_knowledge_schedule_rejects_an_unsupported_cut_or_a_short_masked_level`
+  (`akita-w2:crates/akita-config/src/transcript_grinding_plan.rs:165`) removes
+  one digit at each masked level and expects rejection.
+
+**Why.**
+
+- The paper's lemma is stated per fold, and the evaluation fixes "one more
+  digit" rather than a target. The implementation fixes the target and lets
+  each policy derive the digits.
+- The modeled cap is a per-attempt bound and is never a one-shot bound.
+- The one-hot root has a tighter exact-MGF Chernoff bound than Hoeffding.
+
+**Argument / security impact.**
+
+- Per fold, the balanced bound is Lemma `wo:lem:fold-overflow` with the union
+  over physical coefficients made explicit. It covers both tails through the 2N
+  factor, using the nearer balanced end in place of L₋ + 1 and L₊ + 1, which is
+  conservative.
+- The one-hot bound is a Chernoff bound on the exact moment-generating function
+  of challenge × one-hot input. Any λ on the grid gives a valid bound, so
+  missing the minimizer only enlarges the threshold.
+- Summing over the two masked folds gives δ_fold ≤ 2^−136.
+- Total, with the paper's other terms (δ_LHL = 2^−129.2, T_att = 163,
+  ε = 2^−137, M = 2.37, ν = 256) and Q_tot = 2^100 (an assumption, see Q6):
+  2^−128.79 when δ_fold sits at its target, and 2^−128.81 at the reported
+  per-fold values. This log computed both totals by hand.
+- *Reported*, not reproducible here: the per-fold bounds at the headline row
+  `fp128_onehot_recursive final=36:1` are about 2^−193 (root) and 2^−155
+  (level 1). The test that printed them was removed by fixup `27e64882b`.
+- Correction to the caller's brief: the total is about 2^−128.8, not 2^−128.7.
+  Both computations above give −128.8.
+
+**Finding on clear catalog rows** (partly *verified*). The admission test
+needs `fp128_onehot final=16:2`, "the smallest one-hot row whose masked levels
+meet the one-shot target"
+(`akita-w2:crates/akita-pcs/tests/zk_fold_responses.rs:31-32`). Smaller clear
+rows are short at a masked level, so ZK rows must be planned with `OneShot`
+sizing; they cannot reuse clear rows. At the headline row, however, the W2-d
+test (`akita-w2:crates/akita-planner/src/test/schedule_params_candidate/zk_ranks.rs`)
+admits the clear schedule through `for_tests`. That suggests the clear headline
+digits already meet the one-shot target: at the root, both 564 and 1,469 fit
+in four balanced base-8 digits ([−2340, 1755]). The claim "clear rows are one
+digit short" is therefore *not verified for the headline*. It holds for rows
+below `final=16:2`.
+
+**Status.** Implemented on `wo/akita-w2`, not yet merged into Akita
+`whiteout/dev`. W2-d (A ranks unchanged at levels 0 and 1) is a test; it was
+not run for this log.
+
+**For the paper.**
+
+- §4.1 "Fold responses": state the target as δ_fold ≤ 2^−λ' in total, split
+  evenly over the k masked folds, and say that N counts physical response
+  coefficients.
+- Lemma `wo:lem:fold-overflow`: add the Chernoff variant for one-hot inputs,
+  or note that any valid MGF bound may replace Hoeffding.
+- §6.2 "Randomness": replace "one more digit … below 2^−950" with the
+  target-driven sizing (2^−136 in total). Note that at the headline the extra
+  digit may be unnecessary (see the finding above), and that the ZK error stays
+  about 2^−128.8.
+- The remark at `05_security.tex:438-440` (worst-case sizing removes
+  2δ_fold) stays true.
+
+## D4. Hiding randomness (W1)
+
+**Paper says.** Every commitment of the base argument gets fresh randomness
+on its outer map, one independent vector per slice. Its digits are in the
+alphabet of the witness that later contains it, and its entropy exceeds the
+outer image by 2λ (`04_protocol.tex:58-79`). §6.2 uses 8 extra bits
+(`06_evaluation.tex:107-109,137-143`). Precommitted advice and committed
+programs are not protected (`03_setting.tex:167-173`). Def.
+`wo:def:source-cutoff` forbids a cut at the last fold before the final one
+(`03_setting.tex:133-139`).
+
+**Implementation** (*verified* at `akita:`).
+
+- **One owner.** `akita_params::zk::hiding_randomness_columns` is the only
+  caller of `jolt_crypto::lattice::required_randomness_columns(image_coeffs, 0,
+  ring_dim, log_basis, 8)` (`akita:crates/akita-params/src/zk.rs:18,48`).
+- **Open alphabet.** B and D randomness is sized and sampled at the **open**
+  alphabet of the level that consumes it, which is the alphabet its range check
+  proves (`zk.rs:89-130`). It is not sized at the outer matrix's own input
+  alphabet. At the headline (d_b = 64, rank 1, b = 8): 64·128 + 256 + 8 bits at
+  192 bits per column, so 45 R_64 columns per slice.
+- **Not at the terminal.** `validate_hiding_randomness`
+  (`akita:crates/akita-params/src/zk.rs:146-152`) rejects
+  `cut_level ≥ recursive_folds.len()`: "the last nonterminal fold's output is
+  the terminal witness, sent in the clear, so a cut there would publish that
+  fold's randomness". It also requires every level ≤ cut to carry exactly the
+  derived widths, every later level and every precommitted group to carry
+  none, and a hiding level to use one witness chunk.
+- **Trusted catalogs reject randomness.** `ValidatedScheduleCatalog::try_new`
+  rejects any schedule with hiding randomness as "not selectable"
+  (`akita:crates/akita-pcs/tests/hiding_randomness.rs:74-90`). Hiding schedules
+  exist only through a test-only constructor until ZK is published (W5d).
+- **jolt side.** r_p and r_a are sized by the same function, with
+  `extra_coeffs = 64` for the row L. That gives 105 and 97 R_256 columns
+  (`jolt:specs/whiteout-sigma.md` §1.5).
+
+**Why.**
+
+- The open alphabet is the one alphabet the next level's range check
+  certifies, so it adds no new range-check alphabet and leaves s_∞ unchanged.
+- A cut at the terminal would send randomness in the clear.
+- Trusted catalogs feed clear provers, which must never carry hiding columns
+  that no verifier mode accounts for.
+
+**Argument / security impact.**
+
+- The open alphabet is "the alphabet of the witness that later contains it" in
+  the paper's words, so the LHL argument (Lemma `wo:lem:stat-hiding`, H9) is
+  unchanged.
+- The terminal check is Def. `wo:def:source-cutoff`'s condition, enforced in
+  release with the reason stated.
+- Precommitted groups carry zero randomness. That matches §3.1's exclusion
+  only for trusted advice and committed programs; see D24 for the groups it
+  does not cover.
+- The one-chunk restriction is a simplification. It keeps one randomness vector
+  per slice image.
+
+**Status.** Implemented (W1). The paper's "rank 1 kept at k = 2" (W1-d) is a
+test that was not run here.
+
+**For the paper.** In §4.1, name the alphabet: "the open alphabet of the fold
+whose range check covers the witness that holds it". State that slices
+already split across witness chunks are out of scope, or give each chunk its
+own vector.
+
+## D5. The cut at k = 2
+
+**Paper says.** k ∈ {2, 3, 4} are admissible; k = 2 with offloading is
+recommended (`06_evaluation.tex:169-170,237-246`).
+
+**Implementation.**
+
+- Only `cut_level = 1` (paper k = 2) is supported:
+  `akita-w2:crates/akita-params/src/zk.rs:38,127-131`, and Akita spec §4.1.
+- `masked_folds = cut_level + 1 = 2`, so levels 0 and 1 are masked.
+- There is no planning for k ∈ {3, 4}.
+
+**Why.** It is the recommended configuration, and the earlier-fold matrices
+keep Akita's ranks there (`06_evaluation.tex:155-162`). k = 3 and 4 need re-ranked
+inner matrices.
+
+**Argument / security impact.** None beyond the paper's k = 2 analysis.
+
+**Status.** Implemented.
+
+**For the paper.** No change needed. Optionally state that the
+implementation fixes k = 2.
+
+## D6. Per-round degree schedule
+
+**Paper says.** The masked transcript "has the length of the original one",
+and every round sends all coefficients but one (`04_protocol.tex:33-52`). The
+base count is 1,064 field elements of sumcheck messages at T = 2^24
+(`06_evaluation.tex:66-67`). The paper is silent on batched rounds whose
+members have different degrees.
+
+**Implementation.**
+
+- `jolt_sumcheck::DegreeSchedule::batched`
+  (`jolt:crates/jolt-sumcheck/src/schedule.rs:18,50`) fixes each batch round's
+  wire width at the largest degree declared by the members active in that
+  round, at least 1.
+- Relations declare per-round degrees through `SymbolicSumcheck::round_degree`
+  (`jolt:crates/jolt-claims/src/symbolic.rs:62`). Instruction read-RAF declares
+  its 128 address rounds at degree 2 instead of 10
+  (`jolt:crates/jolt-claims/src/protocols/jolt/relations/instruction/read_raf.rs:90`).
+- The schedule is public and witness-independent. Prover, clear verifier,
+  masked verifier, `pad_layout` and the residual lowering consume the one
+  derivation (commit `292b808b7`).
+
+**Effect** (*verified* in commit message and `whiteout-masking.md:226-236`,
+muldiv, T = 2^10, Dory/BN254):
+
+- clear proof 97,663 → 64,895 B;
+- masked proof 113,951 → 79,071 B;
+- pads 2,073 → 1,049.
+
+Every dropped coefficient is one fewer masked message and one fewer pad.
+Stage 2's RAM read-write and stage 6a's bytecode address phases still send
+zero high coefficients, worth about 0.7 KB more.
+
+**Why.** Sending at the batch maximum padded each low-degree round with zero
+coefficients. In masked mode each of those needs its own pad.
+
+**Argument / security impact.** Def. `wo:def:algebraic-verifier` item 1 asks
+for a witness-independent schedule of slots. A public per-round degree is such
+a schedule. A member polynomial above its declared degree is rejected by the
+prover (`RoundDegreeBoundExceeded`). A masked round off its scheduled width is
+rejected by the lowering (`ZkError::RoundWidthMismatch`). Soundness is
+unchanged: each member's round polynomial has at most the declared degree, so
+the batched round has at most the scheduled degree.
+
+**Status.** Implemented.
+
+**For the paper.** In §4.1, say that the per-round slot count is the
+scheduled degree of the batch round, not the batch maximum. *Unverified*:
+whether the 1,064-element base count already assumes per-round degrees. If it
+does not, the base proof and P shrink accordingly.
+
+## D7. Shared stage checks over `ClaimDomain`
+
+**Paper says.** Fold k's range-leaf and relation final checks become product
+rows, with masked intermediate products where the degree exceeds two
+(`03_setting.tex:305-315`). The count at k = 2 is "two auxiliary values from
+the first two Akita folds" (`06_evaluation.tex:87-88`). The per-level product
+count (Q3) is not stated.
+
+**Implementation** (*verified*).
+
+- Each stage check is written once, generic over
+  `jolt_transcript::ClaimDomain` (`jolt:crates/jolt-transcript/src/private.rs:128`).
+  The clear verifier, the masked verifier (rows), the pad layout (shape) and
+  the prover's auxiliary values all run the same formula
+  (`akita:crates/akita-types/src/stage_checks.rs:1-4`).
+- **Stage-1 leaf**, claim = Σ_{k≤4} c_k·ri^k: u = ri² as a new product slot,
+  then u·(c₄u + c₃ri + c₂) = claim − c₁ri − c₀ via `product_into`. That is 2
+  products and 1 auxiliary slot (`stage_checks.rs:41-62`).
+- **Stage-2 oracle**, claim = w·(B(w+1) + R): one `product_into` row with no
+  auxiliary slot (`stage_checks.rs:75-89`).
+  - B collects both w(w+1) terms: the batched virtual claim and the binary
+    compression constraint.
+  - R collects every term linear in w.
+  - There is **no constant term**. An earlier draft of the Akita spec had one;
+    fixup `62b0c4f88` corrected it.
+- **Total.** 3 products and 1 auxiliary slot per masked level, so 6 products
+  and 2 auxiliary slots at k = 2. This answers Q3 and matches the paper's
+  "two auxiliary values".
+- A PrivateCpu fault test shifts the last stage-2 round by X − X². It shows
+  the stage-2 check is the only one that catches an oracle miss (commit
+  `6d35999a1`).
+
+**Why.** One owner per formula keeps the clear and masked verifiers from
+diverging (Lemma `wo:lem:residual-correct` needs every clear check to become a
+row). `product_into` lands a product on an existing affine value, so no slot
+is spent.
+
+**Argument / security impact.** The rows are exactly the clear checks after
+substituting m = m̂ − p. The stage-2 check is quadratic in the single masked
+value w with public B and R, so one product row suffices.
+
+**Status.** Implemented (W3a/W3b on Akita `whiteout/dev`).
+
+**For the paper.** In §3.2 or §6.1, state the per-level count (3 products,
+1 auxiliary slot) and the stage-2 form w·(B(w+1) + R) = claim.
+
+## D8. BlindFold stays curve-based
+
+**Paper says.** Whiteout's back end is the lattice Σ-protocol plus an Akita
+proof of the response (`04_protocol.tex:4-12`). Curve BlindFold appears only as
+a related system with discrete-log hiding (`06_evaluation.tex:361`).
+
+**Implementation.** The masking front end (M6b) is shared. BlindFold (M6c) is
+a second `ZkBackend`. It proves the same residual relation over (pads,
+residual witness) with the existing Nova fold, and it uses Pedersen and Dory:
+
+- the pads are committed up front as ⌈P/L⌉ Pedersen rows, each with its own
+  blind;
+- the relaxed instance reuses those row commitments;
+- stage 8 stays Dory's hiding evaluation commitment
+  (`jolt:specs/whiteout-masking.md:10-20,59-68,131-143`).
+
+Per-round Pedersen commitments are deleted. Reviewer steering, commit
+`2cc2502ed`: "BlindFold stays curve-based over committed pads".
+
+**Why.** It retires the per-round design, and it exercises the masking front
+end end to end before the lattice back end exists.
+
+**Argument / security impact.** This is a different theorem from Whiteout's.
+
+- Binding of the pad commitment is computational (DLog).
+- Hiding is perfect: Pedersen with independent row blinds, one-time pads, and
+  a uniform folded witness.
+- It is neither post-quantum nor statistical in the binding sense.
+- The products are native R1CS gates, so it needs no constant-term lift and no
+  scalarity rows (`whiteout-masking.md:176-197`).
+
+The masked-transcript part (pads before the first challenge, decoded messages
+fixed before each challenge) is the paper's §4.1 verbatim.
+
+**Status.** Implemented (M6b/M6c).
+
+**For the paper.** Optional. A sentence in §4.1 or §7 noting that the masking
+step is back-end-agnostic, with curve BlindFold over the same pads as a
+discrete-log instantiation.
+
+## D9. Image compression (W5c) and raw images
+
+**Paper says.** u_a, t_p and t_D are sent compressed. Binary decompositions ξ
+in e link them to the raw images (`04_protocol.tex:305-313,329-330`). The
+evaluation charges 416 B for three compressed commitments plus the nonce
+(`06_evaluation.tex:188-190`).
+
+**Implementation.**
+
+- W4 and W5a send t_p (768 coefficients), t_D (64) and u_a (768) raw. That is
+  (768 + 64 + 768)·16 B = 25,600 B, against the paper's 3 × 128 B
+  (`whiteout-sigma.md` §2.5, A12; Akita spec §5.4).
+- W5c lands in RP4 (commit `fe57e2446` and reviewer steering). Images above
+  Akita's 512-coefficient (8 KiB) cap are split into ⌈len/512⌉ chunks, each
+  compressed by the existing two-map chain.
+
+**Why.** Akita's compression source is capped at 512 Fp128 coefficients
+(`akita-params/src/compression.rs:19`, per `whiteout-sigma.md` A12), and the
+images exceed it.
+
+**Argument / security impact.** None for hiding: the compressed forms are
+functions of the raw images, which H4 and H8 already replace by uniform ones.
+Soundness: the split chain needs a norm-one-kernel argument per chunk, as in
+Lemma `wo:lem:compressed-binding`.
+
+**Status.** Raw images implemented; compression in progress (W5c).
+
+**For the paper.** See Q4: the cost model's `FCHAIN_MAX_IMAGE = 884`
+disagrees with Akita's 512 cap. Price the split chain.
+
+## D10. Akita #255: public retry of the fold-response nonce
+
+Source: Akita `specs/whiteout-akita.md` §2.5 at commit `900ed6db4` (§2.5.1–2.5.6).
+
+**Paper says.** Fold responses are never retried; the prover aborts on
+overflow (`04_protocol.tex:97-104`, `05_security.tex:57-58,70`). The paper
+does not consider a challenge filter whose candidate pool can run out.
+
+**Implementation (as argued).**
+
+- **Setting.** Akita #255 (protocol v9) draws each fold group's challenges
+  from one squeezed message. For the two operator-norm families a message can
+  run out of accepted candidates (event E), and the clear prover then moves to
+  the next fold-response nonce. #255's clear loop retries on E ∨ R, where R is
+  a rejected response probe, and R reads the witness.
+- **`PublicRetry`** (§2.5.2). At an operator-norm masked level, try counters
+  in order and skip a counter only on E. Decode every group of a candidate
+  before probing any response. Probe once at the first counter n* where all
+  groups decode; on R, abort with `FoldOverflow` and never retry. Unfiltered
+  masked levels keep `nonce_bits = 0` (D3). No transcript byte, domain or
+  verifier rule changes; an operator-norm masked level sends a 1–2 byte nonce.
+- **Lemma 2.5a** (public retry is simulatable). E is a deterministic function
+  of the public sponge state, the counter and the oracle, so n*, the grind
+  nonce and the challenges are a public function F(σ, H). Theorem `wo:thm:zk`
+  holds with δ_fold replaced by δ'_fold (Lemma 2.5b) and Q_tot replaced by
+  Q_tot + ΔQ. In H1 the accepted challenges at n* are uniform on the filtered
+  family, given the history; the simulator evaluates F on its own state.
+- **Lemma 2.5b** (one-shot overflow under an operator-norm family).
+  δ' = min(δ_H, δ_B):
+  - tuple form δ_H: the paper's lemma with 1/p^ℓ, since all ℓ challenges must
+    pass the filter (D22);
+  - Bernstein form δ_B: variance proxy ℓη²β²/p and bound κ₁β per term. It
+    uses the filtered family's symmetry under c ↦ −c and
+    E_f[Z_i²] ≤ E_S[Z_i²]/p.
+- **Costs** (§2.5.2–2.5.3, marked inference there, not sized on any
+  schedule).
+  - Range: about +½·log₂(1/p) bits from the Bernstein form, +1.47 bits for D64
+    (certified p = 0.1305) and +0.72 bits for D128 (p = 0.3694). That is at
+    most one more radix-16 digit.
+  - ΔQ ≤ 2·2^12·(2^17 + 2^8) < 2^30.1, so the added query term is
+    T_att·ΔQ/2^256 ≈ 2^−218.5.
+  - The one-shot target and T_att are unchanged. PoolExhausted (≤ q^N) is a
+    completeness loss that the simulator reproduces, not a ZK term.
+- **Soundness** (§2.5.4). The verifier is #255's, unchanged. Each candidate
+  is charged by the fold proof of work, so the query-counted bound of
+  `wo:lem:randomized-base` is unchanged.
+
+**Why.** It lets an operator-norm family be used at a masked level without
+leaking the witness through the accepted counter.
+
+**Argument / security impact.** As above. ZK error grows by about 2^−218.5
+plus the δ' − δ difference, which is absorbed by the unchanged 2^−136 target.
+This log recomputed the headline total with the ΔQ term at about 2^−128.8.
+
+**Relevance.** The spec states that the headline masked levels use the
+unfiltered family, so they never run out. D19 questions that for level 1
+(d = 512 challenges); if that family is filtered, this entry applies at the
+headline.
+
+**Status.** Argued, under independent review. The implementation lands at
+the port onto #255 (§2.5.5), with tests W2-e … W2-h (§2.5.6). Until then
+`ZkOpeningSchedule::new` rejects an operator-norm family at a masked level.
+
+**For the paper.** In §4.1 "Fold responses", say that a retry is allowed
+when its trigger is a public function of the transcript and the oracle, and
+that a retry on the response is not. Add Lemma 2.5b, or fix the 1/p clause
+(D22). Add ΔQ to the query count in Theorem `wo:thm:zk`.
+
+## D11. Uni-skip rounds sent in full
+
+**Paper says.** In uni-skip rounds the constant coefficient, of weight |D|,
+is omitted and solved symbolically, like the linear coefficient of a standard
+round (`04_protocol.tex:47-49`).
+
+**Implementation.** The two uni-skip rounds send **every** coefficient masked.
+The residual adds two rows per round: Σ_D f = input claim, and the round's
+output-claim check
+(`jolt:crates/jolt-verifier/src/stages/zk/residual/mod.rs:497-540`,
+`round_format(domain, true)`; `whiteout-masking.md:27-28,100-101`).
+
+**Why.** Clear Jolt sends uni-skip rounds uncompressed, and the masked
+transcript keeps the clear slot positions (`whiteout-masking.md:24-25`).
+
+**Argument / security impact.** It is sound: the explicit sum row is the clear
+check. It costs one extra pad, one extra masked field element and one affine
+row per uni-skip round. The paper's version is strictly smaller.
+
+**Status.** Implemented.
+
+**For the paper.** None required, since the paper's form is valid and smaller.
+It is a possible implementation improvement (2 elements).
+
+## D12. Auxiliary slots and their position
+
+**Paper says.** Each multiplication gate's output is "an existing slot or a
+new masked intermediate value, sent … after its inputs are available and
+before any challenge that uses it" (`03_setting.tex:194-205`). At T = 2^24 the
+model counts 28 intermediate products, plus 2 Spartan affine operands, plus 2
+Akita values: 32 elements, 512 B (`06_evaluation.tex:83-88,188`).
+
+**Implementation.**
+
+- **One slot per product.** jolt keeps one auxiliary slot per symbolic
+  intermediate product, allocated per factor and term and never skipped for a
+  zero coefficient (`jolt:crates/jolt-zk/src/masking/lowering.rs:1-15`;
+  `whiteout-masking.md:104-112,122-126`). It does not land a stage's last
+  product on its running claim. Akita's checks do use `product_into` (D7).
+  - Muldiv, T = 2^10: 108 auxiliary slots, 106 product rows, 16 affine rows;
+    the auxiliary block is 3,456 B (`whiteout-masking.md:210-217`).
+- **Position.** The block is sent after stage 8 (BlindFold) or after Akita's
+  masked levels (Whiteout): `whiteout-masking.md:126-129` (A1); Akita spec §7,
+  order item 6.
+
+**Why.**
+
+- Landing products on running claims would change every ZK proof's layout.
+- Auxiliary-as-witness is listed as an open reduction, worth about 3.3 KB on
+  BlindFold.
+
+**Argument / security impact.** The position is sound because the auxiliary
+slots form an acyclic chain, each defined by one product row or defining row
+over earlier slots, and no base-protocol challenge depends on them. That
+satisfies the paper's "before any challenge that uses it" trivially. The extra
+slots cost bytes, not security.
+
+**Status.** Implemented.
+
+- Count *unverified* at T = 2^24 for the Whiteout path: the muldiv count is at
+  T = 2^10 on BlindFold.
+- The gap between the paper's 32 and jolt's 108 comes from the "existing
+  slot" reuse and from shared repeated products. Both are implemented in D26,
+  which brings muldiv to 26 slots on BlindFold.
+
+**For the paper.** Either state that a gate's output reuses the stage's
+running claim where possible, so the paper's count is a lower bound that the
+implementation does not yet meet, or recount. Note that the auxiliary block
+may follow the whole base protocol.
+
+## D13. Σ oracle input and transcript order
+
+**Paper says.** Attempt i queries x_i = (τ, cm(t_D^{(i)}), n_i)
+(`05_security.tex:314-317`). Protocol `wo:prot:whiteout` gives the step order
+(`04_protocol.tex:509-527`).
+
+**Implementation.**
+
+- **Oracle input.** After ρ, both roles squeeze a 32-byte σ from the live
+  transcript. The attempt fork absorbs (tag, σ, n_i), then the raw t_D, and
+  squeezes c (`whiteout-sigma.md` §2.4; `jolt:crates/jolt-zk/src/whiteout/sigma.rs:291-318`).
+  After W5c the input becomes (σ, cm(t_D), n) (Akita spec §5.4).
+- **Whole order** (Akita spec §7):
+  1. preamble and hiding commitment;
+  2. t_p;
+  3. Jolt stages 1–7, masked;
+  4. stage-8 claims to Akita;
+  5. Akita levels 0..=cut, masked;
+  6. the auxiliary block (Jolt's, then Akita's);
+  7. ρ, σ, t_D, n;
+  8. the response proof.
+- **Hiding commitment first.** The hiding root commitment precedes t_p.
+  Both precede every challenge.
+
+**Why.** The fork must live outside the transcript, so a rejected attempt
+leaves nothing in the replay log. σ carries τ into the fork.
+
+**Argument / security impact.** In the ROM, (σ, t_D, n) determines
+(τ, t_D, n) except on a σ collision. That adds at most Q_tot²/2^257 to Pr[Bad]
+in H2, which is negligible beside the existing (T_att·Q_tot + T_att²)/2^256.
+Raw t_D determines cm(t_D).
+
+**Status.** Implemented (raw t_D); compressed input in W5c.
+
+**For the paper.** Optional: allow x_i = (H(τ), t_D or cm(t_D), n_i).
+
+## D14. Gaussian widths, digits and randomness rounding
+
+**Paper says.** σ_b = αΓγ_bω_b^{−1/2} with optimized ω_b; seven radix-16
+digits (`06_evaluation.tex:97-102`). Randomness of 24,704 and 26,752 entries
+for r_a and r_p (`06_evaluation.tex:141-143`).
+
+**Implementation** (`whiteout-sigma.md` §5, A10).
+
+- **Widths.** They use the closed-form optimum ω_b = N_b/ΣN with integer
+  k_b = ⌈αΓ√(2 ln 2·γ_b²·ΣN/N_b)⌉ + 1, then an exact fixed-point check
+  Σ_b 2·LN2_HI·Γ²γ_b²α²/k_b² ≤ 1.
+- **Digits.** The smallest D with ⌊L(D)²/k_b²⌋ ≥ 1 + ⌈log₂(2000·N_tot)⌉,
+  which gives p_𝓑 ≥ 1 − 1/2000. Every Gaussian block gets 7 digits. The
+  script's discrete optimum gives 6 to r_a, the pads and r_p. The difference
+  is +111,968 cells of e (65,450,122 → 65,562,090, still below 2^26).
+- **Randomness.** r_a = 97 and r_p = 105 R_256 columns (24,832 and 26,880
+  cells). The script rounds to R_64.
+- **Box.** L_b is the full positive digit envelope 7(16^D − 1)/15 (A9).
+
+**Why.** Prover and verifier must agree bit for bit on D_b, so the widths are
+derived in integer arithmetic rather than tabulated. The residual matrices act
+on whole R_256 elements.
+
+**Argument / security impact.** The exact check is ‖cs‖_σ ≤ 1/α for every c
+and every s that passes the alphabet and shape check, which is the hypothesis
+of Theorem `wo:thm:joint-rejection`. There is no change to proof bytes or the
+padded domain.
+
+**Status.** Implemented. D2 will supersede the widths.
+
+**For the paper.** Optionally state the integer width rule and the digit
+rule. Note that the six-digit blocks are an optimization the implementation
+does not take.
+
+## D15. Gaussian sample cost
+
+**Paper says.** A Gaussian sample is assumed to cost 10 ns, giving +1.15 s
+(4.7%) of prover time (`06_evaluation.tex:200-203,249-253`).
+
+**Implementation** (*measured*, `whiteout-sigma.md` A16; Apple M4 Max,
+16 threads):
+
+- M5a's isochronous sampler takes 0.41 µs per coefficient, on one RNG stream.
+- The attempt is serial-bound: 0.221 s of 0.227 s is `fill` at 538,368
+  Gaussian coefficients.
+- Extrapolated to the headline: about 2.6 s per attempt and 6.2 s per proof at
+  2.37 attempts.
+- The Σ-protocol's own work is about 0.08 s per attempt.
+
+**Why.** A constant-time BLISS-style sampler with 192-bit fixed-point
+acceptance (`whiteout-gaussian.md` §2) is far slower than the model's 10 ns.
+
+**Argument / security impact.** None. It is a cost.
+
+**Status.** Measured. The planned fix (a parallel `fill`) was replaced by D2.
+
+**For the paper.** Replace the 10 ns assumption with a measured constant-time
+cost, or state that the 10 ns figure needs a parallel sampler. Under D2 the
+attempt count drops to about 1, but the per-sample cost grows with the
+exponent length ℓ.
+
+## D16. Sampler precision and prover coins
+
+**Paper says.** Finite-precision sampling "adds to this error"; no value is
+given (`06_evaluation.tex:110-112`). The statement is statistical
+(`05_security.tex:431-434`).
+
+**Implementation** (`whiteout-gaussian.md` §2).
+
+- **Precision.** Per output, the error is within 2^−183.3. Over
+  6.2·10⁶ × 163 ≈ 2^29.9 samples it adds at most 2^−149 to the 2^−128.8 bound.
+  Every constant is computed at 320 bits and floored to 192.
+- **Coins.** The prover's coins come from a `CryptoRng`. The design note's
+  per-chunk ChaCha20 expansion would add an explicit PRG assumption. In the
+  current code ChaCha20 appears only in tests (`jolt:crates/jolt-crypto/src/sample/`).
+
+**Argument / security impact.** +2^−149 to Theorem `wo:thm:zk`. ZK is
+statistical relative to ideal prover coins; with real coins it is relative to
+the CSPRNG.
+
+**Status.** Implemented.
+
+**For the paper.** Fill in the precision term (2^−149), and add a sentence
+that ZK is stated for ideal prover coins.
+
+## D17. Σ challenge budget and ⊥ after T_att
+
+**Paper says.** c is uniform on the filtered family 𝓒. After T_att rejections
+the simulator outputs ⊥ (`05_security.tex:426-428`). The paper does not say
+what the prover returns.
+
+**Implementation** (`whiteout-sigma.md` §2.6, A14).
+
+- **Budget.** Exhausting the operator-norm candidate budget (4,096 tries,
+  probability about 2^−1580) is fatal on both sides, never retried.
+- **After T_att.** `WhiteoutError::AttemptsExhausted` is returned after T_att
+  rejections (`jolt:crates/jolt-zk/src/whiteout/sigma.rs:604-628`). The caller
+  may rerun the whole proof with fresh randomness. W6 bounds this rerun at
+  3 runs inside `jolt-prover` (D23).
+
+**Argument / security impact.**
+
+- Conditioned on the budget not running out, c is uniform on 𝓒. Exhaustion is
+  a public function of the oracle input.
+- A rerun is a fresh execution. By H3, the all-rejected event is
+  witness-independent, so the rerun reveals nothing about the witness. The
+  simulator matches it by outputting ⊥ at the same rate.
+
+**Status.** Implemented.
+
+**For the paper.** State the ⊥ behaviour (A14), and that budget exhaustion
+of the filter is a public abort with negligible probability.
+
+## D18. Structural constraints on masked levels
+
+**Paper says.** Def. `wo:def:source-cutoff` (`03_setting.tex:133-139`): no
+response norm is checked in the clear up to k, and fold k passes no setup
+claim. §2.1 restriction of scalars is used in `wo:lem:sigma-extract`.
+
+**Implementation** (Akita spec §4.1, `whiteout-sigma.md` §1.7, A7, A20).
+
+- Every level ≤ cut uses `InnerCommitSecurityRoute::Linf`, so no L2 norm
+  message is sent; `response_l2_sq` falls after the cut.
+- E::DEGREE = 1, else `Unsupported`.
+- The cut level has no Stage 3. Stage-3 claims at level 0 are public (they
+  depend only on setup and public challenges).
+- A hiding level uses one witness chunk (D4).
+- The residual commitment has d_A = d_B. `SigmaSetup` requires one native
+  dimension for every block of N (R_256 at the headline).
+
+**Why.** d_A ≠ d_B, as in Akita's consecutive-coefficient split, only
+relabels coefficients. It is not an R-module map, and Lemma
+`wo:lem:sigma-extract` cancels c, which needs N to be R-linear.
+
+**Status.** Implemented (W4); specified for W3 (`ZkSchedule::validate`).
+
+**For the paper.** State d_A = d_B (or the stride embedding) as a hypothesis
+of §4.2 (A7, Q2). Note that the masked levels use the ∞-norm route.
+
+## D19. Headline fold shapes at the masked levels
+
+**Paper says.** "The folds before fold 5 use Akita's unfiltered challenge
+family in dimension 64 (η² = 71)" (`06_evaluation.tex:147-149`).
+
+**Implementation** (*verified* in test fixtures).
+
+- W2's headline fixtures for `fp128_onehot_recursive final=36:1` have level 0
+  at ring dimension 512 with a 64-dimensional challenge subring (31 × ±1,
+  10 × ±2, η² = 71).
+- Level 1 is at ring dimension 512 with **512-dimensional** challenges
+  (19 × ±1, η² = 19)
+  (`akita-w2:crates/akita-params/src/sis/honest_fold_policy.rs:615-650,714-718`).
+- The Akita spec §2.3 says "folds at or before the cut use the unfiltered
+  family (d = 64, η² = 71), so the lemma's 1/p factor is 1".
+
+**Contradiction.** The Akita spec §2.3 disagrees with the W2 fixture at
+level 1. *Unverified*: whether the d = 512 family is filtered (that would
+bring back Lemma `wo:lem:fold-overflow`'s 1/p factor), and whether the paper's
+schedule predates the current catalog.
+
+**Status.** Open.
+
+**For the paper.** Re-derive §6.2 "Randomness" and "Earlier folds" from the
+current headline row, or pin the schedule the model uses.
+
+## D20. Setup offloading of the response proof
+
+**Paper says.** The recommended configuration offloads the residual and
+first-fold matrices of the response proof in one sumcheck, about 1.2 KB, and
+the verifier's matrix work grows by under 1% (`04_protocol.tex:493-504`,
+`06_evaluation.tex:226-246`).
+
+**Implementation** (Akita spec §5.3, A30). W5a evaluates σ_N by a direct scan.
+W5b (offload into the response root's Stage 3) lands in RP4 only if the direct
+scan exceeds the verifier budget measured in W5-e.
+
+**Status.** Proposed.
+
+**For the paper.** None yet. If W5b is deferred, the measured verifier cost
+corresponds to the paper's "without offloading" rows.
+
+## D21. Open author questions
+
+Unresolved unless marked.
+
+- **Q1, pads instead of randomness below the cut** (Akita spec §11).
+  - Proposal: below the cut, replace a commitment's LHL randomness by 8 pads
+    on its compressed form.
+  - Conditions: the image is revealed only through ξ digits inside masked or
+    Gaussian-hidden witnesses, the compressed form is sent after t_p, and its
+    8 coefficients take pads.
+  - The root keeps randomness, because it is made at commit time and may be
+    reused across proofs.
+  - Saving: W1 shrinks from about 2.8k coefficients per slice to 8 pads per
+    commitment.
+  - The reviewer thinks it plausibly sound. **Unresolved.**
+- **Q2.**
+  - **A7**, d_A = d_B: **unresolved** (D18).
+  - **A9**, the box is the full positive digit envelope: **unresolved** (D14).
+  - **A14**, ⊥ after T_att: **unresolved** (D17).
+  - **A8**, L·r_p := π₀(Σ_j a_j r_{p,j}) as row `rank` of the pad view, with
+    [A_{p,r}; L] uniform because a ↦ π₀(a·) is an F-linear bijection
+    (`whiteout-sigma.md` §1.6): the reviewer finds it fine; author
+    confirmation pending.
+- **Q3.** Answered: 3 products and 1 auxiliary slot per masked level (D7).
+- **Q4, compression above 8 KiB.** The cost script's `FCHAIN_MAX_IMAGE = 884`
+  disagrees with Akita's 512-coefficient cap. Should the model count the split
+  chain? **Unresolved** (D9).
+- **Q5.** Answered: the paper's 2^−950 is per fold. Superseded by D3.
+- **Q6, Q_tot.** `05_security.tex:317` defines Q_tot, but §6.2 gives no value.
+  The removed W2 test assumed 2^100, giving a term of about 2^−148.6. The D2
+  draft assumes 2^64. **Unresolved**: the evaluation should state the assumed
+  bound.
+- **Q7, the 1/p clause.** See D22. **Unresolved.**
+- **W6-Q5, bounded rerun.** Is the rerun delta acceptable as argued? See D23.
+  **Unresolved.**
+
+## D22. Q7: the 1/p clause of the fold-overflow lemma
+
+**Paper says.** "If the challenges are drawn conditioned on a public event of
+probability at least p, such as an operator-norm filter, the bound is
+multiplied by 1/p" (`04_protocol.tex:117-118`).
+
+**Issue.** Akita `specs/whiteout-akita.md` §2.5.2 ("Paper wording") and §11
+Q7 (commit `900ed6db4`) point out a problem. The clause is correct only when p
+is the probability of the event on the whole tuple (c_1, …, c_ℓ). With a
+per-challenge filter of rate p, the tuple event has probability p^ℓ, so the
+bound must be multiplied by p^{−ℓ}. That costs ℓ·log₂(1/p) bits in the
+exponent: 2.94 bits per challenge for D64 and 1.44 for D128.
+
+**Fix offered.** The Bernstein form of Lemma 2.5b (D10) costs only about
+½·log₂(1/p) bits of range for any ℓ, and it wins for large ℓ.
+
+**Security impact.** None on the paper's parameters: its masked folds are
+unfiltered. D19 asks whether the current headline level 1 still is.
+
+**Status.** Open, for the authors.
+
+**For the paper.** Replace "an operator-norm filter" by "an event on the
+whole challenge tuple", note that a per-challenge filter gives p^ℓ, and
+optionally add the Bernstein variant.
+
+## D23. Bounded rerun instead of abort (W6)
+
+**Paper says.** On fold overflow the prover aborts (`04_protocol.tex:100-104`;
+`05_security.tex:70`). H1 charges δ_fold (`05_security.tex:344-350`). After
+T_att rejected Σ attempts the prover outputs ⊥ (D17).
+
+**Implementation** (`jolt:specs/whiteout-jolt-integration.md` §6 and "Paper
+deltas", commit `9d93a7034`).
+
+- **Triggers.** `jolt-prover`'s ZK entry retries on exactly two errors:
+  `ZkError::FoldOverflow` and Σ's `AttemptsExhausted`.
+- **Rerun.** The whole proof is rerun from stage 0 with fresh hiding
+  commitments, pads, g, r_p and Σ coins, drawn from the same `CryptoRng`
+  stream with no reseed or counter. Only the trace and witness are reused.
+- **Bound.** At most 3 runs, then the error is returned.
+- **Disposal.** Aborted runs are dropped and never serialized.
+- **Owner.** The loop lives inside `jolt-prover`, not the caller, so that a
+  caller cannot reuse an RNG seed (W6 "Tradeoffs").
+
+**Argument / security impact** (W6 "Paper deltas").
+
+- Each rerun is a fresh, independent execution, and only the accepted run is
+  output. The output distribution is the real prover's conditioned on no
+  abort in that run, which is within 3·δ_fold of the H1 prover's distribution.
+- The Σ-exhaustion trigger is witness-independent by H3, so it adds nothing.
+- Soundness is unaffected: reruns only discard executions
+  (`05_security.tex:111-112`).
+- At the D3 target δ_fold ≤ 2^−136, 3·δ_fold ≤ 2^−134.4. This log's recomputed
+  total, with this term added to the 2δ_fold of Theorem `wo:thm:zk`, is
+  2^−128.76.
+- No proof was checked here. W6's text says both "reruns at most twice" and
+  "at most 3 attempts"; these agree, since the count is 3 runs in total.
+
+**Status.** Specified (W6), not implemented.
+
+**For the paper.** State the prover's behaviour on abort as a bounded
+whole-proof rerun with all randomness fresh, and add r·δ_fold for r runs to
+Theorem `wo:thm:zk`. Alternatively, keep "abort" and note that a rerun costs
+r·δ_fold.
+
+## D24. Precommitted groups that carry witness data
+
+**Paper says.** Advice committed during proving is witness data. Only
+precommitted, trusted advice and committed programs are outside Whiteout's
+protection (`03_setting.tex:167-173`).
+
+**Implementation.**
+
+- Akita W1 gives every precommitted group zero randomness
+  (`akita:crates/akita-params/src/zk.rs:146-190`, "gives a precommitted
+  group"; Akita spec §3.1).
+- Jolt's per-proof auxiliary groups, **untrusted advice and `FieldInc`**, enter
+  Akita as precommitted groups but carry witness data
+  (`J8:crates/jolt-prover/src/akita/stage8.rs:1-4`, per
+  `jolt:specs/whiteout-jolt-integration.md` Q1).
+- Their outer images would therefore be published without hiding.
+
+**Why it is a gap.** "Precommitted" in Akita is a layout notion: a group
+committed before the opening. The paper's exclusion is a trust notion: data
+committed outside the proof. The two coincide for trusted advice and committed
+programs, but not for these groups.
+
+**Security impact.** It would leak, since their images are deterministic
+functions of witness data. No ZK claim holds for proofs that contain them.
+
+**Status.** Open. An Akita W1 follow-up will give these groups hiding
+randomness. Until then W6 rejects ZK proofs that contain them, with a typed
+`Unsupported` (R6).
+
+**For the paper.** In §3.1 "Advice and committed programs", state the rule
+by provenance: every group committed during proving gets randomness,
+whatever its place in the PCS's batch layout.
+
+## D25. Statement binding under ZK (#254)
+
+**Paper says.** The transcript binds the statement and the schedule (Def.
+`wo:def:algebraic-verifier`); the claims passed to Akita are masked affine
+forms (`06_evaluation.tex:78-83`).
+
+**Implementation** (`jolt:specs/whiteout-jolt-integration.md` §8). Akita #254
+argues that Akita's soundness "does not depend on what the caller absorbed",
+because the root absorbs the claimed values. Under ZK the values go through
+`bind_derived_base`, which absorbs nothing, so W6 replaces the argument:
+
+- each claim is an affine form y = Σ aᵢ(m̂ᵢ − pᵢ) + b;
+- its m̂ᵢ were absorbed before any challenge that depends on y;
+- the aᵢ and b are functions of the statement, the commitments and earlier
+  challenges;
+- p is fixed by t_p, absorbed before the first challenge.
+
+So a second claim vector that verifies under the same challenges either
+changes an absorbed message, which changes the challenges, or opens t_p to a
+different p, which breaks A_p's binding (Lemma `wo:lem:residual-correct`).
+Digests, points and the descriptor stay absorbed, and the zk bit binds the
+mode on both sides. #254's caller contract gains one item: in ZK mode Akita's
+root runs only after t_p and every masked slot its claims reference.
+`MaskedGroupClaim` enforces this by type.
+
+**Status.** Specified (W6). This log did not check the argument.
+
+**For the paper.** None required; the paper already binds claims through
+the masked messages and the pad commitment. A sentence in §4.1 that the PCS
+receives claims as affine forms over committed pads, never as absorbed values,
+would make it explicit.
+
+## D26. Multi-pair product rows and merged products
+
+**Paper says.** A product row is ct(X_i·Y_i − Z_i) with one pair per row
+(Def. `wo:def:residual`, `03_setting.tex:236-247`). Each multiplication
+gate's output is an existing slot or a new masked value (`:194-205`).
+The evaluation counts 28 product values and 2 affine operands at
+T = 2^24 (`06_evaluation.tex:83-88`).
+
+**Gap.** The count of 28 assumes two things the relation cannot express with
+single-pair rows:
+
+- every term's last product lands in its stage check, Σ_m β_m · output_m =
+  running claim, which is a *sum* of products;
+- repeated products are shared.
+
+Landing several products on one claim needs a row Σ_k X_k Y_k − Z. The Σ
+product reduction (`04_protocol.tex:340-390`) already handles it, since it
+sums μ_i X_i Y_i over an index set, but the text never states it.
+
+**Implementation** (`whiteout-masking.md`, "Multi-pair product rows and
+merged products").
+
+- Product rows carry pairs: Σ_k x_k·y_k = z, with every x_k a constant
+  operand.
+- The Σ lift flattens pairs into product entries that share their row's μ.
+- BlindFold splits a row into n constraints with n − 1 witness-only
+  intermediates.
+- jolt-claims factors the bytecode read-RAF cycle output as
+  (Σ_t c_t)·ra₀ra₁ra₂.
+- BlindFold takes affine operands directly; the lattice path keeps the 2
+  defining slots.
+
+**Argument.** Lemma `wo:lem:ct-lift` applies pair by pair: a constant X_k
+gives ct(X_k Y_k) = x_k ct(Y_k), so the row lifts exactly. The μ-aggregation
+is a combination of rows with distinct labels, unchanged. The product
+sumcheck's soundness does not depend on how its entries group into rows. The
+decoded multi-pair row is the clear verifier's own stage check, so
+Lemma `wo:lem:residual-correct`'s decoding argument is unchanged. ZK: the row
+shape is public, and fewer pads reveal nothing more.
+
+**Status.** Implemented on `wo/multipair`. On muldiv at T = 2^10 the
+auxiliary slots drop from 108 to 26, and the masked proof drops from
+79,071 B to 76,447 B. The lattice path keeps the 2 defining slots, for 28.
+The full table is in `whiteout-masking.md`. On the lattice path the count
+matches the paper's accounting: 26 product values plus 2 affine operands,
+against the paper's 28 + 2 at T = 2^24 (`06_evaluation.tex:83-88`). The
+product count at T = 2^24 has not been measured.
+
+**For the paper.**
+
+- State the product rows as ct(Σ_{k∈K_i} X_k Y_k − Z_i), with U indexed by
+  pairs and U_e = μ_{row(e)}[X_e](α).
+- Say that a stage's last products land in its claim check.
+- Say that the 28 assumes merged repeated products.
+

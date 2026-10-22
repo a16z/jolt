@@ -11,7 +11,8 @@
 //! slots before the chunk is timed. As in dudect, the statistic is also computed on measurements
 //! cropped at ten percentiles (taken from a first batch); a test passes if
 //! every `|t| < 4.5`. Fixed classes are extremes: all zero, all `+B`, all
-//! `−B` for masks (`B = 2^20`); zero and `−1` for `V`; zero, all `+2` and
+//! `−B` for masks (`B` the prover's tail cut `14k`, about `2^{39.5}`, which
+//! takes the Ajtai map's two-limb path); zero and `−1` for `V`; zero, all `+2` and
 //! all `−2` for `c`.
 //!
 //! Steps, at `D = 64` and at the stride case `D = 256`: the linear parts of y
@@ -45,7 +46,6 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
 type F = Prime128OffsetA7F7;
-const MASK_BOUND: i64 = 1 << 20;
 const CHUNK: usize = 1_000;
 const THRESHOLD: f64 = 4.5;
 const CROPS: usize = 10;
@@ -181,12 +181,18 @@ fn fixed_vs_random<T>(
 /// uniform values in `[−B, B]`; public coordinates stay zero. A random value
 /// is drawn either way and the fixed one selected without a branch, so both
 /// classes leave the same state behind.
-fn fill_mask(y: &mut [i64], ranges: &[Range<usize>], fixed: Option<i64>, rng: &mut ChaCha20Rng) {
+fn fill_mask(
+    y: &mut [i64],
+    ranges: &[Range<usize>],
+    bound: i64,
+    fixed: Option<i64>,
+    rng: &mut ChaCha20Rng,
+) {
     let keep_random = -i64::from(fixed.is_none());
     let fixed = fixed.unwrap_or(0);
     for range in ranges {
         for slot in &mut y[range.clone()] {
-            let random = (rng.next_u64() % (2 * MASK_BOUND as u64 + 1)) as i64 - MASK_BOUND;
+            let random = (rng.next_u64() % (2 * bound as u64 + 1)) as i64 - bound;
             *slot = (random & black_box(keep_random)) | (fixed & !black_box(keep_random));
         }
     }
@@ -203,13 +209,14 @@ fn run_dimension<const D: usize>(
     let ranges = harness.gaussian_ranges();
     let len = harness.len();
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
-    let bound = MASK_BOUND as u32;
+    let bound = harness.tail_bound().expect("tail bound");
+    let mask_bound = bound as i64;
     harness
         .steps(|steps| {
-            for (label, value) in [("0", 0), ("+B", MASK_BOUND), ("−B", -MASK_BOUND)] {
+            for (label, value) in [("0", 0), ("+B", mask_bound), ("−B", -mask_bound)] {
                 let slot = || vec![0i64; len];
                 let fill = |y: &mut Vec<i64>, fixed: bool, rng: &mut ChaCha20Rng| {
-                    fill_mask(y, &ranges, fixed.then_some(value), rng);
+                    fill_mask(y, &ranges, mask_bound, fixed.then_some(value), rng);
                 };
                 let test = fixed_vs_random(measurements, &mut rng, slot, fill, |y| {
                     let _ = black_box(steps.linear_parts(y));
@@ -230,7 +237,7 @@ fn run_dimension<const D: usize>(
             }
             let new_mask = |fixed: Option<i64>, rng: &mut ChaCha20Rng| {
                 let mut y = vec![0i64; len];
-                fill_mask(&mut y, &ranges, fixed, rng);
+                fill_mask(&mut y, &ranges, mask_bound, fixed, rng);
                 y
             };
             // Q_μ(0, y) and the polar form, on precomputed parts.
@@ -240,7 +247,7 @@ fn run_dimension<const D: usize>(
             // As many separate copies of the fixed class, so both classes
             // cycle through the same amount of memory.
             let fixed_parts: Vec<_> = (0..64)
-                .map(|_| steps.linear_parts(&new_mask(Some(MASK_BOUND), &mut rng)))
+                .map(|_| steps.linear_parts(&new_mask(Some(mask_bound), &mut rng)))
                 .collect::<Result<_, _>>()?;
             let mut test = Cropped::default();
             let mut first = Vec::new();

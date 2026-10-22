@@ -2,6 +2,8 @@
 
 #![expect(clippy::unwrap_used, reason = "tests unwrap well-formed inputs")]
 
+use jolt_algebra::Prime128OffsetA7F7;
+use jolt_crypto::lattice::required_randomness_columns;
 use jolt_zk::whiteout::{
     Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable, SigmaParams, WhiteoutError,
 };
@@ -23,8 +25,26 @@ fn segment(
     }
 }
 
+/// Rank over R_256 of the residual commitment's A and [B|B′] and of the pad
+/// commitment at the headline: a setup input (Akita's planner sizes it for
+/// the ten-digit collision radius, `specs/whiteout-sigma.md` §5.1), owned
+/// here for the whole table.
+const RANK: usize = 5;
+/// Inner-digit R_64 elements per unit of A's rank: Gaussian and public.
+const INNER_DIGITS_PER_RANK: [usize; 2] = [2_688, 3_072];
+
+/// R_64 elements of hiding randomness for an image of `RANK` R_256 elements
+/// plus `extra` coefficients, at the radix-16 digits and 8 bits of slack of
+/// `whiteout-sigma.md` §1.5.
+fn randomness_len(extra: usize) -> usize {
+    let columns =
+        required_randomness_columns::<Prime128OffsetA7F7>(RANK * 256, extra, 256, 4, 8).unwrap();
+    columns * 4
+}
+
 /// The headline residual vector at T = 2^24, k = 2 (`scripts/whiteout-costs.py`),
-/// each segment rounded up to whole R_256 elements.
+/// each segment rounded up to whole R_256 elements, at commitment rank
+/// [`RANK`].
 fn headline(operand_shape: SegmentShape) -> SegmentTable {
     SegmentTable::new(vec![
         segment(
@@ -43,21 +63,21 @@ fn headline(operand_shape: SegmentShape) -> SegmentTable {
         ),
         segment(
             SegmentRole::InnerDigits,
-            9_216,
+            INNER_DIGITS_PER_RANK[1] * RANK,
             4,
             SegmentShape::Dense,
             SegmentMask::Public,
         ),
         segment(
             SegmentRole::InnerDigits,
-            8_064,
+            INNER_DIGITS_PER_RANK[0] * RANK,
             4,
             SegmentShape::Dense,
             SegmentMask::Gaussian,
         ),
         segment(
             SegmentRole::ResidualRandomness,
-            388,
+            randomness_len(0),
             4,
             SegmentShape::Dense,
             SegmentMask::Gaussian,
@@ -78,7 +98,8 @@ fn headline(operand_shape: SegmentShape) -> SegmentTable {
         ),
         segment(
             SegmentRole::PadRandomness,
-            420,
+            // The pad commitment's randomness also hides the row L.
+            randomness_len(64),
             4,
             SegmentShape::Dense,
             SegmentMask::Gaussian,
@@ -90,55 +111,42 @@ fn headline(operand_shape: SegmentShape) -> SegmentTable {
 #[test]
 fn headline_parameters_match_the_closed_form() {
     let params = SigmaParams::derive(&headline(SegmentShape::ConstantPoly)).unwrap();
-    let widths = params
-        .blocks()
-        .iter()
-        .map(|block| block.width)
-        .collect::<Vec<_>>();
-    // σ_b = αΓ·8·√ΣN for radix-16 segments, αΓ·16·√ΣN for the operand
-    // digit polynomials, k_b = σ_b √(2 ln 2), rounded up, plus one.
-    assert_eq!(
-        widths,
-        [6_766_161, 6_766_161, 6_766_161, 6_766_161, 13_532_321, 6_766_161]
-    );
-    assert_eq!(params.response_digits(), [3, 7, 3, 7, 7, 7, 7, 7]);
+    // σ = αΓ·√(Σ_b γ_b²), k = σ √(2 ln 2), rounded up, plus one.
+    assert_eq!(params.width(), WIDTH);
+    assert_eq!(params.response_digits(), [3, 10, 3, 10, 10, 10, 10, 10]);
     assert!(params
         .blocks()
         .iter()
-        .all(|block| block.box_bound == 125_269_879));
-    assert_eq!(params.max_attempts(), Ok(163));
+        .all(|block| block.box_bound == 513_105_426_295));
+    // Per-attempt rejection at most 2^{−13.2}: ten attempts reach 2^{−128}.
+    assert_eq!(params.max_attempts(), Ok(10));
     let _rejection = params.rejection().unwrap();
 }
+
+/// The headline's derived width multiplier.
+const WIDTH: u64 = 58_642_511_897;
 
 #[test]
 fn width_check_rejects_narrower_widths() {
     let table = headline(SegmentShape::ConstantPoly);
-    let derived = SigmaParams::derive(&table).unwrap();
-    let narrow = derived
-        .blocks()
-        .iter()
-        .map(|block| block.width - block.width / 100)
-        .collect::<Vec<_>>();
+    let width = SigmaParams::derive(&table).unwrap().width();
     assert!(matches!(
-        SigmaParams::new(&table, &narrow),
-        Err(WhiteoutError::WidthsTooNarrow)
+        SigmaParams::new(&table, width - width / 100),
+        Err(WhiteoutError::WidthTooNarrow)
     ));
 }
 
 #[test]
 fn width_check_depends_on_the_constant_polynomial_shape() {
     // Operand digit polynomials are constant, so their ℓ₂ norm is 8× below
-    // their ∞-norm bound: widths derived for that shape fail for a dense
+    // their ∞-norm bound: the width derived for that shape fails for a dense
     // operand segment.
-    let widths = SigmaParams::derive(&headline(SegmentShape::ConstantPoly))
+    let width = SigmaParams::derive(&headline(SegmentShape::ConstantPoly))
         .unwrap()
-        .blocks()
-        .iter()
-        .map(|block| block.width)
-        .collect::<Vec<_>>();
+        .width();
     assert_eq!(
-        SigmaParams::new(&headline(SegmentShape::Dense), &widths),
-        Err(WhiteoutError::WidthsTooNarrow)
+        SigmaParams::new(&headline(SegmentShape::Dense), width),
+        Err(WhiteoutError::WidthTooNarrow)
     );
 }
 
@@ -221,47 +229,19 @@ fn segments_must_hold_whole_native_elements() {
 }
 
 #[test]
-fn widths_must_match_the_gaussian_segments() {
+fn width_must_be_a_sampler_width_and_the_table_must_mask_something() {
     let table = small_table();
     assert_eq!(
-        SigmaParams::new(&table, &[1 << 20]),
-        Err(WhiteoutError::WidthCount {
-            expected: 2,
-            actual: 1
-        })
-    );
-    assert_eq!(
-        SigmaParams::new(&table, &[0, 1 << 20]),
+        SigmaParams::new(&table, 0),
         Err(WhiteoutError::WidthOutOfRange { width: 0 })
     );
-    assert_eq!(
-        SigmaParams::new(&table, &[1 << 20, (1 << 31) + 1]),
-        Err(WhiteoutError::WidthOutOfRange {
-            width: (1 << 31) + 1
-        })
-    );
-}
-
-#[test]
-fn parameters_outside_the_rejection_arithmetic_are_rejected() {
-    // Three distinct widths near 2^24 make the product of the distinct k_b²
-    // exceed 2^126; the widths themselves are wide enough.
-    let table = SegmentTable::new(
-        (0..3)
-            .map(|_| *small_table().segments().next().unwrap())
-            .collect(),
-    )
+    let public = SegmentTable::new(vec![Segment {
+        mask: SegmentMask::Public,
+        ..*table.segments().next().unwrap()
+    }])
     .unwrap();
     assert_eq!(
-        SigmaParams::new(&table, &[1 << 24, (1 << 24) - 1, (1 << 24) - 2]),
-        Err(WhiteoutError::RejectionArithmetic)
-    );
-    let accepted = SigmaParams::new(&table, &[1 << 24, 1 << 24, (1 << 24) - 1]).unwrap();
-    let _rejection = accepted.rejection().unwrap();
-    // Widths of 2^31 need nine response digits, past the Ajtai map's i32
-    // lift: rejected before any proof could fail on it.
-    assert_eq!(
-        SigmaParams::new(&table, &[1 << 31; 3]),
-        Err(WhiteoutError::ResponseBoundTooLarge)
+        SigmaParams::new(&public, 1 << 20),
+        Err(WhiteoutError::NoGaussianSegment)
     );
 }

@@ -488,7 +488,7 @@ are Whiteout work.
 | M5c | Akita switches to `jolt-crypto`'s challenges and matrix derivation; delete `akita-challenges` and Akita's copy of the derivation; keep Akita's matrix-length check and its truncated-prefix test | Akita `main` | P0 |
 | M6a | Rename `jolt-blindfold` → `jolt-zk` (pure rename) | jolt | P0 |
 | M6b | `jolt-zk::masking`: pad schedule, masking recorders, residual-relation rows, the back-end trait | jolt | P0 |
-| M6c | BlindFold onto committed pads (Dory); remove per-round Pedersen commitments | jolt | P0 |
+| M6c | Curve BlindFold (Pedersen/Dory) over Whiteout's committed pads; remove per-round Pedersen commitments | jolt | P0 |
 | M6d | Move `akita-zk-*`'s building blocks (constant-term lift, zero-constant-term sampler) into `jolt-zk::whiteout` | jolt | P0 |
 | M6e | Akita deletes the building blocks M6d moved | Akita `dev` | P0 |
 | W1 | Akita: outer hiding randomness per slice, carried into the next fold's witness | Akita `dev` | P0 |
@@ -556,8 +556,16 @@ PRs by cherry-picking.
 
 | Repo | Integration branch | Started from | Extraction targets |
 |---|---|---|---|
-| jolt (a16z/jolt) | `whiteout/dev` | the transcript-unification branch (#2000) | `main` |
-| Akita (LayerZero-Labs/akita) | `whiteout/dev` | the transcript-unification branch (#185) | `main` for seams (M1c, M2b, M3b, M5c); `dev` for the rest |
+| jolt (a16z/jolt) | `whiteout/dev` | the transcript-unification branch (#2000), moving onto Quang's transcript stack (#2097 → #2111, #2113) | `main` |
+| Akita (LayerZero-Labs/akita) | `whiteout/dev` | the transcript-unification branch (#185), moving onto #253 → #254, #255 | `main` for seams (M1c, M2b, M3b, M5c); `dev` for the rest |
+
+#2000 and #185 closed on 2026-10-21 in favour of Quang's stack, which is now the
+transcript base; the Whiteout transcript tickets stack on it.
+
+**Reviewer steering (2026-10-21).** The Σ-protocol runs with near-zero
+rejection: σ grows so that one attempt almost always accepts, in place of a
+parallel sampler. Image compression (W5c) lands in RP4 rather than being
+deferred.
 
 The integration branches stay local; only extracted PRs are pushed. Until M0
 lands, both build on the transcript-unification branches and merge them as they

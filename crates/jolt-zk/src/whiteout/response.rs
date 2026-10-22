@@ -473,7 +473,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 
 /// The largest digit magnitude of the radix-16 alphabet: the bound of the
 /// Ajtai map on `V`'s digits.
-const RESPONSE_DIGIT_BOUND: u32 = 1 << (RESPONSE_LOG_BASIS - 1);
+const RESPONSE_DIGIT_BOUND: u64 = 1 << (RESPONSE_LOG_BASIS - 1);
 
 /// `e`'s decoded parts.
 struct Decoded<F> {

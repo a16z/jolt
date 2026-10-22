@@ -157,10 +157,10 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
     #[cfg(feature = "whiteout-prover")]
     /// The largest digit magnitude of the pad segments, a hard bound on
     /// every committed coefficient.
-    fn digit_bound(&self) -> u32 {
+    fn digit_bound(&self) -> u64 {
         self.segments()
             .iter()
-            .map(|segment| segment.digit_bound() as u32)
+            .map(|segment| segment.digit_bound())
             .max()
             .unwrap_or(0)
     }

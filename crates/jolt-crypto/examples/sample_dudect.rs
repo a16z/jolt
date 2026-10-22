@@ -14,6 +14,12 @@
 //!   vs `|z| ≥ σ`, CDT index `x = ⌊|z|/k⌋ = 0` vs `x ≥ 1`, and the sign. At
 //!   `k = 1`, where `z = 0` is common: `z = 0` vs `z ≠ 0`. Isochrony means
 //!   the whole call, retries included, is independent of the returned value.
+//! - **Parallel fill.** `GaussianSampler::fill_parallel` of two chunks
+//!   (`2^15` outputs) at the production width `k = 58,642,511,897`, one call
+//!   per measurement, `measurements / 1000` calls, split by the secret
+//!   output: more or fewer than the expected share of `|z| ≥ σ`, and the sign
+//!   of the sum. The work split is public, so the whole call must be
+//!   independent of its outputs.
 //! - **Rejection.** `JointRejection::accept` on 64 coordinates, a fixed
 //!   `(z, v)` vs fresh random `(z, v)`, classes interleaved at random. All
 //!   inputs of a chunk are generated before it is timed, and both classes
@@ -37,6 +43,8 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
 const HEADLINE_K: u64 = 16_080_468;
+const PRODUCTION_K: u64 = 58_642_511_897;
+const FILL_LEN: usize = 1 << 15;
 const BOX_BOUND: u64 = 93_120_000;
 const SHIFT_BOUND: u64 = 1 << 13;
 const LEN: usize = 64;
@@ -117,6 +125,43 @@ fn run_sampler(
     Ok(())
 }
 
+fn run_parallel_fill(
+    measurements: usize,
+    rng: &mut ChaCha20Rng,
+    failures: &mut usize,
+) -> Result<(), SampleError> {
+    let width = GaussianWidth::from_multiplier(PRODUCTION_K)?;
+    let sampler = GaussianSampler::new(width);
+    let sigma = width.sigma();
+    // Pr[|z| ≥ σ] for a Gaussian of this width.
+    let expected = 0.3173 * FILL_LEN as f64;
+    let (mut tail, mut sign) = (Welch::default(), Welch::default());
+    let mut out = vec![0i64; FILL_LEN];
+    let mut total = 0.0;
+    let calls = (measurements / 1000).max(100);
+    for _ in 0..calls {
+        let start = Instant::now();
+        sampler.fill_parallel(rng, black_box(&mut out));
+        let elapsed = start.elapsed().as_nanos() as f64;
+        total += elapsed;
+        let wide = out.iter().filter(|&&z| (z as f64).abs() >= sigma).count();
+        tail.push(usize::from(wide as f64 >= expected), elapsed);
+        sign.push(usize::from(out.iter().sum::<i64>() < 0), elapsed);
+    }
+    println!(
+        "  parallel fill: {:.0} ns/sample wall ({} threads)",
+        total / (calls * FILL_LEN) as f64,
+        rayon::current_num_threads()
+    );
+    report(
+        "parallel fill: |z| ≥ σ share above vs below",
+        &tail,
+        failures,
+    );
+    report("parallel fill: sign of the sum", &sign, failures);
+    Ok(())
+}
+
 fn run_rejection(
     measurements: usize,
     rng: &mut ChaCha20Rng,
@@ -183,6 +228,7 @@ fn main() -> ExitCode {
         println!("seed {seed}:");
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
         let result = run_sampler(measurements, &mut rng, &mut failures)
+            .and_then(|()| run_parallel_fill(measurements, &mut rng, &mut failures))
             .and_then(|()| run_rejection(measurements, &mut rng, &mut failures));
         if let Err(error) = result {
             eprintln!("sample_dudect: {error}");

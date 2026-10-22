@@ -65,10 +65,25 @@ fn zk_muldiv_masked_shape_matches_golden() {
         .expect("auxiliary block");
     let relation = masked.relation(&auxiliary).expect("residual relation");
     let layout = masked.pads.layout();
-    assert_eq!(layout.num_pads, 1049);
-    assert_eq!(layout.auxiliary.len(), 108);
-    assert_eq!(relation.affine.len(), 16);
-    assert_eq!(relation.products.len(), 106);
+    // Auxiliary slots: one per intermediate product that is not a term's
+    // last (26). BlindFold takes affine operands, so Spartan's outer and
+    // product remainders need no defining slot. Each term's last product is
+    // a pair of its stage's check row: stage 1's single pair, then the
+    // multi-pair rows of stages 2–6, after the 26 single-pair rows of the
+    // slots.
+    assert_eq!(layout.num_pads, 967);
+    assert_eq!(layout.auxiliary.len(), 26);
+    assert_eq!(relation.affine.len(), 8);
+    assert_eq!(relation.products.len(), 32);
+    let pairs: Vec<usize> = relation
+        .products
+        .iter()
+        .map(|row| row.pairs().count())
+        .collect();
+    assert_eq!(pairs.iter().sum::<usize>(), 92);
+    // Stages 2–6 land their output products on one row each.
+    assert_eq!(pairs[..27], [1; 27]);
+    assert_eq!(pairs[27..], [4, 4, 5, 2, 50]);
 }
 
 /// Every pad slot of the muldiv fixture's layout, base and auxiliary, has a
@@ -111,8 +126,10 @@ fn zk_muldiv_every_masked_value_is_constrained() {
         add_row(row);
     }
     for row in &relation.products {
-        add_row(&row.x.form());
-        add_row(&row.y);
+        for pair in row.pairs() {
+            add_row(&pair.x.form());
+            add_row(&pair.y);
+        }
         add_row(&row.z);
     }
     let unconstrained: Vec<usize> = (0..relation.layout.num_pads)

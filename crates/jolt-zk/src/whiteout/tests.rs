@@ -13,6 +13,7 @@ use std::sync::Mutex;
 
 use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
 use jolt_crypto::lattice::{MatrixShape, MatrixView, CHALLENGE_RING_DIM};
+use jolt_crypto::sample::GaussianWidth;
 use jolt_poly::EqPolynomial;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 use rand_chacha::ChaCha20Rng;
@@ -25,16 +26,19 @@ use super::fixture::{
 };
 use super::labels::RowLabels;
 use super::lift::constant_ring;
-use super::params::{ALPHA, EPSILON_BITS};
+use super::params::EPSILON_BITS;
 use super::placement::{PadPlace, PadPlacement, OPERAND_LEVELS, PAD_LEVELS};
 use super::response::{ResponseProver, ResponseRows, ResponseStatement, ResponseWitness};
-use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
+use super::segments::SegmentRole;
 use super::sigma::{take_rejected, SelfChecks};
 use super::test_support::{
     prove_instance as prove, verify_instance, CheckingResponseProver, SendingResponseProver,
 };
 use super::{ResidualBlock, ResponseSegment, SegmentTable, SigmaParams, SigmaSetup, WhiteoutError};
-use crate::masking::{AffineRow, PadIndex, ResidualRelation, ResidualVar, ZkError};
+use crate::masking::{
+    AffineRow, MaskedOperand, PadIndex, ProductOperand, ProductPair, ResidualRelation, ResidualVar,
+    ZkError,
+};
 
 /// Verifies a proof of `relation` with the statement's own checker.
 fn verify<const D: usize>(
@@ -105,6 +109,15 @@ impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
     }
 }
 
+/// A pair's operand, which the fixture states as a masked slot.
+#[expect(clippy::panic, reason = "tests fail loudly")]
+fn masked(pair: &mut ProductPair<F>) -> &mut MaskedOperand<F> {
+    match &mut pair.x {
+        ProductOperand::Masked(operand) => operand,
+        ProductOperand::Affine(_) => panic!("the fixture's operands are masked slots"),
+    }
+}
+
 fn whiteout_error(error: &ZkError) -> Option<&WhiteoutError> {
     if let ZkError::Whiteout(source) = error {
         source.downcast_ref::<WhiteoutError>()
@@ -133,7 +146,7 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
         }),
         ("product row", {
             let mut instance = Instance::new(21);
-            instance.relation.products[0].x.masked += F::one();
+            masked(&mut instance.relation.products[0].rest[0]).masked += F::one();
             instance
         }),
         ("scalarity row", {
@@ -177,11 +190,24 @@ fn verifier_rejects_each_violated_row_class_at_item_five() {
     }
 }
 
+/// The lift takes only pairs whose operands are masked operand pads.
+#[test]
+fn lift_rejects_affine_operands() {
+    let instance = Instance::<64>::new(18);
+    let mut relation = instance.relation.clone();
+    let x = &mut relation.products[0].rest[0].x;
+    *x = ProductOperand::Affine(x.form());
+    assert!(matches!(
+        instance.setup().lift(&relation, &instance.claims),
+        Err(WhiteoutError::InvalidRelation(_))
+    ));
+}
+
 /// Each self-check fires on its own case, with the exact row or variant.
 #[test]
 fn each_self_check_fires_on_its_own_case() {
     let affine_rows = 2;
-    let scalarity_rows = 63;
+    let scalarity_rows = 2 * 63;
     let check = |instance: &Instance<64>, expected: WhiteoutError| {
         let error = prove_checked(instance, 9).unwrap_err();
         assert_eq!(whiteout_error(&error), Some(&expected), "{error:?}");
@@ -202,7 +228,7 @@ fn each_self_check_fires_on_its_own_case() {
     );
 
     let mut product = Instance::<64>::new(12);
-    product.relation.products[0].x.masked += F::one();
+    masked(&mut product.relation.products[0].rest[0]).masked += F::one();
     check(
         &product,
         WhiteoutError::ResidualUnsatisfied {
@@ -360,15 +386,24 @@ fn check_quadratic_against_decoding<const D: usize>(seed: u64) {
     for (index, row) in instance.relation.affine.iter().enumerate() {
         expected += weight(labels.affine(index)) * row_value(row);
     }
-    let p_x = operand_poly(0);
-    for (r, coefficient) in p_x.iter().enumerate().skip(1) {
-        expected += weight(RowLabels::scalarity(0, r)) * *coefficient;
+    for operand in 0..2 {
+        for (r, coefficient) in operand_poly(operand).iter().enumerate().skip(1) {
+            expected += weight(RowLabels::scalarity(operand, r)) * *coefficient;
+        }
     }
     for (index, product) in instance.relation.products.iter().enumerate() {
-        let x = product.x.masked - p_x[0];
-        let y = lift_ring(&product.y);
-        let difference: F = (1..64).map(|r| p_x[r] * y[64 - r]).sum();
-        let term = x * row_value(&product.y) - row_value(&product.z) + difference;
+        let mut term = -row_value(&product.z);
+        for pair in product.pairs() {
+            let operand = layout()
+                .operand_pads
+                .iter()
+                .position(|pad| *pad == pair.x.masked().unwrap().pad)
+                .unwrap();
+            let p_x = operand_poly(operand);
+            let y = lift_ring(&pair.y);
+            let difference: F = (1..64).map(|r| p_x[r] * y[64 - r]).sum();
+            term += (pair.x.masked().unwrap().masked - p_x[0]) * row_value(&pair.y) + difference;
+        }
         expected += weight(labels.product(index)) * term;
     }
     expected += (0..PAD_LEVELS).rev().fold(F::zero(), |acc, level| {
@@ -493,12 +528,14 @@ fn predicted_repetition_rate(alpha: u32) -> f64 {
 }
 
 /// The mean attempt count over 300 proofs is within 4σ of `M`, at the
-/// paper's α and at α = 10 (`M ≈ 3.99`), which a wrong rate would leave.
+/// paper's α = 16 and at α = 10 (`M ≈ 3.99`), which a wrong rate would leave.
+/// The production α rejects too rarely to measure here; its `T_att` is
+/// pinned in `tests/whiteout_params.rs`.
 #[test]
 fn abort_rate_matches_the_repetition_rate() {
     const PROOFS: u64 = 300;
     let instance = Instance::<64>::new(60);
-    for alpha in [ALPHA, 10] {
+    for alpha in [16, 10] {
         let setup = instance.setup().with_alpha(alpha).unwrap();
         let lifted = setup.lift(&instance.relation, &instance.claims).unwrap();
         let attempts: Vec<f64> = (0..PROOFS)
@@ -539,7 +576,7 @@ fn accepted_responses_have_the_configured_moments() {
     let params = SigmaParams::derive(setup.table()).unwrap();
     let block = params.blocks()[0];
     let start = setup.table().placed()[block.segment].coefficient;
-    let sigma = block.width as f64 / (2.0 * LN_2).sqrt();
+    let sigma = params.width() as f64 / (2.0 * LN_2).sqrt();
     let samples: Vec<f64> = capture
         .accepted
         .lock()
@@ -599,6 +636,7 @@ fn tampered_proofs_are_rejected() {
 }
 
 /// A rejected attempt's `(t_D, n)` with the accepted `z` does not verify.
+/// Runs at the paper's α = 16, where rejections are common.
 #[test]
 fn rejected_attempts_cannot_be_substituted() {
     let instance = Instance::<64>::new(80);
@@ -606,7 +644,7 @@ fn rejected_attempts_cannot_be_substituted() {
     let mut seed = 81;
     let (proof, rejected) = loop {
         let _ = take_rejected();
-        let setup = instance.setup();
+        let setup = instance.setup().with_alpha(16).unwrap();
         let lifted = setup.lift(&instance.relation, &instance.claims).unwrap();
         let (proof, attempts) = prove(
             &instance,
@@ -631,26 +669,18 @@ fn rejected_attempts_cannot_be_substituted() {
 }
 
 #[test]
-fn oversized_tables_are_rejected_before_the_lift_overflows() {
+fn widths_past_every_digit_count_are_rejected() {
     let table = SegmentTable::new(residual_segments::<64>(1)).unwrap();
-    let widths = vec![1u64 << 31; 3];
-    // Widths this large need at least nine digits: past the i32 lift.
-    assert!(matches!(
-        SigmaParams::new(&table, &widths),
-        Err(WhiteoutError::ResponseBoundTooLarge | WhiteoutError::RejectionArithmetic)
-    ));
-    let big = SegmentTable::new(vec![Segment {
-        role: SegmentRole::Witness,
-        len: 1 << 20,
-        native_dim: 64,
-        log_basis: 4,
-        shape: SegmentShape::Dense,
-        mask: SegmentMask::Gaussian,
-    }])
-    .unwrap();
+    // The sampler's largest width needs more than fifteen digits for its box.
     assert_eq!(
-        SigmaParams::derive(&big),
-        Err(WhiteoutError::ResponseBoundTooLarge)
+        SigmaParams::new(&table, 1 << 58),
+        Err(WhiteoutError::Overflow)
+    );
+    assert_eq!(
+        SigmaParams::new(&table, (1 << 58) + 1),
+        Err(WhiteoutError::WidthOutOfRange {
+            width: (1 << 58) + 1
+        })
     );
 }
 
@@ -735,4 +765,19 @@ fn response_rows_vanish_on_the_witness_and_transpose_exactly() {
     }
     check::<64>(50);
     check::<256>(51);
+}
+
+/// `SigmaParams` mirrors the sampler's width range for the verifier, which
+/// does not build the sampler.
+#[test]
+fn width_range_matches_the_sampler() {
+    let table = SegmentTable::new(residual_segments::<64>(1)).unwrap();
+    for width in [0, 1, 1 << 58, (1 << 58) + 1] {
+        let sampler = GaussianWidth::from_multiplier(width).is_ok();
+        let params = !matches!(
+            SigmaParams::new(&table, width),
+            Err(WhiteoutError::WidthOutOfRange { .. })
+        );
+        assert_eq!(sampler, params, "width {width}");
+    }
 }

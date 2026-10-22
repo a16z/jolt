@@ -7,6 +7,7 @@ use std::ops::Range;
 
 use jolt_algebra::Ring;
 use jolt_crypto::lattice::{commit, CHALLENGE_RING_DIM};
+use jolt_crypto::sample::GaussianWidth;
 use jolt_transcript::{
     Blake2b512, ProtocolId, ProverTranscript, Sponge, VerifierTranscript, ATTEMPT_NONCE_LEN,
     FORK_SEED_LEN,
@@ -83,6 +84,11 @@ impl<const D: usize> AttemptHarness<D> {
             .collect()
     }
 
+    /// The prover's hard bound on a mask coefficient, the sampler's tail cut.
+    pub fn tail_bound(&self) -> Result<u64, WhiteoutError> {
+        Ok(GaussianWidth::from_multiplier(self.setup.params().width())?.tail_bound())
+    }
+
     /// Ring elements of `V`.
     pub fn v_rings(&self) -> usize {
         self.setup.v_level().message_rings
@@ -145,11 +151,11 @@ impl<const D: usize> AttemptSteps<'_, D> {
     }
 
     /// `N·y`, the gadget block included, at the hard bound `bound`.
-    pub fn ajtai(&self, y: &[i64], bound: u32) -> Result<usize, WhiteoutError> {
+    pub fn ajtai(&self, y: &[i64], bound: u64) -> Result<usize, WhiteoutError> {
         Ok(self.harness.setup.linear().apply(y, bound)?.len())
     }
 
-    pub fn l_row(&self, y: &[i64], bound: u32) -> Result<ChallengeRing<F>, WhiteoutError> {
+    pub fn l_row(&self, y: &[i64], bound: u64) -> Result<ChallengeRing<F>, WhiteoutError> {
         self.harness.setup.l_row().apply(y, bound)
     }
 

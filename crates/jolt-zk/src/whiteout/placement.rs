@@ -75,23 +75,14 @@ impl PadPlacement {
         })
     }
 
-    /// Release check that `relation` has this placement's layout and that
-    /// every product's operand is an operand pad.
+    /// Release check that `relation` has this placement's layout. The lift
+    /// checks that every pair's operand is an operand pad.
     pub fn check_relation<F>(&self, relation: &ResidualRelation<F>) -> Result<(), WhiteoutError> {
-        if relation.layout != self.layout {
-            return Err(WhiteoutError::InvalidRelation(
-                "relation and placement have different pad layouts",
-            ));
-        }
-        if relation
-            .products
-            .iter()
-            .all(|product| self.layout.operand_pads.contains(&product.x.pad))
-        {
+        if relation.layout == self.layout {
             Ok(())
         } else {
             Err(WhiteoutError::InvalidRelation(
-                "a product's operand is not an operand pad",
+                "relation and placement have different pad layouts",
             ))
         }
     }
