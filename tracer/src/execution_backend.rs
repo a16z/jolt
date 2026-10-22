@@ -181,10 +181,9 @@ impl TracerBackend {
         let mut trace = LimitedTrace::reserve(limit, resident, rows, window)?;
         let cpu = emulator.get_mut_cpu();
         cpu.set_advice_write_allowance(trace.advice_write_allowance());
-        let mut prev_pc = 0;
         loop {
             let pending = trace.cycles.len();
-            crate::step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace.cycles));
+            crate::step_emulator(&mut emulator, Some(&mut trace.cycles));
             if let Some(refusal) = emulator.get_cpu().advice_write_refusal() {
                 return Err(refusal.into());
             }

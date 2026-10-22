@@ -4,23 +4,26 @@
 //! rule. Methods are positional, matching spongefish-native usage
 //! (WhiR, sigma-rs).
 
+#[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
+use crate::Blake2b512;
 #[cfg(feature = "bn254")]
 use jolt_field::Fr;
-use rand::{CryptoRng, RngCore};
-use spongefish::{Decoding, DuplexSpongeInterface, Encoding, NargSerialize, ProverState};
+#[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
+use spongefish::instantiations::Keccak;
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromUniform, ProverState};
 
 /// Prover-side spongefish transcript.
 ///
 /// `H::U` is the sponge alphabet (`u8` for every sponge in this crate).
 pub trait ProverTranscript<H: DuplexSpongeInterface> {
     /// Absorbs `msg` symmetrically with the verifier; emits no NARG bytes.
-    fn public_message<T: Encoding<[H::U]> + ?Sized>(&mut self, msg: &T);
+    fn public_message<T: Encoding<H::U> + ?Sized>(&mut self, msg: &T);
 
     /// Absorbs `msg` and appends its NARG-serialized form for verifier replay.
-    fn prover_message<T: Encoding<[H::U]> + NargSerialize + ?Sized>(&mut self, msg: &T);
+    fn prover_message<T: Encoding<H::U> + Encoding + ?Sized>(&mut self, msg: &T);
 
     /// Squeezes a verifier challenge.
-    fn verifier_message<T: Decoding<[H::U]>>(&mut self) -> T;
+    fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T;
 
     /// Bytes accumulated in the NARG so far.
     fn narg_string(&self) -> &[u8];
@@ -29,17 +32,17 @@ pub trait ProverTranscript<H: DuplexSpongeInterface> {
 impl<H, R> ProverTranscript<H> for ProverState<H, R>
 where
     H: DuplexSpongeInterface,
-    R: RngCore + CryptoRng,
+    R: DuplexSpongeInit<U = u8>,
 {
-    fn public_message<T: Encoding<[H::U]> + ?Sized>(&mut self, msg: &T) {
+    fn public_message<T: Encoding<H::U> + ?Sized>(&mut self, msg: &T) {
         ProverState::public_message(self, msg);
     }
 
-    fn prover_message<T: Encoding<[H::U]> + NargSerialize + ?Sized>(&mut self, msg: &T) {
+    fn prover_message<T: Encoding<H::U> + Encoding + ?Sized>(&mut self, msg: &T) {
         ProverState::prover_message(self, msg);
     }
 
-    fn verifier_message<T: Decoding<[H::U]>>(&mut self) -> T {
+    fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T {
         ProverState::verifier_message::<T>(self)
     }
 
@@ -59,9 +62,9 @@ pub trait OptimizedChallenge {
 }
 
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
-impl<R> OptimizedChallenge for ProverState<spongefish::instantiations::Blake2b512, R>
+impl<R> OptimizedChallenge for ProverState<Blake2b512, R>
 where
-    R: RngCore + CryptoRng,
+    R: DuplexSpongeInit<U = u8>,
 {
     fn challenge_128(&mut self) -> Fr {
         Fr::from(ProverState::verifier_message::<u128>(self))
@@ -69,9 +72,9 @@ where
 }
 
 #[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
-impl<R> OptimizedChallenge for ProverState<spongefish::instantiations::Keccak, R>
+impl<R> OptimizedChallenge for ProverState<Keccak, R>
 where
-    R: RngCore + CryptoRng,
+    R: DuplexSpongeInit<U = u8>,
 {
     fn challenge_128(&mut self) -> Fr {
         Fr::from(ProverState::verifier_message::<u128>(self))

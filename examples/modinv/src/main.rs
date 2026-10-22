@@ -26,13 +26,12 @@ pub fn main() {
 
     let trace_length_advice = proof_advice.trace_length;
 
-    let is_valid_advice = verify_modinv(a, m, output_advice, io_device_advice.panic, proof_advice);
+    verify_modinv(a, m, output_advice, io_device_advice.panic, proof_advice)
+        .expect("Proof verification failed");
 
     info!("Output (modular inverse): {}", output_advice);
-    info!("Proof valid: {}", is_valid_advice);
     info!("Trace length: {} cycles", trace_length_advice);
 
     assert_eq!(output_advice, 4, "Expected inverse of 3 mod 11 to be 4");
     assert_eq!(((a as u128) * (output_advice as u128)) % (m as u128), 1);
-    assert!(is_valid_advice, "Proof verification failed");
 }

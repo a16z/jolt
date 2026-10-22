@@ -49,11 +49,9 @@ pub fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let trace_length_advice = proof.trace_length;
 
-    let is_valid_advice = verify_advice_demo(n, a, b, output, program_io.panic, proof);
+    verify_advice_demo(n, a, b, output, program_io.panic, proof)
+        .expect("Proof verification failed");
 
-    info!("Proof valid: {}", is_valid_advice);
     info!("Trace length: {} cycles", trace_length_advice);
-
-    assert!(is_valid_advice, "Proof verification failed");
     Ok(())
 }

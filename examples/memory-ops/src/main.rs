@@ -18,11 +18,10 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove();
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify(output, program_io.panic, proof);
+    verify(output, program_io.panic, proof).expect("proof verification failed");
 
     info!(
         "outputs: {} {} {} {}",
         output.0, output.1, output.2, output.3
     );
-    info!("valid: {is_valid}");
 }

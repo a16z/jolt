@@ -48,10 +48,10 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove_allocate_stack_with_increased_size();
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_allocate_stack_with_increased_size(output, program_io.panic, proof);
+    verify_allocate_stack_with_increased_size(output, program_io.panic, proof)
+        .expect("proof verification failed");
 
     info!("output: {output}");
-    info!("valid: {is_valid}");
 }
 
 fn handle_result(res: Result<(), Box<dyn Any + Send>>) {

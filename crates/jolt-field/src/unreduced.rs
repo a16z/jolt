@@ -8,6 +8,7 @@
 //! for that pattern: it names the accumulator types and routes every
 //! reduction back through the field type, so a backend's unreduced algebra
 //! is enumerable from one `impl`.
+//! Binary fields defer reduction through [`WithAccumulator`](crate::WithAccumulator) instead.
 
 use crate::{AdditiveGroup, Field};
 

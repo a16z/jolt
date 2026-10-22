@@ -69,14 +69,14 @@ pub fn main() {
         .expect("Could not serialize trusted advice commitment.");
     }
 
-    let is_valid = verify_merkle_tree(
+    verify_merkle_tree(
         leaf1,
         output,
         program_io.panic,
         verifier_trusted_advice_commitment,
         proof,
-    );
+    )
+    .expect("proof verification failed");
 
     info!("output: {}", hex::encode(output));
-    info!("valid: {is_valid}");
 }

@@ -1,41 +1,16 @@
-//! Spongefish domain-separator entry points for the native split-trait
-//! surface.
+//! Native spongefish transcript initialization.
 //!
-//! Two factory functions cover every Jolt caller:
-//!
-//! - [`prover_transcript`] — `(session, instance, sponge) → ProverState`
-//! - [`verifier_transcript`] — `(session, instance, sponge, narg) → VerifierState`
-//!
-//! Both pre-bind [`PROTOCOL_ID`] and absorb the spongefish
-//! `session`/`instance` steps internally. Wire format mirrors spongefish's
-//! `DomainSeparator` exactly:
-//!
-//! ```text
-//! PROTOCOL_ID  (fixed, crate-wide)
-//!   ↓
-//! session(bytes)
-//!   ↓
-//! instance(32-byte digest)
-//!   ↓
-//! to_prover(sponge) | to_verifier(sponge, narg)
-//! ```
-//!
-//! Power users (e.g. `BlindFold` sub-verifiers, custom Encoding types) can
-//! drop down to [`transcript_builder`], which returns spongefish's
-//! `DomainSeparator` with PROTOCOL_ID pre-bound — the full type-state
-//! builder is then available.
+//! The session identifier is derived from [`PROTOCOL_ID`]. Each transcript
+//! absorbs one instance encoding: the length-prefixed caller session followed
+//! by the 32-byte public-statement digest.
 
-use rand::rngs::StdRng;
-use spongefish::{
-    DomainSeparator, DuplexSpongeInterface, Encoding, ProverState, VerifierState, WithoutInstance,
-    WithoutSession,
-};
+use spongefish::instantiations::TurboShake128;
+use spongefish::{DuplexSpongeInit, ProverState, SessionId, VerifierState};
 
 use crate::codec::BytesMsg;
 
-/// Crate-wide spongefish protocol identifier (ASCII left, zero-padded to
-/// 64 bytes). Pre-bound by every factory in this module; exposed so callers
-/// who reach for [`transcript_builder`] can align on the same identifier.
+/// Crate-wide protocol identifier (ASCII left, zero-padded to 64 bytes).
+/// [`session_id`] derives the spongefish session identifier from it.
 pub const PROTOCOL_ID: [u8; 64] = pad_id(b"a16z/jolt-transcript/v1");
 
 const fn pad_id(src: &[u8]) -> [u8; 64] {
@@ -55,99 +30,71 @@ const fn pad_id(src: &[u8]) -> [u8; 64] {
     buf
 }
 
-/// Empty `instance` value used by the legacy facade. Encodes to zero
-/// bytes. The native factory functions use [`InstanceDigest`] instead.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct EmptyInstance;
-
-impl Encoding<[u8]> for EmptyInstance {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        [0u8; 0]
-    }
-}
-
-/// 32-byte instance digest. Internal adapter — exposes `Encoding<[u8]>`
-/// over a fixed-size digest so it slots into spongefish's `.instance(...)`
-/// step. Public callers pass a plain `[u8; 32]` to [`prover_transcript`] /
-/// [`verifier_transcript`]; the factory wraps internally.
-#[derive(Clone, Copy, Debug, Default)]
-struct InstanceDigest([u8; 32]);
-
-impl Encoding<[u8]> for InstanceDigest {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        self.0
-    }
+fn transcript_instance(session: &[u8], digest: [u8; 32]) -> (BytesMsg, [u8; 32]) {
+    (BytesMsg(session.to_vec()), digest)
 }
 
 /// Build a prover transcript bound to `session` and `instance`.
 ///
 /// `session` is protocol-version bytes (e.g. `b"jolt-rv64imac/v1"`).
-/// `instance` is the 32-byte digest of the public statement (typically
-/// `Blake2b(CanonicalSerialize(public_state))`). Both are absorbed under
-/// spongefish's domain-separator steps after [`PROTOCOL_ID`].
+/// `instance` is the 32-byte digest of the public statement. Together they
+/// encode the single spongefish instance, which is non-empty even when
+/// `session` is empty. Spongefish initializes a fresh state of backend `H`
+/// with [`DuplexSpongeInit::init`].
 ///
 /// # Example
 ///
 /// ```
 /// use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, ProverTranscript, VerifierTranscript};
-/// use spongefish::instantiations::Blake2b512;
+/// use spongefish::instantiations::Hash;
+/// use blake2::Blake2b512;
 ///
+/// type Sponge = Hash<Blake2b512>;
 /// const SESSION: &[u8] = b"jolt-rv64imac/v1";
 /// let instance: [u8; 32] = [0xAB; 32];
 ///
-/// let mut prover = prover_transcript(SESSION, instance, Blake2b512::default());
-/// ProverTranscript::<Blake2b512>::prover_message(
+/// let mut prover = prover_transcript::<Sponge>(SESSION, instance);
+/// ProverTranscript::<Sponge>::prover_message(
 ///     &mut prover,
 ///     &BytesMsg(b"commitment-a".to_vec()),
 /// );
-/// let narg = ProverTranscript::<Blake2b512>::narg_string(&prover).to_vec();
+/// let narg = ProverTranscript::<Sponge>::narg_string(&prover).to_vec();
 ///
-/// let mut verifier = verifier_transcript(SESSION, instance, Blake2b512::default(), &narg);
+/// let mut verifier = verifier_transcript::<Sponge>(SESSION, instance, &narg);
 /// let _: BytesMsg =
-///     VerifierTranscript::<Blake2b512>::prover_message(&mut verifier).unwrap();
-/// VerifierTranscript::<Blake2b512>::check_eof(verifier).unwrap();
+///     VerifierTranscript::<Sponge>::prover_message(&mut verifier).unwrap();
+/// VerifierTranscript::<Sponge>::check_eof(verifier).unwrap();
 /// ```
 #[must_use]
-pub fn prover_transcript<H>(session: &[u8], instance: [u8; 32], sponge: H) -> ProverState<H, StdRng>
+pub fn prover_transcript<H>(session: &[u8], instance: [u8; 32]) -> ProverState<H>
 where
-    H: DuplexSpongeInterface<U = u8>,
+    H: DuplexSpongeInit<U = u8>,
 {
-    DomainSeparator::new(PROTOCOL_ID)
-        .session(BytesMsg(session.to_vec()))
-        .instance(InstanceDigest(instance))
-        .to_prover(sponge)
+    ProverState::new(&session_id(), &transcript_instance(session, instance))
 }
 
 /// Build a verifier transcript bound to `session` and `instance` over
 /// `narg`. The verifier MUST pass the same `session`/`instance` as the
-/// prover or the transcript states diverge.
+/// prover or the transcript states diverge. Spongefish initializes a fresh
+/// state of backend `H` with [`DuplexSpongeInit::init`].
 #[must_use]
 pub fn verifier_transcript<'a, H>(
     session: &[u8],
     instance: [u8; 32],
-    sponge: H,
     narg: &'a [u8],
 ) -> VerifierState<'a, H>
 where
-    H: DuplexSpongeInterface<U = u8>,
+    H: DuplexSpongeInit<U = u8>,
 {
-    DomainSeparator::new(PROTOCOL_ID)
-        .session(BytesMsg(session.to_vec()))
-        .instance(InstanceDigest(instance))
-        .to_verifier(sponge, narg)
+    VerifierState::new(&session_id(), &transcript_instance(session, instance), narg)
 }
 
-/// Escape hatch returning spongefish's `DomainSeparator` with
-/// [`PROTOCOL_ID`] pre-bound. Use only when the standard
-/// `(session, instance)` shape doesn't fit — e.g. `BlindFold` sub-verifiers
-/// that compose sub-domain-separators, or callers absorbing a non-32-byte
-/// instance.
-///
-/// Almost every Jolt caller should use [`prover_transcript`] /
-/// [`verifier_transcript`] instead.
+/// Derive the spongefish session identifier from [`PROTOCOL_ID`] using
+/// TurboSHAKE128. Callers with custom instance encodings can pass this
+/// identifier directly to spongefish's prover and verifier constructors.
 #[must_use]
-pub fn transcript_builder() -> DomainSeparator<WithoutInstance, WithoutSession> {
-    DomainSeparator::new(PROTOCOL_ID)
+pub fn session_id() -> SessionId {
+    spongefish::derive_session_id::<TurboShake128>(&PROTOCOL_ID)
 }
 
 #[cfg(test)]
@@ -168,12 +115,22 @@ mod tests {
         assert_eq!(pad_id(&full), full, "a 64-byte id is passed through");
     }
 
-    /// The instance digest is absorbed as its raw 32 bytes (no framing);
-    /// the legacy empty instance encodes to nothing.
     #[test]
-    fn instance_encodings_are_raw_bytes() {
-        let digest = InstanceDigest([0xA5; 32]);
-        assert_eq!(digest.encode().as_ref(), &[0xA5; 32]);
-        assert!(EmptyInstance.encode().as_ref().is_empty());
+    fn instance_encoding_frames_session_and_preserves_digest() {
+        use spongefish::Encoding;
+
+        let digest = [0xA5u8; 32];
+        let instance = transcript_instance(b"", digest);
+        let encoded = instance.encode();
+        let mut expected = vec![0; 8];
+        expected.extend_from_slice(&digest);
+        assert_eq!(encoded.as_ref(), expected);
+
+        let instance = transcript_instance(b"session", digest);
+        let encoded = instance.encode();
+        let mut expected = 7u64.to_le_bytes().to_vec();
+        expected.extend_from_slice(b"session");
+        expected.extend_from_slice(&digest);
+        assert_eq!(encoded.as_ref(), expected);
     }
 }

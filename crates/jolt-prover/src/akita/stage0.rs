@@ -50,8 +50,9 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    if config.akita_chunk_profile.num_chunks()
-        != preprocessing.verifier.pcs_setup.one_hot_num_chunks()
+    let setup = &preprocessing.verifier.pcs_setup;
+    if config.akita_chunk_profile.num_chunks() != setup.one_hot_num_chunks()
+        || config.akita_chunk_profile.levels != setup.one_hot_num_chunked_levels()
     {
         return Err(ProverError::Unsupported {
             reason: "Akita chunk profile differs from preprocessing; reuse its configuration or regenerate preprocessing",

@@ -10,7 +10,7 @@ The host imports the guest package, and will have automatically generated functi
 - `preprocess_shared_sha3(&mut program)` produces shared preprocessing from the compiled program. This only needs to be generated once and can be reused across proofs.
 - `preprocess_prover_sha3(shared)` produces prover preprocessing, and `verifier_preprocessing_from_prover_sha3(&prover)` derives the matching verifier preprocessing.
 - `build_prover_sha3` returns a closure for the prover, which takes in the same input types as the original function and returns the output, a proof, and a `program_io` device.
-- `build_verifier_sha3` returns a closure for the verifier. The verifier closure's parameters comprise of the program input, the claimed output, a `bool` value claiming whether the guest panicked, and the proof.
+- `build_verifier_sha3` returns a closure for the verifier. The verifier closure's parameters comprise of the program input, the claimed output, a `bool` value claiming whether the guest panicked, and the proof. It returns `Ok(())` for a valid proof or the `VerifierError` that rejected it.
 
 ```rust
 use std::time::Instant;
@@ -31,10 +31,9 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove_sha3(input);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_sha3(input, output, program_io.panic, proof);
+    verify_sha3(input, output, program_io.panic, proof).expect("proof verification failed");
 
     println!("output: {}", hex::encode(output));
-    println!("valid: {is_valid}");
 }
 ```
 
