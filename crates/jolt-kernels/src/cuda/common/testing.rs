@@ -292,6 +292,156 @@ pub fn with_ram_witness<R>(
     body(&backend)
 }
 
+pub const ONE_HOT_BYTECODE_LEN: usize = 20;
+
+const ONE_HOT_BYTECODE_STRIDE: usize = 1237;
+
+pub const fn one_hot_fixture_is_padding(log_t: usize, cycle: usize) -> bool {
+    cycle >= (1usize << log_t) - ram_fixture_padding(log_t)
+}
+
+fn one_hot_bytecode(len: usize) -> Vec<JoltInstructionRow> {
+    (0..len)
+        .map(|slot| JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::XOR,
+            address: 0x8000_0000 + 4 * slot,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: Some(3),
+                imm: 0,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        })
+        .collect()
+}
+
+fn one_hot_rows(
+    log_t: usize,
+    bytecode_len: usize,
+    layout: &MemoryLayout,
+    ram_k: usize,
+    seed: u64,
+) -> Vec<TraceRow> {
+    let bytecode = one_hot_bytecode(bytecode_len);
+    let cycles = 1usize << log_t;
+    let lowest = layout.get_lowest_address();
+    let below_lowest = lowest.saturating_sub(8);
+    let mut last_hot = lowest + 8;
+    let mut rows = Vec::with_capacity(cycles);
+
+    for cycle in 0..cycles {
+        if one_hot_fixture_is_padding(log_t, cycle) {
+            rows.push(TraceRow::default());
+            continue;
+        }
+
+        let mix = seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(cycle as u64 + 1);
+        let rs1 = mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29);
+        let rs2 = mix.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (mix >> 31);
+        let word = rs1 % ram_k as u64;
+        let address = lowest + 8 * word;
+        let value = 900 + cycle as u64;
+
+        let instruction = bytecode[cycle.wrapping_mul(ONE_HOT_BYTECODE_STRIDE) % bytecode.len()];
+
+        let access = if ram_fixture_is_cold(log_t, cycle) {
+            match cycle % RAM_FIXTURE_PATTERN {
+                4 => RamAccess::Read(RamRead { address: 0, value }),
+                5 => RamAccess::Read(RamRead {
+                    address: below_lowest,
+                    value,
+                }),
+                _ => RamAccess::NoOp,
+            }
+        } else {
+            match cycle % RAM_FIXTURE_PATTERN {
+                2 => {
+                    last_hot = address;
+                    RamAccess::Write(RamWrite {
+                        address,
+                        pre_value: value,
+                        post_value: value + 1,
+                    })
+                }
+                3 => RamAccess::Read(RamRead {
+                    address: last_hot,
+                    value,
+                }),
+                _ => {
+                    last_hot = address;
+                    RamAccess::Read(RamRead { address, value })
+                }
+            }
+        };
+
+        let registers = RegisterState {
+            rs1: Some(RegisterRead {
+                register: 2,
+                value: rs1,
+            }),
+            rs2: Some(RegisterRead {
+                register: 3,
+                value: rs2,
+            }),
+            ..Default::default()
+        };
+        rows.push(synthetic_row(
+            instruction,
+            registers,
+            access,
+            (cycle.wrapping_mul(ONE_HOT_BYTECODE_STRIDE) % bytecode.len() + 1) as u32,
+        ));
+    }
+    rows
+}
+
+pub fn with_one_hot_witness<R>(
+    log_t: usize,
+    bytecode_rows: usize,
+    ram_k: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend, usize) -> R,
+) -> R {
+    let bytecode = one_hot_bytecode(bytecode_rows);
+    let entry_address = bytecode[0].address as u64;
+    let memory_layout = MemoryLayout::new(&MemoryConfig {
+        program_size: Some(1 << 12),
+        ..MemoryConfig::default()
+    });
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(bytecode, entry_address, RV64IMAC_JOLT)
+            .expect("one-hot bytecode fixture"),
+        ram: RAMPreprocessing::default(),
+        memory_layout: memory_layout.clone(),
+        max_padded_trace_length: 1usize << log_t,
+    });
+    let bytecode_len = preprocessing.bytecode.code_size;
+    let program = Arc::new(JoltProgram::default());
+    let trace = TraceOutput::new(
+        TraceData::new(one_hot_rows(
+            log_t,
+            bytecode_rows,
+            &memory_layout,
+            ram_k,
+            seed,
+        )),
+        Default::default(),
+        None,
+        None,
+    );
+    let backend = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, ram_k, one_hot),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+    );
+    body(&backend, bytecode_len)
+}
+
 const R1CS_FIXTURE_STRIDE: usize = 5;
 
 const R1CS_FIXTURE_SEQUENCE: u16 = 3;

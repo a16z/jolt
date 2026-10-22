@@ -151,6 +151,7 @@ mod advice_claim_reduction;
 mod bytecode_claim_reduction;
 mod common;
 mod dory;
+mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
 mod instruction_claim_reduction;
 mod instruction_input;
@@ -205,9 +206,9 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     /// Replace supported claim reductions, instruction-input checking, RAM output
-    /// and value checking, RAM hamming booleanity, register-value evaluation, Spartan
-    /// shift, RAM RAF evaluation, and RV64 Spartan outer and product kernels with CUDA
-    /// implementations.
+    /// and value checking, RAM hamming booleanity, hamming-weight claim reduction,
+    /// register-value evaluation, Spartan shift, RAM RAF evaluation, and RV64 Spartan
+    /// outer and product kernels with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -224,6 +225,7 @@ where
         backend.bytecode_reduction_address = Box::new(CudaBackend);
         backend.program_image_reduction_address = Box::new(CudaBackend);
         backend.ram_hamming_booleanity = Box::new(CudaBackend);
+        backend.hamming_weight_claim_reduction = Box::new(CudaBackend);
         backend.inc_claim_reduction = Box::new(CudaBackend);
         backend.registers_claim_reduction = Box::new(CudaBackend);
         backend.instruction_claim_reduction = Box::new(CudaBackend);

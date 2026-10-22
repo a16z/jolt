@@ -129,6 +129,8 @@ pub struct CudaKernelContext {
     ohf_fold: CudaFunction,
     ohf_reduce: CudaFunction,
     ohf_affine: CudaFunction,
+    hwr_weights: CudaFunction,
+    hwr_message: CudaFunction,
     #[cfg(test)]
     msm_fq_add: CudaFunction,
     #[cfg(test)]
@@ -349,6 +351,8 @@ impl CudaKernelContext {
             ohf_fold: module.load_function("ohf_fold_kernel")?,
             ohf_reduce: module.load_function("ohf_reduce_kernel")?,
             ohf_affine: module.load_function("ohf_affine_kernel")?,
+            hwr_weights: module.load_function("hwr_weights_kernel")?,
+            hwr_message: module.load_function("hwr_message_kernel")?,
             #[cfg(test)]
             msm_fq_add: module.load_function("msm_fq_add_kernel")?,
             #[cfg(test)]
@@ -620,6 +624,32 @@ impl CudaKernelContext {
             Ok(())
         })?;
         Ok(out)
+    }
+
+    pub(crate) fn copy_into(
+        &self,
+        destination: &mut DeviceFrVec,
+        offset: usize,
+        source: &DeviceFrVec,
+    ) -> Result<(), CudaError> {
+        if offset + source.len() > destination.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: destination.len(),
+                got: offset + source.len(),
+            });
+        }
+        if source.is_empty() {
+            return Ok(());
+        }
+        let limbs = source.len() * LIMBS;
+        let start = offset * LIMBS;
+        xfer_stats::timed(Phase::D2d, limbs * size_of::<u64>(), || {
+            let source = source.limbs().slice(0..limbs);
+            let mut target = destination.limbs_mut().slice_mut(start..start + limbs);
+            self.stream.memcpy_dtod(&source, &mut target)?;
+            self.stream.synchronize()?;
+            Ok::<_, CudaError>(())
+        })
     }
 
     pub(crate) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
@@ -925,6 +955,14 @@ impl CudaKernelContext {
 
     pub(crate) const fn ohf_affine(&self) -> &CudaFunction {
         &self.ohf_affine
+    }
+
+    pub(crate) const fn hwr_weights(&self) -> &CudaFunction {
+        &self.hwr_weights
+    }
+
+    pub(crate) const fn hwr_message(&self) -> &CudaFunction {
+        &self.hwr_message
     }
 
     #[cfg(test)]

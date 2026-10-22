@@ -28,6 +28,7 @@ const KERNEL_FILES: &[&str] = &[
     "booleanity_cycle.cu",
     "spartan_outer.cu",
     "one_hot_fold.cu",
+    "hamming_weight_claim_reduction.cu",
     "ram_output_check.cu",
     "spartan_product.cu",
     "instruction_input.cu",
