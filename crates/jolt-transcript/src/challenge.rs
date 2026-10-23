@@ -95,8 +95,7 @@ mod sealed {
 ///
 /// `ChallengeCodec` bounds the field of every `FieldTranscript<F>`
 /// implementation on spongefish's prover and verifier states, so a protocol
-/// that draws field challenges from them names it as a bound. Akita's
-/// `akita-transcript` re-exports it for that purpose. Callers cannot
+/// that draws field challenges from them names it as a bound. Callers cannot
 /// implement it. The widths and decodings above are part of the transcript's
 /// wire format: changing one changes every proof that draws challenges in
 /// that field.
