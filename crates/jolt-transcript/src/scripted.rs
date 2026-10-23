@@ -4,6 +4,8 @@
 use std::borrow::{Borrow, BorrowMut};
 use std::collections::VecDeque;
 
+use jolt_field::CanonicalEncoding;
+
 #[cfg(feature = "prover-grinding")]
 use crate::pow::MessageSearch;
 use crate::transcript::sealed::Sealed;
@@ -25,6 +27,13 @@ pub enum TranscriptEvent<F> {
     Squeeze(usize),
     /// One challenge draw and the values it returned.
     Challenges(Vec<F>),
+    /// One short challenge draw.
+    ShortChallenge {
+        /// The loss factor its width was priced from.
+        loss_factor: u64,
+        /// The value it returned.
+        value: F,
+    },
 }
 
 /// What a [`ScriptedTranscript`] does with the challenges of each draw.
@@ -133,7 +142,9 @@ impl<T, F, S> ScriptedTranscript<T, F, S> {
             .iter()
             .filter_map(|event| match event {
                 TranscriptEvent::Absorb(bytes) => Some(bytes.as_slice()),
-                TranscriptEvent::Squeeze(_) | TranscriptEvent::Challenges(_) => None,
+                TranscriptEvent::Squeeze(_)
+                | TranscriptEvent::Challenges(_)
+                | TranscriptEvent::ShortChallenge { .. } => None,
             })
             .collect()
     }
@@ -207,6 +218,20 @@ where
         self.events
             .push(TranscriptEvent::Challenges(challenges.clone()));
         Ok(challenges)
+    }
+
+    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>
+    where
+        F: CanonicalEncoding,
+    {
+        let mut challenge = [self.inner.challenge_short_scalar(loss_factor)?];
+        self.script.draw(&mut challenge);
+        let [challenge] = challenge;
+        self.events.push(TranscriptEvent::ShortChallenge {
+            loss_factor,
+            value: challenge,
+        });
+        Ok(challenge)
     }
 }
 

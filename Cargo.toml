@@ -297,7 +297,7 @@ light-poseidon = "0.4"
 digest = "0.11"
 spongefish = { version = "=0.8.0", default-features = false }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.4.2", features = [
+dory = { package = "dory-pcs", version = "=0.4.2", features = [
   "backends",
   "cache",
   "disk-persistence",

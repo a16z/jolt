@@ -39,6 +39,7 @@ ignored = ["rand"]
 
 [features]
 default = ["parallel"]
+binary = ["jolt-field/binary"]
 parallel = ["rayon"]
 # Heap visitation of this crate's tables for the profile harness.
 # Forwards to jolt-field so `F: JoltField` implies `F: Allocative`; without
