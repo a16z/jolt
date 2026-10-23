@@ -31,7 +31,7 @@ where
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = uniskip::draw_spartan_outer_tau(transcript, log_t);
 
-    if !checked.zk {
+    if !checked.zk.is_masked() {
         // The uni-skip first round consumes no openings: its symbolic `input_expression`
         // is `zero` (jolt-claims `spartan/outer_uniskip.rs`), so the input claim is the
         // constant zero. BlindFold still single-sources this claim from that same symbolic

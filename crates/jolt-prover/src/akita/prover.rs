@@ -9,7 +9,7 @@ use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
 use jolt_transcript::Sponge;
-use jolt_verifier::config::JoltProtocolConfig;
+use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
 use jolt_verifier::proof::JoltProof;
 
 use super::stage0::prove_stage0;
@@ -166,7 +166,7 @@ where
     backend.finish();
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+        protocol: JoltProtocolConfig::for_zk(ZkConfig::Transparent),
         narg: transcript.finish(),
     })
 }

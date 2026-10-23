@@ -166,7 +166,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         let entry_bytecode_index = preprocessing
             .program
             .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
-        let bytecode_table_rows = if checked.zk || committed_program {
+        let bytecode_table_rows = if checked.zk.is_masked() || committed_program {
             None
         } else {
             Some(
@@ -182,7 +182,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                     .as_slice(),
             )
         };
-        let address_val_stages = if checked.zk {
+        let address_val_stages = if checked.zk.is_masked() {
             Vec::new()
         } else {
             stage6a
@@ -193,21 +193,22 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 .clone()
         };
         #[cfg(not(feature = "akita"))]
-        let (trusted_advice_reference_point, untrusted_advice_reference_point) = if checked.zk {
-            (None, None)
-        } else {
-            let stage4 = stage4.clear()?;
-            (
-                advice_reference_point_from_upstream(
-                    &stage4.ram_val_check_init,
-                    JoltAdviceKind::Trusted,
-                ),
-                advice_reference_point_from_upstream(
-                    &stage4.ram_val_check_init,
-                    JoltAdviceKind::Untrusted,
-                ),
-            )
-        };
+        let (trusted_advice_reference_point, untrusted_advice_reference_point) =
+            if checked.zk.is_masked() {
+                (None, None)
+            } else {
+                let stage4 = stage4.clear()?;
+                (
+                    advice_reference_point_from_upstream(
+                        &stage4.ram_val_check_init,
+                        JoltAdviceKind::Trusted,
+                    ),
+                    advice_reference_point_from_upstream(
+                        &stage4.ram_val_check_init,
+                        JoltAdviceKind::Untrusted,
+                    ),
+                )
+            };
 
         Self::build_from_parts(Stage6bBuildParts {
             formula_dimensions,

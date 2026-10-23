@@ -95,7 +95,7 @@ where
     H: Sponge,
 {
     transcript.site(STAGE2);
-    match (checked.zk, stage1) {
+    match (checked.zk.is_masked(), stage1) {
         (true, Stage1Output::Clear(_)) => {
             return Err(VerifierError::ExpectedMaskedProof { field: "stage1" });
         }
@@ -171,7 +171,7 @@ where
 
     let input_points = sumchecks.empty_input_points();
 
-    if checked.zk {
+    if checked.zk.is_masked() {
         let ProductUniskipVerified::Zk(product_uniskip) = uniskip.verified else {
             return Err(VerifierError::ExpectedMaskedProof {
                 field: "stage2_uni_skip_first_round_proof",

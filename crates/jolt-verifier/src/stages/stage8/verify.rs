@@ -171,7 +171,7 @@ where
     };
     let opening_ids: Vec<ComposedOpeningId> = entries.iter().map(|entry| entry.id).collect();
 
-    if checked.zk {
+    if checked.zk.is_masked() {
         let gamma_powers = transcript.challenge_powers(entries.len());
         let commitments: Vec<PCS::Output> = entries
             .iter()

@@ -49,6 +49,7 @@ jolt-verifier::config.rs::JoltProtocolConfig.field_inline
 jolt-verifier::config.rs::JoltProtocolConfig.zk
 jolt-verifier::config.rs::ZkConfig::BlindFold
 jolt-verifier::config.rs::ZkConfig::Transparent
+jolt-verifier::config.rs::ZkConfig::Whiteout
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.bytecode_commitment
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.max_padded_trace_length
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.memory_layout

@@ -156,7 +156,7 @@ pub fn tamper_must_reject(bundles: &[Bundle], data: &[u8], mode: &str) {
                 let protocol = &mut statement.proof.protocol;
                 protocol.zk = match protocol.zk {
                     ZkConfig::Transparent => ZkConfig::BlindFold,
-                    ZkConfig::BlindFold => ZkConfig::Transparent,
+                    ZkConfig::BlindFold | ZkConfig::Whiteout => ZkConfig::Transparent,
                 };
             }
         }

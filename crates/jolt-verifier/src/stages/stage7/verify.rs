@@ -71,7 +71,7 @@ where
     // weights) lives in the stage 4/6 clear outputs, absent in ZK where those
     // terms are proved by BlindFold and the relations' `derive_output_term` never
     // runs.
-    let clear = if checked.zk {
+    let clear = if checked.zk.is_masked() {
         None
     } else {
         Some((stage4.clear()?, stage6.clear()?))
@@ -96,7 +96,7 @@ where
     // `challenges.hamming_weight_claim_reduction.gamma`.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if checked.zk {
+    if checked.zk.is_masked() {
         // The produced opening points, derived off the committed batch consistency;
         // stage 8 reads the hamming point and resolves the precommitted finals off
         // them. BlindFold recomputes each relation's sumcheck point and publics

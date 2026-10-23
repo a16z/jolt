@@ -90,7 +90,7 @@ where
     // opening values; produced points derive from its own sumcheck point).
     let address_input_points = address_sumchecks.empty_input_points();
 
-    if checked.zk {
+    if checked.zk.is_masked() {
         let batch = address_sumchecks.verify_masked(
             &address_input_points,
             &mut masked_channel(pads, transcript)?,

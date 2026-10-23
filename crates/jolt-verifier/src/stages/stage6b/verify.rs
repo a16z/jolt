@@ -116,7 +116,7 @@ where
     #[cfg(feature = "akita")]
     let _ = pads;
     #[cfg(not(feature = "akita"))]
-    if checked.zk {
+    if checked.zk.is_masked() {
         let batch =
             sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
 

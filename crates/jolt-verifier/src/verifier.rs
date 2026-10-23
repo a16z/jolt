@@ -278,7 +278,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
-    if checked.zk != pads.is_some() {
+    if checked.zk.is_masked() != pads.is_some() {
         return Err(VerifierError::MissingProofPayload {
             field: "pad commitment",
         });
@@ -546,7 +546,7 @@ where
         transcript,
     )?;
 
-    let mut pads = if checked.zk {
+    let mut pads = if checked.zk.is_masked() {
         let derived;
         let layout = if let Some(layout) = layout {
             layout
@@ -728,7 +728,7 @@ where
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedInputs {
     pub public_io: JoltDevice,
-    pub zk: bool,
+    pub zk: ZkConfig,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
@@ -801,13 +801,12 @@ where
     let one_hot_config = header.one_hot_config;
     #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = header.untrusted_advice;
-    let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
-    let vc_capacity = if zk {
-        Some(validate_zk_vector_commitment_setup::<PCS, VC>(
+    let zk = JOLT_VERIFIER_CONFIG.zk;
+    let vc_capacity = match zk {
+        ZkConfig::BlindFold => Some(validate_zk_vector_commitment_setup::<PCS, VC>(
             preprocessing,
-        )?)
-    } else {
-        None
+        )?),
+        ZkConfig::Transparent | ZkConfig::Whiteout => None,
     };
     let program = &preprocessing.program;
     let memory_layout = program.memory_layout();
@@ -1200,7 +1199,7 @@ mod tests {
         }
         let mut protocol = JOLT_VERIFIER_CONFIG;
         protocol.zk = match protocol.zk {
-            ZkConfig::BlindFold => ZkConfig::Transparent,
+            ZkConfig::BlindFold | ZkConfig::Whiteout => ZkConfig::Transparent,
             ZkConfig::Transparent => ZkConfig::BlindFold,
         };
         let proof = JoltProof {

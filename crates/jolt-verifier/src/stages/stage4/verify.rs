@@ -175,7 +175,7 @@ where
     // `challenge`).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if !checked.zk {
+    if !checked.zk.is_masked() {
         let stage2 = stage2.clear()?;
         let stage3 = stage3.clear()?;
         // The staged advice / program-image openings feed the RAM value-check input

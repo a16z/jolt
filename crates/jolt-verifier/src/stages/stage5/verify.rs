@@ -110,7 +110,7 @@ where
     // carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if !checked.zk {
+    if !checked.zk.is_masked() {
         let stage2 = stage2.clear()?;
         let stage4 = stage4.clear()?;
 

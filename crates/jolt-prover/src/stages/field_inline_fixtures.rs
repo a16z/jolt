@@ -44,6 +44,7 @@ use jolt_riscv::{
     TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_transcript::{Channel, ProverTranscript, VerifierTranscript};
+use jolt_verifier::config::SELECTED_ZK_CONFIG;
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::{
     build_formula_dimensions, stage1, stage2, stage3, stage4, stage5, stage6a, stage6b,
@@ -419,7 +420,7 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
     let config = test_prover_config();
     CheckedInputs {
         public_io: test_public_io(),
-        zk: cfg!(feature = "zk"),
+        zk: SELECTED_ZK_CONFIG,
         trace_length: config.trace_length,
         ram_K: config.ram_K,
         rw_config: config.rw_config,
@@ -547,7 +548,7 @@ pub(crate) fn verify_through(
         build_formula_dimensions(verifier, checked, LOG_T, JoltRelationId::InstructionReadRaf)
             .unwrap();
     let mut counter = CommittedPadsView::counting();
-    let mut pads = checked.zk.then_some(&mut counter);
+    let mut pads = checked.zk.is_masked().then_some(&mut counter);
     'stages: {
         let t = &mut transcript;
         let stage1 = stage1::verify::<Fr, JoltSponge, ()>(checked, t, pads.as_deref_mut()).unwrap();
