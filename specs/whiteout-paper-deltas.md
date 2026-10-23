@@ -59,7 +59,7 @@ so the authors can fold it into the paper.
 | D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
 | D27 | Soundness ledger of the response proof: ≈ 2^−119.7 in total; the α round alone 126/q ≈ 2^−121 | accepted for now | accepted for now (user, 2026-10-22); revisit with the paper authors |
 | D28 | Public coordinates of w_k: the cut level's setup-prefix response and inner digits, at native-element granularity, with no zero cells | clarification, departure | implemented (Akita W5d) |
-| D29 | u_a enters N as a public (raw) target; the masked prefix sends it raw | departure (cost) | implemented (Akita W5d) |
+| D29 | u_a enters N as a public (raw) target; the masked prefix sends it raw (19 × `R_64` after W5e) | departure (cost) | implemented (Akita W5d, re-sized W5e) |
 | D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
 
 ## D1. Constant-time Σ attempt
@@ -1198,21 +1198,44 @@ compression witness (`04_protocol.tex:305-313`).
 required by admission, Akita §4.1 and §4.8.1), as the masked prefix's last
 public message. The Σ setup therefore holds u_a as `BlockTarget::Public`:
 the verifier already has the image, so compressing it again would only add
-compression witness to `e`. At the test row's `d = 64` and rank 1, u_a is
-64 coefficients; at the headline (3 × `R_256`) 768 coefficients, 12 KB.
+compression witness to `e`.
+
+**Size (after Akita W5e).** The residual commitment is priced at the Σ
+collision radius `4Γ_Δ B(10) ≈ 2^47.8` (Akita A41, §5.5.2), which forces its
+`[B_a | B′_a]` from rank 1 to rank 19 over `R_64` at every checked-in row
+(`A_a` from rank 4–5 to 18–19). u_a is `rank × 64` coefficients of 16 B:
+
+| row | u_a before W5e | u_a after W5e | modeled Akita proof before → after |
+|---|---|---|---|
+| 14:1 dense (single-group statement) | 1 × `R_64`, 64 coeff., 1 KB | 19 × `R_64`, 1,216 coeff., 19 KB | 70,534 → 94,500 B |
+| 31:1 + 14:1 (multi-group) | 1 × `R_64`, 1 KB | 19 × `R_64`, 19 KB | 78,826 → 96,244 B |
+| 36:1 headline | 1 × `R_64`, 1 KB | 19 × `R_64`, 19 KB | 84,322 → 101,672 B |
+
+The modeled sizes are the catalog snapshot's `proof_bytes` (default
+artifact set), which counts the raw u_a; the Σ proof and the response
+proof are extra.
+Measured whole proofs (Akita's `zk_end_to_end` harness: masked prefix,
+Σ and response proof; Akita §5.5.2; Apple M4, loaded machine, median of
+six runs):
+
+| statement | proof bytes | prover | verifier |
+|---|---|---|---|
+| single group 14:1 | 75,423 → 95,058 (+26%) | 0.86 → 1.19 s (+38%) | 0.019 → 0.076 s (4.0×) |
+| multi-group 31:1 + 14:1 | 80,738 → 99,196 (+23%) | 7.2 → 9.8 s (+36%) | 0.069 → 0.35 s (5.1×) |
+
+The verifier grows because N holds the rank-19 `A_a` and `[B_a | B′_a]`;
+the setup grows with them (dense 14:1: 131,072 → 7,045,504 field elements,
+54×; the headline's 2^24 is unchanged because its root dominates).
 
 **Security impact.** None: u_a is hidden by `r_a` (Lemma
 `wo:lem:stat-hiding`, Akita §4.8.1), raw or compressed.
 
-**Status.** Implemented. The 12 KB is the cost of keeping the cut
-successor's payload raw; a compressed cut payload with a compressed `N`
-target would recover the paper's 128 B.
-
-**Note (to revisit).** The "3 × `R_256`, 12 KB" headline figure follows
-Akita §4.1's design; the checked-in zero-knowledge rows have a 1 × `R_64`
-residual commitment (u_a of 64 coefficients). The rows are being re-priced
-at the Σ collision radius (Akita A41, W5e), which will change this shape,
-so the cost is restated after W5e.
+**Status.** Implemented. The 19 KB is the cost of keeping the cut
+successor's payload raw at the Σ-bound rank; a compressed cut payload with
+a compressed `N` target would recover the paper's 128 B. Akita §4.1's
+"3 × `R_256`, 12 KB" design figure is superseded: the planner's dimension
+ceiling keeps the cut successor at `R_64`, where binding at the Σ radius
+needs rank 19.
 
 ## D30. Two-witness distinguisher
 
