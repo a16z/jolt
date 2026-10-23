@@ -14,7 +14,7 @@ pub mod emit {
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    use akita_config::{policy_of, CommitmentConfig};
+    use akita_config::{admission_of, policy_of, CommitmentConfig};
     use akita_params::{OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey};
     use akita_pcs::AkitaError;
     use akita_planner::emit::offline_planning_worker_count;
@@ -175,6 +175,7 @@ pub mod emit {
             family_name,
             policy: policy_of::<Cfg>(Cfg::CHUNKING),
             source_contract: Cfg::committed_source_contract()?,
+            admission: admission_of::<Cfg>()?,
             keys,
             grouped_requests: Vec::new(),
             preplanned: Vec::new(),
