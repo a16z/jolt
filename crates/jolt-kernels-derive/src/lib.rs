@@ -27,8 +27,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 use quote::{quote, ToTokens};
 use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, GenericArgument, Meta, PathArguments, Type,
-    TypeParamBound,
+    parse_macro_input, Data, DeriveInput, Error, Fields, GenericArgument, Meta, PathArguments,
+    Type, TypeParamBound,
 };
 
 /// Emit one `jolt_kernels::PrepareKernel<F, R>` impl per `Box<dyn
@@ -42,7 +42,7 @@ use syn::{
 pub fn derive_kernel_slots(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
@@ -55,14 +55,14 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => &fields.named,
             _ => {
-                return Err(syn::Error::new_spanned(
+                return Err(Error::new_spanned(
                     name,
                     "KernelSlots requires a struct with named fields",
                 ))
             }
         },
         _ => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 name,
                 "KernelSlots can only be derived for structs",
             ))
@@ -70,14 +70,14 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     let mut impls = Vec::new();
-    let mut errors: Option<syn::Error> = None;
+    let mut errors: Option<Error> = None;
     for field in fields {
         let ident = &field.ident;
         if !names_prepare_kernel(field.ty.to_token_stream()) {
             continue;
         }
         let Some((f, r)) = prepare_kernel_args(&field.ty) else {
-            let error = syn::Error::new_spanned(
+            let error = Error::new_spanned(
                 &field.ty,
                 "a KernelSlots slot must be exactly `Box<dyn PrepareKernel<F, R>>`",
             );
@@ -131,13 +131,13 @@ fn crate_path(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Path>> {
         )?;
         for entry in entries {
             let Meta::NameValue(name_value) = &entry else {
-                return Err(syn::Error::new_spanned(
+                return Err(Error::new_spanned(
                     &entry,
                     "expected `crate = \"...\"` (the only `kernel_slots` entry)",
                 ));
             };
             if !name_value.path.is_ident("crate") {
-                return Err(syn::Error::new_spanned(
+                return Err(Error::new_spanned(
                     &name_value.path,
                     "unknown `kernel_slots` entry (supported: `crate = \"...\"`)",
                 ));
@@ -147,7 +147,7 @@ fn crate_path(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Path>> {
                 ..
             }) = &name_value.value
             else {
-                return Err(syn::Error::new_spanned(
+                return Err(Error::new_spanned(
                     &name_value.value,
                     "expected a string literal path, e.g. `crate = \"crate\"`",
                 ));
