@@ -1,6 +1,4 @@
-#[cfg(test)]
 pub(crate) mod address_first;
-#[cfg(test)]
 pub(crate) mod address_major_matrix;
 pub(crate) mod address_rounds;
 pub mod context;
@@ -23,7 +21,6 @@ pub(crate) mod precommitted_reduction;
 pub(crate) mod prefix_suffix;
 pub mod primitives;
 pub(crate) mod ra_poly;
-#[cfg(test)]
 pub(crate) mod read_write_matrix;
 pub(crate) mod split_eq;
 pub(crate) mod sum_of_products;

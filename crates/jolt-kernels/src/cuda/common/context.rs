@@ -6,7 +6,6 @@ use cudarc::driver::DevicePtr;
 use cudarc::driver::{
     CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
-#[cfg(test)]
 use cudarc::driver::{DevicePtrMut, DeviceRepr};
 use cudarc::nvrtc::Ptx;
 use jolt_field::Fr;
@@ -16,10 +15,8 @@ use super::error::CudaError;
 use super::half_fold::FoldColumn;
 use super::xfer_stats::{self, Phase};
 
-#[cfg(test)]
 const POISON_BYTE: u8 = 0xA5;
 
-#[cfg(test)]
 fn poison_byte() -> Option<u8> {
     static POISON: OnceLock<Option<u8>> = OnceLock::new();
     *POISON.get_or_init(|| std::env::var_os("JOLT_CUDA_POISON").map(|_| POISON_BYTE))
@@ -95,38 +92,25 @@ pub struct CudaKernelContext {
     unr_fold_chunks: CudaFunction,
     cr_quotient: CudaFunction,
     ap_bind_lanes: CudaFunction,
-    #[cfg(test)]
     rwm_segment_flags: CudaFunction,
-    #[cfg(test)]
     rwm_segment_bounds: CudaFunction,
-    #[cfg(test)]
     rwm_count: CudaFunction,
-    #[cfg(test)]
     rwm_merge: CudaFunction,
-    #[cfg(test)]
     rwm_message: CudaFunction,
-    #[cfg(test)]
     rwm_square_lut: CudaFunction,
-    #[cfg(test)]
     rwm_deref_coeffs: CudaFunction,
-    #[cfg(test)]
     rwm_permute_words: CudaFunction,
-    #[cfg(test)]
     amm_segment_flags: CudaFunction,
-    #[cfg(test)]
     amm_segment_bounds: CudaFunction,
-    #[cfg(test)]
     amm_count: CudaFunction,
-    #[cfg(test)]
     amm_merge: CudaFunction,
-    #[cfg(test)]
     amm_message: CudaFunction,
-    #[cfg(test)]
     amm_materialize: CudaFunction,
-    #[cfg(test)]
     amm_initial_values: CudaFunction,
-    #[cfg(test)]
     amm_lift: CudaFunction,
+    fr_delta_u64: CudaFunction,
+    rrw_flags: CudaFunction,
+    rrw_scatter: CudaFunction,
     bap_bind_squared: CudaFunction,
     bap_message: CudaFunction,
     brc_tables_init: CudaFunction,
@@ -362,38 +346,25 @@ impl CudaKernelContext {
             unr_fold_chunks: module.load_function("unr_fold_chunks_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
             ap_bind_lanes: module.load_function("ap_bind_lanes_kernel")?,
-            #[cfg(test)]
             rwm_segment_flags: module.load_function("rwm_segment_flags_kernel")?,
-            #[cfg(test)]
             rwm_segment_bounds: module.load_function("rwm_segment_bounds_kernel")?,
-            #[cfg(test)]
             rwm_count: module.load_function("rwm_count_kernel")?,
-            #[cfg(test)]
             rwm_merge: module.load_function("rwm_merge_kernel")?,
-            #[cfg(test)]
             rwm_message: module.load_function("rwm_message_kernel")?,
-            #[cfg(test)]
             rwm_square_lut: module.load_function("rwm_square_lut_kernel")?,
-            #[cfg(test)]
             rwm_deref_coeffs: module.load_function("rwm_deref_coeffs_kernel")?,
-            #[cfg(test)]
             rwm_permute_words: module.load_function("rwm_permute_words_kernel")?,
-            #[cfg(test)]
             amm_segment_flags: module.load_function("amm_segment_flags_kernel")?,
-            #[cfg(test)]
             amm_segment_bounds: module.load_function("amm_segment_bounds_kernel")?,
-            #[cfg(test)]
             amm_count: module.load_function("amm_count_kernel")?,
-            #[cfg(test)]
             amm_merge: module.load_function("amm_merge_kernel")?,
-            #[cfg(test)]
             amm_message: module.load_function("amm_message_kernel")?,
-            #[cfg(test)]
             amm_materialize: module.load_function("amm_materialize_kernel")?,
-            #[cfg(test)]
             amm_initial_values: module.load_function("amm_initial_values_kernel")?,
-            #[cfg(test)]
             amm_lift: module.load_function("amm_lift_kernel")?,
+            fr_delta_u64: module.load_function("fr_delta_u64_kernel")?,
+            rrw_flags: module.load_function("rrw_flags_kernel")?,
+            rrw_scatter: module.load_function("rrw_scatter_kernel")?,
             bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
             bap_message: module.load_function("bap_message_kernel")?,
             brc_tables_init: module.load_function("brc_tables_init_kernel")?,
@@ -597,19 +568,16 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn download_u16(&self, buffer: &CudaSlice<u16>) -> Result<Vec<u16>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u16>(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn alloc_u16_unset(&self, len: usize) -> Result<CudaSlice<u16>, CudaError> {
         self.alloc_unset::<u16>(len)
     }
 
-    #[cfg(test)]
     pub(crate) fn download_u32_range(
         &self,
         buffer: &CudaSlice<u32>,
@@ -660,7 +628,6 @@ impl CudaKernelContext {
         Ok(self.stream.alloc_zeros::<u8>(len)?)
     }
 
-    #[cfg(test)]
     fn alloc_unset<T: DeviceRepr>(&self, len: usize) -> Result<CudaSlice<T>, CudaError> {
         // SAFETY: `alloc` leaves the elements unset, which every caller of this
         // helper is required to tolerate: each writes all of `len` before any
@@ -1114,82 +1081,78 @@ impl CudaKernelContext {
         &self.ap_bind_lanes
     }
 
-    #[cfg(test)]
     pub(crate) const fn rwm_segment_flags(&self) -> &CudaFunction {
         &self.rwm_segment_flags
     }
 
-    #[cfg(test)]
     pub(crate) const fn rwm_segment_bounds(&self) -> &CudaFunction {
         &self.rwm_segment_bounds
     }
 
-    #[cfg(test)]
     pub(crate) const fn rwm_count(&self) -> &CudaFunction {
         &self.rwm_count
     }
 
-    #[cfg(test)]
     pub(crate) const fn rwm_merge(&self) -> &CudaFunction {
         &self.rwm_merge
     }
 
-    #[cfg(test)]
     pub(crate) const fn rwm_message(&self) -> &CudaFunction {
         &self.rwm_message
     }
 
-    #[cfg(test)]
     pub(crate) const fn rwm_square_lut(&self) -> &CudaFunction {
         &self.rwm_square_lut
     }
 
-    #[cfg(test)]
     pub(crate) const fn rwm_deref_coeffs(&self) -> &CudaFunction {
         &self.rwm_deref_coeffs
     }
 
-    #[cfg(test)]
     pub(crate) const fn rwm_permute_words(&self) -> &CudaFunction {
         &self.rwm_permute_words
     }
 
-    #[cfg(test)]
     pub(crate) const fn amm_segment_flags(&self) -> &CudaFunction {
         &self.amm_segment_flags
     }
 
-    #[cfg(test)]
     pub(crate) const fn amm_segment_bounds(&self) -> &CudaFunction {
         &self.amm_segment_bounds
     }
 
-    #[cfg(test)]
     pub(crate) const fn amm_count(&self) -> &CudaFunction {
         &self.amm_count
     }
 
-    #[cfg(test)]
     pub(crate) const fn amm_merge(&self) -> &CudaFunction {
         &self.amm_merge
     }
 
-    #[cfg(test)]
     pub(crate) const fn amm_message(&self) -> &CudaFunction {
         &self.amm_message
     }
 
-    #[cfg(test)]
     pub(crate) const fn amm_materialize(&self) -> &CudaFunction {
         &self.amm_materialize
     }
 
-    #[cfg(test)]
     pub(crate) const fn amm_initial_values(&self) -> &CudaFunction {
         &self.amm_initial_values
     }
 
-    #[cfg(test)]
+    pub(crate) const fn fr_delta_u64(&self) -> &CudaFunction {
+        &self.fr_delta_u64
+    }
+
+    pub(crate) const fn rrw_flags(&self) -> &CudaFunction {
+        &self.rrw_flags
+    }
+
+    pub(crate) const fn rrw_scatter(&self) -> &CudaFunction {
+        &self.rrw_scatter
+    }
+
     pub(crate) const fn amm_lift(&self) -> &CudaFunction {
         &self.amm_lift
     }

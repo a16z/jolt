@@ -96,6 +96,11 @@ pub struct DeviceSumOfProducts {
 }
 
 impl DeviceSumOfProducts {
+    #[cfg(feature = "allocative")]
+    pub(crate) fn device_bytes(&self) -> usize {
+        self.offsets.num_bytes() + self.factors.num_bytes() + self.coefficients.device_bytes()
+    }
+
     pub fn round_lanes<F: JoltField>(
         &self,
         context: &CudaKernelContext,

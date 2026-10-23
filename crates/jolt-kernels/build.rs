@@ -27,6 +27,7 @@ const KERNEL_FILES: &[&str] = &[
     "address_major_matrix.cu",
     "address_phase.cu",
     "cycle_rounds.cu",
+    "ram_read_write.cu",
     "instruction_ra_virtualization.cu",
     "ram_ra_virtualization.cu",
     "booleanity_cycle.cu",

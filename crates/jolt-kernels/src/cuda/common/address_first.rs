@@ -35,6 +35,20 @@ pub(crate) struct AddressFirst<F: JoltField> {
 }
 
 impl<F: JoltField> AddressFirst<F> {
+    #[cfg(feature = "allocative")]
+    pub(crate) fn device_bytes(&self) -> usize {
+        self.matrix
+            .as_ref()
+            .map_or(0, DeviceAddressMajorMatrix::device_bytes)
+            + self.dense.as_ref().map_or(0, |columns| {
+                columns.iter().map(DeviceFrVec::device_bytes).sum()
+            })
+            + self.inc.device_bytes()
+            + self.eq.device_bytes()
+            + self.merged_eq.as_ref().map_or(0, DeviceFrVec::device_bytes)
+            + self.form.device_bytes()
+    }
+
     pub(crate) fn new(
         context: &'static CudaKernelContext,
         matrix: DeviceReadWriteMatrix,

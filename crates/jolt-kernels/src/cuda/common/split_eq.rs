@@ -263,7 +263,6 @@ impl<F: JoltField> DeviceSplitEq<F> {
             })
     }
 
-    #[cfg(test)]
     pub fn merge(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         context.upload(super::device::require_fr_slice(self.host.merge().evals())?)
     }

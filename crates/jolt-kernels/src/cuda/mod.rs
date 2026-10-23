@@ -1,13 +1,15 @@
 //! CUDA precommitted, increment, register and instruction claim reductions.
 //! Also provides instruction-input checking, RAM output and value checking,
 //! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization,
-//! shift checking, register-value evaluation, RAM RAF evaluation, and instruction read-RAF.
+//! shift checking, register-value evaluation, RAM RAF evaluation, instruction read-RAF,
+//! and RAM read/write checking.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
 //! reduction, instruction operand reduction, instruction-input and read-RAF checking,
 //! RAM output and value checking, hamming-weight booleanity, Spartan shift
-//! checking, register-value evaluation, and RAM RAF evaluation in the optimized registry.
+//! checking, register-value evaluation, RAM RAF evaluation, and RAM read/write checking
+//! in the optimized registry.
 //! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
 //! field-inline retains the optimized implementations.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
@@ -166,6 +168,7 @@ mod ram_output_check;
 mod ram_ra_claim_reduction;
 mod ram_ra_virtualization;
 mod ram_raf_evaluation;
+mod ram_read_write;
 mod ram_val_check;
 mod registers_claim_reduction;
 #[cfg(test)]
@@ -245,6 +248,7 @@ where
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
         backend.ram_raf_evaluation = Box::new(CudaBackend);
+        backend.ram_read_write = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
         backend.ram_ra_virtualization = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);

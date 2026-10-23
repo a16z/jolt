@@ -31,6 +31,17 @@ pub struct DeviceAddressMajorMatrix {
 }
 
 impl DeviceAddressMajorMatrix {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        (self.rows.len() + self.cols.len()) * size_of::<u32>()
+            + self.val_coeff.device_bytes()
+            + self.prev_val.device_bytes()
+            + self.next_val.device_bytes()
+            + self.coeffs.device_bytes()
+            + self.val_init.device_bytes()
+            + self.wa_scale.device_bytes()
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "the cycle-major transpose hands over one buffer per matrix column"

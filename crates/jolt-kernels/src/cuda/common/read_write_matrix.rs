@@ -11,7 +11,9 @@
 //! representations avoid the full address-by-cycle matrix.
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::{Fr, JoltField, Ring};
+#[cfg(test)]
+use jolt_field::Ring;
+use jolt_field::{Fr, JoltField};
 use jolt_poly::BindingOrder;
 
 use super::address_major_matrix::DeviceAddressMajorMatrix;
@@ -35,6 +37,7 @@ pub struct MatrixEntry {
 
 pub const MAX_COEFF_LUT_VALUES: usize = 1 << 16;
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoeffTables {
     pub values: [Vec<Fr>; MAX_COEFFS],
@@ -58,11 +61,16 @@ struct Segments {
     pair: CudaSlice<u32>,
 }
 
+pub(crate) enum DeviceCoeffs {
+    Direct(DeviceFrVec),
+}
+
 pub(crate) struct DeviceCoeffLut {
     values: DeviceFrVec,
 }
 
 impl DeviceCoeffLut {
+    #[cfg(test)]
     fn new(context: &CudaKernelContext, values: &[Fr]) -> Result<Self, CudaError> {
         if !values.len().is_power_of_two() || values.len() > MAX_COEFF_LUT_VALUES {
             return Err(CudaError::InvariantViolation {
@@ -139,6 +147,21 @@ pub struct DeviceReadWriteMatrix {
 }
 
 impl DeviceReadWriteMatrix {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        (self.rows.len() + self.cols.len()) * size_of::<u32>()
+            + (self.prev_val.len() + self.next_val.len()) * size_of::<u64>()
+            + self.val_coeff.device_bytes()
+            + self.coeffs.device_bytes()
+            + self.coeff_index.len() * size_of::<u16>()
+            + self
+                .luts
+                .iter()
+                .map(|lut| lut.values.device_bytes())
+                .sum::<usize>()
+            + self.wa_scale.device_bytes()
+    }
+
     #[cfg(test)]
     pub fn new(
         context: &CudaKernelContext,
@@ -254,6 +277,7 @@ impl DeviceReadWriteMatrix {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn upload_luts(
         context: &CudaKernelContext,
         tables: &CoeffTables,
@@ -353,6 +377,45 @@ impl DeviceReadWriteMatrix {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the device-side construction hands over one buffer per matrix column"
+    )]
+    pub(crate) fn from_device_parts(
+        context: &CudaKernelContext,
+        rows: CudaSlice<u32>,
+        cols: CudaSlice<u32>,
+        val_coeff: DeviceFrVec,
+        prev_val: CudaSlice<u64>,
+        next_val: CudaSlice<u64>,
+        coeffs: DeviceCoeffs,
+        wa_scale: DeviceFrVec,
+        coeff_width: usize,
+        entries: usize,
+    ) -> Result<Self, CudaError> {
+        let DeviceCoeffs::Direct(coeffs) = coeffs;
+        let coeff_index = context.alloc_u16_unset(1)?;
+        let luts = [
+            DeviceCoeffLut::placeholder(context)?,
+            DeviceCoeffLut::placeholder(context)?,
+        ];
+        Ok(Self {
+            rows,
+            cols,
+            val_coeff,
+            prev_val,
+            next_val,
+            coeffs,
+            coeff_index,
+            luts,
+            indexed: false,
+            wa_scale,
+            coeff_width,
+            entries,
+            rounds_bound: 0,
+        })
+    }
+
     #[cfg(test)]
     pub const fn is_empty(&self) -> bool {
         self.entries == 0
@@ -425,6 +488,32 @@ impl DeviceReadWriteMatrix {
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(entries)) }?;
         context.stream().synchronize()?;
         Ok((segment_count, seg))
+    }
+
+    pub fn to_address_major(
+        &self,
+        context: &CudaKernelContext,
+        val_init: &[Fr],
+    ) -> Result<DeviceAddressMajorMatrix, CudaError> {
+        if self.entries > val_init.len() {
+            return Err(CudaError::InvariantViolation {
+                reason: "transposing a read-write matrix needs its cycle variables fully bound",
+            });
+        }
+        self.require_direct()?;
+        DeviceAddressMajorMatrix::from_parts(
+            context,
+            context.clone_u32(&self.rows)?,
+            context.clone_u32(&self.cols)?,
+            &self.val_coeff,
+            &self.prev_val,
+            &self.next_val,
+            &self.coeffs,
+            val_init,
+            &self.wa_scale,
+            self.coeff_width,
+            self.entries,
+        )
     }
 
     pub(crate) fn into_address_first(
@@ -735,6 +824,19 @@ pub(crate) struct ShardedReadWriteMatrix<F: JoltField> {
 }
 
 impl<F: JoltField> ShardedReadWriteMatrix<F> {
+    #[cfg(feature = "allocative")]
+    pub(crate) fn device_bytes(&self) -> usize {
+        self.shards
+            .iter()
+            .map(|shard| {
+                shard.matrix.device_bytes() + shard.inc.device_bytes() + shard.eq.device_bytes()
+            })
+            .sum::<usize>()
+            + self.collapsed.as_ref().map_or(0, |(matrix, inc)| {
+                matrix.device_bytes() + inc.device_bytes()
+            })
+    }
+
     pub(crate) fn new(shards: Vec<CycleShard<F>>, log_t: usize) -> Result<Self, CudaError> {
         let count = shards.len();
         if count == 0 || !count.is_power_of_two() {

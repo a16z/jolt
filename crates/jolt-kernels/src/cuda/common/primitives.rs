@@ -478,7 +478,6 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    #[cfg(test)]
     pub(crate) fn exclusive_scan_with_total_u32(
         &self,
         input: &CudaSlice<u32>,
