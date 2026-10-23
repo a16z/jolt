@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792790381255,
+  "lastUpdate": 1792797075282,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -198946,6 +198946,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 868112,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7931b223ddefe3cfa35671d0fa8321df4578ff96",
+          "message": "feat(transcript): field challenge codecs with a 2^-160 per-message bias budget (J2) (#2097)\n\n* Add fixed-tape field challenge codecs\n\n* Declare legacy transcript test feature requirements\n\n* fix(transcript): bound, poison and seal field challenge messages\n\nReject unsupported lengths and messages above MAX_CHALLENGE_BYTES before\ntouching the sponge; return early on empty messages; poison the verifier on\npool exhaustion; seal ChallengeCodec; correct the BN254 width table; lint and\ntest jolt-transcript with all features in CI.\n\n* style(transcript): import Sealed, Transcript and sponge traits by name\n\n* fix(transcript): field challenges only on uniform sponges; poison rejected lengths\n\nPoseidonSponge squeezes the bytes of a BN254 scalar, so its output is far\nfrom uniform and the codecs' TV bound fails there. Restrict field_challenges\nto sponges with uniform output (sealed UniformBytes: Keccak, Blake2b512).\nThe verifier now also poisons on a rejected length.\n\n* docs(transcript): document the external challenge-codec contract; trim comments\n\n- ChallengeCodec, UniformBytes and MAX_CHALLENGE_BYTES stay public because\n  they bound the public field_challenges methods; their docs now state that\n  contract and name Akita's transcript as the consumer.\n- Remove the doc block on the crate-private message_bytes helper.\n- Remove the test-file heading and a comment that restated its assertions.\n- Correct the CI comment: default features already cover BN254 and every\n  sponge; the all-features run adds the Solinas and binary codecs.\n\n* docs(transcript): drop the unmerged Akita consumer from the ChallengeCodec contract",
+          "timestamp": "2026-10-23T18:05:48-04:00",
+          "tree_id": "abb2720eb1bc36ad8d65dc609ac0d0d1ceb76fd4",
+          "url": "https://github.com/a16z/jolt/commit/7931b223ddefe3cfa35671d0fa8321df4578ff96"
+        },
+        "date": 1792797066873,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.8984,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862608,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7686,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 504372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 506976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0771,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 497568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 998892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.9008,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 501684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.5325,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 497036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.1745,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 237000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.0906,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.927,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500492,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6878,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 499504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.0772,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 496800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4756,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 510796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 41.9734,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 2001640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.0857,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 655004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 92.9103,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1106376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9537,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500284,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.2203,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 502452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 20.0028,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861452,
             "unit": "KB",
             "extra": ""
           }
