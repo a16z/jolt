@@ -68,6 +68,11 @@ pub enum WhiteoutError {
     /// The response statement does not hold.
     #[error("response rejected: {0}")]
     ResponseRejected(&'static str),
+    /// The table's responses need more digits than the commitments that `s`
+    /// opens are priced for ([`super::BINDING_RESPONSE_DIGITS`]), so their
+    /// certified box leaves the binding radius.
+    #[error("Σ responses need {digits} digits, above the binding regime's")]
+    BindingDigitsExceeded { digits: usize },
     /// A lattice primitive rejected its arguments.
     #[error(transparent)]
     Crypto(#[from] CryptoError),

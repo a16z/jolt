@@ -31,6 +31,11 @@ pub const ALPHA: u32 = 1 << 17;
 pub const EPSILON_BITS: u32 = 137;
 /// Response digits are balanced radix 16.
 pub const RESPONSE_LOG_BASIS: u32 = 4;
+/// The response digit count the commitments that `s` opens are priced for
+/// (`whiteout-sigma.md` §5.1's regime): [`SigmaParams`] rejects a table whose
+/// responses need more, so every certified box is inside the one
+/// [`binding_collision_radius`] was computed for.
+pub const BINDING_RESPONSE_DIGITS: usize = 10;
 /// The acceptance box keeps `p_𝓑 ≥ 1 − 2^{−20}`, far below the rejection
 /// rate set by `M`.
 const BOX_FAILURE_INVERSE: u64 = 1 << 20;
@@ -177,6 +182,12 @@ impl SigmaParams {
                 len: segment.num_coefficients(),
             });
         }
+        if let Some(&digits) = response_digits
+            .iter()
+            .find(|&&digits| digits > BINDING_RESPONSE_DIGITS)
+        {
+            return Err(WhiteoutError::BindingDigitsExceeded { digits });
+        }
         check_rejection_arithmetic(&blocks)?;
         // At most MAX_RESPONSE_MAGNITUDE, within the Ajtai map's input bound.
         let response_bound = response_digits
@@ -241,6 +252,21 @@ impl SigmaParams {
             .rejection()?
             .max_attempts(BOX_FAILURE_INVERSE, ALL_REJECTED_BITS)?)
     }
+}
+
+/// The coefficient-ℓ∞ radius `4Γ_Δ B` at which a commitment matrix that `s`
+/// opens must be Module-SIS hard (Thm `wo:thm:knowledge`; paper §6
+/// "Commitment ranks"): `Γ_Δ = 2κ₁` bounds `‖(c − c′)v‖_∞ / ‖v‖_∞` over the
+/// challenge family, and `B` is the magnitude of the
+/// [`BINDING_RESPONSE_DIGITS`]-digit certified box, the largest response
+/// coefficient on any segment. The one owner of the radius: Akita's residual
+/// commitment (`A_a`, `[B_a | B′_a]`) reads it; the pad commitment `A_p`
+/// will in W6 (Akita A40).
+pub fn binding_collision_radius() -> u128 {
+    let (_, kappa) = challenge_norms();
+    let magnitude = balanced_range(RESPONSE_LOG_BASIS, BINDING_RESPONSE_DIGITS)
+        .map_or(0, |(min, _)| min.unsigned_abs());
+    8 * u128::from(kappa) * magnitude
 }
 
 /// `⌈2^{32} · 2 ln 2 · Γ² α²⌉`, with `ln 2` rounded up: the width condition

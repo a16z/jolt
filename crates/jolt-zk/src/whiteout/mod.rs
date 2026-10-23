@@ -50,7 +50,10 @@ pub use linear::{BlockTarget, ResidualBlock, ResidualGadget};
 pub use pad_commitment::LatticePadCommitment;
 #[cfg(feature = "whiteout-prover")]
 pub use pad_commitment::LatticePadOpening;
-pub use params::{GaussianBlock, SigmaParams, ALPHA, EPSILON_BITS, RESPONSE_LOG_BASIS};
+pub use params::{
+    binding_collision_radius, GaussianBlock, SigmaParams, ALPHA, BINDING_RESPONSE_DIGITS,
+    EPSILON_BITS, RESPONSE_LOG_BASIS,
+};
 pub use placement::{
     PadPlace, PadPlacement, OPERAND_LEVELS, OPERAND_LOG_BASIS, PAD_LEVELS, PAD_LOG_BASIS,
 };

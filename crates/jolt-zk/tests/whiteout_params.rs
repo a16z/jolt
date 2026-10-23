@@ -5,7 +5,8 @@
 use jolt_algebra::Prime128OffsetA7F7;
 use jolt_crypto::lattice::required_randomness_columns;
 use jolt_zk::whiteout::{
-    Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable, SigmaParams, WhiteoutError,
+    binding_collision_radius, Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable,
+    SigmaParams, WhiteoutError, BINDING_RESPONSE_DIGITS,
 };
 
 fn segment(
@@ -121,6 +122,31 @@ fn headline_parameters_match_the_closed_form() {
     // Per-attempt rejection at most 2^{−13.2}: ten attempts reach 2^{−128}.
     assert_eq!(params.max_attempts(), Ok(10));
     let _rejection = params.rejection().unwrap();
+}
+
+/// The binding radius is the paper's coefficientwise `4Γ_Δ B` with
+/// `Γ_Δ = 2κ₁ = 106` (`02_preliminaries.tex:97-108`) and `B` the ten-digit
+/// radix-16 box magnitude `8(16^10 − 1)/15`.
+#[test]
+fn binding_radius_is_four_gamma_delta_times_the_ten_digit_box() {
+    assert_eq!(BINDING_RESPONSE_DIGITS, 10);
+    let magnitude: u128 = 8 * (16u128.pow(10) - 1) / 15;
+    assert_eq!(binding_collision_radius(), 4 * 106 * magnitude);
+    assert_eq!(binding_collision_radius(), 248_636_229_427_520);
+}
+
+/// A table whose responses need an eleventh digit leaves the box the
+/// commitments were priced for, and is rejected.
+#[test]
+fn responses_above_the_binding_digits_are_rejected() {
+    let headline = headline(SegmentShape::ConstantPoly);
+    let mut segments = headline.segments().copied().collect::<Vec<_>>();
+    segments[1].len *= 400;
+    let wide = SegmentTable::new(segments).unwrap();
+    assert_eq!(
+        SigmaParams::derive(&wide),
+        Err(WhiteoutError::BindingDigitsExceeded { digits: 11 })
+    );
 }
 
 /// The headline's derived width multiplier.
