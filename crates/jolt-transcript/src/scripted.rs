@@ -83,7 +83,8 @@ impl<F> Script<F> for VecDeque<F> {
 /// otherwise fail at its first proof-of-work step. It can overstate `T`'s
 /// challenge set and lets the caller pick challenges, so it gives no soundness
 /// and must never back a real proof; the `test-utils` feature that exports it
-/// is for dev-dependencies.
+/// is for dev-dependencies. It wraps byte-sponge transcripts only, since its
+/// script sees check bytes.
 pub struct ScriptedTranscript<T, F, S = VecDeque<F>> {
     inner: T,
     script: S,
@@ -136,7 +137,9 @@ impl<T, F, S> ScriptedTranscript<T, F, S> {
     }
 }
 
-impl<T: Sealed, F, S: Script<F>> Sealed for ScriptedTranscript<T, F, S> {
+impl<T: Sealed<Unit = u8>, F, S: Script<F>> Sealed for ScriptedTranscript<T, F, S> {
+    type Unit = u8;
+
     fn absorb<M: Encoding + ?Sized>(&mut self, message: &M) {
         self.events
             .push(TranscriptEvent::Absorb(message.encode().as_ref().to_vec()));
@@ -160,7 +163,7 @@ impl<T: Sealed, F, S: Script<F>> Sealed for ScriptedTranscript<T, F, S> {
 
 impl<T, F, S> FieldTranscript<F> for ScriptedTranscript<T, F, S>
 where
-    T: FieldTranscript<F>,
+    T: FieldTranscript<F, Unit = u8>,
     F: Clone,
     S: Script<F>,
 {
@@ -193,7 +196,9 @@ where
     }
 }
 
-impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscript<T, F, S> {
+impl<T: ProverTranscript<Unit = u8>, F, S: Script<F>> ProverTranscript
+    for ScriptedTranscript<T, F, S>
+{
     type Sponge = T::Sponge;
 
     fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M) {
@@ -222,7 +227,9 @@ impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscri
     }
 }
 
-impl<T: VerifierTranscript, F, S: Script<F>> VerifierTranscript for ScriptedTranscript<T, F, S> {
+impl<T: VerifierTranscript<Unit = u8>, F, S: Script<F>> VerifierTranscript
+    for ScriptedTranscript<T, F, S>
+{
     fn prover_message<M: Encoding + FromNarg>(&mut self) -> Result<M, VerificationError> {
         let message = self.inner.prover_message::<M>()?;
         self.events
@@ -239,7 +246,7 @@ impl<T: VerifierTranscript, F, S: Script<F>> VerifierTranscript for ScriptedTran
     }
 }
 
-impl<'a, T: VerifierInit<'a>, F, S: Script<F> + Default> VerifierInit<'a>
+impl<'a, T: VerifierInit<'a, Unit = u8>, F, S: Script<F> + Default> VerifierInit<'a>
     for ScriptedTranscript<T, F, S>
 {
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self {
@@ -247,7 +254,9 @@ impl<'a, T: VerifierInit<'a>, F, S: Script<F> + Default> VerifierInit<'a>
     }
 }
 
-impl<T: ProverInit, F, S: Script<F> + Default> ProverInit for ScriptedTranscript<T, F, S> {
+impl<T: ProverInit<Unit = u8>, F, S: Script<F> + Default> ProverInit
+    for ScriptedTranscript<T, F, S>
+{
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
         Self::scripted_by(T::init(session, statement), S::default())
     }

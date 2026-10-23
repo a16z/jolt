@@ -1,8 +1,9 @@
 //! Prover-only operations on `spongefish::ProverState`.
 
+use crate::codec::Units;
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{Leb128, MessageSearch, SpongePow};
-use crate::{prover_transcript, Transcript};
+use crate::{prover_transcript, SpongeUnit, Transcript};
 #[cfg(feature = "prover-grinding")]
 use spongefish::VerificationError;
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState};
@@ -11,9 +12,10 @@ use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState}
 /// and the proof-of-work nonce searches.
 pub trait ProverTranscript: Transcript {
     /// The duplex sponge behind the transcript.
-    type Sponge: DuplexSpongeInterface<U = u8> + Sync;
+    type Sponge: DuplexSpongeInterface<U = Self::Unit> + Sync;
 
-    /// Absorbs `msg` and appends its NARG-serialized form for verifier replay.
+    /// Absorbs `msg` and appends its byte encoding to the NARG string for
+    /// verifier replay.
     fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M);
 
     /// Bytes accumulated in the NARG so far.
@@ -33,9 +35,11 @@ pub trait ProverTranscript: Transcript {
     ///
     /// For `bits == 0` this does nothing. For `1 <= bits <= MAX_POW_BITS`, the
     /// prover sends the least nonce below `2^(bits + 7)` for which the next
-    /// `ceil(bits / 8)` squeezed bytes have their low `bits` bits zero, as
-    /// canonical LEB128 with one byte per prover message, and squeezes those
-    /// bytes. The layout is the one proposed in arkworks-rs/spongefish#301.
+    /// squeezed check has its low `bits` bits zero, as canonical LEB128 with
+    /// one byte per prover message, and squeezes the check. On a byte sponge
+    /// the check is `ceil(bits / 8)` little-endian bytes, the layout proposed
+    /// in arkworks-rs/spongefish#301; on `PoseidonSponge` it is one element's
+    /// canonical integer.
     ///
     /// The step protects the verifier messages drawn after it, up to the next
     /// prover message. The protocol must draw the challenges it protects
@@ -85,7 +89,7 @@ pub trait ProverInit: ProverTranscript + Sized {
 
 impl<H> ProverInit for ProverState<H>
 where
-    H: DuplexSpongeInit<U = u8> + Sync,
+    H: DuplexSpongeInit<U: SpongeUnit> + Sync,
 {
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
         prover_transcript::<H>(session, statement)
@@ -94,13 +98,13 @@ where
 
 impl<H, R> ProverTranscript for ProverState<H, R>
 where
-    H: DuplexSpongeInterface<U = u8> + Sync,
+    H: DuplexSpongeInterface<U: SpongeUnit> + Sync,
     R: DuplexSpongeInit<U = u8>,
 {
     type Sponge = H;
 
     fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M) {
-        ProverState::prover_message(self, msg);
+        ProverState::prover_message(self, &Units(msg));
     }
 
     fn narg_string(&self) -> &[u8] {
@@ -122,9 +126,10 @@ where
             .search(&self.message_search())
             .ok_or(VerificationError)?;
         for byte in Leb128::new(nonce).as_bytes() {
-            ProverState::prover_message(self, byte);
+            ProverTranscript::prover_message(self, byte);
         }
-        if ProverState::verifier_message_as(self, pow.word_len(), |check| pow.accepts(check)) {
+        if ProverState::verifier_message_as(self, H::U::check_len(bits), |check| pow.accepts(check))
+        {
             Ok(())
         } else {
             Err(VerificationError)

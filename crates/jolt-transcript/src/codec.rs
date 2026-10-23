@@ -1,10 +1,97 @@
-//! Message encodings for byte-oriented spongefish transcripts.
+//! Message encodings, and how a sponge absorbs them.
 //!
 //! [`BytesMsg`] is a byte string with an eight-byte little-endian length,
 //! followed by the body. [`Label`], [`LabelWithCount`] and [`U64Word`] are the
 //! 32-byte words that name what the next messages are.
+//!
+//! Every message is a byte [`Encoding`]. [`SpongeUnit`] maps it to the units
+//! the sponge absorbs: a byte sponge absorbs the bytes as they are, and
+//! `PoseidonSponge` packs them into BN254 `Fr` elements.
 
-use spongefish::{Encoding, FromNarg, NargReader, VerificationError};
+use spongefish::{Encoding, FromNarg, NargReader, Unit, VerificationError};
+
+use sealed::Sealed;
+
+pub(crate) mod sealed {
+    pub trait Sealed {}
+}
+
+/// The alphabet of a transcript's sponge: how the sponge absorbs a message,
+/// and how it reads a proof-of-work check from squeezed units.
+///
+/// The trait is sealed.
+pub trait SpongeUnit: Unit + Copy + Eq + Sealed {
+    /// The units the sponge absorbs for `message`. The map is injective and
+    /// prefix-free on byte strings, so messages absorbed back to back decode
+    /// uniquely whenever their byte encodings do.
+    fn encode_message<M: Encoding + ?Sized>(message: &M) -> impl AsRef<[Self]>;
+
+    /// Units squeezed for a proof-of-work check of `bits` bits, for
+    /// `1 <= bits <= MAX_POW_BITS`; at most 4.
+    ///
+    /// [`MAX_POW_BITS`]: crate::MAX_POW_BITS
+    fn check_len(bits: u32) -> usize;
+
+    /// The low 32 bits of a check, or `None` unless `check` has the length of
+    /// one check.
+    fn low_word(check: &[Self]) -> Option<u32>;
+
+    /// Units squeezed for a short challenge of `bits` bits, for
+    /// `1 <= bits <= 253`.
+    fn short_len(bits: u32) -> usize;
+
+    /// A 256-bit little-endian integer whose low `bits` bits are within
+    /// 2^-160 of uniform, read from the `short_len(bits)` units of a short
+    /// challenge, or `None` if they do not fit.
+    fn short_word(units: &[Self]) -> Option<[u8; 32]>;
+}
+
+impl Sealed for u8 {}
+
+/// A byte sponge absorbs a message's bytes as they are, and reads a check or
+/// a short challenge of `bits` bits from `ceil(bits / 8)` little-endian
+/// bytes.
+impl SpongeUnit for u8 {
+    fn encode_message<M: Encoding + ?Sized>(message: &M) -> impl AsRef<[u8]> {
+        message.encode()
+    }
+
+    fn check_len(bits: u32) -> usize {
+        (bits as usize).div_ceil(8)
+    }
+
+    fn low_word(check: &[u8]) -> Option<u32> {
+        let mut word = [0u8; 4];
+        word.get_mut(..check.len())?.copy_from_slice(check);
+        Some(u32::from_le_bytes(word))
+    }
+
+    fn short_len(bits: u32) -> usize {
+        (bits as usize).div_ceil(8)
+    }
+
+    fn short_word(units: &[u8]) -> Option<[u8; 32]> {
+        let mut word = [0u8; 32];
+        word.get_mut(..units.len())?.copy_from_slice(units);
+        Some(word)
+    }
+}
+
+/// A message as its sponge absorbs it: [`SpongeUnit::encode_message`] of its
+/// byte encoding. The proof carries the byte encoding itself.
+pub(crate) struct Units<M>(pub(crate) M);
+
+impl<U: SpongeUnit, M: Encoding> Encoding<U> for Units<M> {
+    fn encode(&self) -> impl AsRef<[U]> {
+        U::encode_message(&self.0)
+    }
+}
+
+impl<M: FromNarg> FromNarg for Units<M> {
+    fn from_narg(reader: &mut NargReader<'_>) -> Result<Self, VerificationError> {
+        M::from_narg(reader).map(Self)
+    }
+}
 
 /// Maximum label length in bytes accepted by [`Label`].
 pub const MAX_LABEL_LEN: usize = 32;

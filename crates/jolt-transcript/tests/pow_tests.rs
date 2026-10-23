@@ -6,11 +6,13 @@ use jolt_field::{CanonicalBytes, F8};
 use jolt_transcript::FieldTranscript;
 use jolt_transcript::{
     prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge, Probe,
-    ProverTranscript, VerifierTranscript, MAX_POW_BITS,
+    ProverTranscript, SpongeUnit, VerifierTranscript, MAX_POW_BITS,
 };
 use spongefish::{
-    instantiations::Keccak, DuplexSpongeInit, DuplexSpongeInterface, ProverState, VerifierState,
+    instantiations::Keccak, DuplexSpongeInit, DuplexSpongeInterface, ProverState, Unit,
+    VerifierState,
 };
+use std::fmt::Debug;
 
 const SESSION: &[u8] = b"jolt/pow/v1";
 const INSTANCE: [u8; 32] = [0x24; 32];
@@ -127,53 +129,63 @@ fn layout_matches_the_manual_transcript() {
     }
 }
 
-fn sponge_prover<H: DuplexSpongeInit<U = u8>>() -> ProverState<H> {
+fn sponge_prover<H: DuplexSpongeInit<U: SpongeUnit> + Sync>() -> ProverState<H> {
     let mut prover = prover_transcript::<H>(SESSION, &INSTANCE);
-    prover.prover_message(&BytesMsg(b"before".to_vec()));
+    ProverTranscript::prover_message(&mut prover, &BytesMsg(b"before".to_vec()));
     prover
 }
 
-fn sponge_verifier<H: DuplexSpongeInit<U = u8>>(narg: &[u8]) -> VerifierState<'_, H> {
+fn sponge_verifier<H: DuplexSpongeInit<U: SpongeUnit>>(narg: &[u8]) -> VerifierState<'_, H> {
     let mut verifier = verifier_transcript::<H>(SESSION, &INSTANCE, narg);
-    assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
+    assert_eq!(
+        VerifierTranscript::prover_message::<BytesMsg>(&mut verifier)
+            .unwrap()
+            .0,
+        b"before"
+    );
     verifier
 }
 
+/// Whether `check` is one check whose low `bits` bits are zero.
+fn check_passes<U: SpongeUnit>(bits: u32, check: &[U]) -> bool {
+    check.len() == U::check_len(bits) && U::low_word(check).unwrap() & ((1u32 << bits) - 1) == 0
+}
+
 /// Runs `check_grind` on `before ‖ nonce ‖ after` and returns the verifier's
-/// result, the bytes it squeezes next and whether the rest still verifies.
-fn verify_nonce<H: DuplexSpongeInit<U = u8>>(
+/// result, the units it squeezes next and whether the rest still verifies.
+fn verify_nonce<H: DuplexSpongeInit<U: SpongeUnit> + Sync>(
     prefix: &[u8],
     nonce: &[u8],
     bits: u32,
-) -> (bool, [u8; 16], bool) {
+) -> (bool, Vec<H::U>, bool) {
     let mut after = sponge_prover::<H>();
-    after.prover_message(&BytesMsg(b"after".to_vec()));
+    ProverTranscript::prover_message(&mut after, &BytesMsg(b"after".to_vec()));
     let suffix = &after.narg_string()[prefix.len()..];
     let narg = [prefix, nonce, suffix].concat();
     let mut verifier = sponge_verifier::<H>(&narg);
     let passed = VerifierTranscript::check_grind(&mut verifier, bits).is_ok();
-    let next = verifier.verifier_message::<[u8; 16]>();
-    let rest = verifier
-        .prover_message::<BytesMsg>()
+    let next = verifier.verifier_message_as(16, <[H::U]>::to_vec);
+    let rest = VerifierTranscript::prover_message::<BytesMsg>(&mut verifier)
         .is_ok_and(|message| message.0 == b"after")
         && verifier.check_eof().is_ok();
     (passed, next, rest)
 }
 
-/// For each sponge, including Poseidon, which absorbs a length with every
-/// call: the search replays the real sends, the honest nonce round-trips and
-/// is the least one, a larger passing nonce in range is accepted (proof bytes
-/// are not unique), and a passing nonce out of range is rejected and poisons.
-fn sponge_checks<H: DuplexSpongeInit<U = u8> + Sync>() {
+/// For each sponge, including Poseidon, which packs a length with every
+/// message and checks the low bits of one squeezed element: the search
+/// replays the real sends, the honest nonce round-trips and is the least one,
+/// a larger passing nonce in range is accepted (proof bytes are not unique),
+/// and a passing nonce out of range is rejected and poisons.
+fn sponge_checks<H: DuplexSpongeInit<U: SpongeUnit + Debug> + Sync>() {
     for bits in [1, 2, 9] {
-        let word_len = (bits as usize).div_ceil(8);
+        let check_len = H::U::check_len(bits);
         let base = sponge_prover::<H>();
         let prefix = base.narg_string().to_vec();
         let search = ProverTranscript::message_search(&base);
         let probe_passes = |value: u32| {
-            let mut check = vec![0u8; word_len];
+            let mut check = vec![H::U::ZERO; check_len];
             search.probe(&leb128(value), &mut check);
-            passes(bits, &check)
+            check_passes(bits, &check)
         };
 
         let mut prover = sponge_prover::<H>();
@@ -181,15 +193,17 @@ fn sponge_checks<H: DuplexSpongeInit<U = u8> + Sync>() {
         let nonce = prover.narg_string()[prefix.len()..].to_vec();
         let value = decode(&nonce);
         assert_eq!(nonce, leb128(value));
-        let challenge = prover.verifier_message::<[u8; 16]>();
+        let challenge = prover.verifier_message_as(16, <[H::U]>::to_vec);
 
         let mut sent = sponge_prover::<H>();
         for byte in &nonce {
-            sent.prover_message(byte);
+            ProverTranscript::prover_message(&mut sent, byte);
         }
-        let mut probed = [0u8; 40];
+        let mut probed = vec![H::U::ZERO; 40];
         search.probe(&nonce, &mut probed);
-        assert_eq!(sent.verifier_message::<[u8; 40]>(), probed);
+        assert_eq!(sent.verifier_message_as(40, <[H::U]>::to_vec), probed);
+        assert!(check_passes(bits, &probed[..check_len]));
+        assert_eq!(probed[check_len..check_len + 16], challenge[..]);
 
         assert_eq!(
             verify_nonce::<H>(&prefix, &nonce, bits),
