@@ -90,6 +90,8 @@ const MESSAGE_METHODS: &[&str] = &[
     "check_grind",
     "exchange",
     "exchange_all",
+    "exchange_public",
+    "exchange_public_all",
     "exchange_private",
     "exchange_private_base",
 ];

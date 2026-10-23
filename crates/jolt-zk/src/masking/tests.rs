@@ -709,7 +709,7 @@ mod single_instance {
         prove_single, receive_masked_single, verify_single, ProveRounds, ProverRoundContext,
         SingleFormat, SingleInstance, SumcheckError, SumcheckSite, VerifierRoundContext,
     };
-    use jolt_transcript::{Channel, ClaimDomain, SiteId};
+    use jolt_transcript::{Channel, ClaimDomain, SiteId, TranscriptError};
 
     use super::*;
 
@@ -994,6 +994,36 @@ mod single_instance {
                 .exchange_private_base(&mut [fr(1)]),
             Err(ZkError::MessageFieldMismatch)
         ));
+    }
+
+    /// A masked channel sends nothing for a clear message, and an explicitly
+    /// public one as the clear transcript would.
+    #[test]
+    fn masked_channels_refuse_clear_messages() {
+        let mut committed = CommittedPads::new(layout(), pads(), ()).unwrap();
+        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
+        let mut channel = committed.channel(&mut transcript);
+        assert_eq!(
+            channel.exchange_all(&mut [fp(5)]),
+            Err(TranscriptError::ClearMessageOnMaskedChannel)
+        );
+        assert_eq!(channel.narg_len(), 0);
+        channel.exchange_public_all(&mut [fp(7)]).unwrap();
+        let narg = transcript.finish();
+        let mut clear = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
+        clear.send(&fp(7));
+        assert_eq!(narg, clear.finish());
+
+        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, &narg);
+        let mut view = CommittedPadsView::new(layout(), ());
+        let mut channel = view.channel(&mut transcript);
+        assert_eq!(
+            channel.exchange(&mut Fp::default()),
+            Err(TranscriptError::ClearMessageOnMaskedChannel)
+        );
+        let mut received = Fp::default();
+        channel.exchange_public(&mut received).unwrap();
+        assert_eq!(received, fp(7));
     }
 
     #[test]

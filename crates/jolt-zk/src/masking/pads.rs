@@ -317,7 +317,8 @@ impl<H: Sponge> MaskedVerifier<'_, '_, H> {
     }
 }
 
-/// Public messages and challenges pass through to the transcript.
+/// Public absorbs, explicitly public messages and challenges pass through to
+/// the transcript. A clear message is refused: it has no masked form here.
 impl<H: Sponge> Channel for MaskedVerifier<'_, '_, H> {
     type Sponge = H;
 
@@ -341,15 +342,26 @@ impl<H: Sponge> Channel for MaskedVerifier<'_, '_, H> {
         self.transcript.public_bytes(bytes);
     }
 
-    fn exchange<A: CanonicalDecode>(&mut self, value: &mut A) -> Result<(), TranscriptError> {
-        self.transcript.exchange(value)
+    fn exchange<A: CanonicalDecode>(&mut self, _: &mut A) -> Result<(), TranscriptError> {
+        Err(TranscriptError::ClearMessageOnMaskedChannel)
     }
 
-    fn exchange_all<A: CanonicalDecode>(
+    fn exchange_all<A: CanonicalDecode>(&mut self, _: &mut [A]) -> Result<(), TranscriptError> {
+        Err(TranscriptError::ClearMessageOnMaskedChannel)
+    }
+
+    fn exchange_public<A: CanonicalDecode>(
+        &mut self,
+        value: &mut A,
+    ) -> Result<(), TranscriptError> {
+        self.transcript.exchange_public(value)
+    }
+
+    fn exchange_public_all<A: CanonicalDecode>(
         &mut self,
         values: &mut [A],
     ) -> Result<(), TranscriptError> {
-        self.transcript.exchange_all(values)
+        self.transcript.exchange_public_all(values)
     }
 
     fn challenge<F: Field>(&mut self) -> F {
@@ -428,14 +440,9 @@ pub struct MaskedProver<'a, F, O, H: Sponge> {
 /// The prover's public proof-of-work messages, interleaved with its masked
 /// ones (Akita's grinding nonces and fold-response counters,
 /// `specs/whiteout-akita.md` §4.5). A nonce is found from public transcript
-/// state alone, so it takes no pad.
-///
-/// WARNING: the [`Channel`] impl's `exchange`/`exchange_all` also send
-/// unmasked. Akita sends its public payloads through them (the D image and
-/// u_a, hidden by their own randomness, `specs/whiteout-akita.md` §4.2), so
-/// they cannot be removed until Akita sends those through an explicit
-/// public-only method. HT1's census (`jolt-verifier`'s `soundness::whiteout`)
-/// classifies every unmasked message of a Whiteout proof.
+/// state alone, so it takes no pad. The only other unmasked messages are
+/// [`Channel::exchange_public`]'s (Akita's D images and u_a, hidden by their
+/// own randomness, `specs/whiteout-akita.md` §4.2).
 impl<F, O, H: Sponge> MaskedProver<'_, F, O, H> {
     /// [`ProverTranscript::grind`].
     ///
@@ -466,7 +473,9 @@ fn same_field<S: Copy + 'static, T: Copy + 'static>(value: S) -> Result<T, ZkErr
         .ok_or(ZkError::MessageFieldMismatch)
 }
 
-/// Public messages and challenges pass through to the transcript, unmasked.
+/// Public absorbs, explicitly public messages and challenges pass through to
+/// the transcript, unmasked. A clear message is refused, so a private value
+/// sent through [`Channel::exchange`] never goes out clear.
 impl<F, O, H: Sponge> Channel for MaskedProver<'_, F, O, H> {
     type Sponge = H;
 
@@ -490,15 +499,26 @@ impl<F, O, H: Sponge> Channel for MaskedProver<'_, F, O, H> {
         self.transcript.public_bytes(bytes);
     }
 
-    fn exchange<A: CanonicalDecode>(&mut self, value: &mut A) -> Result<(), TranscriptError> {
-        self.transcript.exchange(value)
+    fn exchange<A: CanonicalDecode>(&mut self, _: &mut A) -> Result<(), TranscriptError> {
+        Err(TranscriptError::ClearMessageOnMaskedChannel)
     }
 
-    fn exchange_all<A: CanonicalDecode>(
+    fn exchange_all<A: CanonicalDecode>(&mut self, _: &mut [A]) -> Result<(), TranscriptError> {
+        Err(TranscriptError::ClearMessageOnMaskedChannel)
+    }
+
+    fn exchange_public<A: CanonicalDecode>(
+        &mut self,
+        value: &mut A,
+    ) -> Result<(), TranscriptError> {
+        self.transcript.exchange_public(value)
+    }
+
+    fn exchange_public_all<A: CanonicalDecode>(
         &mut self,
         values: &mut [A],
     ) -> Result<(), TranscriptError> {
-        self.transcript.exchange_all(values)
+        self.transcript.exchange_public_all(values)
     }
 
     fn challenge<C: Field>(&mut self) -> C {

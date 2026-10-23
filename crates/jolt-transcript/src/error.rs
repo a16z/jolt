@@ -39,4 +39,9 @@ pub enum TranscriptError {
     /// An earlier receive failed, so this transcript can no longer accept.
     #[error("transcript is poisoned by an earlier failure")]
     Poisoned,
+    /// A message sent as it is ([`Channel::exchange`](crate::Channel::exchange))
+    /// on a masked channel, which sends only masked messages and explicitly
+    /// public ones ([`Channel::exchange_public`](crate::Channel::exchange_public)).
+    #[error("a clear prover message on a masked channel")]
+    ClearMessageOnMaskedChannel,
 }
