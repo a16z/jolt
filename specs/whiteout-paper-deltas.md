@@ -1208,6 +1208,12 @@ compression witness to `e`. At the test row's `d = 64` and rank 1, u_a is
 successor's payload raw; a compressed cut payload with a compressed `N`
 target would recover the paper's 128 B.
 
+**Note (to revisit).** The "3 × `R_256`, 12 KB" headline figure follows
+Akita §4.1's design; the checked-in zero-knowledge rows have a 1 × `R_64`
+residual commitment (u_a of 64 coefficients). The rows are being re-priced
+at the Σ collision radius (Akita A41, W5e), which will change this shape,
+so the cost is restated after W5e.
+
 ## D30. Two-witness distinguisher
 
 **What.** Akita's `examples/zk_distinguisher.rs` (HT2, a manual diagnostic)
