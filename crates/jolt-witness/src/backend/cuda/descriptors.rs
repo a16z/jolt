@@ -1,0 +1,576 @@
+//! Device formula selectors for instruction inputs, operands, outputs, and indices.
+//!
+//! These bytes select the switches in `kernels/atoms.cu`; they are not instruction
+//! ordinals. `tables` indexes the descriptors by the active profile's dense kind
+//! index. Adding a formula requires matching host selectors and device cases.
+
+use jolt_riscv::{JoltInstruction, JoltInstructionKind};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KindDescriptor {
+    pub(crate) input: u8,
+    pub(crate) operand: u8,
+    pub(crate) output: u8,
+    pub(crate) index: u8,
+}
+
+pub(crate) fn descriptor(kind: JoltInstructionKind) -> Option<KindDescriptor> {
+    Some(match kind {
+        JoltInstruction::Noop(_) => KindDescriptor {
+            input: 3,
+            operand: 1,
+            output: 0,
+            index: 0,
+        },
+        JoltInstruction::Add(_) => KindDescriptor {
+            input: 8,
+            operand: 6,
+            output: 34,
+            index: 1,
+        },
+        JoltInstruction::AddW(_) => KindDescriptor {
+            input: 8,
+            operand: 6,
+            output: 44,
+            index: 1,
+        },
+        JoltInstruction::Addi(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 34,
+            index: 1,
+        },
+        JoltInstruction::AddiW(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 44,
+            index: 1,
+        },
+        JoltInstruction::And(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 33,
+            index: 0,
+        },
+        JoltInstruction::AndI(_) => KindDescriptor {
+            input: 9,
+            operand: 1,
+            output: 33,
+            index: 0,
+        },
+        JoltInstruction::Andn(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 32,
+            index: 0,
+        },
+        JoltInstruction::AssertEq(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 30,
+            index: 0,
+        },
+        JoltInstruction::AssertHalfwordAlignment(_) => KindDescriptor {
+            input: 10,
+            operand: 2,
+            output: 1,
+            index: 1,
+        },
+        JoltInstruction::AssertLte(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 29,
+            index: 0,
+        },
+        JoltInstruction::AssertMulUNoOverflow(_) => KindDescriptor {
+            input: 8,
+            operand: 5,
+            output: 24,
+            index: 1,
+        },
+        JoltInstruction::AssertValidDiv0(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 7,
+            index: 0,
+        },
+        JoltInstruction::AssertValidUnsignedRemainder(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 9,
+            index: 0,
+        },
+        JoltInstruction::AssertWordAlignment(_) => KindDescriptor {
+            input: 10,
+            operand: 2,
+            output: 2,
+            index: 1,
+        },
+        JoltInstruction::Auipc(_) => KindDescriptor {
+            input: 7,
+            operand: 3,
+            output: 8,
+            index: 1,
+        },
+        JoltInstruction::Beq(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 30,
+            index: 0,
+        },
+        JoltInstruction::Bge(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 39,
+            index: 0,
+        },
+        JoltInstruction::BgeU(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 31,
+            index: 0,
+        },
+        JoltInstruction::Blt(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 38,
+            index: 0,
+        },
+        JoltInstruction::BltU(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 28,
+            index: 0,
+        },
+        JoltInstruction::Bne(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 27,
+            index: 0,
+        },
+        JoltInstruction::Fence(_) => KindDescriptor {
+            input: 3,
+            operand: 1,
+            output: 0,
+            index: 0,
+        },
+        JoltInstruction::Jal(_) => KindDescriptor {
+            input: 6,
+            operand: 3,
+            output: 8,
+            index: 1,
+        },
+        JoltInstruction::Jalr(_) => KindDescriptor {
+            input: 9,
+            operand: 4,
+            output: 35,
+            index: 1,
+        },
+        JoltInstruction::Ld(_) => KindDescriptor {
+            input: 3,
+            operand: 1,
+            output: 0,
+            index: 0,
+        },
+        JoltInstruction::Lui(_) => KindDescriptor {
+            input: 5,
+            operand: 1,
+            output: 47,
+            index: 1,
+        },
+        JoltInstruction::MovSign(_) => KindDescriptor {
+            input: 9,
+            operand: 1,
+            output: 25,
+            index: 0,
+        },
+        JoltInstruction::Mul(_) => KindDescriptor {
+            input: 8,
+            operand: 5,
+            output: 36,
+            index: 1,
+        },
+        JoltInstruction::MulHU(_) => KindDescriptor {
+            input: 8,
+            operand: 5,
+            output: 26,
+            index: 1,
+        },
+        JoltInstruction::MulI(_) => KindDescriptor {
+            input: 9,
+            operand: 5,
+            output: 40,
+            index: 1,
+        },
+        JoltInstruction::MulIW(_) => KindDescriptor {
+            input: 9,
+            operand: 5,
+            output: 45,
+            index: 1,
+        },
+        JoltInstruction::MulW(_) => KindDescriptor {
+            input: 8,
+            operand: 5,
+            output: 45,
+            index: 1,
+        },
+        JoltInstruction::Or(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 43,
+            index: 0,
+        },
+        JoltInstruction::OrI(_) => KindDescriptor {
+            input: 9,
+            operand: 1,
+            output: 43,
+            index: 0,
+        },
+        JoltInstruction::Pow2(_) => KindDescriptor {
+            input: 11,
+            operand: 6,
+            output: 50,
+            index: 1,
+        },
+        JoltInstruction::Pow2I(_) => KindDescriptor {
+            input: 5,
+            operand: 6,
+            output: 50,
+            index: 1,
+        },
+        JoltInstruction::Pow2IW(_) => KindDescriptor {
+            input: 0,
+            operand: 6,
+            output: 49,
+            index: 1,
+        },
+        JoltInstruction::Pow2W(_) => KindDescriptor {
+            input: 4,
+            operand: 6,
+            output: 49,
+            index: 1,
+        },
+        JoltInstruction::Sd(_) => KindDescriptor {
+            input: 3,
+            operand: 1,
+            output: 0,
+            index: 0,
+        },
+        JoltInstruction::Slt(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 41,
+            index: 0,
+        },
+        JoltInstruction::SltI(_) => KindDescriptor {
+            input: 9,
+            operand: 1,
+            output: 41,
+            index: 0,
+        },
+        JoltInstruction::SltIU(_) => KindDescriptor {
+            input: 9,
+            operand: 1,
+            output: 28,
+            index: 0,
+        },
+        JoltInstruction::SltU(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 28,
+            index: 0,
+        },
+        JoltInstruction::Sub(_) => KindDescriptor {
+            input: 8,
+            operand: 7,
+            output: 37,
+            index: 1,
+        },
+        JoltInstruction::SubW(_) => KindDescriptor {
+            input: 8,
+            operand: 7,
+            output: 46,
+            index: 1,
+        },
+        JoltInstruction::VirtualAdvice(_) => KindDescriptor {
+            input: 3,
+            operand: 8,
+            output: 48,
+            index: 1,
+        },
+        JoltInstruction::VirtualAdviceLoad(_) => KindDescriptor {
+            input: 3,
+            operand: 8,
+            output: 48,
+            index: 1,
+        },
+        JoltInstruction::VirtualHostIO(_) => KindDescriptor {
+            input: 3,
+            operand: 1,
+            output: 0,
+            index: 0,
+        },
+        JoltInstruction::VirtualRev8W(_) => KindDescriptor {
+            input: 4,
+            operand: 0,
+            output: 52,
+            index: 2,
+        },
+        JoltInstruction::VirtualRotri(_) => KindDescriptor {
+            input: 1,
+            operand: 1,
+            output: 11,
+            index: 0,
+        },
+        JoltInstruction::VirtualRotriw(_) => KindDescriptor {
+            input: 1,
+            operand: 1,
+            output: 10,
+            index: 0,
+        },
+        JoltInstruction::VirtualShiftRightBitmask(_) => KindDescriptor {
+            input: 11,
+            operand: 6,
+            output: 51,
+            index: 1,
+        },
+        JoltInstruction::VirtualShiftRightBitmaski(_) => KindDescriptor {
+            input: 5,
+            operand: 6,
+            output: 51,
+            index: 1,
+        },
+        JoltInstruction::VirtualSignExtendWord(_) => KindDescriptor {
+            input: 4,
+            operand: 6,
+            output: 3,
+            index: 1,
+        },
+        JoltInstruction::VirtualSra(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 19,
+            index: 0,
+        },
+        JoltInstruction::VirtualSrai(_) => KindDescriptor {
+            input: 1,
+            operand: 1,
+            output: 13,
+            index: 0,
+        },
+        JoltInstruction::VirtualSrl(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 18,
+            index: 0,
+        },
+        JoltInstruction::VirtualSrli(_) => KindDescriptor {
+            input: 1,
+            operand: 1,
+            output: 12,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRot16(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 20,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRot24(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 21,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRot32(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 22,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRot63(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 23,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW12(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 14,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW16(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 15,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW7(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 16,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW8(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 17,
+            index: 0,
+        },
+        JoltInstruction::VirtualZeroExtendWord(_) => KindDescriptor {
+            input: 4,
+            operand: 6,
+            output: 4,
+            index: 1,
+        },
+        JoltInstruction::Xor(_) => KindDescriptor {
+            input: 8,
+            operand: 1,
+            output: 42,
+            index: 0,
+        },
+        JoltInstruction::XorI(_) => KindDescriptor {
+            input: 9,
+            operand: 1,
+            output: 42,
+            index: 0,
+        },
+        JoltInstruction::VirtualNegateIf(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 53,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW22(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 54,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW19(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 55,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotW6(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 56,
+            index: 0,
+        },
+        JoltInstruction::VirtualXorRotL1(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 57,
+            index: 0,
+        },
+        JoltInstruction::VirtualShiftRightBitmaskW(_) => KindDescriptor {
+            input: 4,
+            operand: 6,
+            output: 58,
+            index: 1,
+        },
+        JoltInstruction::VirtualSrlw(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 59,
+            index: 0,
+        },
+        JoltInstruction::VirtualSrliw(_) => KindDescriptor {
+            input: 1,
+            operand: 1,
+            output: 59,
+            index: 0,
+        },
+        JoltInstruction::VirtualSraw(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 60,
+            index: 0,
+        },
+        JoltInstruction::VirtualSraiw(_) => KindDescriptor {
+            input: 1,
+            operand: 1,
+            output: 60,
+            index: 0,
+        },
+        JoltInstruction::Pext(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 61,
+            index: 0,
+        },
+        JoltInstruction::PextSigned(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 62,
+            index: 0,
+        },
+        JoltInstruction::WindowMaskB(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 63,
+            index: 1,
+        },
+        JoltInstruction::WindowMaskH(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 64,
+            index: 1,
+        },
+        JoltInstruction::WindowMaskW(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 65,
+            index: 1,
+        },
+        JoltInstruction::AlignAddr(_) => KindDescriptor {
+            input: 9,
+            operand: 6,
+            output: 66,
+            index: 1,
+        },
+        JoltInstruction::ShiftDataB(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 67,
+            index: 0,
+        },
+        JoltInstruction::ShiftDataH(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 68,
+            index: 0,
+        },
+        JoltInstruction::ShiftDataW(_) => KindDescriptor {
+            input: 2,
+            operand: 1,
+            output: 69,
+            index: 0,
+        },
+        #[cfg(feature = "field-inline")]
+        JoltInstruction::FieldAdd(_)
+        | JoltInstruction::FieldSub(_)
+        | JoltInstruction::FieldMul(_)
+        | JoltInstruction::FieldInv(_)
+        | JoltInstruction::FieldAssertEq(_)
+        | JoltInstruction::FieldAssertZero(_)
+        | JoltInstruction::FieldLoadImm(_)
+        | JoltInstruction::FieldLoadAccumulateFromRegister(_)
+        | JoltInstruction::FieldLoadAccumulateFromMemory(_) => KindDescriptor {
+            input: 3,
+            operand: 1,
+            output: 0,
+            index: 0,
+        },
+        #[cfg(feature = "field-inline")]
+        JoltInstruction::FieldAdviceLimb(_) => KindDescriptor {
+            input: 3,
+            operand: 8,
+            output: 48,
+            index: 1,
+        },
+    })
+}

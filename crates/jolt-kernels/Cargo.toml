@@ -13,6 +13,20 @@ workspace = true
 
 [features]
 default = ["parallel"]
+cuda = [
+  "dep:cudarc",
+  "dep:strum",
+  "dep:ark-bn254",
+  "dep:ark-ec",
+  "dep:ark-ff",
+  "dep:ark-serialize",
+  "dep:dory",
+  "dep:jolt-crypto",
+  "dep:jolt-dory",
+  "dep:jolt-transcript",
+  "jolt-dory/cuda",
+  "jolt-witness/cuda",
+]
 akita = [
   "dep:jolt-akita",
   "jolt-claims/akita",
@@ -42,6 +56,16 @@ field-inline = [
 ]
 
 [dependencies]
+strum = { workspace = true, optional = true }
+cudarc = { workspace = true, optional = true }
+ark-bn254 = { workspace = true, optional = true }
+ark-ec = { workspace = true, optional = true }
+ark-ff = { workspace = true, optional = true }
+ark-serialize = { workspace = true, optional = true }
+dory = { workspace = true, optional = true }
+jolt-crypto = { workspace = true, optional = true }
+jolt-dory = { workspace = true, optional = true }
+jolt-transcript = { workspace = true, optional = true }
 allocative = { workspace = true, optional = true }
 jolt-akita = { workspace = true, optional = true }
 jolt-claims.workspace = true
@@ -65,6 +89,26 @@ tracing.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
+clap.workspace = true
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+jolt-profiling.workspace = true
+serde.workspace = true
+sha2.workspace = true
+sha3.workspace = true
+bincode.workspace = true
+jolt-host.workspace = true
+jolt-prover.workspace = true
+postcard = { workspace = true, features = ["use-std"] }
+serde_json = { workspace = true, features = ["std"] }
+proptest.workspace = true
+rand.workspace = true
+strum.workspace = true
+rayon.workspace = true
+tracer = { workspace = true, features = ["test-utils", "std"] }
+ark-bn254.workspace = true
+ark-ec.workspace = true
+ark-ff.workspace = true
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true
@@ -75,3 +119,12 @@ jolt-transcript = { workspace = true, features = [
 ] }
 rand_chacha.workspace = true
 rand_core.workspace = true
+
+[[test]]
+name = "cuda_e2e"
+path = "tests/cuda_e2e.rs"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda_profile"
+required-features = ["cuda"]

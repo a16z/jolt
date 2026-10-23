@@ -17,6 +17,16 @@ pub struct RaChunkSelector {
 }
 
 impl RaChunkSelector {
+    #[cfg(feature = "cuda")]
+    pub(crate) const fn shift(self) -> usize {
+        self.shift
+    }
+
+    #[cfg(feature = "cuda")]
+    pub(crate) const fn mask(self) -> u128 {
+        self.mask
+    }
+
     pub fn new(index: usize, chunks: usize, chunk_bits: usize) -> Result<Self, WitnessError> {
         let remaining = chunks
             .checked_sub(index + 1)
