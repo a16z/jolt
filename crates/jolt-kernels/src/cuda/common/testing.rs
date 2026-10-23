@@ -1025,6 +1025,39 @@ pub fn register_rows(log_t: usize, log_k: usize, seed: u64) -> RegisterFixture {
     RegisterFixture { rows, rd_wa, inc }
 }
 
+pub fn hot_addresses(
+    witness: &dyn JoltWitnessOracle<Fr>,
+    polynomial: JoltCommittedPolynomial,
+    addresses: usize,
+    cycles: usize,
+) -> Vec<Option<usize>> {
+    let grid =
+        JoltWitnessOracle::<Fr>::oracle_table(witness, JoltPolynomialId::Committed(polynomial))
+            .expect("committed one-hot column");
+    assert_eq!(grid.len(), addresses * cycles, "{polynomial:?} grid size");
+
+    (0..cycles)
+        .map(|cycle| {
+            let mut found = None;
+            for address in 0..addresses {
+                if grid[address * cycles + cycle] != Fr::from_u64(0) {
+                    assert_eq!(
+                        grid[address * cycles + cycle],
+                        Fr::from_u64(1),
+                        "{polynomial:?} cycle {cycle}: one-hot entry is not 1",
+                    );
+                    assert!(
+                        found.is_none(),
+                        "{polynomial:?} cycle {cycle}: two hot addresses",
+                    );
+                    found = Some(address);
+                }
+            }
+            found
+        })
+        .collect()
+}
+
 pub fn reference_input_claim<'a, R>(
     witness: &dyn JoltWitnessPlane<Fr>,
     make_inputs: impl Fn() -> ProverInputs<'a, Fr, R>,

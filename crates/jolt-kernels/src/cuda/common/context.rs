@@ -112,6 +112,8 @@ pub struct CudaKernelContext {
     amm_initial_values: CudaFunction,
     #[cfg(test)]
     amm_lift: CudaFunction,
+    bap_bind_squared: CudaFunction,
+    bap_message: CudaFunction,
     brc_tables_init: CudaFunction,
     brc_gather: CudaFunction,
     brc_message_sparse: CudaFunction,
@@ -349,6 +351,8 @@ impl CudaKernelContext {
             amm_initial_values: module.load_function("amm_initial_values_kernel")?,
             #[cfg(test)]
             amm_lift: module.load_function("amm_lift_kernel")?,
+            bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
+            bap_message: module.load_function("bap_message_kernel")?,
             brc_tables_init: module.load_function("brc_tables_init_kernel")?,
             brc_gather: module.load_function("brc_gather_kernel")?,
             brc_message_sparse: module.load_function("brc_message_sparse_kernel")?,
@@ -827,6 +831,14 @@ impl CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn gruen_pair_message(&self) -> &CudaFunction {
         &self.gruen_pair_message
+    }
+
+    pub(crate) const fn bap_bind_squared(&self) -> &CudaFunction {
+        &self.bap_bind_squared
+    }
+
+    pub(crate) const fn bap_message(&self) -> &CudaFunction {
+        &self.bap_message
     }
 
     pub(crate) const fn brc_tables_init(&self) -> &CudaFunction {

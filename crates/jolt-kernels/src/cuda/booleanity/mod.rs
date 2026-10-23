@@ -1,4 +1,4 @@
-//! CUDA cycle-phase booleanity checking across instruction, bytecode, and RAM one-hots.
+//! CUDA booleanity checking across instruction, bytecode, and RAM one-hots.
 //!
 //! The address phase folds cycle equality weights into address masses; the
 //! cycle phase checks the gamma-weighted family using split-eq recovery.
@@ -38,6 +38,8 @@ use crate::{
 };
 use one_hot::{BooleanityShard, DeviceBooleanityRa, ShardedBooleanityRa};
 
+pub(crate) mod address;
+pub(crate) mod masses;
 pub(crate) mod one_hot;
 
 pub struct BooleanityCycleKernel<F: JoltField> {

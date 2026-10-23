@@ -94,6 +94,18 @@ impl OneHotShards {
         Ok(Self { windows, columns })
     }
 
+    #[cfg(test)]
+    pub(crate) fn single(columns: DeviceOneHotColumns) -> Self {
+        let window = CycleWindow {
+            start: 0,
+            len: columns.cycles,
+        };
+        Self {
+            windows: vec![window],
+            columns: vec![columns],
+        }
+    }
+
     pub(crate) fn whole(&self) -> Result<&DeviceOneHotColumns, CudaError> {
         self.columns.first().ok_or(CudaError::InvariantViolation {
             reason: "a one-hot shard set holds no columns",
