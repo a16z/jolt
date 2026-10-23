@@ -58,22 +58,23 @@ fn appends_and_challenges_follow_the_legacy_hash_chain() {
         "an empty append must still advance the round counter"
     );
 
-    let challenge = transcript.challenge();
-    expected = manual_step(&expected, 2, &[]);
-    assert_eq!(transcript.state(), expected, "challenge must chain state");
-    assert_eq!(
-        challenge,
-        Fr::from_challenge_bytes(&expected[..16]),
-        "challenge must decode the first 16 squeezed bytes"
-    );
-
-    let scalar = transcript.challenge_scalar();
-    expected = manual_step(&expected, 3, &[]);
-    assert_eq!(
-        scalar,
-        Fr::from_scalar_challenge_bytes(&expected[..16]),
-        "scalar challenge must use the non-optimized decoding path"
-    );
+    // The first two challenges after an absorb squeeze
+    // `Fr::challenge_width(1) = Fr::challenge_width(2) = 52` bytes: two chunks.
+    for (draw, round) in [
+        (LegacyB2b::challenge as fn(&mut LegacyB2b) -> Fr, 2),
+        (LegacyB2b::challenge_scalar, 4),
+    ] {
+        let challenge = draw(&mut transcript);
+        let first = manual_step(&expected, round, &[]);
+        expected = manual_step(&first, round + 1, &[]);
+        assert_eq!(transcript.state(), expected, "challenge must chain state");
+        let squeezed = [first.as_slice(), &expected[..20]].concat();
+        assert_eq!(
+            challenge,
+            Fr::from_bytes_le_reduced(&squeezed),
+            "challenge must reduce the 52 squeezed bytes"
+        );
+    }
 }
 
 #[test]

@@ -11,6 +11,23 @@ type Kec = KeccakTranscript<Fr>;
 
 transcript_tests!(Kec);
 
+/// A field without room for the short width is refused before anything is
+/// squeezed: loss 1 needs 128 bits, the whole bit length of this field.
+#[cfg(feature = "solinas")]
+#[test]
+fn short_scalar_refuses_a_field_without_room() {
+    use jolt_field::Prime128Offset275;
+    use jolt_transcript::{GrindBitsError, Transcript};
+
+    let mut short = KeccakTranscript::<Prime128Offset275>::new(b"narrow");
+    let untouched = short.clone();
+    assert_eq!(
+        short.challenge_short_scalar(1),
+        Err(GrindBitsError::FieldTooSmall)
+    );
+    assert_eq!(short.state(), untouched.state());
+}
+
 #[test]
 fn test_keccak_known_vector() {
     use ark_ff::PrimeField;
@@ -21,11 +38,12 @@ fn test_keccak_known_vector() {
     let challenge: Fr = transcript.challenge();
 
     // Pins the v0.8 session derived from PROTOCOL_ID and the single
-    // length-prefixed label instance absorb.
+    // length-prefixed label instance absorb, then one 52-byte challenge
+    // squeeze reduced mod r.
     let expected: ark_bn254::Fr = ark_bn254::Fr::from_le_bytes_mod_order(&[
-        0xD3, 0xAD, 0xF8, 0x5C, 0x44, 0x15, 0x22, 0x01, 0x89, 0x27, 0xAE, 0x48, 0x70, 0x89, 0x92,
-        0x53, 0x6A, 0x83, 0x7A, 0x4A, 0xA1, 0x89, 0xCA, 0xE7, 0x50, 0x26, 0xD9, 0x50, 0x66, 0xBD,
-        0x62, 0x02,
+        0x4B, 0xA1, 0xF1, 0x31, 0x86, 0x42, 0xF4, 0x21, 0xC9, 0xD6, 0xD3, 0xA9, 0x90, 0x02, 0xCB,
+        0x21, 0x9C, 0x5B, 0x3E, 0x1B, 0xAA, 0xF7, 0x9A, 0xB2, 0x04, 0xAE, 0xD0, 0x83, 0xD2, 0x8A,
+        0xC2, 0x2E,
     ]);
     let got: ark_bn254::Fr = challenge.into();
     assert_eq!(got, expected, "Keccak known-vector regression");

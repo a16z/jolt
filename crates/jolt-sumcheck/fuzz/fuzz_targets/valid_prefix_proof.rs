@@ -24,7 +24,7 @@
 
 use jolt_field::{Fr, CanonicalEncoding};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
+use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
@@ -52,6 +52,8 @@ fuzz_target!(|data: &[u8]| {
     let mut prover_transcript = Blake2bTranscript::new(b"jolt-sumcheck-valid-fuzz");
     let mut running_sum = claimed_sum;
     let mut round_proofs: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
+    let bits = round_pow_bits::<Fr, Blake2bTranscript>(degree).expect("difficulty for degree <= 6");
+    let mut pow_nonces: Vec<u32> = Vec::with_capacity(num_vars);
 
     for round in 0..num_vars {
         if round < valid_rounds {
@@ -80,15 +82,18 @@ fuzz_target!(|data: &[u8]| {
             coeffs.extend_from_slice(&c_high);
             let poly = UnivariatePoly::new(coeffs);
 
-            // Mirror the verifier's transcript / challenge / evaluate sequence.
+            // Mirror the verifier's transcript / proof-of-work / challenge /
+            // evaluate sequence.
             for c in poly.coefficients() {
                 c.append_to_transcript(&mut prover_transcript);
             }
+            pow_nonces.extend(prover_transcript.grind(bits).expect("proof-of-work search"));
             let r: Fr = prover_transcript.challenge();
             running_sum = poly.evaluate(r);
             round_proofs.push(poly);
         } else {
-            // Tail rounds: variable-length raw polynomial from fuzzer bytes.
+            // Tail rounds: variable-length raw polynomial from fuzzer bytes,
+            // with a placeholder proof-of-work nonce.
             // Most of these will fail the verifier's sum check; the contract
             // is that `verify` returns an `Err` (or `Ok` if the random bytes
             // happen to land on a valid value) without panicking.
@@ -108,6 +113,9 @@ fuzz_target!(|data: &[u8]| {
                 .collect();
             cursor += needed;
             round_proofs.push(UnivariatePoly::new(coeffs));
+            if bits > 0 {
+                pow_nonces.push(0);
+            }
         }
     }
 
@@ -115,6 +123,7 @@ fuzz_target!(|data: &[u8]| {
     let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &round_proofs,
+        &pow_nonces,
         BooleanHypercube,
         &mut verifier_transcript,
     );

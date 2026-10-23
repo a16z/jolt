@@ -3,6 +3,7 @@ use jolt_riscv::JoltInstructionKind;
 
 use crate::config::JoltProtocolConfig;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
+use crate::stages::pow::PowSite;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
 #[derive(Debug, thiserror::Error)]
@@ -132,4 +133,13 @@ pub enum VerifierError {
 
     #[error("program preprocessing digest failed: {reason}")]
     PreprocessingDigestFailed { reason: String },
+
+    #[error("no proof-of-work difficulty reaches the security target at {site:?} for loss {loss}")]
+    PowDifficulty { site: PowSite, loss: u64 },
+
+    #[error("proof-of-work nonce at {site:?} is missing, unexpected, or fails the check")]
+    ProofOfWorkRejected { site: PowSite },
+
+    #[error("the challenge set needs proof of work, which this build's proofs do not carry")]
+    ChallengeSetNeedsProofOfWork,
 }

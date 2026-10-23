@@ -14,7 +14,7 @@
 //! squeeze        : out    = H(state || round_word(n)),  state' = out, n += 1
 //! ```
 
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr};
 use jolt_transcript::{Label, LabelWithCount, LegacyBlake2bTranscript, Transcript, U64Word};
 
 type T = LegacyBlake2bTranscript<Fr>;
@@ -56,7 +56,7 @@ fn challenge_draw_rotates_state_and_truncates_to_sixteen_bytes() {
     let mut transcript = T::new(KAT_LABEL);
     transcript.append_bytes(b"jolt says hello");
     let mut buf = [0u8; 16];
-    transcript.raw_challenge_bytes(&mut buf);
+    transcript.challenge_bytes(&mut buf);
 
     assert_eq!(
         hex(&buf),
@@ -74,7 +74,7 @@ fn challenge_draw_rotates_state_and_truncates_to_sixteen_bytes() {
 fn multi_chunk_draw_concatenates_successive_squeezes() {
     let mut transcript = T::new(KAT_LABEL);
     let mut out = [0u8; 48];
-    transcript.raw_challenge_bytes(&mut out);
+    transcript.challenge_bytes(&mut out);
     assert_eq!(
         hex(&out),
         "0db99faadc348c2ecdd3faf44d5f94cf27b2a8b93e757d60eae8a2bc1c057d95\
@@ -82,30 +82,51 @@ fn multi_chunk_draw_concatenates_successive_squeezes() {
     );
 }
 
+/// The first challenge after an absorb squeezes `Fr::challenge_width(1) = 52`
+/// bytes, two chunks, and reduces them modulo `r` as a little-endian integer.
+/// The value was computed independently (Python
+/// `int.from_bytes(.., "little") % r`).
 #[test]
-fn challenge_decodes_the_pinned_bytes_via_from_challenge_bytes() {
-    let mut transcript = T::new(KAT_LABEL);
-    transcript.append_bytes(b"jolt says hello");
-    let challenge: Fr = transcript.challenge();
+fn challenge_reduces_fifty_two_squeezed_bytes() {
+    const SQUEEZED: &str = "25a496912b5b75d6504cbc204a25b13d6121e6266ac056589689c43dc06f9142\
+                            66bf5655d23fb7f4e92e96ea1f0df9727d7f0e9a";
+    const REDUCED: &str = "71854c4909f4c3e785ab8e719f895fdb6a0ea3df7952cabbe4595baa5d355d1f";
+    assert_eq!(Fr::challenge_width(1), 52);
 
-    let pinned: [u8; 16] = [
-        0x25, 0xa4, 0x96, 0x91, 0x2b, 0x5b, 0x75, 0xd6, 0x50, 0x4c, 0xbc, 0x20, 0x4a, 0x25, 0xb1,
-        0x3d,
-    ];
-    assert_eq!(challenge, Fr::from_challenge_bytes(&pinned));
+    let mut probe = T::new(KAT_LABEL);
+    probe.append_bytes(b"jolt says hello");
+    let mut squeezed = [0u8; 52];
+    probe.challenge_bytes(&mut squeezed);
+    assert_eq!(hex(&squeezed), SQUEEZED.replace(' ', ""));
+
+    for draw in [T::challenge, T::challenge_scalar] {
+        let mut transcript = T::new(KAT_LABEL);
+        transcript.append_bytes(b"jolt says hello");
+        let challenge: Fr = draw(&mut transcript);
+        assert_eq!(hex(&challenge.to_bytes_le_vec()), REDUCED);
+        assert_eq!(transcript.state(), probe.state());
+    }
 }
 
+/// Each draw since the last absorb is wider than the one before it may be
+/// (52 bytes for draws 1–2, 53 for draws 3–32), and an absorb starts over.
 #[test]
-fn challenge_scalar_uses_the_scalar_decode_path() {
+fn challenge_width_grows_with_draws_and_resets_on_absorb() {
     let mut transcript = T::new(KAT_LABEL);
-    transcript.append_bytes(b"jolt says hello");
-    let challenge: Fr = transcript.challenge_scalar();
-
-    let pinned: [u8; 16] = [
-        0x25, 0xa4, 0x96, 0x91, 0x2b, 0x5b, 0x75, 0xd6, 0x50, 0x4c, 0xbc, 0x20, 0x4a, 0x25, 0xb1,
-        0x3d,
-    ];
-    assert_eq!(challenge, Fr::from_scalar_challenge_bytes(&pinned));
+    let mut probe = T::new(KAT_LABEL);
+    let check = |transcript: &mut T, probe: &mut T, widths: &[usize]| {
+        for (draw, &width) in widths.iter().enumerate() {
+            assert_eq!(Fr::challenge_width(draw as u64 + 1), width);
+            let mut bytes = vec![0u8; width];
+            probe.challenge_bytes(&mut bytes);
+            let challenge: Fr = transcript.challenge();
+            assert_eq!(challenge, Fr::from_bytes_le_reduced(&bytes), "draw {draw}");
+        }
+    };
+    check(&mut transcript, &mut probe, &[52, 52, 53, 53, 53]);
+    transcript.append_bytes(b"next message");
+    probe.append_bytes(b"next message");
+    check(&mut transcript, &mut probe, &[52, 52, 53]);
 }
 
 #[test]

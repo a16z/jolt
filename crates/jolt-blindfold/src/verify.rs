@@ -5,6 +5,7 @@ use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
 
+use crate::pow::{PowNonces, PowSite};
 use crate::{
     BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError,
     WitnessCoordinate,
@@ -29,7 +30,8 @@ where
         VC: VectorCommitment<Field = F, Output = Com>,
         T: Transcript<Challenge = F>,
     {
-        let folded = self.folded_instance_from_proof(proof, transcript)?;
+        let mut nonces = PowNonces::new(&proof.pow_nonces);
+        let folded = self.folded_instance_from_proof(proof, &mut nonces, transcript)?;
         ensure_len(
             "folded eval outputs",
             folded.eval_commitments.len(),
@@ -42,9 +44,22 @@ where
         )?;
         proof.verify_folded_eval_commitments::<VC>(vc_setup, &folded)?;
         self.verify_folded_eval_witness_bindings::<VC, T>(proof, vc_setup, &folded, transcript)?;
-        let outer = self.verify_outer_folded_r1cs::<VC, T>(proof, vc_setup, &folded, transcript)?;
-        self.verify_inner_folded_r1cs::<VC, T>(proof, vc_setup, &folded, &outer, transcript)?;
-        Ok(())
+        let outer = self.verify_outer_folded_r1cs::<VC, T>(
+            proof,
+            vc_setup,
+            &folded,
+            &mut nonces,
+            transcript,
+        )?;
+        self.verify_inner_folded_r1cs::<VC, T>(
+            proof,
+            vc_setup,
+            &folded,
+            &outer,
+            &mut nonces,
+            transcript,
+        )?;
+        nonces.finish()
     }
 }
 
@@ -56,6 +71,7 @@ where
     fn folded_instance_from_proof<T>(
         &self,
         proof: &BlindFoldProof<F, Com>,
+        nonces: &mut PowNonces<'_>,
         transcript: &mut T,
     ) -> Result<RelaxedInstance<F, Com>, VerificationError<F>>
     where
@@ -89,6 +105,7 @@ where
         self.validate_cross_term_error_rows(&proof.cross_term_error_row_commitments)?;
         transcript.append_values(b"bf_cross_e", &proof.cross_term_error_row_commitments);
 
+        nonces.check(PowSite::Fold, transcript)?;
         let folding_challenge = transcript.challenge();
         Ok(committed.fold(
             &random,
@@ -131,6 +148,7 @@ where
         proof: &BlindFoldProof<F, Com>,
         vc_setup: &VC::Setup,
         folded: &RelaxedInstance<F, Com>,
+        nonces: &mut PowNonces<'_>,
         transcript: &mut T,
     ) -> Result<OuterCheck<F>, VerificationError<F>>
     where
@@ -168,6 +186,7 @@ where
         }
 
         transcript.append(&Label(b"bf_spartan"));
+        nonces.check(PowSite::OuterPoint { num_vars }, transcript)?;
         let tau = transcript.challenge_vector(num_vars);
         let claim = SumcheckClaim::new(num_vars, OUTER_SUMCHECK_DEGREE, F::zero());
         let outer = proof
@@ -422,12 +441,14 @@ where
         vc_setup: &VC::Setup,
         folded: &RelaxedInstance<F, Com>,
         outer: &OuterCheck<F>,
+        nonces: &mut PowNonces<'_>,
         transcript: &mut T,
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
         T: Transcript<Challenge = F>,
     {
+        nonces.check(PowSite::InnerCombination, transcript)?;
         let ra = transcript.challenge();
         let rb = transcript.challenge();
         let rc = transcript.challenge();
@@ -616,7 +637,11 @@ mod tests {
     use jolt_poly::CompressedPoly;
     use jolt_r1cs::ConstraintMatrices;
     use jolt_sumcheck::CompressedSumcheckProof;
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{Blake2bTranscript, UnpricedTranscript};
+
+    /// Declares no proof of work, so hand-built proofs reach the checks these
+    /// tests target; the proof-of-work tests use [`Blake2bTranscript`].
+    type Unpriced = UnpricedTranscript<Blake2bTranscript<Fr>>;
 
     fn f(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -788,6 +813,7 @@ mod tests {
             + protocol.dimensions.error.row_len.trailing_zeros() as usize;
         CompressedSumcheckProof {
             round_polynomials: vec![CompressedPoly::new(vec![f(0)]); num_vars],
+            pow_nonces: Vec::new(),
         }
     }
 
@@ -813,6 +839,7 @@ mod tests {
             ],
             random_u: f(3),
             cross_term_error_row_commitments: vec![identity(); protocol.dimensions.error.row_count],
+            pow_nonces: Vec::new(),
             outer_sumcheck: zero_outer_sumcheck(protocol),
             az_rx: f(0),
             bz_rx: f(0),
@@ -827,10 +854,11 @@ mod tests {
         }
     }
 
-    fn folding_challenge(
+    /// The verifier's transcript right before the folding proof of work.
+    fn fold_transcript(
         protocol: &BlindFoldProtocol<Fr, Bn254G1>,
         proof: &BlindFoldProof<Fr, Bn254G1>,
-    ) -> Fr {
+    ) -> Blake2bTranscript<Fr> {
         let committed = protocol
             .committed_relaxed_instance(&proof.auxiliary_row_commitments)
             .expect("committed instance builds");
@@ -860,7 +888,15 @@ mod tests {
             b"bf_random_eval",
         );
         transcript.append_values(b"bf_cross_e", &proof.cross_term_error_row_commitments);
-        transcript.challenge()
+        transcript
+    }
+
+    /// The folding challenge under [`Unpriced`], which grinds nothing.
+    fn folding_challenge(
+        protocol: &BlindFoldProtocol<Fr, Bn254G1>,
+        proof: &BlindFoldProof<Fr, Bn254G1>,
+    ) -> Fr {
+        fold_transcript(protocol, proof).challenge()
     }
 
     fn proof_with_valid_eval_opening(
@@ -879,7 +915,7 @@ mod tests {
         let setup = setup();
         let protocol = protocol(&setup);
         let proof = proof(&setup, &protocol);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -903,7 +939,7 @@ mod tests {
         let protocol = protocol_with_eval(&setup);
         let mut proof = proof_with_valid_eval_opening(&setup, &protocol);
         let _ = proof.folded_eval_outputs.pop();
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -924,7 +960,7 @@ mod tests {
         let protocol = coefficient_row_protocol();
         let mut proof = proof(&setup, &protocol);
         let _ = proof.random_round_commitments.pop();
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -945,7 +981,7 @@ mod tests {
         let protocol = protocol(&setup);
         let mut proof = proof(&setup, &protocol);
         proof.folded_eval_outputs.push(f(7));
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -962,9 +998,9 @@ mod tests {
         let setup = setup();
         let protocol = protocol_with_eval(&setup);
         let proof = proof_with_valid_eval_opening(&setup, &protocol);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
         let folded = protocol
-            .folded_instance_from_proof(&proof, &mut transcript)
+            .folded_instance_from_proof(&proof, &mut PowNonces::new(&[]), &mut transcript)
             .expect("folded instance builds");
 
         proof
@@ -978,7 +1014,7 @@ mod tests {
         let protocol = protocol_with_eval(&setup);
         let mut proof = proof_with_valid_eval_opening(&setup, &protocol);
         proof.folded_eval_outputs[0] += f(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -996,7 +1032,7 @@ mod tests {
         let protocol = outer_round_protocol();
         let mut proof = proof(&setup, &protocol);
         let _ = proof.outer_sumcheck.round_polynomials.pop();
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -1017,7 +1053,7 @@ mod tests {
         let mut proof = proof(&setup, &protocol);
         proof.outer_sumcheck.round_polynomials[0] =
             CompressedPoly::new(vec![f(0), f(0), f(0), f(0)]);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -1037,7 +1073,7 @@ mod tests {
         let protocol = outer_round_protocol();
         let mut proof = proof(&setup, &protocol);
         proof.error_opening.combined_blinding = f(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -1056,7 +1092,7 @@ mod tests {
         let mut proof = proof(&setup, &protocol);
         proof.az_rx = f(1);
         proof.bz_rx = f(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -1073,7 +1109,7 @@ mod tests {
         let setup = setup();
         let protocol = inner_round_protocol();
         let proof = proof(&setup, &protocol);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -1097,7 +1133,7 @@ mod tests {
         let mut proof = proof(&setup, &protocol);
         add_zero_inner_round(&mut proof);
         proof.witness_opening.combined_blinding = f(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
@@ -1123,7 +1159,7 @@ mod tests {
             combined_vector: vec![f(5)],
             combined_blinding: f(50),
         };
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+        let mut transcript = Unpriced::new(b"blindfold-verify");
 
         let error = protocol
             .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)

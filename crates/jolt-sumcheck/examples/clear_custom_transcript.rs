@@ -6,11 +6,11 @@ use jolt_sumcheck::{
     OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::{ChallengeSetSize, Transcript};
 
 type F = Prime64Offset59;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct FixedTranscript {
     state: [u8; 32],
     cursor: usize,
@@ -18,6 +18,10 @@ struct FixedTranscript {
 
 impl Transcript for FixedTranscript {
     type Challenge = F;
+    // A scripted toy with no soundness: it declares the largest set so that
+    // no proof of work runs. A real transcript declares the size of the set
+    // its challenges are drawn from.
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         let mut transcript = Self::default();
@@ -39,6 +43,10 @@ impl Transcript for FixedTranscript {
     fn challenge(&mut self) -> F {
         self.append_bytes(b"challenge");
         F::from_u64(7)
+    }
+
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        out.fill(0);
     }
 
     fn state(&self) -> [u8; 32] {

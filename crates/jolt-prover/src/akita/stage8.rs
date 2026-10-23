@@ -14,12 +14,15 @@ use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_verifier::stages::pow::{grind_pow, PowSite};
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage8::akita::field_inc_claim;
-use jolt_verifier::stages::stage8::akita::{leaf_claims, object_leaf_claims, one_hot_trace_claim};
+use jolt_verifier::stages::stage8::akita::{
+    leaf_claims, object_leaf_claims, one_hot_trace_claim, selector_loss,
+};
 use jolt_verifier::{CheckedInputs, VerifierError};
 
 use super::witness::{AdviceObject, DirectProgramObjects};
@@ -49,6 +52,7 @@ where
         .map_err(batch_failed::<F>)
 }
 
+/// Returns the joint opening proof and the nonce of the selector points.
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage8<F, PCS, VC, T>(
@@ -65,7 +69,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     transcript: &mut T,
-) -> Result<PCS::Proof, ProverError<F>>
+) -> Result<(PCS::Proof, Option<u32>), ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -94,6 +98,21 @@ where
     let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)
         .map_err(ProverError::Verifier)?;
 
+    let pow_nonce = grind_pow(
+        PowSite::Stage8,
+        selector_loss(
+            [untrusted_advice, trusted_advice]
+                .into_iter()
+                .flatten()
+                .map(|object| &object.plan)
+                .chain(
+                    program
+                        .into_iter()
+                        .flat_map(|objects| objects.objects().map(|object| &object.plan)),
+                ),
+        ),
+        transcript,
+    )?;
     let untrusted_physical = untrusted_advice
         .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
         .transpose()?;
@@ -159,5 +178,5 @@ where
         )
         .map_err(batch_failed::<F>)
     })?;
-    Ok(joint_opening_proof)
+    Ok((joint_opening_proof, pow_nonce))
 }

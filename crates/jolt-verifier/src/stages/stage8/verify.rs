@@ -695,6 +695,7 @@ where
         #[cfg(feature = "field-inline")]
         proof.field_inc_commitment.as_ref(),
         &proof.joint_opening_proof,
+        &proof.stages.pow_nonces(),
         transcript,
         &checked.precommitted,
         stage4.clear()?,

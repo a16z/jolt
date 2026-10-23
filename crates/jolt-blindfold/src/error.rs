@@ -136,6 +136,8 @@ pub enum ProverError<F: JoltField> {
     MultilinearLengthMismatch { expected: usize, actual: usize },
     #[error("{name} must have at least one sumcheck round")]
     DegenerateSumcheck { name: &'static str },
+    #[error("proof of work before the {site} cannot be ground")]
+    ProofOfWork { site: &'static str },
     #[error("witness assignment: {0}")]
     Domain(#[from] SumcheckError<F>),
     #[error("stage {stage_index} witness {name} mismatch: expected {expected}, got {actual}")]
@@ -181,6 +183,10 @@ pub enum VerificationError<F: JoltField> {
     InvalidPowerOfTwo { name: &'static str, value: usize },
     #[error("{name} must have at least one sumcheck round")]
     DegenerateSumcheck { name: &'static str },
+    #[error("proof of work before the {site} was rejected")]
+    ProofOfWorkRejected { site: &'static str },
+    #[error("expected {expected} proof-of-work nonces, got {got}")]
+    WrongNumberOfPowNonces { expected: usize, got: usize },
     #[error("folded eval commitment {index} does not match opened value and blinding")]
     EvalCommitmentMismatch { index: usize },
     #[error("folded eval witness {kind} {index} does not match opened witness coordinate")]

@@ -32,6 +32,7 @@ use super::{
 use crate::{
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage4::{Stage4Output, Stage4OutputClaims, Stage4OutputPoints},
         zk::committed,
@@ -109,6 +110,12 @@ where
     // registers draws nothing, and neither does the `field-inline` value-evaluation member.
     // The drawn challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
+    check_pow(
+        PowSite::Stage5,
+        sumchecks.challenge_loss(),
+        &proof.stages.pow_nonces(),
+        transcript,
+    )?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

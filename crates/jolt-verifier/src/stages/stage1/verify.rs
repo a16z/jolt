@@ -11,7 +11,11 @@ use super::outputs::{
 };
 use crate::{
     proof::JoltProof,
-    stages::{uniskip, zk::committed},
+    stages::{
+        pow::{check_pow, PowSite},
+        uniskip,
+        zk::committed,
+    },
     verifier::CheckedInputs,
     VerifierError,
 };
@@ -30,6 +34,13 @@ where
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);
+    let pow_nonces = proof.stages.pow_nonces();
+    check_pow(
+        PowSite::Stage1Tau,
+        uniskip::spartan_outer_tau_loss(log_t),
+        &pow_nonces,
+        transcript,
+    )?;
     let tau = uniskip::draw_spartan_outer_tau(transcript, log_t);
 
     if !checked.zk {
@@ -59,6 +70,12 @@ where
         let sumchecks = Stage1BatchSumchecks {
             outer_remainder: OuterRemainder::new(dimensions, tau, uniskip_challenge),
         };
+        check_pow(
+            PowSite::Stage1,
+            sumchecks.challenge_loss(),
+            &pow_nonces,
+            transcript,
+        )?;
         let batch_challenges = sumchecks.draw_challenges(transcript)?;
         let input_points = sumchecks.empty_input_points();
 

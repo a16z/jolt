@@ -253,6 +253,12 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         &self.symbolic
     }
 
+    /// Its gamma folds the input claims with powers up to the input
+    /// expression's challenge degree.
+    fn challenge_loss(&self) -> u64 {
+        crate::stages::pow::challenge_degree(&self.symbolic().input_expression::<F>())
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],

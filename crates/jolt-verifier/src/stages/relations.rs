@@ -162,6 +162,14 @@ where
         .map_err(VerifierError::from)
     }
 
+    /// Proof-of-work loss of what [`draw_challenges`](Self::draw_challenges)
+    /// draws: a bound, fixed by the protocol parameters, on how many values of
+    /// those challenges, in units of one challenge set, let a false claim
+    /// survive every later use of them, derived powers and later phases
+    /// included. `0` when it draws nothing. The stage's nonce covers the sum
+    /// over its members ([`crate::stages::pow`]).
+    fn challenge_loss(&self) -> u64;
+
     /// This relation's cross-relation opening aliases, as `(aliased, canonical
     /// source)` id pairs: each aliased opening is produced by this relation's
     /// output `Expr` but is the same polynomial, at the same (structurally
@@ -550,7 +558,7 @@ pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierE
 )]
 pub(crate) mod draw_recording {
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::{ChallengeSetSize, Transcript};
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub(crate) enum DrawEvent {
@@ -574,6 +582,8 @@ pub(crate) mod draw_recording {
 
     impl Transcript for DrawRecordingTranscript {
         type Challenge = Fr;
+        // Scripted challenges: no proof of work.
+        const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
         fn new(_label: &'static [u8]) -> Self {
             Self::default()
@@ -587,6 +597,10 @@ pub(crate) mod draw_recording {
             self.squeezes += 1;
             self.events.push(DrawEvent::Squeeze(self.squeezes));
             Fr::from_u64(self.squeezes)
+        }
+
+        fn challenge_bytes(&mut self, out: &mut [u8]) {
+            out.fill(0);
         }
 
         fn state(&self) -> [u8; 32] {
@@ -614,7 +628,7 @@ pub(crate) mod draw_recording {
 #[cfg(test)]
 pub(crate) mod append_recording {
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::{ChallengeSetSize, Transcript};
 
     /// A minimal `Transcript` double that records each appended byte chunk, so
     /// that append order can be compared without depending on the digest.
@@ -625,6 +639,8 @@ pub(crate) mod append_recording {
 
     impl Transcript for RecordingTranscript {
         type Challenge = Fr;
+        // Scripted challenges: no proof of work.
+        const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
         fn new(_label: &'static [u8]) -> Self {
             Self::default()
@@ -636,6 +652,10 @@ pub(crate) mod append_recording {
 
         fn challenge(&mut self) -> Self::Challenge {
             Fr::from_u64(0)
+        }
+
+        fn challenge_bytes(&mut self, out: &mut [u8]) {
+            out.fill(0);
         }
 
         fn state(&self) -> [u8; 32] {

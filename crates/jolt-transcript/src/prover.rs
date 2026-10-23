@@ -6,13 +6,7 @@
 
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{Leb128, MessageSearch, SpongePow};
-#[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
-use crate::Blake2b512;
 use crate::{challenge::message_bytes, ChallengeCodec, UniformBytes};
-#[cfg(feature = "bn254")]
-use jolt_field::Fr;
-#[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
-use spongefish::instantiations::Keccak;
 use spongefish::{
     DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromUniform, ProverState, VerificationError,
 };
@@ -160,35 +154,5 @@ where
 
     fn narg_string(&self) -> &[u8] {
         ProverState::narg_string(self)
-    }
-}
-
-/// 128-bit-truncating challenge decoder. Implemented for sponges where the
-/// optimization is sound (Blake2b, Keccak); deliberately not implemented
-/// for [`PoseidonSponge`](crate::PoseidonSponge), so calling it on a
-/// Poseidon-backed state is a compile error.
-#[cfg(feature = "bn254")]
-pub trait OptimizedChallenge {
-    /// Squeezes a 128-bit-truncated challenge as an [`Fr`].
-    fn challenge_128(&mut self) -> Fr;
-}
-
-#[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
-impl<R> OptimizedChallenge for ProverState<Blake2b512, R>
-where
-    R: DuplexSpongeInit<U = u8>,
-{
-    fn challenge_128(&mut self) -> Fr {
-        Fr::from(ProverState::verifier_message::<u128>(self))
-    }
-}
-
-#[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
-impl<R> OptimizedChallenge for ProverState<Keccak, R>
-where
-    R: DuplexSpongeInit<U = u8>,
-{
-    fn challenge_128(&mut self) -> Fr {
-        Fr::from(ProverState::verifier_message::<u128>(self))
     }
 }

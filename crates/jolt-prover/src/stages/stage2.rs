@@ -28,6 +28,7 @@ use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
+use jolt_verifier::stages::pow::{grind_pow, PowSite};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 #[cfg(feature = "field-inline")]
@@ -44,7 +45,9 @@ use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_from_upstream};
-use jolt_verifier::stages::uniskip::draw_spartan_product_tau_high;
+use jolt_verifier::stages::uniskip::{
+    draw_spartan_product_tau_high, spartan_product_tau_high_loss,
+};
 use jolt_verifier::VerifierError;
 
 use crate::recorder::ProofMode;
@@ -53,6 +56,10 @@ use crate::{ProverConfig, ProverError, StageProver as _};
 /// Stage 2's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage2ProverOutput<F: JoltField, C> {
+    /// Nonce ground before the `tau_high` draw.
+    pub tau_high_pow_nonce: Option<u32>,
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u32>,
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage2OutputClaims<F>,
@@ -100,6 +107,11 @@ where
     tracing::info_span!("SpartanProductUniskip::prepare")
         .in_scope(|| backend.prepare_product_uniskip(log_t, &tau_low))?;
 
+    let tau_high_pow_nonce = grind_pow(
+        PowSite::Stage2TauHigh,
+        spartan_product_tau_high_loss(),
+        transcript,
+    )?;
     let tau_high: F = draw_spartan_product_tau_high(transcript);
     let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
     // The field-inline lane inputs enter the composed input claim exactly as on the
@@ -154,6 +166,7 @@ where
     };
     // Both batch gammas, then the RAM output-check address reference point (the
     // last member's `draw_challenges` override) — the verifier's exact schedule.
+    let pow_nonce = grind_pow(PowSite::Stage2, sumchecks.challenge_loss(), transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let input_points = sumchecks.empty_input_points();
@@ -179,6 +192,8 @@ where
 
     let claims = Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     Ok(Stage2ProverOutput {
+        tau_high_pow_nonce,
+        pow_nonce,
         uniskip_proof: proved_uniskip.proof,
         sumcheck_proof,
         claims,

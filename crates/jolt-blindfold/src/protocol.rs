@@ -619,7 +619,11 @@ mod tests {
         CommittedOutputClaims, CommittedRound, CommittedSumcheckProof, SumcheckDomainSpec,
         SumcheckStatement,
     };
-    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript, UnpricedTranscript};
+
+    /// Hand-built committed proofs carry no proof of work, so these tests
+    /// replay them on a transcript that declares none.
+    type Unpriced = UnpricedTranscript<Blake2bTranscript<Fr>>;
 
     #[derive(Clone, Debug)]
     struct TestStage {
@@ -648,6 +652,7 @@ mod tests {
                     degree,
                 })
                 .collect(),
+            pow_nonces: Vec::new(),
             output_claims: CommittedOutputClaims {
                 commitments: output_claims
                     .iter()
@@ -670,6 +675,7 @@ mod tests {
                     degree,
                 })
                 .collect(),
+            pow_nonces: Vec::new(),
             output_claims: CommittedOutputClaims {
                 commitments: output_claims
                     .iter()
@@ -706,7 +712,7 @@ mod tests {
             });
         }
 
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold");
+        let mut transcript = Unpriced::new(b"blindfold");
         let mut next_opening_id = 0usize;
         let stages = stages
             .iter()
@@ -795,7 +801,7 @@ mod tests {
 
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21]);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-alias");
+        let mut transcript = Unpriced::new(b"blindfold-alias");
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");
@@ -827,7 +833,7 @@ mod tests {
 
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21]);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-alias");
+        let mut transcript = Unpriced::new(b"blindfold-alias");
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");
@@ -932,7 +938,7 @@ mod tests {
     fn rejects_extra_output_claim_rows_without_typed_openings() {
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21, 22]);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-output-row-count");
+        let mut transcript = Unpriced::new(b"blindfold-output-row-count");
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");

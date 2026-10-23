@@ -556,6 +556,11 @@ mod tests {
             &self.symbolic
         }
 
+        /// Test relation: draws no challenge of its own.
+        fn challenge_loss(&self) -> u64 {
+            0
+        }
+
         fn derive_opening_points(
             &self,
             sumcheck_point: &[F],
@@ -1008,6 +1013,11 @@ mod tests {
 
         fn symbolic(&self) -> &ToyLeafSymbolic {
             &self.symbolic
+        }
+
+        /// Test relation: draws no challenge of its own.
+        fn challenge_loss(&self) -> u64 {
+            0
         }
 
         fn derive_opening_points(

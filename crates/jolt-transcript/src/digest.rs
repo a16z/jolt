@@ -8,6 +8,7 @@
 use digest::{consts::U32, Digest};
 
 use crate::legacy::{Transcript, MAX_LABEL_LEN};
+use crate::ChallengeSetSize;
 
 #[cfg(test)]
 #[derive(Clone, Default)]
@@ -23,6 +24,8 @@ struct TestState {
 pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
     state: [u8; 32],
     n_rounds: u32,
+    /// Challenges drawn since the last absorb; sets the next one's width.
+    draws: u64,
     #[cfg(test)]
     test_state: TestState,
     _marker: std::marker::PhantomData<(fn() -> D, F)>,
@@ -37,6 +40,7 @@ where
         Self {
             state: self.state,
             n_rounds: self.n_rounds,
+            draws: self.draws,
             #[cfg(test)]
             test_state: self.test_state.clone(),
             _marker: std::marker::PhantomData,
@@ -76,15 +80,6 @@ where
     D: Digest<OutputSize = U32>,
     F: jolt_field::CanonicalEncoding,
 {
-    /// Raw multi-byte squeeze backing the deployed challenge decoding, so the
-    /// compatibility `Transcript` vocabulary can drive this engine
-    /// directly (no state handoffs). Hidden: protocol code squeezes through
-    /// the [`Transcript`] challenge methods.
-    #[doc(hidden)]
-    pub fn raw_challenge_bytes(&mut self, out: &mut [u8]) {
-        self.challenge_bytes(out);
-    }
-
     #[inline]
     fn hasher(&self) -> D {
         let mut round_bytes = [0u8; 32];
@@ -92,7 +87,7 @@ where
         D::new().chain_update(self.state).chain_update(round_bytes)
     }
 
-    fn challenge_bytes(&mut self, out: &mut [u8]) {
+    fn squeeze(&mut self, out: &mut [u8]) {
         let mut out = &mut *out;
 
         while out.len() > 32 {
@@ -143,6 +138,8 @@ where
 {
     type Challenge = F;
 
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::from_limbs(F::CHALLENGE_SET_LIMBS);
+
     fn new(label: &'static [u8]) -> Self {
         assert!(
             label.len() <= MAX_LABEL_LEN,
@@ -158,6 +155,7 @@ where
         Self {
             state: hash,
             n_rounds: 0,
+            draws: 0,
             #[cfg(test)]
             test_state: TestState {
                 state_history: vec![hash],
@@ -170,18 +168,18 @@ where
     fn append_bytes(&mut self, bytes: &[u8]) {
         let hash: [u8; 32] = self.hasher().chain_update(bytes).finalize().into();
         self.update_state(hash);
+        self.draws = 0;
     }
 
     fn challenge(&mut self) -> F {
-        let mut buf = [0u8; 16];
-        self.challenge_bytes(&mut buf);
+        self.draws = self.draws.saturating_add(1);
+        let mut buf = vec![0u8; F::challenge_width(self.draws)];
+        self.squeeze(&mut buf);
         F::from_challenge_bytes(&buf)
     }
 
-    fn challenge_scalar(&mut self) -> F {
-        let mut buf = [0u8; 16];
-        self.challenge_bytes(&mut buf);
-        F::from_scalar_challenge_bytes(&buf)
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        self.squeeze(out);
     }
 
     #[inline]

@@ -224,6 +224,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
         &self.symbolic
     }
 
+    /// Draws no challenge of its own: `tau` has its own nonce.
+    fn challenge_loss(&self) -> u64 {
+        0
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],

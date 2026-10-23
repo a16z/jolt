@@ -2,11 +2,12 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpeni
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
-use jolt_sumcheck::{CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
+use jolt_sumcheck::{grind_round, CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use rand_core::RngCore;
 use rayon::prelude::*;
 
+use crate::pow::PowSite;
 use crate::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
 
 const OUTER_SUMCHECK_DEGREE: usize = 3;
@@ -434,6 +435,7 @@ where
         &random_instance.eval_commitments,
     );
     append_values(transcript, b"bf_cross_e", &cross_term_error_row_commitments);
+    let fold_pow_nonce = grind(PowSite::Fold, transcript)?;
     let folding_challenge = transcript.challenge();
 
     let folded_u = F::one() + folding_challenge * random_u;
@@ -549,6 +551,12 @@ where
             name: "outer folded R1CS sumcheck",
         });
     }
+    let outer_point_pow_nonce = grind(
+        PowSite::OuterPoint {
+            num_vars: outer_num_vars,
+        },
+        transcript,
+    )?;
     let tau = transcript.challenge_vector(outer_num_vars);
     let flattened_folded_witness = flatten(&folded_witness_rows);
     let flattened_folded_error = flatten(&folded_error_rows);
@@ -586,6 +594,7 @@ where
         &error_opening,
     );
 
+    let inner_combination_pow_nonce = grind(PowSite::InnerCombination, transcript)?;
     let ra = transcript.challenge();
     let rb = transcript.challenge();
     let rc = transcript.challenge();
@@ -633,6 +642,14 @@ where
         random_eval_commitments,
         random_u,
         cross_term_error_row_commitments,
+        pow_nonces: [
+            fold_pow_nonce,
+            outer_point_pow_nonce,
+            inner_combination_pow_nonce,
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         outer_sumcheck: outer_trace.proof,
         az_rx,
         bz_rx,
@@ -843,8 +860,9 @@ where
     let mut running_sum = F::zero();
     let mut rounds = Vec::with_capacity(num_vars);
     let mut point = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::with_capacity(num_vars);
 
-    for _round in 0..num_vars {
+    for round in 0..num_vars {
         let half = az.len() / 2;
         let mut evals = [F::zero(); OUTER_SUMCHECK_DEGREE + 1];
         for i in 0..half {
@@ -894,6 +912,7 @@ where
             SUMCHECK_ROUND_TRANSCRIPT_LABEL,
             compressed.coeffs_except_linear_term(),
         );
+        grind_round(OUTER_SUMCHECK_DEGREE, round, &mut pow_nonces, transcript)?;
         let challenge = transcript.challenge();
         running_sum = round_poly.evaluate(challenge);
         az.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -908,6 +927,7 @@ where
     Ok(SumcheckTrace {
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
+            pow_nonces,
         },
         point,
     })
@@ -942,8 +962,9 @@ where
     let mut running_sum = claim;
     let mut rounds = Vec::with_capacity(num_vars);
     let mut point = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::with_capacity(num_vars);
 
-    for _round in 0..num_vars {
+    for round in 0..num_vars {
         let half = l_w.len() / 2;
         let mut evals = [F::zero(); INNER_SUMCHECK_DEGREE + 1];
         for i in 0..half {
@@ -976,6 +997,7 @@ where
             INNER_SUMCHECK_LABEL,
             compressed.coeffs_except_linear_term(),
         );
+        grind_round(INNER_SUMCHECK_DEGREE, round, &mut pow_nonces, transcript)?;
         let challenge = transcript.challenge();
         running_sum = round_poly.evaluate(challenge);
         l_w.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -987,6 +1009,7 @@ where
     Ok(SumcheckTrace {
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
+            pow_nonces,
         },
         point,
     })
@@ -1128,6 +1151,17 @@ fn append_relaxed_instance<F, C, T>(
     append_values(transcript, labels.witness, witness_commitments);
     append_values(transcript, labels.error, error_commitments);
     append_values(transcript, labels.eval, eval_commitments);
+}
+
+/// Grinds the proof-of-work nonce for `site` right before its challenge draw.
+fn grind<F, T>(site: PowSite, transcript: &mut T) -> Result<Option<u32>, ProverError<F>>
+where
+    F: JoltField,
+    T: Transcript,
+{
+    let failed = || ProverError::ProofOfWork { site: site.name() };
+    let bits = site.bits::<T>().ok_or_else(failed)?;
+    transcript.grind(bits).map_err(|_| failed())
 }
 
 fn append_values<A, T>(transcript: &mut T, label: &'static [u8], values: &[A])

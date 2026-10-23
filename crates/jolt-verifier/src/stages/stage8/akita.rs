@@ -23,6 +23,7 @@ use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use super::precommitted::precommitted_final_openings;
+use crate::stages::pow::{check_pow, PowSite, StagePowNonces};
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
@@ -160,6 +161,17 @@ where
         .map_err(batch_failed)
 }
 
+/// Proof-of-work loss of the selector points of `plans`. A false claim among
+/// an object's evaluations survives its selector only at a root of a nonzero
+/// multilinear polynomial in the selector's variables, whose total degree is
+/// their count.
+pub fn selector_loss<'a>(plans: impl IntoIterator<Item = &'a PrefixPackedObjectPlan>) -> u64 {
+    plans
+        .into_iter()
+        .map(|plan| crate::num::u64_from_usize(plan.packing().selector_num_vars()))
+        .fold(0, u64::saturating_add)
+}
+
 fn advice_object<'a, PCS: CommitmentScheme>(
     leaf: Option<&EvaluationClaim<PCS::Field>>,
     commitment: Option<&'a PCS::Output>,
@@ -224,6 +236,7 @@ pub fn verify<PCS, VC, T>(
     trusted_advice_commitment: Option<&PCS::Output>,
     #[cfg(feature = "field-inline")] field_inc_commitment: Option<&PCS::Output>,
     proof: &PCS::Proof,
+    pow_nonces: &StagePowNonces,
     transcript: &mut T,
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
@@ -277,19 +290,6 @@ where
         JoltAdviceKind::Trusted,
     )?;
 
-    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
-        validate_packed_object_metadata(object.commitment, &object.plan)?;
-        Some(reduce_object(object, &leaves, transcript)?)
-    } else {
-        None
-    };
-    let trusted_claim = if let Some(object) = trusted.as_ref() {
-        validate_packed_object_metadata(object.commitment, &object.plan)?;
-        Some(reduce_object(object, &leaves, transcript)?)
-    } else {
-        None
-    };
-
     let program = preprocessing
         .program
         .committed()
@@ -303,6 +303,36 @@ where
             .map_err(batch_failed)
         })
         .transpose()?;
+
+    // One nonce covers every object's selector point: the reductions absorb
+    // only claims fixed by earlier messages, so no prover message falls
+    // between the draws.
+    let selector_loss = selector_loss(
+        [untrusted.as_ref(), trusted.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|object| &object.plan)
+            .chain(
+                program
+                    .iter()
+                    .flat_map(|(_, plan)| [&plan.bytecode, &plan.program_image]),
+            ),
+    );
+    check_pow(PowSite::Stage8, selector_loss, pow_nonces, transcript)?;
+
+    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+    let trusted_claim = if let Some(object) = trusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+
     let mut auxiliary_groups = Vec::with_capacity(5);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),

@@ -5,6 +5,7 @@ use jolt_claims::protocols::field_inline::FieldInlineRelationId;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::{Fr, JoltField};
+use jolt_verifier::stages::pow::PowSite;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage2::outputs::FieldRegistersClaimReductionOutputClaims;
 #[cfg(feature = "field-inline")]
@@ -1405,7 +1406,20 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::MissingPreprocessingPayload { .. }
         | VerifierError::UnsupportedInstruction { .. }
         | VerifierError::InvalidFieldInlineBytecode { .. }
-        | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
+        | VerifierError::PreprocessingDigestFailed { .. }
+        | VerifierError::ChallengeSetNeedsProofOfWork => Some(VerifierPhase::Preamble),
+        VerifierError::PowDifficulty { site, .. } | VerifierError::ProofOfWorkRejected { site } => {
+            Some(match site {
+                PowSite::Stage1Tau | PowSite::Stage1 => VerifierPhase::Stage1,
+                PowSite::Stage2TauHigh | PowSite::Stage2 => VerifierPhase::Stage2,
+                PowSite::Stage3 => VerifierPhase::Stage3,
+                PowSite::Stage4 => VerifierPhase::Stage4,
+                PowSite::Stage5 => VerifierPhase::Stage5,
+                PowSite::Stage6a | PowSite::Stage6b => VerifierPhase::Stage6,
+                PowSite::Stage7 => VerifierPhase::Stage7,
+                PowSite::Stage8 => VerifierPhase::Stage8Openings,
+            })
+        }
         VerifierError::MissingProofPayload { field } => match *field {
             "commitments.field_inline" | "field_inc_commitment" => Some(VerifierPhase::Preamble),
             _ => None,

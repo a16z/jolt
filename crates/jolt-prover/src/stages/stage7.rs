@@ -20,6 +20,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
+use jolt_verifier::stages::pow::{grind_pow, PowSite};
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weight_claim_reduction_dimensions;
@@ -33,6 +34,8 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 8 consumes.
 pub struct Stage7ProverOutput<F: JoltField, C> {
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u32>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage7OutputClaims<F>,
     pub clear_output: Stage7ClearOutput<F>,
@@ -77,6 +80,7 @@ where
         &stage6b.output_points,
         Some((stage4, stage6b)),
     )?;
+    let pow_nonce = grind_pow(PowSite::Stage7, sumchecks.challenge_loss(), transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage7_input_values_from_upstream(&sumchecks, stage6b)?;
@@ -98,6 +102,7 @@ where
     let sumcheck_proof = proved.recorded.proof.into();
 
     Ok(Stage7ProverOutput {
+        pow_nonce,
         sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage7ClearOutput {

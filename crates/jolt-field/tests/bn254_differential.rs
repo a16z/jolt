@@ -164,22 +164,6 @@ fn serde_bytes_match() {
     assert!(bincode::serde::decode_from_slice::<two::Fr, _>(&bad, cfg).is_err());
 }
 
-/// The legacy 125-bit shifted challenge for Fr: the masked value is placed
-/// in the two HIGH limbs of a raw Montgomery representation, so the field
-/// value is `(low·2^128 + high·2^192) · R⁻¹ mod r` with `R = 2^256 mod r`.
-fn fr_challenge_model(bytes: &[u8], p: &BigUint) -> BigUint {
-    let mut buf = [0u8; 16];
-    let len = bytes.len().min(16);
-    buf[..len].copy_from_slice(&bytes[..len]);
-    let value = u128::from_le_bytes(buf);
-    let low = BigUint::from(value as u64);
-    let high = BigUint::from(((value >> 64) as u64) & (u64::MAX >> 3));
-    let integer = (low << 128u32) + (high << 192u32);
-    let r_pow = (BigUint::from(1u32) << 256u32) % p;
-    let r_inv = r_pow.modpow(&(p - 2u32), p);
-    integer * r_inv % p
-}
-
 #[test]
 fn transcript_surface_matches() {
     let p = p_fr();
@@ -191,15 +175,13 @@ fn transcript_surface_matches() {
             (v.bits() <= 64).then(|| v.to_u64_digits().first().copied().unwrap_or(0));
         assert_eq!(t.to_u64_checked(), expected_u64);
 
-        let challenge: [u8; 16] = rng.gen();
+        let challenge: Vec<u8> =
+            (0..<two::Fr as CanonicalEncoding>::challenge_width(rng.gen_range(1..=64)))
+                .map(|_| rng.gen())
+                .collect();
         assert_val(
             &<two::Fr as CanonicalEncoding>::from_challenge_bytes(&challenge),
-            &fr_challenge_model(&challenge, &p),
-        );
-        let digest: [u8; 32] = rng.gen();
-        assert_val(
-            &<two::Fr as CanonicalEncoding>::from_scalar_challenge_bytes(&digest),
-            &(BigUint::from_bytes_be(&digest) % &p),
+            &(BigUint::from_bytes_le(&challenge) % &p),
         );
         let wide: [u8; 48] = std::array::from_fn(|_| rng.gen());
         assert_val(
@@ -257,19 +239,6 @@ fn wide_accumulator_matches() {
     assert_eq!(empty.reduce(), two::Fr::from_u64(0));
 }
 
-/// The legacy challenge for Fq places the masked value in the high limbs of
-/// a checked (non-Montgomery) bigint, so the field value is the integer
-/// itself: `low·2^128 + high·2^192 < q`.
-fn fq_challenge_model(bytes: &[u8]) -> BigUint {
-    let mut buf = [0u8; 16];
-    let len = bytes.len().min(16);
-    buf[..len].copy_from_slice(&bytes[..len]);
-    let value = u128::from_le_bytes(buf);
-    let low = BigUint::from(value as u64);
-    let high = BigUint::from(((value >> 64) as u64) & (u64::MAX >> 3));
-    (low << 128u32) + (high << 192u32)
-}
-
 #[test]
 fn fq_matches() {
     let p = p_fq();
@@ -295,14 +264,13 @@ fn fq_matches() {
         let v: u64 = rng.gen();
         assert_val(&two::Fq::from_u64(v), &BigUint::from(v));
 
-        let challenge: [u8; 16] = rng.gen();
+        let challenge: Vec<u8> =
+            (0..<two::Fq as CanonicalEncoding>::challenge_width(rng.gen_range(1..=64)))
+                .map(|_| rng.gen())
+                .collect();
         assert_val(
             &<two::Fq as CanonicalEncoding>::from_challenge_bytes(&challenge),
-            &fq_challenge_model(&challenge),
-        );
-        assert_val(
-            &<two::Fq as CanonicalEncoding>::from_scalar_challenge_bytes(&challenge),
-            &(BigUint::from_bytes_be(&challenge) % &p),
+            &(BigUint::from_bytes_le(&challenge) % &p),
         );
 
         assert_eq!(

@@ -67,6 +67,36 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
         &self.symbolic
     }
 
+    /// The fresh reference-address coordinates enter a multilinear zero-check,
+    /// and the gamma folds the booleanity openings with even powers up to
+    /// `2 (N - 1)`.
+    fn challenge_loss(&self) -> u64 {
+        let missing = self
+            .dimensions
+            .log_k_chunk
+            .saturating_sub(self.instruction_r_address.len());
+        #[cfg(not(feature = "akita"))]
+        let openings =
+            jolt_claims::protocols::jolt::geometry::booleanity::booleanity_output_openings(
+                self.dimensions.layout,
+            )
+            .len();
+        #[cfg(feature = "akita")]
+        let openings = {
+            use jolt_claims::protocols::jolt::lattice::relations::booleanity::{
+                lattice_booleanity_output_openings, LatticeBooleanityDimensions,
+            };
+            // An unpackable shape fails closed: no difficulty fits this loss.
+            let Ok(dimensions) = LatticeBooleanityDimensions::new(self.dimensions) else {
+                return u64::MAX;
+            };
+            lattice_booleanity_output_openings(dimensions).len()
+        };
+        crate::num::u64_from_usize(missing).saturating_add(
+            crate::num::u64_from_usize(openings.saturating_sub(1)).saturating_mul(2),
+        )
+    }
+
     /// Draws the booleanity pre-batch challenges at the frozen wire positions:
     /// the reference address is the reversed stage-5 instruction address,
     /// padded with a fresh `challenge_vector` draw or truncated to the

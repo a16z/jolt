@@ -41,6 +41,7 @@ jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",
   "transcript-keccak",
+  "test-utils",
 ] }
 num-traits = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }

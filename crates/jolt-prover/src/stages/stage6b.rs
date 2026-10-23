@@ -31,6 +31,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
+use jolt_verifier::stages::pow::{grind_pow, PowSite};
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
@@ -61,6 +62,8 @@ pub struct Stage6bProverOutput<F: JoltField, C> {
     pub clear_output: Stage6bClearOutput<F>,
     #[cfg(feature = "zk")]
     pub committed_witness: CommittedSumcheckWitness<F>,
+    /// The nonce ground before the post-6a draws, when their loss needs one.
+    pub pow_nonce: Option<u32>,
 }
 
 /// Prove stage 6b on `transcript` (positioned at the stage-6a boundary).
@@ -100,7 +103,12 @@ where
     // The bytecode gamma shares stage 6a's squeeze; the post-6a draws and the
     // challenges aggregate are the verifier's promoted two-front helpers.
     let carried = &stage6a.challenges;
-    let draws = Stage6bDraws::draw(transcript, committed_program);
+    let pow_nonce = grind_pow(
+        PowSite::Stage6b,
+        Stage6bDraws::<F>::challenge_loss(&formula_dimensions, committed_program),
+        transcript,
+    )?;
+    let draws = Stage6bDraws::draw(transcript, &formula_dimensions, committed_program);
 
     // The batch, through the verifier's own promoted constructor over the
     // clear carriers. Full-mode bytecode rows come from program preprocessing.
@@ -204,6 +212,7 @@ where
         },
         #[cfg(feature = "zk")]
         committed_witness,
+        pow_nonce,
     })
 }
 
@@ -351,7 +360,7 @@ mod field_inline_round_trip {
         )
         .unwrap();
         let carried = &stage6a.clear_output.challenges;
-        let draws = Stage6bDraws::draw(&mut transcript, false);
+        let draws = Stage6bDraws::draw(&mut transcript, &formula_dimensions, false);
         let program = preprocessing.program().unwrap();
         let entry_bytecode_index = preprocessing
             .verifier

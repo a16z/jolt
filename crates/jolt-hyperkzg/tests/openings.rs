@@ -12,7 +12,7 @@ use jolt_hyperkzg::{
 };
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{Blake2bTranscript, ChallengeSetSize, Transcript};
 
 fn setup_params(beta: u64, capacity: usize) -> HyperKZGSetupParams {
     let beta = Fr::from_u64(beta);
@@ -282,11 +282,13 @@ fn bad_imports_and_false_prover_claims_reject() {
     .unwrap();
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ZeroTranscript;
 
 impl Transcript for ZeroTranscript {
     type Challenge = Fr;
+    // Scripted challenges: no proof of work.
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(_: &'static [u8]) -> Self {
         Self
@@ -296,6 +298,10 @@ impl Transcript for ZeroTranscript {
 
     fn challenge(&mut self) -> Fr {
         Fr::zero()
+    }
+
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        out.fill(0);
     }
 
     fn state(&self) -> [u8; 32] {

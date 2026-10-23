@@ -73,6 +73,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
         &self.symbolic
     }
 
+    /// Draws no challenge of its own.
+    fn challenge_loss(&self) -> u64 {
+        0
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],

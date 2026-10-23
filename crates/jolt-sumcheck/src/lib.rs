@@ -110,6 +110,7 @@ pub mod claim;
 pub mod committed;
 pub mod domain;
 pub mod error;
+mod pow;
 pub mod proof;
 pub mod prover;
 #[cfg(feature = "r1cs")]
@@ -154,6 +155,7 @@ pub use committed::{
 pub use domain::F8Domain;
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
+pub use pow::{grind_round, round_pow_bits, Nonced, NoncedRef};
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 #[cfg(feature = "committed")]
 pub use prover::prove_uniskip_committed;

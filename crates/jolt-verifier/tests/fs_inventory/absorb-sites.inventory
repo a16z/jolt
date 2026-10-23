@@ -146,6 +146,8 @@ jolt-transcript::legacy.rs::Transcript::append_labeled::append#0::self.append(&L
 jolt-transcript::legacy.rs::Transcript::append_labeled::append#1::self.append(value)
 jolt-transcript::legacy.rs::Transcript::append_values::append#0::self.append(&LabelWithCount(label,values.len()asu64))
 jolt-transcript::legacy.rs::Transcript::append_values::append#1::self.append(value)
+jolt-transcript::legacy.rs::Transcript::check_grind::append_bytes#0::self.append_bytes(Leb128::new(nonce).as_bytes())
+jolt-transcript::legacy.rs::TranscriptProbe<'_,T>::probe::append_bytes#0::transcript.append_bytes(candidate)
 jolt-transcript::legacy.rs::U64Word::append_to_transcript::append_bytes#0::transcript.append_bytes(&packed)
 jolt-transcript::legacy.rs::append_length_prefixed::append#0::transcript.append(&LabelWithCount(label,len))
 jolt-transcript::legacy.rs::append_length_prefixed::append#1::transcript.append(&Label(label))

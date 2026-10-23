@@ -23,10 +23,12 @@ serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-jolt-field = { workspace = true, features = ["bn254"] }
+jolt-field = { workspace = true, features = ["bn254", "solinas"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
+  "solinas",
   "transcript-blake2b",
+  "test-utils",
 ] }
 rand_chacha.workspace = true
 rand_core.workspace = true

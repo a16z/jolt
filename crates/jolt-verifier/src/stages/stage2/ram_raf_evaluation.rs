@@ -93,6 +93,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         &self.symbolic
     }
 
+    /// Draws no challenge of its own.
+    fn challenge_loss(&self) -> u64 {
+        0
+    }
+
     /// Delegates to `super::phase1_instance_point_offset` (the phase-1 sub-point
     /// slicing shared with `RamOutputCheck`).
     fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {

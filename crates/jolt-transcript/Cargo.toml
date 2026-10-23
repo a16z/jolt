@@ -35,6 +35,8 @@ bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
 transcript-blake2b = ["spongefish", "digest", "dep:blake2"]
 transcript-keccak = ["spongefish", "spongefish/keccak"]
 transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
+# `UnpricedTranscript`, a wrapper that declares no proof of work. Tests only.
+test-utils = []
 
 [dependencies]
 ark-bn254 = { workspace = true, optional = true }

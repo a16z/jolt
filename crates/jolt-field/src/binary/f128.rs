@@ -87,6 +87,8 @@ impl CanonicalBytes for F128 {
 
 impl CanonicalEncoding for F128 {
     const MODULUS_BITS: u32 = 129;
+    /// The canonical encoding: a bijection onto the field.
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [0, 0, 1, 0];
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut word = [0; 16];
@@ -116,8 +118,9 @@ impl CanonicalEncoding for F128 {
         u128::BITS - self.0.leading_zeros()
     }
 
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
+    #[inline]
+    fn challenge_width(_draw: u64) -> usize {
+        Self::NUM_BYTES
     }
 }
 

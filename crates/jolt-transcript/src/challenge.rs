@@ -15,7 +15,7 @@
 //! A protocol's session/version must bind the field, message lengths, and codec
 //! rules; changing any of these changes the Fiat-Shamir decoding map.
 
-#[cfg(any(feature = "bn254", feature = "binary"))]
+#[cfg(any(feature = "solinas", feature = "bn254", feature = "binary"))]
 use jolt_field::CanonicalEncoding;
 #[cfg(feature = "solinas")]
 use jolt_field::{
@@ -172,14 +172,6 @@ fn pool_bytes<F: PseudoMersenne>(len: usize) -> Option<usize> {
     }
 }
 
-/// `|F|^degree`, where a pseudo-Mersenne base has order
-/// `2^MODULUS_BITS - OFFSET`.
-#[cfg(feature = "solinas")]
-const fn pseudo_mersenne_power<F: PseudoMersenne>(degree: usize) -> ChallengeSetSize {
-    let modulus = (u128::MAX >> (128 - F::MODULUS_BITS)) - (F::OFFSET - 1);
-    ChallengeSetSize::from_u128(modulus).pow(degree as u32)
-}
-
 #[cfg(feature = "solinas")]
 fn decode_pool<F, E, const D: usize>(bytes: &[u8], len: usize) -> Option<Vec<E>>
 where
@@ -216,7 +208,8 @@ macro_rules! prime_codec {
         impl<const P: $word> Sealed for $field<P> {}
 
         impl<const P: $word> ChallengeCodec for $field<P> {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize = pseudo_mersenne_power::<Self>(1);
+            const CHALLENGE_SET_SIZE: ChallengeSetSize =
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<Self>(len)
@@ -239,7 +232,7 @@ prime_codec!(Fp128, u128);
 // Registered bases have p ≡ ±3 (mod 8). This sealed list excludes
 // Prime128OffsetA7F7 from all towers, and the quadratic impl fixes TwoNr.
 #[cfg(feature = "solinas")]
-trait TowerBase: PseudoMersenne {}
+trait TowerBase: PseudoMersenne + CanonicalEncoding {}
 
 #[cfg(feature = "solinas")]
 macro_rules! tower_bases {
@@ -265,7 +258,8 @@ macro_rules! extension_codec {
         impl<F: TowerBase> Sealed for $extension<F> {}
 
         impl<F: TowerBase> ChallengeCodec for $extension<F> {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize = pseudo_mersenne_power::<F>(Self::DEGREE);
+            const CHALLENGE_SET_SIZE: ChallengeSetSize =
+                ChallengeSetSize::from_limbs(F::CHALLENGE_SET_LIMBS).pow(Self::DEGREE as u32);
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<F>(len.checked_mul(Self::DEGREE)?)
@@ -285,12 +279,14 @@ extension_codec!(FpExt4, 4);
 #[cfg(feature = "solinas")]
 extension_codec!(FpExt8, 8);
 
+/// Bytes per element of a `len`-element message: `len` reduced elements
+/// share the `2^-161` budget.
 #[cfg(feature = "bn254")]
-fn reduction_width<F: CanonicalEncoding>(len: usize) -> Option<usize> {
-    let bits = F::MODULUS_BITS
-        .checked_add(159)?
-        .checked_add(ceil_log2(u128::try_from(len).ok()?))?;
-    usize::try_from(bits.checked_add(7)?.checked_div(8)?).ok()
+fn element_bytes<F: CanonicalEncoding>(len: usize) -> Option<usize> {
+    Some(jolt_field::reduction_width(
+        F::MODULUS_BITS,
+        ceil_log2(u128::try_from(len).ok()?),
+    ))
 }
 
 #[cfg(feature = "bn254")]
@@ -299,12 +295,11 @@ macro_rules! reduction_codec {
         impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize = ChallengeSetSize::from_limbs(
-                <ark_bn254::$field as ark_ff::PrimeField>::MODULUS.0,
-            );
+            const CHALLENGE_SET_SIZE: ChallengeSetSize =
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
 
             fn challenge_bytes(len: usize) -> Option<usize> {
-                len.checked_mul(reduction_width::<Self>(len)?)
+                len.checked_mul(element_bytes::<Self>(len)?)
             }
 
             fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
@@ -312,7 +307,7 @@ macro_rules! reduction_codec {
                     return None;
                 }
                 let mut result = Vec::with_capacity(len);
-                for chunk in bytes.chunks_exact(reduction_width::<Self>(len)?) {
+                for chunk in bytes.chunks_exact(element_bytes::<Self>(len)?) {
                     result.push(Self::from_bytes_le_reduced(chunk));
                 }
                 Some(result)
@@ -333,9 +328,8 @@ macro_rules! binary_codec {
         impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
-            const CHALLENGE_SET_SIZE: ChallengeSetSize = ChallengeSetSize::power_of_two(
-                8 * <Self as jolt_field::CanonicalBytes>::NUM_BYTES as u32,
-            );
+            const CHALLENGE_SET_SIZE: ChallengeSetSize =
+                ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
 
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(<Self as jolt_field::CanonicalBytes>::NUM_BYTES)

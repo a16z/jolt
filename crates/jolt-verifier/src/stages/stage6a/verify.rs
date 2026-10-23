@@ -21,8 +21,13 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
-        stage5::Stage5Output, zk::committed,
+        pow::{check_pow, PowSite},
+        stage1::Stage1Output,
+        stage2::Stage2Output,
+        stage3::Stage3Output,
+        stage4::Stage4Output,
+        stage5::Stage5Output,
+        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -80,6 +85,12 @@ where
     // booleanity subprotocol samples them before the 6a batch runs, so the
     // transcript schedule fixes them here and they ride downstream as typed
     // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
+    check_pow(
+        PowSite::Stage6a,
+        address_sumchecks.challenge_loss(),
+        &proof.stages.pow_nonces(),
+        transcript,
+    )?;
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -192,6 +203,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::{Fr, Ring};
+    use jolt_transcript::ChallengeSetSize;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -337,6 +349,8 @@ mod tests {
 
     impl Transcript for ConstantChallengeTranscript {
         type Challenge = Fr;
+        // Scripted challenges: no proof of work.
+        const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
         fn new(_label: &'static [u8]) -> Self {
             Self
         }
@@ -344,6 +358,10 @@ mod tests {
         fn challenge(&mut self) -> Self::Challenge {
             Fr::from_u64(7)
         }
+        fn challenge_bytes(&mut self, out: &mut [u8]) {
+            out.fill(0);
+        }
+
         fn state(&self) -> [u8; 32] {
             [0u8; 32]
         }

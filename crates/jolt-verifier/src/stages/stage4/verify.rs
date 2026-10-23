@@ -38,6 +38,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
         zk::committed,
@@ -165,6 +166,12 @@ where
     // the field-register read-write gamma (each a single `challenge_scalar`), then the RAM
     // value-check gamma behind its `b"ram_val_check_gamma"` domain separator (the relation's
     // `draw_challenges` override replays the separator at its exact transcript position).
+    check_pow(
+        PowSite::Stage4,
+        sumchecks.challenge_loss(),
+        &proof.stages.pow_nonces(),
+        transcript,
+    )?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

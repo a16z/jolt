@@ -67,6 +67,7 @@ where
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
+    jolt_verifier::stages::pow::require_no_pow::<T>()?;
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         &mut backend,

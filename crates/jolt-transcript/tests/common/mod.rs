@@ -132,5 +132,33 @@ macro_rules! transcript_tests {
             let unique: HashSet<_> = challenges.iter().collect();
             assert_eq!(unique.len(), 5, "All challenges in vector should be unique");
         }
+
+        /// A short challenge is the squeezed little-endian integer with the
+        /// bits above its width cleared, and it squeezes nothing more.
+        #[test]
+        fn test_challenge_short_scalar() {
+            use jolt_field::CanonicalEncoding;
+            type Challenge = <$transcript_type as Transcript>::Challenge;
+
+            for (loss, bits) in [(1u64, 128u32), (2, 129), (3, 130), (4, 130)] {
+                let mut widest = 0;
+                for round in 0..64u64 {
+                    let mut short = <$transcript_type>::new(b"short_scalar");
+                    short.append_bytes(&round.to_be_bytes());
+                    let mut manual = short.clone();
+                    let value = short.challenge_short_scalar(loss).unwrap();
+
+                    let mut bytes = vec![0u8; bits.div_ceil(8) as usize];
+                    manual.challenge_bytes(&mut bytes);
+                    let excess = 8 * bytes.len() as u32 - bits;
+                    *bytes.last_mut().unwrap() &= u8::MAX >> excess;
+                    assert_eq!(value, Challenge::from_bytes_le_reduced(&bytes));
+                    assert_eq!(short.challenge(), manual.challenge());
+                    widest = widest.max(value.num_bits());
+                }
+                // The top bit is set with probability 1/2 per draw.
+                assert_eq!(widest, bits, "loss={loss}");
+            }
+        }
     };
 }

@@ -11,7 +11,7 @@ use jolt_sumcheck::{
     SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, ChallengeSetSize, Transcript};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +45,7 @@ impl ChallengeField for Prime128Offset275 {
     }
 }
 
+#[derive(Clone)]
 struct ExtensionTranscript<F> {
     state: [u8; 32],
     cursor: usize,
@@ -65,6 +66,8 @@ impl<F> Default for ExtensionTranscript<F> {
 
 impl<F: ChallengeField> Transcript for ExtensionTranscript<F> {
     type Challenge = F;
+    // Scripted challenges: no proof of work.
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         let mut transcript = Self::default();
@@ -91,18 +94,24 @@ impl<F: ChallengeField> Transcript for ExtensionTranscript<F> {
         F::challenge_from_seed(seed)
     }
 
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        out.fill(0);
+    }
+
     fn state(&self) -> [u8; 32] {
         self.state
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct CapturingTranscript {
     absorbed: Vec<u8>,
 }
 
 impl Transcript for CapturingTranscript {
     type Challenge = Quadratic;
+    // Scripted challenges: no proof of work.
+    const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
 
     fn new(label: &'static [u8]) -> Self {
         Self {
@@ -116,6 +125,10 @@ impl Transcript for CapturingTranscript {
 
     fn challenge(&mut self) -> Self::Challenge {
         Quadratic::zero()
+    }
+
+    fn challenge_bytes(&mut self, out: &mut [u8]) {
+        out.fill(0);
     }
 
     fn state(&self) -> [u8; 32] {
