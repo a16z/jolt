@@ -19,9 +19,11 @@ akita = [
   "dep:jolt-witness",
   "dep:tracer",
 ]
-# L3 recursion experiment: the verifier guest (and the host's Akita) evaluate
-# the compression relation weights by factor; same field values.
-l3-compression-weights = ["akita", "jolt-akita/l3-compression-weights"]
+# L3 compression-weight factoring, default on: with `akita`, the verifier
+# guest (and the host's Akita) evaluate the compression relation weights by
+# factor; same field values. Turn it off with --no-default-features.
+default = ["l3-compression-weights"]
+l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }

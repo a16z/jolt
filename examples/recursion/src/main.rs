@@ -876,7 +876,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("ntt-inline");
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("hash-inlines");
-    #[cfg(feature = "l3-compression-weights")]
+    #[cfg(all(feature = "akita", feature = "l3-compression-weights"))]
     program.add_guest_feature("l3-compression-weights");
     program.set_memory_config(memory_config);
     program
