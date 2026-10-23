@@ -144,6 +144,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "thiserror 2.0.20",
 ]
 
@@ -158,6 +159,7 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-transcript",
+ "jolt-zk",
  "serde",
  "sha3 0.12.0",
 ]
@@ -174,13 +176,18 @@ dependencies = [
  "akita-prover",
  "akita-serialization",
  "akita-setup",
+ "akita-sumcheck",
  "akita-types",
  "akita-verifier",
  "jolt-algebra",
  "jolt-crypto",
+ "jolt-poly",
+ "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "rayon",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -210,7 +217,9 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -274,6 +283,7 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "tracing",
 ]
 
@@ -292,6 +302,7 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "rayon",
  "tracing",
 ]
@@ -3154,6 +3165,9 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-zk",
+ "rand 0.8.7",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "serde_json",

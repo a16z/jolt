@@ -449,8 +449,6 @@ jobs:
       # specifics: forced K=256, advice, committed-program, and live tampers.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
-      - name: Run Whiteout masked-stage tests (akita,zk)
-        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,zk,prover-fixtures --test whiteout_stages
       - name: Test Akita profiling artifact and CSV names
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
 

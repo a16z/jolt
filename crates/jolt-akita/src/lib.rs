@@ -33,6 +33,8 @@ mod shape_guard;
 #[cfg(test)]
 mod test_transcripts;
 mod trace_onehot;
+#[cfg(feature = "zk")]
+pub mod whiteout;
 
 pub use akita_pcs::AkitaError;
 
@@ -52,6 +54,8 @@ pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
 pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
+#[cfg(feature = "zk")]
+pub use scheme::WhiteoutPads;
 pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 

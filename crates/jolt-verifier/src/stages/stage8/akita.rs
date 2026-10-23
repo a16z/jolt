@@ -25,8 +25,8 @@ use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 use super::precommitted::precommitted_final_openings;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
-use crate::stages::stage6b::outputs::Stage6bClearOutput;
-use crate::stages::stage7::outputs::Stage7ClearOutput;
+use crate::stages::stage6b::outputs::{Stage6bClearOutput, Stage6bOutputPoints};
+use crate::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputPoints};
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::stages::PrecommittedSchedule;
 use crate::VerifierError;
@@ -356,6 +356,85 @@ where
     Ok(())
 }
 
+/// Whiteout's stage 8: the trace group's claims as affine forms over the
+/// pads, each column's form the masked opening of its final claim, for the
+/// masked Akita opening. Nothing is absorbed here: the forms are built from
+/// masked messages already absorbed, under challenges that precede none of
+/// them, and Akita's masked root binds them without absorbing values
+/// (`specs/whiteout-jolt-integration.md` §8, D25).
+///
+/// # Errors
+///
+/// [`VerifierError::ProtocolAxisUnimplemented`] for a proof with advice, a
+/// committed program or field increments (their groups are W6d), and the
+/// errors of the clear stage 8's shape checks.
+#[cfg(all(feature = "akita", feature = "zk"))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the stage inputs, as in `verify`"
+)]
+pub fn masked_trace_claim<F, PCS, VC>(
+    formula_dimensions: &JoltFormulaDimensions,
+    one_hot_config: JoltOneHotConfig,
+    preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
+    one_hot_trace_commitment: &PCS::Output,
+    untrusted_advice_commitment: Option<&PCS::Output>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    schedule: &PrecommittedSchedule,
+    stage6b_points: &Stage6bOutputPoints<F>,
+    stage7_points: &Stage7OutputPoints<F>,
+    residual: &crate::stages::zk::residual::JoltResidual<F>,
+) -> Result<jolt_zk::whiteout::MaskedGroupClaim<F, PCS::Output>, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
+    VC: VectorCommitment<Field = F>,
+{
+    use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
+
+    if untrusted_advice_commitment.is_some()
+        || trusted_advice_commitment.is_some()
+        || preprocessing.program.committed().is_some()
+        || cfg!(feature = "field-inline")
+    {
+        return Err(VerifierError::ProtocolAxisUnimplemented {
+            axis: "zk (Whiteout)",
+            pending: "precommitted groups: advice, committed programs, field increments (W6d)",
+        });
+    }
+    let chunk_width = one_hot_config.committed_chunk_bits();
+    let plan = ONE_HOT_TRACE_LAYOUT
+        .plan(&OneHotTraceShape {
+            ra_layout: formula_dimensions.ra_layout,
+            log_t: formula_dimensions.trace.log_t(),
+            log_k_chunk: chunk_width,
+        })
+        .map_err(batch_failed)?;
+    validate_one_hot_trace_metadata(
+        one_hot_trace_commitment,
+        &preprocessing.pcs_setup,
+        plan.layout_digest(),
+        plan.num_vars(),
+        plan.ids().len(),
+        1 << chunk_width,
+    )?;
+    let leaves = leaves(
+        schedule,
+        stage6b_points,
+        stage7_points,
+        &mut |_| Ok(None),
+        &mut |polynomial| residual.opening_form(&final_opening_id(polynomial).into()),
+    )?;
+    let (point, evaluations) = one_hot_trace_group(&plan, chunk_width, &leaves)?;
+    Ok(jolt_zk::whiteout::MaskedGroupClaim {
+        commitment: one_hot_trace_commitment.clone(),
+        point,
+        evaluations,
+    })
+}
+
 /// Assembles the native `OneHotTrace` group claim: every canonical
 /// column's leaf claim, its point mapped to the committed row-major order,
 /// all required to share one canonical opening point. Shared verbatim by the
@@ -366,16 +445,52 @@ pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
     commitment: &C,
 ) -> Result<GroupOpeningClaim<F, C>, VerifierError> {
+    let leaves = leaves
+        .iter()
+        .map(|(polynomial, claim)| {
+            (
+                *polynomial,
+                Leaf {
+                    point: claim.point.as_slice().to_vec(),
+                    value: claim.value,
+                },
+            )
+        })
+        .collect();
+    let (point, evaluations) = one_hot_trace_group(plan, chunk_width, &leaves)?;
+    Ok(GroupOpeningClaim::new(
+        commitment.clone(),
+        point,
+        evaluations,
+    ))
+}
+
+/// One committed column's leaf: its opening point and its value, a clear
+/// value or, under Whiteout, an affine form over the pads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Leaf<F, V> {
+    pub point: Vec<F>,
+    pub value: V,
+}
+
+/// The `OneHotTrace` group's common opening point and its columns' values in
+/// the plan's canonical order: each column's point is mapped to the
+/// committed row-major order, and all must agree.
+pub fn one_hot_trace_group<F: JoltField, V: Clone>(
+    plan: &OneHotTraceLayoutPlan,
+    chunk_width: usize,
+    leaves: &BTreeMap<JoltCommittedPolynomial, Leaf<F, V>>,
+) -> Result<(Vec<F>, Vec<V>), VerifierError> {
     let mut common_point: Option<Vec<F>> = None;
     let mut evaluations = Vec::with_capacity(plan.ids().len());
     for polynomial in plan.ids() {
-        let claim = leaves.get(polynomial).ok_or_else(|| {
+        let leaf = leaves.get(polynomial).ok_or_else(|| {
             batch_failed(format!(
                 "missing final OneHotTrace claim for {polynomial:?}"
             ))
         })?;
         let point = ONE_HOT_TRACE_LAYOUT
-            .column_point(*polynomial, chunk_width, claim.point.as_slice())
+            .column_point(*polynomial, chunk_width, &leaf.point)
             .map_err(batch_failed)?;
         if let Some(expected) = &common_point {
             if expected != &point {
@@ -386,7 +501,7 @@ pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
         } else {
             common_point = Some(point);
         }
-        evaluations.push(claim.value);
+        evaluations.push(leaf.value.clone());
     }
     let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
     if common_point.len() != plan.num_vars() {
@@ -394,11 +509,7 @@ pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
             "OneHotTrace opening point has incorrect arity",
         ));
     }
-    Ok(GroupOpeningClaim::new(
-        commitment.clone(),
-        common_point,
-        evaluations,
-    ))
+    Ok((common_point, evaluations))
 }
 
 /// One precommitted object's leaf claims: each of the plan's canonical columns
@@ -437,98 +548,134 @@ pub fn leaf_claims<F: JoltField>(
 ) -> Result<BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>, VerifierError> {
     use JoltCommittedPolynomial as Poly;
 
-    fn leaf<F: JoltField>(value: F, point: &[F]) -> EvaluationClaim<F> {
-        EvaluationClaim::new(Point::high_to_low(point.to_vec()), value)
-    }
-    fn insert<F: JoltField>(
-        leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
-        polynomial: JoltCommittedPolynomial,
-        claim: EvaluationClaim<F>,
-    ) -> Result<(), VerifierError> {
-        if leaves.insert(polynomial, claim).is_some() {
+    let hamming = &stage7.output_values.hamming_weight_claim_reduction;
+    let finals = precommitted_final_openings(
+        schedule,
+        &stage7.output_points,
+        &stage6b.output_points,
+        Some((&stage7.output_values, &stage6b.output_values)),
+    )?;
+    let indexed = |values: &[F], index: usize, polynomial: Poly| {
+        values
+            .get(index)
+            .copied()
+            .ok_or_else(|| batch_failed(format!("missing final value for {polynomial:?}")))
+    };
+    let leaves = leaves(
+        schedule,
+        &stage6b.output_points,
+        &stage7.output_points,
+        &mut |_kind| {
+            #[cfg(feature = "akita")]
+            if let Some(contribution) = stage4.ram_val_check_init.advice_contribution(_kind) {
+                return Ok(Some(Leaf {
+                    point: contribution.opening_point.clone(),
+                    value: contribution.opening_value,
+                }));
+            }
+            Ok(None)
+        },
+        &mut |polynomial| match polynomial {
+            Poly::InstructionRa(index) => indexed(&hamming.instruction_ra, index, polynomial),
+            Poly::BytecodeRa(index) => indexed(&hamming.bytecode_ra, index, polynomial),
+            Poly::RamRa(index) => indexed(&hamming.ram_ra, index, polynomial),
+            Poly::BalancedIncDigit(index) => {
+                indexed(&hamming.balanced_inc_digits, index, polynomial)
+            }
+            Poly::BalancedIncCarry => Ok(hamming.balanced_inc_carry),
+            Poly::RdInc
+            | Poly::RamInc
+            | Poly::Reserved4(_)
+            | Poly::TrustedAdvice
+            | Poly::UntrustedAdvice
+            | Poly::ProgramImageInit
+            | Poly::ProgramBytecode => finals
+                .iter()
+                .find(|opening| opening.polynomial == polynomial)
+                .and_then(|opening| opening.opening_claim)
+                .ok_or_else(|| {
+                    batch_failed(format!("missing clear final value for {polynomial:?}"))
+                }),
+        },
+    )?;
+    Ok(leaves
+        .into_iter()
+        .map(|(polynomial, leaf)| {
+            (
+                polynomial,
+                EvaluationClaim::new(Point::high_to_low(leaf.point), leaf.value),
+            )
+        })
+        .collect())
+}
+
+/// Every committed column's leaf, keyed by committed polynomial: the one
+/// owner of which stage supplies each column's opening point. The hamming
+/// reduction's columns come from stage 7, the precommitted polynomials from
+/// whichever phase completed their reduction, and (Akita) advice from
+/// `advice`; every value from `value`.
+pub fn leaves<F: JoltField, V>(
+    schedule: &PrecommittedSchedule,
+    stage6b_points: &Stage6bOutputPoints<F>,
+    stage7_points: &Stage7OutputPoints<F>,
+    advice: &mut dyn FnMut(JoltAdviceKind) -> Result<Option<Leaf<F, V>>, VerifierError>,
+    value: &mut dyn FnMut(JoltCommittedPolynomial) -> Result<V, VerifierError>,
+) -> Result<BTreeMap<JoltCommittedPolynomial, Leaf<F, V>>, VerifierError> {
+    use JoltCommittedPolynomial as Poly;
+
+    let mut leaves = BTreeMap::new();
+    let mut insert = |polynomial: Poly, point: &[F], value: V| {
+        if leaves
+            .insert(
+                polynomial,
+                Leaf {
+                    point: point.to_vec(),
+                    value,
+                },
+            )
+            .is_some()
+        {
             return Err(batch_failed(format!(
                 "duplicate Akita final claim for {polynomial:?}"
             )));
         }
         Ok(())
-    }
-    fn insert_indexed<F: JoltField>(
-        leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
-        values: &[F],
-        points: &[Vec<F>],
-        polynomial: impl Fn(usize) -> JoltCommittedPolynomial,
-    ) -> Result<(), VerifierError> {
-        for (index, (value, point)) in values.iter().zip(points).enumerate() {
-            insert(leaves, polynomial(index), leaf(*value, point))?;
+    };
+    let hamming = &stage7_points.hamming_weight_claim_reduction;
+    type Family<'a, F> = (&'a [Vec<F>], fn(usize) -> Poly);
+    let families: [Family<'_, F>; 4] = [
+        (&hamming.instruction_ra, Poly::InstructionRa),
+        (&hamming.bytecode_ra, Poly::BytecodeRa),
+        (&hamming.ram_ra, Poly::RamRa),
+        (&hamming.balanced_inc_digits, Poly::BalancedIncDigit),
+    ];
+    for (points, polynomial) in families {
+        for (index, point) in points.iter().enumerate() {
+            insert(polynomial(index), point, value(polynomial(index))?)?;
         }
-        Ok(())
     }
-    let mut leaves = BTreeMap::new();
-
-    let hamming_values = &stage7.output_values.hamming_weight_claim_reduction;
-    let hamming_points = &stage7.output_points.hamming_weight_claim_reduction;
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.instruction_ra,
-        &hamming_points.instruction_ra,
-        Poly::InstructionRa,
-    )?;
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.bytecode_ra,
-        &hamming_points.bytecode_ra,
-        Poly::BytecodeRa,
-    )?;
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.ram_ra,
-        &hamming_points.ram_ra,
-        Poly::RamRa,
-    )?;
-
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.balanced_inc_digits,
-        &hamming_points.balanced_inc_digits,
-        Poly::BalancedIncDigit,
-    )?;
     insert(
-        &mut leaves,
         Poly::BalancedIncCarry,
-        leaf(
-            hamming_values.balanced_inc_carry,
-            &hamming_points.balanced_inc_carry,
-        ),
+        &hamming.balanced_inc_carry,
+        value(Poly::BalancedIncCarry)?,
     )?;
 
-    #[cfg(feature = "akita")]
     for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
-        if let Some(contribution) = stage4.ram_val_check_init.advice_contribution(kind) {
+        if let Some(leaf) = advice(kind)? {
             let polynomial = match kind {
                 JoltAdviceKind::Trusted => Poly::TrustedAdvice,
                 JoltAdviceKind::Untrusted => Poly::UntrustedAdvice,
             };
-            insert(
-                &mut leaves,
-                polynomial,
-                leaf(contribution.opening_value, &contribution.opening_point),
-            )?;
+            insert(polynomial, &leaf.point, leaf.value)?;
         }
     }
 
-    for opening in precommitted_final_openings(
-        schedule,
-        &stage7.output_points,
-        &stage6b.output_points,
-        Some((&stage7.output_values, &stage6b.output_values)),
-    )? {
-        let value = opening.opening_claim.ok_or_else(|| {
-            batch_failed(format!(
-                "missing clear final value for {:?}",
-                opening.polynomial
-            ))
-        })?;
-        insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
+    for opening in precommitted_final_openings(schedule, stage7_points, stage6b_points, None)? {
+        insert(
+            opening.polynomial,
+            &opening.point,
+            value(opening.polynomial)?,
+        )?;
     }
 
     Ok(leaves)

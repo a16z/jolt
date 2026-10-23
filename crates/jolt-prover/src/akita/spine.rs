@@ -8,21 +8,11 @@ use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
 use jolt_transcript::{ProverTranscript, Sponge};
-#[cfg(feature = "zk")]
-use jolt_verifier::pad_layout;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::CheckedInputs;
-#[cfg(feature = "zk")]
-use jolt_zk::masking::CommittedPads;
-#[cfg(feature = "zk")]
-use rand_core::OsRng;
 
-#[cfg(feature = "zk")]
-use super::stage0::prove_stage0;
-#[cfg(feature = "zk")]
-use super::witness::AdviceObject;
 use crate::boundary::finish_stage;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -34,72 +24,6 @@ use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
 use jolt_kernels::{JoltBackend, KernelContext};
-
-/// A Whiteout proof's stages 0–7, for tests of the masked stage spine
-/// before W6d's tail exists: the argument string and the pads.
-#[cfg(feature = "zk")]
-pub struct MaskedStagesProof<F> {
-    pub narg: Vec<u8>,
-    pub pads: Vec<F>,
-}
-
-/// Proves stages 0–7 of a Whiteout proof over uncommitted pads drawn from
-/// the operating system, on the layout [`pad_layout`] derives: no pad
-/// commitment is sent, so the result is not a proof. Test support only.
-///
-/// # Errors
-///
-/// [`ProverError`] if a stage fails.
-#[cfg(feature = "zk")]
-pub fn prove_masked_stages<F, PCS, VC, H>(
-    mut backend: KernelContext<'_, F, JoltBackend<F, PCS>>,
-    preprocessing: &JoltProverPreprocessing<PCS, VC>,
-    config: &ProverConfig,
-    trusted_advice: Option<&AdviceObject<PCS>>,
-    public_io: &JoltDevice,
-) -> Result<MaskedStagesProof<F>, ProverError<F>>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
-    PCS::ProverSetup: GroupSetupMetadata,
-    PCS::VerifierSetup: GroupSetupMetadata,
-    PCS::Output: Clone + PartialEq + GroupCommitmentMetadata,
-    VC: VectorCommitment<Field = F>,
-    H: Sponge,
-{
-    let stage0 = prove_stage0::<F, PCS, VC, H>(
-        &mut backend,
-        preprocessing,
-        config,
-        trusted_advice,
-        public_io,
-    )?;
-    let mut transcript = stage0.transcript;
-    let layout = pad_layout::<F, PCS, VC>(
-        &preprocessing.verifier,
-        public_io,
-        trusted_advice.map(|advice| &advice.commitment),
-        transcript.narg(),
-    )?;
-    let pads = (0..layout.num_pads)
-        .map(|_| F::random(&mut OsRng))
-        .collect();
-    let mut mode = ProofMode::<VC>::masked(CommittedPads::uncommitted(layout, pads)?);
-    let _ = prove_stages_1_to_7::<F, PCS, VC, H>(
-        &mut backend,
-        &mut mode,
-        &stage0.checked,
-        config,
-        preprocessing,
-        public_io,
-        &mut transcript,
-    )?;
-    backend.finish();
-    Ok(MaskedStagesProof {
-        narg: transcript.finish(),
-        pads: mode.into_pads().pads().to_vec(),
-    })
-}
 
 /// Stages 1–7 in `mode`; returns the clear carriers stage 8 reads.
 #[expect(clippy::type_complexity, reason = "the three carriers stage 8 reads")]

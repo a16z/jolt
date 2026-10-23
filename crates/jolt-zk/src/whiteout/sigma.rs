@@ -161,7 +161,7 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         });
         let linear = RingLinearMap::new(linear)?;
 
-        let message_rings = (linear.num_outputs() * D) / CHALLENGE_RING_DIM + 3;
+        let message_rings = Self::v_message_rings(linear.num_outputs());
         let v_level = AjtaiLevel {
             matrix: MatrixShape {
                 rows: v_rank,
@@ -190,6 +190,33 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
             v_level,
             v_matrix,
         })
+    }
+
+    /// Challenge rings of `V`: the Σ messages of `num_outputs` rows of `N`
+    /// over `R_D`, plus three.
+    fn v_message_rings(num_outputs: usize) -> usize {
+        (num_outputs * D) / CHALLENGE_RING_DIM + 3
+    }
+
+    /// The width in challenge-ring columns of `A_D` for opening rows
+    /// `blocks` and the pad commitment `pads`.
+    pub fn v_width(blocks: &[ResidualBlock<F, D>], pads: &LatticePadCommitment<F, D>) -> usize {
+        let outputs = blocks
+            .iter()
+            .map(|block| block.matrix.shape().rows)
+            .sum::<usize>()
+            + pads.image_len() / D;
+        Self::v_message_rings(outputs) * FIELD_LEVELS
+    }
+
+    /// The public stream length [`Self::new`] reads for `A_D` of rank
+    /// `v_rank`.
+    pub fn v_stream_len(
+        blocks: &[ResidualBlock<F, D>],
+        pads: &LatticePadCommitment<F, D>,
+        v_rank: usize,
+    ) -> usize {
+        v_rank * Self::v_width(blocks, pads) * CHALLENGE_RING_DIM
     }
 
     /// This setup at another rejection parameter α (tests of the abort rate).

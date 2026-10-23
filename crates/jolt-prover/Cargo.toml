@@ -58,7 +58,13 @@ akita = [
 # Compile-time ZK mode: masking sumcheck recorders over committed pads, hiding
 # witness commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.
-zk = ["jolt-verifier/zk", "jolt-kernels/zk", "dep:jolt-zk", "dep:rand_core"]
+zk = [
+  "jolt-verifier/zk",
+  "jolt-kernels/zk",
+  "dep:jolt-zk",
+  "dep:rand_core",
+  "jolt-akita?/zk",
+]
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
   "dep:bincode",

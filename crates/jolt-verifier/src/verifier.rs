@@ -2,7 +2,9 @@
 
 use common::constants::MAX_BLINDFOLD_GENERATORS;
 use common::jolt_device::JoltDevice;
-use jolt_algebra::{CanonicalDecode, JoltField};
+#[cfg(not(all(feature = "akita", feature = "zk")))]
+use jolt_algebra::CanonicalDecode;
+use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
@@ -18,7 +20,7 @@ use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::PrivateChannel;
-#[cfg(any(not(feature = "akita"), feature = "zk"))]
+#[cfg(not(feature = "akita"))]
 use jolt_transcript::TranscriptError;
 use jolt_transcript::{Channel, ProtocolId, Sponge, VerifierTranscript};
 #[cfg(not(feature = "akita"))]
@@ -26,7 +28,7 @@ use jolt_zk::blindfold::BlindFold;
 use jolt_zk::masking::CommittedPadsView;
 #[cfg(all(feature = "akita", feature = "zk"))]
 use jolt_zk::masking::OperandRule;
-#[cfg(any(not(feature = "akita"), feature = "zk"))]
+#[cfg(not(feature = "akita"))]
 use jolt_zk::masking::PadLayout;
 #[cfg(not(feature = "akita"))]
 use jolt_zk::masking::{
@@ -41,17 +43,17 @@ use crate::stages::{
     stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
     stage5::Stage5Output, stage6a::Stage6aOutput, stage6b::Stage6bOutput, stage7::Stage7Output,
 };
+#[cfg(not(all(feature = "akita", feature = "zk")))]
+use crate::{config::validate_proof_config, proof::JoltProof, stages::stage8};
 use crate::{
-    config::{
-        validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE,
-    },
+    config::{ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE},
     num,
     preprocessing::JoltVerifierPreprocessing,
-    proof::{JoltProof, ProofCommitments, ProofHeader},
+    proof::{ProofCommitments, ProofHeader},
     sites::{COMMITMENTS, PREAMBLE},
     stages::{
         build_formula_dimensions, stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7,
-        stage8, CommittedProgramSchedule, PrecommittedSchedule,
+        CommittedProgramSchedule, PrecommittedSchedule,
     },
     VerifierError,
 };
@@ -63,7 +65,7 @@ use jolt_transcript::Keccak;
 #[cfg(feature = "transcript-poseidon")]
 use jolt_transcript::PoseidonSponge;
 
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use crate::stages::stage8::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::stages::stage8::Stage8Output;
@@ -259,19 +261,19 @@ impl<F: JoltField, C> MaskedStages<F, C> {
         reason = "a clear Akita build has no residual relation, which alone reads every stage"
     )
 )]
-struct StageOutputs<F: JoltField> {
-    stage1: Stage1Output<F>,
-    stage2: Stage2Output<F>,
-    stage3: Stage3Output<F>,
-    stage4: Stage4Output<F>,
-    stage5: Stage5Output<F>,
-    stage6a: Stage6aOutput<F>,
-    stage6b: Stage6bOutput<F>,
-    stage7: Stage7Output<F>,
+pub(crate) struct StageOutputs<F: JoltField> {
+    pub(crate) stage1: Stage1Output<F>,
+    pub(crate) stage2: Stage2Output<F>,
+    pub(crate) stage3: Stage3Output<F>,
+    pub(crate) stage4: Stage4Output<F>,
+    pub(crate) stage5: Stage5Output<F>,
+    pub(crate) stage6a: Stage6aOutput<F>,
+    pub(crate) stage6b: Stage6bOutput<F>,
+    pub(crate) stage7: Stage7Output<F>,
 }
 
 /// Runs stages 1–7; `pads` is the pad view exactly when the proof is masked.
-fn verify_stages_1_to_7<F, PCS, VC, H, P>(
+pub(crate) fn verify_stages_1_to_7<F, PCS, VC, H, P>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     checked: &CheckedInputs,
     formula_dimensions: &JoltFormulaDimensions,
@@ -360,7 +362,7 @@ const WHITEOUT_OPERANDS: OperandRule = OperandRule::MaskedSlot;
 
 #[cfg(any(not(feature = "akita"), feature = "zk"))]
 impl<F: JoltField> StageOutputs<F> {
-    fn residual<PCS, VC>(
+    pub(crate) fn residual<PCS, VC>(
         &self,
         checked: &CheckedInputs,
         preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -400,10 +402,7 @@ impl<F: JoltField> StageOutputs<F> {
 /// # Errors
 ///
 /// [`VerifierError`] if the seeded prefix is malformed or the replay fails.
-///
-/// Whiteout (W6d) appends Akita's masked prefix to this replay; until then
-/// the Akita build counts stages 1–7 only.
-#[cfg(any(not(feature = "akita"), feature = "zk"))]
+#[cfg(not(feature = "akita"))]
 pub fn pad_layout<F, PCS, VC>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -627,8 +626,9 @@ where
 
 /// The Akita verification path: the same stage spine, with ordered native
 /// trace-column claims and one batch opening for the trace, advice,
-/// and committed-program objects. No homomorphism bounds and no ZK tail.
-#[cfg(feature = "akita")]
+/// and committed-program objects. No homomorphism bounds and no ZK tail
+/// (Whiteout's is `crate::whiteout::verify`).
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 pub fn verify<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -657,16 +657,6 @@ where
         trusted_advice_commitment,
         &mut transcript,
     )?;
-    // Whiteout's pad commitment, masked opening and Σ tail are not wired
-    // yet, so a Whiteout build accepts nothing: it rejects where the pad
-    // commitment would be read.
-    if checked.zk.is_masked() {
-        return Err(VerifierError::ProtocolAxisUnimplemented {
-            axis: "zk (Whiteout)",
-            pending: "the pad commitment, the masked Akita opening and the Σ tail (W6d)",
-        });
-    }
-
     let stages = verify_stages_1_to_7::<F, PCS, VC, H, ()>(
         preprocessing,
         &checked,
@@ -692,36 +682,6 @@ where
 
     transcript.finish()?;
     Ok(())
-}
-
-/// The masked stage spine of a Whiteout proof after its seeding messages:
-/// stages 1–7 on `pads`, and their residual relation. W6d's verifier runs it
-/// between the pad commitment and stage 8.
-///
-/// # Errors
-///
-/// [`VerifierError`] if a stage rejects or the residual cannot be built.
-#[cfg(all(feature = "akita", feature = "zk"))]
-pub fn verify_masked_stages<F, PCS, VC, H, P>(
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    seeded: &SeededTranscript<PCS::Output>,
-    transcript: &mut VerifierTranscript<'_, H>,
-    pads: &mut CommittedPadsView<P>,
-) -> Result<JoltResidual<F>, VerifierError>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    VC: VectorCommitment<Field = F>,
-    H: Sponge,
-{
-    verify_stages_1_to_7::<F, PCS, VC, H, P>(
-        preprocessing,
-        &seeded.checked,
-        &seeded.formula_dimensions,
-        transcript,
-        Some(pads),
-    )?
-    .residual(&seeded.checked, preprocessing)
 }
 
 /// The verifier state after the transcript's leading messages: the validated
@@ -1083,6 +1043,7 @@ mod tests {
 
     use super::*;
     use crate::preprocessing::ProgramPreprocessing;
+    use crate::proof::JoltProof;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_algebra::Fr;
     #[cfg(feature = "zk")]
@@ -1387,7 +1348,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(all(feature = "zk", not(feature = "akita")))]
     #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
         let mut preprocessing = test_preprocessing();
@@ -1403,7 +1364,7 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(all(feature = "zk", not(feature = "akita")))]
     #[test]
     fn validate_inputs_rejects_small_zk_vector_commitment_setup() {
         let mut preprocessing = test_preprocessing();

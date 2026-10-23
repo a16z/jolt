@@ -35,10 +35,7 @@ pub mod akita;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 mod blindfold;
 // A Whiteout build proves only through the prover-fixtures seam until W6d.
-#[cfg(any(
-    not(all(feature = "akita", feature = "zk")),
-    feature = "prover-fixtures"
-))]
+#[cfg(not(all(feature = "akita", feature = "zk")))]
 mod boundary;
 mod config;
 #[cfg(not(feature = "akita"))]

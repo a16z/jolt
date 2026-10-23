@@ -32,8 +32,9 @@ use crate::masking::PadIndex;
 #[cfg(feature = "whiteout-prover")]
 use crate::secret::SecretVec;
 
-/// Radix of the hiding randomness digits.
-pub(crate) const RANDOMNESS_LOG_BASIS: u32 = 4;
+/// Radix of the hiding randomness digits `r_p`.
+pub const PAD_RANDOMNESS_LOG_BASIS: u32 = 4;
+pub(crate) const RANDOMNESS_LOG_BASIS: u32 = PAD_RANDOMNESS_LOG_BASIS;
 
 #[cfg(feature = "whiteout-prover")]
 /// The prover's opening of a pad commitment: the committed digits, which are
@@ -49,6 +50,7 @@ pub struct LatticePadCommitment<F: JoltField, const D: usize> {
     placement: PadPlacement,
     matrix: Arc<PreparedMatrix<F, D>>,
     l_matrix: Arc<PreparedMatrix<F, D>>,
+    rank: usize,
     pad_rings: usize,
     operand_rings: usize,
     randomness_columns: usize,
@@ -63,15 +65,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         rank: usize,
         randomness_columns: usize,
     ) -> Result<Self, WhiteoutError> {
-        let stride = D / CHALLENGE_RING_DIM;
-        if stride == 0 || !D.is_multiple_of(CHALLENGE_RING_DIM) {
-            return Err(WhiteoutError::InvalidRelation(
-                "pad commitment ring dimension must be a multiple of 64",
-            ));
-        }
-        let pad_rings = placement.pad_rings().next_multiple_of(stride);
-        let operand_rings = placement.operand_rings().next_multiple_of(stride);
-        let width = (pad_rings + operand_rings) / stride + randomness_columns;
+        let (pad_rings, operand_rings, width) = Self::geometry(&placement, randomness_columns)?;
         let full = MatrixView::new(
             MatrixShape {
                 rows: rank + 1,
@@ -104,15 +98,77 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
             placement,
             matrix: Arc::new(PreparedMatrix::new(&commitment)?),
             l_matrix: Arc::new(PreparedMatrix::new(&l_view)?),
+            rank,
             pad_rings,
             operand_rings,
             randomness_columns,
         })
     }
 
+    /// The pad and operand rings, padded to whole `R_D` elements, and the
+    /// matrix width in `R_D` columns.
+    fn geometry(
+        placement: &PadPlacement,
+        randomness_columns: usize,
+    ) -> Result<(usize, usize, usize), WhiteoutError> {
+        let stride = D / CHALLENGE_RING_DIM;
+        if stride == 0 || !D.is_multiple_of(CHALLENGE_RING_DIM) {
+            return Err(WhiteoutError::InvalidRelation(
+                "pad commitment ring dimension must be a multiple of 64",
+            ));
+        }
+        let pad_rings = placement.pad_rings().next_multiple_of(stride);
+        let operand_rings = placement.operand_rings().next_multiple_of(stride);
+        Ok((
+            pad_rings,
+            operand_rings,
+            (pad_rings + operand_rings) / stride + randomness_columns,
+        ))
+    }
+
+    /// The matrix width in `R_D` columns of the commitment
+    /// [`Self::new`] builds for `placement`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn width(
+        placement: &PadPlacement,
+        randomness_columns: usize,
+    ) -> Result<usize, WhiteoutError> {
+        Ok(Self::geometry(placement, randomness_columns)?.2)
+    }
+
+    /// The public stream length [`Self::new`] reads: rows `0..=rank` of the
+    /// width [`Self::width`] over `R_D`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn stream_len(
+        placement: &PadPlacement,
+        rank: usize,
+        randomness_columns: usize,
+    ) -> Result<usize, WhiteoutError> {
+        (rank + 1)
+            .checked_mul(Self::width(placement, randomness_columns)?)
+            .and_then(|len| len.checked_mul(D))
+            .ok_or(WhiteoutError::Overflow)
+    }
+
     /// The placement both roles lift the relation by.
     pub fn placement(&self) -> &PadPlacement {
         &self.placement
+    }
+
+    /// Coefficients of the image `A_p · s_p`: `rank` elements of `R_D`.
+    pub fn image_len(&self) -> usize {
+        self.rank * D
+    }
+
+    /// The hiding randomness columns `r_p` takes.
+    pub fn randomness_columns(&self) -> usize {
+        self.randomness_columns
     }
 
     /// The pad segments of `s`, in order: pad digits, operand digits (if any

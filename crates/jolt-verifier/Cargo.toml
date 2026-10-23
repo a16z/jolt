@@ -35,7 +35,13 @@ zk = ["jolt-prover/zk"]
 # The Akita commitment mode: native one-hot trace columns and auxiliary
 # objects share one batch opening. Mutually exclusive with
 # `zk` — one PIOP per compiled verifier.
-akita = ["jolt-prover/akita", "jolt-claims/akita", "tracer/fp128-field-inline"]
+akita = [
+  "jolt-prover/akita",
+  "jolt-claims/akita",
+  "tracer/fp128-field-inline",
+  # Whiteout's masked group opening seam (used under `zk`).
+  "jolt-zk/whiteout",
+]
 transcript-blake2b = [
   "jolt-transcript/bn254",
   "jolt-transcript/transcript-blake2b",
