@@ -10,6 +10,7 @@ mod stage0;
 // Whiteout's stage 8 is the masked Akita opening (`whiteout`).
 #[cfg(not(feature = "zk"))]
 mod stage8;
+#[cfg(not(feature = "zk"))]
 mod trace_group;
 #[cfg(feature = "zk")]
 mod whiteout;

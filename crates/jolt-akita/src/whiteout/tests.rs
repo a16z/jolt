@@ -26,8 +26,7 @@ const NUM_POLYS: usize = 56;
 const SESSION: &[u8] = b"whiteout-opening";
 
 struct Fixture {
-    row: WhiteoutRow,
-    tail: WhiteoutTail,
+    shape: Arc<WhiteoutShape>,
     commitment: CommittedGroup<F>,
     handle: AkitaBackendHint,
     /// Akita's point order.
@@ -36,7 +35,14 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let row = WhiteoutRow::plan(NUM_VARS, NUM_POLYS).unwrap();
+    let shape = WhiteoutSetup::new(None)
+        .shape(&MaskedOpeningShape {
+            precommitted: Vec::new(),
+            num_vars: NUM_VARS,
+            num_polys: NUM_POLYS,
+        })
+        .unwrap();
+    let row = shape.row();
     let rows = 1usize << (NUM_VARS - AKITA_ONE_HOT_K16.ilog2() as usize);
     let polynomials = (0..NUM_POLYS)
         .map(|poly| {
@@ -49,6 +55,7 @@ fn fixture() -> Fixture {
         })
         .collect::<Vec<_>>();
     let source = row
+        .catalog()
         .backend()
         .unwrap()
         .import_source(
@@ -71,8 +78,7 @@ fn fixture() -> Fixture {
         .map(|poly| poly.evaluate(&jolt_point))
         .collect();
     Fixture {
-        row,
-        tail: WhiteoutTail::new(),
+        shape,
         commitment,
         handle,
         point: reverse_point(&jolt_point),
@@ -101,10 +107,10 @@ fn layout(fixture: &Fixture) -> PadLayout {
         .exchange_private_base(&mut claims)
         .unwrap();
     let prefix = fixture
-        .row
+        .shape
+        .row()
         .count_masked(
-            &fixture.commitment,
-            fixture.point.clone(),
+            &[(fixture.commitment.clone(), fixture.point.clone())],
             own_pads(&claims, slots.start),
             &mut view,
             &mut transcript,
@@ -126,17 +132,18 @@ fn replay(
     CommittedPadsView<LatticePadPayload<F>>,
     ResidualRelation<F>,
 ) {
-    let mut pads = WhiteoutTail::receive_pads(&fixture.row, layout.clone(), transcript).unwrap();
+    let mut pads =
+        WhiteoutTail::receive_pads(fixture.shape.row(), layout.clone(), transcript).unwrap();
     let mut claims = vec![F::default(); NUM_POLYS];
     let slots = pads
         .channel(transcript)
         .exchange_private_base(&mut claims)
         .unwrap();
     let prefix = fixture
-        .row
+        .shape
+        .row()
         .verify_masked(
-            &fixture.commitment,
-            fixture.point.clone(),
+            &[(fixture.commitment.clone(), fixture.point.clone())],
             own_pads(&claims, slots.start),
             &mut pads,
             transcript,
@@ -158,18 +165,27 @@ fn prove(fixture: &Fixture, seed: u64) -> Vec<u8> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut transcript = new_prover_transcript(SESSION);
     let mut pads = fixture
-        .tail
-        .commit_pads(&fixture.row, layout.clone(), &mut transcript, &mut rng)
+        .shape
+        .tail()
+        .commit_pads(
+            fixture.shape.row(),
+            layout.clone(),
+            &mut transcript,
+            &mut rng,
+        )
         .unwrap();
     let masked = pads.send(&fixture.evaluations, &mut transcript).unwrap();
     let forms = own_pads(&masked, 0);
     let (residual, auxiliary) = fixture
-        .row
+        .shape
+        .row()
         .prove_masked(
-            fixture.commitment.clone(),
-            fixture.handle.clone(),
-            fixture.point.clone(),
-            fixture.evaluations.clone(),
+            vec![ProverGroup {
+                commitment: fixture.commitment.clone(),
+                handle: fixture.handle.clone(),
+                point: fixture.point.clone(),
+                evaluations: fixture.evaluations.clone(),
+            }],
             &forms,
             &mut pads,
             &mut transcript,
@@ -181,9 +197,10 @@ fn prove(fixture: &Fixture, seed: u64) -> Vec<u8> {
     let mut replayed = new_verifier_transcript(SESSION, &narg);
     let (_, _, relation) = replay(fixture, &layout, &mut replayed);
     fixture
-        .tail
+        .shape
+        .tail()
         .prove(
-            &fixture.row,
+            fixture.shape.row(),
             &relation,
             &residual,
             &pads,
@@ -198,9 +215,13 @@ fn verify(fixture: &Fixture, proof: &[u8]) -> Result<(), ZkError> {
     let layout = layout(fixture);
     let mut transcript = new_verifier_transcript(SESSION, proof);
     let (prefix, pads, relation) = replay(fixture, &layout, &mut transcript);
-    fixture
-        .tail
-        .verify(&fixture.row, &relation, &prefix, &pads, &mut transcript)?;
+    fixture.shape.tail().verify(
+        fixture.shape.row(),
+        &relation,
+        &prefix,
+        &pads,
+        &mut transcript,
+    )?;
     transcript.finish()?;
     Ok(())
 }
@@ -226,7 +247,7 @@ fn whiteout_opening_verifies_and_rejects_a_flipped_response_byte() {
 fn whiteout_ranks_sit_at_the_tables_minimum() {
     let fixture = fixture();
     let layout = layout(&fixture);
-    with_ring_dim!(fixture.row.ring_dim(), D, {
+    with_ring_dim!(fixture.shape.row().ring_dim(), D, {
         let pads = WhiteoutTail::pad_commitment::<D>(&layout).unwrap();
         let width =
             LatticePadCommitment::<F, D>::width(pads.placement(), pads.randomness_columns())

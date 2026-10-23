@@ -331,7 +331,7 @@ mod akita {
 }
 
 /// HT4 on Whiteout: the statement class is load-bearing.
-#[cfg(all(feature = "akita", feature = "zk", not(feature = "field-inline")))]
+#[cfg(all(feature = "akita", feature = "zk"))]
 mod whiteout {
     use common::jolt_device::JoltDevice;
     use jolt_akita::{AkitaField, AkitaScheme};

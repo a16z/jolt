@@ -19,13 +19,19 @@ use jolt_akita::AkitaField;
 use jolt_akita::AkitaScheme;
 use jolt_algebra::CanonicalBytes;
 use jolt_prover::akita::preprocessing::AkitaVc;
-use jolt_transcript::{SiteId, TranscriptEvent, TranscriptOp};
+use jolt_transcript::{SiteId, TranscriptEvent, TranscriptOp, VerifierTranscript};
 use jolt_verifier::sites::{STAGE8, WHITEOUT, WHITEOUT_SIGMA};
-use jolt_verifier::whiteout::pad_layout;
-use jolt_verifier::{JoltProtocolConfig, JoltSponge, VerifierError, ZkConfig};
+use jolt_verifier::stages::stage8::akita::WhiteoutObject;
+use jolt_verifier::whiteout::{pad_layout, whiteout_stages};
+use jolt_verifier::{
+    jolt_protocol_id, JoltProtocolConfig, JoltSponge, VerifierError, ZkConfig, JOLT_SESSION,
+};
 
 use super::checks;
-use crate::support::akita_fixtures::{whiteout_muldiv_case, whiteout_rerun_case, AkitaFixtureCase};
+use crate::support::akita_fixtures::{
+    whiteout_advice_case, whiteout_committed_case, whiteout_muldiv_case, whiteout_rerun_case,
+    AkitaFixtureCase,
+};
 use crate::support::narg::{assert_coverage_closure, Region, Trace, TracedCase};
 
 const FIELD_BYTES: usize = <AkitaField as CanonicalBytes>::NUM_BYTES;
@@ -113,7 +119,9 @@ fn class(at: Position, site: Site, kind: Kind) -> Option<Class> {
     let family = site.akita_family();
     match (at.region, site, kind) {
         (R::Preamble, Site::Jolt(_), K::Clear | K::Public) => Some(C::Statement),
-        (R::Commitments, Site::Jolt(_), K::Clear) => Some(C::Commitment),
+        // The proof's commitments, then the statement-fixed ones (trusted
+        // advice, a committed program) absorbed as public.
+        (R::Commitments, Site::Jolt(_), K::Clear | K::Public) => Some(C::Commitment),
         (R::Pads, Site::Jolt(_), K::Clear) => Some(C::Pads),
         (
             R::Stage1
@@ -223,26 +231,85 @@ fn classify(trace: &Trace) -> Vec<Classified> {
     out
 }
 
-/// Stage 8's own absorbs: the catalog digest and the selected row's
-/// digest, 32 bytes each, and nothing else at its site.
+/// The catalog digest and the selected row's digest, 32 bytes each.
 const STAGE8_DIGESTS: [usize; 2] = [32, 32];
 
+/// The absorbs a proof's statement fixes outside the message stream.
+struct Expected {
+    /// Stage 8's own absorbs: each packed precommitted object's reduction
+    /// binds its two layout words, its digest and its point, and never an
+    /// evaluation (the clear reduction's `clear-only` absorb); then the two
+    /// digests. Nothing else is absorbed at Stage 8's site.
+    stage8: Vec<usize>,
+    /// Public absorbs in the commitments region: two (header, image) per
+    /// statement-fixed commitment, trusted advice and each committed-program
+    /// object.
+    public_commitments: usize,
+}
+
+/// [`Expected`] of `case`'s proof, from the statement's opening plan.
+fn expected_absorbs(case: &AkitaFixtureCase) -> Expected {
+    let mut transcript = VerifierTranscript::<JoltSponge>::new(
+        &jolt_protocol_id::<JoltSponge>(),
+        JOLT_SESSION,
+        &case.proof().narg,
+    );
+    let stages = whiteout_stages::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+        &case.preprocessing,
+        &case.public_io,
+        case.trusted_advice_commitment.as_ref(),
+        &mut transcript,
+        None,
+    )
+    .expect("the masked stages");
+    let mut absorbs = Vec::new();
+    for object in &stages.plan.objects {
+        match object {
+            WhiteoutObject::Packed { plan, .. } => {
+                absorbs.extend([8, 8, 32, plan.packing().logical_num_vars() * FIELD_BYTES]);
+            }
+            #[cfg(feature = "field-inline")]
+            WhiteoutObject::FieldInc { .. } => {}
+        }
+    }
+    absorbs.extend(STAGE8_DIGESTS);
+    let statement_fixed = usize::from(case.trusted_advice_commitment.is_some())
+        + 2 * usize::from(case.preprocessing.program.committed().is_some());
+    Expected {
+        stage8: absorbs,
+        public_commitments: 2 * statement_fixed,
+    }
+}
+
 /// The census: bytes per class, or every unclassified operation.
-fn census(trace: &Trace) -> Result<BTreeMap<Class, usize>, Vec<String>> {
+/// `expected` is [`expected_absorbs`] of the proof.
+fn census(trace: &Trace, expected: &Expected) -> Result<BTreeMap<Class, usize>, Vec<String>> {
     let mut totals = BTreeMap::new();
     let mut failures = Vec::new();
-    let stage8: Vec<usize> = trace
+    let absorbed: Vec<usize> = trace
         .events
         .iter()
         .filter(|event| event.site == STAGE8 && event.op != TranscriptOp::Challenge)
         .map(|event| event.len)
         .collect();
-    if stage8 != STAGE8_DIGESTS {
+    if absorbed != expected.stage8 {
         failures.push(format!(
-            "Stage 8's own absorbs are {stage8:?}, not its two digests"
+            "Stage 8's own absorbs are {absorbed:?}, not {:?}",
+            expected.stage8
         ));
     }
-    for item in classify(trace) {
+    let classified = classify(trace);
+    let public_commitments = classified
+        .iter()
+        .filter(|item| item.region == Region::Commitments && item.kind == Kind::Public)
+        .count();
+    if public_commitments != expected.public_commitments {
+        failures.push(format!(
+            "{public_commitments} public absorbs in the commitments region, not {}",
+            expected.public_commitments
+        ));
+    }
+    for item in classified {
         match item.class {
             Some(class) => *totals.entry(class).or_default() += item.bytes,
             None => failures.push(format!(
@@ -263,19 +330,33 @@ fn census(trace: &Trace) -> Result<BTreeMap<Class, usize>, Vec<String>> {
 }
 
 fn honest() -> (&'static AkitaFixtureCase, Trace) {
-    let case = whiteout_muldiv_case();
+    honest_of(whiteout_muldiv_case())
+}
+
+fn honest_of(case: &'static AkitaFixtureCase) -> (&'static AkitaFixtureCase, Trace) {
     let trace = case.honest_trace();
     assert_coverage_closure(&trace, case.proof().narg.len());
     (case, trace)
 }
 
-/// HT1: every received byte and public absorb of an honest Whiteout proof
-/// belongs to exactly one class, and the message bytes tile the argument
-/// string (coverage closure), so no private value reaches the sponge clear.
-#[test]
-fn whiteout_masked_site_census() {
-    let (case, trace) = honest();
-    let totals = census(&trace)
+/// The Whiteout cases with precommitted groups: both advice kinds, and a
+/// committed program (with `field-inline`, every case also opens `FieldInc`,
+/// and committed programs are excluded by the field-inline protocol).
+fn precommitted_cases() -> Vec<&'static AkitaFixtureCase> {
+    let mut cases = vec![whiteout_advice_case()];
+    if cfg!(not(feature = "field-inline")) {
+        cases.push(whiteout_committed_case());
+    }
+    cases
+}
+
+/// HT1 over one case: every received byte and public absorb belongs to
+/// exactly one class, Stage 8 absorbs exactly its statement's
+/// [`Expected::stage8`], and the message bytes tile the argument string
+/// (coverage closure), so no private value reaches the sponge clear.
+fn assert_census(case: &'static AkitaFixtureCase) {
+    let (case, trace) = honest_of(case);
+    let totals = census(&trace, &expected_absorbs(case))
         .unwrap_or_else(|failures| panic!("unclassified operations:\n{}", failures.join("\n")));
     let message_bytes: usize = classify(&trace)
         .iter()
@@ -296,6 +377,21 @@ fn whiteout_masked_site_census() {
             totals.contains_key(&class),
             "no {class:?} bytes: {totals:?}"
         );
+    }
+}
+
+/// HT1 on muldiv: the trace group alone.
+#[test]
+fn whiteout_masked_site_census() {
+    assert_census(whiteout_muldiv_case());
+}
+
+/// HT1 with precommitted groups (W6f): advice and committed programs open
+/// masked, their packing reductions absorb no evaluation.
+#[test]
+fn whiteout_masked_site_census_with_precommitted_groups() {
+    for case in precommitted_cases() {
+        assert_census(case);
     }
 }
 
@@ -343,9 +439,10 @@ fn whiteout_census_flags_a_jolt_claim_and_an_akita_value_routed_clear() {
             )
         })
         .expect("Akita's stage 1 sends masked values");
+    let stage8 = expected_absorbs(whiteout_muldiv_case());
     for item in [jolt_claim, akita_stage1] {
         assert!(
-            census(&routed_clear(&trace, item.index)).is_err(),
+            census(&routed_clear(&trace, item.index), &stage8).is_err(),
             "{item:?} routed clear is not flagged"
         );
     }
@@ -356,12 +453,13 @@ fn whiteout_census_flags_a_jolt_claim_and_an_akita_value_routed_clear() {
 /// flagged.
 #[test]
 fn whiteout_census_flags_every_unmasked_message() {
-    let (_, trace) = honest();
+    let (case, trace) = honest();
+    let stage8 = expected_absorbs(case);
     let masked = masked_messages(&trace);
     assert!(masked.len() > 100);
     let missed: Vec<usize> = masked
         .iter()
-        .filter(|item| census(&routed_clear(&trace, item.index)).is_ok())
+        .filter(|item| census(&routed_clear(&trace, item.index), &stage8).is_ok())
         .map(|item| item.index)
         .collect();
     assert!(missed.is_empty(), "unflagged clear routings: {missed:?}");
@@ -373,10 +471,13 @@ fn whiteout_census_flags_every_unmasked_message() {
     let mut events = trace.events.clone();
     events[wide.index + 1].len -= 1;
     assert!(
-        census(&Trace {
-            events,
-            result: Ok(())
-        })
+        census(
+            &Trace {
+                events,
+                result: Ok(())
+            },
+            &stage8
+        )
         .is_err(),
         "a message masked but for its last element is not flagged"
     );
@@ -395,14 +496,43 @@ fn whiteout_census_flags_every_unmasked_message() {
         extra.len = FIELD_BYTES;
         events.insert(digest + 1, extra);
         assert!(
-            census(&Trace {
-                events,
-                result: Ok(())
-            })
+            census(
+                &Trace {
+                    events,
+                    result: Ok(())
+                },
+                &stage8
+            )
             .is_err(),
             "a clear {op:?} at Stage 8's site is not flagged"
         );
     }
+
+    // An extra public absorb in the commitments region (muldiv has no
+    // statement-fixed commitment).
+    let commitment = trace
+        .regions()
+        .iter()
+        .position(|region| *region == Region::Commitments)
+        .expect("the commitments");
+    let mut events = trace.events.clone();
+    let public = TranscriptEvent {
+        op: TranscriptOp::Public,
+        narg: None,
+        ..events[commitment].clone()
+    };
+    events.insert(commitment, public);
+    assert!(
+        census(
+            &Trace {
+                events,
+                result: Ok(())
+            },
+            &stage8
+        )
+        .is_err(),
+        "an extra public absorb among the commitments is not flagged"
+    );
 
     let stage5 = masked
         .iter()
@@ -416,10 +546,13 @@ fn whiteout_census_flags_every_unmasked_message() {
     };
     events.insert(stage5.index, public);
     assert!(
-        census(&Trace {
-            events,
-            result: Ok(())
-        })
+        census(
+            &Trace {
+                events,
+                result: Ok(())
+            },
+            &stage8
+        )
         .is_err(),
         "a public absorb inside Stage 5 is not flagged"
     );
@@ -441,7 +574,21 @@ fn whiteout_muldiv_message_sweep() {
 /// auxiliary block, Σ and the response proof) is exercised.
 #[test]
 fn whiteout_tamper_per_census_class() {
-    let (case, trace) = honest();
+    assert_tamper_per_census_class(whiteout_muldiv_case());
+}
+
+/// [`whiteout_tamper_per_census_class`] with precommitted groups (W6f):
+/// the untrusted advice commitment, and every region and class the opening
+/// of advice or a committed program reaches.
+#[test]
+fn whiteout_tamper_per_census_class_with_precommitted_groups() {
+    for case in precommitted_cases() {
+        assert_tamper_per_census_class(case);
+    }
+}
+
+fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
+    let (case, trace) = honest_of(case);
     let mut groups: BTreeMap<(Region, Class, bool), Vec<std::ops::Range<usize>>> = BTreeMap::new();
     for item in classify(&trace) {
         if let (Some(class), Some(range)) = (item.class, trace.events[item.index].narg.clone()) {
@@ -641,7 +788,9 @@ mod shifts {
     use akita_params::GrindingSite;
 
     use super::Site;
-    use crate::support::akita_fixtures::whiteout_muldiv_case;
+    use crate::support::akita_fixtures::{
+        whiteout_advice_case, whiteout_muldiv_case, AkitaFixtureCase,
+    };
 
     type F = AkitaField;
 
@@ -742,12 +891,28 @@ mod shifts {
     /// not a row the shift could not satisfy.
     #[test]
     fn whiteout_final_openings_meet_akita_through_the_batch_challenges() {
-        let case = whiteout_muldiv_case();
+        assert_shifts_meet_akita_through_the_batch_challenges(whiteout_muldiv_case(), 1);
+    }
+
+    /// The same with precommitted groups (W6f): untrusted and trusted
+    /// advice's claims join the trace group's under the one functional.
+    /// Their stage-4 openings also feed Jolt's RAM value check, so Jolt's
+    /// rows see two combinations of the claims.
+    #[test]
+    fn whiteout_advice_final_openings_meet_akita_through_the_batch_challenges() {
+        assert_shifts_meet_akita_through_the_batch_challenges(whiteout_advice_case(), 2);
+    }
+
+    /// `jolt_seen` is the rank of Jolt's rows on the final-opening claims.
+    fn assert_shifts_meet_akita_through_the_batch_challenges(
+        case: &AkitaFixtureCase,
+        jolt_seen: usize,
+    ) {
         let pads = &case.pads;
         let derived = pad_layout::<F, AkitaScheme, AkitaVc, JoltSponge>(
             &case.preprocessing,
             &case.public_io,
-            None,
+            case.trusted_advice_commitment.as_ref(),
             &case.proof.narg,
         )
         .expect("pad layout");
@@ -761,7 +926,7 @@ mod shifts {
             let mut stages = whiteout_stages::<F, AkitaScheme, AkitaVc, AuditSponge>(
                 &case.preprocessing,
                 &case.public_io,
-                None,
+                case.trusted_advice_commitment.as_ref(),
                 &mut transcript,
                 Some(&derived),
             )
@@ -797,7 +962,11 @@ mod shifts {
             tape.bytes.len(),
             "every challenge byte is on the tape"
         );
-        let claims = &stages.claim.evaluations;
+        let claims: Vec<_> = stages
+            .claims
+            .iter()
+            .flat_map(|group| &group.evaluations)
+            .collect();
         assert_eq!(
             batch.len(),
             claims.len(),
@@ -842,22 +1011,25 @@ mod shifts {
             .expect("Akita rows");
         let (akita_affine, akita_products) = (akita_rows.affine.len(), akita_rows.products.len());
 
-        // Each claim's form reads one base pad.
-        let slots: Vec<usize> = claims
+        // Each claim's form reads one base pad, with a coefficient: −1 for a
+        // claim that is its own masked slot, a packing weight times −1 for a
+        // packed precommitted claim. Lowering the pad by one moves the claim
+        // by `gains[claim]`.
+        let (slots, gains): (Vec<usize>, Vec<F>) = claims
             .iter()
             .map(|form| {
-                let pads: Vec<usize> = form
+                let pads: Vec<(usize, F)> = form
                     .terms
                     .iter()
-                    .filter_map(|(variable, _)| match variable {
-                        ResidualVar::Pad(pad) => Some(pad.0),
+                    .filter_map(|(variable, coefficient)| match variable {
+                        ResidualVar::Pad(pad) => Some((pad.0, *coefficient)),
                         ResidualVar::Witness(_) => None,
                     })
                     .collect();
-                assert_eq!(pads.len(), 1, "a final-opening claim is one masked slot");
-                pads[0]
+                assert_eq!(pads.len(), 1, "a final-opening claim reads one masked slot");
+                (pads[0].0, -pads[0].1)
             })
-            .collect();
+            .unzip();
         let cheat = |delta: &[F]| -> Vec<F> {
             let mut shifted = pads.clone();
             for (&slot, &by) in slots.iter().zip(delta) {
@@ -906,8 +1078,8 @@ mod shifts {
         let (jolt_null, _) = null_space(&jolt);
         assert_eq!(
             jolt_null.len(),
-            slots.len() - 1,
-            "Jolt's rows see one combination"
+            slots.len() - jolt_seen,
+            "the rank of Jolt's rows on the claims"
         );
         let (_, akita_rank) = null_space(&akita);
         assert_eq!(
@@ -919,9 +1091,13 @@ mod shifts {
         let row = (0..akita[0].len())
             .find(|&row| !akita[0][row].is_zero())
             .expect("a claim shift moves an Akita row");
-        let scale = akita[0][row] * batch[0].inverse().expect("nonzero challenge");
+        let scale = akita[0][row] * (gains[0] * batch[0]).inverse().expect("nonzero challenge");
         for (claim, challenge) in batch.iter().enumerate() {
-            assert_eq!(akita[claim][row], scale * *challenge, "claim {claim}");
+            assert_eq!(
+                akita[claim][row],
+                scale * gains[claim] * *challenge,
+                "claim {claim}"
+            );
         }
 
         // Two Jolt-invisible shifts combined into the functional's kernel
@@ -930,7 +1106,10 @@ mod shifts {
             delta
                 .iter()
                 .zip(&batch)
-                .fold(F::zero(), |sum, (by, challenge)| sum + *by * *challenge)
+                .zip(&gains)
+                .fold(F::zero(), |sum, ((by, challenge), gain)| {
+                    sum + *by * *gain * *challenge
+                })
         };
         let (first, second) = {
             let mut moving = jolt_null.iter().filter(|vector| !phi(vector).is_zero());

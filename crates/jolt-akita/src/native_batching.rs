@@ -634,6 +634,10 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 })
                 .map_err(prove_failed)
             }
+            #[cfg(feature = "zk")]
+            AkitaHintSource::WhiteoutPrecommitted { .. } => Err(invalid_batch(
+                "a Whiteout precommitted group opens only in its masked opening",
+            )),
             AkitaHintSource::OneHot { .. } | AkitaHintSource::TraceOneHot { .. } => {
                 let opening =
                     one_hot_opening(setup, point, &evaluations, backend_commitment, backend_hint)?;

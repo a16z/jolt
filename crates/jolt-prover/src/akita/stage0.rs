@@ -10,6 +10,7 @@ use common::jolt_device::JoltDevice;
 use jolt_kernels::akita::commitment::{WitnessCommitRequest, WitnessCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 
+use jolt_akita::TraceOneHotCommitment;
 use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::lattice::OneHotTraceShape;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
@@ -22,7 +23,11 @@ use jolt_verifier::{
     CheckedInputs, ProofCommitments, ProofHeader, JOLT_SESSION,
 };
 
-use super::witness::{commit_advice, AdviceObject};
+#[cfg(not(feature = "zk"))]
+use super::witness::commit_advice;
+#[cfg(feature = "zk")]
+use super::witness::commit_advice_hiding;
+use super::witness::AdviceObject;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 #[cfg(feature = "field-inline")]
 use jolt_kernels::akita::commitment::FieldIncObject;
@@ -38,20 +43,9 @@ where
     pub transcript: ProverTranscript<H>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
-    #[cfg_attr(
-        feature = "zk",
-        expect(
-            dead_code,
-            reason = "Whiteout opens no precommitted group yet: the hiding commit rejects them"
-        )
-    )]
     pub untrusted_advice: Option<AdviceObject<PCS>>,
     /// The field increment polynomial, committed on every Akita field-inline proof.
     #[cfg(feature = "field-inline")]
-    #[cfg_attr(
-        feature = "zk",
-        expect(dead_code, reason = "Whiteout rejects field-inline proofs")
-    )]
     pub field_inc: FieldIncObject<PCS>,
 }
 
@@ -69,7 +63,7 @@ pub fn prove_stage0<F, PCS, VC, H>(
 ) -> Result<Stage0Output<PCS, H>, ProverError<F>>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F> + TraceOneHotCommitment + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
     PCS::Output: Clone,
@@ -156,12 +150,24 @@ where
     // Auxiliary objects commit before the trace because their frozen
     // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
-        Some(commit_advice::<PCS>(
+        let max_bytes = public_io.memory_layout.max_untrusted_advice_size as usize;
+        // Whiteout commits it hiding on the trace setup's backend, which
+        // opens it.
+        #[cfg(feature = "zk")]
+        let object = commit_advice_hiding::<PCS>(
+            &preprocessing.pcs_setup,
+            JoltAdviceKind::Untrusted,
+            &public_io.untrusted_advice,
+            max_bytes,
+        )?;
+        #[cfg(not(feature = "zk"))]
+        let object = commit_advice::<PCS>(
             PCS::transparent_setup_context(&preprocessing.pcs_setup),
             JoltAdviceKind::Untrusted,
             &public_io.untrusted_advice,
-            public_io.memory_layout.max_untrusted_advice_size as usize,
-        )?)
+            max_bytes,
+        )?;
+        Some(object)
     } else {
         None
     };

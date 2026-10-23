@@ -151,12 +151,12 @@ where
         Ok(point)
     }
 
-    /// Reduces ordered logical evaluations at one common point.
-    pub fn reduce_evaluations<F: JoltField>(
+    /// Each logical slot's weight `eq(s, slot)` at `selector_point`, in slot
+    /// order: the reduced evaluation is `Σ_slot weight · evaluation`.
+    pub fn slot_weights<F: JoltField>(
         &self,
         selector_point: &[F],
-        evaluations: &[F],
-    ) -> Result<F, OpeningsError> {
+    ) -> Result<Vec<F>, OpeningsError> {
         if selector_point.len() != self.selector_num_vars {
             return Err(OpeningsError::InvalidBatch(format!(
                 "prefix selector has {} variables, expected {}",
@@ -164,6 +164,17 @@ where
                 self.selector_num_vars
             )));
         }
+        Ok((0..self.ids.len())
+            .map(|slot| eq_index_msb(selector_point, slot as u128))
+            .collect())
+    }
+
+    /// Reduces ordered logical evaluations at one common point.
+    pub fn reduce_evaluations<F: JoltField>(
+        &self,
+        selector_point: &[F],
+        evaluations: &[F],
+    ) -> Result<F, OpeningsError> {
         if evaluations.len() != self.ids.len() {
             return Err(OpeningsError::InvalidBatch(format!(
                 "prefix-packed statement has {} evaluations, expected {}",
@@ -171,11 +182,12 @@ where
                 self.ids.len()
             )));
         }
-        Ok(evaluations
-            .iter()
-            .enumerate()
-            .fold(F::zero(), |sum, (slot, evaluation)| {
-                sum + *evaluation * eq_index_msb(selector_point, slot as u128)
+        Ok(self
+            .slot_weights(selector_point)?
+            .into_iter()
+            .zip(evaluations)
+            .fold(F::zero(), |sum, (weight, evaluation)| {
+                sum + weight * *evaluation
             }))
     }
 
@@ -190,32 +202,96 @@ where
         F: JoltField,
         C: Channel,
     {
-        if claims.point.len() != self.logical_num_vars {
+        let selection = self.select(
+            &claims.layout_digest,
+            claims.point.as_slice(),
+            PackedEvaluations::Clear(&claims.evaluations),
+            transcript,
+        )?;
+        let evaluation = self.reduce_evaluations(&selection.selector, &claims.evaluations)?;
+        Ok(EvaluationClaim::new(selection.point, evaluation))
+    }
+
+    /// Binds the layout, the semantic digest, the common logical point and
+    /// the evaluations as `evaluations` says, then samples the selector. The
+    /// one owner of the reduction's transcript order: [`Self::reduce_claims`]
+    /// is this over clear evaluations, and a masked caller combines its
+    /// evaluation forms with [`PrefixSelection::weights`].
+    pub fn select<F, C>(
+        &self,
+        layout_digest: &[u8; 32],
+        point: &[F],
+        evaluations: PackedEvaluations<'_, F>,
+        transcript: &mut C,
+    ) -> Result<PrefixSelection<F>, OpeningsError>
+    where
+        F: JoltField,
+        C: Channel,
+    {
+        if point.len() != self.logical_num_vars {
             return Err(OpeningsError::InvalidBatch(format!(
                 "logical point has {} variables, expected {}",
-                claims.point.len(),
+                point.len(),
                 self.logical_num_vars
             )));
         }
-        if claims.evaluations.len() != self.ids.len() {
+        if evaluations.len() != self.ids.len() {
             return Err(OpeningsError::InvalidBatch(format!(
                 "prefix-packed statement has {} evaluations, expected {}",
-                claims.evaluations.len(),
+                evaluations.len(),
                 self.ids.len()
             )));
         }
 
         transcript.public(&(self.logical_num_vars as u64));
         transcript.public(&(self.slot_capacity as u64));
-        transcript.public(&claims.layout_digest);
-        transcript.public_all(claims.point.as_slice());
-        transcript.public_all(&claims.evaluations);
+        transcript.public(layout_digest);
+        transcript.public_all(point);
+        match evaluations {
+            PackedEvaluations::Clear(evaluations) => transcript.public_all(evaluations),
+            PackedEvaluations::Masked { .. } => {}
+        }
 
         let selector = transcript.challenges_small(self.selector_num_vars);
-        let point = self.pack_point(&selector, claims.point.as_slice())?;
-        let evaluation = self.reduce_evaluations(&selector, &claims.evaluations)?;
-        Ok(EvaluationClaim::new(point, evaluation))
+        let packed_point = self.pack_point(&selector, point)?;
+        let weights = self.slot_weights(&selector)?;
+        Ok(PrefixSelection {
+            point: packed_point,
+            selector,
+            weights,
+        })
     }
+}
+
+/// How a prefix-packed reduction binds its logical evaluations before the
+/// selector is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackedEvaluations<'a, F> {
+    /// Clear values, absorbed.
+    Clear(&'a [F]),
+    /// `count` evaluations that are affine forms of masked messages the
+    /// transcript already absorbed, so nothing is absorbed for them (Whiteout,
+    /// `specs/whiteout-jolt-integration.md` §8): the forms are fixed before
+    /// the selector because every message they read is.
+    Masked { count: usize },
+}
+
+impl<F> PackedEvaluations<'_, F> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Clear(evaluations) => evaluations.len(),
+            Self::Masked { count } => *count,
+        }
+    }
+}
+
+/// A prefix-packed reduction's drawn selector `s`: the physical point
+/// `(s || logical)` and each logical slot's weight `eq(s, slot)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrefixSelection<F> {
+    pub point: Vec<F>,
+    pub selector: Vec<F>,
+    pub weights: Vec<F>,
 }
 
 /// Semantic claims reduced to one opening of a prefix-packed polynomial.

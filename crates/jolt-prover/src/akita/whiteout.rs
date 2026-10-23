@@ -8,12 +8,15 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_algebra::JoltField;
 use jolt_crypto::VectorCommitment;
-use jolt_openings::{GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup};
+use jolt_openings::{
+    GroupCommitmentMetadata, GroupOpeningClaim, GroupSetupMetadata, TaggedGroupOpeningClaim,
+    TransparentObjectSetup,
+};
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::sites::{PADS, STAGE8, WHITEOUT, WHITEOUT_SIGMA};
-use jolt_verifier::stages::stage8::akita::leaf_claims;
+use jolt_verifier::stages::stage8::akita::{clear_group_claims, leaf_claims};
 use jolt_verifier::whiteout::{
     pad_layout, whiteout_prefix, whiteout_relation, whiteout_stages, WhiteoutScheme,
 };
@@ -22,7 +25,6 @@ use rand_core::{CryptoRng, OsRng, RngCore};
 
 use super::spine::prove_stages_1_to_7;
 use super::stage0::prove_stage0;
-use super::trace_group::trace_group_claim;
 use super::witness::AdviceObject;
 use crate::boundary::finish_stage;
 use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
@@ -109,7 +111,7 @@ where
     transcript.site(PADS);
     let pads = PCS::whiteout_commit_pads(
         &preprocessing.pcs_setup,
-        &stage0.commitment,
+        layout.shape(),
         layout.layout().clone(),
         &mut transcript,
         rng,
@@ -141,25 +143,76 @@ where
     };
     transcript.site(STAGE8);
     let leaves = leaf_claims(&stage0.checked.precommitted, &stage4, &stage6b, &stage7)?;
-    let claim = trace_group_claim(
-        &stage0.checked,
-        config,
-        preprocessing,
-        &leaves,
+    let mut groups = clear_group_claims(
+        &stages.plan,
+        stage0.checked.one_hot_config,
         &stage0.commitment,
+        &leaves,
+        #[cfg(feature = "field-inline")]
+        &stage6b,
+        &mut transcript,
     )?;
-    if claim.point != stages.claim.point
-        || claim.evaluations.len() != stages.claim.evaluations.len()
+    if groups.len() != stages.claims.len()
+        || groups.iter().zip(&stages.claims).any(|(group, claim)| {
+            group.point != claim.point || group.values.len() != claim.evaluations.len()
+        })
     {
         return Err(ProverError::InvariantViolation {
-            reason: "the trace group's claim disagrees with the verifier's masked claim",
+            reason: "the opening's groups disagree with the verifier's masked claims",
         });
     }
+    let trace = groups.pop().ok_or(ProverError::InvariantViolation {
+        reason: "a Whiteout opening has a trace group",
+    })?;
+    // The precommitted hints in the plan's canonical order: advice, then the
+    // field increments or the committed program.
+    let hints = stage0
+        .untrusted_advice
+        .as_ref()
+        .map(|object| &object.hint)
+        .into_iter()
+        .chain(trusted_advice.map(|object| &object.hint));
+    #[cfg(feature = "field-inline")]
+    let hints = hints.chain(std::iter::once(&stage0.field_inc.hint));
+    let hints = hints
+        .chain(
+            preprocessing
+                .committed_program
+                .iter()
+                .flat_map(|data| data.direct_program.objects().map(|object| &object.hint)),
+        )
+        .collect::<Vec<_>>();
+    if hints.len() != groups.len() {
+        return Err(ProverError::InvariantViolation {
+            reason: "the precommitted hints disagree with the opening's plan",
+        });
+    }
+    let precommitted = groups
+        .into_iter()
+        .zip(&stages.plan.objects)
+        .zip(hints)
+        .map(|((group, object), hint)| {
+            (
+                TaggedGroupOpeningClaim::new(
+                    object.role(),
+                    GroupOpeningClaim::new(group.commitment, group.point, group.values),
+                ),
+                hint.clone(),
+            )
+        })
+        .collect();
+    let forms = stages
+        .claims
+        .iter()
+        .flat_map(|claim| claim.evaluations.iter().cloned())
+        .collect::<Vec<_>>();
     let (residual, mut auxiliary) = PCS::whiteout_prove_masked(
         &preprocessing.pcs_setup,
-        claim,
+        layout.shape(),
+        precommitted,
+        GroupOpeningClaim::new(trace.commitment, trace.point, trace.values),
         stage0.hint,
-        &stages.claim.evaluations,
+        &forms,
         &mut pads,
         &mut transcript,
     )?;
@@ -211,7 +264,7 @@ where
     transcript.site(WHITEOUT_SIGMA);
     PCS::whiteout_prove_tail(
         &preprocessing.pcs_setup,
-        &stage0.commitment,
+        layout.shape(),
         &relation,
         &residual,
         &pads,
