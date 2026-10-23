@@ -2,6 +2,7 @@
 
 #[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 use crate::Blake2b512;
+use crate::{challenge::message_bytes, ChallengeCodec, UniformBytes};
 #[cfg(all(
     feature = "bn254",
     any(feature = "transcript-blake2b", feature = "transcript-keccak")
@@ -10,7 +11,8 @@ use jolt_field::Fr;
 #[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
 use spongefish::instantiations::Keccak;
 use spongefish::{
-    DuplexSpongeInterface, Encoding, FromNarg, FromUniform, VerificationError, VerifierState,
+    DuplexSpongeInterface, Encoding, FromNarg, FromUniform, Transcript, VerificationError,
+    VerifierState,
 };
 
 #[cfg(all(
@@ -29,6 +31,25 @@ pub trait VerifierTranscript<H: DuplexSpongeInterface> {
 
     /// Squeezes a verifier challenge.
     fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T;
+
+    /// Draws one message with conventional TV ≤ 2^-161 across all `len` elements.
+    /// The protocol session/version must bind the codec, field, and length.
+    /// `len == 0` returns an empty vector without touching the sponge. Only
+    /// sponges with uniform output qualify ([`UniformBytes`]); `PoseidonSponge`
+    /// does not.
+    ///
+    /// # Errors
+    /// Returns `VerificationError`, before any sponge operation, when the codec
+    /// does not support `len` or the message would exceed
+    /// [`MAX_CHALLENGE_BYTES`](crate::MAX_CHALLENGE_BYTES) bytes. Otherwise on
+    /// rejection-pool exhaustion (probability at most 2^-161). Every failure
+    /// poisons the state, so later reads and `check_eof` fail.
+    fn field_challenges<F: ChallengeCodec>(
+        &mut self,
+        len: usize,
+    ) -> Result<Vec<F>, VerificationError>
+    where
+        H: UniformBytes;
 
     /// Asserts the NARG was fully consumed.
     ///
@@ -61,6 +82,28 @@ where
 
     fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T {
         VerifierState::verifier_message::<T>(self)
+    }
+
+    fn field_challenges<F: ChallengeCodec>(
+        &mut self,
+        len: usize,
+    ) -> Result<Vec<F>, VerificationError>
+    where
+        H: UniformBytes,
+    {
+        // A length the codec rejects poisons the state too, so a caller that
+        // drops the error still fails `check_eof`.
+        let n = message_bytes::<F>(len);
+        Transcript::check(self, || n.is_ok())?;
+        let n = n?;
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let challenges =
+            VerifierState::verifier_message_as(self, n, |bytes| F::decode_challenges(bytes, len));
+        // Exhaustion poisons the state, so later reads and `check_eof` fail too.
+        Transcript::check(self, || challenges.is_some())?;
+        challenges.ok_or(VerificationError)
     }
 
     fn check_eof(self) -> Result<(), VerificationError> {
