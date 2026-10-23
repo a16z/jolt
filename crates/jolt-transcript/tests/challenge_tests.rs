@@ -1,5 +1,3 @@
-//! Field challenge wire compatibility and message-wide sampling contracts.
-
 #![cfg(all(
     feature = "transcript-keccak",
     any(feature = "solinas", feature = "bn254", feature = "binary")
@@ -253,8 +251,6 @@ fn subword_candidates_mask_unused_high_bits() {
     check::<Prime31Offset19>([7, 0, 0, 0x80]);
 }
 
-/// For every registered base, the candidate p is rejected and p - 1, the
-/// largest element, is accepted.
 #[cfg(feature = "solinas")]
 #[test]
 fn candidates_at_the_modulus_boundary() {

@@ -775,8 +775,8 @@ jobs:
               cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
             fi
           done
-      # The shard loop above tests jolt-transcript with default features only,
-      # which skips the field codecs, the extra sponges and their tests.
+      # The shard loop above tests jolt-transcript with default features, which
+      # leave out the Solinas and binary field codecs and their tests.
       - name: Test jolt-transcript with all features
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-transcript --all-features --cargo-quiet
