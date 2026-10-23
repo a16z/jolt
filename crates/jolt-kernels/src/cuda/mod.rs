@@ -148,6 +148,7 @@ use jolt_openings::CommitmentScheme;
 use crate::{JoltBackend, KernelError, ModeStreamingCommitment};
 
 mod advice_claim_reduction;
+mod booleanity;
 mod bytecode_claim_reduction;
 mod common;
 mod dory;
@@ -210,7 +211,7 @@ where
 {
     /// Replace supported claim reductions, instruction-input checking, instruction
     /// RA virtualization, RAM output and value checking, RAM hamming booleanity,
-    /// hamming-weight claim reduction,
+    /// hamming-weight claim reduction, booleanity cycle checking,
     /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
     /// reduction and virtualization, and RV64 Spartan outer and product kernels with
     /// CUDA implementations.
@@ -229,6 +230,7 @@ where
         backend.untrusted_advice_address = Box::new(CudaBackend);
         backend.bytecode_reduction_address = Box::new(CudaBackend);
         backend.program_image_reduction_address = Box::new(CudaBackend);
+        backend.booleanity_cycle = Box::new(CudaBackend);
         backend.ram_hamming_booleanity = Box::new(CudaBackend);
         backend.hamming_weight_claim_reduction = Box::new(CudaBackend);
         backend.inc_claim_reduction = Box::new(CudaBackend);

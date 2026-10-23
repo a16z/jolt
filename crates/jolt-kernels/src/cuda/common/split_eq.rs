@@ -102,7 +102,6 @@ impl<F: JoltField> DeviceSplitEq<F> {
         )
     }
 
-    #[cfg(not(feature = "field-inline"))]
     pub fn new_with_scaling(
         context: &CudaKernelContext,
         point: &[F],
@@ -121,7 +120,6 @@ impl<F: JoltField> DeviceSplitEq<F> {
         )
     }
 
-    #[cfg(not(feature = "field-inline"))]
     pub fn new_window_with_scaling(
         context: &CudaKernelContext,
         point: &[F],
