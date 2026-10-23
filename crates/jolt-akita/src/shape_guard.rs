@@ -9,8 +9,7 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{
-    CompressionChainPlan, GroupCommitPhaseParams, OpeningClaimsLayout, OpeningScheduleSelection,
-    PolynomialGroupLayout,
+    GroupCommitPhaseParams, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
 };
 use akita_pcs::AkitaError;
 use akita_schedules::ResolvedScheduleRow;
@@ -128,19 +127,10 @@ fn validate_commitment_profile_len(
 fn expected_commitment_coeff_len_for_profile(
     profile: &GroupCommitPhaseParams,
 ) -> Result<usize, OpeningsError> {
-    let source_coefficients = profile
-        .outer_slice_count
-        .complete_source_coefficients(
-            profile.outer.matrix.output_rank(),
-            profile.outer.matrix.ring_dimension(),
-        )
-        .map_err(|err| invalid_batch(format!("Akita commitment profile is invalid: {err}")))?;
-    CompressionChainPlan::for_complete_source(
-        profile.outer.matrix.sis_modulus_profile(),
-        source_coefficients,
-    )
-    .map(|plan| plan.terminal_coefficients())
-    .map_err(|err| invalid_batch(format!("Akita commitment profile is invalid: {err}")))
+    profile
+        .outer_compression_plan()
+        .map(|plan| plan.terminal_coefficients())
+        .map_err(|err| invalid_batch(format!("Akita commitment profile is invalid: {err}")))
 }
 
 fn field_elem_bytes() -> usize {

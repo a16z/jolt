@@ -50,7 +50,8 @@ mod verifier;
 pub use challenge::{ChallengeCodec, ChallengeSponge, UniformBytes, MAX_CHALLENGE_BYTES};
 pub use codec::{BytesMsg, Label, LabelWithCount, SpongeUnit, U64Word, MAX_LABEL_LEN};
 pub use grind_bits::{
-    grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS, SECURITY_BITS,
+    challenge_bits_for_loss, grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS,
+    SECURITY_BITS,
 };
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::{FrUnit, PoseidonPermutation, PoseidonSponge};

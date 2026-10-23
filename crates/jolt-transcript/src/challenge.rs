@@ -90,6 +90,15 @@ pub(crate) mod sealed {
 ///
 /// The trait is sealed: every implementation lives in this module, next to
 /// the argument for its TV bound.
+///
+/// # Use outside this crate
+///
+/// `ChallengeCodec` bounds the field of every `FieldTranscript<F>`
+/// implementation on spongefish's prover and verifier states, so a protocol
+/// that draws field challenges from them names it as a bound. Callers cannot
+/// implement it. The widths and decodings above are part of the transcript's
+/// wire format: changing one changes every proof that draws challenges in
+/// that field.
 pub trait ChallengeCodec: Sized + Sealed {
     /// `|Self|`, the number of values one challenge can take. Proof-of-work
     /// difficulties are priced from it ([`grind_bits_for_loss`]).
@@ -113,6 +122,10 @@ pub trait ChallengeCodec: Sized + Sealed {
 ///
 /// `PoseidonSponge` squeezes field elements, not bytes, and is not one; it
 /// draws `Fr` challenges natively through [`ChallengeSponge`].
+///
+/// It is public because it bounds the byte sponges' [`ChallengeSponge`]
+/// implementation, behind the public `FieldTranscript<F>` implementations.
+/// Callers name it only as that bound and cannot implement it.
 pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
 
 /// A sponge that draws one message of `len` challenges in `F`, with
@@ -166,7 +179,7 @@ impl UniformBytes for Blake2b512 {}
 /// Largest challenge message, in squeezed bytes; a Poseidon element counts as
 /// 32 bytes. Larger requests are rejected before touching the sponge, so a
 /// length taken from the input cannot make the verifier allocate without
-/// bound.
+/// bound. Callers can compare a length against it before drawing.
 pub const MAX_CHALLENGE_BYTES: usize = 1 << 24;
 
 #[cfg(any(feature = "solinas", feature = "bn254"))]

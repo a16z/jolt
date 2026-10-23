@@ -35,12 +35,22 @@ pub trait SpongeUnit: Unit + Copy + Eq + Sealed {
     /// The low 32 bits of a check, or `None` unless `check` has the length of
     /// one check.
     fn low_word(check: &[Self]) -> Option<u32>;
+
+    /// Units squeezed for a short challenge of `bits` bits, for
+    /// `1 <= bits <= 253`.
+    fn short_len(bits: u32) -> usize;
+
+    /// A 256-bit little-endian integer whose low `bits` bits are within
+    /// 2^-160 of uniform, read from the `short_len(bits)` units of a short
+    /// challenge, or `None` if they do not fit.
+    fn short_word(units: &[Self]) -> Option<[u8; 32]>;
 }
 
 impl Sealed for u8 {}
 
-/// A byte sponge absorbs a message's bytes as they are, and checks the low
-/// bits of `ceil(bits / 8)` little-endian bytes.
+/// A byte sponge absorbs a message's bytes as they are, and reads a check or
+/// a short challenge of `bits` bits from `ceil(bits / 8)` little-endian
+/// bytes.
 impl SpongeUnit for u8 {
     fn encode_message<M: Encoding + ?Sized>(message: &M) -> impl AsRef<[u8]> {
         message.encode()
@@ -54,6 +64,16 @@ impl SpongeUnit for u8 {
         let mut word = [0u8; 4];
         word.get_mut(..check.len())?.copy_from_slice(check);
         Some(u32::from_le_bytes(word))
+    }
+
+    fn short_len(bits: u32) -> usize {
+        (bits as usize).div_ceil(8)
+    }
+
+    fn short_word(units: &[u8]) -> Option<[u8; 32]> {
+        let mut word = [0u8; 32];
+        word.get_mut(..units.len())?.copy_from_slice(units);
+        Some(word)
     }
 }
 

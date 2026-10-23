@@ -37,7 +37,7 @@
 use std::sync::OnceLock;
 
 use ark_bn254::Fr as InnerFr;
-use ark_ff::{AdditiveGroup, Field, PrimeField};
+use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
 use jolt_field::Fr;
 use light_poseidon::parameters::bn254_x5::get_poseidon_parameters;
 use spongefish::{DuplexSponge, EncodedSessionId, Encoding, Permutation, Unit};
@@ -119,6 +119,22 @@ impl SpongeUnit for FrUnit {
         };
         let low_limb = unit.0.into_bigint().0.first().copied()?;
         Some(low_limb as u32)
+    }
+
+    fn short_len(_bits: u32) -> usize {
+        2
+    }
+
+    /// `x0 + p * x1 mod 2^256`. For uniform elements `x0` and `x1`, the integer
+    /// `x0 + p * x1` is uniform on `[0, p^2)`, so its low `bits` bits are
+    /// within `2^bits / p^2 <= 2^-253` of uniform for `bits <= 253`.
+    fn short_word(units: &[Self]) -> Option<[u8; 32]> {
+        let [low, high] = units else {
+            return None;
+        };
+        let mut word = high.0.into_bigint().mul_low(&InnerFr::MODULUS);
+        word.add_with_carry(&low.0.into_bigint());
+        word.to_bytes_le().try_into().ok()
     }
 }
 
@@ -235,7 +251,6 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    use ark_ff::BigInteger;
     use light_poseidon::{Poseidon, PoseidonHasher};
     use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 

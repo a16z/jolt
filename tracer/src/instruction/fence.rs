@@ -1,8 +1,9 @@
-use crate::instruction::registers::fence::RegisterStateFence;
+use crate::instruction::registers::no_operands::RegisterStateNoOperands;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    declare_riscv_instr, emulator::cpu::Cpu, instruction::format::format_fence::FormatFence,
+    declare_riscv_instr, emulator::cpu::Cpu,
+    instruction::format::format_no_operands::FormatNoOperands,
 };
 
 use super::{RISCVInstruction, RISCVTrace};
@@ -11,8 +12,8 @@ declare_riscv_instr!(
     name   = FENCE,
     mask   = 0x0000707f,
     match  = 0x0000000f,
-    format = FormatFence,
-    registers = RegisterStateFence,
+    format = FormatNoOperands,
+    registers = RegisterStateNoOperands,
     ram    = ()
 );
 

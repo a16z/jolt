@@ -233,3 +233,40 @@ fn challenges_are_full_width() {
         .iter()
         .any(|&c| le_bytes(c)[16..].iter().any(|&b| b != 0)));
 }
+
+/// A short challenge squeezes two elements `x0` and `x1`, keeps the low `b`
+/// bits of `x0 + p * x1`, and squeezes nothing more. The verifier draws the
+/// same value.
+#[test]
+fn short_challenge_keeps_the_low_bits_of_two_elements() {
+    use ark_ff::BigInteger;
+    use jolt_field::CanonicalEncoding;
+
+    for (loss, bits) in [(1u64, 128u32), (4, 130)] {
+        let mut widest = 0;
+        for round in 0..64u32 {
+            let statement = round.to_be_bytes();
+            let mut short = prover_transcript::<PoseidonSponge>(SESSION, &statement);
+            let mut manual = prover_transcript::<PoseidonSponge>(SESSION, &statement);
+            let value: Fr = short.challenge_short_scalar(loss).unwrap();
+
+            let drawn = challenges(&mut manual, 3);
+            let [x0, x1] =
+                [drawn[0], drawn[1]].map(|x| BnFr::from_le_bytes_mod_order(&le_bytes(x)));
+            let mut sum = x1.into_bigint().mul_low(&BnFr::MODULUS);
+            sum.add_with_carry(&x0.into_bigint());
+            let len = bits.div_ceil(8) as usize;
+            let mut bytes = sum.to_bytes_le()[..len].to_vec();
+            *bytes.last_mut().unwrap() &= u8::MAX >> (8 * len as u32 - bits);
+            assert_eq!(value, Fr::from_bytes_le_reduced(&bytes));
+            assert_eq!(challenges(&mut short, 1), [drawn[2]]);
+
+            let mut verifier = verifier_transcript::<PoseidonSponge>(SESSION, &statement, &[]);
+            let verified: Fr = verifier.challenge_short_scalar(loss).unwrap();
+            assert_eq!(verified, value);
+            widest = widest.max(value.num_bits());
+        }
+        // The top bit is set with probability 1/2 per draw.
+        assert_eq!(widest, bits, "loss={loss}");
+    }
+}

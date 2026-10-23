@@ -395,6 +395,7 @@ mod tests {
         #[test]
         fn search_is_independent_of_the_thread_count() {
             use super::super::CALLER_NONCES;
+            use rayon::ThreadPoolBuilder;
 
             for bits in [2, 9] {
                 let pow = SpongePow::new(bits).unwrap();
@@ -411,7 +412,7 @@ mod tests {
                 for least in candidates.into_iter().filter(|&least| least <= last) {
                     let probe = AcceptAny(vec![last, least, (least + 1).min(last)]);
                     for threads in [1, 2, 3, 8] {
-                        let pool = rayon::ThreadPoolBuilder::new()
+                        let pool = ThreadPoolBuilder::new()
                             .num_threads(threads)
                             .build()
                             .unwrap();

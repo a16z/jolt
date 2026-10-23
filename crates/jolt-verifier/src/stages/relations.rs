@@ -501,12 +501,17 @@ where
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    let provided: BTreeSet<_> = claims
-        .canonical_order()
-        .into_iter()
-        .filter(|id| !aliased.contains(id))
-        .collect();
-    if provided != expected {
+    let mut provided = claims.canonical_order();
+    if !aliased.is_empty() {
+        provided.retain(|id| !aliased.contains(id));
+    }
+    // A canonical order is usually already the sorted, duplicate-free wire set.
+    if provided.iter().eq(&expected) {
+        return Ok(());
+    }
+    provided.sort_unstable();
+    provided.dedup();
+    if !provided.iter().eq(&expected) {
         return Err(VerifierError::StageClaimSumcheckFailed {
             stage: format!("{:?}", member.id()),
             reason: format!(
