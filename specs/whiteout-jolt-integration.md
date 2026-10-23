@@ -210,3 +210,48 @@ Jolt pins Akita `dev` at W6b.
 - **Q3 (Quang).** Does he accept `ShapeTranscript` as a third sealed implementation?
 - **Q4.** `ZkBackend`'s `ProverTranscript<H>` signatures (`whiteout/dev:crates/jolt-zk/src/masking/backend.rs:113`) must port to `ProverState`. This is an M6b re-landing item, not W6.
 - **Q5 (paper authors).** Is the bounded rerun delta acceptable as argued?
+
+## Prototype deltas (W6 on `whiteout/dev`)
+
+The prototype runs on `whiteout/dev` at `9589dd045` (Akita dev `9dd27e997`), which has neither J7/J8 nor W5d. This section maps each J-stack citation above to its equivalent here and records each decision. It is the port map back to the J-stack. Paths are relative to the jolt root unless prefixed `akita:`.
+
+| Spec item | J-stack | Here | Decision |
+|---|---|---|---|
+| §1 mode enum | `J8:…/config.rs:27` | `ZkConfig` at `crates/jolt-verifier/src/config.rs:29`, serialized in `JoltProof.protocol` | Same: `Whiteout` appended. |
+| §1 statement word | `JoltStatement.zk` (`J8:verifier.rs:319-325`) | byte 0 of `JoltProtocolConfig::transcript_bytes`, absorbed by `absorb_public_preamble` (`verifier.rs:748`) | `Whiteout` → 2 in that byte. |
+| §1 selection | `SELECTED_ZK_CONFIG` (`J8:config.rs:76-79`) | same name, `config.rs:111-115` | `match` on (`zk`, `akita`). |
+| §1 compile errors | `J8:config.rs:20-24`, `J8:jolt-prover/src/lib.rs:36-37` | `config.rs:21-26`, `crates/jolt-prover/src/lib.rs:36-37` | Lifted by the first W6d commit (masked stages under Akita). Until W6d's tail lands, `akita::prove` returns `ProverError::Unsupported` and `verify` returns `ProtocolAxisUnimplemented` where the pad commitment would be read; no accepting path exists. |
+| §1 typed mode | `CheckedInputs.zk: bool`, `for_zk(bool)` | same (`verifier.rs:729`, `config.rs:55`) | Same change; stage code asks `ZkConfig::is_masked()`. |
+| §1 Akita config | `ZkCommitmentConfig<RecursiveCommitmentConfig<OneHot>>` | Akita dev has no `ZkCommitmentConfig` (W5d); jolt-akita's presets are `JoltOneHotK16`/`K256`… (`crates/jolt-akita/src/configs.rs`) | W6b wraps jolt-akita's own recursive presets in W5d's `ZkCommitmentConfig` once merged. |
+| §2 transport | spongefish `ProverState`/`VerifierState`, NARG | jolt-transcript `ProverTranscript`/`VerifierTranscript`; the proof *is* the argument string (`JoltProof { protocol, narg }`, `proof.rs:35`); Akita and `ZkBackend` already write to the same type | Rows 0–9 all go to one argument string. Q4 does not arise: `ZkBackend` already takes `ProverTranscript<H>`. |
+| §2 rows 0, 1 | `J8:verifier.rs:213-293` | `seed_transcript` (`PREAMBLE`, `COMMITMENTS` sites) | Unchanged. |
+| §2 row 2 | `PADS` | `PADS` site in `verify_stages_on` (`verifier.rs:566`), BlindFold only | Same position, Whiteout's pad commitment. |
+| §2 row 9 | `check_eof` | `VerifierTranscript::finish` (`verifier.rs:116, 667`) | Unchanged. |
+| §3 opening trait | `GroupBatchOpening` (`J8:jolt-openings/src/schemes.rs:118`) | `CommitmentScheme::{prove_batch, verify_batch}` (`crates/jolt-openings/src/schemes.rs:131-155`) | `MaskedGroupOpening` in `jolt_zk::whiteout` as specified, but not a subtrait of a group-opening trait (none exists): it names its own setup and commitment types, and the verifier bounds `PCS: CommitmentScheme + MaskedGroupOpening<…>`. The verifier is generic over `PCS`, so a trait is needed on that side. |
+| §3 hiding commit | `HidingCommitment`/`ZkOpening` split (W6b) | `ZkOpeningScheme::commit_zk` (Dory, `schemes.rs:339`); the Akita prover is generic over `PCS` but already bounds jolt-akita's own `TraceOneHotCommitment` | **No split.** Hiding commits are prover-only, and Akita's stage 0 already bounds jolt-akita traits; W6b adds the hiding entry point there. Dory and `ZkOpeningScheme` are untouched (R2 by construction). |
+| §3 probe | `J8:jolt-prover/src/blindfold.rs:128-141` | `MaskedStages.checkpoint` (`verifier.rs:180`), compared in `crates/jolt-prover/src/blindfold.rs:116-120` | Same, taken after Akita's cut, before the auxiliary block. |
+| §4 `pad_layout` | Akita-excluded at `whiteout/dev:verifier.rs:389` | same function, `verifier.rs:390` | Extended: stages 1–7, Jolt's stage-8 reductions, then Akita's `count_masked_prefix` (`akita:crates/akita-verifier/src/fold/masked_prefix.rs:90`, `CountingGrinding`), then the shapes. |
+| §4 `ShapeTranscript` | needed because J8's stages grind (`J8:jolt-transcript/src/verifier.rs:91-100`) | Jolt's stages never grind here (no `check_grind` in jolt-verifier); only Akita grinds, and `CountingGrinding` skips it | **Not built.** Q3 does not arise. The zero-filled replay stays. |
+| §4 Q2 | stage messages in NARG? | They already are. | Zero-filled replay applies unchanged. |
+| §5 proof type | `JoltProof<PCS, VC, ()>`, `JoltProofClaims::Zk`, `backend_proof` | `JoltProof { protocol, narg }`; no claims or backend field | V5's "non-empty `backend_proof`" case is covered by "appended NARG byte" (`finish`). |
+| §6 rerun owner | `jolt-prover` ZK entry | `jolt_prover::akita::prove` (`crates/jolt-prover/src/akita/prover.rs:32`) | Loop there. |
+| §6 RNG | one `CryptoRng` stream | BlindFold draws from `OsRng` (`blindfold.rs:72`); Akita's backend draws hiding randomness from its own OS stream (`akita:crates/akita-cpu-backend/src/opaque/backend.rs:134`; `with_hiding_rng` is test-support) | Both OS streams. Each draw is fresh, so "no reseed, no counter" holds. HT3 compares two runs' values, not seeds. A seeded Akita hiding RNG per commit would make the test reproducible; that is an Akita request (W6b), not a blocker. |
+| §7 census | `absorb-sites.inventory` | `crates/jolt-verifier/tests/fs_inventory/absorb-sites.inventory`, checked by `fs_obligations` | Same file; `zk-site-classes` sits beside it. |
+| §8 binding | `bind_derived_base` | same (Akita M3b fixup is on dev) | Plus one item from our base: stage 8's prefix-packing reduction (`PrefixPackedLayout::reduce_claims`, `crates/jolt-openings/src/prefix.rs:184`) absorbs the claim evaluations with `public_all`. Under Whiteout it must absorb only the layout, digest and point, and carry the evaluations as affine forms; the evaluations are derived from masked messages already absorbed (D25's argument). |
+
+**Prerequisites our base lacks** (not in the J-stack spec, because there M6b/M6c/W4 are re-landed first):
+
+- The masked stage verifiers and `JoltResidual` are Dory-only (`#[cfg(not(feature = "akita"))]`, `crates/jolt-verifier/src/stages/zk/mod.rs:14`). Akita's relation set (fused increments, the Akita-only stage-6b/7 relations) has no residual lowering. W6d must lower them; this is the largest jolt-side item.
+- Stage 8 on Akita takes clear stage outputs (`stages/stage8/akita.rs:218`). W6d writes its leaf and packing claims once over affine forms.
+- jolt-zk is not in the root `[patch."https://github.com/a16z/jolt"]`, so Akita's `zk` features would resolve a second jolt-zk. W6b adds it.
+
+**Masked stages under Akita (first W6d commit).**
+
+- *Owner of the Akita lowering.* The Akita build changes stage 5 (canonical instruction addresses), 6a/6b (the lattice read-RAF and booleanity relations, no increment reduction, no advice cycle phases) and 7 (the digit-zero reduction). Under `akita`, `JoltResidual` lowers stages 5–7 from `MaskedMember`s the masked stage verifiers record (`ConcreteSumcheck::masked_member`, generated `masked_members`). Each member's formulas are its symbolic relation's, and every public value comes from the member's own `derive_input_term`/`derive_output_term` and drawn challenges, the clear verifier's owners. The bytecode read-RAF cycle relation gained `derive_output_term` (its publics, formerly inline in `expected_output`, are one shared helper), and the cycle wrapper dispatches `masked_member` per variant like `expected_output`. Whiteout builds the bytecode table fold in masked mode for these publics; BlindFold does not (its residual derives its own).
+- *Inherited debt.* The homomorphic residual computes stages 5–7's publics by hand, beside the verifier's owners, and both builds lower stages 1–4 by hand (the relations are the same in both builds). Migrate them to `MaskedMember` publics at port time; R2 kept them untouched here.
+- *Operand rule.* Whiteout lowers with `OperandRule::MaskedSlot` (`verifier.rs`, `WHITEOUT_OPERANDS`).
+- *Pads before W6d.* `ModePads` under Akita is `CommittedPads<F, ()>` (no opening). Only the `prover-fixtures` seam `akita::prove_masked_stages` builds pads (`CommittedPads::uncommitted`, jolt-zk `test-support`); it sends no pad commitment and is not a proof. `pad_layout` counts stages 1–7 only until W6d appends Akita's prefix.
+- *Committed programs.* The committed-program reductions' publics (6b `FinalScale`/`OutputWeight` by `derive_output_term`; stage 7's address phases from `Stage7References`, which Whiteout fills from the masked stage 4/6b carriers) take the same owner path.
+- *Test.* `crates/jolt-prover/tests/whiteout_stages.rs` (lane `-p jolt-prover --features akita,zk,prover-fixtures --test whiteout_stages`), for muldiv, committed-program muldiv and both advice kinds: honest pads satisfy every row, the verifier-derived layout fills the prover's pads, and every base slot appears in some row (a single-slot shift with a consistently recomputed auxiliary block breaks one). That is not unique determination. **W6d's tamper tests must cover compensating shifts across the final-opening slots**, which only the stage-8 opening binds. Both production entries reject. Other `akita` test suites are not expected to pass under `akita,zk` before W6d.
+
+**Slicing on this base.** W6a is jolt-only and lands now. W6b–W6d need W5d (`ZkCommitmentConfig`, `IS_ZK`, the published ZK entry points, the ZK family artifacts, `ResidualOpening.public_segments`/`blocks`).

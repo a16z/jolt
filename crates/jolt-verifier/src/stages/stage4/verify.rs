@@ -175,7 +175,7 @@ where
     // `challenge`).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if !checked.zk {
+    if !checked.zk.is_masked() {
         let stage2 = stage2.clear()?;
         let stage3 = stage3.clear()?;
         // The staged advice / program-image openings feed the RAM value-check input
@@ -237,6 +237,8 @@ where
             batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             ram_val_check_public_eval,
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            program_image_point: init_structure.program_image_point.clone(),
             output_points: batch.output_points,
         }))
     }

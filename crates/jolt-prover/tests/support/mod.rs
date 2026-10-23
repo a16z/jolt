@@ -4,7 +4,7 @@
 )]
 
 use std::sync::Arc;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use std::thread::Builder;
 
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -152,7 +152,7 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
 
 /// BlindFold verification recurses over a large folded R1CS, so ZK tests run
 /// on a wide stack like the verifier's own ZK suites.
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 pub fn with_zk_stack(body: impl FnOnce() + Send + 'static) {
     Builder::new()
         .stack_size(128 * 1024 * 1024)

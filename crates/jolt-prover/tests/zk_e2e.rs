@@ -6,6 +6,7 @@
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "zk",
+    not(feature = "akita"),
     not(feature = "field-inline")
 ))]
 mod support;
@@ -13,6 +14,7 @@ mod support;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "zk",
+    not(feature = "akita"),
     not(feature = "field-inline")
 ))]
 #[expect(
@@ -33,12 +35,12 @@ mod zk {
     use jolt_riscv::JoltTraceRow;
     use jolt_transcript::VerifierTranscript;
     use jolt_verifier::proof::JoltProof;
-    use jolt_verifier::JoltProtocolConfig;
     use jolt_verifier::JoltSponge;
     use jolt_verifier::VerifierError;
     use jolt_verifier::{
         jolt_protocol_id, verify_stages, MaskedStages, VerifiedStages, JOLT_SESSION,
     };
+    use jolt_verifier::{JoltProtocolConfig, ZkConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use jolt_zk::masking::{ResidualRelation, ResidualVar};
 
@@ -138,7 +140,10 @@ mod zk {
     fn zk_muldiv_reference_backend_proof_is_accepted() {
         with_zk_stack(|| {
             let proved = prove_muldiv(JoltBackend::reference());
-            assert_eq!(proved.proof.protocol, JoltProtocolConfig::for_zk(true));
+            assert_eq!(
+                proved.proof.protocol,
+                JoltProtocolConfig::for_zk(ZkConfig::BlindFold)
+            );
             verify(&proved).expect("modular ZK proof must verify");
         });
     }

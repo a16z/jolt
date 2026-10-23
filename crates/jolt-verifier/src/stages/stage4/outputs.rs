@@ -101,6 +101,10 @@ pub struct Stage4ZkOutput<F: JoltField> {
     pub batch_rounds: BatchedMaskedRounds<F>,
     pub batch_output_claims: MaskedClaims<F>,
     pub ram_val_check_public_eval: F,
+    /// Whiteout: the staged program-image opening's RAM address point, which
+    /// stage 7's program-image address phase reads for its output public.
+    #[cfg(all(feature = "akita", feature = "zk"))]
+    pub program_image_point: Option<Vec<F>>,
     /// The produced opening points, the ZK counterpart of the clear path's
     /// `output_points`. Read through the same `*_point()` accessors.
     pub output_points: Stage4OutputPoints<F>,

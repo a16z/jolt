@@ -116,7 +116,7 @@ fn wrong_protocols(proof: &JoltProof) -> Vec<JoltProtocolConfig> {
     let mut zk = proof.protocol;
     zk.zk = match zk.zk {
         ZkConfig::Transparent => ZkConfig::BlindFold,
-        ZkConfig::BlindFold => ZkConfig::Transparent,
+        ZkConfig::BlindFold | ZkConfig::Whiteout => ZkConfig::Transparent,
     };
     let mut commitment = proof.protocol;
     commitment.commitment = match commitment.commitment {

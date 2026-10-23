@@ -9,7 +9,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::Sponge;
-use jolt_verifier::config::JoltProtocolConfig;
+use jolt_verifier::config::{JoltProtocolConfig, SELECTED_ZK_CONFIG};
 use jolt_verifier::proof::JoltProof;
 
 #[cfg(feature = "zk")]
@@ -204,7 +204,7 @@ where
     )?;
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(cfg!(feature = "zk")),
+        protocol: JoltProtocolConfig::for_zk(SELECTED_ZK_CONFIG),
         narg: transcript.finish(),
     })
 }

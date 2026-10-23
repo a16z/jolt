@@ -38,15 +38,15 @@ pub struct BytecodeReductionAddressPhase<F: JoltField> {
     symbolic: BytecodeAddressPhase,
     layout: BytecodeClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
-    /// The stage-6b bytecode cycle-phase output weights, consumed only by the
-    /// clear-only `derive_output_term` (`OutputWeight`). `None` in ZK (BlindFold
-    /// recomputes the weights), where this relation's `derive_output_term` never runs.
+    /// The stage-6b bytecode cycle-phase output weights, consumed only by
+    /// `derive_output_term` (`OutputWeight`). `None` under BlindFold, which
+    /// recomputes the weights and never runs `derive_output_term`.
     weights: Option<BytecodeReductionWeights<F>>,
 }
 
 impl<F: JoltField> BytecodeReductionAddressPhase<F> {
-    /// `weights` are the stage-6b bytecode cycle-phase outputs (`None` in ZK,
-    /// clear-only aux); `cycle_phase_variables` and the layout are known before the
+    /// `weights` are the stage-6b bytecode cycle-phase outputs (`None` under
+    /// BlindFold); `cycle_phase_variables` and the layout are known before the
     /// stage-7 sumcheck, so a single construction serves both the input claim and
     /// the output check.
     pub fn new(
@@ -68,7 +68,7 @@ impl<F: JoltField> BytecodeReductionAddressPhase<F> {
             .as_ref()
             .ok_or_else(|| {
                 bytecode_public_failed(
-                    "bytecode address phase has no output weights (ZK-only construction)",
+                    "bytecode address phase has no output weights (BlindFold construction)",
                 )
             })?
             .as_inputs())
@@ -135,16 +135,16 @@ pub struct ProgramImageReductionAddressPhase<F: JoltField> {
     layout: ProgramImageClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
     /// The RAM address point of the staged `ProgramImageInitContributionRw` opening
-    /// (from stage 4). Consumed only by the clear-only `derive_output_term`
-    /// (`FinalScale`), so it is `None` in ZK — where BlindFold recomputes the scale
-    /// and this relation's `derive_output_term` never runs.
+    /// (from stage 4). Consumed only by `derive_output_term` (`FinalScale`);
+    /// `None` under BlindFold, which recomputes the scale and never runs
+    /// `derive_output_term`.
     reference_opening_point: Option<Vec<F>>,
 }
 
 impl<F: JoltField> ProgramImageReductionAddressPhase<F> {
     /// `reference_opening_point` is the RAM address point of the staged
-    /// `ProgramImageInitContributionRw` opening (from stage 4), `None` in ZK
-    /// (clear-only aux). It and the cycle-phase variables are known before the
+    /// `ProgramImageInitContributionRw` opening (from stage 4), `None` under
+    /// BlindFold. It and the cycle-phase variables are known before the
     /// stage-7 sumcheck.
     pub fn new(
         layout: &ProgramImageClaimReductionLayout,
@@ -210,7 +210,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> 
         };
         let reference_opening_point = self.reference_opening_point.as_ref().ok_or_else(|| {
             program_image_public_failed(
-                "program-image address phase has no reference opening point (ZK-only construction)",
+                "program-image address phase has no reference opening point (BlindFold construction)",
             )
         })?;
         self.layout

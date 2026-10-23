@@ -139,6 +139,13 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features akita
       - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
         run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
+      # Whiteout (akita + zk): masked stages 1-7 only until the W6d tail;
+      # both production entries reject.
+      - name: cargo clippy Whiteout (akita,zk)
+        run: |
+          cargo clippy -p jolt-verifier --all-targets --features akita,zk,prover-fixtures
+          cargo clippy -p jolt-prover --all-targets --features akita,zk
+          cargo clippy -p jolt-prover --all-targets --features akita,zk,prover-fixtures
       # The Dory arms of the guest x mode matrix and the e2e suites compile
       # only under prover-fixtures; lint both protocols like the akita pair.
       - name: cargo clippy -p jolt-prover --features prover-fixtures
@@ -442,6 +449,8 @@ jobs:
       # specifics: forced K=256, advice, committed-program, and live tampers.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
+      - name: Run Whiteout masked-stage tests (akita,zk)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,zk,prover-fixtures --test whiteout_stages
       - name: Test Akita profiling artifact and CSV names
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
 

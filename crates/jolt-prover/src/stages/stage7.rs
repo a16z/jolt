@@ -22,7 +22,9 @@ use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weight_claim_reduction_dimensions;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
-use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
+use jolt_verifier::stages::stage7::{
+    build_stage7_sumchecks, stage7_input_values_from_upstream, Stage7References,
+};
 use jolt_verifier::CheckedInputs;
 
 use crate::recorder::ProofMode;
@@ -69,7 +71,9 @@ where
         hamming_dimensions,
         precommitted,
         &stage6b.output_points,
-        Some((stage4, stage6b)),
+        Stage7References::from_clear(stage4, stage6b),
+        #[cfg(not(feature = "akita"))]
+        Some(stage4),
     )?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 

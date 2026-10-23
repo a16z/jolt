@@ -38,8 +38,9 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::program_image
     ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, BytecodeClaimReductionPublic,
+    JoltAdviceKind, JoltDerivedId, JoltRelationId, PrecommittedReductionLayout,
+    ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 
@@ -365,12 +366,35 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
         if self.layout.dimensions().has_address_phase() {
             Ok(value)
         } else {
-            let scale = self
-                .layout
-                .cycle_phase_scale_at_opening_point(&self.r_addr_rw, output_points.program_image())
-                .map_err(program_image_public_failed)?;
-            Ok(scale * value)
+            Ok(self.final_scale(output_points)? * value)
         }
+    }
+
+    fn derive_output_term(
+        &self,
+        id: &JoltDerivedId,
+        _input_points: &ProgramImageReductionCyclePhaseInputClaims<Vec<F>>,
+        output_points: &ProgramImageReductionCyclePhaseOutputClaims<Vec<F>>,
+        _challenges: &NoChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let JoltDerivedId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
+            id
+        else {
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
+        };
+        self.final_scale(output_points)
+    }
+}
+
+impl<F: JoltField> ProgramImageReductionCyclePhase<F> {
+    /// The `FinalScale` public at the produced opening point.
+    fn final_scale(
+        &self,
+        output_points: &ProgramImageReductionCyclePhaseOutputClaims<Vec<F>>,
+    ) -> Result<F, VerifierError> {
+        self.layout
+            .cycle_phase_scale_at_opening_point(&self.r_addr_rw, output_points.program_image())
+            .map_err(program_image_public_failed)
     }
 }
 
@@ -489,14 +513,36 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
             .bytecode()
             .copied()
             .ok_or_else(|| bytecode_public_failed("expected final bytecode claim"))?;
+        Ok(value * self.output_weight(output_points)?)
+    }
+
+    fn derive_output_term(
+        &self,
+        id: &JoltDerivedId,
+        _input_points: &BytecodeReductionCyclePhaseInputClaims<Vec<F>>,
+        output_points: &BytecodeReductionCyclePhaseOutputClaims<Vec<F>>,
+        _challenges: &BytecodeReductionCyclePhaseChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        if *id != JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::OutputWeight)
+        {
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
+        }
+        self.output_weight(output_points)
+    }
+}
+
+impl<F: JoltField> BytecodeReductionCyclePhase<F> {
+    /// The `OutputWeight` public at the produced final opening point.
+    fn output_weight(
+        &self,
+        output_points: &BytecodeReductionCyclePhaseOutputClaims<Vec<F>>,
+    ) -> Result<F, VerifierError> {
         let point = output_points
             .bytecode()
             .ok_or_else(|| bytecode_public_failed("expected final bytecode point"))?;
-        let weight = self
-            .layout
+        self.layout
             .cycle_phase_final_output_weight_at_opening_point(self.weights.as_inputs(), point)
-            .map_err(bytecode_public_failed)?;
-        Ok(value * weight)
+            .map_err(bytecode_public_failed)
     }
 }
 

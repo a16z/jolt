@@ -33,6 +33,10 @@ use jolt_transcript::{Channel, PrivateChannel, Sponge, VerifierTranscript};
 use jolt_zk::masking::{MaskedOperand, PadIndex};
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
+#[cfg(all(feature = "akita", feature = "zk"))]
+use crate::stages::zk::residual::VerifierPublicId;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use crate::stages::zk::MaskedMember;
 use crate::VerifierError;
 
 /// Re-exported for the `#[derive(SumcheckBatch)]`-generated batch-wide alias
@@ -262,6 +266,33 @@ where
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
+    }
+
+    /// This member as a masked proof's residual relation lowers it: the
+    /// symbolic claim formulas, with every public source resolved by the
+    /// same `derive_*_term` and challenges the clear checks use. A relation
+    /// whose symbolic is an anchor for several formulas overrides it.
+    #[cfg(all(feature = "akita", feature = "zk"))]
+    fn masked_member(
+        &self,
+        input_points: &SumcheckInputPoints<F, Self>,
+        output_points: &SumcheckOutputPoints<F, Self>,
+        challenges: &ConcreteSumcheckChallenges<F, Self>,
+    ) -> Result<MaskedMember<F>, VerifierError>
+    where
+        DerivedIdOf<F, Self>: Into<VerifierPublicId>,
+        ChallengeIdOf<F, Self>: Into<VerifierPublicId>,
+    {
+        MaskedMember::new(
+            self.symbolic(),
+            |id| self.derive_input_term(id, challenges),
+            |id| self.derive_output_term(id, input_points, output_points, challenges),
+            |id| {
+                challenges
+                    .resolve_challenge(id)
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
+            },
+        )
     }
 
     /// The input claim (claimed sum), evaluated from the input `Expr` against the
