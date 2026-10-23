@@ -181,6 +181,77 @@ The trace layout digest advances to `native-batch/v8`, and the grouped transcrip
 domains advance to v4. Akita proofs and preprocessing from the packed layout are
 incompatible with this layout.
 
+## Decomposition performance
+
+All chunk counts use the same streamed decomposition algorithm. Each position task
+owns one contiguous chunk buffer and visits the block range assigned to that chunk
+across every native column. Challenges retain column-major indexing at the API and
+are prepared in block-major order for the fused traversal. There is no selector
+capacity, column-to-chunk routing, or single-chunk kernel specialization.
+
+Dense accumulation groups up to eight contributions, adds them in bounded `i16`
+lanes, then widens once. Small row-index and contribution buffers have fixed stack
+capacities. K>=D kernels read bounded batches of raw indices and committed-zero
+masks; Sparse accumulation avoids materializing contribution tuples. One-digit
+witnesses consume the coefficient buffers directly for every chunk count, and
+multi-digit expansion and witness construction run independently across chunks.
+
+D128/K256 Compact mode prepares at most 4 MiB of dense rotations per shared
+block batch. Tasks with at least four contributing blocks retain `i16` partials
+between table batches; other tasks accumulate directly in `i32`. A conservative
+sum of each contributing challenge's maximum coefficient magnitude bounds every
+partial. Tasks flush before the bound exceeds `i16::MAX`; negacyclic rotations
+of `i8::MIN` are represented exactly as `i16`. Partial activity is inspected only
+at flush time. The task cache budget includes one output buffer; the narrow path
+adds two bytes per coefficient of scratch storage.
+
+Row-aligned block geometry reads each trace row once across all chunks. Manually
+chosen K>D blocks that split a row can require reading that boundary row for each
+block, as in the existing native kernel. Chunk outputs and Akita's global response
+aggregation still have costs that grow with the requested output size.
+
+The intentional lazy benchmark excludes setup and opening-view validation:
+
+```sh
+RAYON_NUM_THREADS=4 JOLT_AKITA_DECOMPOSE_MODE=auto \
+  cargo run --profile ci -q -p jolt-akita --example trace_decompose -- 16 31 128 48 256 8192 1 8
+```
+
+Arguments are `log2_rows samples D columns K positions digits chunks`.
+`JOLT_AKITA_BENCH_CHALLENGES=synthetic` selects D/4 challenge coefficients of
+magnitude one instead of the canonical production fixture.
+`JOLT_AKITA_BENCH_ACTIVITY=quarter` makes only every fourth row eligible in each
+column. Two warmups are the default; `JOLT_AKITA_BENCH_WARMUPS=0` avoids extra
+full-trace passes in long runs.
+
+Matched kernel measurements reuse the saved pre-`codex/akita-multi-chunk-on-1948`
+baselines; neither those historical kernels nor unchanged `amir/akita-batch` was
+benchmarked again. The 116 recorded geometries were measured with every chunk
+count, yielding 464 configurations. Every one-chunk case measured below its saved
+baseline. D64/K16 with three columns, `2^16` rows, and 8192 positions measured
+0.325 ms Dense/one-digit, 0.520 ms Dense/three-digit, and 0.651 ms
+Compact/one-digit, versus saved baselines of 0.475, 0.660, and 0.805 ms.
+
+At `2^28` rows with D128, 48 columns, 65536 positions, and one digit:
+
+| K | Saved pre-PR seconds | 1 chunk | 2 chunks | 4 chunks | 8 chunks |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 16 | 55.758 | 37.284 | 37.357 | 37.434 | 37.605 |
+| 256 | 23.497 | 23.095 | 23.073 | 23.149 | 23.091 |
+
+The chunk-count spreads are 0.9% and 0.3% respectively. These large runs use one
+sample per configuration, and the historical numbers come from separate runs;
+small margins do not establish a precise speedup. Short, output-dominated traces
+still pay for additional witness buffers and global-response aggregation, including
+empty chunks. Near-identical total latency is not claimed for those geometries.
+The comparison includes the native layout change and uses the prior single-chunk
+kernel as the reference; it is not an unchanged-native-kernel comparison or an
+end-to-end prover timing.
+
+Sampling rules, exact saved-baseline provenance, current source hashes, raw results,
+and reproduction commands are recorded in
+`benchmark-runs/akita-native-chunk-kernel-20261006/`.
+
 ## Validation
 
 Acceptance requires native/materialized kernel agreement, one row visit per fused
