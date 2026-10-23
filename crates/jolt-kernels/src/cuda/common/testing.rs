@@ -963,6 +963,9 @@ pub const REGISTER_ACTIVITY: [RegisterActivity; 12] = [
 
 pub struct RegisterFixture {
     pub rows: Vec<TraceRow>,
+    pub val: Vec<Fr>,
+    pub rs1_ra: Vec<Fr>,
+    pub rs2_ra: Vec<Fr>,
     pub rd_wa: Vec<Fr>,
     pub inc: Vec<Fr>,
 }
@@ -972,9 +975,16 @@ pub fn register_rows(log_t: usize, log_k: usize, seed: u64) -> RegisterFixture {
     let registers = 1usize << log_k;
     let mut state = vec![0u64; registers];
     let mut rows = Vec::with_capacity(cycles);
+    let mut val = vec![Fr::from_u64(0); registers * cycles];
+    let mut rs1_ra = vec![Fr::from_u64(0); registers * cycles];
+    let mut rs2_ra = vec![Fr::from_u64(0); registers * cycles];
     let mut rd_wa = vec![Fr::from_u64(0); registers * cycles];
 
     for cycle in 0..cycles {
+        for (register, value) in state.iter().copied().enumerate() {
+            val[register * cycles + cycle] = Fr::from_u64(value);
+        }
+
         let (rs1, rs2, rd) = REGISTER_ACTIVITY[(cycle + seed as usize) % REGISTER_ACTIVITY.len()];
         let mut registers_state = RegisterState::default();
         if let Some(register) = rs1 {
@@ -982,12 +992,14 @@ pub fn register_rows(log_t: usize, log_k: usize, seed: u64) -> RegisterFixture {
                 register,
                 value: state[register as usize],
             });
+            rs1_ra[register as usize * cycles + cycle] = Fr::from_u64(1);
         }
         if let Some(register) = rs2 {
             registers_state.rs2 = Some(RegisterRead {
                 register,
                 value: state[register as usize],
             });
+            rs2_ra[register as usize * cycles + cycle] = Fr::from_u64(1);
         }
         if let Some(register) = rd {
             let pre_value = state[register as usize];
@@ -1022,7 +1034,14 @@ pub fn register_rows(log_t: usize, log_k: usize, seed: u64) -> RegisterFixture {
         })
         .collect();
 
-    RegisterFixture { rows, rd_wa, inc }
+    RegisterFixture {
+        rows,
+        val,
+        rs1_ra,
+        rs2_ra,
+        rd_wa,
+        inc,
+    }
 }
 
 pub fn hot_addresses(

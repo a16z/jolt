@@ -11,9 +11,7 @@
 //! representations avoid the full address-by-cycle matrix.
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-#[cfg(test)]
-use jolt_field::Ring;
-use jolt_field::{Fr, JoltField};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::BindingOrder;
 
 use super::address_major_matrix::DeviceAddressMajorMatrix;
@@ -37,7 +35,6 @@ pub struct MatrixEntry {
 
 pub const MAX_COEFF_LUT_VALUES: usize = 1 << 16;
 
-#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoeffTables {
     pub values: [Vec<Fr>; MAX_COEFFS],
@@ -63,6 +60,10 @@ struct Segments {
 
 pub(crate) enum DeviceCoeffs {
     Direct(DeviceFrVec),
+    Indexed {
+        index: CudaSlice<u16>,
+        luts: [DeviceCoeffLut; MAX_COEFFS],
+    },
 }
 
 pub(crate) struct DeviceCoeffLut {
@@ -70,7 +71,6 @@ pub(crate) struct DeviceCoeffLut {
 }
 
 impl DeviceCoeffLut {
-    #[cfg(test)]
     fn new(context: &CudaKernelContext, values: &[Fr]) -> Result<Self, CudaError> {
         if !values.len().is_power_of_two() || values.len() > MAX_COEFF_LUT_VALUES {
             return Err(CudaError::InvariantViolation {
@@ -277,7 +277,6 @@ impl DeviceReadWriteMatrix {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn upload_luts(
         context: &CudaKernelContext,
         tables: &CoeffTables,
@@ -393,12 +392,18 @@ impl DeviceReadWriteMatrix {
         coeff_width: usize,
         entries: usize,
     ) -> Result<Self, CudaError> {
-        let DeviceCoeffs::Direct(coeffs) = coeffs;
-        let coeff_index = context.alloc_u16_unset(1)?;
-        let luts = [
-            DeviceCoeffLut::placeholder(context)?,
-            DeviceCoeffLut::placeholder(context)?,
-        ];
+        let (coeffs, coeff_index, luts, indexed) = match coeffs {
+            DeviceCoeffs::Direct(coeffs) => (
+                coeffs,
+                context.alloc_u16_unset(1)?,
+                [
+                    DeviceCoeffLut::placeholder(context)?,
+                    DeviceCoeffLut::placeholder(context)?,
+                ],
+                false,
+            ),
+            DeviceCoeffs::Indexed { index, luts } => (context.alloc(1)?, index, luts, true),
+        };
         Ok(Self {
             rows,
             cols,
@@ -408,7 +413,7 @@ impl DeviceReadWriteMatrix {
             coeffs,
             coeff_index,
             luts,
-            indexed: false,
+            indexed,
             wa_scale,
             coeff_width,
             entries,

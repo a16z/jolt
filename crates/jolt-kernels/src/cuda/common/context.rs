@@ -111,6 +111,9 @@ pub struct CudaKernelContext {
     fr_delta_u64: CudaFunction,
     rrw_flags: CudaFunction,
     rrw_scatter: CudaFunction,
+    rs2_claim: CudaFunction,
+    reg_scatter: CudaFunction,
+    reg_count: CudaFunction,
     bap_bind_squared: CudaFunction,
     bap_message: CudaFunction,
     brc_tables_init: CudaFunction,
@@ -365,6 +368,9 @@ impl CudaKernelContext {
             fr_delta_u64: module.load_function("fr_delta_u64_kernel")?,
             rrw_flags: module.load_function("rrw_flags_kernel")?,
             rrw_scatter: module.load_function("rrw_scatter_kernel")?,
+            rs2_claim: module.load_function("rs2_claim_kernel")?,
+            reg_scatter: module.load_function("reg_scatter_kernel")?,
+            reg_count: module.load_function("reg_count_kernel")?,
             bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
             bap_message: module.load_function("bap_message_kernel")?,
             brc_tables_init: module.load_function("brc_tables_init_kernel")?,
@@ -728,6 +734,12 @@ impl CudaKernelContext {
 
     pub(crate) fn clone_u32(&self, buffer: &CudaSlice<u32>) -> Result<CudaSlice<u32>, CudaError> {
         xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtod(buffer)?)
+        })
+    }
+
+    pub(crate) fn clone_u64(&self, buffer: &CudaSlice<u64>) -> Result<CudaSlice<u64>, CudaError> {
+        xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u64>(), || {
             Ok(self.stream.clone_dtod(buffer)?)
         })
     }
@@ -1151,6 +1163,18 @@ impl CudaKernelContext {
 
     pub(crate) const fn rrw_scatter(&self) -> &CudaFunction {
         &self.rrw_scatter
+    }
+
+    pub(crate) const fn reg_count(&self) -> &CudaFunction {
+        &self.reg_count
+    }
+
+    pub(crate) const fn reg_scatter(&self) -> &CudaFunction {
+        &self.reg_scatter
+    }
+
+    pub(crate) const fn rs2_claim(&self) -> &CudaFunction {
+        &self.rs2_claim
     }
 
     pub(crate) const fn amm_lift(&self) -> &CudaFunction {

@@ -2,13 +2,13 @@
 //! Also provides instruction-input checking, RAM output and value checking,
 //! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization,
 //! shift checking, register-value evaluation, RAM RAF evaluation, instruction read-RAF,
-//! and RAM read/write checking.
+//! and RAM/register read/write checking.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
 //! reduction, instruction operand reduction, instruction-input and read-RAF checking,
 //! RAM output and value checking, hamming-weight booleanity, Spartan shift
-//! checking, register-value evaluation, RAM RAF evaluation, and RAM read/write checking
+//! checking, register-value evaluation, RAM RAF evaluation, and RAM/register read/write checking
 //! in the optimized registry.
 //! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
 //! field-inline retains the optimized implementations.
@@ -171,7 +171,6 @@ mod ram_raf_evaluation;
 mod ram_read_write;
 mod ram_val_check;
 mod registers_claim_reduction;
-#[cfg(test)]
 mod registers_read_write;
 mod registers_val_evaluation;
 #[cfg(not(feature = "field-inline"))]
@@ -249,6 +248,7 @@ where
         backend.ram_output_check = Box::new(CudaBackend);
         backend.ram_raf_evaluation = Box::new(CudaBackend);
         backend.ram_read_write = Box::new(CudaBackend);
+        backend.registers_read_write = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
         backend.ram_ra_virtualization = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);
