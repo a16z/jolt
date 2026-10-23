@@ -337,6 +337,20 @@ impl<H: Sponge> Channel for VerifierTranscript<'_, H> {
         Ok(())
     }
 
+    fn exchange_public<A: CanonicalDecode>(
+        &mut self,
+        value: &mut A,
+    ) -> Result<(), TranscriptError> {
+        self.exchange(value)
+    }
+
+    fn exchange_public_all<A: CanonicalDecode>(
+        &mut self,
+        values: &mut [A],
+    ) -> Result<(), TranscriptError> {
+        self.exchange_all(values)
+    }
+
     fn challenge<F: Field>(&mut self) -> F {
         let (value, squeezed) = self.state.exact_challenge();
         self.log.record(TranscriptOp::Challenge, squeezed, None);

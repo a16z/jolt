@@ -37,12 +37,21 @@ pub trait Channel {
     /// Absorbs a public byte string, framed by its `u64` little-endian length.
     fn public_bytes(&mut self, bytes: &[u8]);
 
-    /// Sends (prover) or receives into (verifier) one prover message.
+    /// Sends (prover) or receives into (verifier) one prover message, as it
+    /// is.
+    ///
+    /// For protocols with no masked mode. Code written over both modes sends
+    /// a witness-dependent value through
+    /// [`PrivateChannel::exchange_private`](crate::PrivateChannel::exchange_private)
+    /// and a value public in both modes through
+    /// [`exchange_public`](Self::exchange_public); a masked channel refuses
+    /// this method.
     ///
     /// # Errors
     ///
     /// The verifier fails when the argument string is exhausted or the bytes
-    /// are not a canonical encoding. The prover never fails.
+    /// are not a canonical encoding. A clear prover never fails; a masked
+    /// channel fails with [`TranscriptError::ClearMessageOnMaskedChannel`].
     fn exchange<A: CanonicalDecode>(&mut self, value: &mut A) -> Result<(), TranscriptError>;
 
     /// Sends or receives one prover message per slot, in order.
@@ -52,6 +61,30 @@ pub trait Channel {
     /// As [`exchange`](Self::exchange).
     fn exchange_all<A: CanonicalDecode>(&mut self, values: &mut [A])
         -> Result<(), TranscriptError>;
+
+    /// Sends or receives one prover message that is public in both modes: a
+    /// masked channel sends it as it is, with no pad. The bytes are
+    /// [`exchange`](Self::exchange)'s.
+    ///
+    /// Only for a value the protocol may reveal: one hidden by its own
+    /// randomness, such as a hiding commitment, or a function of public data.
+    ///
+    /// # Errors
+    ///
+    /// The verifier fails as [`exchange`](Self::exchange) does. The prover
+    /// never fails.
+    fn exchange_public<A: CanonicalDecode>(&mut self, value: &mut A)
+        -> Result<(), TranscriptError>;
+
+    /// [`exchange_public`](Self::exchange_public) for each slot, in order.
+    ///
+    /// # Errors
+    ///
+    /// As [`exchange_public`](Self::exchange_public).
+    fn exchange_public_all<A: CanonicalDecode>(
+        &mut self,
+        values: &mut [A],
+    ) -> Result<(), TranscriptError>;
 
     /// Draws an exactly uniform element of `F`, per [`Field::random`]'s
     /// rejection-sampling contract.
