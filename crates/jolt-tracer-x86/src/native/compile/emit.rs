@@ -13,7 +13,8 @@
 //!   `imm.trailing_zeros()` (the immediate is a bitmask, not a shift);
 //! - guest termination is the PC-stall convention: a jump/taken branch whose
 //!   target equals its own source address executes once, then execution
-//!   stops.
+//!   stops, unless re-running it would leave
+//!   (`JoltInstructionRow::self_jump_repeats`).
 
 use common::constants::STACK_CANARY_SIZE;
 use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynasmApi, DynasmLabelApi};
@@ -908,9 +909,11 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -2);
                 e.load_imm(RCX, link_value(row));
                 e.store_rd(RCX, row.operands.rd);
-                dynasm!(e.ops ; .arch x64 ; mov rcx, QWORD row.address as i64 ; cmp rax, rcx ; jne >go);
-                e.terminal(row.address as u64);
-                dynasm!(e.ops ; .arch x64 ; go:);
+                if row.self_jump_repeats() {
+                    dynasm!(e.ops ; .arch x64 ; mov rcx, QWORD row.address as i64 ; cmp rax, rcx ; jne >go);
+                    e.terminal(row.address as u64);
+                    dynasm!(e.ops ; .arch x64 ; go:);
+                }
                 e.dispatch();
             }
 

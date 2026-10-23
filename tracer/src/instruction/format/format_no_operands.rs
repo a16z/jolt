@@ -4,11 +4,11 @@ use std::fmt::Debug;
 use super::{InstructionFormat, NormalizedOperands};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatFence {}
+pub struct FormatNoOperands {}
 
-impl InstructionFormat for FormatFence {
+impl InstructionFormat for FormatNoOperands {
     fn parse(_word: u32) -> Self {
-        FormatFence {}
+        FormatNoOperands {}
     }
 
     #[cfg(any(feature = "test-utils", test))]
@@ -17,14 +17,14 @@ impl InstructionFormat for FormatFence {
     }
 }
 
-impl From<NormalizedOperands> for FormatFence {
+impl From<NormalizedOperands> for FormatNoOperands {
     fn from(_: NormalizedOperands) -> Self {
         Self {}
     }
 }
 
-impl From<FormatFence> for NormalizedOperands {
-    fn from(_: FormatFence) -> Self {
+impl From<FormatNoOperands> for NormalizedOperands {
+    fn from(_: FormatNoOperands) -> Self {
         NormalizedOperands::default()
     }
 }
