@@ -13,11 +13,26 @@ use super::{
     CoeffLut, CycleState, LutIndex, OneHotCoeff,
 };
 
+/// Target entries per block of the block-parallel passes.
+const BLOCK_TARGET: usize = 1 << 14;
+
+/// Most blocks a block-parallel pass splits `len` entries into;
+/// [`pair_aligned_bounds`] merges blocks whose aligned boundaries coincide.
+pub(super) fn block_count(len: usize) -> usize {
+    len.div_ceil(BLOCK_TARGET).max(1)
+}
+
+/// Entries of each per-task scratch vector the in-place binds compact a
+/// row-pair group through.
+pub(super) const IN_PLACE_SCRATCH_LEN: usize = 2 << REGISTER_ADDRESS_BITS;
+
+/// Entries of each [`fused_scratch`] vector.
+pub(super) const FUSED_SCRATCH_LEN: usize = 1 << REGISTER_ADDRESS_BITS;
+
 /// Block boundaries advanced so no `row >> pair_bits` group is split.
 pub(crate) fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec<usize> {
-    const BLOCK_TARGET: usize = 1 << 14;
     let len = entries.len();
-    let block_count = len.div_ceil(BLOCK_TARGET).max(1);
+    let block_count = block_count(len);
     let mut bounds: Vec<usize> = Vec::with_capacity(block_count + 1);
     bounds.push(0);
     for block in 1..block_count {
@@ -91,13 +106,13 @@ pub(crate) fn bind_sparse_entries_in_place<E>(
     let counts: Vec<usize> = block_slices
         .into_par_iter()
         .map_init(
-            || Vec::with_capacity(2 << REGISTER_ADDRESS_BITS),
+            || Vec::with_capacity(IN_PLACE_SCRATCH_LEN),
             |scratch, block| bind_block(scratch, block),
         )
         .collect();
     #[cfg(not(feature = "parallel"))]
     let counts: Vec<usize> = {
-        let mut scratch = Vec::with_capacity(2 << REGISTER_ADDRESS_BITS);
+        let mut scratch = Vec::with_capacity(IN_PLACE_SCRATCH_LEN);
         block_slices
             .into_iter()
             .map(|block| bind_block(&mut scratch, block))
@@ -202,8 +217,8 @@ pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
         .map_init(
             || {
                 (
-                    Vec::with_capacity(2 << REGISTER_ADDRESS_BITS),
-                    Vec::with_capacity(2 << REGISTER_ADDRESS_BITS),
+                    Vec::with_capacity(IN_PLACE_SCRATCH_LEN),
+                    Vec::with_capacity(IN_PLACE_SCRATCH_LEN),
                 )
             },
             |scratch, (vals_block, metas_block)| bind_block(scratch, vals_block, metas_block),
@@ -212,8 +227,8 @@ pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
     #[cfg(not(feature = "parallel"))]
     let counts: Vec<usize> = {
         let mut scratch = (
-            Vec::with_capacity(2 << REGISTER_ADDRESS_BITS),
-            Vec::with_capacity(2 << REGISTER_ADDRESS_BITS),
+            Vec::with_capacity(IN_PLACE_SCRATCH_LEN),
+            Vec::with_capacity(IN_PLACE_SCRATCH_LEN),
         );
         block_slices
             .into_iter()
@@ -501,8 +516,8 @@ type FusedScratch<F> = (Vec<SparseEntry<F, LutIndex>>, Vec<SparseEntry<F, LutInd
 
 pub(super) fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
     (
-        Vec::with_capacity(1 << REGISTER_ADDRESS_BITS),
-        Vec::with_capacity(1 << REGISTER_ADDRESS_BITS),
+        Vec::with_capacity(FUSED_SCRATCH_LEN),
+        Vec::with_capacity(FUSED_SCRATCH_LEN),
     )
 }
 

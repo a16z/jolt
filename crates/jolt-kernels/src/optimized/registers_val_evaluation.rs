@@ -108,6 +108,34 @@ impl<F: JoltField> WaState<F> {
 
 pub struct OptimizedRegistersValEvaluation;
 
+impl OptimizedRegistersValEvaluation {
+    /// Peak bytes over `2^log_t >= 2^8` cycles (the prover's smallest padded
+    /// trace; a final table under four entries reserves four): the first bind
+    /// builds the `T/2` increment table beside the `rd` indices taken over from
+    /// stage 4 (moved, not copied), the `K`-entry address eq table and the
+    /// split LT tables. Rayon's fallible collect folds each split into its own
+    /// vector on a linked list, then appends them into one reserved table.
+    /// Split sizes have no lower bound, so each entry is priced at its worst:
+    /// its table slot, four vector slots (a one-entry split reserves four) and
+    /// a list node. The `T/2` write table that replaces the indices, the second
+    /// bind's `T/4` copy of the increments beside it and the split tables'
+    /// later dense switch hold less. Not counted: the increment row store, a
+    /// handle on the witness's rows when it has one, and the row collect
+    /// `prepare` falls back to when stage 4 parked no indices.
+    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
+        let cycles = 1usize << log_t;
+        let collected_entry = 5 * size_of::<F>() + size_of::<Vec<F>>() + 2 * size_of::<usize>();
+        [
+            cycles.saturating_mul(size_of::<Option<u8>>()),
+            (1usize << REGISTER_ADDRESS_BITS) * size_of::<F>(),
+            SplitLt::<F>::split_bytes(log_t),
+            (cycles / 2).saturating_mul(collected_entry),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
     fn prepare(
         &self,
@@ -457,5 +485,18 @@ mod tests {
     #[test]
     fn parity_with_stale_parked_indices_falls_back() {
         run_parity(structured_fixture(8), 3, 73, &IndexSource::StaleParked);
+    }
+
+    /// Stage 5's side of the `rd` handoff, at 2^13 cycles with Fr: the
+    /// indices stage 4 parked, moved in and counted once (16384 bytes), the
+    /// 128-entry address eq table (4096), the split LT tables of 2^6 and twice
+    /// 2^7 entries (10240), and 4096 increments collected at 200 bytes each:
+    /// a 32-byte table slot, four in a one-entry split and a 40-byte list node.
+    #[test]
+    fn peak_bytes_holds_the_parked_rd_indices_once() {
+        assert_eq!(
+            OptimizedRegistersValEvaluation::peak_bytes::<Fr>(13),
+            16_384 + 4_096 + 10_240 + 819_200
+        );
     }
 }

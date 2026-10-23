@@ -877,6 +877,20 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
     }
 }
 
+/// Pool threads that can run a parallel pass's closures at once; one without
+/// `parallel`. A rayon worker runs one closure body at a time, so per-call
+/// scratch a pass allocates inside its closures is live at most this many times.
+pub(crate) fn pool_workers() -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        rayon::current_num_threads()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        1
+    }
+}
+
 /// `LT(·, r) + constant` served from split tables and bound low-to-high
 /// (legacy `LtPolynomial` port).
 ///
@@ -900,13 +914,27 @@ pub(crate) enum SplitLt<F> {
 }
 
 impl<F: JoltField> SplitLt<F> {
+    /// Variables of `lt_lo` over a `vars`-variable point; `lt_hi` and
+    /// `eq_hi` take the rest.
+    const fn lo_vars(vars: usize) -> usize {
+        vars / 2
+    }
+
+    /// Bytes of the three split tables over `vars >= 2` variables.
+    pub(crate) fn split_bytes(vars: usize) -> usize {
+        let hi = 1usize << (vars - Self::lo_vars(vars));
+        (1usize << Self::lo_vars(vars))
+            .saturating_add(hi.saturating_mul(2))
+            .saturating_mul(size_of::<F>())
+    }
+
     pub(crate) fn new(r_cycle: &[F]) -> Self {
         Self::new_plus_constant(r_cycle, F::zero())
     }
 
     /// `LT(·, r_cycle) + constant` — the constant rides in the hi table.
     pub(crate) fn new_plus_constant(r_cycle: &[F], constant: F) -> Self {
-        let mid = r_cycle.len() / 2;
+        let mid = Self::lo_vars(r_cycle.len());
         let (r_hi, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
         if r_lo.is_empty() {
             return Self::Dense(

@@ -987,6 +987,28 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
 /// linear-time round kernel.
 pub struct OptimizedOuterRemainder;
 
+/// Entries of each of the remainder's `Az` and `Bz` tables over `2^log_t`
+/// cycles: the joint `(cycle ‖ stream)` domain.
+fn remainder_len(log_t: usize) -> usize {
+    (1usize << log_t).saturating_mul(2)
+}
+
+impl OptimizedOuterRemainder {
+    /// Peak bytes of the remainder's tables over `2^log_t` cycles: `Az` and
+    /// `Bz` at [`remainder_len`] entries each, plus the buffer the first
+    /// in-place shrink of `Az` allocates while `Bz` still holds its full
+    /// capacity ([`Polynomial::in_place_shrink_len`]). The closing opening
+    /// walk's `2^log_t` cycle weights come after both tables are bound down.
+    /// Not counted: the row store, a handle on the witness's rows when it has
+    /// one; the uni-skip carry; the split-eq tables; the field-inline rows.
+    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
+        let len = remainder_len(log_t);
+        len.saturating_mul(2)
+            .saturating_add(Polynomial::<F>::in_place_shrink_len(len))
+            .saturating_mul(size_of::<F>())
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
     fn prepare(
         &self,
@@ -1074,9 +1096,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
 
-        let cycles = 1usize << log_t;
-        let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * cycles);
-        let mut bz: Vec<F> = unsafe_allocate_zero_vec(2 * cycles);
+        let mut az: Vec<F> = unsafe_allocate_zero_vec(remainder_len(log_t));
+        let mut bz: Vec<F> = unsafe_allocate_zero_vec(remainder_len(log_t));
         let e_out = split_eq.e_out_current();
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();

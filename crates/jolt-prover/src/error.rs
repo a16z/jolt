@@ -61,6 +61,13 @@ pub enum ProverError<F: JoltField> {
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
 
+    /// An explicit [`MemoryBudget`](crate::MemoryBudget) is below the bytes
+    /// reserved for the optimized prover's known eager allocations
+    /// ([`MemoryBudget::check_known_eager`](crate::MemoryBudget::check_known_eager)).
+    /// Raised after tracing, before proving.
+    #[error("memory budget of {budget} bytes is below the {required} bytes reserved for the optimized prover's known eager allocations")]
+    MemoryBudgetExceeded { budget: usize, required: usize },
+
     /// The trace's last row is not a jump. Padding no-ops follow the last
     /// row, and only a jump's next-PC constraint is waived for a no-op
     /// successor, so any other final row (a taken self-branch, or the row

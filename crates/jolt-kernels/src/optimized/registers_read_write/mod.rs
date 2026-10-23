@@ -47,9 +47,35 @@ pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use address_first::AddressFirstKernel;
 use rows::CollectRegisterEntries;
-use sparse::{CoeffLut, CycleState};
+use sparse::CycleState;
 
 pub struct OptimizedRegistersReadWrite;
+
+impl OptimizedRegistersReadWrite {
+    /// Peak bytes of the kernel `prepare` builds for `dimensions` of at least
+    /// 2^8 cycles (the prover's smallest padded trace), under the same
+    /// `ReadWriteOrder` dispatch, with the per-cycle `rd` indices it
+    /// parks for stage 5: the cycle-first sparse state
+    /// (`CycleState::peak_bytes`) beside the `rs1` and `rs2` index columns, or
+    /// the address-first tables (`AddressFirstKernel::peak_bytes`); none for a
+    /// phase split `prepare` rejects before allocating. Not counted: the Gruen
+    /// split-eq tables, the round challenges, and the per-chunk extraction
+    /// buffer of the streamed collect taken without a row handle or without
+    /// `parallel`.
+    pub fn peak_bytes<F: JoltField>(dimensions: ReadWriteDimensions) -> usize {
+        let log_t = dimensions.log_t();
+        let column = (1usize << log_t).saturating_mul(size_of::<Option<u8>>());
+        match ReadWriteOrder::new::<F>(dimensions) {
+            Ok(ReadWriteOrder::CycleFirst) => column
+                .saturating_mul(3)
+                .saturating_add(CycleState::<F>::peak_bytes(log_t)),
+            Ok(ReadWriteOrder::AddressFirst) => {
+                column.saturating_add(AddressFirstKernel::<F>::peak_bytes(log_t))
+            }
+            Err(_) => 0,
+        }
+    }
+}
 
 impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
     fn prepare(
@@ -86,9 +112,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         }
         let cycles = 1usize << log_t;
 
-        let gamma = inputs.challenges.gamma;
-        let gamma_sq = gamma * gamma;
-
         // Sparse entry construction: one trace pass — the typed rows are
         // never materialized whole (80 bytes per cycle saved at the stage's
         // peak moment).
@@ -99,12 +122,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             rd_indices,
             rd_inc,
         } = CollectRegisterEntries::collect(witness, cycles)?;
-        let cycle = CycleState::new(
-            entries,
-            CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
-            CoeffLut::new(vec![F::zero(), F::one()]),
-            rd_inc,
-        );
+        let cycle = CycleState::new(entries, inputs.challenges.gamma, rd_inc);
 
         // Park the rd hot indices for the stage-5 val-evaluation kernel.
         session.park(SharedRdIndices(rd_indices));

@@ -73,6 +73,27 @@ impl InstructionInputRow {
 
 pub struct OptimizedInstructionInput;
 
+/// Entries of each table the first bind materializes over `2^log_t` cycles.
+fn materialized_len(log_t: usize) -> usize {
+    (1usize << log_t) / 2
+}
+
+impl OptimizedInstructionInput {
+    /// Peak bytes of the kernel's tables over `2^log_t` cycles: the
+    /// [`NUM_TABLES`] tables the first bind materializes at
+    /// [`materialized_len`] entries each, plus the buffer the first in-place
+    /// shrink of one table allocates while the others still hold their full
+    /// capacity ([`Polynomial::in_place_shrink_len`]). Not counted: the row
+    /// store, a handle on the witness's rows when it has one; the split-eq
+    /// tables.
+    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
+        let len = materialized_len(log_t);
+        len.saturating_mul(NUM_TABLES)
+            .saturating_add(Polynomial::<F>::in_place_shrink_len(len))
+            .saturating_mul(size_of::<F>())
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
@@ -352,9 +373,12 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         self.gruen.bind(challenge);
         match &mut self.state {
             InputState::Native(rows) => {
-                let tables =
-                    Self::materialize_half(rows, challenge, 1 << (self.progress.total() - 1))
-                        .map_err(row_extraction_error)?;
+                let tables = Self::materialize_half(
+                    rows,
+                    challenge,
+                    materialized_len(self.progress.total()),
+                )
+                .map_err(row_extraction_error)?;
                 self.state = InputState::Dense(tables);
                 purge_retained_memory(self.progress.total());
             }
