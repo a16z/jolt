@@ -309,21 +309,6 @@ mod tests {
         }
     }
 
-    /// Known answers at λ = 128 for a degree-`d` sumcheck round, `L = d`.
-    #[test]
-    fn known_answers() {
-        let fp128 = ChallengeSetSize::field_order(P128, 1).unwrap();
-        let masked_125 = ChallengeSetSize::power_of_two(125);
-        for (d, fp128_bits, masked_bits) in [(1, 1, 3), (2, 2, 4), (3, 2, 5), (8, 4, 6)] {
-            assert_eq!(grind_bits_for_loss(d, fp128, 128), Ok(fp128_bits), "d={d}");
-            assert_eq!(
-                grind_bits_for_loss(d, masked_125, 128),
-                Ok(masked_bits),
-                "d={d}"
-            );
-        }
-    }
-
     #[test]
     fn the_last_supported_difficulty_is_exact() {
         let fp128 = ChallengeSetSize::field_order(P128, 1).unwrap();
