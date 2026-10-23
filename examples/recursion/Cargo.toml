@@ -19,14 +19,16 @@ akita = [
   "dep:jolt-witness",
   "dep:tracer",
 ]
-# L3 compression-weight factoring, default on: with `akita`, the verifier
-# guest (and the host's Akita) evaluate the compression relation weights by
-# factor; same field values. Turn it off with --no-default-features.
-default = ["l3-compression-weights"]
+# L3 compression-weight factoring and the L2 terminal quotient certificate,
+# both default on and both effective only with `akita`. L3: the verifier guest
+# (and the host's Akita) evaluate the compression relation weights by factor;
+# same field values. L2: the inner Akita proofs carry the terminal A-row
+# quotient (protocol identifier v7-l2tq1) and the guest checks it at two
+# points instead of the exact product. Turn both off with
+# --no-default-features.
+default = ["l3-compression-weights", "l2-terminal-quotient"]
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
-# L2 terminal quotient certificate: the inner Akita proofs carry the terminal
-# A-row quotient and the guest verifies it instead of the exact product.
-l2-terminal-quotient = ["akita", "jolt-akita/l2-terminal-quotient"]
+l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }

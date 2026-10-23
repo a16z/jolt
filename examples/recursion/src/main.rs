@@ -117,7 +117,7 @@ enum Commands {
     },
     /// L2 lever: write a proof stream whose first inner Akita proof has its
     /// terminal quotient or terminal response altered (rejection cases).
-    #[cfg(feature = "l2-terminal-quotient")]
+    #[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
     TamperL2 {
         #[arg(long)]
         example: String,
@@ -892,7 +892,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("akita");
     #[cfg(feature = "ntt-inline")]
     program.add_guest_feature("ntt-inline");
-    #[cfg(feature = "l2-terminal-quotient")]
+    #[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
     program.add_guest_feature("l2-terminal-quotient");
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("hash-inlines");
@@ -947,7 +947,7 @@ fn tamper_opening(guest: GuestProgram, workdir: &Path, output: &Path) {
 }
 
 /// Bincode's standard varint length prefix.
-#[cfg(feature = "l2-terminal-quotient")]
+#[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
 fn push_varint_len(out: &mut Vec<u8>, len: usize) {
     let len = len as u64;
     if len < 251 {
@@ -966,7 +966,7 @@ fn push_varint_len(out: &mut Vec<u8>, len: usize) {
 
 /// L2 rejection fixtures. The quotient is the last message of the Akita
 /// proof body (after the terminal `z` payload), `quotient_bytes` long.
-#[cfg(feature = "l2-terminal-quotient")]
+#[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
 fn tamper_l2(
     guest: GuestProgram,
     workdir: &Path,
@@ -1175,7 +1175,7 @@ fn main() {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
             tamper_opening(guest, workdir, output);
         }
-        #[cfg(feature = "l2-terminal-quotient")]
+        #[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
         Some(Commands::TamperL2 {
             example,
             workdir,
