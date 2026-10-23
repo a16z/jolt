@@ -2,14 +2,14 @@
 //! Also provides instruction-input checking, RAM output and value checking,
 //! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization,
 //! shift checking, register-value evaluation, RAM RAF evaluation, instruction read-RAF,
-//! and RAM/register read/write checking.
+//! RAM/register read/write checking, and initial-RAM opening evaluation.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
 //! reduction, instruction operand reduction, instruction-input and read-RAF checking,
 //! RAM output and value checking, hamming-weight booleanity, Spartan shift
 //! checking, register-value evaluation, RAM RAF evaluation, and RAM/register read/write checking
-//! in the optimized registry.
+//! plus initial-RAM opening evaluation in the optimized registry.
 //! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
 //! field-inline retains the optimized implementations.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
@@ -162,6 +162,7 @@ mod instruction_claim_reduction;
 mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
+mod opening;
 mod program_image_claim_reduction;
 mod ram_hamming_booleanity;
 mod ram_output_check;
@@ -219,7 +220,8 @@ where
     /// hamming-weight claim reduction, booleanity checking,
     /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
     /// reduction and virtualization, and RV64 bytecode read-RAF, Spartan outer,
-    /// and product kernels, plus instruction read-RAF, with CUDA implementations.
+    /// and product kernels, plus instruction read-RAF and initial-RAM opening
+    /// evaluation, with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -249,6 +251,7 @@ where
         backend.ram_raf_evaluation = Box::new(CudaBackend);
         backend.ram_read_write = Box::new(CudaBackend);
         backend.registers_read_write = Box::new(CudaBackend);
+        backend.ram_initial_openings = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
         backend.ram_ra_virtualization = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);
