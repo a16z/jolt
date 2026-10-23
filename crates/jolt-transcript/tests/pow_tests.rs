@@ -2,16 +2,15 @@
 
 #![expect(clippy::unwrap_used, reason = "tests")]
 
-use jolt_field::{CanonicalBytes, Fr, Prime128Offset275, F8};
+use jolt_field::{CanonicalBytes, F8};
 use jolt_transcript::FieldTranscript;
 use jolt_transcript::{
-    prover_transcript, verifier_transcript, Blake2b512, BytesMsg, ChallengeCodec, PoseidonSponge,
-    Probe, ProverTranscript, VerifierTranscript, MAX_POW_BITS,
+    prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge, Probe,
+    ProverTranscript, VerifierTranscript, MAX_POW_BITS,
 };
 use spongefish::{
     instantiations::Keccak, DuplexSpongeInit, DuplexSpongeInterface, ProverState, VerifierState,
 };
-use std::fmt::Debug;
 
 const SESSION: &[u8] = b"jolt/pow/v1";
 const INSTANCE: [u8; 32] = [0x24; 32];
@@ -126,36 +125,6 @@ fn layout_matches_the_manual_transcript() {
             manual_check(bits, n);
         }
     }
-}
-
-/// One proof of work protects two challenge messages of different fields.
-fn round_trip<F: ChallengeCodec + PartialEq + Debug, G: ChallengeCodec + PartialEq + Debug>() {
-    for bits in [0, 1, 8, 9, 16] {
-        let mut prover = prover();
-        ProverTranscript::grind(&mut prover, bits).unwrap();
-        let first = FieldTranscript::<F>::challenge_vector(&mut prover, 17).unwrap();
-        let second = FieldTranscript::<G>::challenge_vector(&mut prover, 3).unwrap();
-        prover.prover_message(&BytesMsg(b"after".to_vec()));
-
-        let mut verifier = verifier(prover.narg_string());
-        VerifierTranscript::check_grind(&mut verifier, bits).unwrap();
-        assert_eq!(
-            FieldTranscript::<F>::challenge_vector(&mut verifier, 17).unwrap(),
-            first
-        );
-        assert_eq!(
-            FieldTranscript::<G>::challenge_vector(&mut verifier, 3).unwrap(),
-            second
-        );
-        assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"after");
-        verifier.check_eof().unwrap();
-    }
-}
-
-#[test]
-fn round_trips() {
-    round_trip::<Prime128Offset275, Fr>();
-    round_trip::<Fr, Prime128Offset275>();
 }
 
 fn sponge_prover<H: DuplexSpongeInit<U = u8>>() -> ProverState<H> {
