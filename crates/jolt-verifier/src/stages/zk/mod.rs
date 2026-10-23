@@ -8,12 +8,13 @@ use jolt_zk::masking::{CommittedPadsView, MaskedVerifier};
 use crate::stages::relations::MaskedClaims;
 use crate::VerifierError;
 
-/// The residual relation over Jolt's stages. ZK applies only to the
-/// homomorphic build: no zk protocol exists over the Akita axis (`akita` and
-/// `zk` are mutually exclusive features).
-#[cfg(not(feature = "akita"))]
+/// The residual relation over Jolt's stages 1–7.
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
 #[doc(hidden)]
 pub mod residual;
+
+#[cfg(all(feature = "akita", feature = "zk"))]
+pub use residual::MaskedMember;
 
 /// A masked stage batch as the ZK verifier reads it: the masked rounds with
 /// their batching data, the output points derived at the batch point, and the

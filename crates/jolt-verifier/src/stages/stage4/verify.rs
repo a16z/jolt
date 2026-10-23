@@ -237,6 +237,8 @@ where
             batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             ram_val_check_public_eval,
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            program_image_point: init_structure.program_image_point.clone(),
             output_points: batch.output_points,
         }))
     }

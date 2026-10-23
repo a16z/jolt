@@ -6,6 +6,7 @@
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "zk",
+    not(feature = "akita"),
     not(feature = "field-inline")
 ))]
 mod support;
@@ -13,6 +14,7 @@ mod support;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "zk",
+    not(feature = "akita"),
     not(feature = "field-inline")
 ))]
 #[expect(

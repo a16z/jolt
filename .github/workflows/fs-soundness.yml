@@ -59,15 +59,10 @@ jobs:
           -p jolt-verifier
           --test fs_obligations
           --cargo-quiet
-      - name: Probe Akita ZK support
-        shell: bash
-        run: |
-          set -euo pipefail
-          if cargo check -p jolt-verifier --lib --features akita,zk 2>akita-zk.log; then
-            echo "Akita+ZK now builds; add it to the Fiat-Shamir fixture matrix."
-            exit 1
-          fi
-          grep -q "features are mutually exclusive" akita-zk.log
+      # Akita+ZK (Whiteout) builds but rejects every proof until the W6d
+      # tail lands; that PR adds it to the Fiat-Shamir fixture matrix.
+      - name: Build Akita ZK (Whiteout) verifier
+        run: cargo check -p jolt-verifier --lib --features akita,zk
 
   fs-attacks-smoke:
     name: FS attacks (${{ matrix.instance }})

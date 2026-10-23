@@ -12,6 +12,8 @@ use super::instruction_read_raf::{
 };
 use super::ram_ra_claim_reduction::{RamRaClaimReduction, RamRaClaimReductionOutputClaims};
 use super::registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationOutputClaims};
+#[cfg(all(feature = "akita", feature = "zk"))]
+use crate::stages::zk::MaskedMember;
 use crate::VerifierError;
 
 /// Source-of-truth for stage 5's sumcheck batch, in Fiat-Shamir batch order (instruction
@@ -107,6 +109,10 @@ pub struct Stage5ClearOutput<F: JoltField> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5ZkOutput<F: JoltField> {
+    /// Whiteout: each member's residual lowering, through the clear
+    /// verifier's own public-value owners (`ConcreteSumcheck::masked_member`).
+    #[cfg(all(feature = "akita", feature = "zk"))]
+    pub members: Vec<MaskedMember<F>>,
     pub challenges: Stage5Challenges<F>,
     pub batch_rounds: BatchedMaskedRounds<F>,
     pub batch_output_claims: MaskedClaims<F>,

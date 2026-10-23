@@ -16,20 +16,26 @@ use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
-use jolt_transcript::{Channel, ProtocolId, Sponge, VerifierTranscript};
 #[cfg(not(feature = "akita"))]
-use jolt_transcript::{PrivateChannel, TranscriptError};
+use jolt_transcript::PrivateChannel;
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
+use jolt_transcript::TranscriptError;
+use jolt_transcript::{Channel, ProtocolId, Sponge, VerifierTranscript};
 #[cfg(not(feature = "akita"))]
 use jolt_zk::blindfold::BlindFold;
 use jolt_zk::masking::CommittedPadsView;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_zk::masking::OperandRule;
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
+use jolt_zk::masking::PadLayout;
 #[cfg(not(feature = "akita"))]
 use jolt_zk::masking::{
-    AffineRow, PadLayout, ResidualRelation, ResidualRows, ResidualVar, ZkBackend, ZkError,
+    AffineRow, ResidualRelation, ResidualRows, ResidualVar, ZkBackend, ZkError,
 };
 
 #[cfg(not(feature = "akita"))]
 use crate::sites::{BLINDFOLD, PADS};
-#[cfg(not(feature = "akita"))]
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
 use crate::stages::zk::residual::{JoltResidual, ResidualInputs};
 use crate::stages::{
     stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
@@ -247,10 +253,10 @@ impl<F: JoltField, C> MaskedStages<F, C> {
 
 /// Stages 1–7's outputs.
 #[cfg_attr(
-    feature = "akita",
+    all(feature = "akita", not(feature = "zk")),
     expect(
         dead_code,
-        reason = "the Akita build has no residual relation, which alone reads every stage"
+        reason = "a clear Akita build has no residual relation, which alone reads every stage"
     )
 )]
 struct StageOutputs<F: JoltField> {
@@ -347,7 +353,12 @@ where
     })
 }
 
-#[cfg(not(feature = "akita"))]
+/// The residual operand rule of Whiteout, the Akita build's back end: it
+/// commits each product operand's pad as a constant digit polynomial.
+#[cfg(all(feature = "akita", feature = "zk"))]
+const WHITEOUT_OPERANDS: OperandRule = OperandRule::MaskedSlot;
+
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
 impl<F: JoltField> StageOutputs<F> {
     fn residual<PCS, VC>(
         &self,
@@ -369,7 +380,10 @@ impl<F: JoltField> StageOutputs<F> {
             stage6a: self.stage6a.zk()?,
             stage6b: self.stage6b.zk()?,
             stage7: self.stage7.zk()?,
+            #[cfg(not(feature = "akita"))]
             operands: BlindFold::<VC>::OPERANDS,
+            #[cfg(feature = "akita")]
+            operands: WHITEOUT_OPERANDS,
         })
     }
 }
@@ -386,7 +400,10 @@ impl<F: JoltField> StageOutputs<F> {
 /// # Errors
 ///
 /// [`VerifierError`] if the seeded prefix is malformed or the replay fails.
-#[cfg(not(feature = "akita"))]
+///
+/// Whiteout (W6d) appends Akita's masked prefix to this replay; until then
+/// the Akita build counts stages 1–7 only.
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
 pub fn pad_layout<F, PCS, VC>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -640,6 +657,15 @@ where
         trusted_advice_commitment,
         &mut transcript,
     )?;
+    // Whiteout's pad commitment, masked opening and Σ tail are not wired
+    // yet, so a Whiteout build accepts nothing: it rejects where the pad
+    // commitment would be read.
+    if checked.zk.is_masked() {
+        return Err(VerifierError::ProtocolAxisUnimplemented {
+            axis: "zk (Whiteout)",
+            pending: "the pad commitment, the masked Akita opening and the Σ tail (W6d)",
+        });
+    }
 
     let stages = verify_stages_1_to_7::<F, PCS, VC, H, ()>(
         preprocessing,
@@ -666,6 +692,36 @@ where
 
     transcript.finish()?;
     Ok(())
+}
+
+/// The masked stage spine of a Whiteout proof after its seeding messages:
+/// stages 1–7 on `pads`, and their residual relation. W6d's verifier runs it
+/// between the pad commitment and stage 8.
+///
+/// # Errors
+///
+/// [`VerifierError`] if a stage rejects or the residual cannot be built.
+#[cfg(all(feature = "akita", feature = "zk"))]
+pub fn verify_masked_stages<F, PCS, VC, H, P>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    seeded: &SeededTranscript<PCS::Output>,
+    transcript: &mut VerifierTranscript<'_, H>,
+    pads: &mut CommittedPadsView<P>,
+) -> Result<JoltResidual<F>, VerifierError>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+    H: Sponge,
+{
+    verify_stages_1_to_7::<F, PCS, VC, H, P>(
+        preprocessing,
+        &seeded.checked,
+        &seeded.formula_dimensions,
+        transcript,
+        Some(pads),
+    )?
+    .residual(&seeded.checked, preprocessing)
 }
 
 /// The verifier state after the transcript's leading messages: the validated

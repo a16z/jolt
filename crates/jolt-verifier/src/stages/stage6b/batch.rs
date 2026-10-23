@@ -3,10 +3,11 @@
 //! `Stage6bSumchecks::build` assembles the batch members ONCE, after
 //! stage 6a and the post-6a draws, directly from the upstream stage outputs. It
 //! derives the mode-agnostic constructor legs (per-stage cycle bindings, reduced
-//! points, the stage-6a address openings) plus the clear-only value aux
-//! (`table_fold`, `address_val_stages`, base advice reference points — each
-//! empty/`None` in ZK, where `expected_output` never runs) as a single contiguous
-//! block before constructing the members. The four `Option` members are present
+//! points, the stage-6a address openings) plus the value aux (`table_fold`,
+//! `address_val_stages`, base advice reference points) as a single contiguous
+//! block before constructing the members. The value aux feeds the clear
+//! output checks; Whiteout's masked lowering also reads the table fold for its
+//! publics, and BlindFold builds none of it (its residual derives its own). The four `Option` members are present
 //! exactly when their precommitted layout needs a cycle-phase reduction, so the
 //! batch's instance count matches the prover's.
 
@@ -55,6 +56,7 @@ use super::instruction_ra_virtualization::{
 use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
+use crate::config::ZkConfig;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::stages::stage1::Stage1Output;
 use crate::stages::stage2::{Stage2BatchOutputPoints, Stage2Output};
@@ -73,9 +75,9 @@ use crate::VerifierError;
 
 /// The batch legs [`Stage6bSumchecks::build_from_parts`] assembles the members
 /// from: protocol geometry, the precommitted schedule, the carried stage-6a
-/// draws, the mode-agnostic upstream opening points, and the clear-only value
-/// aux (each empty/`None` in ZK, where `input_claim`/`expected_output` never
-/// run). Every field is data both the verifier and the prover hold.
+/// draws, the mode-agnostic upstream opening points, and the value aux (see
+/// the module docs for when each is present). Every field is data both the
+/// verifier and the prover hold.
 pub struct Stage6bBuildParts<'a, F: JoltField> {
     pub formula_dimensions: &'a JoltFormulaDimensions,
     pub ram_log_k: usize,
@@ -83,7 +85,7 @@ pub struct Stage6bBuildParts<'a, F: JoltField> {
     pub precommitted: &'a PrecommittedSchedule,
     pub entry_bytecode_index: usize,
     /// The full bytecode rows backing the full-program table fold
-    /// (`None` in ZK and committed-program modes).
+    /// (`None` under BlindFold and in committed-program mode).
     pub bytecode_table_rows: Option<&'a [JoltInstructionRow]>,
     pub carried: &'a Stage6aCarriedChallenges<F>,
     pub eta: Option<F>,
@@ -159,14 +161,18 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         // The pre-/around-6a draws consumed by the legs ride on the stage-6a
         // output as typed upstream values; the mode-specific value aux (the
         // staged Val openings, the advice reference points, the full bytecode
-        // rows) feeds only `input_claim` / `expected_output`, which never run
-        // in ZK.
+        // rows) feeds `input_claim` / `expected_output`, and the table fold also
+        // Whiteout's masked publics.
         let committed_program = checked.precommitted.bytecode.is_some();
         let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
         let entry_bytecode_index = preprocessing
             .program
             .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
-        let bytecode_table_rows = if checked.zk.is_masked() || committed_program {
+        // The table fold feeds the clear output check and, under Whiteout,
+        // the masked lowering's `StageValue` publics; BlindFold's residual
+        // derives its own.
+        let table_fold_needed = !committed_program && !matches!(checked.zk, ZkConfig::BlindFold);
+        let bytecode_table_rows = if !table_fold_needed {
             None
         } else {
             Some(
@@ -363,8 +369,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 registers_val_evaluation_cycle,
             ]
         };
-        // The full-program table fold is expected_output-only (absent rows mean
-        // ZK or committed mode, where it never runs).
+        // The full-program table fold feeds the output publics (absent rows
+        // mean BlindFold or committed mode, where nothing reads it).
         let bytecode_table_fold =
             bytecode_table_rows.map(|bytecode| BytecodeReadRafTableFoldInputs {
                 bytecode,

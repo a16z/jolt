@@ -14,7 +14,7 @@ use core::marker::PhantomData;
 
 #[cfg(feature = "zk")]
 use jolt_algebra::CanonicalEncoding;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_crypto::Commitment;
 use jolt_crypto::VectorCommitment;
 use jolt_poly::UnivariatePoly;
@@ -29,28 +29,35 @@ use jolt_transcript::{ProverTranscript, Sponge};
 use jolt_verifier::stages::relations::ClaimRoutes;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::VerifierError;
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+use jolt_zk::blindfold::BlindFoldPadOpening;
 #[cfg(feature = "zk")]
-use jolt_zk::{
-    blindfold::BlindFoldPadOpening,
-    masking::{CommittedPads, MaskingRecorder},
-};
+use jolt_zk::masking::{CommittedPads, MaskingRecorder};
 
 use crate::ProverError;
 
+/// What opens the pad commitment: BlindFold's vector-commitment opening.
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+type ModePadOpening<VC> =
+    BlindFoldPadOpening<<VC as VectorCommitment>::Field, <VC as Commitment>::Output>;
+
 /// The pads a ZK proof commits before its first challenge.
-#[cfg(feature = "zk")]
-pub type ModePads<VC> = CommittedPads<
-    <VC as VectorCommitment>::Field,
-    BlindFoldPadOpening<<VC as VectorCommitment>::Field, <VC as Commitment>::Output>,
->;
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+pub type ModePads<VC> = CommittedPads<<VC as VectorCommitment>::Field, ModePadOpening<VC>>;
+/// The pads a Whiteout proof commits before its first challenge.
+/// PROTOTYPE: no opening until W6d wires Whiteout's lattice pad commitment;
+/// the production Whiteout entry rejects before any pads exist, and only the
+/// `prover-fixtures` seam builds them (`CommittedPads::uncommitted`).
+#[cfg(all(feature = "zk", feature = "akita"))]
+pub type ModePads<VC> = CommittedPads<<VC as VectorCommitment>::Field, ()>;
 
 /// The compiled mode's batch recorder type.
-#[cfg(feature = "zk")]
-pub type ModeRecorder<'a, VC> = MaskingRecorder<
-    'a,
-    <VC as VectorCommitment>::Field,
-    BlindFoldPadOpening<<VC as VectorCommitment>::Field, <VC as Commitment>::Output>,
->;
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+pub type ModeRecorder<'a, VC> =
+    MaskingRecorder<'a, <VC as VectorCommitment>::Field, ModePadOpening<VC>>;
+/// The compiled mode's batch recorder type.
+#[cfg(all(feature = "zk", feature = "akita"))]
+pub type ModeRecorder<'a, VC> = MaskingRecorder<'a, <VC as VectorCommitment>::Field, ()>;
 #[cfg(not(feature = "zk"))]
 pub type ModeRecorder<'a, VC> = ClearSumcheckRecorder<<VC as VectorCommitment>::Field>;
 

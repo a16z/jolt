@@ -35,6 +35,8 @@ use jolt_riscv::JoltInstructionRow;
 #[cfg(feature = "field-inline")]
 use crate::stages::field_inline_bytecode::FieldInlineBytecodeFold;
 use crate::stages::relations::ConcreteSumcheck;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use crate::stages::zk::MaskedMember;
 use crate::VerifierError;
 
 #[cfg(not(feature = "akita"))]
@@ -127,7 +129,7 @@ pub struct BytecodeReadRaf<F: JoltField> {
     /// stages, plus the lattice store stage — whose fold and complement feed
     /// the four fused-inc consumer stages) folded against
     /// `eq(r_address, row)` — the pre-cycle half of the read-raf publics.
-    /// `None` in ZK, where `expected_output` never runs.
+    /// `None` under BlindFold, whose residual derives its own publics.
     stage_values_at_r_address: Option<FoldedStageValues<F>>,
     /// Field-register access points and the stage-4/5 gamma powers.
     #[cfg(feature = "field-inline")]
@@ -309,36 +311,37 @@ fn expected_output_from_publics<F: JoltField>(
     )
 }
 
-impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
-    type Symbolic = CycleSymbolic;
+/// The full-mode cycle relation's publics at one output point.
+struct CyclePublics<F: JoltField> {
+    base: BytecodeReadRafPublicValues<F>,
+    /// The four fused-inc consumer stages' `StageValue`s, from stage
+    /// `NUM_BYTECODE_VAL_STAGES - 1` on.
+    #[cfg(feature = "akita")]
+    fused: Vec<F>,
+}
 
-    fn symbolic(&self) -> &Self::Symbolic {
-        &self.symbolic
+impl<F: JoltField> CyclePublics<F> {
+    fn value(&self, id: &JoltDerivedId) -> Result<F, VerifierError> {
+        let missing = || VerifierError::MissingStageClaimDerived { id: (*id).into() };
+        let JoltDerivedId::BytecodeReadRaf(public_id) = id else {
+            return Err(missing());
+        };
+        #[cfg(feature = "akita")]
+        if let jolt_claims::protocols::jolt::BytecodeReadRafPublic::StageValue(stage) = public_id {
+            if let Some(fused) = stage.checked_sub(NUM_BYTECODE_VAL_STAGES - 1) {
+                return self.fused.get(fused).copied().ok_or_else(missing);
+            }
+        }
+        self.base.value(*public_id).ok_or_else(missing)
     }
+}
 
-    fn derive_opening_points(
+impl<F: JoltField> BytecodeReadRaf<F> {
+    /// The publics the clear output check and the masked lowering both read.
+    fn cycle_publics(
         &self,
-        sumcheck_point: &[F],
-        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
-    ) -> Result<BytecodeReadRafCycleOutputClaims<Vec<F>>, VerifierError> {
-        let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
-        derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
-    }
-
-    #[cfg_attr(
-        feature = "akita",
-        expect(
-            clippy::wildcard_enum_match_arm,
-            reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
-        )
-    )]
-    fn expected_output(
-        &self,
-        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
-        output_values: &BytecodeReadRafCycleOutputClaims<F>,
         output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
-        challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
-    ) -> Result<F, VerifierError> {
+    ) -> Result<CyclePublics<F>, VerifierError> {
         let opening_point = output_points
             .bytecode_ra()
             .first()
@@ -392,24 +395,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
             }
             composed
         };
-        #[cfg(not(feature = "akita"))]
-        {
-            expected_output_from_publics(
-                self.dimensions,
-                &base_public_values,
-                &output_values.bytecode_ra,
-                challenges.gamma,
-            )
-        }
-        // The Akita fused-inc stages: the store fold (and its complement)
-        // bound to the four consuming relations' cycle points, resolved
-        // through the lattice cycle output expression against the `FusedInc`
-        // opening.
         #[cfg(feature = "akita")]
-        {
-            // The four fused-inc consumer stages resolve from the staged store
-            // fold (its complement for the register legs) against their own
-            // cycle eqs; the `FusedInc` factor is the relation's own opening.
+        let fused = {
             let base_stages = NUM_BYTECODE_VAL_STAGES - 1;
             // The store stage is the last staged wire (index `base_stages`).
             let store_at_r_address = *stage_values_at_r_address
@@ -427,7 +414,60 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     .ok_or_else(|| public_input_failed("missing fused stage cycle point"))?;
                 Ok(address_fold * *cycle_eq)
             };
-            let public_values = base_public_values;
+            (base_stages..READ_RAF_CYCLE_STAGES)
+                .map(fused_stage_value)
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok(CyclePublics {
+            base: base_public_values,
+            #[cfg(feature = "akita")]
+            fused,
+        })
+    }
+}
+
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
+    type Symbolic = CycleSymbolic;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
+
+    fn derive_opening_points(
+        &self,
+        sumcheck_point: &[F],
+        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
+    ) -> Result<BytecodeReadRafCycleOutputClaims<Vec<F>>, VerifierError> {
+        let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
+    }
+
+    #[cfg_attr(
+        feature = "akita",
+        expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
+        )
+    )]
+    fn expected_output(
+        &self,
+        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
+        output_values: &BytecodeReadRafCycleOutputClaims<F>,
+        output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
+        challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let publics = self.cycle_publics(output_points)?;
+        #[cfg(not(feature = "akita"))]
+        {
+            expected_output_from_publics(
+                self.dimensions,
+                &publics.base,
+                &output_values.bytecode_ra,
+                challenges.gamma,
+            )
+        }
+        #[cfg(feature = "akita")]
+        {
             let output_openings = bytecode::read_raf_output_openings(self.dimensions);
             if output_values.bytecode_ra.len() != output_openings.bytecode_ra.len() {
                 return Err(public_input_failed(format!(
@@ -458,17 +498,19 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     }
                     _ => Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
                 },
-                |id| match id {
-                    JoltDerivedId::BytecodeReadRaf(
-                        jolt_claims::protocols::jolt::BytecodeReadRafPublic::StageValue(stage),
-                    ) if *stage >= base_stages => fused_stage_value(*stage),
-                    JoltDerivedId::BytecodeReadRaf(public_id) => public_values
-                        .value(*public_id)
-                        .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
-                    _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
-                },
+                |id| publics.value(id),
             )
         }
+    }
+
+    fn derive_output_term(
+        &self,
+        id: &JoltDerivedId,
+        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
+        output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
+        _challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        self.cycle_publics(output_points)?.value(id)
     }
 }
 
@@ -758,10 +800,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
 
-    #[expect(
-        clippy::wildcard_enum_match_arm,
-        reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
-    )]
     fn expected_output(
         &self,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
@@ -769,20 +807,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let opening_point = output_points
-            .bytecode_ra()
-            .first()
-            .map(Vec::as_slice)
-            .ok_or_else(|| public_input_failed("bytecode cycle produced no openings"))?;
-        let r_cycle = r_cycle_suffix(self.dimensions.log_t(), opening_point)?;
-        let public_values = bytecode::read_raf_committed_public_values::<F>(
-            BytecodeReadRafCommittedEvaluationInputs {
-                r_address: &self.r_address,
-                r_cycle,
-                stage_cycle_points: self.stage_cycle_points.each_ref().map(Vec::as_slice),
-                entry_bytecode_index: self.entry_bytecode_index,
-            },
-        );
+        let public_values = self.committed_publics(output_points)?;
         let output_openings = bytecode::read_raf_output_openings(self.dimensions);
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
@@ -811,14 +836,53 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                     .resolve_challenge(id)
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
-            |id| match id {
-                JoltDerivedId::BytecodeReadRaf(public_id) => public_values
-                    .value(*public_id)
-                    .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
-                _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
-            },
+            |id| committed_public_value(&public_values, id),
         )
     }
+
+    fn derive_output_term(
+        &self,
+        id: &JoltDerivedId,
+        _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
+        output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
+        _challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        committed_public_value(&self.committed_publics(output_points)?, id)
+    }
+}
+
+impl<F: JoltField> BytecodeReadRafCommitted<F> {
+    /// The publics the clear output check and the masked lowering both read.
+    fn committed_publics(
+        &self,
+        output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
+    ) -> Result<bytecode::BytecodeReadRafCommittedPublicValues<F>, VerifierError> {
+        let opening_point = output_points
+            .bytecode_ra()
+            .first()
+            .map(Vec::as_slice)
+            .ok_or_else(|| public_input_failed("bytecode cycle produced no openings"))?;
+        let r_cycle = r_cycle_suffix(self.dimensions.log_t(), opening_point)?;
+        Ok(bytecode::read_raf_committed_public_values::<F>(
+            BytecodeReadRafCommittedEvaluationInputs {
+                r_address: &self.r_address,
+                r_cycle,
+                stage_cycle_points: self.stage_cycle_points.each_ref().map(Vec::as_slice),
+                entry_bytecode_index: self.entry_bytecode_index,
+            },
+        ))
+    }
+}
+
+fn committed_public_value<F: JoltField>(
+    public_values: &bytecode::BytecodeReadRafCommittedPublicValues<F>,
+    id: &JoltDerivedId,
+) -> Result<F, VerifierError> {
+    let missing = || VerifierError::MissingStageClaimDerived { id: (*id).into() };
+    let JoltDerivedId::BytecodeReadRaf(public_id) = id else {
+        return Err(missing());
+    };
+    public_values.value(*public_id).ok_or_else(missing)
 }
 
 #[derive(Clone)]
@@ -994,6 +1058,29 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
             ),
             BytecodeReadRafCycleVariant::Committed(relation) => {
                 relation.expected_output(input_points, output_values, output_points, challenges)
+            }
+        }
+    }
+
+    /// Dispatches per variant, like [`expected_output`](Self::expected_output):
+    /// the full variant lowers its own output formula, not the anchor's.
+    #[cfg(all(feature = "akita", feature = "zk"))]
+    fn masked_member(
+        &self,
+        input_points: &BytecodeReadRafInputClaims<Vec<F>>,
+        output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
+        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
+    ) -> Result<MaskedMember<F>, VerifierError> {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation.masked_member(
+                input_points,
+                output_points,
+                &BytecodeReadRafCyclePhaseChallenges {
+                    gamma: challenges.gamma,
+                },
+            ),
+            BytecodeReadRafCycleVariant::Committed(relation) => {
+                relation.masked_member(input_points, output_points, challenges)
             }
         }
     }

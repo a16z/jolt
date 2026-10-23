@@ -58,11 +58,13 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{JoltProof, ProofCommitments, ProofHeader};
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
+pub use verifier::pad_layout;
+#[cfg(all(feature = "akita", feature = "zk"))]
+pub use verifier::verify_masked_stages;
 pub use verifier::{
     absorb_public_commitments, absorb_public_preamble, jolt_protocol_id, seed_transcript,
     validate_inputs, verify, CheckedInputs, JoltSponge, JOLT_SESSION,
 };
 #[cfg(not(feature = "akita"))]
-pub use verifier::{
-    pad_layout, replay_stages, verify_residual, verify_stages, MaskedStages, VerifiedStages,
-};
+pub use verifier::{replay_stages, verify_residual, verify_stages, MaskedStages, VerifiedStages};

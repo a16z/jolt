@@ -21,7 +21,6 @@ use super::field_registers_inc_claim_reduction::{
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
 };
-#[cfg(not(feature = "akita"))]
 use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
 use super::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
 use super::{
@@ -44,7 +43,6 @@ use super::{
         ram_ra_virtualization_input_values_from_upstream,
     },
 };
-#[cfg(not(feature = "akita"))]
 use crate::stages::zk::masked_channel;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -111,18 +109,25 @@ where
         stage5.output_points(),
     );
 
-    // No zk protocol exists over the Akita axis, so the masked arm is
-    // base-only and an Akita build never holds pads.
-    #[cfg(feature = "akita")]
-    let _ = pads;
-    #[cfg(not(feature = "akita"))]
     if checked.zk.is_masked() {
         let batch =
             sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
 
         return Ok(Stage6bOutput::Zk(Stage6bZkOutput {
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            members: sumchecks.masked_members(
+                &input_points,
+                &batch.output_points,
+                &cycle_challenges,
+            )?,
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            bytecode_reduction_weights: sumchecks
+                .bytecode_reduction
+                .as_ref()
+                .map(|reduction| reduction.weights().clone()),
             challenges: Stage6bCarriedChallenges {
                 instruction_ra_gamma: draws.instruction_ra_gamma,
+                #[cfg(not(feature = "akita"))]
                 inc_gamma: draws.inc_gamma,
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_gamma: draws.field_registers_inc_gamma,

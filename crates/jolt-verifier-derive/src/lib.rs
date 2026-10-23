@@ -793,6 +793,70 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
+    // Each present member's residual lowering, in declaration order (the
+    // batching-coefficient order), through its `ConcreteSumcheck::masked_member`.
+    let masked_members_method = {
+        let pushes = plans.iter().map(|plan| {
+            let id = &plan.ident;
+            if plan.is_option {
+                quote! {
+                    match (
+                        self.#id.as_ref(),
+                        input_points.#id.as_ref(),
+                        output_points.#id.as_ref(),
+                        challenges.#id.as_ref(),
+                    ) {
+                        (::core::option::Option::None, _, _, _) => {}
+                        (
+                            ::core::option::Option::Some(__member),
+                            ::core::option::Option::Some(__input),
+                            ::core::option::Option::Some(__output),
+                            ::core::option::Option::Some(__challenges),
+                        ) => __members.push(__member.masked_member(__input, __output, __challenges)?),
+                        (::core::option::Option::Some(_), _, _, _) => {
+                            return ::core::result::Result::Err(
+                                #krate::VerifierError::StageClaimSumcheckFailed {
+                                    stage: #base_lit.to_string(),
+                                    reason: "present instance is missing its points or challenges"
+                                        .to_string(),
+                                },
+                            );
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    __members.push(self.#id.masked_member(
+                        &input_points.#id,
+                        &output_points.#id,
+                        &challenges.#id,
+                    )?);
+                }
+            }
+        });
+        quote! {
+            /// Each present member as a masked proof's residual relation
+            /// lowers it, in declaration order. Whiteout (the `akita`
+            /// build) only; BlindFold's residual lowers by hand.
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            pub fn masked_members(
+                &self,
+                input_points: &#input_points_name<#f>,
+                output_points: &#output_points_name<#f>,
+                challenges: &#challenges_name<#f>,
+            ) -> ::core::result::Result<
+                ::std::vec::Vec<#krate::stages::zk::MaskedMember<#f>>,
+                #krate::VerifierError,
+            > {
+                use #relations::ConcreteSumcheck as _;
+
+                let mut __members = ::std::vec::Vec::new();
+                #(#pushes)*
+                ::core::result::Result::Ok(__members)
+            }
+        }
+    };
+
     // Map each member's opening point through its
     // `ConcreteSumcheck::derive_opening_points` into the stage's `OutputPoints`
     // aggregate. Takes the batch challenge vector directly: an instance's point
@@ -1234,6 +1298,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #begin_batch_method
             #verify_clear_method
             #verify_masked_method
+            #masked_members_method
             #derive_points_method
             #validate_aliases_method
             #expected_final_claim_method

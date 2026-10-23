@@ -22,10 +22,10 @@ use crate::JoltBackend;
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_algebra::Fr;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_algebra::Ring;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_crypto::{Bn254, JoltGroup, PedersenSetup};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
@@ -44,7 +44,7 @@ use jolt_riscv::{
     TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_transcript::{Channel, ProverTranscript, VerifierTranscript};
-use jolt_verifier::config::SELECTED_ZK_CONFIG;
+use jolt_verifier::config::{ZkConfig, SELECTED_ZK_CONFIG};
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::{
     build_formula_dimensions, stage1, stage2, stage3, stage4, stage5, stage6a, stage6b,
@@ -430,7 +430,8 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
         trusted_advice_commitment_present: false,
-        vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
+        vc_capacity: matches!(SELECTED_ZK_CONFIG, ZkConfig::BlindFold)
+            .then_some(MAX_BLINDFOLD_GENERATORS),
         precommitted: PrecommittedSchedule {
             #[cfg(not(feature = "akita"))]
             trusted_advice: None,
@@ -483,7 +484,7 @@ pub(crate) fn test_public_io() -> JoltDevice {
 /// committed on a throwaway transcript: the fixture prover starts at stage 1,
 /// and [`verify_through`] counts pads rather than reading their commitment.
 pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
-    #[cfg(feature = "zk")]
+    #[cfg(all(feature = "zk", not(feature = "akita")))]
     {
         use jolt_zk::{
             blindfold::BlindFold,
@@ -503,6 +504,19 @@ pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
         )
         .unwrap();
         ProofMode::masked(pads)
+    }
+    // Whiteout's pads are uncommitted until W6d wires the lattice pad
+    // commitment.
+    #[cfg(all(feature = "zk", feature = "akita"))]
+    {
+        use jolt_algebra::Field;
+        use jolt_zk::masking::{CommittedPads, PadLayout};
+        use rand_core::OsRng;
+        let layout = PadLayout::new(1 << 14, 0).unwrap();
+        let pads = (0..layout.num_pads)
+            .map(|_| Fr::random(&mut OsRng))
+            .collect();
+        ProofMode::masked(CommittedPads::uncommitted(layout, pads).unwrap())
     }
     #[cfg(not(feature = "zk"))]
     {

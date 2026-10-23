@@ -20,12 +20,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::VerifierError;
 
-#[cfg(all(feature = "zk", feature = "akita"))]
-compile_error!(
-    "the `zk` and `akita` features are mutually exclusive until Whiteout (`ZkConfig::Whiteout`) \
-     is wired into the verifier (specs/whiteout-jolt-integration.md, W6d)"
-);
-
 /// The zero-knowledge axis. Serialized in [`JoltProof`](crate::proof::JoltProof)
 /// and absorbed as the first preamble byte, so variants are append-only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

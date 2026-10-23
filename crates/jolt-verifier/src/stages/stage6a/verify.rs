@@ -96,6 +96,12 @@ where
             &mut masked_channel(pads, transcript)?,
         )?;
         return Ok(Stage6aOutput::Zk(Stage6aZkOutput {
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            members: address_sumchecks.masked_members(
+                &address_input_points,
+                &batch.output_points,
+                &address_challenges,
+            )?,
             challenges: carried,
             rounds: batch.rounds,
             output_claims: batch.output_claims,

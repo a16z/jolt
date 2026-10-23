@@ -29,6 +29,13 @@ use jolt_kernels::akita::commitment::FieldIncObject;
 
 /// Outputs retained for later prover stages. The transcript is positioned
 /// exactly where the verifier's `seed_transcript` leaves its own.
+#[cfg_attr(
+    feature = "zk",
+    expect(
+        dead_code,
+        reason = "the commitments feed stage 8, which Whiteout replaces in W6d"
+    )
+)]
 pub struct Stage0Output<PCS, H>
 where
     PCS: CommitmentScheme,
