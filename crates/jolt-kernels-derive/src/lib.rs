@@ -4,11 +4,14 @@
 //! whose sumcheck slots are `Box<dyn PrepareKernel<F, R>>` fields — into its
 //! type-indexed resolution: one `jolt_kernels::PrepareKernel<F, R>` impl per
 //! slot, delegating `prepare` to `self.<field>`. The field's own type IS the
-//! relation→slot mapping — declared once, restated nowhere. Every other
-//! field (bespoke slots such as commitment streaming or the joint opening)
-//! is skipped silently, so a mis-declared slot surfaces as a
-//! missing-`PrepareKernel` bound error at the consuming stage impl, never as
-//! a derive error. The emitted impls reference `PrepareKernel` and its
+//! relation→slot mapping — declared once, restated nowhere. Fields whose type
+//! never names `PrepareKernel` (bespoke slots such as commitment streaming or
+//! the joint opening) are skipped. The test is syntactic: a field whose type
+//! names `PrepareKernel` in any other shape (an extra object bound, a wrapper,
+//! a wrong argument count) is a derive error at that field, while a slot
+//! spelled through a type alias or a renamed import never names it, is
+//! skipped, and surfaces as a missing `PrepareKernel` bound at the consumer
+//! that needs it. The emitted impls reference `PrepareKernel` and its
 //! signature types through the crate path from the serde-style
 //! `#[kernel_slots(crate = "...")]` override — absolute `::jolt_kernels` by
 //! default (external registries need nothing); `jolt-kernels` itself passes
@@ -17,9 +20,12 @@
 //!
 //! See `specs/prover-stage-drivers.md`.
 
+#[cfg(test)]
+mod tests;
+
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use proc_macro2::{TokenStream as TokenStream2, TokenTree};
+use quote::{quote, ToTokens};
 use syn::{
     parse_macro_input, Data, DeriveInput, Fields, GenericArgument, Meta, PathArguments, Type,
     TypeParamBound,
@@ -27,7 +33,8 @@ use syn::{
 
 /// Emit one `jolt_kernels::PrepareKernel<F, R>` impl per `Box<dyn
 /// PrepareKernel<F, R>>` field of the registry struct, delegating `prepare`
-/// to that field. Fields of any other type are skipped silently.
+/// to that field. Fields whose type does not name `PrepareKernel` are
+/// skipped; any other field naming it is rejected.
 /// `#[kernel_slots(crate = "...")]` overrides the `::jolt_kernels` path the
 /// impls name the trait crate by (the defining crate passes `"crate"`). See
 /// the crate-level docs.
@@ -62,10 +69,25 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    let impls = fields.iter().filter_map(|field| {
-        let ident = field.ident.as_ref()?;
-        let (f, r) = prepare_kernel_args(&field.ty)?;
-        Some(quote! {
+    let mut impls = Vec::new();
+    let mut errors: Option<syn::Error> = None;
+    for field in fields {
+        let ident = &field.ident;
+        if !names_prepare_kernel(field.ty.to_token_stream()) {
+            continue;
+        }
+        let Some((f, r)) = prepare_kernel_args(&field.ty) else {
+            let error = syn::Error::new_spanned(
+                &field.ty,
+                "a KernelSlots slot must be exactly `Box<dyn PrepareKernel<F, R>>`",
+            );
+            match &mut errors {
+                Some(errors) => errors.combine(error),
+                None => errors = Some(error),
+            }
+            continue;
+        };
+        impls.push(quote! {
             impl #impl_generics #krate::PrepareKernel<#f, #r> for #name #ty_generics
             #where_clause
             {
@@ -81,10 +103,21 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     self.#ident.prepare(session, witness, inputs)
                 }
             }
-        })
-    });
+        });
+    }
 
-    Ok(quote!(#(#impls)*))
+    match errors {
+        Some(errors) => Err(errors),
+        None => Ok(quote!(#(#impls)*)),
+    }
+}
+
+fn names_prepare_kernel(tokens: TokenStream2) -> bool {
+    tokens.into_iter().any(|tree| match tree {
+        TokenTree::Ident(ident) => ident == "PrepareKernel",
+        TokenTree::Group(group) => names_prepare_kernel(group.stream()),
+        TokenTree::Punct(_) | TokenTree::Literal(_) => false,
+    })
 }
 
 fn crate_path(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Path>> {
