@@ -610,6 +610,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_claims::protocols::jolt::geometry::dimensions::JoltOneHotDimensions;
     use jolt_field::Fr;
 
     /// Pins the post-6a draw schedule to member declaration order: the instruction-RA gamma,
@@ -618,16 +619,14 @@ mod tests {
     /// then the committed bytecode eta exactly when the bytecode layout is committed.
     #[test]
     fn stage6b_draws_follow_member_declaration_order() {
-        let formula_dimensions = JoltFormulaDimensions::try_from(
-            jolt_claims::protocols::jolt::geometry::dimensions::JoltOneHotDimensions {
-                log_t: 8,
-                instruction_address_bits: 128,
-                bytecode_k: 1024,
-                ram_k: 4096,
-                committed_chunk_bits: 8,
-                lookup_virtual_chunk_bits: 32,
-            },
-        )
+        let formula_dimensions = JoltFormulaDimensions::try_from(JoltOneHotDimensions {
+            log_t: 8,
+            instruction_address_bits: 128,
+            bytecode_k: 1024,
+            ram_k: 4096,
+            committed_chunk_bits: 8,
+            lookup_virtual_chunk_bits: 32,
+        })
         .unwrap();
         for committed_bytecode in [false, true] {
             let mut expected_squeezes = 1usize;

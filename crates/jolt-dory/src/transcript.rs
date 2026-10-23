@@ -143,7 +143,7 @@ mod tests {
     use ark_serialize::CanonicalSerialize;
     use dory::backends::arkworks::{ArkFr as DoryArkFr, ArkG1};
     use jolt_field::Ring;
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{Blake2bTranscript, SECURITY_BITS};
 
     // The framing words below are reconstructed from the documented layout
     // (legacy.rs `Label` / `LabelWithCount`), NOT by calling those helpers:
@@ -296,7 +296,7 @@ mod tests {
         for (label, bits) in [(&b"alpha"[..], 130), (b"beta", 129), (b"d", 130)] {
             let loss = short_challenge_loss(label).expect("short label");
             assert_eq!(
-                jolt_transcript::challenge_bits_for_loss(loss, jolt_transcript::SECURITY_BITS),
+                jolt_transcript::challenge_bits_for_loss(loss, SECURITY_BITS),
                 Ok(bits)
             );
 
