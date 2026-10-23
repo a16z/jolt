@@ -135,6 +135,14 @@ impl JoltProgram {
         &self.elf_bytes
     }
 
+    /// Bytes the ELF image, expanded bytecode and memory-init buffers hold on
+    /// the heap, at capacity.
+    pub fn heap_bytes(&self) -> usize {
+        self.elf_bytes.capacity()
+            + self.expanded_bytecode.capacity() * size_of::<JoltInstructionRow>()
+            + self.memory_init.capacity() * size_of::<(u64, u8)>()
+    }
+
     pub fn trace_with<B: ExecutionBackend>(
         &self,
         backend: &mut B,
@@ -326,6 +334,23 @@ impl TraceOutput<Arc<TraceData>> {
             advice_tape,
         )
     }
+
+    /// Bytes the shared trace buffers ([`TraceData::heap_bytes`], counted
+    /// once), the device's input, advice and output buffers, the final memory
+    /// image and the advice tape hold on the heap, at capacity.
+    pub fn heap_bytes(&self) -> usize {
+        let device = &self.device;
+        self.trace.heap_bytes()
+            + device.inputs.capacity()
+            + device.trusted_advice.capacity()
+            + device.untrusted_advice.capacity()
+            + device.outputs.capacity()
+            + self
+                .final_memory
+                .as_ref()
+                .map_or(0, |memory| memory.bytes.capacity() * size_of::<(u64, u8)>())
+            + self.advice_tape.as_ref().map_or(0, Vec::capacity)
+    }
 }
 
 #[cfg(test)]
@@ -398,6 +423,47 @@ mod dimension_tests {
                 assert_eq!(merged.merge(RamAddressBounds::default()), merged);
             }
         }
+    }
+
+    #[test]
+    fn heap_bytes_count_owned_buffers_at_capacity() {
+        let mut rows = Vec::with_capacity(64);
+        rows.resize(3, JoltTraceRow::default());
+        let device = JoltDevice {
+            inputs: Vec::with_capacity(5),
+            trusted_advice: Vec::with_capacity(7),
+            untrusted_advice: Vec::with_capacity(11),
+            outputs: Vec::with_capacity(13),
+            ..JoltDevice::default()
+        };
+        let final_memory = MemoryImage {
+            bytes: Vec::with_capacity(17),
+        };
+        let advice_tape = Vec::<u8>::with_capacity(19);
+        let expected = rows.capacity() * size_of::<JoltTraceRow>()
+            + device.inputs.capacity()
+            + device.trusted_advice.capacity()
+            + device.untrusted_advice.capacity()
+            + device.outputs.capacity()
+            + final_memory.bytes.capacity() * size_of::<(u64, u8)>()
+            + advice_tape.capacity();
+        let output = TraceOutput::new(
+            TraceData::new(rows),
+            device,
+            Some(final_memory),
+            Some(advice_tape),
+        );
+        assert_eq!(output.heap_bytes(), expected);
+
+        let elf_bytes = Vec::with_capacity(23);
+        let mut expanded_bytecode = Vec::with_capacity(29);
+        expanded_bytecode.push(JoltInstructionRow::default());
+        let memory_init = Vec::with_capacity(31);
+        let expected = elf_bytes.capacity()
+            + expanded_bytecode.capacity() * size_of::<JoltInstructionRow>()
+            + memory_init.capacity() * size_of::<(u64, u8)>();
+        let program = JoltProgram::from_parts(elf_bytes, expanded_bytecode, memory_init, 0, 0);
+        assert_eq!(program.heap_bytes(), expected);
     }
 
     #[test]

@@ -309,8 +309,13 @@ pub struct ProfileArgs {
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
     /// optimized`. A budget below the optimized prover's known eager
     /// reservation, which covers named eager tables only, fails after
-    /// tracing, before proving; passing it does not mean the whole proof
-    /// fits, and the budget does not cap process memory.
+    /// tracing, before proving. Under Akita, a budget that cannot hold the
+    /// trace output, program and program preprocessing buffers plus the
+    /// one-hot setup's flat public matrix and setup-prefix sources fails
+    /// before PCS setup allocates them, and any budget fails for multi-chunk
+    /// or field-inline setups, which that check does not price. Passing does
+    /// not mean the whole proof fits, and the budget does not cap process
+    /// memory.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
@@ -1008,10 +1013,28 @@ fn prove_workload(
     )
     .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
+    // Counts the named caller buffers only: the sizing trace run_workload
+    // queued for a background drop may still be live and is not included.
+    let setup_source_limit = memory_budget.map(|budget| {
+        let caller_bytes = trace_output
+            .heap_bytes()
+            .saturating_add(jolt_program.heap_bytes())
+            .saturating_add(shared.program.heap_bytes());
+        budget.bytes().checked_sub(caller_bytes).unwrap_or_else(|| {
+            panic!(
+                "memory budget of {} bytes is below the {caller_bytes} bytes the trace output, program and program preprocessing hold before PCS setup",
+                budget.bytes()
+            )
+        })
+    });
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
-    let (pcs_setup, verifier_setup) = AkitaScheme::setup(params).expect("Akita PCS setup");
+    let (pcs_setup, verifier_setup) = match setup_source_limit {
+        Some(limit) => AkitaScheme::setup_with_known_source_limit(params, limit),
+        None => AkitaScheme::setup(params),
+    }
+    .expect("Akita PCS setup");
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);
     let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {

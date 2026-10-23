@@ -16,8 +16,8 @@ use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutpu
 use jolt_witness::JoltWitnessPlane;
 use std::sync::Arc;
 
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, DEFAULT_MAX_WIDTH};
+use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns, NO_ACCESS};
 use super::support::{
     bind_raw_twice, bound_pair, pin_derived_term, triple_product_round_evals, RoundProgress,
     SplitLt,
@@ -79,6 +79,43 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
             lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
         }))
     }
+}
+
+// `scalar_window_bytes` is derived for eight-wide lazy address tables only.
+const _: () = assert!(DEFAULT_MAX_WIDTH == 8);
+
+/// Bytes the value check's scalar tables request at their largest over
+/// `2^log_t` cycles and `ram_k` addresses: the larger of two windows, both
+/// with the split LT tables. The second bind builds the `T/4`-entry
+/// increment table while the shared address column, two generations of
+/// value columns ([`ram_access_columns_bytes`]: stage 2's, which may still
+/// await its background drop, and the check's own, dropped right after) and
+/// the `2K`-entry address table are live. The fourth bind builds the
+/// `16K`-entry address table beside the `8K`-entry one, with the address
+/// column, stage 2's generation and the increment table still counted, the
+/// last at `T/4` although parallel binds may already have copied it smaller.
+/// Every other scalar request of the check, from the collector's chunk views
+/// at preparation through the dense address and LT replacements, round
+/// messages, the output and the tables a parallel build queues for a
+/// background drop, fits in the larger window. Not counted: the boxed
+/// kernel, `Vec` and `Arc` headers, Rayon jobs and the macOS purge's
+/// cache-pump requests.
+///
+/// Derived for the canonical 64-bit `Fr` and Akita field layouts, from the
+/// minimum trace length `ProverConfig::from_padded_dimensions` enforces
+/// (2^8 cycles, 2^12 under Akita) to 2^32 cycles and for up to 2^32
+/// addresses, independent of the cycle count; not claimed for other layouts.
+pub fn scalar_window_bytes<F: JoltField>(log_t: usize, ram_k: usize) -> usize {
+    let field = |entries: usize| entries.saturating_mul(size_of::<F>());
+    let increments = (1usize << log_t) / 4;
+    let second_bind = ram_access_columns_bytes(log_t, 2)
+        .saturating_add(field(increments.saturating_add(ram_k.saturating_mul(2))));
+    let fourth_bind = ram_access_columns_bytes(log_t, 1).saturating_add(field(
+        increments.saturating_add(ram_k.saturating_mul(3 * DEFAULT_MAX_WIDTH)),
+    ));
+    second_bind
+        .max(fourth_bind)
+        .saturating_add(SplitLt::<F>::split_bytes(log_t))
 }
 
 /// Raw trace values for two rounds; a dense `T/4` table afterward.
