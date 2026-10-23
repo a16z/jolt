@@ -30,6 +30,11 @@ profiling = ["parallel"]
 # relation weights by factor (same field values; see akita-types).
 l3-compression-weights = ["akita-types/l3-compression-weights"]
 
+# Byte-preserving recursion experiments, default off.
+word-transcript = ["jolt-transcript/word-transcript"]
+word-decode = ["jolt-field/word-decode"]
+ont-static-base = ["akita-challenges/ont-static-base"]
+
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.

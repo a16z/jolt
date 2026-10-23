@@ -898,6 +898,12 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("hash-inlines");
     #[cfg(all(feature = "akita", feature = "l3-compression-weights"))]
     program.add_guest_feature("l3-compression-weights");
+    #[cfg(feature = "word-transcript")]
+    program.add_guest_feature("word-transcript");
+    #[cfg(feature = "word-decode")]
+    program.add_guest_feature("word-decode");
+    #[cfg(feature = "ont-static-base")]
+    program.add_guest_feature("ont-static-base");
     program.set_memory_config(memory_config);
     program
 }

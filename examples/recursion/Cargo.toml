@@ -30,6 +30,11 @@ default = ["l3-compression-weights", "l2-terminal-quotient"]
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
 
+# Each arm is selected independently and forwarded to the guest.
+word-transcript = ["akita", "jolt-akita/word-transcript"]
+word-decode = ["akita", "jolt-akita/word-decode"]
+ont-static-base = ["akita", "jolt-akita/ont-static-base"]
+
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
 jolt-program = { path = "../../crates/jolt-program", optional = true }

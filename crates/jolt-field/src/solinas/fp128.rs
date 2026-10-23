@@ -1157,6 +1157,13 @@ impl<const P: u128> CanonicalBytes for Fp128<P> {
         assert_eq!(out.len(), Self::NUM_BYTES);
         out.copy_from_slice(&join(self.0).to_le_bytes());
     }
+
+    #[cfg(feature = "word-transcript")]
+    #[inline(always)]
+    fn to_bytes_be(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), Self::NUM_BYTES);
+        out.copy_from_slice(&join(self.0).to_be_bytes());
+    }
 }
 
 impl<const P: u128> CanonicalEncoding for Fp128<P> {
@@ -1204,11 +1211,20 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
 
     #[inline]
     fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        #[cfg(feature = "word-transcript")]
+        if let Ok(array) = <[u8; 16]>::try_from(bytes) {
+            return Self::from_u128(u128::from_le_bytes(array));
+        }
         Self::from_bytes_le_reduced(bytes)
     }
 }
 
+#[cfg(not(feature = "word-decode"))]
 crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
+
+#[cfg(feature = "word-decode")]
+#[path = "fp128_word_decode.rs"]
+mod word_decode;
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
     type Accumulator = Fp128Accumulator<P>;

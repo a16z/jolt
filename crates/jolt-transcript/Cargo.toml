@@ -27,6 +27,9 @@ transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
 
 blake2-inline = ["dep:jolt-inlines-blake2", "jolt-inlines-blake2/digest"]
 
+# Byte-preserving scalar buffering and encoding, default off.
+word-transcript = ["jolt-field/word-transcript"]
+
 [dependencies]
 jolt-inlines-blake2 = { workspace = true, optional = true }
 ark-bn254 = { workspace = true, optional = true }
@@ -39,6 +42,7 @@ jolt-field = { path = "../jolt-field", default-features = false }
 rand = { workspace = true, features = ["std_rng"], optional = true }
 
 [dev-dependencies]
+jolt-field = { path = "../jolt-field", default-features = false, features = ["solinas"] }
 criterion = { workspace = true }
 
 [[bench]]

@@ -29,6 +29,10 @@ hash-inlines = [
 # L3 recursion experiment: factorized compression-weight evaluation.
 l3-compression-weights = ["akita", "jolt-akita/l3-compression-weights"]
 
+word-transcript = ["akita", "jolt-akita/word-transcript"]
+word-decode = ["akita", "jolt-akita/word-decode"]
+ont-static-base = ["akita", "jolt-akita/ont-static-base"]
+
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
 # embedded_bytecode.rs imports jolt-riscv types when the host prepares an
