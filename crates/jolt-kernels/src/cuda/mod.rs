@@ -150,6 +150,8 @@ use crate::{JoltBackend, KernelError, ModeStreamingCommitment};
 mod advice_claim_reduction;
 mod booleanity;
 mod bytecode_claim_reduction;
+#[cfg(not(feature = "field-inline"))]
+mod bytecode_read_raf;
 mod common;
 mod dory;
 mod hamming_weight_claim_reduction;
@@ -213,8 +215,8 @@ where
     /// RA virtualization, RAM output and value checking, RAM hamming booleanity,
     /// hamming-weight claim reduction, booleanity checking,
     /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
-    /// reduction and virtualization, and RV64 Spartan outer and product kernels with
-    /// CUDA implementations.
+    /// reduction and virtualization, and RV64 bytecode read-RAF cycle, Spartan outer,
+    /// and product kernels with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -248,6 +250,7 @@ where
         backend.spartan_shift = Box::new(CudaBackend);
         #[cfg(not(feature = "field-inline"))]
         {
+            backend.bytecode_read_raf_cycle = Box::new(CudaBackend);
             backend.spartan_outer_uniskip = Box::new(CudaBackend);
             backend.spartan_outer_remainder = Box::new(CudaBackend);
             backend.spartan_product_uniskip = Box::new(CudaBackend);

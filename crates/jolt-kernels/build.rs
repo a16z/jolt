@@ -29,6 +29,7 @@ const KERNEL_FILES: &[&str] = &[
     "instruction_ra_virtualization.cu",
     "ram_ra_virtualization.cu",
     "booleanity_cycle.cu",
+    "bytecode_read_raf.cu",
     "spartan_outer.cu",
     "one_hot_fold.cu",
     "hamming_weight_claim_reduction.cu",

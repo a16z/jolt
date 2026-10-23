@@ -119,6 +119,14 @@ pub struct CudaKernelContext {
     brc_message_sparse: CudaFunction,
     brc_message_dense: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
+    brr_coefficient: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    brr_gather: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    brr_message_sparse: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    brr_message_dense: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     so_gather: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
     so_shift: CudaFunction,
@@ -357,6 +365,14 @@ impl CudaKernelContext {
             brc_gather: module.load_function("brc_gather_kernel")?,
             brc_message_sparse: module.load_function("brc_message_sparse_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brr_coefficient: module.load_function("brr_coefficient_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brr_gather: module.load_function("brr_gather_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brr_message_sparse: module.load_function("brr_message_sparse_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brr_message_dense: module.load_function("brr_message_dense_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             so_gather: module.load_function("so_gather_kernel")?,
             #[cfg(not(feature = "field-inline"))]
@@ -855,6 +871,26 @@ impl CudaKernelContext {
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {
         &self.brc_message_dense
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brr_coefficient(&self) -> &CudaFunction {
+        &self.brr_coefficient
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brr_gather(&self) -> &CudaFunction {
+        &self.brr_gather
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brr_message_sparse(&self) -> &CudaFunction {
+        &self.brr_message_sparse
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brr_message_dense(&self) -> &CudaFunction {
+        &self.brr_message_dense
     }
 
     #[cfg(not(feature = "field-inline"))]
