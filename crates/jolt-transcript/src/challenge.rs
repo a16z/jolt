@@ -96,10 +96,10 @@ mod sealed {
 ///
 /// `ChallengeCodec` bounds the field of every `ProverTranscript` and
 /// `VerifierTranscript` `field_challenges` call, so a protocol that draws
-/// field challenges from these transcripts names it as a bound. Akita's
-/// `akita-transcript` re-exports it for that purpose. Callers cannot implement it. The widths and decodings above are
-/// part of the transcript's wire format: changing one changes every proof
-/// that draws challenges in that field.
+/// field challenges from these transcripts names it as a bound. Callers
+/// cannot implement it. The widths and decodings above are part of the
+/// transcript's wire format: changing one changes every proof that draws
+/// challenges in that field.
 pub trait ChallengeCodec: Sized + Sealed {
     /// `|Self|`, the number of values one challenge can take. Proof-of-work
     /// difficulties are priced from it ([`grind_bits_for_loss`]).
