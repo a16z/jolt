@@ -58,6 +58,9 @@ so the authors can fold it into the paper.
 | D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
 | D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
 | D27 | Soundness ledger of the response proof: ≈ 2^−119.7 in total; the α round alone 126/q ≈ 2^−121 | accepted for now | accepted for now (user, 2026-10-22); revisit with the paper authors |
+| D28 | Public coordinates of w_k: the cut level's setup-prefix response and inner digits, at native-element granularity, with no zero cells | clarification, departure | implemented (Akita W5d) |
+| D29 | u_a enters N as a public (raw) target; the masked prefix sends it raw | departure (cost) | implemented (Akita W5d) |
+| D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
 
 ## D1. Constant-time Σ attempt
 
@@ -1158,4 +1161,77 @@ Options if the headline must hold: draw `α` (and the sumcheck challenges)
 from an extension field, repeat the α round, or state the headline as
 about 2^−119.7 for this component. The product and fused sumchecks also carry no proof of
 work (Akita spec A34).
+
+## D28. Public coordinates of w_k
+
+**Paper says.** Coordinates of `s` that hold public data may be left to the
+public response `c·s` instead of a Gaussian mask (§4.2, "Public
+coordinates"). Akita's note (§4.6, A27) planned to align the setup-group
+response in w_k to `R_256` boundaries by padding with zero cells.
+
+**Implementation** (Akita W5d, `akita:specs/whiteout-akita.md` §5.5.1).
+`ResidualGeometry` names the public spans of w_k: the response and the
+inner digits of the cut level's setup-prefix group, read from that level's
+witness layout. `ResidualShape` cuts w_k into runs of whole native elements
+(`R_D`, `D` = the residual ring dimension) and marks a run public only when
+every coefficient of it lies in a public span; an element that straddles a
+span's end stays Gaussian. w_k's layout is unchanged: no zero cells.
+
+**Argument.** Masking a public coefficient hides nothing and costs only a
+few Gaussian coordinates; leaving a witness-dependent coefficient public
+would leak through `z = c·s`. So the rounding goes one way. The spans are
+public by Akita §3.5: the setup prefix's response `Σ_b c_b·ŝ_b` is a
+function of the public setup and the level's public fold challenges, and
+its inner digits are digits of a setup-derived commitment.
+
+**Status.** Implemented. Not verified by recomputation (Akita A39).
+
+**For the paper.** State that public coordinates need not be aligned: a
+straddling element is masked whole.
+
+## D29. u_a in N as a raw public target
+
+**Paper says.** u_a is sent compressed, and Item 3 checks it through its
+compression witness (`04_protocol.tex:305-313`).
+
+**Implementation.** Akita's cut successor sends u_a raw (`payload = Raw`,
+required by admission, Akita §4.1 and §4.8.1), as the masked prefix's last
+public message. The Σ setup therefore holds u_a as `BlockTarget::Public`:
+the verifier already has the image, so compressing it again would only add
+compression witness to `e`. At the test row's `d = 64` and rank 1, u_a is
+64 coefficients; at the headline (3 × `R_256`) 768 coefficients, 12 KB.
+
+**Security impact.** None: u_a is hidden by `r_a` (Lemma
+`wo:lem:stat-hiding`, Akita §4.8.1), raw or compressed.
+
+**Status.** Implemented. The 12 KB is the cost of keeping the cut
+successor's payload raw; a compressed cut payload with a compressed `N`
+target would recover the paper's 128 B.
+
+## D30. Two-witness distinguisher
+
+**What.** Akita's `examples/zk_distinguisher.rs` (HT2, a manual diagnostic)
+proves the single-group end-to-end statement `N` times for each of two
+witnesses of one shape and point, and runs a 2 × 256 χ² homogeneity test at
+every byte position of the proofs (about 75 KB), flagging a position at
+`p < 0.01 / positions`. Two injected leaks calibrate it: the first claim's
+pad zero, and that pad with only 64 random bits.
+
+**Measured** (Apple M4, loaded machine; about 0.65 s per proof):
+
+| N per witness | trials | honest flagged | pad 0 flagged | 64-bit pad flagged | smallest p (controls) |
+|---|---|---|---|---|---|
+| 8 | 5 | 0 | 0 | 0 | 6.3e−5 |
+| 16 | 5 | 0 | 5 | 5 | 1.5e−8 |
+| 64 | 2 | 0 | 2 | 2 | 1.1e−29 |
+
+The honest runs' smallest p-values were 0.055, 0.078 and 0.012, against a
+threshold of about 1.3e−7.
+
+**Reading.** The test detects a byte that is constant within a witness and
+different across witnesses once a fully separated 2 × 2 table reaches the
+Bonferroni threshold, `χ² = 2N` at one degree of freedom: about `N ≥ 14`
+here. It has no power against small biases at these `N`; it is a smoke test
+for gross leaks (an unmasked or weakly masked slot), not evidence of
+statistical zero knowledge.
 
