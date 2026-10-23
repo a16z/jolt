@@ -20,8 +20,9 @@ const fn lut_len(seed: usize, binds: u32) -> usize {
     seed.pow(1 << binds)
 }
 
+// Square-root bound: squaring the saturated length 2^16 overflows a 32-bit usize.
 const fn lut_saturated(values: usize) -> bool {
-    values * values > MAX_LUT_VALUES
+    values > MAX_LUT_VALUES.isqrt()
 }
 
 // `CycleState::peak_bytes` prices this schedule: the third bind still squares
