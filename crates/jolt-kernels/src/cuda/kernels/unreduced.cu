@@ -10,6 +10,10 @@ __device__ __forceinline__ void unr_zero(u64 *folded) {
     for (int i = 0; i < 2 * UNR_SLOTS; i++) folded[i] = 0;
 }
 
+__device__ __forceinline__ void unr_add_folded(u64 *folded, const u64 *other) {
+    for (int i = 0; i < 2 * UNR_SLOTS; i++) folded[i] += other[i];
+}
+
 __device__ __forceinline__ void unr_mul_words(const u64 *value,
                                               const unsigned long long *words,
                                               unsigned int word_count,
@@ -104,6 +108,23 @@ extern "C" __global__ void unr_mul_scatter_kernel(const u64 *__restrict__ values
 
     u64 *target = slots + (unsigned long long)buckets[j] * (2 * UNR_SLOTS);
     unr_scatter_add(target, folded, UNR_SLOTS);
+}
+
+extern "C" __global__ void unr_fold_chunks_kernel(const u64 *__restrict__ slots,
+                                                  unsigned int chunks, unsigned int groups,
+                                                  u64 *__restrict__ out) {
+    unsigned int g = blockIdx.x * blockDim.x + threadIdx.x;
+    if (g >= groups) return;
+
+    u64 acc[2 * UNR_SLOTS];
+    unr_zero(acc);
+    const u64 *base = slots + (unsigned long long)g * chunks * (2 * UNR_SLOTS);
+    for (unsigned int c = 0; c < chunks; c++) {
+        unr_add_folded(acc, base + (unsigned long long)c * (2 * UNR_SLOTS));
+    }
+
+    u64 *target = out + (unsigned long long)g * (2 * UNR_SLOTS);
+    for (int i = 0; i < 2 * UNR_SLOTS; i++) target[i] = acc[i];
 }
 
 extern "C" __global__ void unr_reduce_kernel(const u64 *__restrict__ slots,

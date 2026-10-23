@@ -1,11 +1,11 @@
 //! CUDA precommitted, increment, register and instruction claim reductions.
 //! Also provides instruction-input checking, RAM output and value checking,
 //! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization,
-//! shift checking, register-value evaluation, and RAM RAF evaluation.
+//! shift checking, register-value evaluation, RAM RAF evaluation, and instruction read-RAF.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
-//! reduction, instruction operand reduction, instruction-input checking,
+//! reduction, instruction operand reduction, instruction-input and read-RAF checking,
 //! RAM output and value checking, hamming-weight booleanity, Spartan shift
 //! checking, register-value evaluation, and RAM RAF evaluation in the optimized registry.
 //! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
@@ -159,7 +159,6 @@ mod inc_claim_reduction;
 mod instruction_claim_reduction;
 mod instruction_input;
 mod instruction_ra_virtualization;
-#[cfg(test)]
 mod instruction_read_raf;
 mod program_image_claim_reduction;
 mod ram_hamming_booleanity;
@@ -188,6 +187,8 @@ pub use common::error::CudaError;
 pub use common::lt_poly::DeviceLtPolynomial;
 pub use common::xfer_stats;
 pub use dory::CudaDoryScheme;
+pub use instruction_read_raf::address_driver::DeviceAddressPhase;
+pub use instruction_read_raf::address_phase::{init_raf_buckets, init_suffix_buckets, DeviceRows};
 
 /// Stateless slot provider; witness-dependent device state belongs to the
 /// bound proof session rather than the reusable backend registry.
@@ -216,7 +217,7 @@ where
     /// hamming-weight claim reduction, booleanity checking,
     /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
     /// reduction and virtualization, and RV64 bytecode read-RAF, Spartan outer,
-    /// and product kernels with CUDA implementations.
+    /// and product kernels, plus instruction read-RAF, with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
     pub fn cuda() -> Self
@@ -241,6 +242,7 @@ where
         backend.instruction_claim_reduction = Box::new(CudaBackend);
         backend.instruction_input = Box::new(CudaBackend);
         backend.instruction_ra_virtualization = Box::new(CudaBackend);
+        backend.instruction_read_raf = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
         backend.ram_raf_evaluation = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);

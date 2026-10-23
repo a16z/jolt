@@ -76,9 +76,24 @@ pub struct CudaKernelContext {
     rrv_message_dense: CudaFunction,
     #[cfg(test)]
     sfx_eval_batch: CudaFunction,
-    #[cfg(test)]
     pfx_mle_round: CudaFunction,
-    #[cfg(test)]
+    ap_raf_keys: CudaFunction,
+    ap_table_keys: CudaFunction,
+    ap_histogram: CudaFunction,
+    ap_scatter: CudaFunction,
+    ap_raf_reduce_chunked: CudaFunction,
+    ap_suffix_reduce: CudaFunction,
+    ap_scale_shift: CudaFunction,
+    ap_condense: CudaFunction,
+    ap_raf_prefix: CudaFunction,
+    ap_round_message_hinted: CudaFunction,
+    ap_combined_val: CudaFunction,
+    ap_ra: CudaFunction,
+    ap_flag_keys: CudaFunction,
+    ap_flag_sums: CudaFunction,
+    ap_raf_flag_sum: CudaFunction,
+    unr_fold_chunks: CudaFunction,
+    cr_quotient: CudaFunction,
     ap_bind_lanes: CudaFunction,
     #[cfg(test)]
     rwm_segment_flags: CudaFunction,
@@ -155,7 +170,6 @@ pub struct CudaKernelContext {
     roc_message: CudaFunction,
     #[cfg(test)]
     unr_mul_scatter: CudaFunction,
-    #[cfg(test)]
     unr_reduce: CudaFunction,
     ohf_fold: CudaFunction,
     ohf_reduce: CudaFunction,
@@ -329,9 +343,24 @@ impl CudaKernelContext {
             rrv_message_dense: module.load_function("rrv_message_dense_kernel")?,
             #[cfg(test)]
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
-            #[cfg(test)]
             pfx_mle_round: module.load_function("pfx_mle_round_kernel")?,
-            #[cfg(test)]
+            ap_raf_keys: module.load_function("ap_raf_keys_kernel")?,
+            ap_table_keys: module.load_function("ap_table_keys_kernel")?,
+            ap_histogram: module.load_function("ap_histogram_kernel")?,
+            ap_scatter: module.load_function("ap_scatter_kernel")?,
+            ap_raf_reduce_chunked: module.load_function("ap_raf_reduce_chunked_kernel")?,
+            ap_suffix_reduce: module.load_function("ap_suffix_reduce_kernel")?,
+            ap_scale_shift: module.load_function("ap_scale_shift_kernel")?,
+            ap_condense: module.load_function("ap_condense_kernel")?,
+            ap_raf_prefix: module.load_function("ap_raf_prefix_kernel")?,
+            ap_round_message_hinted: module.load_function("ap_round_message_hinted_kernel")?,
+            ap_combined_val: module.load_function("ap_combined_val_kernel")?,
+            ap_ra: module.load_function("ap_ra_kernel")?,
+            ap_flag_keys: module.load_function("ap_flag_keys_kernel")?,
+            ap_flag_sums: module.load_function("ap_flag_sums_kernel")?,
+            ap_raf_flag_sum: module.load_function("ap_raf_flag_sum_kernel")?,
+            unr_fold_chunks: module.load_function("unr_fold_chunks_kernel")?,
+            cr_quotient: module.load_function("cr_quotient_kernel")?,
             ap_bind_lanes: module.load_function("ap_bind_lanes_kernel")?,
             #[cfg(test)]
             rwm_segment_flags: module.load_function("rwm_segment_flags_kernel")?,
@@ -408,7 +437,6 @@ impl CudaKernelContext {
             roc_message: module.load_function("roc_message_kernel")?,
             #[cfg(test)]
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
-            #[cfg(test)]
             unr_reduce: module.load_function("unr_reduce_kernel")?,
             ohf_fold: module.load_function("ohf_fold_kernel")?,
             ohf_reduce: module.load_function("ohf_reduce_kernel")?,
@@ -1010,12 +1038,78 @@ impl CudaKernelContext {
         &self.sfx_eval_batch
     }
 
-    #[cfg(test)]
     pub(crate) const fn pfx_mle_round(&self) -> &CudaFunction {
         &self.pfx_mle_round
     }
 
-    #[cfg(test)]
+    pub(crate) const fn ap_raf_keys(&self) -> &CudaFunction {
+        &self.ap_raf_keys
+    }
+
+    pub(crate) const fn ap_table_keys(&self) -> &CudaFunction {
+        &self.ap_table_keys
+    }
+
+    pub(crate) const fn ap_histogram(&self) -> &CudaFunction {
+        &self.ap_histogram
+    }
+
+    pub(crate) const fn ap_scatter(&self) -> &CudaFunction {
+        &self.ap_scatter
+    }
+
+    pub(crate) const fn ap_raf_reduce_chunked(&self) -> &CudaFunction {
+        &self.ap_raf_reduce_chunked
+    }
+
+    pub(crate) const fn ap_suffix_reduce(&self) -> &CudaFunction {
+        &self.ap_suffix_reduce
+    }
+
+    pub(crate) const fn ap_scale_shift(&self) -> &CudaFunction {
+        &self.ap_scale_shift
+    }
+
+    pub(crate) const fn ap_condense(&self) -> &CudaFunction {
+        &self.ap_condense
+    }
+
+    pub(crate) const fn ap_raf_prefix(&self) -> &CudaFunction {
+        &self.ap_raf_prefix
+    }
+
+    pub(crate) const fn ap_round_message_hinted(&self) -> &CudaFunction {
+        &self.ap_round_message_hinted
+    }
+
+    pub(crate) const fn ap_combined_val(&self) -> &CudaFunction {
+        &self.ap_combined_val
+    }
+
+    pub(crate) const fn ap_ra(&self) -> &CudaFunction {
+        &self.ap_ra
+    }
+
+    pub(crate) const fn ap_flag_keys(&self) -> &CudaFunction {
+        &self.ap_flag_keys
+    }
+
+    pub(crate) const fn ap_flag_sums(&self) -> &CudaFunction {
+        &self.ap_flag_sums
+    }
+
+    pub(crate) const fn ap_raf_flag_sum(&self) -> &CudaFunction {
+        &self.ap_raf_flag_sum
+    }
+
+    pub(crate) const fn unr_fold_chunks(&self) -> &CudaFunction {
+        &self.unr_fold_chunks
+    }
+
+    pub(crate) const fn cr_quotient(&self) -> &CudaFunction {
+        &self.cr_quotient
+    }
+
     pub(crate) const fn ap_bind_lanes(&self) -> &CudaFunction {
         &self.ap_bind_lanes
     }
@@ -1105,7 +1199,6 @@ impl CudaKernelContext {
         &self.unr_mul_scatter
     }
 
-    #[cfg(test)]
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
         &self.unr_reduce
     }
