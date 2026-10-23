@@ -484,7 +484,7 @@ pub(crate) fn test_public_io() -> JoltDevice {
 /// committed on a throwaway transcript: the fixture prover starts at stage 1,
 /// and [`verify_through`] counts pads rather than reading their commitment.
 pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
-    #[cfg(all(feature = "zk", not(feature = "akita")))]
+    #[cfg(feature = "zk")]
     {
         use jolt_zk::{
             blindfold::BlindFold,
@@ -504,19 +504,6 @@ pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
         )
         .unwrap();
         ProofMode::masked(pads)
-    }
-    // Whiteout's pads are uncommitted until W6d wires the lattice pad
-    // commitment.
-    #[cfg(all(feature = "zk", feature = "akita"))]
-    {
-        use jolt_algebra::Field;
-        use jolt_zk::masking::{CommittedPads, PadLayout};
-        use rand_core::OsRng;
-        let layout = PadLayout::new(1 << 14, 0).unwrap();
-        let pads = (0..layout.num_pads)
-            .map(|_| Fr::random(&mut OsRng))
-            .collect();
-        ProofMode::masked(CommittedPads::uncommitted(layout, pads).unwrap())
     }
     #[cfg(not(feature = "zk"))]
     {

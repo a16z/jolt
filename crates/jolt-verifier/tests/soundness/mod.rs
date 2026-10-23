@@ -22,6 +22,14 @@ mod dory;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "logging",
+    feature = "akita",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
+mod whiteout;
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "logging",
     not(feature = "akita"),
     not(feature = "field-inline"),
     feature = "zk"

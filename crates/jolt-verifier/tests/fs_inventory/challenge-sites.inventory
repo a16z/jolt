@@ -11,6 +11,7 @@ jolt-openings::schemes.rs::HomomorphicBatch<PCS>::prove_batch::challenge_powers#
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::prove_batch_zk::challenge_powers#0
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_powers#0
+jolt-prover::akita/whiteout.rs::prove_once::challenge_bytes#6
 jolt-prover::blindfold.rs::prove_blindfold::challenge_bytes#1
 jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#1
 jolt-spartan-verifier::key.rs::SpartanKey<F>::draw_tau::challenge#0
@@ -40,6 +41,7 @@ jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#4
 jolt-verifier::stages/uniskip.rs::draw_spartan_outer_tau::challenges_small#0
 jolt-verifier::stages/uniskip.rs::draw_spartan_product_tau_high::challenge_small#0
 jolt-verifier::verifier.rs::verify_stages_on::challenge_bytes#5
+jolt-verifier::whiteout.rs::whiteout_prefix::challenge_bytes#1
 jolt-zk::blindfold/prove.rs::prove_inner_sumcheck::challenge_small#1
 jolt-zk::blindfold/prove.rs::prove_outer_sumcheck::challenge_small#1
 jolt-zk::blindfold/prove.rs::prove_with_row_committer::challenge_small#1

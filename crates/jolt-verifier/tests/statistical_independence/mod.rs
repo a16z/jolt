@@ -4,6 +4,7 @@
     feature = "prover-fixtures",
     feature = "logging",
     feature = "zk",
+    not(feature = "akita"),
     not(feature = "field-inline")
 ))]
 pub mod zk;

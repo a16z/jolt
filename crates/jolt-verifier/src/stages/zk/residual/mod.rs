@@ -356,8 +356,20 @@ impl<F: JoltField> JoltResidual<F> {
     ///
     /// [`VerifierError`] if a formula does not lower.
     pub fn pad_layout(&self, base: usize) -> Result<PadLayout, VerifierError> {
-        let mut shape = OperandShapeDomain::new(base).with_operands(self.operands);
-        let claims = self.lower_claims(&mut shape, &mut |id| {
+        Ok(self.shape(OperandShapeDomain::new(base))?.layout()?)
+    }
+
+    /// Allocates this relation's auxiliary slots and records its product
+    /// operands in `shape`, after whatever `shape` already holds, under this
+    /// relation's operand rule (the one its rows use).
+    ///
+    /// # Errors
+    ///
+    /// [`VerifierError`] if a formula does not lower.
+    pub fn shape(&self, shape: OperandShapeDomain) -> Result<OperandShapeDomain, VerifierError> {
+        let mut shape = shape.with_operands(self.operands);
+        let shape_ref = &mut shape;
+        let claims = self.lower_claims(shape_ref, &mut |id| {
             Ok(Some(
                 self.opening(id)
                     .map_err(|_| ZkError::InvalidRelation {
@@ -366,8 +378,8 @@ impl<F: JoltField> JoltResidual<F> {
                     .pad,
             ))
         })?;
-        self.check_stages(&mut shape, claims, |_, _, input| Ok(input))?;
-        Ok(shape.layout()?)
+        self.check_stages(shape_ref, claims, |_, _, input| Ok(input))?;
+        Ok(shape)
     }
 
     /// The prover's auxiliary values, in slot order, from the decoded
@@ -394,6 +406,22 @@ impl<F: JoltField> JoltResidual<F> {
         JoltResidualRows {
             residual: self,
             masked_auxiliary,
+            first_slot: None,
+        }
+    }
+
+    /// The rows over `masked_auxiliary`, whose slots start at `first_slot`:
+    /// the relation's part of an auxiliary block another protocol's part
+    /// leads.
+    pub fn rows_from<'r>(
+        &'r self,
+        masked_auxiliary: &'r [F],
+        first_slot: usize,
+    ) -> JoltResidualRows<'r, F> {
+        JoltResidualRows {
+            residual: self,
+            masked_auxiliary,
+            first_slot: Some(first_slot),
         }
     }
 
@@ -470,6 +498,8 @@ struct StageClaims<V> {
 pub struct JoltResidualRows<'r, F: JoltField> {
     residual: &'r JoltResidual<F>,
     masked_auxiliary: &'r [F],
+    /// The first auxiliary slot, when not the layout's.
+    first_slot: Option<usize>,
 }
 
 impl<F: JoltField> ResidualRows<F> for JoltResidualRows<'_, F> {
@@ -477,8 +507,9 @@ impl<F: JoltField> ResidualRows<F> for JoltResidualRows<'_, F> {
 
     fn append_rows(&self, relation: &mut ResidualRelation<F>) -> Result<(), VerifierError> {
         let residual = self.residual;
-        let mut rows =
-            RowsDomain::new(relation, self.masked_auxiliary).with_operands(residual.operands);
+        let first = self.first_slot.unwrap_or(relation.layout.auxiliary.start);
+        let mut rows = RowsDomain::from_slot(relation, self.masked_auxiliary, first)
+            .with_operands(residual.operands);
         let claims = residual.lower_claims(&mut rows, &mut |id| {
             residual
                 .opening_form(id)

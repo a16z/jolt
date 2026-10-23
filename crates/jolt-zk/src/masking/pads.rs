@@ -428,7 +428,14 @@ pub struct MaskedProver<'a, F, O, H: Sponge> {
 /// The prover's public proof-of-work messages, interleaved with its masked
 /// ones (Akita's grinding nonces and fold-response counters,
 /// `specs/whiteout-akita.md` §4.5). A nonce is found from public transcript
-/// state alone, so it takes no pad; no other unmasked send is offered.
+/// state alone, so it takes no pad.
+///
+/// WARNING: the [`Channel`] impl's `exchange`/`exchange_all` also send
+/// unmasked. Akita sends its public payloads through them (the D image and
+/// u_a, hidden by their own randomness, `specs/whiteout-akita.md` §4.2), so
+/// they cannot be removed until Akita sends those through an explicit
+/// public-only method. HT1's census (`jolt-verifier`'s `soundness::whiteout`)
+/// classifies every unmasked message of a Whiteout proof.
 impl<F, O, H: Sponge> MaskedProver<'_, F, O, H> {
     /// [`ProverTranscript::grind`].
     ///
@@ -459,7 +466,7 @@ fn same_field<S: Copy + 'static, T: Copy + 'static>(value: S) -> Result<T, ZkErr
         .ok_or(ZkError::MessageFieldMismatch)
 }
 
-/// Public messages and challenges pass through to the transcript.
+/// Public messages and challenges pass through to the transcript, unmasked.
 impl<F, O, H: Sponge> Channel for MaskedProver<'_, F, O, H> {
     type Sponge = H;
 

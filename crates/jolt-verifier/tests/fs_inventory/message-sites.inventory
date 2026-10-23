@@ -94,6 +94,8 @@ jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::exchange_all::exchange_all#0:
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::exchange_private::exchange_all#0::self.transcript.exchange_all(values)
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::exchange_private_base::exchange_all#0::self.transcript.exchange_all(values)
 jolt-zk::masking/pads.rs::MaskedVerifier<'_,'_,H>::receive_nonce::receive_nonce#0::self.transcript.receive_nonce(nonce_bits)
+jolt-zk::whiteout/committed_pads.rs::commit_lattice_pads::send_all#0::transcript.send_all(&compressed.payload)
+jolt-zk::whiteout/committed_pads.rs::receive_lattice_pads::receive_n#0::transcript.receive_n(compression.payload_len(commitment.image_len())?)
 jolt-zk::whiteout/diagnostics.rs::AttemptHarness<D>::prove::send_all#0::transcript.send_all(payload)
 jolt-zk::whiteout/sigma.rs::prover::prove_under_dit::send_all#3::transcript.send_all(&accepted.t_d.payload)
 jolt-zk::whiteout/sigma.rs::prover::prove_under_dit::send_bytes#4::transcript.send_bytes(&accepted.nonce)

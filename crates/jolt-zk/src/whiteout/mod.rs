@@ -7,10 +7,14 @@
 //! and verifier, and the response statement. It exposes no zero-knowledge
 //! mode yet (`ZkBackend for Whiteout` is W6). The verifier-side pieces build
 //! under the `whiteout` feature; the prover-side sampler additionally needs
-//! `whiteout-prover`, so a verifier that enables `whiteout` never compiles it.
+//! `whiteout-prover`. WARNING: an Akita verifier build compiles it anyway,
+//! because jolt-akita's `zk` enables `whiteout-prover` for its prover half;
+//! splitting jolt-akita's feature is a follow-up
+//! (`specs/whiteout-jolt-integration.md`, prototype deltas).
 //! Randomness here comes from a caller-supplied cryptographic RNG.
 
 mod challenge;
+mod committed_pads;
 mod compression;
 #[cfg(feature = "whiteout-diagnostics")]
 pub mod diagnostics;
@@ -26,6 +30,7 @@ mod fixture;
 mod labels;
 mod lift;
 mod linear;
+mod opening;
 mod pad_commitment;
 mod params;
 mod placement;
@@ -43,13 +48,17 @@ pub mod test_support;
 mod weights;
 
 pub use challenge::{challenge_times_i64, DenseChallenge};
+#[cfg(feature = "whiteout-prover")]
+pub use committed_pads::{commit_lattice_pads, WhiteoutPadOpening};
+pub use committed_pads::{receive_lattice_pads, LatticePadPayload};
 pub use compression::{CompressedImage, ImageCompression};
 pub use error::WhiteoutError;
 pub use lift::{ChallengeRing, EvaluationClaims, LiftedRelation};
 pub use linear::{BlockTarget, ResidualBlock, ResidualGadget};
-pub use pad_commitment::LatticePadCommitment;
+pub use opening::{MaskedGroupClaim, MaskedGroupOpening};
 #[cfg(feature = "whiteout-prover")]
 pub use pad_commitment::LatticePadOpening;
+pub use pad_commitment::{LatticePadCommitment, PAD_RANDOMNESS_LOG_BASIS};
 pub use params::{
     binding_collision_radius, GaussianBlock, SigmaParams, ALPHA, BINDING_RESPONSE_DIGITS,
     EPSILON_BITS, RESPONSE_LOG_BASIS,

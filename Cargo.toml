@@ -213,6 +213,7 @@ jolt-transcript = { path = "crates/jolt-transcript" }
 jolt-algebra = { path = "crates/jolt-algebra" }
 jolt-crypto = { path = "crates/jolt-crypto" }
 jolt-sumcheck = { path = "crates/jolt-sumcheck" }
+jolt-zk = { path = "crates/jolt-zk" }
 
 # [pin] Local-only: build against the Akita integration branch (~/akita-whiteout).
 [patch."https://github.com/LayerZero-Labs/akita.git"]

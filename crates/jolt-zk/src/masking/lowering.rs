@@ -112,6 +112,11 @@ impl OperandShapeDomain {
         Ok(PadLayout::new(self.slots.start, self.slots.next)?.with_operand_pads(self.operands))
     }
 
+    /// The auxiliary slots allocated so far.
+    pub fn auxiliary_count(&self) -> usize {
+        self.slots.next
+    }
+
     /// Records the pad of a product's operand `x`, each pad once, under
     /// [`OperandRule::MaskedSlot`].
     fn record_operand(&mut self, x: Option<PadIndex>) -> Result<(), ZkError> {
@@ -255,11 +260,22 @@ pub struct RowsDomain<'r, F> {
 
 impl<'r, F: Field> RowsDomain<'r, F> {
     pub fn new(relation: &'r mut ResidualRelation<F>, masked_auxiliary: &'r [F]) -> Self {
-        let slots = AuxiliarySlots::new(relation.layout.auxiliary.start);
+        let first = relation.layout.auxiliary.start;
+        Self::from_slot(relation, masked_auxiliary, first)
+    }
+
+    /// Rows whose auxiliary values `masked_auxiliary` take the slots from
+    /// `first` on: a protocol whose auxiliary block follows another's in the
+    /// same relation.
+    pub fn from_slot(
+        relation: &'r mut ResidualRelation<F>,
+        masked_auxiliary: &'r [F],
+        first: usize,
+    ) -> Self {
         Self {
             relation,
             masked_auxiliary,
-            slots,
+            slots: AuxiliarySlots::new(first),
             rule: OperandRule::MaskedSlot,
         }
     }

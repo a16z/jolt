@@ -166,7 +166,7 @@ mod field_inline_round_trip {
 /// ZK with field-inline enabled: the committed stage-1 witness carries the
 /// composed rows, and the production `stage1::verify` zk branch consumes the
 /// prover's argument string.
-#[cfg(all(test, feature = "field-inline", feature = "zk"))]
+#[cfg(all(test, feature = "field-inline", feature = "zk", not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
     use jolt_algebra::Fr;

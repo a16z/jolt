@@ -84,6 +84,36 @@ pub enum ZkError {
 }
 
 #[cfg(feature = "whiteout")]
+impl ZkError {
+    /// Whether a fresh rerun of the whole proof may succeed: a fold overflow
+    /// or exhausted Σ attempts, both independent of the witness
+    /// (`specs/whiteout-jolt-integration.md` §6). Every other error is final.
+    pub fn is_rerunnable(&self) -> bool {
+        match self {
+            Self::FoldOverflow { .. } => true,
+            Self::Whiteout(source) => matches!(
+                source.downcast_ref::<WhiteoutError>(),
+                Some(WhiteoutError::AttemptsExhausted)
+            ),
+            Self::Transcript(_)
+            | Self::PadsExhausted { .. }
+            | Self::PadCountMismatch { .. }
+            | Self::InvalidLayout { .. }
+            | Self::OperandPadsMismatch
+            | Self::MessageFieldMismatch
+            | Self::RoundWidthMismatch { .. }
+            | Self::RoundCountMismatch { .. }
+            | Self::InvalidRelation { .. }
+            | Self::ClaimMismatch(_)
+            | Self::Sumcheck(_)
+            | Self::BlindFoldShape(_)
+            | Self::BlindFoldProver(_)
+            | Self::BlindFoldRejected(_) => false,
+        }
+    }
+}
+
+#[cfg(feature = "whiteout")]
 impl From<WhiteoutError> for ZkError {
     fn from(error: WhiteoutError) -> Self {
         Self::Whiteout(Box::new(error))

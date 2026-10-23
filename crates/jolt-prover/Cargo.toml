@@ -20,7 +20,11 @@ parallel = [
   "jolt-sumcheck/parallel",
   "dep:rayon",
 ]
-prover-fixtures = ["dep:jolt-host", "jolt-zk?/test-support"]
+prover-fixtures = [
+  "dep:jolt-host",
+  "dep:zeroize",
+  "jolt-zk?/test-support",
+]
 # Field-inline protocol composition: the field-inline prover — every stage
 # proves the composed protocol, and only field-inline guests are accepted (the
 # witness plane refuses classic-profile traces). The e2e acceptance lives in
@@ -42,7 +46,7 @@ field-inline = [
 # prover proves exactly one protocol: this feature swaps the proof shape to
 # the Akita envelope, so the Dory (elliptic-curve) path `src/dory` is
 # compiled out and the Akita (lattice) path `src/akita` replaces it.
-# Mutually exclusive with `zk` (compile error on the combination).
+# With `zk` it proves Whiteout (zero knowledge over Akita).
 akita = [
   "dep:jolt-akita",
   "dep:akita-params",
@@ -58,7 +62,13 @@ akita = [
 # Compile-time ZK mode: masking sumcheck recorders over committed pads, hiding
 # witness commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.
-zk = ["jolt-verifier/zk", "jolt-kernels/zk", "dep:jolt-zk", "dep:rand_core"]
+zk = [
+  "jolt-verifier/zk",
+  "jolt-kernels/zk",
+  "dep:jolt-zk",
+  "dep:rand_core",
+  "jolt-akita?/zk",
+]
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
   "dep:bincode",
@@ -110,6 +120,7 @@ jolt-verifier.workspace = true
 jolt-witness.workspace = true
 jolt-zk = { workspace = true, optional = true }
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
+zeroize = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true

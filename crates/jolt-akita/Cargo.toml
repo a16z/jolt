@@ -12,6 +12,17 @@ workspace = true
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
 profiling = []
+# Whiteout (zero knowledge over Akita): the zero-knowledge configurations,
+# hiding commitments, the masked opening and the response prover. Selects
+# nothing; jolt-prover's `zk` with `akita` does.
+zk = [
+  "dep:jolt-zk",
+  "dep:rand_core",
+  "akita-config/zk",
+  "akita-params/zk",
+  "akita-pcs/zk",
+  "akita-planner/zk",
+]
 
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
@@ -38,12 +49,15 @@ jolt-openings = { path = "../jolt-openings", default-features = false, features 
 ] }
 jolt-poly.workspace = true
 jolt-transcript = { path = "../jolt-transcript", default-features = false }
+jolt-zk = { workspace = true, optional = true, features = ["whiteout-prover"] }
+rand_core = { workspace = true, optional = true }
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 
 [dev-dependencies]
 bincode.workspace = true
+rand = { workspace = true, features = ["std_rng"] }
 jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
 ] }

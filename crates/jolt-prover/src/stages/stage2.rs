@@ -240,7 +240,7 @@ mod field_inline_round_trip {
 
 /// clear claims, and the production stage-1/2 zk verifiers consume the
 /// prover's argument string.
-#[cfg(all(test, feature = "field-inline", feature = "zk"))]
+#[cfg(all(test, feature = "field-inline", feature = "zk", not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
     use jolt_algebra::Fr;

@@ -19,3 +19,6 @@ pub const STAGE6B: SiteId = SiteId::label("jolt/stage6b");
 pub const STAGE7: SiteId = SiteId::label("jolt/stage7");
 pub const STAGE8: SiteId = SiteId::label("jolt/stage8");
 pub const BLINDFOLD: SiteId = SiteId::label("jolt/blindfold");
+pub const WHITEOUT: SiteId = SiteId::label("jolt/whiteout");
+/// Whiteout's Σ-protocol, after the auxiliary block.
+pub const WHITEOUT_SIGMA: SiteId = SiteId::label("jolt/whiteout/sigma");

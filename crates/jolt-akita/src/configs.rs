@@ -20,6 +20,7 @@ macro_rules! delegate_preset {
         $committed_source_class:expr,
         $chunked_witness_cfg:expr,
         $family_name:literal
+        $(, zk: $zk_family_name:literal)?
     ) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, Default)]
@@ -31,6 +32,7 @@ macro_rules! delegate_preset {
             const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
                 <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE;
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
+            $(const ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> = Some($zk_family_name);)?
 
             fn schedule_family_name() -> &'static str {
                 $family_name
@@ -113,10 +115,14 @@ delegate_preset!(
 
 impl RecursiveScheduleConfig for JoltOneHotK16Direct {
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k16";
+    const RECURSIVE_ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> =
+        Some("jolt-fp128-onehot-k16-zk");
 }
 
 impl RecursiveScheduleConfig for JoltOneHotK256Direct {
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k256";
+    const RECURSIVE_ZK_SCHEDULE_FAMILY_NAME: Option<&'static str> =
+        Some("jolt-fp128-onehot-k256-zk");
 }
 
 /// Runtime K=16 policy. Its catalog may contain either direct or setup-offloaded
@@ -266,7 +272,8 @@ delegate_preset!(
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),
     AkitaChunkProfile::Eight.witness_cfg(),
-    "jolt-fp128-dense-bounded"
+    "jolt-fp128-dense-bounded",
+    zk: "jolt-fp128-dense-bounded-zk"
 );
 
 delegate_preset!(

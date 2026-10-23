@@ -73,7 +73,50 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 
     /// Releases backend state that can be rebuilt before the opening proof.
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError>;
+
+    /// Whiteout: samples, commits and sends the pads of `layout` for the
+    /// masked opening of `trace` (spec §2, row 2).
+    #[cfg(feature = "zk")]
+    fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
+        setup: &Self::ProverSetup,
+        trace: &Self::Output,
+        layout: jolt_zk::masking::PadLayout,
+        transcript: &mut ProverTranscript<H>,
+        rng: &mut R,
+    ) -> Result<WhiteoutPads<Self::Field>, jolt_zk::masking::ZkError>;
+
+    /// Whiteout: proves the masked levels of `trace`'s opening through the
+    /// cut, its claims stated by `forms` (spec §2, row 5). Returns the
+    /// residual opening and the masked levels' auxiliary values, which lead
+    /// the auxiliary block.
+    #[cfg(feature = "zk")]
+    fn whiteout_prove_masked<H: Sponge>(
+        setup: &Self::ProverSetup,
+        trace: GroupOpeningClaim<Self::Field, Self::Output>,
+        hint: Self::OpeningHint,
+        forms: &[jolt_zk::masking::AffineRow<Self::Field>],
+        pads: &mut WhiteoutPads<Self::Field>,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(crate::whiteout::WhiteoutResidual, Vec<Self::Field>), jolt_zk::masking::ZkError>;
+
+    /// Whiteout: proves `relation` by the Σ-protocol and the response proof
+    /// (spec §2, rows 7 and 8).
+    #[cfg(feature = "zk")]
+    fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
+        setup: &Self::ProverSetup,
+        trace: &Self::Output,
+        relation: &jolt_zk::masking::ResidualRelation<Self::Field>,
+        residual: &crate::whiteout::WhiteoutResidual,
+        pads: &WhiteoutPads<Self::Field>,
+        transcript: &mut ProverTranscript<H>,
+        rng: &mut R,
+    ) -> Result<(), jolt_zk::masking::ZkError>;
 }
+
+/// Whiteout's committed pads.
+#[cfg(feature = "zk")]
+pub type WhiteoutPads<F> =
+    jolt_zk::masking::CommittedPads<F, jolt_zk::whiteout::WhiteoutPadOpening<F>>;
 
 /// Strictly ascending roles make the ordered commitment group list
 /// unambiguous and forbid duplicate or permuted groups.
@@ -230,6 +273,35 @@ impl AkitaScheme {
         let poly_count = source.len();
         Self::validate_commit_shape(setup, num_vars, poly_count)?;
         let one_hot_k = setup.one_hot_k();
+        #[cfg(feature = "zk")]
+        if let Some(whiteout) = setup.verifier.whiteout.as_ref() {
+            // Whiteout commits the trace group hiding, under its
+            // zero-knowledge row; its precommitted groups are W6d.
+            if profiles.is_some() {
+                return Err(invalid_batch(
+                    "Whiteout commits no precommitted groups yet (W6d)",
+                ));
+            }
+            let shape = whiteout
+                .shape(num_vars, poly_count)
+                .map_err(invalid_setup)?;
+            let row = shape.row();
+            let (backend_commitment, backend_hint) = with_backend_pool(|| {
+                let source = row.backend()?.import_source(source)?;
+                row.commit_hiding(&source)
+            })
+            .map_err(commit_failed)?;
+            return Self::package_commitment(
+                layout_digest,
+                num_vars,
+                backend_commitment,
+                backend_hint,
+                AkitaHintSource::TraceOneHot {
+                    poly_count,
+                    one_hot_k,
+                },
+            );
+        }
         let (_, backend) = setup.one_hot_backend()?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
             let source = backend.import_source(source)?;
@@ -410,6 +482,67 @@ impl TraceOneHotCommitment for AkitaScheme {
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError> {
         setup.release_post_commit_ntt_residency()
     }
+
+    #[cfg(feature = "zk")]
+    fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
+        setup: &Self::ProverSetup,
+        trace: &Self::Output,
+        layout: jolt_zk::masking::PadLayout,
+        transcript: &mut ProverTranscript<H>,
+        rng: &mut R,
+    ) -> Result<WhiteoutPads<AkitaField>, jolt_zk::masking::ZkError> {
+        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, trace)?;
+        shape
+            .tail()
+            .commit_pads(shape.row(), layout, transcript, rng)
+    }
+
+    #[cfg(feature = "zk")]
+    fn whiteout_prove_masked<H: Sponge>(
+        setup: &Self::ProverSetup,
+        trace: GroupOpeningClaim<AkitaField, AkitaCommitment>,
+        hint: AkitaProverHint,
+        forms: &[jolt_zk::masking::AffineRow<AkitaField>],
+        pads: &mut WhiteoutPads<AkitaField>,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(crate::whiteout::WhiteoutResidual, Vec<AkitaField>), jolt_zk::masking::ZkError>
+    {
+        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, &trace.commitment)?;
+        let (commitment, handle) = hint.backend.ok_or_else(|| {
+            AkitaError::InvalidInput("the trace hint has no backend payload".into())
+        })?;
+        let (opening, auxiliary) = shape.row().prove_masked(
+            commitment,
+            handle,
+            crate::adapters::reverse_point(&trace.point),
+            trace.evaluations,
+            forms,
+            pads,
+            transcript,
+        )?;
+        Ok((crate::whiteout::WhiteoutResidual { opening }, auxiliary))
+    }
+
+    #[cfg(feature = "zk")]
+    fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
+        setup: &Self::ProverSetup,
+        trace: &Self::Output,
+        relation: &jolt_zk::masking::ResidualRelation<AkitaField>,
+        residual: &crate::whiteout::WhiteoutResidual,
+        pads: &WhiteoutPads<AkitaField>,
+        transcript: &mut ProverTranscript<H>,
+        rng: &mut R,
+    ) -> Result<(), jolt_zk::masking::ZkError> {
+        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, trace)?;
+        shape.tail().prove(
+            shape.row(),
+            relation,
+            &residual.opening,
+            pads,
+            transcript,
+            rng,
+        )
+    }
 }
 
 impl Commitment for AkitaScheme {
@@ -513,6 +646,10 @@ impl CommitmentScheme for AkitaScheme {
             one_hot_k: params.one_hot_k,
             schedule_artifacts,
             backend_cache: BackendVerifierCache::default(),
+            #[cfg(feature = "zk")]
+            whiteout: params
+                .whiteout
+                .then(crate::whiteout::WhiteoutSetup::default),
         };
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
             if params.flavor == AkitaSetupFlavor::OneHot {

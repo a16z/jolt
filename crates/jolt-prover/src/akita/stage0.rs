@@ -29,13 +29,6 @@ use jolt_kernels::akita::commitment::FieldIncObject;
 
 /// Outputs retained for later prover stages. The transcript is positioned
 /// exactly where the verifier's `seed_transcript` leaves its own.
-#[cfg_attr(
-    feature = "zk",
-    expect(
-        dead_code,
-        reason = "the commitments feed stage 8, which Whiteout replaces in W6d"
-    )
-)]
 pub struct Stage0Output<PCS, H>
 where
     PCS: CommitmentScheme,
@@ -45,9 +38,20 @@ where
     pub transcript: ProverTranscript<H>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
+    #[cfg_attr(
+        feature = "zk",
+        expect(
+            dead_code,
+            reason = "Whiteout opens no precommitted group yet: the hiding commit rejects them"
+        )
+    )]
     pub untrusted_advice: Option<AdviceObject<PCS>>,
     /// The field increment polynomial, committed on every Akita field-inline proof.
     #[cfg(feature = "field-inline")]
+    #[cfg_attr(
+        feature = "zk",
+        expect(dead_code, reason = "Whiteout rejects field-inline proofs")
+    )]
     pub field_inc: FieldIncObject<PCS>,
 }
 

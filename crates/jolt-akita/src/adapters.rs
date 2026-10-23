@@ -393,6 +393,10 @@ pub struct AkitaSetupParams {
     #[serde(default, rename = "advice_schedule")]
     pub(crate) grouped_schedule: Option<GroupedScheduleParams>,
     pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
+    /// Whiteout: the trace group commits hiding and opens masked.
+    #[cfg(feature = "zk")]
+    #[serde(default)]
+    pub(crate) whiteout: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,6 +423,8 @@ impl AkitaSetupParams {
             flavor: AkitaSetupFlavor::Both,
             grouped_schedule: None,
             schedule_artifacts,
+            #[cfg(feature = "zk")]
+            whiteout: false,
         }
     }
 
@@ -442,6 +448,8 @@ impl AkitaSetupParams {
             flavor: AkitaSetupFlavor::OneHot,
             grouped_schedule: None,
             schedule_artifacts,
+            #[cfg(feature = "zk")]
+            whiteout: false,
         }
     }
 
@@ -466,6 +474,8 @@ impl AkitaSetupParams {
             flavor: AkitaSetupFlavor::OneHot,
             grouped_schedule,
             schedule_artifacts,
+            #[cfg(feature = "zk")]
+            whiteout: false,
         }
     }
 
@@ -487,6 +497,8 @@ impl AkitaSetupParams {
             flavor: AkitaSetupFlavor::Dense,
             grouped_schedule: None,
             schedule_artifacts,
+            #[cfg(feature = "zk")]
+            whiteout: false,
         }
     }
 
@@ -498,6 +510,13 @@ impl AkitaSetupParams {
     /// Constructors default to [`AkitaChunkProfile::Single`].
     pub fn with_akita_chunk_profile(mut self, profile: AkitaChunkProfile) -> Self {
         self.akita_chunk_profile = profile;
+        self
+    }
+
+    /// Whiteout: commits the trace group hiding and opens it masked.
+    #[cfg(feature = "zk")]
+    pub fn with_whiteout(mut self) -> Self {
+        self.whiteout = true;
         self
     }
 
@@ -607,6 +626,10 @@ pub struct AkitaVerifierSetup {
     pub(crate) schedule_artifacts: AkitaVerifierScheduleArtifacts,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
+    /// Whiteout: the masked opening's parameters and its per-shape setups.
+    #[cfg(feature = "zk")]
+    #[serde(default)]
+    pub(crate) whiteout: Option<crate::whiteout::WhiteoutSetup>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

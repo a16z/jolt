@@ -43,7 +43,7 @@ pub fn preprocess_full_with_advice(
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     validate_trace_order(config)?;
-    let (pcs_setup, verifier_setup) = grouped_setup(
+    let params = grouped_setup_params(
         schedule_artifacts,
         &program,
         config,
@@ -51,6 +51,14 @@ pub fn preprocess_full_with_advice(
         trusted_advice,
         &[],
     )?;
+    full_from_params(params, program)
+}
+
+fn full_from_params(
+    params: AkitaSetupParams,
+    program: JoltProgramPreprocessing,
+) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    let (pcs_setup, verifier_setup) = AkitaScheme::setup(params)?;
     let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Full(Arc::new(program)),
         verifier_setup,
@@ -138,6 +146,9 @@ pub(crate) fn grouped_setup_params(
         Arc::clone(schedule_artifacts),
     )
     .with_akita_chunk_profile(config.akita_chunk_profile);
+    // Whiteout commits the trace group hiding and opens it masked.
+    #[cfg(feature = "zk")]
+    let params = params.with_whiteout();
     Ok(params)
 }
 
