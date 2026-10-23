@@ -13,6 +13,7 @@ const KERNEL_FILES: &[&str] = &[
     "precommitted_reduction.cu",
     "msm.cu",
     "pairing.cu",
+    "opening.cu",
     "scan.cu",
     "lt_poly.cu",
     "half_fold.cu",

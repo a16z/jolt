@@ -236,6 +236,12 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_window_fold: CudaFunction,
     #[cfg(test)]
+    msm_fold_rows: CudaFunction,
+    #[cfg(test)]
+    opening_one_hot_embed: CudaFunction,
+    #[cfg(test)]
+    opening_one_hot_fold: CudaFunction,
+    #[cfg(test)]
     msm_jacobian_z: CudaFunction,
     #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
@@ -495,6 +501,12 @@ impl CudaKernelContext {
             msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
             #[cfg(test)]
             msm_window_fold: module.load_function("msm_window_fold_kernel")?,
+            #[cfg(test)]
+            msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
+            #[cfg(test)]
+            opening_one_hot_embed: module.load_function("opening_one_hot_embed_kernel")?,
+            #[cfg(test)]
+            opening_one_hot_fold: module.load_function("opening_one_hot_fold_kernel")?,
             #[cfg(test)]
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             #[cfg(test)]
@@ -1388,6 +1400,21 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_window_fold(&self) -> &CudaFunction {
         &self.msm_window_fold
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_fold_rows(&self) -> &CudaFunction {
+        &self.msm_fold_rows
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn opening_one_hot_embed(&self) -> &CudaFunction {
+        &self.opening_one_hot_embed
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn opening_one_hot_fold(&self) -> &CudaFunction {
+        &self.opening_one_hot_fold
     }
 
     #[cfg(test)]

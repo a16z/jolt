@@ -2721,6 +2721,212 @@ impl CudaKernelContext {
     }
 }
 
+impl CudaKernelContext {
+    pub(crate) fn zero_extend(
+        &self,
+        source: &DeviceFrVec,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        self.copy_into(&mut output, 0, source)?;
+        Ok(output)
+    }
+
+    pub(crate) fn fold_rows(
+        &self,
+        table: &DeviceFrVec,
+        left: &[Fr],
+        sigma: usize,
+    ) -> Result<Vec<Fr>, CudaError> {
+        let columns = 1usize << sigma;
+        if !table.len().is_multiple_of(columns) {
+            return Err(CudaError::LengthMismatch {
+                expected: columns,
+                got: table.len(),
+            });
+        }
+        let rows = table.len() / columns;
+        if left.len() != rows {
+            return Err(CudaError::LengthMismatch {
+                expected: rows,
+                got: left.len(),
+            });
+        }
+        self.fold_rows_window(table, 0, table.len(), left, sigma)
+    }
+
+    pub(crate) fn fold_rows_window(
+        &self,
+        table: &DeviceFrVec,
+        base: usize,
+        len: usize,
+        left: &[Fr],
+        sigma: usize,
+    ) -> Result<Vec<Fr>, CudaError> {
+        let columns = 1usize << sigma;
+        let mut output = self.alloc(columns)?;
+        if len == 0 {
+            return output.to_host();
+        }
+        let reach = base
+            .checked_add(len)
+            .ok_or(CudaError::LengthMismatch {
+                expected: usize::MAX,
+                got: len,
+            })?
+            .div_ceil(columns);
+        if table.len() < len || left.len() < reach {
+            return Err(CudaError::LengthMismatch {
+                expected: reach,
+                got: left.len().min(table.len()),
+            });
+        }
+        let device_left = self.upload(left)?;
+        let base_arg = u64::try_from(base).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: base,
+        })?;
+        let len_arg = u64::try_from(len).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: len,
+        })?;
+        let sigma_arg = u32::try_from(sigma).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: sigma,
+        })?;
+        let rows_arg = Self::count_of(left.len())?;
+        let columns_arg = Self::count_of(columns)?;
+        let mut builder = self.stream().launch_builder(self.msm_fold_rows());
+        let _ = builder.arg(table.limbs());
+        let _ = builder.arg(device_left.limbs());
+        let _ = builder.arg(&base_arg);
+        let _ = builder.arg(&len_arg);
+        let _ = builder.arg(&sigma_arg);
+        let _ = builder.arg(&rows_arg);
+        let _ = builder.arg(&columns_arg);
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: thread `c < columns` reads `table[i]` for `i` stepping by
+        // `columns` from its own residue class strictly below `len`, checked above
+        // against `table`'s length, and `left[row]` for `row = (base + i) >> sigma`
+        // only while `row < rows`, which is `left`'s own length. It writes only
+        // `out[c]` of a `columns`-element fresh allocation distinct from both
+        // inputs. Threads with `c >= columns` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(columns_arg)) }?;
+        self.stream().synchronize()?;
+        output.to_host()
+    }
+
+    pub(crate) fn one_hot_embed_device(
+        &self,
+        device_hot: &CudaSlice<u32>,
+        cycles: usize,
+        domain: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(domain)?;
+        if cycles == 0 {
+            return Ok(output);
+        }
+        if device_hot.len() < cycles {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: device_hot.len(),
+            });
+        }
+        let count = Self::count_of(cycles)?;
+        let cycles = u64::try_from(cycles).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: count as usize,
+        })?;
+        let domain_arg = u64::try_from(domain).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: domain,
+        })?;
+        let mut builder = self.stream().launch_builder(self.opening_one_hot_embed());
+        let _ = builder.arg(device_hot);
+        let _ = builder.arg(&cycles);
+        let _ = builder.arg(&domain_arg);
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: thread `t < cycles` reads only `hot[t]`, and writes at most one
+        // element `out[address * cycles + t]` after checking that index against
+        // `domain` — the length of the fresh zeroed allocation `out`. Each `t`
+        // yields a distinct index, so no two threads write the same element, and
+        // `out` aliases neither `hot` nor any input.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub(crate) fn one_hot_fold_window(
+        &self,
+        device_hot: &CudaSlice<u32>,
+        cycles: usize,
+        base: usize,
+        len: usize,
+        left: &[Fr],
+        sigma: usize,
+    ) -> Result<Vec<Fr>, CudaError> {
+        let columns = 1usize << sigma;
+        let mut output = self.alloc(columns)?;
+        if cycles == 0 || len == 0 {
+            return output.to_host();
+        }
+        if columns > cycles
+            || base.checked_add(len).is_none_or(|end| end > cycles)
+            || device_hot.len() < len
+        {
+            return Err(CudaError::LengthMismatch {
+                expected: columns,
+                got: cycles.min(device_hot.len()),
+            });
+        }
+        let device_left = self.upload(left)?;
+        let base = u64::try_from(base).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: base,
+        })?;
+        let len_arg = u64::try_from(len).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: len,
+        })?;
+        let cycles = u64::try_from(cycles).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: cycles,
+        })?;
+        let columns_u64 = u64::try_from(columns).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: columns,
+        })?;
+        let rows = u64::try_from(left.len()).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: left.len(),
+        })?;
+        let sigma_arg = u32::try_from(sigma).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: sigma,
+        })?;
+        let columns_arg = Self::count_of(columns)?;
+        let mut builder = self.stream().launch_builder(self.opening_one_hot_fold());
+        let _ = builder.arg(device_hot);
+        let _ = builder.arg(device_left.limbs());
+        let _ = builder.arg(&cycles);
+        let _ = builder.arg(&base);
+        let _ = builder.arg(&len_arg);
+        let _ = builder.arg(&columns_u64);
+        let _ = builder.arg(&sigma_arg);
+        let _ = builder.arg(&rows);
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: thread `c < columns` reads `hot[i]` for `i` stepping by
+        // `columns` from its own residue class strictly below `len`, checked above
+        // against `hot`'s length, and `left[row]` only after bounds-checking
+        // `row < rows` against `left`'s own length. It writes only `out[c]` of a
+        // `columns`-element fresh allocation distinct from both inputs. Threads
+        // with `c >= columns` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(columns_arg)) }?;
+        self.stream().synchronize()?;
+        output.to_host()
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod testing {
     use ark_bn254::{Fq, Fr as ArkFr, G1Affine, G1Projective};

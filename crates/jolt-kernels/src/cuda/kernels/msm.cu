@@ -1398,6 +1398,30 @@ extern "C" __global__ void msm_window_accumulate_kernel(u64 *__restrict__ accumu
     }
 }
 
+extern "C" __global__ void msm_fold_rows_kernel(const u64 *__restrict__ table,
+                                                const u64 *__restrict__ left,
+                                                unsigned long long base, unsigned long long len,
+                                                unsigned int sigma, unsigned int rows,
+                                                unsigned int columns, u64 *__restrict__ out) {
+    unsigned int column = blockIdx.x * blockDim.x + threadIdx.x;
+    if (column >= columns) return;
+    u64 acc[LIMBS] = {0, 0, 0, 0};
+    unsigned long long span = (unsigned long long)columns;
+    unsigned long long mask = span - 1ull;
+    unsigned long long first = ((unsigned long long)column + span - (base & mask)) & mask;
+    unsigned long long row = (base + first) >> sigma;
+    for (unsigned long long local = first; local < len; local += span, row++) {
+        if (row >= rows) break;
+        u64 weight[LIMBS], value[LIMBS], term[LIMBS], sum[LIMBS];
+        load4(left + row * LIMBS, weight);
+        load4(table + local * LIMBS, value);
+        fr_mul(weight, value, term);
+        fr_add(acc, term, sum);
+        for (int limb = 0; limb < LIMBS; limb++) acc[limb] = sum[limb];
+    }
+    store4(out + (unsigned long long)column * LIMBS, acc);
+}
+
 // Limit the warp fallback's register footprint to preserve small-bucket throughput.
 extern "C" __global__ __launch_bounds__(256, 2)
 void msm_segment_sum_small_kernel(const u64 *__restrict__ bases,

@@ -103,6 +103,10 @@
 //! coefficients once on device, using at most 512 MiB. The prepared loop combines
 //! four strided pairs per thread to share accumulator squarings. Larger coefficient
 //! tables use the direct block loop; identity pairs skip coefficient reads.
+//! Opening row folds assign one output column per thread and sum its weighted
+//! entries, including windows that start partway through a row. Sparse one-hot
+//! folds gather row weights directly from hot indices; cold entries contribute
+//! zero. Sparse embedding scatters ones into a zeroed address-by-cycle table.
 //! Prefix/suffix sumchecks first bind compact weight and accumulator tables,
 //! then fold the original field columns on device to build the suffix phase.
 //! Equality and shifted-equality weights share this engine; final column claims
