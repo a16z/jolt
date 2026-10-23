@@ -3,17 +3,20 @@
 use std::collections::VecDeque;
 
 use common::jolt_device::MemoryConfig;
+use jolt_platform::JOLT_ADVICE_WRITE_CALL_ID;
 use jolt_program::expand::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
 };
 #[cfg(not(feature = "field-inline"))]
-use jolt_riscv::RV64IMAC_JOLT;
+use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
+use jolt_riscv::{instructions::VirtualHostIO, InlineExtension, JoltInstructionKind as Kind};
 #[cfg(feature = "field-inline")]
 use jolt_riscv::{FieldInlineOp, RV64IMAC_JOLT_FIELD_INLINE};
-use jolt_riscv::{InlineExtension, JoltInstructionKind as Kind};
 
 use super::*;
+use crate::emulator::cpu::PrivilegeMode;
 use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
+use crate::emulator::mmu::{AddressingMode, DRAM_BASE};
 use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
 use crate::instruction::format::format_inline::FormatInline;
 use crate::instruction::inline::{
@@ -27,7 +30,7 @@ fn guest(words: &[u32]) -> (JoltProgram, TraceInputs) {
     #[cfg(feature = "field-inline")]
     let profile = RV64IMAC_JOLT_FIELD_INLINE;
     #[cfg(not(feature = "field-inline"))]
-    let profile = RV64IMAC_JOLT;
+    let profile = RV64IMAC_JOLT_ALL_INLINES;
     let program = jolt_program::build_jolt_program_with_inline_provider(
         &elf,
         &mut TracerInlineExpansionProvider::new(),
@@ -94,8 +97,19 @@ fn longest_inline(
     asm.finalize()
 }
 
-// custom-1, funct3 6, rd x5, funct7 0x7d.
+/// A registered inline whose host advice write precedes a write of x5.
+fn host_write_then_increment(
+    mut asm: InlineExpansionBuilder,
+    _operands: InlineOperands,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    asm.emit_i(Kind::VirtualHostIO(VirtualHostIO(())), 0, 0, 0);
+    asm.emit_i(Kind::ADDI, 5, 5, 1);
+    asm.finalize()
+}
+
+// custom-1, funct3 6, rd x5; funct7 0x7d and 0x7c.
 const LONGEST_INLINE_WORD: u32 = 0xfa00_62ab;
+const HOST_WRITE_INLINE_WORD: u32 = 0xf800_62ab;
 
 inventory::submit! {
     InlineRegistration {
@@ -105,6 +119,18 @@ inventory::submit! {
         extension: InlineExtension::Sha2,
         name: "TEST_LONGEST_INLINE",
         build_sequence: longest_inline,
+        build_advice: no_advice,
+    }
+}
+
+inventory::submit! {
+    InlineRegistration {
+        opcode: 0x2b,
+        funct3: 0x6,
+        funct7: 0x7c,
+        extension: InlineExtension::Sha2,
+        name: "TEST_HOST_WRITE_INLINE",
+        build_sequence: host_write_then_increment,
         build_advice: no_advice,
     }
 }
@@ -375,4 +401,132 @@ fn limited_trace_matches_the_original_trace() {
             .any(|event| (PARALLEL_ROW_CONVERSION_THRESHOLD..wide).contains(&event.cycle)));
         assert!(events.last().unwrap().cycle > 4 * wide);
     }
+}
+
+/// Within one tick, a registered inline's rows after a refused advice write do
+/// not run, in trace and in execute mode; without a limit both rows run.
+#[test]
+fn refused_advice_write_stops_its_inline() {
+    let inline = Instruction::from(INLINE::new(
+        HOST_WRITE_INLINE_WORD,
+        0x8000_0000,
+        false,
+        false,
+    ));
+    let writing_cpu = |limit: Option<usize>| {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        cpu.get_mut_mmu().init_memory(64);
+        cpu.x[10] = i64::from(JOLT_ADVICE_WRITE_CALL_ID);
+        cpu.x[11] = 0x8000_0000;
+        cpu.x[12] = 8;
+        if let Some(limit) = limit {
+            cpu.set_advice_write_allowance(TraceAllocationAllowance::new(limit, 0));
+        }
+        cpu
+    };
+    // 8 scratch bytes and a new 8-byte tape.
+    let refusal = Some(TraceAllocationError::LimitExceeded {
+        phase: TraceAllocationPhase::AdviceWrite,
+        limit_bytes: 15,
+        required_bytes: 16,
+    });
+
+    let mut cpu = writing_cpu(Some(15));
+    let mut cycles = Vec::new();
+    inline.trace(&mut cpu, Some(&mut cycles));
+    assert_eq!(cpu.advice_write_refusal(), refusal);
+    assert_eq!((cpu.x[5], cycles.len(), cpu.advice_tape.len()), (0, 1, 0));
+
+    let mut cpu = writing_cpu(Some(15));
+    inline.execute(&mut cpu);
+    assert_eq!(cpu.advice_write_refusal(), refusal);
+    assert_eq!((cpu.x[5], cpu.trace_len, cpu.advice_tape.len()), (0, 1, 0));
+
+    let mut cpu = writing_cpu(None);
+    let mut cycles = Vec::new();
+    inline.trace(&mut cpu, Some(&mut cycles));
+    assert_eq!((cpu.x[5], cycles.len(), cpu.advice_tape.len()), (1, 2, 8));
+}
+
+/// A guest that writes 24 bytes of its own text to the advice tape, then
+/// 64 KiB through the registered inline above, then 7 bytes, and stalls.
+fn advice_writing_guest() -> (JoltProgram, TraceInputs) {
+    guest(&[
+        0x00ad_c537, // lui a0, 0xadc
+        0xabe5_0513, // addi a0, a0, -0x542: the advice-write call
+        0x0000_0597, // auipc a1, 0
+        0x0180_0613, // addi a2, x0, 24
+        0x0000_205b, // host I/O
+        0x0001_0637, // lui a2, 0x10
+        HOST_WRITE_INLINE_WORD,
+        0x0070_0613, // addi a2, x0, 7
+        0x0000_205b, // host I/O
+        0x0000_006f, // j .
+    ])
+}
+
+/// The tape-only run, which requests no trace storage, writes the tape the
+/// original and the limited traces write, through several tape growths and
+/// to the PC stall.
+#[test]
+fn tape_only_run_writes_the_traced_tape() {
+    assert_eq!(JOLT_ADVICE_WRITE_CALL_ID, 0x00ad_babe);
+    let (program, inputs) = advice_writing_guest();
+    let original = TracerBackend::new()
+        .trace(&program, inputs.clone())
+        .unwrap();
+    let tape = original.advice_tape.unwrap();
+    assert_eq!(tape.len(), 24 + (1 << 16) + 7);
+    let limited_trace = limited(usize::MAX).trace(&program, inputs.clone()).unwrap();
+    assert_eq!(limited_trace.advice_tape.unwrap(), tape);
+    let tape_only = TracerBackend::execute_advice_tape(&program, inputs, usize::MAX).unwrap();
+    assert_eq!(tape_only, tape);
+}
+
+/// With each run's setup requirement as its limit, the 24-byte write fits
+/// and the registered inline's 64 KiB write is refused: the limited trace and
+/// the tape-only run return that error instead of running on to the stall
+/// with a shorter tape. The tape-only setup requests no row reserve.
+#[test]
+fn refused_advice_write_fails_the_run() {
+    let (program, inputs) = advice_writing_guest();
+    let (_, setup) = rejection(limited(0).trace(&program, inputs.clone())).unwrap();
+    let (phase, required) = rejection(limited(setup).trace(&program, inputs.clone())).unwrap();
+    assert_eq!(phase, TraceAllocationPhase::AdviceWrite);
+    assert!(required > setup + (1 << 16), "{required} {setup}");
+
+    let tape_only = |limit| TracerBackend::execute_advice_tape(&program, inputs.clone(), limit);
+    let (phase, setup) = rejection(tape_only(0)).unwrap();
+    assert_eq!(phase, TraceAllocationPhase::Initial);
+    assert!(setup < crate::trace_capacity_reserve() * size_of::<JoltTraceRow>());
+    let (phase, required) = rejection(tape_only(setup)).unwrap();
+    assert_eq!(phase, TraceAllocationPhase::AdviceWrite);
+    assert!(required > setup + (1 << 16), "{required} {setup}");
+}
+
+/// The tape-only run stops where a trace stops: [`PassOne::step`], which it
+/// runs, ends at the first tick that emits no row and never ticks again. No
+/// guest can make such a tick (it needs paging, and satp writes do not
+/// decode), so paging over a page table of zeros forces an instruction page
+/// fault.
+#[test]
+fn tape_only_stop_ends_at_a_zero_row_tick() {
+    let (program, inputs) = advice_writing_guest();
+    let mut emulator = crate::create_emulator(
+        program.elf_bytes(),
+        None,
+        &inputs.inputs,
+        &inputs.untrusted_advice,
+        &inputs.trusted_advice,
+        &inputs.memory_config,
+        None,
+    );
+    let mmu = emulator.get_mut_cpu().get_mut_mmu();
+    mmu.update_addressing_mode(AddressingMode::SV39);
+    mmu.update_privilege_mode(PrivilegeMode::User);
+    mmu.update_ppn((DRAM_BASE + (1 << 16)) >> 12);
+    let mut pass = PassOne::new(emulator);
+    assert!(!pass.step());
+    assert!(!pass.step());
+    assert_eq!(pass.rows(), 0);
 }
