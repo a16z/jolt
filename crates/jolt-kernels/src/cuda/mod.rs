@@ -215,7 +215,7 @@ where
     /// RA virtualization, RAM output and value checking, RAM hamming booleanity,
     /// hamming-weight claim reduction, booleanity checking,
     /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
-    /// reduction and virtualization, and RV64 bytecode read-RAF cycle, Spartan outer,
+    /// reduction and virtualization, and RV64 bytecode read-RAF, Spartan outer,
     /// and product kernels with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
@@ -250,6 +250,7 @@ where
         backend.spartan_shift = Box::new(CudaBackend);
         #[cfg(not(feature = "field-inline"))]
         {
+            backend.bytecode_read_raf_address = Box::new(CudaBackend);
             backend.bytecode_read_raf_cycle = Box::new(CudaBackend);
             backend.spartan_outer_uniskip = Box::new(CudaBackend);
             backend.spartan_outer_remainder = Box::new(CudaBackend);

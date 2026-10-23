@@ -1,6 +1,7 @@
-//! CUDA bytecode read+RAF cycle checking.
+//! CUDA bytecode read+RAF checking.
 //!
-//! As in optimized, the cycle phase fuses the relation's linear terms into one coefficient
+//! Address pushforwards use canonical packed bytecode PCs. As in optimized,
+//! the cycle phase fuses the relation's linear terms into one coefficient
 //! column and multiplies it by the committed RA chunks.
 //!
 //! CUDA retains the packed PC and per-chunk lookup tables for five binds
@@ -38,8 +39,10 @@ use crate::{
 use coefficient::DeviceCoefficient;
 use one_hot::{BytecodeShard, DeviceBytecodeRa, ShardedBytecodeRa};
 
+pub(crate) mod address;
 pub(crate) mod coefficient;
 pub(crate) mod one_hot;
+pub(crate) mod pushforward;
 
 pub struct BytecodeReadRafCycleKernel<F: JoltField> {
     relation: BytecodeReadRafCycle<F>,

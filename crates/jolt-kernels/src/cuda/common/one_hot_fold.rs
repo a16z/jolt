@@ -94,6 +94,20 @@ impl OneHotShards {
         Ok(Self { windows, columns })
     }
 
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) fn from_windows(
+        windows: Vec<CycleWindow>,
+        columns: Vec<DeviceOneHotColumns>,
+    ) -> Result<Self, CudaError> {
+        if windows.len() != columns.len() || windows.is_empty() {
+            return Err(CudaError::LengthMismatch {
+                expected: windows.len(),
+                got: columns.len(),
+            });
+        }
+        Ok(Self { windows, columns })
+    }
+
     #[cfg(test)]
     pub(crate) fn single(columns: DeviceOneHotColumns) -> Self {
         let window = CycleWindow {

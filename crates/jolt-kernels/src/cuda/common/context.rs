@@ -137,6 +137,12 @@ pub struct CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     so_claims: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
+    brap_one_hot: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    brap_term: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    brap_message: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     sp_gather: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
     sp_matrix: CudaFunction,
@@ -383,6 +389,12 @@ impl CudaKernelContext {
             so_factors: module.load_function("so_factors_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             so_claims: module.load_function("so_claims_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brap_one_hot: module.load_function("brap_one_hot_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brap_term: module.load_function("brap_term_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brap_message: module.load_function("brap_message_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             sp_gather: module.load_function("sp_gather_kernel")?,
             #[cfg(not(feature = "field-inline"))]
@@ -822,6 +834,21 @@ impl CudaKernelContext {
 
     pub(crate) const fn ss_packed_columns(&self) -> &CudaFunction {
         &self.ss_packed_columns
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brap_one_hot(&self) -> &CudaFunction {
+        &self.brap_one_hot
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brap_term(&self) -> &CudaFunction {
+        &self.brap_term
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brap_message(&self) -> &CudaFunction {
+        &self.brap_message
     }
 
     #[cfg(not(feature = "field-inline"))]

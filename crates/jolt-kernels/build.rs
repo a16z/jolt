@@ -38,6 +38,7 @@ const KERNEL_FILES: &[&str] = &[
     "instruction_input.cu",
     "spartan_shift.cu",
     "booleanity_address.cu",
+    "bytecode_read_raf_address.cu",
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
