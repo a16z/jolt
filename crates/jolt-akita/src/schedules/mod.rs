@@ -36,7 +36,7 @@ pub mod emit {
     use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
     /// Admitted production trace exponents for K=16.
-    pub const K16_TRACE_LOG_T: (usize, usize) = (12, 30);
+    pub const K16_TRACE_LOG_T: (usize, usize) = (12, 31);
     pub const K16_NUM_VARS: (usize, usize) = (
         K16_TRACE_LOG_T.0 + K16_COLUMN_VARIABLES,
         K16_TRACE_LOG_T.1 + K16_COLUMN_VARIABLES,
@@ -44,7 +44,7 @@ pub mod emit {
     /// One- and two-polynomial rows used by adapter and grouped-planner diagnostics.
     pub const ONE_HOT_SCALAR_NUM_POLYS: &[usize] = &[1, 2];
     /// Bounded-dense advice and committed-program byte objects.
-    pub const DENSE_NUM_VARS: (usize, usize) = (14, 34);
+    pub const DENSE_NUM_VARS: (usize, usize) = (14, 35);
 
     /// First logical trace exponent using setup offloading.
     pub const RECURSIVE_TRACE_LOG_T_CUTOVER: usize = 21;
