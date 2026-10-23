@@ -21,13 +21,13 @@ impl TraceAllocationAllowance {
 
     /// Admits `new_request` bytes beside the `retained_here` bytes this owner
     /// keeps live until the request completes, such as the old buffer of a
-    /// growth.
+    /// growth, and returns the bytes live while it is made.
     pub(crate) fn check_request(
         self,
         phase: TraceAllocationPhase,
         retained_here: usize,
         new_request: usize,
-    ) -> Result<(), TraceAllocationError> {
+    ) -> Result<usize, TraceAllocationError> {
         let required_bytes = self
             .other_live_bytes
             .checked_add(retained_here)
@@ -40,7 +40,7 @@ impl TraceAllocationAllowance {
                 required_bytes,
             });
         }
-        Ok(())
+        Ok(required_bytes)
     }
 }
 
@@ -67,6 +67,18 @@ pub(crate) fn sum_bytes(
 /// the larger of `required` and twice `capacity`, so growth stays amortized.
 pub(crate) fn growth_target(capacity: usize, required: usize) -> usize {
     required.max(capacity.saturating_mul(2))
+}
+
+/// The least of `initial`, `2 * initial`, `4 * initial`, ... that holds
+/// `required` elements, or `None` past `usize`: the capacity a buffer
+/// reserved at `initial` reaches under [`growth_target`] when no request
+/// overruns its capacity by more than `initial` elements.
+pub(crate) fn doubling_target(initial: usize, required: usize) -> Option<usize> {
+    let mut capacity = initial.max(1);
+    while capacity < required {
+        capacity = capacity.checked_mul(2)?;
+    }
+    Some(capacity)
 }
 
 /// `Vec::try_reserve_exact` reporting a refused request as `phase`'s

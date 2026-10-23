@@ -304,7 +304,10 @@ pub fn compute_advice_tape(
 /// unpriced requests can exceed it. The limited trace rejects parallel tracing
 /// (`TRACER_PARALLEL`), fails at the first covered request the budget cannot
 /// hold, starting with its setup requests (over 1 GiB by default), and keeps
-/// its row reserve in the trace, where the known-eager check counts it.
+/// its rows' observed capacity in the trace, where the known-eager check
+/// counts it: a run holding every cycle to the end requests exactly its rows;
+/// a batched run keeps at least its row reserve, even when it converts only
+/// at the end.
 /// That check, [`MemoryBudget::check_known_eager`], runs after tracing and
 /// before the witness is built. Passing does not mean the proof fits in the
 /// budget. [`compute_advice_tape`] checks its run only against the budget it

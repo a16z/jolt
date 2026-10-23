@@ -700,6 +700,30 @@ impl Cpu {
         Ok(instr)
     }
 
+    /// The instruction the next [`Self::tick`] executes, decoded as that tick
+    /// decodes it, or `None` when the tick emits no row: the CPU waits for an
+    /// interrupt, or the fetch traps. The PC stays, also when the decode
+    /// panics, but a miss fills the decode cache and the fetch raises the
+    /// flat memory's high-water mark, as the tick's own fetch does. Under
+    /// paging it could also set accessed bits; the only caller, the limited
+    /// trace, ticks a fresh serial emulator whose addressing mode no
+    /// production caller changes.
+    pub(crate) fn peek_instruction(&mut self) -> Option<Instruction> {
+        if self.wfi {
+            return None;
+        }
+        if let Some(cached) = self.mmu.decode_cache.lookup(self.pc) {
+            return Some(cached.instr);
+        }
+        let restore = RestorePc {
+            pc: self.pc,
+            cpu: self,
+        };
+        let decoded = restore.cpu.decode_and_cache().ok();
+        drop(restore);
+        decoded
+    }
+
     fn handle_interrupt(&mut self, instruction_address: u64) {
         let minterrupt = self.read_csr_raw(CSR_MIP_ADDRESS) & self.read_csr_raw(CSR_MIE_ADDRESS);
 
@@ -1550,6 +1574,18 @@ pub fn get_register_name(num: usize) -> &'static str {
     }
 }
 
+/// Puts `pc` back into the CPU when dropped, also while unwinding.
+struct RestorePc<'a> {
+    cpu: &'a mut Cpu,
+    pc: u64,
+}
+
+impl Drop for RestorePc<'_> {
+    fn drop(&mut self) {
+        self.cpu.pc = self.pc;
+    }
+}
+
 #[cold]
 #[inline(never)]
 fn decode_failure(word: u32, address: u64, compressed: bool, e: impl core::fmt::Display) -> ! {
@@ -1561,10 +1597,11 @@ fn decode_failure(word: u32, address: u64, compressed: bool, e: impl core::fmt::
 #[cfg(test)]
 mod test_cpu {
     use std::io::{Result as IoResult, Write};
+    use std::panic::AssertUnwindSafe;
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::emulator::mmu::DRAM_BASE;
+    use crate::emulator::mmu::{AddressingMode, DRAM_BASE};
     use crate::emulator::terminal::DummyTerminal;
 
     fn create_cpu() -> Cpu {
@@ -1811,6 +1848,62 @@ mod test_cpu {
             Some(TraceAllocationError::SizeOverflow { phase })
         );
         assert_eq!(tape(&cpu), (8, 8));
+    }
+
+    /// A peek returns what the next tick decodes and leaves the PC where it
+    /// was: on a decode-cache miss, which fills the cache, on a hit, for a
+    /// compressed and an out-of-text instruction, after a store invalidates
+    /// the cached decode, and when the fetch traps or the decode panics. A
+    /// CPU waiting for an interrupt peeks nothing.
+    #[test]
+    fn peek_instruction_leaves_the_pc() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(1 << 14);
+        cpu.mmu.decode_cache.init(DRAM_BASE, DRAM_BASE + 8);
+        let (addi, compressed, outside) = (0x0010_8093, 0x0000_0020, DRAM_BASE + 8);
+        // c.addi4spn x8, 8 at +4, and jalr with funct3 1, which panics, at +12.
+        for (pc, word) in [(DRAM_BASE, addi), (DRAM_BASE + 4, compressed)]
+            .into_iter()
+            .chain([(outside, addi), (outside + 4, 0x0000_1067)])
+        {
+            cpu.get_mut_mmu().store_word(pc, word).unwrap();
+        }
+        let peek = |cpu: &mut Cpu, pc| {
+            cpu.update_pc(pc);
+            let instruction = cpu.peek_instruction();
+            assert_eq!(cpu.read_pc(), pc);
+            instruction
+        };
+        let decoded = |word, pc| Instruction::decode(word, pc, false).ok();
+        assert_eq!(peek(&mut cpu, DRAM_BASE), decoded(addi, DRAM_BASE));
+        assert!(cpu.mmu.decode_cache.lookup(DRAM_BASE).is_some());
+        assert_eq!(peek(&mut cpu, DRAM_BASE), decoded(addi, DRAM_BASE));
+        let expanded = uncompress_instruction(compressed);
+        assert_eq!(
+            peek(&mut cpu, DRAM_BASE + 4),
+            Instruction::decode(expanded, DRAM_BASE + 4, true).ok()
+        );
+        assert_eq!(peek(&mut cpu, outside), decoded(addi, outside));
+        assert!(cpu.mmu.decode_cache.lookup(outside).is_none());
+        cpu.get_mut_mmu()
+            .store_word(DRAM_BASE, 0x0020_8093)
+            .unwrap();
+        assert_eq!(peek(&mut cpu, DRAM_BASE), decoded(0x0020_8093, DRAM_BASE));
+        cpu.tick(None);
+        assert_eq!((cpu.read_pc(), cpu.read_register(1)), (DRAM_BASE + 4, 2));
+        cpu.update_pc(outside + 4);
+        let peeked = std::panic::catch_unwind(AssertUnwindSafe(|| cpu.peek_instruction()));
+        assert!(peeked.is_err());
+        assert_eq!(cpu.read_pc(), outside + 4);
+        cpu.wfi = true;
+        assert_eq!(peek(&mut cpu, DRAM_BASE), None);
+        cpu.wfi = false;
+        // Paging over a page table of zeros faults the fetch, which advances
+        // the PC before it fails.
+        cpu.mmu.update_addressing_mode(AddressingMode::SV39);
+        cpu.mmu.update_privilege_mode(PrivilegeMode::User);
+        cpu.mmu.update_ppn((DRAM_BASE + (1 << 13)) >> 12);
+        assert_eq!(peek(&mut cpu, outside), None);
     }
 
     #[test]

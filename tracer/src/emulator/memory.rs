@@ -390,26 +390,15 @@ impl Memory {
         }
     }
 
-    /// [`Self::materialized_nonzero_bytes`] of a flat backing as one exact
-    /// allocation, admitted by `allowance` first. Flat doublewords are in
-    /// address order, so the image needs no sort.
-    pub(crate) fn try_flat_nonzero_bytes(
-        &self,
-        allowance: TraceAllocationAllowance,
-    ) -> Result<Vec<(u64, u8)>, TraceAllocationError> {
-        let phase = TraceAllocationPhase::FinalMemory;
+    /// The final image of a flat backing, [`Self::materialized_nonzero_bytes`]
+    /// as one exact allocation, with its nonzero bytes counted.
+    pub(crate) fn flat_image(&self) -> FlatImage<'_> {
         let (dwords, _) = self.data.flat_parts();
-        let mut count = 0;
+        let mut len = 0;
         for (index, &doubleword) in dwords.iter().enumerate() {
-            for_each_nonzero_byte(index, doubleword, |_| count += 1);
+            for_each_nonzero_byte(index, doubleword, |_| len += 1);
         }
-        allowance.check_request(phase, 0, bytes_of::<(u64, u8)>(count, phase)?)?;
-        let mut bytes = Vec::new();
-        reserve_exact(&mut bytes, count, phase)?;
-        for (index, &doubleword) in dwords.iter().enumerate() {
-            for_each_nonzero_byte(index, doubleword, |byte| bytes.push(byte));
-        }
-        Ok(bytes)
+        FlatImage { dwords, len }
     }
 
     /// Reads multiple bytes from memory.
@@ -441,6 +430,34 @@ impl Memory {
         self.data.num_doublewords = 0;
         self.data.high_water = 0;
         taken
+    }
+}
+
+/// A flat memory's final image, counted but not yet collected.
+pub(crate) struct FlatImage<'a> {
+    dwords: &'a [u64],
+    len: usize,
+}
+
+impl FlatImage<'_> {
+    /// Bytes the collected image requests.
+    pub(crate) fn bytes(&self) -> Result<usize, TraceAllocationError> {
+        bytes_of::<(u64, u8)>(self.len, TraceAllocationPhase::FinalMemory)
+    }
+
+    /// The nonzero bytes in address order, admitted by `allowance` first.
+    /// Flat doublewords are in address order, so the image needs no sort.
+    pub(crate) fn try_collect(
+        self,
+        allowance: TraceAllocationAllowance,
+    ) -> Result<Vec<(u64, u8)>, TraceAllocationError> {
+        allowance.check_request(TraceAllocationPhase::FinalMemory, 0, self.bytes()?)?;
+        let mut bytes = Vec::new();
+        reserve_exact(&mut bytes, self.len, TraceAllocationPhase::FinalMemory)?;
+        for (index, &doubleword) in self.dwords.iter().enumerate() {
+            for_each_nonzero_byte(index, doubleword, |byte| bytes.push(byte));
+        }
+        Ok(bytes)
     }
 }
 
@@ -517,7 +534,9 @@ mod tests {
         let request = 48;
         let phase = TraceAllocationPhase::FinalMemory;
         assert_eq!(
-            memory.try_flat_nonzero_bytes(TraceAllocationAllowance::new(request + 7, 8)),
+            memory
+                .flat_image()
+                .try_collect(TraceAllocationAllowance::new(request + 7, 8)),
             Err(TraceAllocationError::LimitExceeded {
                 phase,
                 limit_bytes: request + 7,
@@ -525,7 +544,8 @@ mod tests {
             })
         );
         let image = memory
-            .try_flat_nonzero_bytes(TraceAllocationAllowance::new(request + 8, 8))
+            .flat_image()
+            .try_collect(TraceAllocationAllowance::new(request + 8, 8))
             .expect("the image fits exactly");
         assert_eq!(image, vec![(3, 0xCC), (9, 0xAA), (40, 0xBB)]);
         assert_eq!(image.capacity(), 3);

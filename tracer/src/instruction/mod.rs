@@ -178,6 +178,7 @@ use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, NormalizedOperands};
+use jolt_program::execution::TraceError;
 pub use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{
     JoltInstructionKind, RamAccess, RamRead, RamWrite, SourceInlineKey, SourceInstructionKind,
@@ -945,6 +946,53 @@ fn is_field_inline_instruction(instruction: &Instruction) -> bool {
 #[cfg(not(feature = "field-inline"))]
 fn is_field_inline_instruction(_instruction: &Instruction) -> bool {
     false
+}
+
+/// Rows and field events one tick emits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Emission {
+    pub(crate) rows: usize,
+    pub(crate) field_events: usize,
+}
+
+impl Instruction {
+    /// What [`Self::trace`] emits when it completes, read from the expansion
+    /// it walks, the CPU's cached one, filled on a miss: one row per final
+    /// instruction, and a field event per field-inline one. A registered
+    /// inline stopped by a refused advice write emits fewer rows. Only
+    /// `tick_emission_matches_trace_for_every_instruction` pins that
+    /// `is_source_only` names the instructions whose trace expands, and that
+    /// an expansion row's `rd = x0` rewrite traces as one row. `NoOp`,
+    /// `UNIMPL` (whose traces panic) and an expansion row that would expand
+    /// again fail with [`TraceError::SourceOnlyCycle`].
+    pub(crate) fn emission(&self, cpu: &mut Cpu) -> Result<Emission, TraceError> {
+        let kind = self.source_instruction().kind();
+        if !self.takes_rd0_expansion() && !jolt_program::expand::is_source_only(kind) {
+            return self.leaf_emission();
+        }
+        let mut emission = Ok(Emission::default());
+        cpu.with_cached_inline_sequence(self, |_, rows| {
+            emission = rows.iter().try_fold(Emission::default(), |total, row| {
+                let leaf = row.leaf_emission()?;
+                Ok(Emission {
+                    rows: total.rows + leaf.rows,
+                    field_events: total.field_events + leaf.field_events,
+                })
+            });
+        });
+        emission
+    }
+
+    fn leaf_emission(&self) -> Result<Emission, TraceError> {
+        let kind = self.source_instruction().kind();
+        if matches!(self, Self::NoOp | Self::UNIMPL) || jolt_program::expand::is_source_only(kind) {
+            return Err(TraceError::SourceOnlyCycle(kind));
+        }
+        Ok(Emission {
+            rows: 1,
+            field_events: usize::from(self.is_field_inline()),
+        })
+    }
 }
 
 macro_rules! define_final_jolt_row_conversion {
