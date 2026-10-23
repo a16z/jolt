@@ -2,14 +2,16 @@
 
 use std::error::Error;
 
-use jolt_field::{CanonicalEncoding, Field, F128, F192, F64, F8};
+use jolt_field::{Field, F128, F192, F64, F8};
 use jolt_poly::lagrange::F8DomainSizeError;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    ClearProof, ClearSumcheckProof, F8Domain, SumcheckClaim, SumcheckDomain, SumcheckError,
-    SumcheckProof, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    grind_round, ClearProof, ClearSumcheckProof, F8Domain, LabeledRoundPoly, RoundMessage,
+    SumcheckClaim, SumcheckDomain, SumcheckError, SumcheckProof, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript, UnpricedTranscript};
+
+const LABEL: &[u8] = b"f8-uniskip-reduction";
 
 fn horner<F: Field>(coefficients: &[F], point: F) -> F {
     coefficients
@@ -72,15 +74,33 @@ fn degree_overflow<F: Field + From<F8>>() -> Result<(), F8DomainSizeError> {
     Ok(())
 }
 
-fn full_clear_round<F: Field>(coefficients: Vec<F>) -> SumcheckProof<F, ()> {
-    SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof {
-        round_polynomials: vec![UnivariatePoly::new(coefficients)],
-    }))
+/// A one-round proof of `coefficients` for `claim`, with the round nonce
+/// ground as the prover grinds it: after the round message, before the
+/// challenge.
+fn full_clear_round<F, T>(
+    claim: &SumcheckClaim<F>,
+    coefficients: Vec<F>,
+) -> Result<SumcheckProof<F, ()>, SumcheckError<F>>
+where
+    F: Field + AppendToTranscript,
+    T: Transcript<Challenge = F>,
+{
+    let round_polynomial = UnivariatePoly::new(coefficients);
+    let mut transcript = T::new(LABEL);
+    LabeledRoundPoly::new(&round_polynomial, UNISKIP_ROUND_TRANSCRIPT_LABEL)
+        .append_to_transcript(&mut transcript);
+    let mut pow_nonces = Vec::new();
+    grind_round::<F, T>(claim.degree, 0, &mut pow_nonces, &mut transcript)?;
+    Ok(SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof {
+        round_polynomials: vec![round_polynomial],
+        pow_nonces,
+    })))
 }
 
-fn one_round_reduction<F>() -> Result<(), Box<dyn Error>>
+fn one_round_reduction<F, T>() -> Result<(), Box<dyn Error>>
 where
-    F: Field + From<F8> + CanonicalEncoding + AppendToTranscript,
+    F: Field + From<F8> + AppendToTranscript + 'static,
+    T: Transcript<Challenge = F>,
 {
     let coefficients = [0x31, 0x47, 0x59, 0x6d, 0x83, 0x97].map(|word| F::from(F8::from_raw(word)));
     let direct_sum: F = (0..4)
@@ -88,8 +108,8 @@ where
         .sum();
     let claim = SumcheckClaim::new(1, 5, direct_sum);
     let domain = F8Domain::new(4)?;
-    let mut transcript = Blake2bTranscript::<F>::new(b"f8-uniskip-reduction");
-    let reduced = full_clear_round(coefficients.to_vec()).verify(
+    let mut transcript = T::new(LABEL);
+    let reduced = full_clear_round::<F, T>(&claim, coefficients.to_vec())?.verify(
         &claim,
         domain,
         UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -115,9 +135,9 @@ where
                 }
         })
         .collect();
-    let mut transcript = Blake2bTranscript::<F>::new(b"f8-uniskip-reduction");
+    let mut transcript = T::new(LABEL);
     assert!(matches!(
-        full_clear_round(changed_cubic).verify(
+        full_clear_round::<F, T>(&claim, changed_cubic)?.verify(
             &claim,
             domain,
             UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -131,8 +151,8 @@ where
         .enumerate()
         .map(|(index, &coefficient)| coefficient + if index == 0 { F::one() } else { F::zero() })
         .collect();
-    let mut transcript = Blake2bTranscript::<F>::new(b"f8-uniskip-reduction");
-    let reduced = full_clear_round(changed_constant).verify(
+    let mut transcript = T::new(LABEL);
+    let reduced = full_clear_round::<F, T>(&claim, changed_constant)?.verify(
         &claim,
         domain,
         UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -149,7 +169,7 @@ where
 }
 
 macro_rules! field_tests {
-    ($module:ident, $field:ty) => {
+    ($module:ident, $field:ty, $transcript:ty) => {
         mod $module {
             use super::*;
 
@@ -170,15 +190,19 @@ macro_rules! field_tests {
 
             #[test]
             fn full_round_reduction_and_coefficient_tampering() -> Result<(), Box<dyn Error>> {
-                one_round_reduction::<$field>()
+                one_round_reduction::<$field, $transcript>()
             }
         }
     };
 }
 
-field_tests!(f64, F64);
-field_tests!(f128, F128);
-field_tests!(f192, F192);
+// `F64` challenges carry 64 bits, which no supported proof of work lifts to
+// the 128-bit target, so a priced transcript rejects every round; the `F64`
+// reduction runs unpriced and checks the domain's algebra, not Fiat-Shamir
+// security.
+field_tests!(f64, F64, UnpricedTranscript<Blake2bTranscript<F64>>);
+field_tests!(f128, F128, Blake2bTranscript<F128>);
+field_tests!(f192, F192, Blake2bTranscript<F192>);
 
 #[test]
 fn new_rejects_sizes_outside_1_to_256() {
