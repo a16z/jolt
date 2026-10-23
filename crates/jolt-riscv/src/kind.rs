@@ -328,12 +328,6 @@ macro_rules! source_extension_for_marker {
     (AssertEq) => {
         Some(SourceExtension::JoltCustom)
     };
-    (AssertHalfwordAlignment) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (AssertWordAlignment) => {
-        Some(SourceExtension::JoltCustom)
-    };
     (AssertLte) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -436,9 +430,6 @@ macro_rules! source_extension_for_marker {
     (ShiftDataW) => {
         Some(SourceExtension::JoltCustom)
     };
-    (AlignAddr) => {
-        Some(SourceExtension::JoltCustom)
-    };
     (VirtualXorRot32) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -488,6 +479,24 @@ macro_rules! source_extension_for_marker {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualXorRotL1) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (LoadB) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (LoadH) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (LoadW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (StoreB) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (StoreH) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (StoreW) => {
         Some(SourceExtension::JoltCustom)
     };
     (FieldAdd) => {
@@ -820,12 +829,6 @@ macro_rules! source_side_effects_for_marker {
     (AssertEq) => {
         false
     };
-    (AssertHalfwordAlignment) => {
-        false
-    };
-    (AssertWordAlignment) => {
-        false
-    };
     (AssertLte) => {
         false
     };
@@ -922,9 +925,6 @@ macro_rules! source_side_effects_for_marker {
     (ShiftDataW) => {
         false
     };
-    (AlignAddr) => {
-        false
-    };
     (VirtualXorRot32) => {
         false
     };
@@ -975,6 +975,24 @@ macro_rules! source_side_effects_for_marker {
     };
     (VirtualXorRotL1) => {
         false
+    };
+    (LoadB) => {
+        true
+    };
+    (LoadH) => {
+        true
+    };
+    (LoadW) => {
+        true
+    };
+    (StoreB) => {
+        true
+    };
+    (StoreH) => {
+        true
+    };
+    (StoreW) => {
+        true
     };
     (FieldAdd) => {
         true
@@ -1117,12 +1135,6 @@ macro_rules! jolt_target_extension_for_marker {
     (AssertEq) => {
         Some(JoltTargetExtension::VirtualAssertions)
     };
-    (AssertHalfwordAlignment) => {
-        Some(JoltTargetExtension::VirtualAssertions)
-    };
-    (AssertWordAlignment) => {
-        Some(JoltTargetExtension::VirtualAssertions)
-    };
     (AssertLte) => {
         Some(JoltTargetExtension::VirtualAssertions)
     };
@@ -1213,9 +1225,6 @@ macro_rules! jolt_target_extension_for_marker {
     (ShiftDataW) => {
         Some(JoltTargetExtension::VirtualShifts)
     };
-    (AlignAddr) => {
-        Some(JoltTargetExtension::VirtualShifts)
-    };
     (Andn) => {
         Some(JoltTargetExtension::BitManipulation)
     };
@@ -1272,6 +1281,24 @@ macro_rules! jolt_target_extension_for_marker {
     };
     (VirtualXorRotL1) => {
         Some(JoltTargetExtension::BitManipulation)
+    };
+    (LoadB) => {
+        Some(JoltTargetExtension::LoadStore64)
+    };
+    (LoadH) => {
+        Some(JoltTargetExtension::LoadStore64)
+    };
+    (LoadW) => {
+        Some(JoltTargetExtension::LoadStore64)
+    };
+    (StoreB) => {
+        Some(JoltTargetExtension::LoadStore64)
+    };
+    (StoreH) => {
+        Some(JoltTargetExtension::LoadStore64)
+    };
+    (StoreW) => {
+        Some(JoltTargetExtension::LoadStore64)
     };
     (FieldAdd) => {
         Some(JoltTargetExtension::FieldInline)
@@ -1444,12 +1471,6 @@ macro_rules! jolt_side_effects_for_marker {
     (AssertEq) => {
         false
     };
-    (AssertHalfwordAlignment) => {
-        false
-    };
-    (AssertWordAlignment) => {
-        false
-    };
     (AssertLte) => {
         false
     };
@@ -1546,9 +1567,6 @@ macro_rules! jolt_side_effects_for_marker {
     (ShiftDataW) => {
         false
     };
-    (AlignAddr) => {
-        false
-    };
     (VirtualXorRot32) => {
         false
     };
@@ -1599,6 +1617,24 @@ macro_rules! jolt_side_effects_for_marker {
     };
     (VirtualXorRotL1) => {
         false
+    };
+    (LoadB) => {
+        true
+    };
+    (LoadH) => {
+        true
+    };
+    (LoadW) => {
+        true
+    };
+    (StoreB) => {
+        true
+    };
+    (StoreH) => {
+        true
+    };
+    (StoreW) => {
+        true
     };
 }
 
@@ -2129,10 +2165,12 @@ mod tests {
     fn tags_are_stable_for_representative_final_rows() {
         assert_eq!(JoltInstructionKind::NoOp.tag(), JoltInstructionTag(0x0000));
         assert_eq!(JoltInstructionKind::ADD.tag(), JoltInstructionTag(0x0002));
-        assert_eq!(
-            JoltInstructionKind::from_tag(JoltInstructionTag(0x0062)),
-            None
-        );
+        for retired in [0x0062, 0x0065, 0x0066, 0x009a] {
+            assert_eq!(
+                JoltInstructionKind::from_tag(JoltInstructionTag(retired)),
+                None
+            );
+        }
         assert_eq!(
             JoltInstruction::VirtualHostIO(VirtualHostIO(())).tag(),
             JoltInstructionTag(0x0068)

@@ -56,8 +56,12 @@ macro_rules! template_format {
             imm: 1234,
         }
     };
-    (FormatAssert) => {
-        FormatAssert { rs1: 2, imm: 1234 }
+    (FormatAMO) => {
+        FormatAMO {
+            rd: 1,
+            rs1: 2,
+            rs2: 3,
+        }
     };
     (FormatT) => {
         FormatT { rd: 1, rs1: 2 }

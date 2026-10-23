@@ -27,12 +27,10 @@ use crate::{JoltInstructionKind, JoltInstructionRow, SourceInstructionKind, Sour
 #[cfg(feature = "serialization")]
 use crate::{NormalizedOperands, SourceInlineKey};
 pub use assert::AssertEq;
-pub use assert::AssertHalfwordAlignment;
 pub use assert::AssertLte;
 pub use assert::AssertMulUNoOverflow;
 pub use assert::AssertValidDiv0;
 pub use assert::AssertValidUnsignedRemainder;
-pub use assert::AssertWordAlignment;
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
     FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldAssertZero, FieldInv,
@@ -106,7 +104,9 @@ pub use m::Rem;
 pub use m::RemU;
 pub use m::RemUW;
 pub use m::RemW;
-pub use virt::AlignAddr;
+pub use virt::LoadB;
+pub use virt::LoadH;
+pub use virt::LoadW;
 pub use virt::MovSign;
 pub use virt::MulI;
 pub use virt::MulIW;
@@ -119,6 +119,9 @@ pub use virt::Pow2W;
 pub use virt::ShiftDataB;
 pub use virt::ShiftDataH;
 pub use virt::ShiftDataW;
+pub use virt::StoreB;
+pub use virt::StoreH;
+pub use virt::StoreW;
 pub use virt::VirtualAdvice;
 pub use virt::VirtualAdviceLoad;
 pub use virt::VirtualHostIO;
@@ -386,8 +389,6 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     AssertValidDiv0(AssertValidDiv0<T>),
     AssertValidUnsignedRemainder(AssertValidUnsignedRemainder<T>),
     AssertMulUNoOverflow(AssertMulUNoOverflow<T>),
-    AssertWordAlignment(AssertWordAlignment<T>),
-    AssertHalfwordAlignment(AssertHalfwordAlignment<T>),
     Pow2(Pow2<T>),
     Pow2I(Pow2I<T>),
     Pow2W(Pow2W<T>),
@@ -428,11 +429,16 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     Pext(Pext<T>),
     WindowMaskB(WindowMaskB<T>),
     WindowMaskH(WindowMaskH<T>),
-    AlignAddr(AlignAddr<T>),
     ShiftDataB(ShiftDataB<T>),
     ShiftDataH(ShiftDataH<T>),
     ShiftDataW(ShiftDataW<T>),
     VirtualXorRotL1(VirtualXorRotL1<T>),
+    LoadB(LoadB<T>),
+    LoadH(LoadH<T>),
+    LoadW(LoadW<T>),
+    StoreB(StoreB<T>),
+    StoreH(StoreH<T>),
+    StoreW(StoreW<T>),
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
@@ -611,8 +617,6 @@ impl_jolt_instructions_flags! {
     AssertValidDiv0 => VirtualAssertValidDiv0,
     AssertValidUnsignedRemainder => VirtualAssertValidUnsignedRemainder,
     AssertMulUNoOverflow => VirtualAssertMulUNoOverflow,
-    AssertWordAlignment => VirtualAssertWordAlignment,
-    AssertHalfwordAlignment => VirtualAssertHalfwordAlignment,
     Pow2 => VirtualPow2,
     Pow2I => VirtualPow2I,
     Pow2W => VirtualPow2W,
@@ -653,11 +657,16 @@ impl_jolt_instructions_flags! {
     Pext => VirtualPext,
     WindowMaskB => VirtualWindowMaskB,
     WindowMaskH => VirtualWindowMaskH,
-    AlignAddr => VirtualAlignAddr,
     ShiftDataB => VirtualShiftDataB,
     ShiftDataH => VirtualShiftDataH,
     ShiftDataW => VirtualShiftDataW,
     VirtualXorRotL1 => VirtualXORROTL1,
+    LoadB => VirtualLoadB,
+    LoadH => VirtualLoadH,
+    LoadW => VirtualLoadW,
+    StoreB => VirtualStoreB,
+    StoreH => VirtualStoreH,
+    StoreW => VirtualStoreW,
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLoad => VirtualAdviceLoad,
     VirtualHostIO => VirtualHostIO,
@@ -700,13 +709,20 @@ mod tests {
     }
 
     #[test]
-    fn right_operand_exclusive() {
+    fn only_store_data_shifters_sum_both_right_operands() {
         for instr in JoltInstruction::iter() {
             let flags = instr.instruction_flags();
-            assert!(
-                !(flags[InstructionFlags::RightOperandIsRs2Value]
-                    && flags[InstructionFlags::RightOperandIsImm]),
-                "Right operand flags not exclusive for {instr:?}",
+            let sums_both = flags[InstructionFlags::RightOperandIsRs2Value]
+                && flags[InstructionFlags::RightOperandIsImm];
+            let is_store_data_shifter = matches!(
+                instr,
+                JoltInstruction::ShiftDataB(_)
+                    | JoltInstruction::ShiftDataH(_)
+                    | JoltInstruction::ShiftDataW(_)
+            );
+            assert_eq!(
+                sums_both, is_store_data_shifter,
+                "unexpected right operand flags for {instr:?}",
             );
         }
     }
