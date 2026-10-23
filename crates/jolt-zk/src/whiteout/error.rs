@@ -76,10 +76,6 @@ pub enum WhiteoutError {
     /// A lattice primitive rejected its arguments.
     #[error(transparent)]
     Crypto(#[from] CryptoError),
-    /// The production parameters wait on the pricing items `pending`
-    /// names; only test-only parameters reach a proof until then.
-    #[error("Whiteout is not production-ready: {pending}")]
-    NotProductionReady { pending: &'static str },
     /// The sampling layer rejected its parameters.
     #[cfg(feature = "whiteout-prover")]
     #[error(transparent)]

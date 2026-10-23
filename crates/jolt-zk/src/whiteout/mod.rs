@@ -7,7 +7,10 @@
 //! and verifier, and the response statement. It exposes no zero-knowledge
 //! mode yet (`ZkBackend for Whiteout` is W6). The verifier-side pieces build
 //! under the `whiteout` feature; the prover-side sampler additionally needs
-//! `whiteout-prover`, so a verifier that enables `whiteout` never compiles it.
+//! `whiteout-prover`. WARNING: an Akita verifier build compiles it anyway,
+//! because jolt-akita's `zk` enables `whiteout-prover` for its prover half;
+//! splitting jolt-akita's feature is a follow-up
+//! (`specs/whiteout-jolt-integration.md`, prototype deltas).
 //! Randomness here comes from a caller-supplied cryptographic RNG.
 
 mod challenge;

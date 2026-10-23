@@ -120,8 +120,7 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
 }
 
 /// Whiteout's muldiv case (`akita,zk`): one hiding `OneHotTrace` group,
-/// under Akita A40's test-only Σ ranks (the production setup rejects until
-/// W5e prices them).
+/// under the production setup.
 #[cfg(feature = "zk")]
 pub fn whiteout_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
@@ -144,7 +143,7 @@ fn generate_whiteout_muldiv() -> AkitaFixtureCase {
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
     let config = derive_config(&run);
-    let preprocessing = preprocessing::preprocess_full_whiteout_a40_test_only(
+    let preprocessing = preprocessing::preprocess_full(
         &AkitaScheduleArtifacts::shared_from_default_directory(),
         run.program_preprocessing.clone(),
         &config,

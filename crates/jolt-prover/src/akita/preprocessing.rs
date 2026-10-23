@@ -1,8 +1,6 @@
 use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
-#[cfg(feature = "zk")]
-use jolt_akita::whiteout::SigmaRanks;
 use jolt_akita::{
     AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
     AkitaVerifierSetup, DenseGroupLayout, GroupedScheduleParams,
@@ -53,22 +51,6 @@ pub fn preprocess_full_with_advice(
         trusted_advice,
         &[],
     )?;
-    full_from_params(params, program)
-}
-
-/// [`preprocess_full_with_advice`] for Whiteout with Σ ranks NOT priced at
-/// the Σ collision radius (Akita A40): the production setup prices them by
-/// `jolt_akita::whiteout::sigma_matrix_rank`, which rejects until W5e. Tests
-/// only.
-#[cfg(all(feature = "zk", feature = "prover-fixtures"))]
-pub fn preprocess_full_whiteout_a40_test_only(
-    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
-    program: JoltProgramPreprocessing,
-    config: &ProverConfig,
-) -> Result<AkitaProverPreprocessing, PreprocessingError> {
-    validate_trace_order(config)?;
-    let params = grouped_setup_params(schedule_artifacts, &program, config, false, false, &[])?
-        .with_whiteout(SigmaRanks::A40_TEST_ONLY);
     full_from_params(params, program)
 }
 
@@ -166,7 +148,7 @@ pub(crate) fn grouped_setup_params(
     .with_akita_chunk_profile(config.akita_chunk_profile);
     // Whiteout commits the trace group hiding and opens it masked.
     #[cfg(feature = "zk")]
-    let params = params.with_whiteout(SigmaRanks::Priced);
+    let params = params.with_whiteout();
     Ok(params)
 }
 

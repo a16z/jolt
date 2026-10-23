@@ -337,7 +337,7 @@ mod whiteout {
     use jolt_akita::{AkitaField, AkitaScheme};
     use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_transcript::VerifierTranscript;
-    use jolt_verifier::whiteout::{pad_layout, verify_transcript};
+    use jolt_verifier::whiteout::{pad_layout, verify_transcript, DerivedPadLayout};
     use jolt_verifier::{
         jolt_protocol_id, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError,
         JOLT_SESSION,
@@ -375,7 +375,7 @@ mod whiteout {
         preprocessing: &Preprocessing,
         public_io: &JoltDevice,
         proof: &JoltProof,
-    ) -> Result<jolt_zk::masking::PadLayout, VerifierError> {
+    ) -> Result<DerivedPadLayout, VerifierError> {
         pad_layout::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
             preprocessing,
             public_io,

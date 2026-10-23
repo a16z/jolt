@@ -260,8 +260,9 @@ impl SigmaParams {
 /// challenge family, and `B` is the magnitude of the
 /// [`BINDING_RESPONSE_DIGITS`]-digit certified box, the largest response
 /// coefficient on any segment. The one owner of the radius: Akita's residual
-/// commitment (`A_a`, `[B_a | B′_a]`) reads it; the pad commitment `A_p`
-/// will in W6 (Akita A40).
+/// commitment (`A_a`, `[B_a | B′_a]`) and Jolt's pad commitment `A_p`
+/// (`jolt_akita`'s `sigma_matrix_rank`, Akita A40) read it through Akita's
+/// Σ-binding table.
 pub fn binding_collision_radius() -> u128 {
     let (_, kappa) = challenge_norms();
     let magnitude = balanced_range(RESPONSE_LOG_BASIS, BINDING_RESPONSE_DIGITS)

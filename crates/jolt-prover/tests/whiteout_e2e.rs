@@ -2,8 +2,7 @@
 //! an honest muldiv proof verifies and tampering rejects, and the shapes
 //! this prototype does not open reject with typed errors. The verifier-side
 //! suites (census, sweeps, compensating shifts) are jolt-verifier's
-//! `soundness::whiteout`. The Σ ranks are Akita A40's test-only ones; the production setup
-//! rejects until W5e prices them.
+//! `soundness::whiteout`.
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -41,10 +40,8 @@ mod whiteout {
     /// How a case is preprocessed.
     #[derive(Clone, Copy)]
     enum Setup {
-        /// A40's test-only Σ ranks.
-        A40TestOnly,
-        /// The production setup, which prices the Σ ranks.
-        Priced,
+        /// The production setup.
+        Muldiv,
         /// Production, with a committed program.
         Committed,
         /// Production, with untrusted and trusted advice.
@@ -59,7 +56,7 @@ mod whiteout {
 
     fn prepare(setup: Setup) -> PreparedGuest {
         match setup {
-            Setup::A40TestOnly | Setup::Priced | Setup::Committed => support::prepare(&GuestCase {
+            Setup::Muldiv | Setup::Committed => support::prepare(&GuestCase {
                 inputs: postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
                 ..GuestCase::new("muldiv-guest")
             }),
@@ -85,12 +82,7 @@ mod whiteout {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let advice = matches!(setup, Setup::Advice);
         let preprocessing = match setup {
-            Setup::A40TestOnly => preprocessing::preprocess_full_whiteout_a40_test_only(
-                &artifacts,
-                run.preprocessing,
-                &config,
-            ),
-            Setup::Priced | Setup::Advice => preprocessing::preprocess_full_with_advice(
+            Setup::Muldiv | Setup::Advice => preprocessing::preprocess_full_with_advice(
                 &artifacts,
                 run.preprocessing,
                 &config,
@@ -145,7 +137,7 @@ mod whiteout {
     }
 
     fn honest() -> (Proved, JoltProof) {
-        let mut proved = prove(Setup::A40TestOnly);
+        let mut proved = prove(Setup::Muldiv);
         let proof = std::mem::replace(
             &mut proved.proof,
             Err(ProverError::InvariantViolation { reason: "taken" }),
@@ -180,21 +172,6 @@ mod whiteout {
         let (again, second) = honest();
         verify(&again, &second).expect("a second Whiteout proof verifies");
         assert_ne!(proof.narg, second.narg);
-    }
-
-    /// The production setup is gated on A40 and A41 by name, so it reads as
-    /// pending pricing rather than a capability gap, and pricing the Σ ranks
-    /// alone cannot open it.
-    #[test]
-    fn whiteout_production_ranks_reject_until_w5e() {
-        let error = prove(Setup::Priced)
-            .proof
-            .expect_err("unpriced Σ ranks reject");
-        let message = error.to_string();
-        assert!(
-            message.contains("A40") && message.contains("A41"),
-            "{message}"
-        );
     }
 
     /// Precommitted groups (advice, committed programs) are not opened yet.

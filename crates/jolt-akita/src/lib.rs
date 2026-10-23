@@ -34,7 +34,7 @@ mod shape_guard;
 mod test_transcripts;
 mod trace_onehot;
 #[cfg(feature = "zk")]
-pub mod whiteout;
+mod whiteout;
 
 pub use akita_pcs::AkitaError;
 
@@ -58,6 +58,8 @@ pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 pub use scheme::WhiteoutPads;
 pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
+#[cfg(feature = "zk")]
+pub use whiteout::WhiteoutResidual;
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.

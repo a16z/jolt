@@ -10,6 +10,11 @@
 
 use std::collections::BTreeMap;
 
+use akita_params::transcript_site::{
+    SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
+    SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_SUMCHECK,
+};
+use akita_params::{GrindingSite, ProtocolSiteId};
 use jolt_akita::AkitaField;
 use jolt_akita::AkitaScheme;
 use jolt_algebra::CanonicalBytes;
@@ -57,11 +62,7 @@ enum Kind {
 enum Site {
     Jolt(SiteId),
     Response,
-    /// An Akita `ProtocolSiteId`: its family and family-specific detail.
-    Akita {
-        family: u32,
-        detail: u32,
-    },
+    Akita(ProtocolSiteId),
 }
 
 impl Site {
@@ -72,29 +73,45 @@ impl Site {
         if site == RESPONSE_SITE {
             return Self::Response;
         }
-        let word =
-            |at: usize| u32::from_le_bytes(site.0[at..at + 4].try_into().expect("four bytes"));
-        Self::Akita {
-            family: word(0),
-            detail: word(24),
+        Self::Akita(ProtocolSiteId::from_bytes(site.0))
+    }
+
+    /// The Akita family, if Akita set the site.
+    fn akita_family(self) -> Option<u32> {
+        match self {
+            Self::Akita(site) => Some(site.family),
+            Self::Jolt(_) | Self::Response => None,
         }
     }
 }
 
-/// Akita's grinding sites (`akita_params::transcript_grinding`): families
-/// from 100; a nonzero detail names the nonce's width.
-const GRINDING_FAMILIES: std::ops::RangeFrom<u32> = 100..;
+/// An Akita grinding nonce: a grinding site (`GrindingSite`, whose families
+/// start at the evaluation batch's) with a nonce width in its detail.
+fn is_grinding_nonce(site: Site) -> bool {
+    let first = GrindingSite::EvaluationBatch { level: 0 }.site_id(0).family;
+    matches!(site, Site::Akita(site) if site.family >= first && site.detail != 0)
+}
 
-/// The class of a `kind` operation at `site` in `region`, if the protocol
-/// has one there. Akita's masked-level rows follow `akita:specs/whiteout-akita.md`
-/// §4.2: rounds and their claims masked (sumcheck 1, stage 2 3, stage 1 4),
-/// the D image (8) and u_a (10) public but hidden by their randomness, the
-/// root statement (11) and fold bindings (9) public, grinding nonces public.
-fn class(region: Region, site: Site, kind: Kind) -> Option<Class> {
+/// Where an operation sits: its region, and whether Akita's response proof
+/// has begun (its first event carries the response site).
+#[derive(Clone, Copy, Debug)]
+struct Position {
+    region: Region,
+    in_response: bool,
+}
+
+/// The class of a `kind` operation at `site` and `at`, if the protocol has
+/// one there. Akita's masked-level rows follow
+/// `akita:specs/whiteout-akita.md` §4.2: rounds and their claims masked
+/// (sumcheck, stage 2, stage 1), the D image and u_a public but hidden by
+/// their randomness, the root statement and fold bindings public, grinding
+/// nonces public.
+fn class(at: Position, site: Site, kind: Kind) -> Option<Class> {
     use Class as C;
     use Kind as K;
     use Region as R;
-    match (region, site, kind) {
+    let family = site.akita_family();
+    match (at.region, site, kind) {
         (R::Preamble, Site::Jolt(_), K::Clear | K::Public) => Some(C::Statement),
         (R::Commitments, Site::Jolt(_), K::Clear) => Some(C::Commitment),
         (R::Pads, Site::Jolt(_), K::Clear) => Some(C::Pads),
@@ -110,30 +127,44 @@ fn class(region: Region, site: Site, kind: Kind) -> Option<Class> {
             Site::Jolt(_),
             K::Masked,
         ) => Some(C::MaskedSlot),
-        // The catalog digest and the selected row's digest.
-        (R::Stage8, Site::Jolt(site), K::Clear | K::Public) if site == STAGE8 => Some(C::Statement),
-        (
-            R::Stage8,
-            Site::Akita {
-                family: 1 | 3 | 4, ..
-            },
-            K::Masked,
-        ) => Some(C::MaskedSlot),
-        (R::Stage8, Site::Akita { family: 8 | 10, .. }, K::Clear) => Some(C::Commitment),
-        (R::Stage8, Site::Akita { family: 11, .. }, K::Public) => Some(C::Statement),
-        (R::Stage8, Site::Akita { family: 9, .. }, K::Public) => Some(C::ChallengeDerived),
-        (R::Stage8 | R::Whiteout, Site::Akita { family, detail }, K::Clear)
-            if GRINDING_FAMILIES.contains(&family) && detail != 0 =>
+        // The catalog digest and the selected row's digest, absorbed only
+        // (`stage8_digests` pins their count and size).
+        (R::Stage8, Site::Jolt(site), K::Public) if site == STAGE8 => Some(C::Statement),
+        (R::Stage8, Site::Akita(_), K::Masked)
+            if matches!(
+                family,
+                Some(SITE_FAMILY_SUMCHECK | SITE_FAMILY_STAGE2 | SITE_FAMILY_STAGE1)
+            ) =>
         {
+            Some(C::MaskedSlot)
+        }
+        (R::Stage8, Site::Akita(_), K::Clear)
+            if matches!(
+                family,
+                Some(SITE_FAMILY_OPENING_PAYLOAD | SITE_FAMILY_NEXT_WITNESS)
+            ) =>
+        {
+            Some(C::Commitment)
+        }
+        (R::Stage8, Site::Akita(_), K::Public) if family == Some(SITE_FAMILY_ROOT_STATEMENT) => {
+            Some(C::Statement)
+        }
+        (R::Stage8, Site::Akita(_), K::Public) if family == Some(SITE_FAMILY_FOLD_BINDING) => {
             Some(C::ChallengeDerived)
         }
+        (R::Stage8, _, K::Clear) if is_grinding_nonce(site) => Some(C::ChallengeDerived),
         // The auxiliary block, then the Σ-protocol's messages and targets.
-        (R::Whiteout, Site::Jolt(site), K::Masked) if site == WHITEOUT => Some(C::MaskedSlot),
-        (R::Whiteout, Site::Jolt(site), K::Clear | K::Public) if site == WHITEOUT_SIGMA => {
+        (R::Whiteout, Site::Jolt(site), K::Masked) if site == WHITEOUT && !at.in_response => {
+            Some(C::MaskedSlot)
+        }
+        (R::Whiteout, Site::Jolt(site), K::Clear | K::Public)
+            if site == WHITEOUT_SIGMA && !at.in_response =>
+        {
             Some(C::Sigma)
         }
-        // The response proof: a clear Akita proof of the Σ response.
-        (R::Whiteout, Site::Response | Site::Akita { .. }, K::Clear | K::Public) => {
+        // The response proof: a clear Akita proof of the Σ response, after
+        // its first site.
+        (R::Whiteout, Site::Response | Site::Akita(_), K::Clear | K::Public) if at.in_response => {
             Some(C::Response)
         }
         _ => None,
@@ -156,7 +187,9 @@ fn classify(trace: &Trace) -> Vec<Classified> {
     let regions = trace.regions();
     let events: &[TranscriptEvent] = &trace.events;
     let mut out = Vec::new();
+    let mut in_response = false;
     for (index, event) in events.iter().enumerate() {
+        in_response |= event.site == RESPONSE_SITE;
         let kind = match event.op {
             TranscriptOp::Message => match events.get(index + 1).map(|next| next.op) {
                 Some(TranscriptOp::Masked { .. })
@@ -177,16 +210,38 @@ fn classify(trace: &Trace) -> Vec<Classified> {
             region: regions[index],
             kind,
             bytes: event.len,
-            class: class(regions[index], Site::of(event.site), kind),
+            class: class(
+                Position {
+                    region: regions[index],
+                    in_response,
+                },
+                Site::of(event.site),
+                kind,
+            ),
         });
     }
     out
 }
 
+/// Stage 8's own absorbs: the catalog digest and the selected row's
+/// digest, 32 bytes each, and nothing else at its site.
+const STAGE8_DIGESTS: [usize; 2] = [32, 32];
+
 /// The census: bytes per class, or every unclassified operation.
 fn census(trace: &Trace) -> Result<BTreeMap<Class, usize>, Vec<String>> {
     let mut totals = BTreeMap::new();
     let mut failures = Vec::new();
+    let stage8: Vec<usize> = trace
+        .events
+        .iter()
+        .filter(|event| event.site == STAGE8 && event.op != TranscriptOp::Challenge)
+        .map(|event| event.len)
+        .collect();
+    if stage8 != STAGE8_DIGESTS {
+        failures.push(format!(
+            "Stage 8's own absorbs are {stage8:?}, not its two digests"
+        ));
+    }
     for item in classify(trace) {
         match item.class {
             Some(class) => *totals.entry(class).or_default() += item.bytes,
@@ -281,7 +336,10 @@ fn whiteout_census_flags_a_jolt_claim_and_an_akita_value_routed_clear() {
         .find(|item| {
             matches!(
                 Site::of(trace.events[item.index].site),
-                Site::Akita { family: 4, .. }
+                Site::Akita(ProtocolSiteId {
+                    family: SITE_FAMILY_STAGE1,
+                    ..
+                })
             )
         })
         .expect("Akita's stage 1 sends masked values");
@@ -322,6 +380,29 @@ fn whiteout_census_flags_every_unmasked_message() {
         .is_err(),
         "a message masked but for its last element is not flagged"
     );
+
+    // A clear-only absorb at Stage 8's site (an evaluation, as the clear
+    // build's reduction absorbs): a public absorb, then a clear message.
+    let digest = trace
+        .events
+        .iter()
+        .position(|event| event.site == STAGE8)
+        .expect("Stage 8's digests");
+    for op in [TranscriptOp::Public, TranscriptOp::Message] {
+        let mut events = trace.events.clone();
+        let mut extra = events[digest].clone();
+        extra.op = op;
+        extra.len = FIELD_BYTES;
+        events.insert(digest + 1, extra);
+        assert!(
+            census(&Trace {
+                events,
+                result: Ok(())
+            })
+            .is_err(),
+            "a clear {op:?} at Stage 8's site is not flagged"
+        );
+    }
 
     let stage5 = masked
         .iter()
@@ -412,7 +493,7 @@ fn whiteout_masked_level_and_auxiliary_block_tampers() {
         .iter()
         .find(|item| {
             item.region == Region::Stage8
-                && matches!(Site::of(trace.events[item.index].site), Site::Akita { .. })
+                && matches!(Site::of(trace.events[item.index].site), Site::Akita(_))
         })
         .expect("Akita's masked levels send masked values");
     let aux = masked
@@ -503,7 +584,7 @@ fn whiteout_pad_layout_counts_the_same_on_any_bytes() {
         .range
         .start;
     let zeros = layout(&narg[..seeded]);
-    assert_eq!(zeros.num_pads, case.pads.len());
+    assert_eq!(zeros.layout().num_pads, case.pads.len());
     assert_eq!(layout(narg), zeros);
     let mut random = narg[..seeded].to_vec();
     let mut state = 0x9e37_79b9_7f4a_7c15_u64;
@@ -557,6 +638,8 @@ mod shifts {
     use jolt_zk::whiteout::MaskedGroupOpening;
 
     use super::fs_transcript::{decode_small_challenge, record, AuditSponge};
+    use akita_params::GrindingSite;
+
     use super::Site;
     use crate::support::akita_fixtures::whiteout_muldiv_case;
 
@@ -646,6 +729,11 @@ mod shifts {
         (basis, pivots.len())
     }
 
+    /// Pins a known protocol property (D25): Akita's rows apply exactly one
+    /// functional to the final-opening claims. If Akita adds binding (more
+    /// rows, or a second functional), this test fails; update D25 and the
+    /// spec's prototype deltas with the new argument, then this test.
+    ///
     /// N1: a shift of the final-opening claims that Jolt's rows cannot see
     /// meets Akita's rows only through one functional, whose coefficients
     /// are the EvaluationBatch challenges (drawn after t_p and every masked
@@ -656,13 +744,14 @@ mod shifts {
     fn whiteout_final_openings_meet_akita_through_the_batch_challenges() {
         let case = whiteout_muldiv_case();
         let pads = &case.pads;
-        let layout = pad_layout::<F, AkitaScheme, AkitaVc, JoltSponge>(
+        let derived = pad_layout::<F, AkitaScheme, AkitaVc, JoltSponge>(
             &case.preprocessing,
             &case.public_io,
             None,
             &case.proof.narg,
         )
         .expect("pad layout");
+        let layout = derived.layout().clone();
         let ((stages, prefix, relation, events), tape) = record(|| {
             let mut transcript = VerifierTranscript::<AuditSponge>::new(
                 &jolt_protocol_id::<AuditSponge>(),
@@ -674,7 +763,7 @@ mod shifts {
                 &case.public_io,
                 None,
                 &mut transcript,
-                Some(&layout),
+                Some(&derived),
             )
             .expect("masked stages");
             let (prefix, _) = whiteout_prefix(&mut stages, &mut transcript).expect("prefix");
@@ -684,7 +773,9 @@ mod shifts {
             (stages, prefix, relation, events)
         });
 
-        // The EvaluationBatch challenges, one per claim, from the tape.
+        // The EvaluationBatch challenges, one per claim, from the tape: the
+        // batch's draws (detail 0, not its grinding nonce's).
+        let evaluation_batch = GrindingSite::EvaluationBatch { level: 0 }.site_id(0);
         let mut offset = 0;
         let mut batch = Vec::new();
         for event in &events {
@@ -693,10 +784,7 @@ mod shifts {
             }
             if matches!(
                 Site::of(event.site),
-                Site::Akita {
-                    family: 100,
-                    detail: 0
-                }
+                Site::Akita(site) if site.family == evaluation_batch.family && site.detail == 0
             ) {
                 batch.push(decode_small_challenge::<F>(
                     &tape.bytes[offset..offset + event.len],

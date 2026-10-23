@@ -117,7 +117,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 
 **common** — Shared constants (`XLEN`, `REGISTER_COUNT`, thresholds) and `JoltDevice`/`MemoryLayout` types
 
-The SDK's `host` feature enables native build/prove APIs. On `jolt-prover`, `akita` selects the native lattice batching protocol and is mutually exclusive with `zk`.
+The SDK's `host` feature enables native build/prove APIs. On `jolt-prover`, `akita` selects the native lattice batching protocol; with `zk` it selects Whiteout (zero knowledge over Akita).
 
 ### Key Type Parameters
 

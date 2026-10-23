@@ -15,7 +15,12 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use crate::ProverConfig;
 
 mod drivers;
-#[cfg(all(test, feature = "field-inline"))]
+// Whiteout (`akita` with `zk`) rejects field-inline proofs.
+#[cfg(all(
+    test,
+    feature = "field-inline",
+    not(all(feature = "akita", feature = "zk"))
+))]
 pub(crate) mod field_inline_fixtures;
 pub mod stage1;
 pub mod stage2;

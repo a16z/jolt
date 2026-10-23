@@ -110,7 +110,7 @@ where
     let pads = PCS::whiteout_commit_pads(
         &preprocessing.pcs_setup,
         &stage0.commitment,
-        layout.clone(),
+        layout.layout().clone(),
         &mut transcript,
         rng,
     )?;

@@ -24,7 +24,6 @@ prover-fixtures = [
   "dep:jolt-host",
   "dep:zeroize",
   "jolt-zk?/test-support",
-  "jolt-akita?/test-support",
 ]
 # Field-inline protocol composition: the field-inline prover — every stage
 # proves the composed protocol, and only field-inline guests are accepted (the
@@ -47,7 +46,7 @@ field-inline = [
 # prover proves exactly one protocol: this feature swaps the proof shape to
 # the Akita envelope, so the Dory (elliptic-curve) path `src/dory` is
 # compiled out and the Akita (lattice) path `src/akita` replaces it.
-# Mutually exclusive with `zk` (compile error on the combination).
+# With `zk` it proves Whiteout (zero knowledge over Akita).
 akita = [
   "dep:jolt-akita",
   "dep:akita-params",

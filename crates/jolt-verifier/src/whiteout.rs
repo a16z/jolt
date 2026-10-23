@@ -138,6 +138,20 @@ fn stage8_claim<F: JoltField, C: Clone>(
     )
 }
 
+/// A pad layout [`pad_layout`] derived from a statement and its seeding
+/// messages. Only [`pad_layout`] builds one, so a caller that reuses a
+/// derived layout (the prover, a recording sponge's single transcript)
+/// cannot inject another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DerivedPadLayout(PadLayout);
+
+impl DerivedPadLayout {
+    /// The layout.
+    pub fn layout(&self) -> &PadLayout {
+        &self.0
+    }
+}
+
 /// The pad layout of a Whiteout proof, from the masked verifier's own replay
 /// over the seeded prefix followed by zero bytes: stages 1–7 and Akita's
 /// masked levels count the message pads; then Akita's checks, then Jolt's,
@@ -151,7 +165,7 @@ pub fn pad_layout<F, PCS, VC, H>(
     public_io: &JoltDevice,
     trusted_advice_commitment: Option<&PCS::Output>,
     seeded_prefix: &[u8],
-) -> Result<PadLayout, VerifierError>
+) -> Result<DerivedPadLayout, VerifierError>
 where
     F: JoltField,
     PCS: WhiteoutScheme<F>,
@@ -198,8 +212,7 @@ where
             Ok((residual, prefix)) => {
                 let mut domain = OperandShapeDomain::new(counter.used());
                 PCS::prefix_shape(&prefix, &mut domain)?;
-                residual.shape(&mut domain)?;
-                return Ok(domain.layout()?);
+                return Ok(DerivedPadLayout(residual.shape(domain)?.layout()?));
             }
             Err(VerifierError::Transcript(TranscriptError::Truncated)) if padding < 1 << 24 => {
                 padding <<= 1;
@@ -221,7 +234,7 @@ pub fn whiteout_stages<F, PCS, VC, H>(
     public_io: &JoltDevice,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut VerifierTranscript<'_, H>,
-    layout: Option<&PadLayout>,
+    layout: Option<&DerivedPadLayout>,
 ) -> Result<WhiteoutStages<F, PCS>, VerifierError>
 where
     F: JoltField,
@@ -249,7 +262,8 @@ where
             trusted_advice_commitment,
             transcript.consumed(),
         )?,
-    };
+    }
+    .0;
     transcript.site(PADS);
     let mut pads = PCS::receive_pads(&shape, layout, transcript)?;
     let stages = verify_stages_1_to_7::<F, PCS, VC, H, LatticePadPayload<F>>(
@@ -393,7 +407,7 @@ pub fn verify_transcript<F, PCS, VC, H>(
     public_io: &JoltDevice,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut VerifierTranscript<'_, H>,
-    layout: Option<&PadLayout>,
+    layout: Option<&DerivedPadLayout>,
 ) -> Result<(), VerifierError>
 where
     F: JoltField,

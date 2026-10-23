@@ -48,6 +48,10 @@ where
     pub untrusted_advice: Option<AdviceObject<PCS>>,
     /// The field increment polynomial, committed on every Akita field-inline proof.
     #[cfg(feature = "field-inline")]
+    #[cfg_attr(
+        feature = "zk",
+        expect(dead_code, reason = "Whiteout rejects field-inline proofs")
+    )]
     pub field_inc: FieldIncObject<PCS>,
 }
 

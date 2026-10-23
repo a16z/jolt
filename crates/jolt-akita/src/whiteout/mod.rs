@@ -6,11 +6,10 @@
 //!
 //! PROTOTYPE (port map in the spec's prototype deltas):
 //! - Zero-knowledge rows are planned on first use for the exact shape, in
-//!   both roles, instead of shipped as artifacts: the zk families are
-//!   test-only until W5e re-prices them (A41).
+//!   both roles, instead of shipped as artifacts.
 //! - One trace group under `JoltOneHotK16`, no precommitted groups.
-//! - `A_p` and `A_D` ranks come from [`sigma_matrix_rank`], which waits on
-//!   W5e's Σ-binding table (A40).
+//! - `A_p` is priced at the Σ collision radius ([`sigma_matrix_rank`]),
+//!   `A_D` at its digits' difference bound ([`digit_matrix_rank`]).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -19,6 +18,8 @@ use akita_config::proof_optimized::fp128::ResponseDigits;
 use akita_config::{
     policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
 };
+use akita_params::sis::sigma_binding::sigma_binding_min_rank;
+use akita_params::sis::{min_secure_rank, SisMatrixRole};
 use akita_params::zk::{
     hiding_randomness_columns, DigitAlphabet, ImageShape, ZkOpeningSchedule, ZK_CUT_LEVEL,
 };
@@ -33,7 +34,9 @@ use akita_pcs::zk::{
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaError, AkitaVerifier, GroupContext, SelectedProverOpeningData,
 };
+use akita_schedules::planner_support::projected_collision_role_price;
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_crypto::lattice::{derive_public_matrix_prefix, PublicMatrixSeed};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use jolt_zk::masking::{
@@ -42,7 +45,7 @@ use jolt_zk::masking::{
 use jolt_zk::whiteout::{
     commit_lattice_pads, prove_sigma, receive_lattice_pads, verify_sigma, BlockTarget,
     ImageCompression, LatticePadCommitment, LatticePadPayload, PadPlacement, SigmaSetup,
-    WhiteoutError, WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS,
+    WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS, RESPONSE_LOG_BASIS,
 };
 use rand_core::{CryptoRng, RngCore};
 
@@ -80,74 +83,51 @@ macro_rules! with_ring_dim {
     };
 }
 
-/// The ranks of the pad commitment `A_p` and of `A_D`. `A_p` binds the
-/// pads, which the Σ-protocol certifies only inside its Gaussian box, so it
-/// must be Module-SIS hard at the Σ collision radius (Akita A40). `A_D`
-/// commits range-checked radix-16 digits, so it needs Module-SIS only at
-/// the digit-difference bound, as ordinary Akita pricing does
-/// (`05_security.tex:31-33`, `wo:thm:knowledge`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum SigmaRanks {
-    /// `A_p` priced by [`sigma_matrix_rank`], `A_D` by
-    /// [`digit_matrix_rank`].
-    Priced,
-    /// Fixed ranks for tests, NOT priced (A40): the Akita end-to-end
-    /// harness's 2 and 1, until W5e's table prices them.
-    #[cfg(any(test, feature = "test-support"))]
-    A40TestOnly { pad: usize, v: usize },
-}
-
-/// The Module-SIS rank of `A_p`, of `width` columns over a ring of dimension
-/// `ring_dim`, at the Σ collision radius: the one owner of its sizing.
+/// The Module-SIS rank of the pad commitment `A_p`, of `width` columns over
+/// a ring of dimension `ring_dim`: Akita's Σ-binding table at jolt-zk's
+/// `binding_collision_radius()`, the radius the residual's `A_a` and
+/// `[B_a | B′_a]` are priced at (Akita A41, §5.5.2; `A_p` is A40). `A_p` binds the pads,
+/// which the Σ-protocol certifies only inside its Gaussian box.
 ///
 /// # Errors
 ///
-/// Always, until Akita's Σ-binding table lands with W5e (A40):
-/// `akita_params::sis::sigma_binding::sigma_binding_min_rank` prices it.
+/// [`AkitaError::UnsupportedSchedule`] if the table has no rank for the
+/// matrix.
 pub(crate) fn sigma_matrix_rank(ring_dim: usize, width: usize) -> Result<usize, ZkError> {
-    Err(AkitaError::UnsupportedSchedule(format!(
-        "A40: the Σ-binding rank of A_p (d {ring_dim}, width {width}) is priced by W5e's \
-         sigma_binding_min_rank, which Akita dev does not have yet"
-    ))
-    .into())
+    sigma_binding_min_rank(WhiteoutOneHot::sis_modulus_profile(), ring_dim, width).ok_or_else(
+        || {
+            AkitaError::UnsupportedSchedule(format!(
+                "no Σ-binding rank for A_p (d {ring_dim}, width {width})"
+            ))
+            .into()
+        },
+    )
 }
 
-/// The Module-SIS rank of `A_D`, of `width` challenge-ring columns over
-/// range-checked radix-16 digits, at the digit-difference bound: the one
-/// owner of its sizing.
+/// The Module-SIS rank of `A_D`, of `width` challenge-ring columns of
+/// range-checked radix-2^[`RESPONSE_LOG_BASIS`] digits: Akita's ordinary
+/// pricing of a digit commitment (its D role at the digit-difference bound,
+/// `05_security.tex:31-33`), with the key Akita's planner builds for one.
 ///
 /// # Errors
 ///
-/// Always, until it is wired to Akita's ordinary digit pricing with W5e.
+/// [`AkitaError::UnsupportedSchedule`] if the table has no rank for the
+/// matrix.
 pub(crate) fn digit_matrix_rank(width: usize) -> Result<usize, ZkError> {
-    Err(AkitaError::UnsupportedSchedule(format!(
-        "the rank of A_D (width {width}) is priced at the digit-difference bound by Akita's \
-         ordinary pricing, not wired until W5e merges"
-    ))
-    .into())
-}
-
-impl SigmaRanks {
-    /// A40: the Akita end-to-end harness's ranks (2 and 1), NOT priced;
-    /// tests only, until W5e's table prices them.
-    #[cfg(any(test, feature = "test-support"))]
-    pub const A40_TEST_ONLY: Self = Self::A40TestOnly { pad: 2, v: 1 };
-
-    fn pad(self, ring_dim: usize, width: usize) -> Result<usize, ZkError> {
-        match self {
-            Self::Priced => sigma_matrix_rank(ring_dim, width),
-            #[cfg(any(test, feature = "test-support"))]
-            Self::A40TestOnly { pad, .. } => Ok(pad),
-        }
-    }
-
-    fn v(self, width: usize) -> Result<usize, ZkError> {
-        match self {
-            Self::Priced => digit_matrix_rank(width),
-            #[cfg(any(test, feature = "test-support"))]
-            Self::A40TestOnly { v, .. } => Ok(v),
-        }
-    }
+    let policy = policy_of::<WhiteoutOneHot>(<JoltOneHotK16 as CatalogChunking>::CHUNKING);
+    projected_collision_role_price(
+        &policy,
+        SisMatrixRole::Open,
+        CHALLENGE_RING_DIM,
+        CHALLENGE_RING_DIM,
+        width,
+        RESPONSE_LOG_BASIS,
+    )
+    .and_then(|(key, width)| min_secure_rank(key, u64::try_from(width).ok()?))
+    .ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!("no digit-commitment rank for A_D (width {width})"))
+            .into()
+    })
 }
 
 /// Jolt's public seeds for the streams `A_p` and `A_D` are cut from. They are
@@ -449,49 +429,54 @@ impl WhiteoutRow {
 /// The Σ-protocol's commitments for one pad layout: `A_p` and `A_D` with
 /// their streams, the residual shape, and the response proof.
 pub struct WhiteoutTail {
-    ranks: SigmaRanks,
     response: Mutex<BTreeMap<usize, Arc<AkitaResponseProver<WhiteoutResponse>>>>,
 }
 
 impl WhiteoutTail {
-    pub fn new(ranks: SigmaRanks) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            ranks,
             response: Mutex::new(BTreeMap::new()),
         }
     }
 
+    /// Prices `A_p` and its hiding randomness together: the randomness width
+    /// depends on the rank and the rank on the width, so both are iterated
+    /// to a fixed point, as Akita's planner prices a hiding commitment
+    /// (`price_with_hiding_randomness`, at most 8 rounds).
+    fn pad_rank<const D: usize>(placement: &PadPlacement) -> Result<(usize, usize), ZkError> {
+        const MAX_ROUNDS: usize = 8;
+        let mut randomness_columns = 0;
+        for _ in 0..MAX_ROUNDS {
+            let rank = sigma_matrix_rank(
+                D,
+                LatticePadCommitment::<F, D>::width(placement, randomness_columns)?,
+            )?;
+            let needed = hiding_randomness_columns(
+                ImageShape {
+                    rows: rank,
+                    ring_dim: D,
+                    modulus: WhiteoutOneHot::sis_modulus_profile(),
+                },
+                DigitAlphabet {
+                    log_basis: PAD_RANDOMNESS_LOG_BASIS,
+                },
+            )?;
+            if needed == randomness_columns {
+                return Ok((rank, randomness_columns));
+            }
+            randomness_columns = needed;
+        }
+        Err(AkitaError::InvalidSetup(
+            "the pad commitment's rank and randomness found no fixed point".into(),
+        )
+        .into())
+    }
+
     fn pad_commitment<const D: usize>(
-        &self,
         layout: &PadLayout,
     ) -> Result<LatticePadCommitment<F, D>, ZkError> {
         let placement = PadPlacement::new(layout)?;
-        // The randomness width depends on the rank, and the rank on the
-        // width; the rank is priced at the width without randomness, then
-        // checked at the full width.
-        let rank = self
-            .ranks
-            .pad(D, LatticePadCommitment::<F, D>::width(&placement, 0)?)?;
-        let randomness_columns = hiding_randomness_columns(
-            ImageShape {
-                rows: rank,
-                ring_dim: D,
-                modulus: WhiteoutOneHot::sis_modulus_profile(),
-            },
-            DigitAlphabet {
-                log_basis: PAD_RANDOMNESS_LOG_BASIS,
-            },
-        )?;
-        if self.ranks.pad(
-            D,
-            LatticePadCommitment::<F, D>::width(&placement, randomness_columns)?,
-        )? > rank
-        {
-            return Err(AkitaError::InvalidSetup(
-                "the pad commitment's rank does not cover its randomness".into(),
-            )
-            .into());
-        }
+        let (rank, randomness_columns) = Self::pad_rank::<D>(&placement)?;
         let stream = public_stream(
             LatticePadCommitment::<F, D>::stream_len(&placement, rank, randomness_columns)?,
             PAD_STREAM_SEED,
@@ -507,15 +492,14 @@ impl WhiteoutTail {
     /// The Σ setup over `row`'s residual with commitment `u_a`, the pad
     /// commitment of `layout` with image `pad_image`.
     fn sigma<const D: usize>(
-        &self,
         row: &WhiteoutRow,
         layout: &PadLayout,
         u_a: &[F],
         pad_image: BlockTarget<F, D>,
     ) -> Result<SigmaSetup<F, D>, ZkError> {
-        let pads = self.pad_commitment::<D>(layout)?;
+        let pads = Self::pad_commitment::<D>(layout)?;
         let blocks = row.shape.blocks::<D>(row.stream(), u_a)?;
-        let v_rank = self.ranks.v(SigmaSetup::<F, D>::v_width(&blocks, &pads))?;
+        let v_rank = digit_matrix_rank(SigmaSetup::<F, D>::v_width(&blocks, &pads))?;
         let v_stream = public_stream(
             SigmaSetup::<F, D>::v_stream_len(&blocks, &pads, v_rank),
             V_STREAM_SEED,
@@ -538,7 +522,7 @@ impl WhiteoutTail {
         layout: &PadLayout,
     ) -> Result<Arc<AkitaResponseProver<WhiteoutResponse>>, ZkError> {
         let u_a = vec![F::default(); row.shape.geometry().profile.outer.matrix.output_rank() * D];
-        let sigma = self.sigma::<D>(
+        let sigma = Self::sigma::<D>(
             row,
             layout,
             &u_a,
@@ -563,7 +547,7 @@ impl WhiteoutTail {
     ///
     /// # Errors
     ///
-    /// [`ZkError`] if the layout does not fit or a rank is not priced (A40).
+    /// [`ZkError`] if the layout does not fit or a rank is not priced.
     pub fn commit_pads<S: Sponge, R: RngCore + CryptoRng>(
         &self,
         row: &WhiteoutRow,
@@ -572,7 +556,7 @@ impl WhiteoutTail {
         rng: &mut R,
     ) -> Result<CommittedPads<F, WhiteoutPadOpening<F>>, ZkError> {
         with_ring_dim!(row.ring_dim(), D, {
-            let commitment = self.pad_commitment::<D>(&layout)?;
+            let commitment = Self::pad_commitment::<D>(&layout)?;
             let response = self.response::<D>(row, &layout)?;
             commit_lattice_pads(
                 &commitment,
@@ -590,13 +574,12 @@ impl WhiteoutTail {
     ///
     /// As [`Self::commit_pads`], or a truncated payload.
     pub fn receive_pads<S: Sponge>(
-        &self,
         row: &WhiteoutRow,
         layout: PadLayout,
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
         with_ring_dim!(row.ring_dim(), D, {
-            let commitment = self.pad_commitment::<D>(&layout)?;
+            let commitment = Self::pad_commitment::<D>(&layout)?;
             receive_lattice_pads(
                 &commitment,
                 &CompressionShape::<WhiteoutResponse>::default(),
@@ -625,7 +608,7 @@ impl WhiteoutTail {
         let layout = pads.layout().clone();
         with_ring_dim!(row.ring_dim(), D, {
             let opening = pads.opening();
-            let sigma = self.sigma::<D>(
+            let sigma = Self::sigma::<D>(
                 row,
                 &layout,
                 &residual.residual_commitment,
@@ -667,7 +650,7 @@ impl WhiteoutTail {
         let layout = pads.layout().clone();
         let claim = prefix.residual_claim();
         with_ring_dim!(row.ring_dim(), D, {
-            let sigma = self.sigma::<D>(
+            let sigma = Self::sigma::<D>(
                 row,
                 &layout,
                 claim.commitment(),
@@ -700,12 +683,11 @@ impl WhiteoutShape {
     }
 }
 
-/// A setup's Whiteout parameters, with its masked opening shape planned on
-/// first use (derived state, shared by clones and skipped by serde). A
-/// setup opens one shape (its trace group's), so the cache holds one.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+/// A setup's Whiteout state: its masked opening shape, planned on first use
+/// (derived state, shared by clones and skipped by serde). A setup opens one
+/// shape (its trace group's), so the cache holds one.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct WhiteoutSetup {
-    ranks: SigmaRanks,
     #[serde(skip)]
     shape: Arc<Mutex<Option<CachedShape>>>,
 }
@@ -715,54 +697,31 @@ type CachedShape = ((usize, usize), Arc<WhiteoutShape>);
 
 impl std::fmt::Debug for WhiteoutSetup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WhiteoutSetup")
-            .field("ranks", &self.ranks)
-            .finish_non_exhaustive()
+        f.debug_struct("WhiteoutSetup").finish_non_exhaustive()
     }
 }
 
+/// Derived state only: every Whiteout setup is equal.
 impl PartialEq for WhiteoutSetup {
-    fn eq(&self, other: &Self) -> bool {
-        self.ranks == other.ranks
+    fn eq(&self, _: &Self) -> bool {
+        true
     }
 }
 
 impl Eq for WhiteoutSetup {}
 
-/// What production Whiteout waits on: A40 prices `A_p`/`A_D` at the Σ
-/// radius; A41 re-prices the zero-knowledge rows and binds the residual
-/// commitment u_a (§8). Implementing [`sigma_matrix_rank`] alone must not
-/// make Whiteout reachable.
-const PRODUCTION_PENDING: &str = "Akita A40 (Σ-binding ranks of A_p/A_D, W5e's \
-     sigma_binding_min_rank) and A41 (priced zero-knowledge rows and the binding of the \
-     residual commitment u_a/w_k)";
-
 impl WhiteoutSetup {
-    pub(crate) fn new(ranks: SigmaRanks) -> Self {
-        Self {
-            ranks,
-            shape: Arc::default(),
-        }
-    }
-
     /// The masked opening of a K=16 trace group of `num_polys` polynomials
     /// in `num_vars` variables.
     ///
     /// # Errors
     ///
-    /// [`WhiteoutError::NotProductionReady`] under the production ranks, and
     /// [`ZkError`] if no zero-knowledge row exists for the shape.
     pub(crate) fn shape(
         &self,
         num_vars: usize,
         num_polys: usize,
     ) -> Result<Arc<WhiteoutShape>, ZkError> {
-        if self.ranks == SigmaRanks::Priced {
-            return Err(WhiteoutError::NotProductionReady {
-                pending: PRODUCTION_PENDING,
-            }
-            .into());
-        }
         let mut cached = self.shape.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((key, shape)) = cached.as_ref() {
             if *key == (num_vars, num_polys) {
@@ -771,7 +730,7 @@ impl WhiteoutSetup {
         }
         let shape = Arc::new(WhiteoutShape {
             row: WhiteoutRow::plan(num_vars, num_polys)?,
-            tail: WhiteoutTail::new(self.ranks),
+            tail: WhiteoutTail::new(),
         });
         *cached = Some(((num_vars, num_polys), Arc::clone(&shape)));
         Ok(shape)

@@ -91,7 +91,7 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         layout: PadLayout,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
-        shape.tail.receive_pads(&shape.row, layout, transcript)
+        WhiteoutTail::receive_pads(&shape.row, layout, transcript)
     }
 
     fn verify_masked<H: Sponge, P>(

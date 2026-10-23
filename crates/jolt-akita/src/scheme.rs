@@ -647,7 +647,9 @@ impl CommitmentScheme for AkitaScheme {
             schedule_artifacts,
             backend_cache: BackendVerifierCache::default(),
             #[cfg(feature = "zk")]
-            whiteout: params.whiteout.map(crate::whiteout::WhiteoutSetup::new),
+            whiteout: params
+                .whiteout
+                .then(crate::whiteout::WhiteoutSetup::default),
         };
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
             if params.flavor == AkitaSetupFlavor::OneHot {

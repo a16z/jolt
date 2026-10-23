@@ -393,11 +393,10 @@ pub struct AkitaSetupParams {
     #[serde(default, rename = "advice_schedule")]
     pub(crate) grouped_schedule: Option<GroupedScheduleParams>,
     pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
-    /// Whiteout: the trace group commits hiding and opens masked, with the
-    /// Σ-protocol's `A_p`/`A_D` sized by these ranks.
+    /// Whiteout: the trace group commits hiding and opens masked.
     #[cfg(feature = "zk")]
     #[serde(default)]
-    pub(crate) whiteout: Option<crate::whiteout::SigmaRanks>,
+    pub(crate) whiteout: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,7 +424,7 @@ impl AkitaSetupParams {
             grouped_schedule: None,
             schedule_artifacts,
             #[cfg(feature = "zk")]
-            whiteout: None,
+            whiteout: false,
         }
     }
 
@@ -450,7 +449,7 @@ impl AkitaSetupParams {
             grouped_schedule: None,
             schedule_artifacts,
             #[cfg(feature = "zk")]
-            whiteout: None,
+            whiteout: false,
         }
     }
 
@@ -476,7 +475,7 @@ impl AkitaSetupParams {
             grouped_schedule,
             schedule_artifacts,
             #[cfg(feature = "zk")]
-            whiteout: None,
+            whiteout: false,
         }
     }
 
@@ -499,7 +498,7 @@ impl AkitaSetupParams {
             grouped_schedule: None,
             schedule_artifacts,
             #[cfg(feature = "zk")]
-            whiteout: None,
+            whiteout: false,
         }
     }
 
@@ -514,11 +513,10 @@ impl AkitaSetupParams {
         self
     }
 
-    /// Whiteout: commits the trace group hiding and opens it masked, with
-    /// `A_p`/`A_D` sized by `ranks`.
+    /// Whiteout: commits the trace group hiding and opens it masked.
     #[cfg(feature = "zk")]
-    pub fn with_whiteout(mut self, ranks: crate::whiteout::SigmaRanks) -> Self {
-        self.whiteout = Some(ranks);
+    pub fn with_whiteout(mut self) -> Self {
+        self.whiteout = true;
         self
     }
 

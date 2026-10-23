@@ -23,9 +23,6 @@ zk = [
   "akita-pcs/zk",
   "akita-planner/zk",
 ]
-# Test-only Whiteout parameters (`SigmaRanks::A40TestOnly`); inert without
-# `zk`, so a clear build's test support compiles the clear protocol.
-test-support = []
 
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }

@@ -1090,11 +1090,13 @@ cheater would, finds:
 - A shift in that functional's kernel passes every row under the drawn
   challenges.
 
-So the argument is Schwartz–Zippel over the EvaluationBatch coefficients: a
-nonzero shift fixed before they are drawn lies in their kernel with
-probability at most 1/|C| over the small challenge set C (one linear
-condition), and the shift is fixed by then because t_p and the masked values
-are absorbed first. It also needs the residual u_a
+So the argument is Schwartz–Zippel over the EvaluationBatch coefficients,
+one per claim, each a small challenge: 16 squeezed bytes reduced mod
+q = 2^128 − 4,294,944,759, so each residue has at most two preimages and
+any one value is drawn with probability at most 2·2^−128. A nonzero shift
+fixed before they are drawn is one linear condition on them, so it lies in
+their kernel with probability at most 2^−127; the shift is fixed by then
+because t_p and the masked values are absorbed first. It also needs the residual u_a
 bound (§8, A41). This log did not check the argument.
 
 **For the paper.** None required; the paper already binds claims through

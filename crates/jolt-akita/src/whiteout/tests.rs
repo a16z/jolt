@@ -24,8 +24,6 @@ const NUM_VARS: usize = 16;
 /// Muldiv's trace group shape.
 const NUM_POLYS: usize = 56;
 const SESSION: &[u8] = b"whiteout-opening";
-/// A40: not priced at the Σ radius.
-const RANKS: SigmaRanks = SigmaRanks::A40_TEST_ONLY;
 
 struct Fixture {
     row: WhiteoutRow,
@@ -74,7 +72,7 @@ fn fixture() -> Fixture {
         .collect();
     Fixture {
         row,
-        tail: WhiteoutTail::new(RANKS),
+        tail: WhiteoutTail::new(),
         commitment,
         handle,
         point: reverse_point(&jolt_point),
@@ -128,10 +126,7 @@ fn replay(
     CommittedPadsView<LatticePadPayload<F>>,
     ResidualRelation<F>,
 ) {
-    let mut pads = fixture
-        .tail
-        .receive_pads(&fixture.row, layout.clone(), transcript)
-        .unwrap();
+    let mut pads = WhiteoutTail::receive_pads(&fixture.row, layout.clone(), transcript).unwrap();
     let mut claims = vec![F::default(); NUM_POLYS];
     let slots = pads
         .channel(transcript)
@@ -219,4 +214,33 @@ fn whiteout_opening_verifies_and_rejects_a_flipped_response_byte() {
     let last = tampered.len() - 1;
     tampered[last] ^= 1;
     assert!(verify(&fixture, &tampered).is_err());
+}
+
+/// The honest bound, pinned to Akita's frozen tables: muldiv's `A_p` (d 64,
+/// width 898) takes rank 18, whose Σ-binding bracket is 179 < width ≤ 2463,
+/// so rank 17 is under the 128-bit target there, as the A40 harness's rank
+/// 2 is; `A_D` (key Open, d 64, ℓ∞ 15) takes rank 1 at width 4736, inside
+/// the q128 cell's rank-1 width of 93,935. The residual's own ranks are
+/// pinned by akita-pcs (`admission_prices_the_residual_at_the_sigma_radius`).
+#[test]
+fn whiteout_ranks_sit_at_the_tables_minimum() {
+    let fixture = fixture();
+    let layout = layout(&fixture);
+    with_ring_dim!(fixture.row.ring_dim(), D, {
+        let pads = WhiteoutTail::pad_commitment::<D>(&layout).unwrap();
+        let width =
+            LatticePadCommitment::<F, D>::width(pads.placement(), pads.randomness_columns())
+                .unwrap();
+        assert_eq!((D, width, pads.image_len() / D), (64, 898, 18));
+        Ok::<(), ZkError>(())
+    })
+    .unwrap();
+    assert_eq!(sigma_matrix_rank(64, 179).unwrap(), 17);
+    assert_eq!(sigma_matrix_rank(64, 180).unwrap(), 18);
+    assert_eq!(sigma_matrix_rank(64, 2463).unwrap(), 18);
+    assert!(sigma_matrix_rank(64, 2464).unwrap() > 18);
+
+    assert_eq!(digit_matrix_rank(4736).unwrap(), 1);
+    assert_eq!(digit_matrix_rank(93_935).unwrap(), 1);
+    assert!(digit_matrix_rank(93_936).unwrap() > 1);
 }

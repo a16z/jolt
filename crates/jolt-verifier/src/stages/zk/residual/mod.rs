@@ -356,19 +356,20 @@ impl<F: JoltField> JoltResidual<F> {
     ///
     /// [`VerifierError`] if a formula does not lower.
     pub fn pad_layout(&self, base: usize) -> Result<PadLayout, VerifierError> {
-        let mut shape = OperandShapeDomain::new(base).with_operands(self.operands);
-        self.shape(&mut shape)?;
-        Ok(shape.layout()?)
+        Ok(self.shape(OperandShapeDomain::new(base))?.layout()?)
     }
 
     /// Allocates this relation's auxiliary slots and records its product
-    /// operands in `shape`, after whatever `shape` already holds.
+    /// operands in `shape`, after whatever `shape` already holds, under this
+    /// relation's operand rule (the one its rows use).
     ///
     /// # Errors
     ///
     /// [`VerifierError`] if a formula does not lower.
-    pub fn shape(&self, shape: &mut OperandShapeDomain) -> Result<(), VerifierError> {
-        let claims = self.lower_claims(shape, &mut |id| {
+    pub fn shape(&self, shape: OperandShapeDomain) -> Result<OperandShapeDomain, VerifierError> {
+        let mut shape = shape.with_operands(self.operands);
+        let shape_ref = &mut shape;
+        let claims = self.lower_claims(shape_ref, &mut |id| {
             Ok(Some(
                 self.opening(id)
                     .map_err(|_| ZkError::InvalidRelation {
@@ -377,8 +378,8 @@ impl<F: JoltField> JoltResidual<F> {
                     .pad,
             ))
         })?;
-        self.check_stages(shape, claims, |_, _, input| Ok(input))?;
-        Ok(())
+        self.check_stages(shape_ref, claims, |_, _, input| Ok(input))?;
+        Ok(shape)
     }
 
     /// The prover's auxiliary values, in slot order, from the decoded

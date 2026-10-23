@@ -454,7 +454,7 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,zk,prover-fixtures --test whiteout_e2e
       # The Whiteout verifier fixture: HT1 census, sweeps, shift probe, HT3.
       - name: Run jolt-verifier Whiteout suites (akita,zk)
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,zk,prover-fixtures,logging
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,zk,prover-fixtures,logging --test-threads 1
       - name: Test Akita profiling artifact and CSV names
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
 

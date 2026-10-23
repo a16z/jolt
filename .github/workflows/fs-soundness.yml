@@ -59,8 +59,9 @@ jobs:
           -p jolt-verifier
           --test fs_obligations
           --cargo-quiet
-      # Akita+ZK (Whiteout) builds but rejects every proof until the W6d
-      # tail lands; that PR adds it to the Fiat-Shamir fixture matrix.
+      # Akita+ZK (Whiteout) Fiat-Shamir coverage runs in rust.yml's
+      # jolt-verifier Whiteout lane (census, sweeps, fs_attacks::whiteout);
+      # this job only checks the verifier builds.
       - name: Build Akita ZK (Whiteout) verifier
         run: cargo check -p jolt-verifier --lib --features akita,zk
 
