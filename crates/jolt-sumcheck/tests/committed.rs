@@ -6,7 +6,9 @@ use jolt_sumcheck::round_proof::RoundMessage;
 use jolt_sumcheck::{
     round_pow_bits, CommittedRound, CommittedRoundWitness, SumcheckStatement, SumcheckVerifier,
 };
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript,
+};
 
 type F = Fr;
 type VC = Pedersen<Bn254G1>;
@@ -44,14 +46,14 @@ fn grind_nonces(
     degree: usize,
     label: &'static [u8],
 ) -> Vec<u32> {
-    let bits = round_pow_bits::<F, Blake2bTranscript<F>>(degree).unwrap();
-    let mut transcript = Blake2bTranscript::<F>::new(label);
+    let bits = round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap();
+    let mut transcript = prover_transcript::<Blake2b512>(label, b"");
     rounds
         .iter()
         .filter_map(|round| {
             round.append_to_transcript(&mut transcript);
-            let nonce = transcript.grind(bits).unwrap();
-            let _challenge: F = transcript.challenge();
+            let nonce = transcript.public_grind(bits).unwrap();
+            let _challenge: F = transcript.challenge().unwrap();
             nonce
         })
         .collect()
@@ -69,18 +71,18 @@ fn committed_rounds_complete_with_pedersen_commitments() {
         ],
     );
 
-    let bits = round_pow_bits::<F, Blake2bTranscript<F>>(2).unwrap();
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let mut expected_challenges = Vec::new();
+    let bits = round_pow_bits::<F, ProverState<Blake2b512>>(2).unwrap();
+    let mut prover_state = prover_transcript::<Blake2b512>(b"committed-roundtrip", b"");
+    let mut expected_challenges: Vec<F> = Vec::new();
     let mut pow_nonces = Vec::new();
     for round in &rounds {
-        round.append_to_transcript(&mut prover_transcript);
-        pow_nonces.extend(prover_transcript.grind(bits).unwrap());
-        expected_challenges.push(prover_transcript.challenge());
+        round.append_to_transcript(&mut prover_state);
+        pow_nonces.extend(prover_state.public_grind(bits).unwrap());
+        expected_challenges.push(prover_state.challenge().unwrap());
     }
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let consistency = SumcheckVerifier::verify_committed_round_consistency(
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"committed-roundtrip", b"");
+    let consistency = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(rounds.len(), 2),
         &rounds,
         &pow_nonces,
@@ -90,7 +92,10 @@ fn committed_rounds_complete_with_pedersen_commitments() {
 
     assert_eq!(consistency.challenges(), expected_challenges);
     assert_eq!(consistency.round_degrees(), vec![2, 1, 2]);
-    assert_eq!(verifier_transcript.state(), prover_transcript.state());
+    assert_eq!(
+        verifier_transcript.verifier_message::<[u8; 32]>(),
+        prover_state.verifier_message::<[u8; 32]>()
+    );
 }
 
 #[test]
@@ -110,8 +115,8 @@ fn tampered_committed_round_changes_challenges() {
     )
     .remove(0);
 
-    let mut original_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let original = SumcheckVerifier::verify_committed_round_consistency(
+    let mut original_transcript = prover_transcript::<Blake2b512>(b"committed-roundtrip", b"");
+    let original = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(2, 2),
         &rounds,
         &grind_nonces(&rounds, 2, b"committed-roundtrip"),
@@ -119,8 +124,8 @@ fn tampered_committed_round_changes_challenges() {
     )
     .unwrap();
 
-    let mut tampered_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let tampered = SumcheckVerifier::verify_committed_round_consistency(
+    let mut tampered_transcript = prover_transcript::<Blake2b512>(b"committed-roundtrip", b"");
+    let tampered = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(2, 2),
         &tampered,
         &grind_nonces(&tampered, 2, b"committed-roundtrip"),
@@ -129,5 +134,8 @@ fn tampered_committed_round_changes_challenges() {
     .unwrap();
 
     assert_ne!(tampered.challenges(), original.challenges());
-    assert_ne!(tampered_transcript.state(), original_transcript.state());
+    assert_ne!(
+        tampered_transcript.verifier_message::<[u8; 32]>(),
+        original_transcript.verifier_message::<[u8; 32]>()
+    );
 }

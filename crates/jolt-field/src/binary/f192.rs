@@ -156,11 +156,6 @@ impl CanonicalEncoding for F192 {
             .find_map(|(i, c)| (!c.is_zero()).then(|| i as u32 * 64 + c.num_bits()))
             .unwrap_or(0)
     }
-
-    #[inline]
-    fn challenge_width(_draw: u64) -> usize {
-        Self::NUM_BYTES
-    }
 }
 
 impl WithAccumulator for F192 {

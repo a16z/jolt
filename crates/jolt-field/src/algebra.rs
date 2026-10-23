@@ -14,6 +14,8 @@ use allocative::Allocative;
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use serde::{de::DeserializeOwned, Serialize};
+#[cfg(feature = "spongefish")]
+use spongefish::Encoding;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::iter::{Product, Sum};
@@ -286,13 +288,9 @@ pub trait CanonicalEncoding:
     /// Bit length of the field order `|F|` (for prime fields, the modulus).
     const MODULUS_BITS: u32;
 
-    /// Size of the set [`from_challenge_bytes`](Self::from_challenge_bytes)
-    /// draws from, as little-endian 64-bit limbs. Either no challenge has
-    /// probability above one over this size, or the draws that follow one
-    /// absorbed message are jointly within total variation `2^-161` of
-    /// uniform on a set of this size, as the field order is for the default
-    /// [`challenge_width`](Self::challenge_width). Proof-of-work difficulty
-    /// is priced from it; that distance is charged separately.
+    /// The field order, as little-endian 64-bit limbs: the size of the set
+    /// a challenge codec draws from. Proof-of-work difficulty is priced from
+    /// it.
     const CHALLENGE_SET_LIMBS: [u64; 4];
 
     /// Decodes little-endian bytes of any length by reducing into the field.
@@ -344,27 +342,6 @@ pub trait CanonicalEncoding:
     ///
     /// Zero is considered to have zero significant bits.
     fn num_bits(&self) -> u32;
-
-    /// Number of transcript bytes squeezed for the `draw`-th challenge since
-    /// the transcript last absorbed, counting from 1, and decoded by
-    /// [`from_challenge_bytes`](Self::from_challenge_bytes).
-    ///
-    /// The default reduces [`reduction_width`]`(MODULUS_BITS, 1 + 2⌈log₂ draw⌉)`
-    /// bytes modulo the field order. Draw `k` is then within total variation
-    /// `2^-162 / k²` of uniform, so any number of draws after one message are
-    /// jointly within `2^-162 · π²/6 < 2^-161`, with no bound on their count.
-    #[inline]
-    fn challenge_width(draw: u64) -> usize {
-        let log_draw = u64::BITS - draw.saturating_sub(1).leading_zeros();
-        reduction_width(Self::MODULUS_BITS, 1 + 2 * log_draw)
-    }
-
-    /// Decodes one challenge from the bytes [`challenge_width`](Self::challenge_width)
-    /// gives. Every challenge, scalar or not, uses this decoder.
-    #[inline]
-    fn from_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 /// Bytes per element so that `2^share_bits` elements, each reduced modulo a
@@ -542,14 +519,37 @@ pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]
 impl<T: ?Sized> MaybeAllocative for T {}
 
+/// spongefish's [`Encoding`](spongefish::Encoding) when the `spongefish`
+/// feature is on, vacuous otherwise.
+///
+/// Every field in this crate encodes as its canonical little-endian bytes, so
+/// `F: JoltField` can be absorbed into a transcript without a bound of its own.
+#[cfg(feature = "spongefish")]
+pub trait MaybeEncoding: Encoding {}
+#[cfg(feature = "spongefish")]
+impl<T: Encoding + ?Sized> MaybeEncoding for T {}
+/// spongefish's `Encoding` when the `spongefish` feature is on, vacuous
+/// otherwise.
+#[cfg(not(feature = "spongefish"))]
+pub trait MaybeEncoding {}
+#[cfg(not(feature = "spongefish"))]
+impl<T: ?Sized> MaybeEncoding for T {}
+
 /// Everything Jolt's protocol stack requires of a scalar field: field
-/// algebra, a canonical transcript encoding, an accumulator, serde wire
-/// serialization (canonical-checked, via [`impl_serde_bytes!`]), and heap
-/// visitation under the `allocative` feature.
+/// algebra, a canonical encoding, an accumulator, serde wire serialization
+/// (canonical-checked, via [`impl_serde_bytes!`]), the transcript encoding
+/// under the `spongefish` feature, and heap visitation under the `allocative`
+/// feature.
 ///
 /// Blanket-implemented — implement the component traits and this follows.
 pub trait JoltField:
-    Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned + MaybeAllocative
+    Field
+    + CanonicalEncoding
+    + WithAccumulator
+    + Serialize
+    + DeserializeOwned
+    + MaybeAllocative
+    + MaybeEncoding
 {
 }
 
@@ -559,7 +559,8 @@ impl<
             + WithAccumulator
             + Serialize
             + DeserializeOwned
-            + MaybeAllocative,
+            + MaybeAllocative
+            + MaybeEncoding,
     > JoltField for T
 {
 }

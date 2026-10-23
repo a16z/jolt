@@ -24,7 +24,7 @@ use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::{DoryCommitment, DoryScheme};
 use jolt_field::Fr;
-use jolt_transcript::LegacyBlake2bTranscript;
+use jolt_transcript::{Keccak, VerifierState};
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 
 mod support;
@@ -134,7 +134,7 @@ fn write_bundle(filename: &str, bundle: FuzzBundle, zk: bool) {
     assert_eq!(consumed, bytes.len(), "fuzz bundle has trailing bytes");
     support::assert_accepts_mode(
         zk,
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &decoded.0,
             &decoded.1,
             &decoded.2,

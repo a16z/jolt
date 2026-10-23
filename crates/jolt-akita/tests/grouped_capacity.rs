@@ -22,7 +22,7 @@ use jolt_openings::{
     TransparentObjectSetup,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
 use support::{f, layout, polynomial};
 
 /// The smallest one-column K=16 Single arity whose scalar guide has a
@@ -107,13 +107,13 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     .expect("trace group should commit against the larger advice object");
     let main = GroupOpeningClaim::new(trace_commitment, trace_point, vec![trace_evaluation]);
 
-    let mut prover_transcript = Blake2bTranscript::new(b"akita-grouped-capacity");
+    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
     let proof = AkitaScheme::prove_batch(
         &prover_setup,
         vec![(advice_claim.clone(), advice_hint)],
         main.clone(),
         trace_hint,
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .expect("grouped opening should prove");
 
@@ -121,8 +121,10 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         &serde_json::to_string(&verifier_setup).expect("verifier setup should serialize"),
     )
     .expect("verifier setup should deserialize");
+    let prover_tail = prover_state.verifier_message::<[u8; 32]>();
     for setup in [&verifier_setup, &transported] {
-        let mut verifier_transcript = Blake2bTranscript::new(b"akita-grouped-capacity");
+        let mut verifier_transcript =
+            prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
         AkitaScheme::verify_batch(
             setup,
             std::slice::from_ref(&advice_claim),
@@ -131,10 +133,13 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
             &mut verifier_transcript,
         )
         .expect("grouped opening should verify");
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(
+            prover_tail,
+            verifier_transcript.verifier_message::<[u8; 32]>()
+        );
     }
 
-    let mut other_context = Blake2bTranscript::new(b"akita-grouped-capacity");
+    let mut other_context = prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
     other_context.append_bytes(b"different preceding Jolt messages");
     assert!(AkitaScheme::verify_batch(
         &transported,

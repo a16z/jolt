@@ -14,7 +14,7 @@ jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs = { path = "../jolt-r1cs", default-features = false }
 jolt-spartan-verifier.workspace = true
-jolt-sumcheck.workspace = true
+jolt-sumcheck = { workspace = true, features = ["prover"] }
 jolt-transcript.workspace = true
 
 [dev-dependencies]

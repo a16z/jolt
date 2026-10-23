@@ -29,7 +29,7 @@ use jolt_sumcheck::{
     BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckError,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, VerificationError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -86,9 +86,19 @@ pub enum SpartanError<F: JoltField> {
     Matrix(#[from] ConstraintMatrixEvalError),
     #[error(transparent)]
     Opening(#[from] OpeningsError),
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
 }
 
-impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
+impl<F: JoltField> From<VerificationError> for SpartanError<F> {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
+}
+
+impl<F: JoltField + Encoding> SpartanKey<F> {
     /// Verify against this authenticated relation and the application's PCS key.
     ///
     /// The application's key policy must fix PCS setup and transcript choices.
@@ -98,10 +108,10 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
         public_inputs: &[F],
         proof: &SpartanProof<F, PCS::Output, PCS::Proof>,
         pcs_setup: &PCS::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = F>,
+        transcript: &mut impl FieldTranscript<F>,
     ) -> Result<(), SpartanError<F>>
     where
-        PCS::Output: AppendToTranscript,
+        PCS::Output: Encoding,
     {
         let tau = self.begin(public_inputs, &proof.witness_commitment, transcript)?;
         let outer = proof.outer.verify(

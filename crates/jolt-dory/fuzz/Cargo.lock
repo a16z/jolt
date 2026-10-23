@@ -399,7 +399,7 @@ dependencies = [
  "rand_core",
  "rayon",
  "serde",
- "thiserror 2.0.19",
+ "thiserror",
  "tracing",
 ]
 
@@ -597,7 +597,8 @@ dependencies = [
  "num-traits",
  "rand_core",
  "serde",
- "thiserror 2.0.19",
+ "spongefish",
+ "thiserror",
 ]
 
 [[package]]
@@ -609,7 +610,7 @@ dependencies = [
  "jolt-poly",
  "jolt-transcript",
  "serde",
- "thiserror 2.0.19",
+ "thiserror",
  "tracing",
 ]
 
@@ -642,7 +643,7 @@ dependencies = [
  "rand_core",
  "rayon",
  "serde",
- "thiserror 2.0.19",
+ "thiserror",
  "tracing",
 ]
 
@@ -653,10 +654,8 @@ dependencies = [
  "ark-bn254",
  "ark-ff",
  "blake2 0.11.0-rc.6",
- "digest 0.11.3",
  "getrandom 0.4.3",
  "jolt-field",
- "light-poseidon",
  "spongefish",
 ]
 
@@ -701,18 +700,6 @@ checksum = "a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2"
 dependencies = [
  "arbitrary",
  "cc",
-]
-
-[[package]]
-name = "light-poseidon"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47a1ccadd0bb5a32c196da536fd72c59183de24a055f6bf0513bf845fefab862"
-dependencies = [
- "ark-bn254",
- "ark-ff",
- "num-bigint",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -987,31 +974,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9"
 dependencies = [
- "thiserror-impl 2.0.19",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
+ "thiserror-impl",
 ]
 
 [[package]]

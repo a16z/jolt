@@ -7,7 +7,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::config::JoltProtocolConfig;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::proof::ClearProofClaims;
@@ -57,17 +57,17 @@ pub fn prove<F, PCS, VC, T>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output, Blind = F>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: Encoding + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F> + ProverInit,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
-    jolt_verifier::stages::pow::require_no_pow::<T>()?;
+    jolt_verifier::stages::pow::require_no_pow::<F, T>()?;
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         &mut backend,
@@ -217,6 +217,7 @@ where
             rw_config: config.rw_config,
             one_hot_config: config.one_hot_config,
             trace_polynomial_order: config.trace_polynomial_order,
+            narg: transcript.narg_string().to_vec(),
         })
     }
     #[cfg(feature = "zk")]
@@ -240,6 +241,7 @@ where
             rw_config: config.rw_config,
             one_hot_config: config.one_hot_config,
             trace_polynomial_order: config.trace_polynomial_order,
+            narg: transcript.narg_string().to_vec(),
         };
         let witnesses = ZkStageWitnesses {
             stage1_uniskip: stage1.uniskip_witness,
@@ -264,7 +266,7 @@ where
             &shell,
             &witnesses,
             &final_opening,
-            transcript.state(),
+            &transcript,
         )?;
 
         Ok(shell.with_claims(JoltProofClaims::Zk { blindfold_proof }))

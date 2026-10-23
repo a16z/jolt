@@ -27,13 +27,13 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
-use jolt_transcript::{AppendToTranscript, Label, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, Label, Probe, ProverInit};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::stages::zk::{blindfold, inputs::BlindFoldInputs};
 use jolt_verifier::stages::{
     stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
 };
-use jolt_verifier::VerifierError;
+use jolt_verifier::{VerifierError, JOLT_SESSION};
 
 use crate::{JoltProverPreprocessing, ProverError};
 
@@ -98,8 +98,8 @@ pub(crate) struct ZkFinalOpening<F> {
 }
 
 /// Prove the BlindFold tail for `shell` (the assembled proof with a unit
-/// claims placeholder). `forward_state` is the prover's own transcript state
-/// at the stage-8 boundary — the replay must land on the same bytes.
+/// claims placeholder). `forward` is the prover's own transcript at the
+/// stage-8 boundary — the replay must land on the same sponge state.
 pub(crate) fn prove_blindfold<F, PCS, VC, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -107,17 +107,17 @@ pub(crate) fn prove_blindfold<F, PCS, VC, T>(
     shell: &JoltProof<PCS, VC, ()>,
     witnesses: &ZkStageWitnesses<F>,
     final_opening: &ZkFinalOpening<F>,
-    forward_state: [u8; 32],
+    forward: &T,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: Encoding + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F> + ProverInit,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let (protocol, mut transcript) = replay_stages::<F, PCS, VC, T>(
@@ -127,10 +127,16 @@ where
         trusted_advice_commitment,
     )?;
     // A 32-byte compare guarding the exact seam the design rests on: the
-    // replay landing on the prover's forward transcript bytes. Hard error
-    // (not debug-only) so release provers diagnose drift here rather than
-    // as a downstream BlindFold verification failure.
-    if transcript.state() != forward_state {
+    // replay landing on the prover's forward sponge state, compared by what
+    // copies of the two sponges squeeze next. Hard error (not debug-only) so
+    // release provers diagnose drift here rather than as a downstream
+    // BlindFold verification failure.
+    let next_bytes = |transcript: &T| {
+        let mut out = [0u8; 32];
+        transcript.message_search().probe(&[], &mut out);
+        out
+    };
+    if next_bytes(&transcript) != next_bytes(forward) {
         return Err(ProverError::InvariantViolation {
             reason: "the verifier replay diverged from the prover's forward transcript",
         });
@@ -182,20 +188,21 @@ fn replay_stages<F, PCS, VC, T>(
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(BlindFoldProtocol<F, VC::Output>, T), ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: Encoding + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F> + ProverInit,
 {
-    let (checked, mut transcript) = jolt_verifier::validate_and_seed_transcript::<PCS, VC, T, ()>(
+    let (checked, mut transcript) = jolt_verifier::validate_and_seed_transcript(
         preprocessing,
         public_io,
         shell,
         trusted_advice_commitment,
+        |statement| T::init(JOLT_SESSION, statement),
     )?;
     let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
         shell,

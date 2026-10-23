@@ -18,7 +18,7 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
@@ -120,17 +120,16 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
     /// so the generated aggregate draw lands the vector exactly where the legacy
     /// stage front drew it — after both batch gammas.
     ///
-    /// MUST stay `challenge()` (not `challenge_scalar()`): both decode the same
-    /// 16-byte squeeze, but differently, so switching would silently change the
-    /// address point values without changing the transcript bytes.
-    fn draw_challenges<T: Transcript<Challenge = F>>(
+    /// Each coordinate is its own one-challenge codec message; one
+    /// `challenge_vector` message would squeeze different bytes.
+    fn draw_challenges<T: FieldTranscript<F>>(
         &self,
         transcript: &mut T,
     ) -> Result<RamOutputCheckChallenges<F>, VerifierError> {
         Ok(RamOutputCheckChallenges {
             output_address: (0..self.read_write_dimensions.log_k())
                 .map(|_| transcript.challenge())
-                .collect(),
+                .collect::<Result<_, _>>()?,
         })
     }
 

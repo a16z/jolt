@@ -24,7 +24,7 @@ use jolt_openings::{
     TaggedGroupOpeningClaim, VerifierOpeningClaim,
 };
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{FieldTranscript, Label, LabelWithCount, U64Word};
 use tracing::info_span;
 
 use crate::adapters::{
@@ -157,7 +157,7 @@ fn bind_grouped_statement_transcripts<T>(
     main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
 ) -> Result<Vec<u8>, OpeningsError>
 where
-    T: Transcript<Challenge = AkitaField>,
+    T: FieldTranscript<AkitaField>,
 {
     append_verifier_setup(transcript, setup, AkitaBackendFlavor::OneHot)?;
     transcript.append(&Label(b"akita_precommit_batch_v4"));
@@ -182,20 +182,17 @@ where
             transcript.append_bytes(b"main_trace");
         }
         transcript.append(&U64Word(u64::from(role.is_some())));
-        claim.commitment.append_to_transcript(transcript);
+        transcript.append(&claim.commitment);
         transcript.append_values(b"akita_group_point", &claim.point);
         transcript.append(&LabelWithCount(
             b"akita_group_evaluations",
             claim.evaluations.len() as u64,
         ));
         for evaluation in &claim.evaluations {
-            evaluation.append_to_transcript(transcript);
+            transcript.append(&evaluation);
         }
     }
-    Ok(bridged_akita_session(
-        transcript,
-        b"jolt-akita/precommitted-group-batch/v4",
-    ))
+    bridged_akita_session(transcript, b"jolt-akita/precommitted-group-batch/v4")
 }
 
 fn prove_one_hot_opening(
@@ -247,7 +244,7 @@ impl AkitaNativeBatching {
         transcript: &mut T,
     ) -> Result<AkitaBatchProof, OpeningsError>
     where
-        T: Transcript<Challenge = AkitaField>,
+        T: FieldTranscript<AkitaField>,
     {
         let auxiliary_claims = auxiliary_groups
             .iter()
@@ -350,7 +347,7 @@ impl AkitaNativeBatching {
         transcript: &mut T,
     ) -> Result<(), OpeningsError>
     where
-        T: Transcript<Challenge = AkitaField>,
+        T: FieldTranscript<AkitaField>,
     {
         validate_trace_batch_statement(setup, auxiliary_groups, main)?;
         let backend_main_point = reverse_point(&main.point);
@@ -528,7 +525,7 @@ fn bind_statement_transcripts<T>(
     point: &[AkitaField],
 ) -> Result<Vec<u8>, OpeningsError>
 where
-    T: Transcript<Challenge = AkitaField>,
+    T: FieldTranscript<AkitaField>,
 {
     {
         let _span = info_span!("AkitaNativeBatching::append_setup_and_statement").entered();
@@ -536,7 +533,7 @@ where
         append_batch_statement(transcript, statement, commitment, point);
     }
     let _span = info_span!("AkitaNativeBatching::bridge_transcripts").entered();
-    Ok(bridged_akita_session(transcript, b"jolt-akita/batch"))
+    bridged_akita_session(transcript, b"jolt-akita/batch")
 }
 
 fn single_group_batch<'a, Cfg>(
@@ -602,7 +599,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
     ) -> Result<Self::Proof, OpeningsError>
     where
         Self: 'a,
-        T: Transcript<Challenge = Self::Field>,
+        T: FieldTranscript<Self::Field>,
     {
         let ValidatedStatement { commitment, point } = validate_statement(
             &statement,
@@ -677,7 +674,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         transcript: &mut T,
     ) -> Result<(), OpeningsError>
     where
-        T: Transcript<Challenge = Self::Field>,
+        T: FieldTranscript<Self::Field>,
     {
         let ValidatedStatement { commitment, point } = validate_statement(
             statement,
@@ -755,7 +752,7 @@ mod tests {
     use super::*;
     use jolt_field::Zero;
     use jolt_openings::{CommitmentGroupRole, EvaluationClaim};
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Blake2b512};
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
     use crate::configs::AkitaChunkProfile;
@@ -810,7 +807,7 @@ mod tests {
             schedule_selection: [0; 32],
             backend_proof: Vec::new(),
         };
-        let mut transcript = Blake2bTranscript::new(b"invalid-transported-setup");
+        let mut transcript = prover_transcript::<Blake2b512>(b"invalid-transported-setup", b"");
         let error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &transported,
             &statement,

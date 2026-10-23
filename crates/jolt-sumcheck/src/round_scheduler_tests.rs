@@ -7,7 +7,7 @@
 )]
 
 use jolt_field::{Fr, Ring};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, ProverState};
 
 use crate::batch::{BatchMember, BatchPrelude};
 use crate::error::SumcheckError;
@@ -52,7 +52,7 @@ fn traversal_fixture() -> (
     DenseMember,
     DenseMember,
     BatchPrelude<F>,
-    Blake2bTranscript,
+    ProverState<Blake2b512>,
     ClearSumcheckRecorder<F>,
 ) {
     let sum_long = F::from_u64(4242);
@@ -60,11 +60,11 @@ fn traversal_fixture() -> (
     let long = DenseMember::with_sum(3, sum_long, 7);
     let short = DenseMember::with_sum(1, sum_short, 13);
 
-    let mut transcript = Blake2bTranscript::new(b"traversal-seam");
+    let mut transcript = prover_transcript::<Blake2b512>(b"traversal-seam", b"");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[sum_long, sum_short], &mut transcript);
-    let coeff_long: F = transcript.challenge_scalar();
-    let coeff_short: F = transcript.challenge_scalar();
+    let coeff_long: F = transcript.challenge().unwrap();
+    let coeff_short: F = transcript.challenge().unwrap();
     let prelude = BatchPrelude::new(
         vec![
             BatchMember {
@@ -106,7 +106,11 @@ fn proof_is_invariant_under_a_reordering_traversal() {
         let recorded = recorder
             .finish(&proved.member_claims, &mut transcript)
             .unwrap();
-        (proved, recorded.proof, transcript.state())
+        (
+            proved,
+            recorded.proof,
+            transcript.verifier_message::<[u8; 32]>(),
+        )
     };
 
     let (sequential, sequential_proof, sequential_state) = prove(false);

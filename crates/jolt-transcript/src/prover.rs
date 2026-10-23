@@ -1,46 +1,23 @@
-//! Spongefish-native [`ProverTranscript`] surface.
-//!
-//! Implemented directly on `spongefish::ProverState<H, R>` via the orphan
-//! rule. Methods are positional, matching spongefish-native usage
-//! (WhiR, sigma-rs).
+//! Prover-only operations on `spongefish::ProverState`.
 
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{Leb128, MessageSearch, SpongePow};
-use crate::{challenge::message_bytes, ChallengeCodec, UniformBytes};
-use spongefish::{
-    DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromUniform, ProverState, VerificationError,
-};
+use crate::{prover_transcript, Transcript};
+#[cfg(feature = "prover-grinding")]
+use spongefish::VerificationError;
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState};
 
-/// Prover-side spongefish transcript.
-///
-/// `H::U` is the sponge alphabet (`u8` for every sponge in this crate).
-pub trait ProverTranscript<H: DuplexSpongeInterface> {
-    /// Absorbs `msg` symmetrically with the verifier; emits no NARG bytes.
-    fn public_message<T: Encoding<H::U> + ?Sized>(&mut self, msg: &T);
+/// The prover's side of a [`Transcript`]: messages written to the NARG string
+/// and the proof-of-work nonce searches.
+pub trait ProverTranscript: Transcript {
+    /// The duplex sponge behind the transcript.
+    type Sponge: DuplexSpongeInterface<U = u8> + Sync;
 
     /// Absorbs `msg` and appends its NARG-serialized form for verifier replay.
-    fn prover_message<T: Encoding<H::U> + Encoding + ?Sized>(&mut self, msg: &T);
+    fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M);
 
-    /// Squeezes a verifier challenge.
-    fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T;
-
-    /// Draws one message with conventional TV ≤ 2^-161 across all `len` elements.
-    /// The protocol session/version must bind the codec, field, and length.
-    /// `len == 0` returns an empty vector without touching the sponge. Only
-    /// sponges with uniform output qualify ([`UniformBytes`]); `PoseidonSponge`
-    /// does not.
-    ///
-    /// # Errors
-    /// Returns `VerificationError`, before any sponge operation, when the codec
-    /// does not support `len` or the message would exceed
-    /// [`MAX_CHALLENGE_BYTES`](crate::MAX_CHALLENGE_BYTES) bytes. Otherwise on
-    /// rejection-pool exhaustion (probability at most 2^-161).
-    fn field_challenges<F: ChallengeCodec>(
-        &mut self,
-        len: usize,
-    ) -> Result<Vec<F>, VerificationError>
-    where
-        H: UniformBytes;
+    /// Bytes accumulated in the NARG so far.
+    fn narg_string(&self) -> &[u8];
 
     /// A copy of the public sponge, for searching over the next prover
     /// message: a proof-of-work nonce, or a retry counter whose following
@@ -50,9 +27,9 @@ pub trait ProverTranscript<H: DuplexSpongeInterface> {
     /// Needs the `prover-grinding` feature, which enables spongefish's
     /// `yolocrypto` to copy the sponge state.
     #[cfg(feature = "prover-grinding")]
-    fn message_search(&self) -> MessageSearch<H>;
+    fn message_search(&self) -> MessageSearch<Self::Sponge>;
 
-    /// A proof of work of `bits` bits on this transcript's own sponge.
+    /// A proof of work of `bits` bits whose nonce goes into the NARG string.
     ///
     /// For `bits == 0` this does nothing. For `1 <= bits <= MAX_POW_BITS`, the
     /// prover sends the least nonce below `2^(bits + 7)` for which the next
@@ -64,9 +41,6 @@ pub trait ProverTranscript<H: DuplexSpongeInterface> {
     /// prover message. The protocol must draw the challenges it protects
     /// directly after this step: a prover message in between would let the
     /// prover change them without redoing the work.
-    ///
-    /// Needs the `prover-grinding` feature, which enables spongefish's
-    /// `yolocrypto` to copy the sponge state for the nonce search.
     ///
     /// # Security
     ///
@@ -85,44 +59,52 @@ pub trait ProverTranscript<H: DuplexSpongeInterface> {
     /// after the nonce is sent, if the real check disagrees with the search;
     /// that means the sponge's absorb is not what the probe replays, a bug.
     #[cfg(feature = "prover-grinding")]
-    fn grind(&mut self, bits: u32) -> Result<(), VerificationError>
-    where
-        H: DuplexSpongeInterface<U = u8> + Sync;
+    fn grind(&mut self, bits: u32) -> Result<(), VerificationError>;
 
-    /// Bytes accumulated in the NARG so far.
-    fn narg_string(&self) -> &[u8];
+    /// A proof of work of `bits` bits whose nonce the proof carries outside the
+    /// NARG string. Returns that nonce, or `None` for `bits == 0`, which leaves
+    /// the transcript unchanged.
+    ///
+    /// The nonce is the least one below `2^(bits + 7)` that passes
+    /// [`check_public_grind`](Transcript::check_public_grind), which is then
+    /// applied to this transcript.
+    ///
+    /// # Errors
+    /// As [`grind`](Self::grind).
+    #[cfg(feature = "prover-grinding")]
+    fn public_grind(&mut self, bits: u32) -> Result<Option<u32>, VerificationError>;
 }
 
-impl<H, R> ProverTranscript<H> for ProverState<H, R>
+/// A prover transcript that a prover builds itself, bound to the same
+/// instance its verifier binds: from the session and the public statement, as
+/// [`prover_transcript`] does.
+pub trait ProverInit: ProverTranscript + Sized {
+    /// The transcript bound to `session` and `statement`.
+    fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self;
+}
+
+impl<H> ProverInit for ProverState<H>
 where
-    H: DuplexSpongeInterface,
+    H: DuplexSpongeInit<U = u8> + Sync,
+{
+    fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
+        prover_transcript::<H>(session, statement)
+    }
+}
+
+impl<H, R> ProverTranscript for ProverState<H, R>
+where
+    H: DuplexSpongeInterface<U = u8> + Sync,
     R: DuplexSpongeInit<U = u8>,
 {
-    fn public_message<T: Encoding<H::U> + ?Sized>(&mut self, msg: &T) {
-        ProverState::public_message(self, msg);
-    }
+    type Sponge = H;
 
-    fn prover_message<T: Encoding<H::U> + Encoding + ?Sized>(&mut self, msg: &T) {
+    fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M) {
         ProverState::prover_message(self, msg);
     }
 
-    fn verifier_message<T: FromUniform<H::U>>(&mut self) -> T {
-        ProverState::verifier_message::<T>(self)
-    }
-
-    fn field_challenges<F: ChallengeCodec>(
-        &mut self,
-        len: usize,
-    ) -> Result<Vec<F>, VerificationError>
-    where
-        H: UniformBytes,
-    {
-        let n = message_bytes::<F>(len)?;
-        if len == 0 {
-            return Ok(Vec::new());
-        }
-        ProverState::verifier_message_as(self, n, |bytes| F::decode_challenges(bytes, len))
-            .ok_or(VerificationError)
+    fn narg_string(&self) -> &[u8] {
+        ProverState::narg_string(self)
     }
 
     #[cfg(feature = "prover-grinding")]
@@ -131,16 +113,13 @@ where
     }
 
     #[cfg(feature = "prover-grinding")]
-    fn grind(&mut self, bits: u32) -> Result<(), VerificationError>
-    where
-        H: DuplexSpongeInterface<U = u8> + Sync,
-    {
+    fn grind(&mut self, bits: u32) -> Result<(), VerificationError> {
         if bits == 0 {
             return Ok(());
         }
         let pow = SpongePow::new(bits).ok_or(VerificationError)?;
         let nonce = pow
-            .search(&ProverTranscript::message_search(self))
+            .search(&self.message_search())
             .ok_or(VerificationError)?;
         for byte in Leb128::new(nonce).as_bytes() {
             ProverState::prover_message(self, byte);
@@ -152,7 +131,16 @@ where
         }
     }
 
-    fn narg_string(&self) -> &[u8] {
-        ProverState::narg_string(self)
+    #[cfg(feature = "prover-grinding")]
+    fn public_grind(&mut self, bits: u32) -> Result<Option<u32>, VerificationError> {
+        if bits == 0 {
+            return Ok(None);
+        }
+        let pow = SpongePow::new(bits).ok_or(VerificationError)?;
+        let nonce = pow
+            .search(&self.message_search())
+            .ok_or(VerificationError)?;
+        self.check_public_grind(bits, Some(nonce))?;
+        Ok(Some(nonce))
     }
 }

@@ -3,6 +3,7 @@
 #![expect(clippy::unwrap_used, reason = "tests")]
 
 use jolt_field::{CanonicalBytes, F8};
+use jolt_transcript::FieldTranscript;
 use jolt_transcript::{
     prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge, Probe,
     ProverTranscript, VerifierTranscript, MAX_POW_BITS,
@@ -15,13 +16,13 @@ const SESSION: &[u8] = b"jolt/pow/v1";
 const INSTANCE: [u8; 32] = [0x24; 32];
 
 fn prover() -> ProverState<Keccak> {
-    let mut prover = prover_transcript::<Keccak>(SESSION, INSTANCE);
+    let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
     prover.prover_message(&BytesMsg(b"before".to_vec()));
     prover
 }
 
 fn verifier(narg: &[u8]) -> VerifierState<'_, Keccak> {
-    let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, narg);
+    let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, narg);
     assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
     verifier
 }
@@ -75,7 +76,7 @@ fn manual_check(bits: u32, n: usize) {
     let start = jolt.narg_string().len();
     ProverTranscript::grind(&mut jolt, bits).unwrap();
     let nonce = jolt.narg_string()[start..].to_vec();
-    let values = ProverTranscript::field_challenges::<F8>(&mut jolt, n).unwrap();
+    let values = FieldTranscript::<F8>::challenge_vector(&mut jolt, n).unwrap();
     let tail: [u8; 8] = jolt.verifier_message();
     let value = decode(&nonce);
     assert_eq!(nonce, leb128(value), "bits {bits}");
@@ -111,7 +112,7 @@ fn manual_check(bits: u32, n: usize) {
 
     let mut verifier = verifier(jolt.narg_string());
     VerifierTranscript::check_grind(&mut verifier, bits).unwrap();
-    let read = VerifierTranscript::field_challenges::<F8>(&mut verifier, n).unwrap();
+    let read = FieldTranscript::<F8>::challenge_vector(&mut verifier, n).unwrap();
     assert_eq!(read, values);
     assert_eq!(verifier.verifier_message::<[u8; 8]>(), tail);
     verifier.check_eof().unwrap();
@@ -127,13 +128,13 @@ fn layout_matches_the_manual_transcript() {
 }
 
 fn sponge_prover<H: DuplexSpongeInit<U = u8>>() -> ProverState<H> {
-    let mut prover = prover_transcript::<H>(SESSION, INSTANCE);
+    let mut prover = prover_transcript::<H>(SESSION, &INSTANCE);
     prover.prover_message(&BytesMsg(b"before".to_vec()));
     prover
 }
 
 fn sponge_verifier<H: DuplexSpongeInit<U = u8>>(narg: &[u8]) -> VerifierState<'_, H> {
-    let mut verifier = verifier_transcript::<H>(SESSION, INSTANCE, narg);
+    let mut verifier = verifier_transcript::<H>(SESSION, &INSTANCE, narg);
     assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
     verifier
 }

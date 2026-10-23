@@ -131,11 +131,6 @@ impl CanonicalEncoding for F8 {
     fn num_bits(&self) -> u32 {
         u8::BITS - self.0.leading_zeros()
     }
-
-    #[inline]
-    fn challenge_width(_draw: u64) -> usize {
-        Self::NUM_BYTES
-    }
 }
 
 impl WithAccumulator for F8 {

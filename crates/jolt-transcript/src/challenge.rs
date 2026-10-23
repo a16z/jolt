@@ -29,7 +29,6 @@ use jolt_field::{Fq, Fr};
 use jolt_field::{F128, F192, F64, F8};
 #[cfg(feature = "transcript-keccak")]
 use spongefish::instantiations::Keccak;
-#[cfg(feature = "spongefish")]
 use spongefish::{DuplexSpongeInterface, VerificationError};
 
 #[cfg(feature = "transcript-blake2b")]
@@ -94,12 +93,12 @@ mod sealed {
 ///
 /// # Use outside this crate
 ///
-/// `ChallengeCodec` bounds the field of every `ProverTranscript` and
-/// `VerifierTranscript` `field_challenges` call, so a protocol that draws
-/// field challenges from these transcripts names it as a bound. Callers
-/// cannot implement it. The widths and decodings above are part of the
-/// transcript's wire format: changing one changes every proof that draws
-/// challenges in that field.
+/// `ChallengeCodec` bounds the field of every `FieldTranscript<F>`
+/// implementation on spongefish's prover and verifier states, so a protocol
+/// that draws field challenges from them names it as a bound. Callers cannot
+/// implement it. The widths and decodings above are part of the transcript's
+/// wire format: changing one changes every proof that draws challenges in
+/// that field.
 pub trait ChallengeCodec: Sized + Sealed {
     /// `|Self|`, the number of values one challenge can take. Proof-of-work
     /// difficulties are priced from it ([`grind_bits_for_loss`]).
@@ -125,9 +124,8 @@ pub trait ChallengeCodec: Sized + Sealed {
 /// encoding of a BN254 scalar, whose top bits are far from uniform.
 ///
 /// It is public because it bounds the sponge of the public
-/// `field_challenges` methods. Callers name it only as that bound and cannot
-/// implement it.
-#[cfg(feature = "spongefish")]
+/// `FieldTranscript<F>` implementations. Callers name it only as that bound
+/// and cannot implement it.
 pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
 
 #[cfg(feature = "transcript-keccak")]
@@ -352,7 +350,11 @@ macro_rules! binary_codec {
 #[cfg(feature = "binary")]
 binary_codec!(F8, F64, F128, F192);
 
-#[cfg(feature = "spongefish")]
+/// Bytes squeezed for a message of `len` elements of `F`.
+///
+/// # Errors
+/// Returns `VerificationError` when `F` does not support `len` or the message
+/// would exceed [`MAX_CHALLENGE_BYTES`].
 pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, VerificationError> {
     F::challenge_bytes(len)
         .filter(|&bytes| bytes <= MAX_CHALLENGE_BYTES)
@@ -362,9 +364,7 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
 #[cfg(all(test, feature = "solinas"))]
 mod tests {
     use super::{Prime64Offset59, Sealed, UniformBytes};
-    use crate::{
-        prover_transcript, verifier_transcript, BytesMsg, ProverTranscript, VerifierTranscript,
-    };
+    use crate::{prover_transcript, verifier_transcript, BytesMsg, FieldTranscript};
     use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
     /// A sponge whose output is all ones, so every pooled candidate is
@@ -399,14 +399,14 @@ mod tests {
 
     #[test]
     fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
-        let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
-        assert!(ProverTranscript::field_challenges::<Prime64Offset59>(&mut prover, 3).is_err());
+        let mut prover = prover_transcript::<Saturated>(SESSION, &INSTANCE);
+        assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut prover, 3).is_err());
 
-        let mut prover = prover_transcript::<Saturated>(SESSION, INSTANCE);
+        let mut prover = prover_transcript::<Saturated>(SESSION, &INSTANCE);
         prover.prover_message(&BytesMsg(b"after".to_vec()));
         let mut verifier =
-            verifier_transcript::<Saturated>(SESSION, INSTANCE, prover.narg_string());
-        assert!(VerifierTranscript::field_challenges::<Prime64Offset59>(&mut verifier, 3).is_err());
+            verifier_transcript::<Saturated>(SESSION, &INSTANCE, prover.narg_string());
+        assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut verifier, 3).is_err());
         assert!(verifier.prover_message::<BytesMsg>().is_err());
         assert!(verifier.check_eof().is_err());
     }

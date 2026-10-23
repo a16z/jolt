@@ -6,8 +6,7 @@
 
 use jolt_field::CanonicalBytes;
 use jolt_transcript::{
-    prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec, ProverTranscript,
-    VerifierTranscript,
+    prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec, FieldTranscript,
 };
 use spongefish::instantiations::Keccak;
 use std::fmt::{Debug, Write};
@@ -30,17 +29,17 @@ const INSTANCE: [u8; 32] = [0x42; 32];
 
 fn round_trip<F: ChallengeCodec + PartialEq + Debug>() {
     for len in [1, 17, 28] {
-        let mut prover = prover_transcript::<Keccak>(SESSION, INSTANCE);
+        let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
         prover.prover_message(&BytesMsg(b"before".to_vec()));
-        let expected = ProverTranscript::field_challenges::<F>(&mut prover, len).unwrap();
+        let expected = FieldTranscript::<F>::challenge_vector(&mut prover, len).unwrap();
         assert_eq!(expected.len(), len);
         prover.prover_message(&BytesMsg(b"after".to_vec()));
         let tail: [u8; 32] = prover.verifier_message();
 
-        let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, prover.narg_string());
+        let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, prover.narg_string());
         assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
         assert_eq!(
-            VerifierTranscript::field_challenges::<F>(&mut verifier, len).unwrap(),
+            FieldTranscript::<F>::challenge_vector(&mut verifier, len).unwrap(),
             expected
         );
         assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"after");
@@ -144,12 +143,10 @@ fn pooled_message_sizes_meet_owner_bounds() {
 fn unsupported_lengths_return_transcript_errors() {
     for len in [1 << 22, usize::MAX] {
         assert_eq!(Prime24Offset3::challenge_bytes(len), None);
-        let mut prover = prover_transcript::<Keccak>(SESSION, INSTANCE);
-        assert!(ProverTranscript::field_challenges::<Prime24Offset3>(&mut prover, len).is_err());
-        let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, &[]);
-        assert!(
-            VerifierTranscript::field_challenges::<Prime24Offset3>(&mut verifier, len).is_err()
-        );
+        let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
+        assert!(FieldTranscript::<Prime24Offset3>::challenge_vector(&mut prover, len).is_err());
+        let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, &[]);
+        assert!(FieldTranscript::<Prime24Offset3>::challenge_vector(&mut verifier, len).is_err());
         assert!(verifier.check_eof().is_err());
     }
 }
@@ -157,25 +154,25 @@ fn unsupported_lengths_return_transcript_errors() {
 #[cfg(feature = "binary")]
 #[test]
 fn messages_above_the_byte_cap_are_rejected_before_touching_the_sponge() {
-    let mut prover = prover_transcript::<Keccak>(SESSION, INSTANCE);
-    let full = ProverTranscript::field_challenges::<F8>(&mut prover, MAX_CHALLENGE_BYTES).unwrap();
+    let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
+    let full = FieldTranscript::<F8>::challenge_vector(&mut prover, MAX_CHALLENGE_BYTES).unwrap();
     assert_eq!(full.len(), MAX_CHALLENGE_BYTES);
-    let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, &[]);
+    let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, &[]);
     assert_eq!(
-        VerifierTranscript::field_challenges::<F8>(&mut verifier, MAX_CHALLENGE_BYTES).unwrap(),
+        FieldTranscript::<F8>::challenge_vector(&mut verifier, MAX_CHALLENGE_BYTES).unwrap(),
         full
     );
 
     for len in [MAX_CHALLENGE_BYTES + 1, usize::MAX] {
-        let mut prover = prover_transcript::<Keccak>(SESSION, INSTANCE);
-        assert!(ProverTranscript::field_challenges::<F8>(&mut prover, len).is_err());
-        let mut fresh = prover_transcript::<Keccak>(SESSION, INSTANCE);
+        let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
+        assert!(FieldTranscript::<F8>::challenge_vector(&mut prover, len).is_err());
+        let mut fresh = prover_transcript::<Keccak>(SESSION, &INSTANCE);
         assert_eq!(
             prover.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
         );
-        let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, &[]);
-        assert!(VerifierTranscript::field_challenges::<F8>(&mut verifier, len).is_err());
+        let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, &[]);
+        assert!(FieldTranscript::<F8>::challenge_vector(&mut verifier, len).is_err());
         assert!(verifier.check_eof().is_err());
     }
 }
@@ -190,20 +187,20 @@ fn empty_messages_leave_the_sponge_untouched() {
     use spongefish::DuplexSpongeInit;
 
     fn check<H: DuplexSpongeInit<U = u8> + UniformBytes>() {
-        let mut prover = prover_transcript::<H>(SESSION, INSTANCE);
-        assert!(ProverTranscript::field_challenges::<Fr>(&mut prover, 0)
+        let mut prover = prover_transcript::<H>(SESSION, &INSTANCE);
+        assert!(FieldTranscript::<Fr>::challenge_vector(&mut prover, 0)
             .unwrap()
             .is_empty());
-        let mut fresh = prover_transcript::<H>(SESSION, INSTANCE);
+        let mut fresh = prover_transcript::<H>(SESSION, &INSTANCE);
         assert_eq!(
             prover.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
         );
-        let mut verifier = verifier_transcript::<H>(SESSION, INSTANCE, &[]);
-        assert!(VerifierTranscript::field_challenges::<Fr>(&mut verifier, 0)
+        let mut verifier = verifier_transcript::<H>(SESSION, &INSTANCE, &[]);
+        assert!(FieldTranscript::<Fr>::challenge_vector(&mut verifier, 0)
             .unwrap()
             .is_empty());
-        let mut fresh = verifier_transcript::<H>(SESSION, INSTANCE, &[]);
+        let mut fresh = verifier_transcript::<H>(SESSION, &INSTANCE, &[]);
         assert_eq!(
             verifier.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
@@ -327,15 +324,15 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
     expected: &str,
     continuation: &str,
 ) {
-    let mut prover = prover_transcript::<Keccak>(SESSION, INSTANCE);
+    let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
     prover.prover_message(&BytesMsg(b"before".to_vec()));
-    let values = ProverTranscript::field_challenges::<F>(&mut prover, len).unwrap();
+    let values = FieldTranscript::<F>::challenge_vector(&mut prover, len).unwrap();
     let tail: [u8; 16] = prover.verifier_message();
     prover.prover_message(&BytesMsg(b"after".to_vec()));
-    let mut verifier = verifier_transcript::<Keccak>(SESSION, INSTANCE, prover.narg_string());
+    let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, prover.narg_string());
     assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
     assert_eq!(
-        VerifierTranscript::field_challenges::<F>(&mut verifier, len).unwrap(),
+        FieldTranscript::<F>::challenge_vector(&mut verifier, len).unwrap(),
         values
     );
     assert_eq!(verifier.verifier_message::<[u8; 16]>(), tail);
@@ -350,14 +347,14 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
 fn solinas_known_answers() {
     known_answer::<Prime128OffsetA7F7>(
         1,
-        "03a0e231957e175cad1c4652986665f6",
-        "cf233d36ef269b469d2c9f0e05bbf256",
+        "054c2dd95aac3fe41030fd854e23bb1c",
+        "f94c4bb61fd8fb32d1caa4e81a9d2411",
     );
-    known_answer::<Prime64Offset59>(1, "03a0e231957e175c", "9ab77b02494dd39fcf233d36ef269b46");
+    known_answer::<Prime64Offset59>(1, "054c2dd95aac3fe4", "66d94962948e5d1bf94c4bb61fd8fb32");
     known_answer::<FpExt4<Prime32Offset99>>(
         1,
-        "03a0e231957e175cad1c4652986665f6",
-        "05bbf2567392ecb9d780c781ffd908e3",
+        "054c2dd95aac3fe41030fd854e23bb1c",
+        "1a9d24117be65f8a42263c77b5726f3a",
     );
 }
 
@@ -366,8 +363,8 @@ fn solinas_known_answers() {
 fn bn254_known_answer() {
     known_answer::<Fr>(
         1,
-        "613f26dcbbf8587df01a46ce094e04d1601b84a15c2c1759fd02b13bbbb52430",
-        "d780c781ffd908e35322f4c213862958",
+        "7102fb019592516789657a0711ec2e8e295f8e3aff0c618914af0a9dca4da608",
+        "42263c77b5726f3a3984d3c5788dd66a",
     );
 }
 
@@ -376,8 +373,8 @@ fn bn254_known_answer() {
 fn binary_known_answer() {
     known_answer::<F128>(
         1,
-        "03a0e231957e175cad1c4652986665f6",
-        "cc638e1acaa5c8429ab77b02494dd39f",
+        "054c2dd95aac3fe41030fd854e23bb1c",
+        "6f7ccba5b9646bd566d94962948e5d1b",
     );
 }
 
@@ -389,23 +386,23 @@ fn keccak_rate_boundary_known_answers() {
     known_answer::<F8>(
         136,
         concat!(
-            "03a0e231957e175cad1c4652986665f6cc638e1acaa5c8429ab77b02494dd39f",
-            "cf233d36ef269b469d2c9f0e05bbf2567392ecb9d780c781ffd908e35322f4c2",
-            "1386295823f9bebdb077934826eeaa88df7668d2edcca3d139887290f644bf396",
-            "5ef5d78c221223a45823663c3d8d52749fea1c0058d43d503581e4d9544d2633",
-            "114fdfde8526f70",
+            "054c2dd95aac3fe41030fd854e23bb1c6f7ccba5b9646bd566d94962948e5d1b",
+            "f94c4bb61fd8fb32d1caa4e81a9d24117be65f8a42263c77b5726f3a3984d3c5",
+            "788dd66a184950ffa84ae77ce7a81690fe05c2cb5b858f72244dd62aa3a09b38",
+            "bf264e5d9dff511d05316450c2f222c41bd9e3a7450eb7f77027d30891c2c44d",
+            "e39e7b3ab5d41e40",
         ),
-        "da8dad6d5c627aed4e52368123c6e50a",
+        "60ef1af29559e3b43b9fdaed924be4d0",
     );
     known_answer::<F8>(
         137,
         concat!(
-            "03a0e231957e175cad1c4652986665f6cc638e1acaa5c8429ab77b02494dd39f",
-            "cf233d36ef269b469d2c9f0e05bbf2567392ecb9d780c781ffd908e35322f4c2",
-            "1386295823f9bebdb077934826eeaa88df7668d2edcca3d139887290f644bf396",
-            "5ef5d78c221223a45823663c3d8d52749fea1c0058d43d503581e4d9544d2633",
-            "114fdfde8526f70da",
+            "054c2dd95aac3fe41030fd854e23bb1c6f7ccba5b9646bd566d94962948e5d1b",
+            "f94c4bb61fd8fb32d1caa4e81a9d24117be65f8a42263c77b5726f3a3984d3c5",
+            "788dd66a184950ffa84ae77ce7a81690fe05c2cb5b858f72244dd62aa3a09b38",
+            "bf264e5d9dff511d05316450c2f222c41bd9e3a7450eb7f77027d30891c2c44d",
+            "e39e7b3ab5d41e4060",
         ),
-        "8dad6d5c627aed4e52368123c6e50a7d",
+        "ef1af29559e3b43b9fdaed924be4d02b",
     );
 }

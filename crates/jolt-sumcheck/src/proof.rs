@@ -9,7 +9,7 @@ use crate::{
 };
 use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
@@ -138,8 +138,8 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: AppendToTranscript,
-        T: Transcript<Challenge = F>,
+        F: Encoding,
+        T: FieldTranscript<F>,
         D: SumcheckDomain<F>,
     {
         match self {
@@ -176,8 +176,8 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: AppendToTranscript,
-        T: Transcript<Challenge = F>,
+        F: Encoding,
+        T: FieldTranscript<F>,
     {
         match self {
             Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(
@@ -210,8 +210,8 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FieldTranscript<F>,
+        C: Clone + Encoding,
     {
         match self {
             Self::Committed(proof) => proof.verify_committed_consistency(statement, transcript),
@@ -237,8 +237,8 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FieldTranscript<F>,
+        C: Clone + Encoding,
     {
         self.verify_committed_consistency(SumcheckStatement::new(num_vars, degree), transcript)
     }

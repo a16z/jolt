@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
@@ -47,7 +47,7 @@ pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
     /// ([`OutputClaims::opening_values`]) order, each under the `b"opening_claim"`
     /// label. This is the Fiat-Shamir order and MUST match the order in which the
     /// prover commits the openings.
-    fn append_openings<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
+    fn append_openings<T: FieldTranscript<F>>(&self, transcript: &mut T) {
         for value in self.opening_values() {
             transcript.append_labeled(b"opening_claim", &value);
         }
@@ -137,11 +137,11 @@ where
     /// transcript, in the exact order the stage's inline draw uses. Batch-level
     /// coefficients and the shared binding vector are NOT drawn here.
     ///
-    /// The default draws one `challenge_scalar` per `Challenges` field, in
+    /// The default draws one `challenge()` per `Challenges` field, in
     /// declaration order, via [`SumcheckChallenges::from_transcript_values`]. This is
     /// the correct draw for the common case — a relation whose challenges are each a
-    /// single `challenge_scalar` (and for [`NoChallenges`](::jolt_claims::NoChallenges),
-    /// which has no fields, it draws nothing). A `challenge_scalar_powers(n)` draw
+    /// single `challenge()` (and for [`NoChallenges`](::jolt_claims::NoChallenges),
+    /// which has no fields, it draws nothing). A `challenge_powers(n)` draw
     /// reduces to this case: it performs exactly one squeeze and the relation keeps
     /// the degree-1 power, which equals that squeezed scalar. Only relations whose
     /// draw is genuinely different — an extra transcript append (a domain
@@ -150,16 +150,23 @@ where
     ///
     /// The bound is `SumcheckChallenges` — which every `Challenges` already
     /// implements — so the default needs no separate `Default` derive. It errors
-    /// only if the per-field draw cannot populate the struct, which cannot happen for
-    /// the infinite `challenge_scalar` stream the default supplies.
-    fn draw_challenges<T: Transcript<Challenge = F>>(
+    /// only if the transcript refuses a draw: the stream of single challenges it
+    /// supplies is otherwise unbounded.
+    fn draw_challenges<T: FieldTranscript<F>>(
         &self,
         transcript: &mut T,
     ) -> Result<ConcreteSumcheckChallenges<F, Self>, VerifierError> {
-        SumcheckChallenges::from_transcript_values(::core::iter::repeat_with(|| {
-            transcript.challenge_scalar()
-        }))
-        .map_err(VerifierError::from)
+        // The stream stops at the first refused draw, which is reported as
+        // such rather than as a missing challenge.
+        let mut rejected = false;
+        let challenges = SumcheckChallenges::from_transcript_values(
+            ::core::iter::repeat_with(|| transcript.challenge())
+                .map_while(|draw| draw.map_err(|_| rejected = true).ok()),
+        );
+        if rejected {
+            return Err(VerifierError::TranscriptRejected);
+        }
+        challenges.map_err(VerifierError::from)
     }
 
     /// Proof-of-work loss of what [`draw_challenges`](Self::draw_challenges)
@@ -542,125 +549,46 @@ pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierE
 }
 
 /// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]
-/// reproduces a stage's inline Fiat-Shamir draw exactly.
+/// reproduces a stage's inline Fiat-Shamir draw exactly, and that
+/// `append_openings` reproduces the reference absorb order.
 ///
-/// Unlike the `append_openings` recorder, challenge *squeezes*
-/// (`challenge`/`challenge_scalar`/`challenge_scalar_powers`) append no bytes, so a
-/// byte-chunk recorder cannot observe them. This double instead records an ordered
-/// event log that distinguishes a squeeze from a byte-append (e.g. the
-/// `ram_val_check` gamma domain separator), and returns a *distinct sequential*
-/// scalar from each squeeze so a relation's stored challenge can be checked against
-/// the squeeze that produced it.
+/// It logs every absorb and every challenge draw in order, and its `n`-th
+/// challenge is `Fr(n)`, so a relation's stored challenge can be matched to the
+/// draw that produced it.
 #[cfg(test)]
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "tests use plain arithmetic on fixture data"
-)]
 pub(crate) mod draw_recording {
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::{ChallengeSetSize, Transcript};
+    pub(crate) use jolt_transcript::TranscriptEvent;
+    use jolt_transcript::{prover_transcript, Keccak, ProverState, ScriptedTranscript};
 
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) enum DrawEvent {
-        /// A challenge squeeze (`challenge`/`challenge_scalar`/the single squeeze
-        /// inside `challenge_scalar_powers`). Carries the 1-based squeeze index so
-        /// the value a relation kept can be matched to its squeeze.
-        Squeeze(u64),
-        /// A raw byte append (a domain separator preceding a squeeze).
-        Append(Vec<u8>),
+    /// A logging transcript whose `n`-th challenge is `Fr(n)`.
+    pub(crate) type DrawRecordingTranscript = ScriptedTranscript<ProverState<Keccak>, Fr>;
+
+    /// A fresh [`DrawRecordingTranscript`].
+    pub(crate) fn recorder() -> DrawRecordingTranscript {
+        ScriptedTranscript::with_script(
+            prover_transcript::<Keccak>(b"draw-recording", b""),
+            (1..=4096).map(Fr::from_u64).collect(),
+        )
     }
 
-    /// A `Transcript` that logs every squeeze and byte-append in order. Each
-    /// squeeze returns `Fr(index)` for the 1-based squeeze counter, so the powers
-    /// `challenge_scalar_powers` derives are distinct and a stored `gamma` can be
-    /// asserted to equal the squeezed value.
-    #[derive(Clone, Default)]
-    pub(crate) struct DrawRecordingTranscript {
-        pub(crate) events: Vec<DrawEvent>,
-        squeezes: u64,
+    /// The event of a one-challenge draw that returned `Fr(index)`.
+    pub(crate) fn squeeze(index: u64) -> TranscriptEvent<Fr> {
+        TranscriptEvent::Challenges(vec![Fr::from_u64(index)])
     }
 
-    impl Transcript for DrawRecordingTranscript {
-        type Challenge = Fr;
-        // Scripted challenges: no proof of work.
-        const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.events.push(DrawEvent::Append(bytes.to_vec()));
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            self.squeezes += 1;
-            self.events.push(DrawEvent::Squeeze(self.squeezes));
-            Fr::from_u64(self.squeezes)
-        }
-
-        fn challenge_bytes(&mut self, out: &mut [u8]) {
-            out.fill(0);
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
-    }
-
-    /// Run `draw` against a fresh recorder, returning its ordered event log and the
-    /// draw's result. A `draw_challenges` and a hand-written replica of the inline
-    /// draw, each passed through this, are directly comparable: equal event logs
-    /// prove the same squeeze/append sequence, and the recorder's distinct
-    /// sequential squeeze values let the returned challenge be checked against the
+    /// Run `draw` against a fresh recorder, returning its ordered event log and
+    /// the draw's result. A `draw_challenges` and a hand-written replica of the
+    /// inline draw, each passed through this, are directly comparable: equal
+    /// event logs prove the same absorb and draw sequence, and the sequential
+    /// challenge values let the returned challenge be checked against the
     /// replica's captured value.
     pub(crate) fn record<R>(
         draw: impl FnOnce(&mut DrawRecordingTranscript) -> R,
-    ) -> (Vec<DrawEvent>, R) {
-        let mut transcript = DrawRecordingTranscript::default();
+    ) -> (Vec<TranscriptEvent<Fr>>, R) {
+        let mut transcript = recorder();
         let result = draw(&mut transcript);
-        (transcript.events, result)
-    }
-}
-
-/// The append-order recorder shared by the stage `append_output_claims` ordering
-/// locks: unlike the challenge recorder, it observes only byte appends.
-#[cfg(test)]
-pub(crate) mod append_recording {
-    use jolt_field::{Fr, Ring};
-    use jolt_transcript::{ChallengeSetSize, Transcript};
-
-    /// A minimal `Transcript` double that records each appended byte chunk, so
-    /// that append order can be compared without depending on the digest.
-    #[derive(Clone, Default)]
-    pub(crate) struct RecordingTranscript {
-        pub(crate) chunks: Vec<Vec<u8>>,
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-        // Scripted challenges: no proof of work.
-        const CHALLENGE_SET: ChallengeSetSize = ChallengeSetSize::power_of_two(256);
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn challenge_bytes(&mut self, out: &mut [u8]) {
-            out.fill(0);
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
+        (transcript.events().to_vec(), result)
     }
 }
 
@@ -688,20 +616,21 @@ mod tests {
         JoltOpeningId::committed(polynomial, relation)
     }
 
-    use super::append_recording::RecordingTranscript;
+    use super::draw_recording::recorder;
+    use jolt_transcript::Transcript;
 
-    /// The chunk stream produced by appending `opening_values()` one-by-one is
+    /// The absorb stream produced by appending `opening_values()` one-by-one is
     /// the reference Fiat-Shamir order; `append_openings` must reproduce it.
     fn assert_append_matches_values<C: OutputClaims<Fr>>(claims: &C) {
-        let mut via_append = RecordingTranscript::default();
+        let mut via_append = recorder();
         claims.append_openings(&mut via_append);
 
-        let mut via_values = RecordingTranscript::default();
+        let mut via_values = recorder();
         for value in claims.opening_values() {
             via_values.append_labeled(b"opening_claim", &value);
         }
 
-        assert_eq!(via_append.chunks, via_values.chunks);
+        assert_eq!(via_append.absorbed(), via_values.absorbed());
     }
 
     #[derive(OutputClaims)]
@@ -1311,7 +1240,7 @@ mod sumcheck_batch_derive_tests {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod begin_batch_tests {
-    use super::draw_recording::{record, DrawEvent};
+    use super::draw_recording::{record, TranscriptEvent};
     use super::ConcreteSumcheck as _;
     use crate::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -1320,7 +1249,7 @@ mod begin_batch_tests {
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_sumcheck::{append_sumcheck_claim, BatchMember, ClearSumcheckRecorder};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::FieldTranscript;
 
     #[derive(super::SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
@@ -1392,7 +1321,7 @@ mod begin_batch_tests {
         let (replica_events, (instruction_coeff, registers_coeff)) = record(|t| {
             append_sumcheck_claim(t, &instruction_sum);
             append_sumcheck_claim(t, &registers_sum);
-            (t.challenge_scalar(), t.challenge_scalar())
+            (t.challenge().unwrap(), t.challenge().unwrap())
         });
         assert_eq!(events, replica_events);
 
@@ -1449,7 +1378,7 @@ mod begin_batch_tests {
         assert_eq!(
             events
                 .iter()
-                .filter(|event| matches!(event, DrawEvent::Squeeze(_)))
+                .filter(|event| matches!(event, TranscriptEvent::Challenges(_)))
                 .count(),
             1,
         );

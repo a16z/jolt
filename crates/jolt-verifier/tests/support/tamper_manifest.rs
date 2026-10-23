@@ -1420,6 +1420,9 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
                 PowSite::Stage8 => VerifierPhase::Stage8Openings,
             })
         }
+        // A refused draw or unread NARG bytes are observed wherever the
+        // transcript stops; neither names a phase.
+        VerifierError::TranscriptRejected | VerifierError::NargNotConsumed => None,
         VerifierError::MissingProofPayload { field } => match *field {
             "commitments.field_inline" | "field_inc_commitment" => Some(VerifierPhase::Preamble),
             _ => None,

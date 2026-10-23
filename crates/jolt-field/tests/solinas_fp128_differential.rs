@@ -184,11 +184,6 @@ macro_rules! check_prime128 {
             let challenge: [u8; 32] = $rng.gen();
             for len in [8usize, 16, 32] {
                 let ours = <$two as CanonicalEncoding>::from_bytes_le_reduced(&challenge[..len]);
-                assert_eq!(
-                    <$two as CanonicalEncoding>::from_challenge_bytes(&challenge[..len]),
-                    ours,
-                    "challenge derivation defaults to the reducing decode"
-                );
                 let mut padded = [0u8; 32];
                 padded[..len].copy_from_slice(&challenge[..len]);
                 let limbs: [u64; 4] = std::array::from_fn(|i| {

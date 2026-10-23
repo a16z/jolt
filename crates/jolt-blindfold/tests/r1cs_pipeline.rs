@@ -3,7 +3,7 @@
 mod support;
 
 use jolt_sumcheck::{grind_round, RoundMessage};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
@@ -17,11 +17,11 @@ fn r1cs_pipeline_rejects_late_stage_mismatch() {
 
     // Regrind the swapped rounds' proof of work at stage 3's transcript
     // position, so the mismatch reaches the R1CS check under test.
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
+    let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-r1cs-e2e", b"");
     for stage in [&stage1, &stage2] {
         let _consistency = stage
             .proof
-            .verify_committed_consistency(stage.statement, &mut transcript)
+            .verify_committed_consistency::<F, _>(stage.statement, &mut transcript)
             .expect("honest stage verifies");
     }
     let mut pow_nonces = Vec::new();
@@ -34,7 +34,7 @@ fn r1cs_pipeline_rejects_late_stage_mismatch() {
             &mut transcript,
         )
         .expect("proof of work");
-        let _challenge: F = transcript.challenge();
+        let _challenge: F = transcript.challenge().expect("challenge draw");
     }
     tampered_stage3.proof.pow_nonces = pow_nonces;
 

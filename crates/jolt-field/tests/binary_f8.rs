@@ -103,7 +103,6 @@ fn spine_contract() {
     }
     for (input, expected) in [(&[][..], F8::zero()), (&[0xab, 0xcd][..], value)] {
         assert_eq!(F8::from_bytes_le_reduced(input), expected);
-        assert_eq!(F8::from_challenge_bytes(input), expected);
     }
     assert_eq!(F8::from_bytes_le_checked(&[]), None);
     assert_eq!(F8::from_bytes_le_checked(&[0xab]), Some(value));

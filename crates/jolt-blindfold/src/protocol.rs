@@ -619,11 +619,7 @@ mod tests {
         CommittedOutputClaims, CommittedRound, CommittedSumcheckProof, SumcheckDomainSpec,
         SumcheckStatement,
     };
-    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript, UnpricedTranscript};
-
-    /// Hand-built committed proofs carry no proof of work, so these tests
-    /// replay them on a transcript that declares none.
-    type Unpriced = UnpricedTranscript<Blake2bTranscript<Fr>>;
+    use jolt_transcript::{prover_transcript, Blake2b512, Encoding};
 
     #[derive(Clone, Debug)]
     struct TestStage {
@@ -703,7 +699,7 @@ mod tests {
         final_openings: Vec<FinalOpeningBinding<Fr, usize, Com>>,
     ) -> Result<BlindFoldStatement<Fr, usize, Com>, VerificationError<Fr>>
     where
-        Com: Clone + AppendToTranscript,
+        Com: Clone + Encoding,
     {
         if stages.len() != proofs.len() {
             return Err(VerificationError::StageCountMismatch {
@@ -712,7 +708,7 @@ mod tests {
             });
         }
 
-        let mut transcript = Unpriced::new(b"blindfold");
+        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold", b"");
         let mut next_opening_id = 0usize;
         let stages = stages
             .iter()
@@ -751,7 +747,7 @@ mod tests {
         final_openings: Vec<FinalOpeningBinding<Fr, usize, Com>>,
     ) -> BlindFoldProtocol<Fr, Com>
     where
-        Com: Clone + AppendToTranscript,
+        Com: Clone + Encoding,
     {
         let statement = try_statement_from_proofs(stages, proofs, final_openings)
             .expect("statement builds from committed proofs");
@@ -801,7 +797,7 @@ mod tests {
 
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21]);
-        let mut transcript = Unpriced::new(b"blindfold-alias");
+        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-alias", b"");
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");
@@ -833,7 +829,7 @@ mod tests {
 
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21]);
-        let mut transcript = Unpriced::new(b"blindfold-alias");
+        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-alias", b"");
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");
@@ -938,7 +934,7 @@ mod tests {
     fn rejects_extra_output_claim_rows_without_typed_openings() {
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21, 22]);
-        let mut transcript = Unpriced::new(b"blindfold-output-row-count");
+        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-output-row-count", b"");
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");

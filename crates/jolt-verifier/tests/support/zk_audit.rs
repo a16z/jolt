@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, VerifierInit};
 
 use jolt_verifier::{
     preprocessing::JoltVerifierPreprocessing,
@@ -13,7 +13,7 @@ use jolt_verifier::{
         stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
         zk::{blindfold, inputs::BlindFoldInputs},
     },
-    VerifierError,
+    VerifierError, JOLT_SESSION,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,29 +46,29 @@ impl ZkBlindFoldProtocolShape {
     }
 }
 
-pub fn audit_zk_blindfold_protocol_shape<F, PCS, VC, T, ZkProof>(
+pub fn audit_zk_blindfold_protocol_shape<'a, F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &'a JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<ZkBlindFoldProtocolShape, VerifierError>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: Encoding + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F> + VerifierInit<'a>,
 {
-    let (checked, mut transcript) =
-        jolt_verifier::validate_and_seed_transcript::<PCS, VC, T, ZkProof>(
-            preprocessing,
-            public_io,
-            proof,
-            trusted_advice_commitment,
-        )?;
+    let (checked, mut transcript) = jolt_verifier::validate_and_seed_transcript(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        |statement| T::init(JOLT_SESSION, statement, &proof.narg),
+    )?;
 
     let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
         proof,

@@ -1,18 +1,20 @@
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, JoltField};
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
-#[cfg(feature = "committed")]
+use jolt_transcript::{Encoding, LabelWithCount, Transcript};
+#[cfg(all(feature = "committed", feature = "prover"))]
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+#[cfg(all(feature = "committed", feature = "prover"))]
 use rand_core::RngCore;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::SumcheckError;
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 use crate::pow::grind_round;
 use crate::pow::{Nonced, NoncedRef};
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 use crate::proof::SumcheckProof;
 use crate::round_proof::RoundMessage;
 
@@ -25,7 +27,7 @@ pub struct CommittedRound<C> {
     pub degree: usize,
 }
 
-impl<C: AppendToTranscript> RoundMessage for CommittedRound<C> {
+impl<C: Encoding> RoundMessage for CommittedRound<C> {
     fn degree(&self) -> usize {
         self.degree
     }
@@ -38,7 +40,7 @@ impl<C: AppendToTranscript> RoundMessage for CommittedRound<C> {
             SUMCHECK_COMMITMENT_LABEL,
             self.degree as u64,
         ));
-        self.commitment.append_to_transcript(transcript);
+        transcript.append(&self.commitment);
     }
 }
 
@@ -47,15 +49,18 @@ pub struct CommittedOutputClaims<C> {
     pub commitments: Vec<C>,
 }
 
-impl<C: AppendToTranscript> AppendToTranscript for CommittedOutputClaims<C> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            OUTPUT_CLAIMS_LABEL,
-            self.commitments.len() as u64,
-        ));
+/// A [`LabelWithCount`] word carrying the number of commitments, then each
+/// commitment.
+impl<C: Encoding> Encoding for CommittedOutputClaims<C> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = LabelWithCount(OUTPUT_CLAIMS_LABEL, self.commitments.len() as u64)
+            .encode()
+            .as_ref()
+            .to_vec();
         for commitment in &self.commitments {
-            commitment.append_to_transcript(transcript);
+            out.extend_from_slice(commitment.encode().as_ref());
         }
+        out
     }
 }
 
@@ -219,7 +224,7 @@ pub struct CommittedSumcheckWitness<F> {
 }
 
 impl<F> CommittedSumcheckWitness<F> {
-    #[cfg(feature = "committed")]
+    #[cfg(all(feature = "committed", feature = "prover"))]
     fn new() -> Self {
         Self {
             round_coefficients: Vec::new(),
@@ -236,7 +241,7 @@ impl<F> CommittedSumcheckWitness<F> {
 /// flattened output-claim values and absorb those commitments. Blindings are
 /// drawn from the caller-supplied `rng` and retained in the witness — the
 /// caller owns the randomness source, so a fixed seed reproduces the proof.
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub struct CommittedSumcheckBuilder<'a, F, VC, R>
 where
     F: JoltField,
@@ -250,7 +255,7 @@ where
     witness: CommittedSumcheckWitness<F>,
 }
 
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 impl<'a, F, VC, R> CommittedSumcheckBuilder<'a, F, VC, R>
 where
     F: JoltField,
@@ -280,7 +285,7 @@ where
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         let coefficients = round_poly.coefficients().to_vec();
         if coefficients.len() > VC::capacity(self.setup) {
@@ -303,7 +308,7 @@ where
             &mut self.pow_nonces,
             transcript,
         )?;
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge()?;
 
         self.rounds.push(round);
         self.witness.round_coefficients.push(coefficients);
@@ -324,7 +329,7 @@ where
         transcript: &mut T,
     ) -> Result<(SumcheckProof<F, VC::Output>, CommittedSumcheckWitness<F>), SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         let capacity = VC::capacity(self.setup);
         let mut commitments = Vec::with_capacity(output_claim_values.len().div_ceil(capacity));
@@ -337,7 +342,7 @@ where
         }
 
         let output_claims = CommittedOutputClaims { commitments };
-        output_claims.append_to_transcript(transcript);
+        transcript.append(&output_claims);
         Ok((
             SumcheckProof::Committed(CommittedSumcheckProof {
                 rounds: self.rounds,

@@ -14,7 +14,7 @@ use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, Pedersen
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 use rayon::prelude::*;
 
 use crate::routines::{JoltG1Routines, JoltG2Routines};
@@ -233,7 +233,7 @@ impl CommitmentScheme for DoryScheme {
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
@@ -267,6 +267,7 @@ impl CommitmentScheme for DoryScheme {
                 &mut dory_transcript,
             )
             .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove failed: {e:?}")))?;
+        dory_transcript.finish()?;
 
         Ok(DoryProof(proof))
     }
@@ -278,7 +279,7 @@ impl CommitmentScheme for DoryScheme {
         eval: Fr,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
@@ -302,7 +303,8 @@ impl CommitmentScheme for DoryScheme {
             setup.0.clone().into_inner(),
             &mut dory_transcript,
         )
-        .map_err(|_| OpeningsError::VerificationFailed)
+        .map_err(|_| OpeningsError::VerificationFailed)?;
+        dory_transcript.finish()
     }
 }
 
@@ -380,7 +382,7 @@ impl ZkOpeningScheme for DoryScheme {
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
@@ -403,6 +405,7 @@ impl ZkOpeningScheme for DoryScheme {
                 &mut dory_transcript,
             )
             .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove (ZK) failed: {e:?}")))?;
+        dory_transcript.finish()?;
 
         let y_com = proof
             .y_com
@@ -421,7 +424,7 @@ impl ZkOpeningScheme for DoryScheme {
         point: &[Fr],
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
@@ -444,6 +447,7 @@ impl ZkOpeningScheme for DoryScheme {
             &mut dory_transcript,
         )
         .map_err(|_| OpeningsError::VerificationFailed)?;
+        dory_transcript.finish()?;
 
         Ok(hiding_commitment)
     }

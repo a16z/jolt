@@ -6,52 +6,37 @@
 
 use std::{any::Any, cell::RefCell, collections::BTreeMap, sync::Arc};
 
-use jolt_field::{CanonicalEncoding, Field, Ring};
-use jolt_transcript::{ChallengeSetSize, GrindBitsError, Transcript};
+use jolt_field::Field;
+use jolt_transcript::{Keccak, Script, ScriptedTranscript, VerifierState};
 use jolt_verifier::fs_audit::{self, FsScope};
 
-/// The transcript API used to derive a challenge.
+/// A challenge draw's verifier scope, ordinal within that scope, and length.
 ///
-/// Multi-value APIs are recorded at draw granularity, mirroring the
-/// production trait defaults: `challenge_vector(len)` is `len` independent
-/// squeezes (one [`ChallengeKind::VectorElement`] record each), and
-/// `challenge_scalar_powers(len)` squeezes only its base scalar (one
-/// [`ChallengeKind::PowersBase`] record) with the powers derived locally.
-/// A verifier refactor that drops or short-consumes an element therefore
-/// registers as a per-element tape divergence instead of hiding inside one
-/// atomic `Vec` record.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChallengeKind {
-    Challenge,
-    Scalar,
-    VectorElement { len: usize, index: usize },
-    PowersBase { len: usize },
-    ShortScalar { loss_factor: u64 },
-}
-
-/// A challenge's verifier scope and ordinal within that scope.
+/// One record is one codec message: `challenge_vector(len)` is one record of
+/// `len` values, and `challenge_powers(len)` one record of its single base.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChallengeId {
     pub scope: FsScope,
     pub index: usize,
-    pub kind: ChallengeKind,
+    pub len: usize,
 }
 
-/// One typed challenge call and all values it returned.
+/// One challenge draw and the values it returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeRecord<F> {
     pub id: ChallengeId,
     pub values: Vec<F>,
 }
 
-/// Challenges produced while verifying one fixture.
+/// Challenges produced while verifying one fixture, and the proof-of-work
+/// check bytes squeezed between them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeTape<F> {
     pub records: Vec<ChallengeRecord<F>>,
     /// Proof-of-work check bytes, in squeeze order. They are not challenges,
     /// but a replay must freeze them too: otherwise a mutated transcript
     /// fails the proof of work before reaching the binding under test.
-    pub pow_checks: Vec<Vec<u8>>,
+    pub checks: Vec<Vec<u8>>,
 }
 
 impl<F: PartialEq> ChallengeTape<F> {
@@ -90,15 +75,15 @@ struct ErasedRecord {
 enum Session {
     Record {
         records: Vec<ErasedRecord>,
+        checks: Vec<Vec<u8>>,
         counters: BTreeMap<FsScope, usize>,
-        pow_checks: Vec<Vec<u8>>,
     },
     Replay {
         records: Vec<ErasedRecord>,
+        checks: Vec<Vec<u8>>,
         counters: BTreeMap<FsScope, usize>,
         cursor: usize,
-        pow_checks: Vec<Vec<u8>>,
-        pow_cursor: usize,
+        check_cursor: usize,
     },
 }
 
@@ -106,176 +91,100 @@ thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
 }
 
-fn next_id(counters: &mut BTreeMap<FsScope, usize>, kind: ChallengeKind) -> ChallengeId {
+fn next_id(counters: &mut BTreeMap<FsScope, usize>, len: usize) -> ChallengeId {
     let scope = fs_audit::current();
     let index = counters.entry(scope).or_default();
     let id = ChallengeId {
         scope,
         index: *index,
-        kind,
+        len,
     };
     *index += 1;
     id
 }
 
-fn draw<F>(kind: ChallengeKind, produce: impl FnOnce() -> Vec<F>) -> Vec<F>
-where
-    F: Field + 'static,
-{
-    let actual = produce();
-    SESSION.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        let Some(session) = slot.as_mut() else {
-            return actual;
-        };
-        match session {
-            Session::Record {
-                records, counters, ..
-            } => {
-                let id = next_id(counters, kind);
-                records.push(ErasedRecord {
-                    id,
-                    values: Arc::new(actual.clone()),
-                });
-                actual
+/// The [`Script`] of [`AuditTranscript`]: records every draw and check, or
+/// replaces them with the active replay tape. It keeps the real challenge set,
+/// so proofs carry their real nonces.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AuditScript;
+
+impl<F: Field + 'static> Script<F> for AuditScript {
+    const UNPRICED: bool = false;
+
+    fn draw(&mut self, challenges: &mut [F]) {
+        SESSION.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            match slot.as_mut() {
+                None => {}
+                Some(Session::Record {
+                    records, counters, ..
+                }) => {
+                    let id = next_id(counters, challenges.len());
+                    records.push(ErasedRecord {
+                        id,
+                        values: Arc::new(challenges.to_vec()),
+                    });
+                }
+                Some(Session::Replay {
+                    records,
+                    counters,
+                    cursor,
+                    ..
+                }) => {
+                    let id = next_id(counters, challenges.len());
+                    let expected = records
+                        .get(*cursor)
+                        .unwrap_or_else(|| panic!("challenge replay exhausted at {id:?}"));
+                    assert_eq!(
+                        expected.id, id,
+                        "challenge replay length or scope diverged at tape index {cursor}"
+                    );
+                    *cursor += 1;
+                    challenges.clone_from_slice(
+                        expected
+                            .values
+                            .downcast_ref::<Vec<F>>()
+                            .expect("challenge replay field type changed"),
+                    );
+                }
             }
-            Session::Replay {
-                records,
-                counters,
-                cursor,
+        });
+    }
+
+    // A frozen verifier takes every squeeze from the tape, so a replay over
+    // changed inputs passes the proof-of-work checks the honest run passed.
+    fn check_bytes(&mut self, bytes: &mut [u8]) {
+        SESSION.with(|slot| match slot.borrow_mut().as_mut() {
+            None => {}
+            Some(Session::Record { checks, .. }) => checks.push(bytes.to_vec()),
+            Some(Session::Replay {
+                checks,
+                check_cursor,
                 ..
-            } => {
-                let id = next_id(counters, kind);
-                let expected = records
-                    .get(*cursor)
-                    .unwrap_or_else(|| panic!("challenge replay exhausted at {id:?}"));
-                assert_eq!(
-                    expected.id, id,
-                    "challenge replay kind or scope diverged at tape index {cursor}"
-                );
-                *cursor += 1;
-                expected
-                    .values
-                    .downcast_ref::<Vec<F>>()
-                    .expect("challenge replay field type changed")
-                    .clone()
+            }) => {
+                let expected = checks
+                    .get(*check_cursor)
+                    .unwrap_or_else(|| panic!("check replay exhausted at {check_cursor}"));
+                bytes.copy_from_slice(expected);
+                *check_cursor += 1;
             }
-        }
-    })
+        });
+    }
 }
 
-/// Records or replays one proof-of-work check squeeze. `out` already holds
-/// the live squeeze; a replay overwrites it with the recorded bytes.
-fn pow_check(out: &mut [u8]) {
-    SESSION.with(|slot| match slot.borrow_mut().as_mut() {
-        None => {}
-        Some(Session::Record { pow_checks, .. }) => pow_checks.push(out.to_vec()),
-        Some(Session::Replay {
-            pow_checks,
-            pow_cursor,
-            ..
-        }) => {
-            let expected = pow_checks
-                .get(*pow_cursor)
-                .unwrap_or_else(|| panic!("proof-of-work replay exhausted at {pow_cursor}"));
-            assert_eq!(
-                expected.len(),
-                out.len(),
-                "proof-of-work replay width diverged at check {pow_cursor}"
-            );
-            out.copy_from_slice(expected);
-            *pow_cursor += 1;
-        }
+/// The production verifier transcript with its draws and checks recorded or
+/// replayed for the active session.
+pub type AuditTranscript<'a, F> = ScriptedTranscript<VerifierState<'a, Keccak>, F, AuditScript>;
+
+fn start(session: Session) {
+    SESSION.with(|slot| {
+        assert!(
+            slot.borrow().is_none(),
+            "nested Fiat-Shamir audit sessions are unsupported"
+        );
+        *slot.borrow_mut() = Some(session);
     });
-}
-
-/// Transcript wrapper that records or replays challenge calls for the active session.
-#[derive(Clone)]
-pub struct AuditTranscript<T> {
-    inner: T,
-}
-
-impl<T: Default> Default for AuditTranscript<T> {
-    fn default() -> Self {
-        Self {
-            inner: T::default(),
-        }
-    }
-}
-
-impl<T> Transcript for AuditTranscript<T>
-where
-    T: Transcript,
-    T::Challenge: Field + 'static,
-{
-    type Challenge = T::Challenge;
-    const CHALLENGE_SET: ChallengeSetSize = T::CHALLENGE_SET;
-
-    fn new(label: &'static [u8]) -> Self {
-        Self {
-            inner: T::new(label),
-        }
-    }
-
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        self.inner.append_bytes(bytes);
-    }
-
-    fn challenge(&mut self) -> Self::Challenge {
-        draw(ChallengeKind::Challenge, || vec![self.inner.challenge()])[0]
-    }
-
-    fn challenge_scalar(&mut self) -> Self::Challenge {
-        draw(ChallengeKind::Scalar, || {
-            vec![self.inner.challenge_scalar()]
-        })[0]
-    }
-
-    // WARNING: both bodies must mirror the `Transcript` trait defaults
-    // (`legacy.rs`), which no production transcript overrides — the audit
-    // records at the same granularity the sponge is actually squeezed.
-    fn challenge_vector(&mut self, len: usize) -> Vec<Self::Challenge> {
-        (0..len)
-            .map(|index| {
-                draw(ChallengeKind::VectorElement { len, index }, || {
-                    vec![self.inner.challenge()]
-                })[0]
-            })
-            .collect()
-    }
-
-    fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge> {
-        let base = draw(ChallengeKind::PowersBase { len }, || {
-            vec![self.inner.challenge_scalar()]
-        })[0];
-        let mut powers = vec![Self::Challenge::from_u64(1); len];
-        for index in 1..len {
-            powers[index] = powers[index - 1] * base;
-        }
-        powers
-    }
-
-    fn challenge_short_scalar(
-        &mut self,
-        loss_factor: u64,
-    ) -> Result<Self::Challenge, GrindBitsError>
-    where
-        Self::Challenge: CanonicalEncoding,
-    {
-        let value = self.inner.challenge_short_scalar(loss_factor)?;
-        Ok(draw(ChallengeKind::ShortScalar { loss_factor }, || vec![value])[0])
-    }
-
-    // Short scalars squeeze through `inner` above, so the only raw squeezes
-    // left are the provided `check_grind`'s proof-of-work check words.
-    fn challenge_bytes(&mut self, out: &mut [u8]) {
-        self.inner.challenge_bytes(out);
-        pow_check(out);
-    }
-
-    fn state(&self) -> [u8; 32] {
-        self.inner.state()
-    }
 }
 
 /// Runs `verify` with challenge recording enabled.
@@ -283,25 +192,16 @@ pub fn record_challenges<F, R>(verify: impl FnOnce() -> R) -> (R, ChallengeTape<
 where
     F: Field + 'static,
 {
-    SESSION.with(|slot| {
-        assert!(
-            slot.borrow().is_none(),
-            "nested Fiat-Shamir audit sessions are unsupported"
-        );
-        *slot.borrow_mut() = Some(Session::Record {
-            records: Vec::new(),
-            counters: BTreeMap::new(),
-            pow_checks: Vec::new(),
-        });
+    start(Session::Record {
+        records: Vec::new(),
+        checks: Vec::new(),
+        counters: BTreeMap::new(),
     });
-
     let result = verify();
-    let (records, pow_checks) = SESSION.with(|slot| match slot.borrow_mut().take() {
+    let (records, checks) = SESSION.with(|slot| match slot.borrow_mut().take() {
         Some(Session::Record {
-            records,
-            pow_checks,
-            ..
-        }) => (records, pow_checks),
+            records, checks, ..
+        }) => (records, checks),
         Some(Session::Replay { .. }) => panic!("recording session changed to replay"),
         None => panic!("recording session disappeared"),
     });
@@ -316,24 +216,18 @@ where
                 .clone(),
         })
         .collect();
-    (
-        result,
-        ChallengeTape {
-            records,
-            pow_checks,
-        },
-    )
+    (result, ChallengeTape { records, checks })
 }
 
-/// Result of verifying with a frozen challenge tape. The counts cover
-/// challenge records and proof-of-work checks together.
+/// Result of verifying with a frozen challenge tape.
 pub struct ReplayResult<R> {
     pub output: R,
     pub consumed: usize,
     pub expected: usize,
 }
 
-/// Runs `verify` while returning the recorded values for every challenge call.
+/// Runs `verify` while returning the recorded values for every challenge
+/// draw and proof-of-work check.
 pub fn replay_challenges<F, R>(
     tape: &ChallengeTape<F>,
     verify: impl FnOnce() -> R,
@@ -341,37 +235,25 @@ pub fn replay_challenges<F, R>(
 where
     F: Field + 'static,
 {
-    let records = tape
-        .records
-        .iter()
-        .map(|record| ErasedRecord {
-            id: record.id,
-            values: Arc::new(record.values.clone()),
-        })
-        .collect();
-    SESSION.with(|slot| {
-        assert!(
-            slot.borrow().is_none(),
-            "nested Fiat-Shamir audit sessions are unsupported"
-        );
-        *slot.borrow_mut() = Some(Session::Replay {
-            records,
-            counters: BTreeMap::new(),
-            cursor: 0,
-            pow_checks: tape.pow_checks.clone(),
-            pow_cursor: 0,
-        });
+    start(Session::Replay {
+        records: tape
+            .records
+            .iter()
+            .map(|record| ErasedRecord {
+                id: record.id,
+                values: Arc::new(record.values.clone()),
+            })
+            .collect(),
+        checks: tape.checks.clone(),
+        counters: BTreeMap::new(),
+        cursor: 0,
+        check_cursor: 0,
     });
-
     let output = verify();
     let (consumed, expected) = SESSION.with(|slot| match slot.borrow_mut().take() {
         Some(Session::Replay {
-            records,
-            cursor,
-            pow_checks,
-            pow_cursor,
-            ..
-        }) => (cursor + pow_cursor, records.len() + pow_checks.len()),
+            records, cursor, ..
+        }) => (cursor, records.len()),
         Some(Session::Record { .. }) => panic!("replay session changed to recording"),
         None => panic!("replay session disappeared"),
     });

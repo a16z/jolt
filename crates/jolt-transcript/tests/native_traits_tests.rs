@@ -5,22 +5,21 @@
 
 use blake2::Blake2b512;
 use jolt_field::Fr;
-use jolt_transcript::{
-    prover_transcript, verifier_transcript, ProverTranscript, VerifierTranscript,
-};
+use jolt_transcript::FieldTranscript;
+use jolt_transcript::{prover_transcript, verifier_transcript};
 use spongefish::instantiations::Hash;
 
 const SESSION: &[u8] = b"native-traits";
 const INSTANCE: [u8; 32] = [0x77; 32];
 
 fn prover_challenge(session: &[u8], instance: [u8; 32]) -> Vec<Fr> {
-    let mut prover = prover_transcript::<Hash<Blake2b512>>(session, instance);
-    ProverTranscript::field_challenges::<Fr>(&mut prover, 1).unwrap()
+    let mut prover = prover_transcript::<Hash<Blake2b512>>(session, &instance);
+    FieldTranscript::<Fr>::challenge_vector(&mut prover, 1).unwrap()
 }
 
 fn verifier_challenge(session: &[u8], instance: [u8; 32]) -> Vec<Fr> {
-    let mut verifier = verifier_transcript::<Hash<Blake2b512>>(session, instance, &[]);
-    VerifierTranscript::field_challenges::<Fr>(&mut verifier, 1).unwrap()
+    let mut verifier = verifier_transcript::<Hash<Blake2b512>>(session, &instance, &[]);
+    FieldTranscript::<Fr>::challenge_vector(&mut verifier, 1).unwrap()
 }
 
 #[test]

@@ -8,7 +8,7 @@ use jolt_field::{CanonicalBytes, JoltField};
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
@@ -38,14 +38,14 @@ pub fn prove<F, PCS, VC, T>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField + CanonicalBytes + AppendToTranscript,
+    F: JoltField + CanonicalBytes + Encoding,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
-    PCS::Output: Clone + PartialEq + AppendToTranscript + GroupCommitmentMetadata,
+    PCS::Output: Clone + PartialEq + Encoding + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Clone + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Clone + Encoding,
+    T: FieldTranscript<F> + ProverInit,
 {
     // The Akita path is transparent-only (`akita` and `zk` are mutually
     // exclusive), so the mode context carries nothing; the shared stage
@@ -221,5 +221,6 @@ where
         rw_config: config.rw_config,
         one_hot_config: config.one_hot_config,
         trace_polynomial_order: config.trace_polynomial_order,
+        narg: transcript.narg_string().to_vec(),
     })
 }

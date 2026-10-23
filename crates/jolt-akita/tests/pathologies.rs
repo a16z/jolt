@@ -17,7 +17,7 @@ use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, OpeningsError, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Point, Polynomial, HIGH_TO_LOW};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use serde_json::{json, Value};
 use support::{batch_polynomials, f, layout, native_setup, polynomial, setup_for};
 
@@ -83,18 +83,18 @@ fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
     let eval = one_hot.evaluate(&point);
     assert_eq!(eval, dense.evaluate(&point));
 
-    let mut prover_transcript = Blake2bTranscript::new(b"akita-native-one-hot");
+    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-native-one-hot", b"");
     let proof = AkitaScheme::open(
         &one_hot,
         &point,
         eval,
         &prover_setup,
         Some(one_hot_hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"akita-native-one-hot");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-native-one-hot", b"");
     AkitaScheme::verify(
         &one_hot_commitment,
         &point,
@@ -104,7 +104,10 @@ fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
         &mut verifier_transcript,
     )
     .expect("native Akita one-hot proof should verify");
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }
 
 #[test]
@@ -149,7 +152,7 @@ fn akita_forged_commitment_metadata_rejects_before_shape_backed_allocation() {
             evaluation: claim.evaluation.clone(),
         })
         .collect();
-    let mut transcript = Blake2bTranscript::new(b"akita-forged-metadata");
+    let mut transcript = prover_transcript::<Blake2b512>(b"akita-forged-metadata", b"");
     let err = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &forged_statement,
@@ -169,7 +172,7 @@ fn akita_native_batching_rejects_corrupted_proof_payloads() {
 
     for field in ["schedule_selection", "backend_proof"] {
         let tampered = mutate_byte_array_field(&proof, field);
-        let mut transcript = Blake2bTranscript::new(b"akita-corrupt-proof");
+        let mut transcript = prover_transcript::<Blake2b512>(b"akita-corrupt-proof", b"");
         assert!(
             <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
                 &verifier_setup,
@@ -191,18 +194,18 @@ fn akita_zk_interfaces_are_explicitly_unsupported() {
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).unwrap();
 
-    let mut prover_transcript = Blake2bTranscript::new(b"akita-zk-unsupported");
+    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-zk-unsupported", b"");
     let (proof, _, ()) = AkitaScheme::open_zk(
         &poly,
         &point,
         eval,
         &prover_setup,
         hint.clone(),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"akita-zk-unsupported");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-zk-unsupported", b"");
     assert_transparent_zk_error(AkitaScheme::verify_zk(
         &commitment,
         &point,
@@ -212,7 +215,7 @@ fn akita_zk_interfaces_are_explicitly_unsupported() {
     ));
 
     let zk_point = Point::<HIGH_TO_LOW, _>::high_to_low(point);
-    let mut transcript = Blake2bTranscript::new(b"akita-zk-batch-prove-unsup");
+    let mut transcript = prover_transcript::<Blake2b512>(b"akita-zk-batch-prove-unsup", b"");
     assert_transparent_zk_error(
         <AkitaNativeBatching as ZkBatchOpeningScheme>::prove_batch_zk(
             &prover_setup,
@@ -225,7 +228,7 @@ fn akita_zk_interfaces_are_explicitly_unsupported() {
         ),
     );
 
-    let mut transcript = Blake2bTranscript::new(b"akita-zk-batch-verify-unsup");
+    let mut transcript = prover_transcript::<Blake2b512>(b"akita-zk-batch-verify-unsup", b"");
     assert_transparent_zk_error(
         <AkitaNativeBatching as ZkBatchOpeningScheme>::verify_batch_zk(
             &verifier_setup,
@@ -251,7 +254,7 @@ fn native_proof_fixture(
             .expect("grouped commit should succeed");
     let statement = support::native_statement(commitment, &point, [eval_a, eval_b]);
 
-    let mut transcript = Blake2bTranscript::new(label);
+    let mut transcript = prover_transcript::<Blake2b512>(label, b"");
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),

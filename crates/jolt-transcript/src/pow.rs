@@ -19,16 +19,14 @@
 //! binary that links a grinding prover compiles its verifier with
 //! `yolocrypto` too; in 0.8.0 the feature changes visibility only, not bytes.
 //!
-//! The legacy [`Transcript`](crate::Transcript) facade carries the same step
-//! with the nonce outside the transcript ([`Transcript::grind`] and
-//! [`Transcript::check_grind`]). It copies its own state, so it needs neither
-//! feature.
+//! A proof that carries its nonces outside the NARG string runs the same step
+//! with the nonce absorbed as a public message
+//! ([`Transcript::check_public_grind`] and [`ProverTranscript::public_grind`]).
 //!
-//! [`Transcript::grind`]: crate::Transcript::grind
-//! [`Transcript::check_grind`]: crate::Transcript::check_grind
+//! [`Transcript::check_public_grind`]: crate::Transcript::check_public_grind
+//! [`ProverTranscript::public_grind`]: crate::ProverTranscript::public_grind
 
-use std::error::Error;
-use std::fmt::{Display, Formatter, Result as FmtResult};
+#[cfg(feature = "prover-grinding")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "prover-grinding")]
@@ -36,20 +34,7 @@ use spongefish::DuplexSpongeInterface;
 
 use crate::MAX_POW_BITS;
 
-/// A proof of work was rejected: its difficulty is above [`MAX_POW_BITS`], its
-/// nonce is missing, unexpected or out of range, or the nonce fails the check.
-/// On the prover side, the nonce search exhausted the nonce space.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProofOfWorkError;
-
-impl Display for ProofOfWorkError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.write_str("proof of work rejected")
-    }
-}
-
-impl Error for ProofOfWorkError {}
-
+#[cfg(feature = "prover-grinding")]
 /// Evaluates the transcript on a candidate prover message without sending it.
 ///
 /// A probe is [`Sync`], so a search may run on
@@ -128,7 +113,6 @@ impl SpongePow {
     }
 
     /// `ceil((bits + 7) / 7)` bytes encode every nonce, at most 5.
-    #[cfg(feature = "spongefish")]
     pub(crate) const fn max_nonce_len(self) -> usize {
         (self.bits as usize + 13) / 7
     }
@@ -152,7 +136,6 @@ impl SpongePow {
     /// Reads a nonce byte by byte through `next`. Returns `None` unless its
     /// encoding is canonical LEB128 and it is at most `last_nonce`; read
     /// errors pass through.
-    #[cfg(feature = "spongefish")]
     pub(crate) fn read_nonce<E>(
         self,
         mut next: impl FnMut() -> Result<u8, E>,
@@ -173,6 +156,7 @@ impl SpongePow {
     }
 
     /// Whether sending `nonce` makes the next squeezed bytes pass the check.
+    #[cfg(feature = "prover-grinding")]
     fn accepts_nonce(self, probe: &impl Probe, nonce: u32) -> bool {
         let mut check = [0u8; 4];
         let Some(out) = check.get_mut(..self.word_len()) else {
@@ -187,6 +171,7 @@ impl SpongePow {
     /// pool scans the rest. Builds without `parallel` scan everything on the
     /// calling thread. Either way the result is the least accepted nonce, so
     /// the proof does not depend on the thread count.
+    #[cfg(feature = "prover-grinding")]
     pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
         let last = self.last_nonce();
         // `u64::MAX` is no nonce, so it marks "not found".
@@ -211,6 +196,7 @@ impl SpongePow {
     /// Scans the nonces `first, first + stride, ...` up to `last` in
     /// increasing order and lowers `least` to the first one accepted. Stops
     /// once it cannot beat `least`, which other scans may lower meanwhile.
+    #[cfg(feature = "prover-grinding")]
     fn scan(self, probe: &impl Probe, first: u64, stride: usize, last: u32, least: &AtomicU64) {
         let nonces = (first..=u64::from(last))
             .step_by(stride)
@@ -268,7 +254,6 @@ mod tests {
         assert!(SpongePow::new(MAX_POW_BITS + 1).is_none());
     }
 
-    #[cfg(feature = "spongefish")]
     #[test]
     fn layout() {
         let layout = |bits| {
@@ -281,7 +266,6 @@ mod tests {
         assert_eq!(layout(25), (u32::MAX, 5, 4));
     }
 
-    #[cfg(feature = "spongefish")]
     #[test]
     fn read_nonce_accepts_only_canonical_nonces_in_range() {
         let read = |bits, bytes: &[u8]| {
@@ -308,10 +292,9 @@ mod tests {
         assert_eq!(read(8, &[0x80]), Err("short"));
     }
 
+    #[cfg(feature = "prover-grinding")]
     mod search {
-        #[cfg(feature = "spongefish")]
-        use super::super::MAX_POW_BITS;
-        use super::super::{Leb128, Probe, SpongePow};
+        use super::super::{Leb128, Probe, SpongePow, MAX_POW_BITS};
 
         #[test]
         fn leb128_is_canonical() {
@@ -321,7 +304,6 @@ mod tests {
             assert_eq!(encode(128), [0x80, 0x01]);
             assert_eq!(encode(300), [0xac, 0x02]);
             assert_eq!(encode(u32::MAX), [0xff, 0xff, 0xff, 0xff, 0x0f]);
-            #[cfg(feature = "spongefish")]
             for bits in 1..=MAX_POW_BITS {
                 let pow = SpongePow::new(bits).unwrap();
                 let longest = Leb128::new(pow.last_nonce());

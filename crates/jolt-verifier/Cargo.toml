@@ -12,7 +12,6 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
-default = ["transcript-blake2b"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]
@@ -34,15 +33,6 @@ zk = ["jolt-prover/zk"]
 # objects share one batch opening. Mutually exclusive with
 # `zk` — one PIOP per compiled verifier.
 akita = ["jolt-prover/akita", "jolt-claims/akita", "tracer/fp128-field-inline"]
-transcript-blake2b = [
-  "jolt-transcript/bn254",
-  "jolt-transcript/transcript-blake2b",
-]
-transcript-keccak = [
-  "jolt-transcript/bn254",
-  "jolt-transcript/transcript-keccak",
-]
-transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
@@ -68,6 +58,11 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "test-utils",
+  "transcript-keccak",
+] }
 jolt-host.workspace = true
 jolt-prover.workspace = true
 jolt-witness.workspace = true

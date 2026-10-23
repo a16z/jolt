@@ -1,5 +1,3 @@
-#![cfg(feature = "binary")]
-
 use std::error::Error;
 
 use jolt_field::{Field, F128, F192, F64, F8};
@@ -9,9 +7,16 @@ use jolt_sumcheck::{
     grind_round, ClearProof, ClearSumcheckProof, F8Domain, LabeledRoundPoly, RoundMessage,
     SumcheckClaim, SumcheckDomain, SumcheckError, SumcheckProof, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript, UnpricedTranscript};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState, ProverTranscript,
+    ScriptedTranscript,
+};
 
 const LABEL: &[u8] = b"f8-uniskip-reduction";
+
+fn blake2b() -> ProverState<Blake2b512> {
+    prover_transcript::<Blake2b512>(LABEL, b"")
+}
 
 fn horner<F: Field>(coefficients: &[F], point: F) -> F {
     coefficients
@@ -80,13 +85,13 @@ fn degree_overflow<F: Field + From<F8>>() -> Result<(), F8DomainSizeError> {
 fn full_clear_round<F, T>(
     claim: &SumcheckClaim<F>,
     coefficients: Vec<F>,
+    mut transcript: T,
 ) -> Result<SumcheckProof<F, ()>, SumcheckError<F>>
 where
-    F: Field + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    F: Field + Encoding,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let round_polynomial = UnivariatePoly::new(coefficients);
-    let mut transcript = T::new(LABEL);
     LabeledRoundPoly::new(&round_polynomial, UNISKIP_ROUND_TRANSCRIPT_LABEL)
         .append_to_transcript(&mut transcript);
     let mut pow_nonces = Vec::new();
@@ -97,10 +102,10 @@ where
     })))
 }
 
-fn one_round_reduction<F, T>() -> Result<(), Box<dyn Error>>
+fn one_round_reduction<F, T>(new_transcript: impl Fn() -> T) -> Result<(), Box<dyn Error>>
 where
-    F: Field + From<F8> + AppendToTranscript + 'static,
-    T: Transcript<Challenge = F>,
+    F: Field + From<F8> + Encoding + 'static,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let coefficients = [0x31, 0x47, 0x59, 0x6d, 0x83, 0x97].map(|word| F::from(F8::from_raw(word)));
     let direct_sum: F = (0..4)
@@ -108,8 +113,8 @@ where
         .sum();
     let claim = SumcheckClaim::new(1, 5, direct_sum);
     let domain = F8Domain::new(4)?;
-    let mut transcript = T::new(LABEL);
-    let reduced = full_clear_round::<F, T>(&claim, coefficients.to_vec())?.verify(
+    let mut transcript = new_transcript();
+    let reduced = full_clear_round(&claim, coefficients.to_vec(), new_transcript())?.verify(
         &claim,
         domain,
         UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -135,9 +140,9 @@ where
                 }
         })
         .collect();
-    let mut transcript = T::new(LABEL);
+    let mut transcript = new_transcript();
     assert!(matches!(
-        full_clear_round::<F, T>(&claim, changed_cubic)?.verify(
+        full_clear_round(&claim, changed_cubic, new_transcript())?.verify(
             &claim,
             domain,
             UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -151,8 +156,8 @@ where
         .enumerate()
         .map(|(index, &coefficient)| coefficient + if index == 0 { F::one() } else { F::zero() })
         .collect();
-    let mut transcript = T::new(LABEL);
-    let reduced = full_clear_round::<F, T>(&claim, changed_constant)?.verify(
+    let mut transcript = new_transcript();
+    let reduced = full_clear_round(&claim, changed_constant, new_transcript())?.verify(
         &claim,
         domain,
         UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -169,7 +174,7 @@ where
 }
 
 macro_rules! field_tests {
-    ($module:ident, $field:ty, $transcript:ty) => {
+    ($module:ident, $field:ty, $transcript:expr) => {
         mod $module {
             use super::*;
 
@@ -190,7 +195,7 @@ macro_rules! field_tests {
 
             #[test]
             fn full_round_reduction_and_coefficient_tampering() -> Result<(), Box<dyn Error>> {
-                one_round_reduction::<$field, $transcript>()
+                one_round_reduction::<$field, _>($transcript)
             }
         }
     };
@@ -200,9 +205,9 @@ macro_rules! field_tests {
 // the 128-bit target, so a priced transcript rejects every round; the `F64`
 // reduction runs unpriced and checks the domain's algebra, not Fiat-Shamir
 // security.
-field_tests!(f64, F64, UnpricedTranscript<Blake2bTranscript<F64>>);
-field_tests!(f128, F128, Blake2bTranscript<F128>);
-field_tests!(f192, F192, Blake2bTranscript<F192>);
+field_tests!(f64, F64, || ScriptedTranscript::<_, F64>::new(blake2b()));
+field_tests!(f128, F128, blake2b);
+field_tests!(f192, F192, blake2b);
 
 #[test]
 fn new_rejects_sizes_outside_1_to_256() {

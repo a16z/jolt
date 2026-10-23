@@ -12,7 +12,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_claim_reduction::{
@@ -95,7 +95,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     match (checked.zk, stage1) {
         (true, Stage1Output::Clear(_)) => {
@@ -166,7 +166,7 @@ where
 
     // Draw each relation's challenges in declaration order: the RAM read-write gamma, the
     // instruction claim-reduction gamma, under `field-inline` the field-inline claim-reduction
-    // gamma (each a single `challenge_scalar`), then the RAM output-check address reference
+    // gamma (each a single `challenge()`), then the RAM output-check address reference
     // point (the last member's `draw_challenges` override — one raw `challenge()` per RAM
     // address variable, landing after the gammas as the inline draw did). The drawn challenges
     // feed the input/output claims and populate the stage aggregate carried downstream.
@@ -279,7 +279,7 @@ fn verify_product_uniskip<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let log_t = crate::num::ilog2(checked.trace_length);
     let product_dimensions = SpartanProductDimensions::new(log_t);
@@ -291,7 +291,7 @@ where
         &proof.stages.pow_nonces(),
         transcript,
     )?;
-    let tau_high = uniskip::draw_spartan_product_tau_high(transcript);
+    let tau_high = uniskip::draw_spartan_product_tau_high(transcript)?;
     let uniskip_params = uniskip::UniskipParams::spartan_product();
     match stage1 {
         Stage1Output::Clear(stage1) => {

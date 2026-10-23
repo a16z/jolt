@@ -196,7 +196,7 @@ mod twin_tests {
         ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds, SequentialRounds,
         SumcheckError, SumcheckProof,
     };
-    use jolt_transcript::{Blake2bTranscript, Transcript};
+    use jolt_transcript::{prover_transcript, Keccak};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
     use jolt_verifier::VerifierError;
     use jolt_witness::{
@@ -762,8 +762,8 @@ mod twin_tests {
         )));
 
         let mut context = KernelContext::new(&kernels, NoWitness, session);
-        let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-twin");
-        let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
+        let mut prover_state = prover_transcript::<Keccak>(b"prove-driver-twin", b"");
+        let challenges = sumchecks.draw_challenges(&mut prover_state).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
@@ -773,14 +773,14 @@ mod twin_tests {
                 &input_points,
                 &challenges,
                 ClearSumcheckRecorder::<Fr>::new(),
-                &mut prover_transcript,
+                &mut prover_state,
             )
             .unwrap();
 
         // Verifier twin: generated draw + composed verify_clear (which runs the
         // derive-opening-points and expected-final-claim checks internally) +
         // output-claim absorbs.
-        let mut verifier_transcript = Blake2bTranscript::new(b"prove-driver-twin");
+        let mut verifier_transcript = prover_transcript::<Keccak>(b"prove-driver-twin", b"");
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
         let _ = sumchecks
             .verify_clear(
@@ -795,7 +795,10 @@ mod twin_tests {
             .unwrap();
         sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
 
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(
+            prover_state.verifier_message::<[u8; 32]>(),
+            verifier_transcript.verifier_message::<[u8; 32]>()
+        );
 
         let calls = context
             .session()
@@ -873,8 +876,8 @@ mod twin_tests {
         let session = ProofSession::default();
 
         let mut context = KernelContext::new(&kernels, NoWitness, session);
-        let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
-        let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
+        let mut prover_state = prover_transcript::<Keccak>(b"prove-driver-head-twin", b"");
+        let challenges = sumchecks.draw_challenges(&mut prover_state).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
@@ -884,11 +887,11 @@ mod twin_tests {
                 &input_points,
                 &challenges,
                 ClearSumcheckRecorder::<Fr>::new(),
-                &mut prover_transcript,
+                &mut prover_state,
             )
             .unwrap();
 
-        let mut verifier_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
+        let mut verifier_transcript = prover_transcript::<Keccak>(b"prove-driver-head-twin", b"");
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
         let verified_points = sumchecks
             .verify_clear(
@@ -903,7 +906,10 @@ mod twin_tests {
             .unwrap();
         sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
 
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(
+            prover_state.verifier_message::<[u8; 32]>(),
+            verifier_transcript.verifier_message::<[u8; 32]>()
+        );
         assert_eq!(verified_points, proved.output_points);
         assert_eq!(
             proved.output_points.delta.value.as_slice(),
@@ -938,7 +944,7 @@ mod twin_tests {
         let sumchecks = fixture(false);
         let inputs = inputs(false);
         let kernels = toy_kernels();
-        let mut transcript = Blake2bTranscript::new(b"prove-driver-twin");
+        let mut transcript = prover_transcript::<Keccak>(b"prove-driver-twin", b"");
         let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let result = sumchecks.prove(

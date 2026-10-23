@@ -14,7 +14,7 @@ use jolt_r1cs::ConstraintMatrices;
 use jolt_spartan_prover::prove;
 use jolt_spartan_verifier::{SpartanError, SpartanKey};
 use jolt_sumcheck::SumcheckError;
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState};
 
 fn matrices() -> ConstraintMatrices<Fr> {
     let one = Fr::one();
@@ -40,8 +40,8 @@ fn public() -> [Fr; 1] {
 fn witness() -> [Fr; 3] {
     [3, 9, 27].map(Fr::from_u64)
 }
-fn transcript() -> Blake2bTranscript {
-    Blake2bTranscript::new(b"spartan-test")
+fn transcript() -> ProverState<Blake2b512> {
+    prover_transcript::<Blake2b512>(b"spartan-test", b"")
 }
 
 fn hyperkzg_setup() -> (
@@ -63,14 +63,15 @@ fn hyperkzg_setup() -> (
 
 fn check_backend<PCS: CommitmentScheme<Field = Fr>>(pk: &PCS::ProverSetup, vk: &PCS::VerifierSetup)
 where
-    PCS::Output: AppendToTranscript,
+    PCS::Output: Encoding,
 {
     let key = key();
     let mut pt = transcript();
     let proof = prove::<PCS>(&key, &public(), &witness(), pk, &mut pt).unwrap();
     let mut vt = transcript();
     key.verify::<PCS>(&public(), &proof, vk, &mut vt).unwrap();
-    assert_eq!(pt.challenge(), vt.challenge());
+    let (prover_next, verifier_next): (Fr, Fr) = (pt.challenge().unwrap(), vt.challenge().unwrap());
+    assert_eq!(prover_next, verifier_next);
     let bytes = bincode::serde::encode_to_vec(&proof, bincode::config::standard()).unwrap();
     let (decoded, used) =
         bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();

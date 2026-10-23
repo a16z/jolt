@@ -12,13 +12,13 @@
     reason = "tests unwrap successful PCS operations"
 )]
 
-use std::sync::{Arc, Mutex};
-
 use jolt_dory::DoryScheme;
-use jolt_field::{CanonicalEncoding, Field, Fr};
+use jolt_field::{Field, Fr};
 use jolt_openings::{CommitmentScheme, ZkOpeningScheme};
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, ChallengeSetSize, GrindBitsError, Transcript};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, ProverState, ScriptedTranscript, TranscriptEvent,
+};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -30,60 +30,26 @@ enum Event {
     Bytes,
 }
 
-/// A Blake2b transcript that logs every absorb and draw.
-#[derive(Clone, Default)]
-struct Recording {
-    inner: Blake2bTranscript,
-    log: Arc<Mutex<Vec<Event>>>,
+/// A Blake2b transcript that logs every absorb and draw, with its own
+/// challenges.
+type Recording = ScriptedTranscript<ProverState<Blake2b512>, Fr>;
+
+fn recording(label: &[u8]) -> Recording {
+    ScriptedTranscript::new(prover_transcript::<Blake2b512>(label, b""))
 }
 
-impl Recording {
-    fn push(&self, event: Event) {
-        self.log.lock().unwrap().push(event);
-    }
-
-    fn events(&self) -> Vec<Event> {
-        self.log.lock().unwrap().clone()
-    }
-}
-
-impl Transcript for Recording {
-    type Challenge = Fr;
-    const CHALLENGE_SET: ChallengeSetSize = <Blake2bTranscript as Transcript>::CHALLENGE_SET;
-
-    fn new(label: &'static [u8]) -> Self {
-        Self {
-            inner: Blake2bTranscript::new(label),
-            log: Arc::default(),
-        }
-    }
-
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        self.push(Event::Absorb);
-        self.inner.append_bytes(bytes);
-    }
-
-    fn challenge(&mut self) -> Fr {
-        self.push(Event::Full);
-        self.inner.challenge()
-    }
-
-    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<Fr, GrindBitsError>
-    where
-        Self::Challenge: CanonicalEncoding,
-    {
-        self.push(Event::Short(loss_factor));
-        self.inner.challenge_short_scalar(loss_factor)
-    }
-
-    fn challenge_bytes(&mut self, out: &mut [u8]) {
-        self.push(Event::Bytes);
-        self.inner.challenge_bytes(out);
-    }
-
-    fn state(&self) -> [u8; 32] {
-        self.inner.state()
-    }
+/// The log, with one event per absorb and per draw.
+fn events(transcript: &Recording) -> Vec<Event> {
+    transcript
+        .events()
+        .iter()
+        .flat_map(|event| match event {
+            TranscriptEvent::Absorb(_) => vec![Event::Absorb],
+            TranscriptEvent::Squeeze(_) => vec![Event::Bytes],
+            TranscriptEvent::Challenges(values) => vec![Event::Full; values.len()],
+            TranscriptEvent::ShortChallenge { loss_factor, .. } => vec![Event::Short(*loss_factor)],
+        })
+        .collect()
 }
 
 /// Checks the short draws come as `beta, alpha` per round and then `d`, each
@@ -149,15 +115,15 @@ fn transparent_short_draws_start_their_own_bursts() {
         let (poly, point, eval) = instance(num_vars, 2100 + num_vars as u64);
         let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut pt = Recording::new(b"dory-bursts");
+        let mut pt = recording(b"dory-bursts");
         let proof =
             DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt).unwrap();
-        let mut vt = Recording::new(b"dory-bursts");
+        let mut vt = recording(b"dory-bursts");
         DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt)
             .expect("transparent proof verifies");
 
         assert_eq!(pt.events(), vt.events(), "prover and verifier draw alike");
-        check_bursts(&vt.events(), num_vars.div_ceil(2));
+        check_bursts(&events(&vt), num_vars.div_ceil(2));
     }
 }
 
@@ -170,15 +136,15 @@ fn zk_short_draws_start_their_own_bursts() {
         let (commitment, hint) =
             <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut pt = Recording::new(b"dory-zk-bursts");
+        let mut pt = recording(b"dory-zk-bursts");
         let (proof, _, _) =
             DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt).unwrap();
-        let mut vt = Recording::new(b"dory-zk-bursts");
+        let mut vt = recording(b"dory-zk-bursts");
         let _eval_com =
             DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
                 .expect("zero-knowledge proof verifies");
 
         assert_eq!(pt.events(), vt.events(), "prover and verifier draw alike");
-        check_bursts(&vt.events(), num_vars.div_ceil(2));
+        check_bursts(&events(&vt), num_vars.div_ceil(2));
     }
 }

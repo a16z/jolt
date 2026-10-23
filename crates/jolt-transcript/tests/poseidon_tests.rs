@@ -1,31 +1,66 @@
-//! Tests for PoseidonTranscript implementation.
+//! Tests for the Poseidon sponge.
+//!
+//! Poseidon's squeezed bytes are not uniform, so it draws no field
+//! challenges; these tests exercise it as a byte sponge.
 
-mod common;
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, PoseidonSponge, ProverState, Transcript,
+};
 
-use jolt_field::Fr;
-use jolt_transcript::PoseidonTranscript;
+const SESSION: &[u8] = b"jolt-transcript/tests";
 
-type Pos = PoseidonTranscript<Fr>;
+fn squeeze_after<F: FnOnce(&mut ProverState<PoseidonSponge>)>(f: F) -> [u8; 32] {
+    let mut transcript = prover_transcript::<PoseidonSponge>(SESSION, b"Jolt");
+    f(&mut transcript);
+    transcript.verifier_message::<[u8; 32]>()
+}
 
-transcript_tests!(Pos);
+#[test]
+fn test_poseidon_determinism_and_order() {
+    let a = squeeze_after(|t| {
+        t.append(&1u64);
+        t.append(&2u64);
+    });
+    let b = squeeze_after(|t| {
+        t.append(&1u64);
+        t.append(&2u64);
+    });
+    let c = squeeze_after(|t| {
+        t.append(&2u64);
+        t.append(&1u64);
+    });
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+}
+
+#[test]
+fn test_poseidon_prover_and_verifier_agree() {
+    let mut prover = prover_transcript::<PoseidonSponge>(SESSION, b"Jolt");
+    let mut verifier = verifier_transcript::<PoseidonSponge>(SESSION, b"Jolt", &[]);
+    prover.append_bytes(b"msg");
+    verifier.append_bytes(b"msg");
+    assert_eq!(
+        prover.verifier_message::<[u8; 32]>(),
+        verifier.verifier_message::<[u8; 32]>()
+    );
+}
 
 #[test]
 fn test_poseidon_known_vector() {
-    use ark_ff::PrimeField;
-    use jolt_transcript::Transcript;
+    let got = squeeze_after(|t| t.append(&12345u64));
+    // Pins the session derived from PROTOCOL_ID, the instance absorb, one
+    // `u64` public message and a 32-byte squeeze.
+    assert_eq!(
+        hex(&got),
+        "788647c07eed8851fb17d6eeb2682d72ccca468c7ebd9f49a071712305eb8817",
+        "Poseidon known-vector regression"
+    );
+}
 
-    let mut transcript = PoseidonTranscript::<Fr>::new(b"Jolt");
-    transcript.append_bytes(&12345u64.to_be_bytes());
-    let challenge: Fr = transcript.challenge();
-
-    // Pins the v0.8 session derived from PROTOCOL_ID and the single
-    // length-prefixed label instance absorb, then one 52-byte challenge
-    // squeeze reduced mod r.
-    let expected: ark_bn254::Fr = ark_bn254::Fr::from_le_bytes_mod_order(&[
-        0x52, 0x31, 0x0C, 0x87, 0xD8, 0x93, 0x5C, 0x65, 0x2E, 0x83, 0x71, 0x19, 0xF2, 0x81, 0x1E,
-        0x79, 0xC0, 0xAE, 0x1A, 0xDB, 0xE6, 0xC5, 0xED, 0xD2, 0x12, 0xDC, 0x69, 0x7D, 0xBD, 0xF4,
-        0x8E, 0x27,
-    ]);
-    let got: ark_bn254::Fr = challenge.into();
-    assert_eq!(got, expected, "Poseidon known-vector regression");
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes.iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
 }

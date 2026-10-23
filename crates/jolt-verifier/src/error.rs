@@ -1,5 +1,6 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_riscv::JoltInstructionKind;
+use jolt_transcript::VerificationError;
 
 use crate::config::JoltProtocolConfig;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
@@ -142,4 +143,20 @@ pub enum VerifierError {
 
     #[error("the challenge set needs proof of work, which this build's proofs do not carry")]
     ChallengeSetNeedsProofOfWork,
+
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+
+    /// The proof's NARG string has unread bytes, or a transcript check
+    /// failed earlier.
+    #[error("the transcript did not end cleanly")]
+    NargNotConsumed,
+}
+
+impl From<VerificationError> for VerifierError {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

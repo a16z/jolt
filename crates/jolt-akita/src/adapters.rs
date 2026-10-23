@@ -24,7 +24,9 @@ use akita_types::{
 use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{
+    BytesMsg, Encoding, FieldTranscript, Label, LabelWithCount, Transcript, U64Word,
+};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -712,12 +714,12 @@ pub(crate) fn append_batch_statement<T: Transcript>(
     point: &[AkitaField],
 ) {
     transcript.append(&Label(b"akita_batch_statement"));
-    commitment.append_to_transcript(transcript);
+    transcript.append(&commitment);
     transcript.append_values(b"akita_pcs_point", point);
     transcript.append(&LabelWithCount(b"akita_claims", statement.len() as u64));
     for claim in statement {
-        claim.commitment.append_to_transcript(transcript);
-        claim.evaluation.value.append_to_transcript(transcript);
+        transcript.append(&claim.commitment);
+        transcript.append(&claim.evaluation.value);
     }
 }
 
@@ -856,20 +858,33 @@ impl AkitaCommitment {
     }
 }
 
-impl AppendToTranscript for AkitaCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_commitment"));
-        transcript.append_bytes(self.backend_flavor.transcript_label());
-        transcript.append_bytes(&self.layout_digest);
-        transcript.append(&U64Word(self.num_vars as u64));
-        transcript.append(&U64Word(self.poly_count as u64));
-        transcript.append(&U64Word(self.one_hot_k as u64));
-        transcript.append(&U64Word(self.backend_coeff_len as u64));
-        transcript.append(&LabelWithCount(
-            b"akita_commitment_bytes",
-            self.serialized_backend_bytes.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_backend_bytes);
+impl Encoding for AkitaCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Label(b"akita_commitment").encode().as_ref().to_vec();
+        out.extend_from_slice(
+            BytesMsg(self.backend_flavor.transcript_label())
+                .encode()
+                .as_ref(),
+        );
+        out.extend_from_slice(BytesMsg(&self.layout_digest).encode().as_ref());
+        for word in [
+            self.num_vars,
+            self.poly_count,
+            self.one_hot_k,
+            self.backend_coeff_len,
+        ] {
+            out.extend_from_slice(U64Word(word as u64).encode().as_ref());
+        }
+        out.extend_from_slice(
+            LabelWithCount(
+                b"akita_commitment_bytes",
+                self.serialized_backend_bytes.len() as u64,
+            )
+            .encode()
+            .as_ref(),
+        );
+        out.extend_from_slice(BytesMsg(&self.serialized_backend_bytes).encode().as_ref());
+        out
     }
 }
 
@@ -921,14 +936,16 @@ impl AkitaHidingCommitment {
     }
 }
 
-impl AppendToTranscript for AkitaHidingCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_hiding_commitment"));
-        transcript.append(&LabelWithCount(
-            b"akita_hiding_eval",
-            self.eval.len() as u64,
-        ));
-        transcript.append_bytes(&self.eval);
+impl Encoding for AkitaHidingCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Label(b"akita_hiding_commitment").encode().as_ref().to_vec();
+        out.extend_from_slice(
+            LabelWithCount(b"akita_hiding_eval", self.eval.len() as u64)
+                .encode()
+                .as_ref(),
+        );
+        out.extend_from_slice(BytesMsg(&self.eval).encode().as_ref());
+        out
     }
 }
 
@@ -1209,11 +1226,14 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
 /// subsequent Jolt challenge consumes the terminal opening proof, so
 /// reabsorbing that proof into the outer transcript could not affect
 /// acceptance.
-pub(crate) fn bridged_akita_session<T>(jolt_transcript: &mut T, session_label: &[u8]) -> Vec<u8>
+pub(crate) fn bridged_akita_session<T>(
+    jolt_transcript: &mut T,
+    session_label: &[u8],
+) -> Result<Vec<u8>, OpeningsError>
 where
-    T: Transcript<Challenge = AkitaField>,
+    T: FieldTranscript<AkitaField>,
 {
-    let bridge = jolt_transcript.challenge_scalar();
+    let bridge = jolt_transcript.challenge()?;
     let bridge_bytes = bridge.to_bytes_le_vec();
     // Akita binds the concrete instance into its own Fiat-Shamir state but
     // keeps the session bytes as domain separator, so the cross-protocol
@@ -1221,7 +1241,7 @@ where
     let mut bridged_session = Vec::with_capacity(session_label.len() + bridge_bytes.len());
     bridged_session.extend_from_slice(session_label);
     bridged_session.extend_from_slice(&bridge_bytes);
-    bridged_session
+    Ok(bridged_session)
 }
 
 #[cfg(test)]
