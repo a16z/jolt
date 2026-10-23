@@ -990,12 +990,14 @@ fn validate_trace_length(
     Ok(())
 }
 
-/// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
-/// `8k + lowest_address`, and the lattice digit-zero reconstruction relies on
-/// `unmap(0) = lowest_address ≠ 0` to distinguish "no RAM access" from an
-/// access at remapped word zero (see "Where the RAM activation is pinned" in
-/// `specs/lattice-claims.md`). Mirrors the prover-side
-/// `UnmapRamAddressPolynomial::new` assertion (`start_address > 8`).
+/// Fail closed on a RAM remap base that RAF evaluation cannot rely on. Stage
+/// 2's RAF-evaluation unmap is `8k + lowest_address`:
+/// - `lowest_address > 8` keeps `unmap(0) ≠ 0`, which the lattice digit-zero
+///   reconstruction relies on to distinguish "no RAM access" from an access
+///   at remapped word zero;
+/// - `lowest_address ≡ 0 (mod 8)` makes every admissible `RamAddress` a
+///   multiple of 8, which is how RAF evaluation rejects a memory access
+///   misaligned for its width (see R1CS constraint 0 in `jolt-claims`).
 fn validate_ram_remap_base(
     memory_layout: &common::jolt_device::MemoryLayout,
 ) -> Result<(), VerifierError> {
@@ -1005,6 +1007,14 @@ fn validate_ram_remap_base(
             reason: format!(
                 "lowest remapped RAM address {lowest_address:#x} must exceed 8 so the RAF \
                  unmap constant stays clear of the null-address range"
+            ),
+        });
+    }
+    if !lowest_address.is_multiple_of(8) {
+        return Err(VerifierError::InvalidMemoryLayout {
+            reason: format!(
+                "lowest remapped RAM address {lowest_address:#x} must be doubleword-aligned so \
+                 RAF evaluation rejects misaligned memory accesses"
             ),
         });
     }
@@ -1446,6 +1456,25 @@ mod tests {
             validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::InvalidMemoryLayout { reason })
                 if reason.contains("lowest remapped RAM address")
+        ));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_misaligned_ram_remap_base() {
+        let mut memory_layout = test_memory_layout();
+        memory_layout.trusted_advice_start -= 4;
+        memory_layout.untrusted_advice_start -= 4;
+        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidMemoryLayout { reason })
+                if reason.contains("doubleword-aligned")
         ));
     }
 

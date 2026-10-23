@@ -1,39 +1,31 @@
+use jolt_riscv::SourceInstructionKind as Kind;
+
+use super::shared::{AccessWidth, LaneWindow};
 use super::*;
 
-/// Lowers `AMOSWAP.W` through the shared word-AMO lane update helpers.
-///
-/// The pre-helper extracts and sign-extends the old word; the post-helper
-/// merges the low word of `rs2` into the containing doubleword and returns the
-/// old word in `rd`.
+/// Lowers `AMOSWAP.W` as a read-modify-write of the word lane: the old word is
+/// extracted sign-extended, the low word of `rs2` is merged back and stored,
+/// and `rd` receives the old word last because it may alias `rs1` or `rs2`.
 pub(in crate::expand) fn expand_amoswapw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
-    let v_mask = asm.allocate()?;
-    let v_dword = asm.allocate()?;
-    let v_shift = asm.allocate()?;
-    let v_rd = asm.allocate()?;
+    let doubleword = asm.allocate()?;
+    let lane = asm.allocate()?;
+    let old = asm.allocate()?;
 
-    super::shared::expand_amo_pre64(
+    let window = LaneWindow::open(
         &mut asm,
+        AccessWidth::Word,
+        doubleword.operand(),
+        lane.operand(),
         reg(rs1(instruction)?),
-        v_rd.operand(),
-        v_dword.operand(),
-        v_shift.operand(),
-    )?;
-    super::shared::expand_amo_post64(
-        &mut asm,
-        super::shared::AmoPost64 {
-            rs1: reg(rs1(instruction)?),
-            v_rs2: reg(rs2(instruction)?),
-            v_dword: v_dword.operand(),
-            v_shift: v_shift.operand(),
-            v_mask: v_mask.operand(),
-            rd: reg(rd(instruction)?),
-            v_rd: v_rd.operand(),
-        },
-    )?;
-    asm.release_many([v_mask, v_dword, v_shift, v_rd]);
+        0,
+    );
+    window.extract(&mut asm, old.operand(), true);
+    window.merge(&mut asm, reg(rs2(instruction)?));
+    asm.emit_i(Kind::ADDI, reg(rd(instruction)?), old.operand(), 0);
+    asm.release_many([doubleword, lane, old]);
 
     asm.finalize()
 }

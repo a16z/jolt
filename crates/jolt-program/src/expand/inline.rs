@@ -275,17 +275,6 @@ impl InlineExpansionBuilder {
         );
     }
 
-    /// Emit an address-form alignment assertion with a signed byte offset.
-    pub fn emit_align(
-        &mut self,
-        instruction_kind: impl Into<SourceInstructionKind>,
-        rs1: u8,
-        imm: i64,
-    ) {
-        self.inner
-            .emit_address(instruction_kind, Self::register_operand(rs1), imm as i128);
-    }
-
     /// Emit or constant-fold a binary operation.
     ///
     /// Register/register operands use `register_kind`, register/immediate

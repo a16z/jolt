@@ -523,7 +523,7 @@ impl SpartanOuterRow {
         let compressed = 2 * i128::from(self.is_compressed.0);
         let pc_step = diff(self.next_unexpanded_pc.0, self.unexpanded_pc.0);
         let rv64_b_second_lo = [
-            diff(self.ram_address.0, self.rs1_value.0) - imm_lo,
+            diff(self.ram_address.0, self.rs1_value.0) - imm_lo + word(self.lookup_output.0),
             right_lookup_lo - left_input - right_input_lo,
             right_lookup_lo - left_input + right_input_lo,
             right_lookup_lo - product_lo,
