@@ -23,7 +23,8 @@ use super::{CommittedPads, CommittedPadsView, PadLayout, ResidualRelation};
 pub type ErasedSource = Box<dyn Error + Send + Sync + 'static>;
 
 /// Why masking or a back end failed. Every variant is an invariant violation
-/// or a rejected proof; none is retryable.
+/// or a rejected proof, except [`ZkError::FoldOverflow`], after which the
+/// caller may rerun the whole proof with fresh randomness.
 #[derive(Debug, ThisError)]
 pub enum ZkError {
     #[error("ZK transcript: {0}")]
@@ -73,6 +74,13 @@ pub enum ZkError {
     /// `ZkError` exhaustively).
     #[error("Whiteout: {0}")]
     Whiteout(#[source] ErasedSource),
+    /// The lattice PCS's one-shot fold response at masked level `level`
+    /// fell outside its digit range (Akita `AkitaError::FoldOverflow`). The
+    /// proof is aborted; a rerun draws all of its randomness fresh. Akita
+    /// maps its error to this variant, since jolt-zk cannot name Akita's
+    /// error type.
+    #[error("fold response overflowed its digit range at masked level {level}")]
+    FoldOverflow { level: u32 },
 }
 
 #[cfg(feature = "whiteout")]

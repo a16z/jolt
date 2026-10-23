@@ -165,7 +165,8 @@ impl From<ZkError> for VerifierError {
             | ZkError::BlindFoldShape(_)
             | ZkError::BlindFoldProver(_)
             | ZkError::BlindFoldRejected(_)
-            | ZkError::Whiteout(_) => Self::Masking(error),
+            | ZkError::Whiteout(_)
+            | ZkError::FoldOverflow { .. } => Self::Masking(error),
         }
     }
 }
