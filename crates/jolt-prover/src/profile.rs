@@ -52,7 +52,7 @@ use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 use jolt_akita::AkitaField;
-use jolt_host::{JoltProgramSource, Program};
+use jolt_host::{default_target_dir, JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
@@ -307,15 +307,24 @@ pub struct ProfileArgs {
 
     /// Explicit memory budget in bytes: an integer with an optional binary
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
-    /// optimized`. A budget below the optimized prover's known eager
-    /// reservation, which covers named eager tables only, fails after
-    /// tracing, before proving. Under Akita, a budget that cannot hold the
-    /// trace output, program and program preprocessing buffers plus the
-    /// one-hot setup's flat public matrix and setup-prefix sources fails
-    /// before PCS setup allocates them, and any budget fails for multi-chunk
-    /// or field-inline setups, which that check does not price. Passing does
-    /// not mean the whole proof fits, and the budget does not cap process
-    /// memory.
+    /// optimized`. The budget first routes the trace over the `2^scale`
+    /// domain with `TracerBackend::limited_for_row_domain`, a routing proxy,
+    /// not a peak: at or above it the guest runs twice, as without a budget;
+    /// below it, once through the limited serial trace, which rejects parallel
+    /// tracing (`TRACER_PARALLEL`), fails at the first covered request the
+    /// budget cannot hold (its setup alone requests over 1 GiB by default) and
+    /// keeps its row reserve in the trace output the checks below count. A run
+    /// much shorter than the domain can take the limited trace although the
+    /// original would fit, and a budget just above the proxy keeps an original
+    /// trace whose unpriced requests can exceed it. A budget below the
+    /// optimized prover's known eager reservation, which covers named eager
+    /// tables only, fails after tracing, before proving. Under Akita, a budget
+    /// that cannot hold the trace output, program and program preprocessing
+    /// buffers plus the one-hot setup's flat public matrix and setup-prefix
+    /// sources fails before PCS setup allocates them, and any budget fails for
+    /// multi-chunk or field-inline setups, which that check does not price.
+    /// Passing does not mean the whole proof fits, and the budget does not cap
+    /// process memory.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
@@ -749,13 +758,32 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     }
     #[cfg(feature = "field-inline")]
     program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
-    let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
-    assert!(
-        sizing_trace.len().next_power_of_two() <= max_trace_length,
-        "Trace is longer than expected"
-    );
-    jolt_kernels::mem::drop_in_background_thread(sizing_trace);
-    let memory_layout = io_device.memory_layout.clone();
+    let limited = args
+        .memory_budget
+        .and_then(|budget| TracerBackend::limited_for_row_domain(budget.bytes(), max_trace_length));
+    // The original route keeps its sizing run's device owned until the run
+    // ends, as it did before the limited route existed.
+    let (limited_trace, memory_layout, _sizing_device) = if let Some(mut tracer) = limited {
+        // The tracer symbolizes a guest panic's backtrace from the ELF path;
+        // building here sets it, so `trace_with_backend` does not rebuild.
+        // `prove_workload`'s `ProverConfig::derive_from_dimensions` rejects a
+        // trace whose padded length exceeds `max_trace_length`.
+        program.build(&default_target_dir().to_string_lossy());
+        tracer.elf_path = Some(program.elf.clone().expect("guest build produces an ELF"));
+        let trace_output = program
+            .trace_with_backend(&mut tracer, &input, &[], &[])
+            .expect("modular trace");
+        let memory_layout = trace_output.device.memory_layout.clone();
+        (Some(trace_output), memory_layout, None)
+    } else {
+        let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
+        assert!(
+            sizing_trace.len().next_power_of_two() <= max_trace_length,
+            "Trace is longer than expected"
+        );
+        jolt_kernels::mem::drop_in_background_thread(sizing_trace);
+        (None, io_device.memory_layout.clone(), Some(io_device))
+    };
     let jolt_program = Arc::new(program.build_jolt_program().expect("build Jolt program"));
     let program_preprocessing = JoltProgramPreprocessing::new(
         jolt_program.expanded_bytecode.clone(),
@@ -767,7 +795,8 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     )
     .expect("program preprocessing");
 
-    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    let trace_output =
+        limited_trace.unwrap_or_else(|| trace_modular(&jolt_program, &memory_layout, &input));
     let trace_length = trace_output.trace.proof_len();
 
     let run = prove_workload(
@@ -1013,8 +1042,9 @@ fn prove_workload(
     )
     .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
-    // Counts the named caller buffers only: the sizing trace run_workload
-    // queued for a background drop may still be live and is not included.
+    // Counts the named caller buffers only: on the original trace route, the
+    // sizing trace run_workload queued for a background drop may still be
+    // live and is not included.
     let setup_source_limit = memory_budget.map(|budget| {
         let caller_bytes = trace_output
             .heap_bytes()

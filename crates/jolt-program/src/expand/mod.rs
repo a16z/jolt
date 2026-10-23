@@ -31,6 +31,7 @@ pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
 pub use grammar::{is_source_only, ExpandedInstructionSequence};
 pub use inline::{InlineExpansionBuilder, InlineOperands, InlineRegister, Value};
+pub use materialize::MAX_EXPANDED_ROWS_PER_SOURCE;
 
 #[doc(hidden)]
 pub mod asm_support {

@@ -18,6 +18,16 @@ use crate::expand::{
 
 pub(super) const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
 pub(super) const MAX_INLINE_ROWS_PER_SOURCE: usize = u16::MAX as usize;
+/// Most final rows one source instruction expands into: the larger of the
+/// built-in recipe and registered-inline (reset rows included) capacities that
+/// `ExpansionBuffer::push` enforces. Native and field-inline leaves are one
+/// row.
+pub const MAX_EXPANDED_ROWS_PER_SOURCE: usize =
+    if MAX_INLINE_ROWS_PER_SOURCE > MAX_FINAL_ROWS_PER_SOURCE {
+        MAX_INLINE_ROWS_PER_SOURCE
+    } else {
+        MAX_FINAL_ROWS_PER_SOURCE
+    };
 
 type StampSequenceFn = fn(
     Vec<JoltInstructionRow>,
