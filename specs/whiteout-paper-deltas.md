@@ -1215,9 +1215,17 @@ The modeled sizes are the catalog snapshot's `proof_bytes` (default
 artifact set), which counts the raw u_a; the Σ proof and the response
 proof are extra.
 Measured whole proofs (Akita's `zk_end_to_end` harness: masked prefix,
-Σ and response proof; Akita §5.5.2): single group 75,423 → 95,058 B, prover
-0.86 → 1.19 s; multi-group 31:1 + 14:1 80,738 → 99,196 B, prover 7.2 →
-9.8 s.
+Σ and response proof; Akita §5.5.2; Apple M4, loaded machine, median of
+six runs):
+
+| statement | proof bytes | prover | verifier |
+|---|---|---|---|
+| single group 14:1 | 75,423 → 95,058 (+26%) | 0.86 → 1.19 s (+38%) | 0.019 → 0.076 s (4.0×) |
+| multi-group 31:1 + 14:1 | 80,738 → 99,196 (+23%) | 7.2 → 9.8 s (+36%) | 0.069 → 0.35 s (5.1×) |
+
+The verifier grows because N holds the rank-19 `A_a` and `[B_a | B′_a]`;
+the setup grows with them (dense 14:1: 131,072 → 7,045,504 field elements,
+54×; the headline's 2^24 is unchanged because its root dominates).
 
 **Security impact.** None: u_a is hidden by `r_a` (Lemma
 `wo:lem:stat-hiding`, Akita §4.8.1), raw or compressed.
