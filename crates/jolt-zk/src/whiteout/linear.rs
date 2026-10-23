@@ -221,7 +221,19 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         scales: &[F],
         lo: &CyclotomicRing<F, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
-        // Blocks run in parallel: a matrix is shared by many blocks.
+        // Blocks run in parallel, and a matrix is shared by many blocks:
+        // build each distinct matrix's entries over F once, before the tasks
+        // that read them.
+        let mut warmed: Vec<&Arc<PreparedMatrix<F, D>>> = Vec::new();
+        for block in &self.blocks {
+            if !warmed
+                .iter()
+                .any(|matrix| Arc::ptr_eq(matrix, &block.matrix))
+            {
+                block.matrix.prepare_field_entries();
+                warmed.push(&block.matrix);
+            }
+        }
         let blocks: Vec<Vec<CyclotomicRing<F, D>>> = self
             .blocks
             .par_iter()

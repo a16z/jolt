@@ -209,15 +209,23 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
             .collect())
     }
 
-    /// The entries over `F`, built on first use: once per matrix, so a
-    /// verifier that keeps its setup pays for it once, not per proof.
+    /// Builds the entries over `F` that [`Self::combine_columns`] reads, if
+    /// they are not built yet. Call it once before combining one matrix from
+    /// several parallel tasks: concurrent first callers would each build a
+    /// copy.
+    pub fn prepare_field_entries(&self) {
+        let _entries = self.field_entries();
+    }
+
+    /// The entries over `F`, built on first use and kept, so a verifier that
+    /// keeps its setup pays for them once, not per proof.
     ///
     /// WARNING: the build runs in parallel outside the cell's lock. Inside
-    /// `get_or_init` it would deadlock: callers run on Rayon workers (one
-    /// matrix shared by several blocks of `N`), and a worker that steals
-    /// another caller's job while it waits on the build blocks on the cell it
-    /// is initializing. Concurrent first callers may each build the entries;
-    /// one is kept.
+    /// `get_or_init` it would deadlock: callers run on Rayon workers, and a
+    /// worker that steals another caller's job while it waits on the build
+    /// blocks on the cell it is initializing. Concurrent first callers may
+    /// each build the entries (one is kept), so a caller sharing one matrix
+    /// across parallel tasks warms it first ([`Self::prepare_field_entries`]).
     fn field_entries(&self) -> &[CyclotomicRing<F, D>] {
         if let Some(entries) = self.coefficients.get() {
             return entries;
