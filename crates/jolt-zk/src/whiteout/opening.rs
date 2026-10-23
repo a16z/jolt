@@ -35,14 +35,18 @@ pub trait MaskedGroupOpening<F: JoltField> {
     /// state and the residual claim at the cut.
     type Prefix;
 
-    /// The shape of an opening of `groups`.
+    /// The shape of the opening of one group of `num_polys` polynomials in
+    /// `num_vars` variables. The verifier derives both from the statement and
+    /// checks the commitment's metadata against them first: a commitment
+    /// header is prover-controlled.
     ///
     /// # Errors
     ///
     /// [`ZkError`] if the setup has no masked opening of that shape.
     fn shape(
         setup: &Self::Setup,
-        groups: &[&Self::GroupCommitment],
+        num_vars: usize,
+        num_polys: usize,
     ) -> Result<Self::Shape, ZkError>;
 
     /// Reads the pad commitment of `layout`, at its transcript position

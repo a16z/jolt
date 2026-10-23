@@ -22,10 +22,12 @@ use jolt_openings::{
 use jolt_poly::Point;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
-use super::precommitted::precommitted_final_openings;
+use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
-use crate::stages::stage6b::outputs::{Stage6bClearOutput, Stage6bOutputPoints};
+use crate::stages::stage6b::outputs::Stage6bClearOutput;
+#[cfg(feature = "zk")]
+use crate::stages::stage6b::outputs::Stage6bOutputPoints;
 use crate::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputPoints};
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::stages::PrecommittedSchedule;
@@ -356,44 +358,31 @@ where
     Ok(())
 }
 
-/// Whiteout's stage 8: the trace group's claims as affine forms over the
-/// pads, each column's form the masked opening of its final claim, for the
-/// masked Akita opening. Nothing is absorbed here: the forms are built from
-/// masked messages already absorbed, under challenges that precede none of
-/// them, and Akita's masked root binds them without absorbing values
-/// (`specs/whiteout-jolt-integration.md` §8, D25).
+/// Whiteout's trace group, from the statement: its layout plan, after the
+/// sent commitment's and the setup's metadata are checked against it. The
+/// masked opening's shape is derived from this plan, never from the
+/// prover's commitment header.
 ///
 /// # Errors
 ///
 /// [`VerifierError::ProtocolAxisUnimplemented`] for a proof with advice, a
-/// committed program or field increments (their groups are W6d), and the
-/// errors of the clear stage 8's shape checks.
+/// committed program or field increments (their groups are not opened
+/// yet), and the errors of the clear stage 8's shape checks.
 #[cfg(all(feature = "akita", feature = "zk"))]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the stage inputs, as in `verify`"
-)]
-pub fn masked_trace_claim<F, PCS, VC>(
+pub fn whiteout_trace_plan<PCS, VC>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
     preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    schedule: &PrecommittedSchedule,
-    stage6b_points: &Stage6bOutputPoints<F>,
-    stage7_points: &Stage7OutputPoints<F>,
-    residual: &crate::stages::zk::residual::JoltResidual<F>,
-) -> Result<jolt_zk::whiteout::MaskedGroupClaim<F, PCS::Output>, VerifierError>
+) -> Result<OneHotTraceLayoutPlan, VerifierError>
 where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
+    PCS: CommitmentScheme,
+    PCS::Output: OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
-    VC: VectorCommitment<Field = F>,
+    VC: VectorCommitment<Field = PCS::Field>,
 {
-    use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
-
     if untrusted_advice_commitment.is_some()
         || trusted_advice_commitment.is_some()
         || preprocessing.program.committed().is_some()
@@ -401,7 +390,7 @@ where
     {
         return Err(VerifierError::ProtocolAxisUnimplemented {
             axis: "zk (Whiteout)",
-            pending: "precommitted groups: advice, committed programs, field increments (W6d)",
+            pending: "precommitted groups: advice, committed programs, field increments",
         });
     }
     let chunk_width = one_hot_config.committed_chunk_bits();
@@ -420,14 +409,42 @@ where
         plan.ids().len(),
         1 << chunk_width,
     )?;
+    Ok(plan)
+}
+
+/// Whiteout's stage 8: the trace group's claims as affine forms over the
+/// pads, each column's form the masked opening of its final claim, for the
+/// masked Akita opening. Nothing is absorbed here: the forms are built from
+/// masked messages already absorbed, under challenges that precede none of
+/// them, and Akita's masked root binds them without absorbing values
+/// (`specs/whiteout-jolt-integration.md` §8, D25).
+///
+/// # Errors
+///
+/// The errors of the clear stage 8's leaf geometry.
+#[cfg(all(feature = "akita", feature = "zk"))]
+pub fn masked_trace_claim<F, C: Clone>(
+    plan: &OneHotTraceLayoutPlan,
+    one_hot_config: JoltOneHotConfig,
+    one_hot_trace_commitment: &C,
+    schedule: &PrecommittedSchedule,
+    stage6b_points: &Stage6bOutputPoints<F>,
+    stage7_points: &Stage7OutputPoints<F>,
+    residual: &crate::stages::zk::residual::JoltResidual<F>,
+) -> Result<jolt_zk::whiteout::MaskedGroupClaim<F, C>, VerifierError>
+where
+    F: JoltField,
+{
+    use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
+
     let leaves = leaves(
-        schedule,
-        stage6b_points,
         stage7_points,
+        precommitted_final_openings(schedule, stage7_points, stage6b_points, None)?,
         &mut |_| Ok(None),
-        &mut |polynomial| residual.opening_form(&final_opening_id(polynomial).into()),
+        &mut |polynomial, _| residual.opening_form(&final_opening_id(polynomial).into()),
     )?;
-    let (point, evaluations) = one_hot_trace_group(&plan, chunk_width, &leaves)?;
+    let (point, evaluations) =
+        one_hot_trace_group(plan, one_hot_config.committed_chunk_bits(), &leaves)?;
     Ok(jolt_zk::whiteout::MaskedGroupClaim {
         commitment: one_hot_trace_commitment.clone(),
         point,
@@ -468,15 +485,15 @@ pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
 /// One committed column's leaf: its opening point and its value, a clear
 /// value or, under Whiteout, an affine form over the pads.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Leaf<F, V> {
-    pub point: Vec<F>,
-    pub value: V,
+pub(crate) struct Leaf<F, V> {
+    pub(crate) point: Vec<F>,
+    pub(crate) value: V,
 }
 
 /// The `OneHotTrace` group's common opening point and its columns' values in
 /// the plan's canonical order: each column's point is mapped to the
 /// committed row-major order, and all must agree.
-pub fn one_hot_trace_group<F: JoltField, V: Clone>(
+pub(crate) fn one_hot_trace_group<F: JoltField, V: Clone>(
     plan: &OneHotTraceLayoutPlan,
     chunk_width: usize,
     leaves: &BTreeMap<JoltCommittedPolynomial, Leaf<F, V>>,
@@ -562,9 +579,8 @@ pub fn leaf_claims<F: JoltField>(
             .ok_or_else(|| batch_failed(format!("missing final value for {polynomial:?}")))
     };
     let leaves = leaves(
-        schedule,
-        &stage6b.output_points,
         &stage7.output_points,
+        finals,
         &mut |_kind| {
             #[cfg(feature = "akita")]
             if let Some(contribution) = stage4.ram_val_check_init.advice_contribution(_kind) {
@@ -575,7 +591,7 @@ pub fn leaf_claims<F: JoltField>(
             }
             Ok(None)
         },
-        &mut |polynomial| match polynomial {
+        &mut |polynomial, clear| match polynomial {
             Poly::InstructionRa(index) => indexed(&hamming.instruction_ra, index, polynomial),
             Poly::BytecodeRa(index) => indexed(&hamming.bytecode_ra, index, polynomial),
             Poly::RamRa(index) => indexed(&hamming.ram_ra, index, polynomial),
@@ -589,13 +605,9 @@ pub fn leaf_claims<F: JoltField>(
             | Poly::TrustedAdvice
             | Poly::UntrustedAdvice
             | Poly::ProgramImageInit
-            | Poly::ProgramBytecode => finals
-                .iter()
-                .find(|opening| opening.polynomial == polynomial)
-                .and_then(|opening| opening.opening_claim)
-                .ok_or_else(|| {
-                    batch_failed(format!("missing clear final value for {polynomial:?}"))
-                }),
+            | Poly::ProgramBytecode => clear.ok_or_else(|| {
+                batch_failed(format!("missing clear final value for {polynomial:?}"))
+            }),
         },
     )?;
     Ok(leaves
@@ -614,12 +626,11 @@ pub fn leaf_claims<F: JoltField>(
 /// reduction's columns come from stage 7, the precommitted polynomials from
 /// whichever phase completed their reduction, and (Akita) advice from
 /// `advice`; every value from `value`.
-pub fn leaves<F: JoltField, V>(
-    schedule: &PrecommittedSchedule,
-    stage6b_points: &Stage6bOutputPoints<F>,
+pub(crate) fn leaves<F: JoltField, V>(
     stage7_points: &Stage7OutputPoints<F>,
+    precommitted: Vec<PrecommittedFinalOpening<F>>,
     advice: &mut dyn FnMut(JoltAdviceKind) -> Result<Option<Leaf<F, V>>, VerifierError>,
-    value: &mut dyn FnMut(JoltCommittedPolynomial) -> Result<V, VerifierError>,
+    value: &mut dyn FnMut(JoltCommittedPolynomial, Option<F>) -> Result<V, VerifierError>,
 ) -> Result<BTreeMap<JoltCommittedPolynomial, Leaf<F, V>>, VerifierError> {
     use JoltCommittedPolynomial as Poly;
 
@@ -651,13 +662,13 @@ pub fn leaves<F: JoltField, V>(
     ];
     for (points, polynomial) in families {
         for (index, point) in points.iter().enumerate() {
-            insert(polynomial(index), point, value(polynomial(index))?)?;
+            insert(polynomial(index), point, value(polynomial(index), None)?)?;
         }
     }
     insert(
         Poly::BalancedIncCarry,
         &hamming.balanced_inc_carry,
-        value(Poly::BalancedIncCarry)?,
+        value(Poly::BalancedIncCarry, None)?,
     )?;
 
     for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
@@ -670,12 +681,9 @@ pub fn leaves<F: JoltField, V>(
         }
     }
 
-    for opening in precommitted_final_openings(schedule, stage7_points, stage6b_points, None)? {
-        insert(
-            opening.polynomial,
-            &opening.point,
-            value(opening.polynomial)?,
-        )?;
+    for opening in precommitted {
+        let leaf_value = value(opening.polynomial, opening.opening_claim)?;
+        insert(opening.polynomial, &opening.point, leaf_value)?;
     }
 
     Ok(leaves)

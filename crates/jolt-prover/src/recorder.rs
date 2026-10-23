@@ -33,6 +33,8 @@ use jolt_verifier::VerifierError;
 use jolt_zk::blindfold::BlindFoldPadOpening;
 #[cfg(feature = "zk")]
 use jolt_zk::masking::{CommittedPads, MaskingRecorder};
+#[cfg(all(feature = "zk", feature = "akita"))]
+use jolt_zk::whiteout::WhiteoutPadOpening;
 
 use crate::ProverError;
 
@@ -40,24 +42,18 @@ use crate::ProverError;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 type ModePadOpening<VC> =
     BlindFoldPadOpening<<VC as VectorCommitment>::Field, <VC as Commitment>::Output>;
+/// What opens the pad commitment: Whiteout's lattice pad opening.
+#[cfg(all(feature = "zk", feature = "akita"))]
+type ModePadOpening<VC> = WhiteoutPadOpening<<VC as VectorCommitment>::Field>;
 
 /// The pads a ZK proof commits before its first challenge.
-#[cfg(all(feature = "zk", not(feature = "akita")))]
+#[cfg(feature = "zk")]
 pub type ModePads<VC> = CommittedPads<<VC as VectorCommitment>::Field, ModePadOpening<VC>>;
-/// The pads a Whiteout proof commits before its first challenge.
-/// PROTOTYPE: no opening until W6d wires Whiteout's lattice pad commitment;
-/// the production Whiteout entry rejects before any pads exist, and only the
-/// `prover-fixtures` seam builds them (`CommittedPads::uncommitted`).
-#[cfg(all(feature = "zk", feature = "akita"))]
-pub type ModePads<VC> = CommittedPads<<VC as VectorCommitment>::Field, ()>;
 
 /// The compiled mode's batch recorder type.
-#[cfg(all(feature = "zk", not(feature = "akita")))]
+#[cfg(feature = "zk")]
 pub type ModeRecorder<'a, VC> =
     MaskingRecorder<'a, <VC as VectorCommitment>::Field, ModePadOpening<VC>>;
-/// The compiled mode's batch recorder type.
-#[cfg(all(feature = "zk", feature = "akita"))]
-pub type ModeRecorder<'a, VC> = MaskingRecorder<'a, <VC as VectorCommitment>::Field, ()>;
 #[cfg(not(feature = "zk"))]
 pub type ModeRecorder<'a, VC> = ClearSumcheckRecorder<<VC as VectorCommitment>::Field>;
 

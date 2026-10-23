@@ -264,7 +264,7 @@ mod dory {
     }
 }
 
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 mod akita {
     use jolt_akita::{AkitaField, AkitaScheme};
     use jolt_algebra::Ring;
@@ -326,6 +326,74 @@ mod akita {
             &tape,
             || verify_with(case, &case.preprocessing, &attacked),
             "a stage-1 sumcheck equivocation",
+        );
+    }
+}
+
+/// HT4 on Whiteout: the statement class is load-bearing.
+#[cfg(all(feature = "akita", feature = "zk", not(feature = "field-inline")))]
+mod whiteout {
+    use common::jolt_device::JoltDevice;
+    use jolt_akita::{AkitaField, AkitaScheme};
+    use jolt_prover::akita::preprocessing::AkitaVc;
+    use jolt_transcript::VerifierTranscript;
+    use jolt_verifier::whiteout::{pad_layout, verify_transcript};
+    use jolt_verifier::{
+        jolt_protocol_id, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError,
+        JOLT_SESSION,
+    };
+
+    use super::support::akita_fixtures::whiteout_muldiv_case;
+    use super::{assert_binding_load_bearing, record_honest, AuditSponge};
+
+    type Preprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
+
+    /// `verify`'s body on the audit sponge. The pad layout, a statement-only
+    /// replay, is derived outside the session on the production sponge: the
+    /// session's tape admits one transcript.
+    fn verify_with(
+        preprocessing: &Preprocessing,
+        public_io: &JoltDevice,
+        proof: &JoltProof,
+    ) -> Result<(), VerifierError> {
+        let mut transcript = VerifierTranscript::<AuditSponge>::new(
+            &jolt_protocol_id::<AuditSponge>(),
+            JOLT_SESSION,
+            &proof.narg,
+        );
+        verify_transcript::<AkitaField, AkitaScheme, AkitaVc, AuditSponge>(
+            preprocessing,
+            public_io,
+            None,
+            &mut transcript,
+            Some(&layout(preprocessing, public_io, proof)?),
+        )?;
+        Ok(transcript.finish()?)
+    }
+
+    fn layout(
+        preprocessing: &Preprocessing,
+        public_io: &JoltDevice,
+        proof: &JoltProof,
+    ) -> Result<jolt_zk::masking::PadLayout, VerifierError> {
+        pad_layout::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+            preprocessing,
+            public_io,
+            None,
+            &proof.narg,
+        )
+    }
+
+    #[test]
+    fn whiteout_preprocessing_digest_requires_fiat_shamir_binding() {
+        let case = whiteout_muldiv_case();
+        let tape = record_honest(|| verify_with(&case.preprocessing, &case.public_io, &case.proof));
+        let mut preprocessing = case.preprocessing.clone();
+        preprocessing.preprocessing_digest[0] ^= 1;
+        assert_binding_load_bearing(
+            &tape,
+            || verify_with(&preprocessing, &case.public_io, &case.proof),
+            "a Whiteout proof under different preprocessing",
         );
     }
 }

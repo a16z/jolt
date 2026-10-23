@@ -126,6 +126,7 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
                 .end;
             Ok(start..end)
         };
+        let outputs = Self::output_rows(&blocks, pads);
         let mut linear = Vec::with_capacity(blocks.len() + 1);
         for block in blocks {
             let gadget = match block.gadget {
@@ -160,8 +161,13 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
             target: pad_image,
         });
         let linear = RingLinearMap::new(linear)?;
+        if linear.num_outputs() != outputs {
+            return Err(WhiteoutError::InvariantViolation(
+                "N's output rows differ from the blocks' and the pad commitment's",
+            ));
+        }
 
-        let message_rings = Self::v_message_rings(linear.num_outputs());
+        let message_rings = Self::v_message_rings(outputs);
         let v_level = AjtaiLevel {
             matrix: MatrixShape {
                 rows: v_rank,
@@ -198,15 +204,20 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         (num_outputs * D) / CHALLENGE_RING_DIM + 3
     }
 
-    /// The width in challenge-ring columns of `A_D` for opening rows
-    /// `blocks` and the pad commitment `pads`.
-    pub fn v_width(blocks: &[ResidualBlock<F, D>], pads: &LatticePadCommitment<F, D>) -> usize {
-        let outputs = blocks
+    /// The output ring rows of `N`: each opening block's rows, then the pad
+    /// commitment's (the order [`Self::new`] stacks them in).
+    fn output_rows(blocks: &[ResidualBlock<F, D>], pads: &LatticePadCommitment<F, D>) -> usize {
+        blocks
             .iter()
             .map(|block| block.matrix.shape().rows)
             .sum::<usize>()
-            + pads.image_len() / D;
-        Self::v_message_rings(outputs) * FIELD_LEVELS
+            + pads.matrix().shape().rows
+    }
+
+    /// The width in challenge-ring columns of `A_D` for opening rows
+    /// `blocks` and the pad commitment `pads`.
+    pub fn v_width(blocks: &[ResidualBlock<F, D>], pads: &LatticePadCommitment<F, D>) -> usize {
+        Self::v_message_rings(Self::output_rows(blocks, pads)) * FIELD_LEVELS
     }
 
     /// The public stream length [`Self::new`] reads for `A_D` of rank

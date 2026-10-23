@@ -25,12 +25,13 @@ use jolt_transcript::{
 };
 use jolt_verifier::sites::{
     BLINDFOLD, COMMITMENTS, PADS, PREAMBLE, STAGE1, STAGE2, STAGE3, STAGE4, STAGE5, STAGE6A,
-    STAGE6B, STAGE7, STAGE8,
+    STAGE6B, STAGE7, STAGE8, WHITEOUT,
 };
 use jolt_verifier::{
     jolt_protocol_id, JoltProof, JoltSponge, JoltVerifierPreprocessing, ProofHeader, VerifierError,
     JOLT_SESSION,
 };
+use jolt_zk::masking::ZkError;
 
 /// A Jolt protocol region, in transcript order. Each is entered by the
 /// verifier setting the matching [`jolt_verifier::sites`] site.
@@ -49,10 +50,12 @@ pub enum Region {
     Stage7,
     Stage8,
     BlindFold,
+    /// Whiteout's auxiliary block, Σ-protocol and response proof.
+    Whiteout,
 }
 
 impl Region {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Preamble,
         Self::Commitments,
         Self::Pads,
@@ -66,14 +69,18 @@ impl Region {
         Self::Stage7,
         Self::Stage8,
         Self::BlindFold,
+        Self::Whiteout,
     ];
 
     /// The regions a proof of this build passes through.
     pub fn expected() -> Vec<Self> {
         Self::ALL
             .into_iter()
-            .filter(|region| {
-                cfg!(feature = "zk") || !matches!(region, Self::Pads | Self::BlindFold)
+            .filter(|&region| {
+                (cfg!(feature = "zk") || region != Self::Pads)
+                    && (cfg!(all(feature = "zk", not(feature = "akita")))
+                        || region != Self::BlindFold)
+                    && (cfg!(all(feature = "zk", feature = "akita")) || region != Self::Whiteout)
             })
             .collect()
     }
@@ -93,6 +100,7 @@ impl Region {
             (STAGE7, Self::Stage7),
             (STAGE8, Self::Stage8),
             (BLINDFOLD, Self::BlindFold),
+            (WHITEOUT, Self::Whiteout),
         ]
         .into_iter()
         .find_map(|(candidate, region)| (candidate == site).then_some(region))
@@ -110,9 +118,20 @@ impl Region {
     /// header and commitments in [`Trace::messages`].
     pub fn statement_deadline() -> Self {
         if cfg!(feature = "zk") {
-            Self::Stage8
+            Self::zk_deadline()
         } else {
             Self::Stage1
+        }
+    }
+
+    /// Where a ZK proof checks its masked messages: BlindFold's Stage 8
+    /// opening binds every stage challenge; Whiteout checks nothing before
+    /// its Σ-protocol over the residual relation.
+    pub fn zk_deadline() -> Self {
+        if cfg!(feature = "akita") {
+            Self::Whiteout
+        } else {
+            Self::Stage8
         }
     }
 }
@@ -198,7 +217,7 @@ impl Trace {
                     .clone()
                     .expect("every message event records its argument-string range"),
                 deadline: if cfg!(feature = "zk") {
-                    region.max(Region::Stage8)
+                    region.max(Region::zk_deadline())
                 } else {
                     next_challenge.unwrap_or(region).max(region)
                 },
@@ -422,18 +441,24 @@ mod akita {
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
     use jolt_algebra::CanonicalBytes;
     use jolt_prover::akita::preprocessing::AkitaVc;
+    #[cfg(not(feature = "zk"))]
+    use jolt_verifier::seed_transcript;
+    #[cfg(not(feature = "zk"))]
     use jolt_verifier::stages::{
         stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
     };
+    #[cfg(not(feature = "zk"))]
     use jolt_verifier::verifier::SeededTranscript;
-    use jolt_verifier::{
-        seed_transcript, verify, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError,
-    };
+    #[cfg(feature = "zk")]
+    use jolt_verifier::whiteout::verify_transcript;
+    use jolt_verifier::{verify, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError};
+    #[cfg(not(feature = "zk"))]
     use jolt_zk::masking::CommittedPadsView;
 
     use super::{finish_trace, new_transcript, Trace, TracedCase};
     use crate::support::akita_fixtures::AkitaFixtureCase;
     use jolt_transcript::VerifierTranscript;
+    #[cfg(not(feature = "zk"))]
     use stage8::Stage8Output;
 
     type Preprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
@@ -441,6 +466,7 @@ mod akita {
     /// `jolt_verifier::verify`'s Akita body after its protocol-config check.
     /// The Akita build exports no stage-spine entry point, so the sequence is
     /// restated here; `TracedCase::honest_trace` checks it against `verify`.
+    #[cfg(not(feature = "zk"))]
     fn stages(
         preprocessing: &Preprocessing,
         public_io: &JoltDevice,
@@ -506,6 +532,23 @@ mod akita {
             Stage8Output::Clear => Ok(()),
             Stage8Output::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage8" }),
         }
+    }
+
+    /// Whiteout's verifier body, the production `verify_transcript`.
+    #[cfg(feature = "zk")]
+    fn stages(
+        preprocessing: &Preprocessing,
+        public_io: &JoltDevice,
+        trusted_advice_commitment: Option<&AkitaCommitment>,
+        transcript: &mut VerifierTranscript<'_, JoltSponge>,
+    ) -> Result<(), VerifierError> {
+        verify_transcript::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+            preprocessing,
+            public_io,
+            trusted_advice_commitment,
+            transcript,
+            None,
+        )
     }
 
     impl TracedCase for AkitaFixtureCase {
@@ -782,7 +825,13 @@ pub fn assert_truncations_reject<C: TracedCase>(case: &C, budget: Option<usize>)
                 Err(VerifierError::FinalOpeningVerificationFailed { reason })
                     if *reason == OpeningsError::VerificationFailed.to_string()
             );
-        if !is_truncation(&result) && !opaque_akita_opening {
+        // WARNING: Whiteout's masked levels, Σ and response proof report a
+        // truncation through Akita's unit `InvalidProof`, erased into
+        // `ZkError::Whiteout`.
+        let opaque_whiteout = cfg!(all(feature = "akita", feature = "zk"))
+            && region >= Region::Stage8
+            && matches!(&result, Err(VerifierError::Masking(ZkError::Whiteout(_))));
+        if !is_truncation(&result) && !opaque_akita_opening && !opaque_whiteout {
             failures.push(format!("cut at {boundary}: {result:?}"));
         }
     }

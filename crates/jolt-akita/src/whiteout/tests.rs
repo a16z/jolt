@@ -24,8 +24,8 @@ const NUM_VARS: usize = 16;
 /// Muldiv's trace group shape.
 const NUM_POLYS: usize = 56;
 const SESSION: &[u8] = b"whiteout-opening";
-/// A40: the Akita harness's ranks, not priced at the Σ radius.
-const RANKS: SigmaRanks = SigmaRanks::A40TestOnly { pad: 2, v: 1 };
+/// A40: not priced at the Σ radius.
+const RANKS: SigmaRanks = SigmaRanks::A40_TEST_ONLY;
 
 struct Fixture {
     row: WhiteoutRow,
@@ -52,6 +52,7 @@ fn fixture() -> Fixture {
         .collect::<Vec<_>>();
     let source = row
         .backend()
+        .unwrap()
         .import_source(
             polynomials
                 .iter()

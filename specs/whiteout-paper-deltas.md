@@ -988,7 +988,14 @@ deltas", commit `9d93a7034`).
 - No proof was checked here. W6's text says both "reruns at most twice" and
   "at most 3 attempts"; these agree, since the count is 3 runs in total.
 
-**Status.** Specified (W6), not implemented.
+**Status.** Implemented (W6d): `jolt_prover::akita::prove` on the Whiteout
+build, `WHITEOUT_ATTEMPTS = 3`, retrying on `ZkError::is_rerunnable`. Both
+OS streams (Akita's hiding randomness, jolt's pads/g/r_p/Σ coins) draw
+fresh. HT3 (jolt-verifier `soundness::whiteout`) aborts the first attempt
+after its masked levels through a `prover-fixtures` fault seam: the rerun's
+hiding commitment, t_p and every masked message differ from the aborted
+attempt's, and its proof verifies. The seam forces the abort; it does not
+produce a real fold overflow.
 
 **For the paper.** State the prover's behaviour on abort as a bounded
 whole-proof rerun with all randomness fresh, and add r·δ_fold for r runs to
@@ -1067,7 +1074,28 @@ mode on both sides. #254's caller contract gains one item: in ZK mode Akita's
 root runs only after t_p and every masked slot its claims reference.
 `MaskedGroupClaim` enforces this by type.
 
-**Status.** Specified (W6). This log did not check the argument.
+**Status.** Implemented for the trace group (W6d): stage 8 passes its claims
+to Akita as `MaskedGroupClaim` forms and absorbs no evaluation; precommitted
+groups, whose packing reduction would absorb evaluations, are rejected for
+now. What binds the final-opening claims is not a row a shift cannot
+satisfy. jolt-verifier's `soundness::whiteout::shifts` probe, on muldiv's 56
+final-opening claims with every auxiliary value recomputed as a consistent
+cheater would, finds:
+
+- Jolt's rows see one combination of the claims (a 55-dimensional blind
+  space).
+- Akita's rows apply exactly one functional to the claims, and its
+  coefficients are the EvaluationBatch challenges, which are drawn after t_p
+  and every masked value.
+- A shift in that functional's kernel passes every row under the drawn
+  challenges.
+
+So the argument is Schwartz–Zippel over the EvaluationBatch coefficients: a
+nonzero shift fixed before they are drawn lies in their kernel with
+probability at most 1/|C| over the small challenge set C (one linear
+condition), and the shift is fixed by then because t_p and the masked values
+are absorbed first. It also needs the residual u_a
+bound (§8, A41). This log did not check the argument.
 
 **For the paper.** None required; the paper already binds claims through
 the masked messages and the pad commitment. A sentence in §4.1 that the PCS

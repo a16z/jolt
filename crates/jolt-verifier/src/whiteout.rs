@@ -15,6 +15,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_algebra::JoltField;
+use jolt_claims::protocols::jolt::lattice::OneHotTraceLayoutPlan;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Channel, Sponge, TranscriptError, VerifierTranscript};
@@ -26,13 +27,13 @@ use jolt_zk::whiteout::{LatticePadPayload, MaskedGroupClaim, MaskedGroupOpening}
 use crate::config::{validate_proof_config, JOLT_VERIFIER_CONFIG};
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
-use crate::sites::{PADS, STAGE8, WHITEOUT};
-use crate::stages::stage8::akita::masked_trace_claim;
+use crate::sites::{PADS, STAGE8, WHITEOUT, WHITEOUT_SIGMA};
+use crate::stages::stage8::akita::{masked_trace_claim, whiteout_trace_plan};
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::stages::zk::residual::JoltResidual;
 use crate::verifier::{
-    jolt_protocol_id, seed_transcript, verify_stages_1_to_7, JoltSponge, SeededTranscript,
-    StageOutputs, JOLT_SESSION,
+    jolt_protocol_id, seed_transcript, verify_stages_1_to_7, SeededTranscript, StageOutputs,
+    JOLT_SESSION,
 };
 use crate::VerifierError;
 
@@ -69,28 +70,67 @@ where
     pub claim: MaskedGroupClaim<F, PCS::Output>,
 }
 
-/// Stage 8's masked claims over `residual`, from the stage outputs.
-fn stage8_claim<F, PCS, VC>(
+/// The seeding messages, then the trace group's plan and the masked
+/// opening's shape, both from the statement: the commitment metadata is
+/// checked against the plan before any shape is built.
+fn seed<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    seeded: &SeededTranscript<PCS::Output>,
+    public_io: &JoltDevice,
     trusted_advice_commitment: Option<&PCS::Output>,
-    stages: &StageOutputs<F>,
-    residual: &JoltResidual<F>,
-) -> Result<MaskedGroupClaim<F, PCS::Output>, VerifierError>
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<Seed<F, PCS>, VerifierError>
 where
     F: JoltField,
     PCS: WhiteoutScheme<F>,
     PCS::Output: Clone + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
+    H: Sponge,
 {
-    masked_trace_claim::<F, PCS, VC>(
+    let seeded = seed_transcript(
+        preprocessing,
+        public_io,
+        trusted_advice_commitment,
+        transcript,
+    )?;
+    let plan = whiteout_trace_plan::<PCS, VC>(
         &seeded.formula_dimensions,
         seeded.checked.one_hot_config,
         preprocessing,
         &seeded.commitments.one_hot_trace,
         seeded.commitments.untrusted_advice.as_ref(),
         trusted_advice_commitment,
+    )?;
+    let shape = PCS::shape(&preprocessing.pcs_setup, plan.num_vars(), plan.ids().len())?;
+    Ok(Seed {
+        seeded,
+        plan,
+        shape,
+    })
+}
+
+/// [`seed`]'s output.
+struct Seed<F: JoltField, PCS: WhiteoutScheme<F>>
+where
+    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
+{
+    seeded: SeededTranscript<PCS::Output>,
+    plan: OneHotTraceLayoutPlan,
+    shape: <PCS as MaskedGroupOpening<F>>::Shape,
+}
+
+/// Stage 8's masked claims over `residual`, from the stage outputs.
+fn stage8_claim<F: JoltField, C: Clone>(
+    seeded: &SeededTranscript<C>,
+    plan: &OneHotTraceLayoutPlan,
+    stages: &StageOutputs<F>,
+    residual: &JoltResidual<F>,
+) -> Result<MaskedGroupClaim<F, C>, VerifierError> {
+    masked_trace_claim(
+        plan,
+        seeded.checked.one_hot_config,
+        &seeded.commitments.one_hot_trace,
         &seeded.checked.precommitted,
         stages.stage6b.output_points(),
         &stages.stage7.zk()?.output_points,
@@ -106,7 +146,7 @@ where
 /// # Errors
 ///
 /// [`VerifierError`] if the seeded prefix is malformed or the replay fails.
-pub fn pad_layout<F, PCS, VC>(
+pub fn pad_layout<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     trusted_advice_commitment: Option<&PCS::Output>,
@@ -118,6 +158,7 @@ where
     PCS::Output: Clone + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
+    H: Sponge,
 {
     // As the homomorphic build's replay: 1 MiB covers the masked messages
     // of every realistic trace, doubled up to 16 MiB.
@@ -126,23 +167,20 @@ where
         let mut bytes = Vec::with_capacity(seeded_prefix.len().saturating_add(padding));
         bytes.extend_from_slice(seeded_prefix);
         bytes.resize(seeded_prefix.len().saturating_add(padding), 0);
-        let mut transcript = VerifierTranscript::<JoltSponge>::new(
-            &jolt_protocol_id::<JoltSponge>(),
-            JOLT_SESSION,
-            &bytes,
-        );
-        let seeded = seed_transcript(
+        let mut transcript =
+            VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, &bytes);
+        let Seed {
+            seeded,
+            plan,
+            shape,
+        } = seed::<F, PCS, VC, H>(
             preprocessing,
             public_io,
             trusted_advice_commitment,
             &mut transcript,
         )?;
-        let shape = PCS::shape(
-            &preprocessing.pcs_setup,
-            &[&seeded.commitments.one_hot_trace],
-        )?;
         let mut counter = CommittedPadsView::counting();
-        let replayed = verify_stages_1_to_7::<F, PCS, VC, JoltSponge, ()>(
+        let replayed = verify_stages_1_to_7::<F, PCS, VC, H, ()>(
             preprocessing,
             &seeded.checked,
             &seeded.formula_dimensions,
@@ -151,13 +189,7 @@ where
         )
         .and_then(|stages| {
             let residual = stages.residual(&seeded.checked, preprocessing)?;
-            let claim = stage8_claim::<F, PCS, VC>(
-                preprocessing,
-                &seeded,
-                trusted_advice_commitment,
-                &stages,
-                &residual,
-            )?;
+            let claim = stage8_claim(&seeded, &plan, &stages, &residual)?;
             let prefix = PCS::count_masked(&shape, vec![claim], &mut counter, &mut transcript)
                 .map_err(VerifierError::Masking)?;
             Ok((residual, prefix))
@@ -199,7 +231,11 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
-    let seeded = seed_transcript(
+    let Seed {
+        seeded,
+        plan,
+        shape,
+    } = seed::<F, PCS, VC, H>(
         preprocessing,
         public_io,
         trusted_advice_commitment,
@@ -207,17 +243,13 @@ where
     )?;
     let layout = match layout {
         Some(layout) => layout.clone(),
-        None => pad_layout::<F, PCS, VC>(
+        None => pad_layout::<F, PCS, VC, H>(
             preprocessing,
             public_io,
             trusted_advice_commitment,
             transcript.consumed(),
         )?,
     };
-    let shape = PCS::shape(
-        &preprocessing.pcs_setup,
-        &[&seeded.commitments.one_hot_trace],
-    )?;
     transcript.site(PADS);
     let mut pads = PCS::receive_pads(&shape, layout, transcript)?;
     let stages = verify_stages_1_to_7::<F, PCS, VC, H, LatticePadPayload<F>>(
@@ -229,13 +261,7 @@ where
     )?;
     let residual = stages.residual(&seeded.checked, preprocessing)?;
     transcript.site(STAGE8);
-    let claim = stage8_claim::<F, PCS, VC>(
-        preprocessing,
-        &seeded,
-        trusted_advice_commitment,
-        &stages,
-        &residual,
-    )?;
+    let claim = stage8_claim(&seeded, &plan, &stages, &residual)?;
     Ok(WhiteoutStages {
         shape,
         pads,
@@ -342,22 +368,51 @@ where
     validate_proof_config(&JOLT_VERIFIER_CONFIG, proof.protocol)?;
     let mut transcript =
         VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, &proof.narg);
-    let mut stages = whiteout_stages::<F, PCS, VC, H>(
+    verify_transcript::<F, PCS, VC, H>(
         preprocessing,
         public_io,
         trusted_advice_commitment,
         &mut transcript,
         None,
     )?;
-    let (prefix, _checkpoint) = whiteout_prefix(&mut stages, &mut transcript)?;
-    let relation = whiteout_relation(&mut stages, &prefix, &mut transcript)?;
-    PCS::verify_tail(
-        &stages.shape,
-        &prefix,
-        &relation,
-        &stages.pads,
-        &mut transcript,
-    )?;
     transcript.finish()?;
+    Ok(())
+}
+
+/// [`verify`]'s body after the protocol-config check, over a transcript the
+/// caller owns and finishes (its event log is the masked-site census's
+/// input). `layout` is the derived pad layout when the caller has it: a
+/// recording sponge allows one transcript per session, and [`pad_layout`]
+/// replays on a second.
+///
+/// # Errors
+///
+/// [`VerifierError`] if any step rejects.
+pub fn verify_transcript<F, PCS, VC, H>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut VerifierTranscript<'_, H>,
+    layout: Option<&PadLayout>,
+) -> Result<(), VerifierError>
+where
+    F: JoltField,
+    PCS: WhiteoutScheme<F>,
+    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
+    VC: VectorCommitment<Field = F>,
+    H: Sponge,
+{
+    let mut stages = whiteout_stages::<F, PCS, VC, H>(
+        preprocessing,
+        public_io,
+        trusted_advice_commitment,
+        transcript,
+        layout,
+    )?;
+    let (prefix, _checkpoint) = whiteout_prefix(&mut stages, transcript)?;
+    let relation = whiteout_relation(&mut stages, &prefix, transcript)?;
+    transcript.site(WHITEOUT_SIGMA);
+    PCS::verify_tail(&stages.shape, &prefix, &relation, &stages.pads, transcript)?;
     Ok(())
 }

@@ -16,7 +16,8 @@ default = ["transcript-blake2b"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]
-prover-fixtures = []
+# The fixture prover's test seams (Whiteout's A40 test-only preprocessing).
+prover-fixtures = ["jolt-prover/prover-fixtures"]
 # Records every transcript operation with its protocol site (crate::sites)
 # and argument-string range, for the transcript test suites.
 logging = ["jolt-transcript/logging"]
@@ -33,8 +34,8 @@ field-inline = [
 ]
 zk = ["jolt-prover/zk"]
 # The Akita commitment mode: native one-hot trace columns and auxiliary
-# objects share one batch opening. Mutually exclusive with
-# `zk` — one PIOP per compiled verifier.
+# objects share one batch opening. With `zk` it verifies Whiteout proofs
+# only — one PIOP per compiled verifier.
 akita = [
   "jolt-prover/akita",
   "jolt-claims/akita",

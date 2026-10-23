@@ -1,5 +1,4 @@
-//! Stages 1–7 of the Akita prover, shared by the clear prover and (until
-//! W6d wires Whiteout's tail) the masked prover-fixtures seam.
+//! Stages 1–7 of the Akita prover, shared by the clear and Whiteout provers.
 
 use common::jolt_device::JoltDevice;
 use jolt_algebra::JoltField;

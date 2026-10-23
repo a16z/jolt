@@ -24,6 +24,10 @@ pub struct AkitaFixtureCase {
     pub public_io: JoltDevice,
     pub proof: JoltProof,
     pub trusted_advice_commitment: Option<AkitaCommitment>,
+    /// Whiteout: the proof's pads, for probes that rebuild the residual
+    /// relation as a cheating prover would.
+    #[cfg(feature = "zk")]
+    pub pads: Vec<AkitaField>,
 }
 
 impl AkitaFixtureCase {
@@ -42,6 +46,7 @@ impl AkitaFixtureCase {
 }
 
 /// The muldiv case: one `OneHotTrace` commitment object and no precommitted objects.
+#[cfg(not(feature = "zk"))]
 pub fn akita_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_muldiv)
@@ -49,6 +54,7 @@ pub fn akita_muldiv_case() -> &'static AkitaFixtureCase {
 
 /// The advice case: both advice kinds, three commitment objects
 /// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`) in one grouped opening.
+#[cfg(not(feature = "zk"))]
 pub fn akita_advice_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_advice)
@@ -56,11 +62,13 @@ pub fn akita_advice_case() -> &'static AkitaFixtureCase {
 
 /// The committed-program case: direct bytecode and program-image objects in
 /// the native grouped opening.
+#[cfg(not(feature = "zk"))]
 pub fn akita_committed_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_committed_muldiv)
 }
 
+#[cfg(not(feature = "zk"))]
 fn generate_muldiv() -> AkitaFixtureCase {
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
@@ -74,6 +82,7 @@ fn generate_muldiv() -> AkitaFixtureCase {
     prove_prepared(run, config, preprocessing, &[])
 }
 
+#[cfg(not(feature = "zk"))]
 fn generate_advice() -> AkitaFixtureCase {
     let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
     let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
@@ -96,6 +105,7 @@ fn generate_advice() -> AkitaFixtureCase {
     prove_prepared(run, config, preprocessing, &trusted_advice)
 }
 
+#[cfg(not(feature = "zk"))]
 fn generate_committed_muldiv() -> AkitaFixtureCase {
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
@@ -106,6 +116,40 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
         &config,
     )
     .expect("committed Akita preprocessing");
+    prove_prepared(run, config, preprocessing, &[])
+}
+
+/// Whiteout's muldiv case (`akita,zk`): one hiding `OneHotTrace` group,
+/// under Akita A40's test-only Σ ranks (the production setup rejects until
+/// W5e prices them).
+#[cfg(feature = "zk")]
+pub fn whiteout_muldiv_case() -> &'static AkitaFixtureCase {
+    static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
+    CASE.get_or_init(generate_whiteout_muldiv)
+}
+
+/// Whiteout's muldiv case proved with its first attempt aborted after the
+/// masked levels (HT3), and that attempt's argument string.
+#[cfg(feature = "zk")]
+pub fn whiteout_rerun_case() -> (AkitaFixtureCase, Vec<u8>) {
+    jolt_prover::akita::whiteout_faults::abort_next_attempt();
+    let case = generate_whiteout_muldiv();
+    let aborted =
+        jolt_prover::akita::whiteout_faults::take_aborted().expect("the first attempt aborted");
+    (case, aborted)
+}
+
+#[cfg(feature = "zk")]
+fn generate_whiteout_muldiv() -> AkitaFixtureCase {
+    let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
+    let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
+    let config = derive_config(&run);
+    let preprocessing = preprocessing::preprocess_full_whiteout_a40_test_only(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        run.program_preprocessing.clone(),
+        &config,
+    )
+    .expect("Whiteout preprocessing");
     prove_prepared(run, config, preprocessing, &[])
 }
 
@@ -155,6 +199,8 @@ fn prove_prepared(
         public_io,
         proof,
         trusted_advice_commitment: trusted.map(|object| object.commitment),
+        #[cfg(feature = "zk")]
+        pads: jolt_prover::akita::whiteout_secrets::take().expect("the Whiteout proof's pads"),
     }
 }
 

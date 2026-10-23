@@ -6,9 +6,8 @@
 use std::collections::BTreeMap;
 
 use jolt_algebra::JoltField;
-use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
-use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
+use jolt_claims::protocols::jolt::lattice::packing::PrefixPackedObjectPlan;
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
@@ -20,19 +19,14 @@ use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage8::akita::field_inc_claim;
-use jolt_verifier::stages::stage8::akita::{leaf_claims, object_leaf_claims, one_hot_trace_claim};
-use jolt_verifier::{CheckedInputs, VerifierError};
+use jolt_verifier::stages::stage8::akita::{leaf_claims, object_leaf_claims};
+use jolt_verifier::CheckedInputs;
 
+use super::trace_group::{batch_failed, trace_group_claim};
 use super::witness::{AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 #[cfg(feature = "field-inline")]
 use jolt_kernels::akita::commitment::FieldIncObject;
-
-fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
-    ProverError::Verifier(VerifierError::FinalOpeningBatchFailed {
-        reason: reason.to_string(),
-    })
-}
 
 fn reduce_precommitted<F, C>(
     plan: &PrefixPackedObjectPlan,
@@ -75,26 +69,14 @@ where
     H: Sponge,
 {
     transcript.site(STAGE8);
-    let log_t = checked.trace_length.ilog2() as usize;
-    let chunk_width = config.one_hot_config.committed_chunk_bits();
-    let formula_dimensions = crate::stages::formula_dimensions(
+    let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
+    let main_group = trace_group_claim(
         checked,
         config,
-        preprocessing.verifier.program.bytecode_len(),
-        JoltRelationId::HammingWeightClaimReduction,
+        preprocessing,
+        &leaves,
+        one_hot_trace_commitment,
     )?;
-    let plan = ONE_HOT_TRACE_LAYOUT
-        .plan(&OneHotTraceShape {
-            ra_layout: formula_dimensions.ra_layout,
-            log_t,
-            log_k_chunk: chunk_width,
-        })
-        .map_err(batch_failed::<F>)?;
-
-    let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
-
-    let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)
-        .map_err(ProverError::Verifier)?;
 
     let untrusted_physical = untrusted_advice
         .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))

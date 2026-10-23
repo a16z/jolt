@@ -13,7 +13,7 @@
 //!   W5e's Σ-binding table (A40).
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use akita_config::proof_optimized::fp128::ResponseDigits;
 use akita_config::{
@@ -42,7 +42,7 @@ use jolt_zk::masking::{
 use jolt_zk::whiteout::{
     commit_lattice_pads, prove_sigma, receive_lattice_pads, verify_sigma, BlockTarget,
     ImageCompression, LatticePadCommitment, LatticePadPayload, PadPlacement, SigmaSetup,
-    WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS,
+    WhiteoutError, WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS,
 };
 use rand_core::{CryptoRng, RngCore};
 
@@ -80,37 +80,59 @@ macro_rules! with_ring_dim {
     };
 }
 
-/// The ranks of the pad commitment `A_p` and of `A_D`. Both bind openings
-/// the Σ-protocol certifies only inside its Gaussian box, so both must be
-/// Module-SIS hard at the Σ collision radius `4Γ_Δ·B_M` (Akita A40).
+/// The ranks of the pad commitment `A_p` and of `A_D`. `A_p` binds the
+/// pads, which the Σ-protocol certifies only inside its Gaussian box, so it
+/// must be Module-SIS hard at the Σ collision radius (Akita A40). `A_D`
+/// commits range-checked radix-16 digits, so it needs Module-SIS only at
+/// the digit-difference bound, as ordinary Akita pricing does
+/// (`05_security.tex:31-33`, `wo:thm:knowledge`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SigmaRanks {
-    /// Priced by [`sigma_matrix_rank`] at each matrix's ring dimension and
-    /// width.
+    /// `A_p` priced by [`sigma_matrix_rank`], `A_D` by
+    /// [`digit_matrix_rank`].
     Priced,
-    /// Fixed ranks for tests, NOT priced at the Σ radius (A40): the Akita
-    /// end-to-end harness's 2 and 1, until W5e's table prices them.
+    /// Fixed ranks for tests, NOT priced (A40): the Akita end-to-end
+    /// harness's 2 and 1, until W5e's table prices them.
     #[cfg(any(test, feature = "test-support"))]
     A40TestOnly { pad: usize, v: usize },
 }
 
-/// The Module-SIS rank of a matrix that binds a Σ-certified opening, of
-/// `width` columns over a ring of dimension `ring_dim`, at the Σ collision
-/// radius: the one owner of `A_p` and `A_D` sizing.
+/// The Module-SIS rank of `A_p`, of `width` columns over a ring of dimension
+/// `ring_dim`, at the Σ collision radius: the one owner of its sizing.
 ///
 /// # Errors
 ///
 /// Always, until Akita's Σ-binding table lands with W5e (A40):
 /// `akita_params::sis::sigma_binding::sigma_binding_min_rank` prices it.
-pub fn sigma_matrix_rank(ring_dim: usize, width: usize) -> Result<usize, ZkError> {
+pub(crate) fn sigma_matrix_rank(ring_dim: usize, width: usize) -> Result<usize, ZkError> {
     Err(AkitaError::UnsupportedSchedule(format!(
-        "A40: the Σ-binding rank of A_p/A_D (d {ring_dim}, width {width}) is priced by W5e's \
+        "A40: the Σ-binding rank of A_p (d {ring_dim}, width {width}) is priced by W5e's \
          sigma_binding_min_rank, which Akita dev does not have yet"
     ))
     .into())
 }
 
+/// The Module-SIS rank of `A_D`, of `width` challenge-ring columns over
+/// range-checked radix-16 digits, at the digit-difference bound: the one
+/// owner of its sizing.
+///
+/// # Errors
+///
+/// Always, until it is wired to Akita's ordinary digit pricing with W5e.
+pub(crate) fn digit_matrix_rank(width: usize) -> Result<usize, ZkError> {
+    Err(AkitaError::UnsupportedSchedule(format!(
+        "the rank of A_D (width {width}) is priced at the digit-difference bound by Akita's \
+         ordinary pricing, not wired until W5e merges"
+    ))
+    .into())
+}
+
 impl SigmaRanks {
+    /// A40: the Akita end-to-end harness's ranks (2 and 1), NOT priced;
+    /// tests only, until W5e's table prices them.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const A40_TEST_ONLY: Self = Self::A40TestOnly { pad: 2, v: 1 };
+
     fn pad(self, ring_dim: usize, width: usize) -> Result<usize, ZkError> {
         match self {
             Self::Priced => sigma_matrix_rank(ring_dim, width),
@@ -121,7 +143,7 @@ impl SigmaRanks {
 
     fn v(self, width: usize) -> Result<usize, ZkError> {
         match self {
-            Self::Priced => sigma_matrix_rank(jolt_crypto::lattice::CHALLENGE_RING_DIM, width),
+            Self::Priced => digit_matrix_rank(width),
             #[cfg(any(test, feature = "test-support"))]
             Self::A40TestOnly { v, .. } => Ok(v),
         }
@@ -139,16 +161,22 @@ fn public_stream(len: usize, seed: [u8; 32]) -> Result<Vec<F>, ZkError> {
         .map_err(|error| AkitaError::InvalidSetup(error.to_string()).into())
 }
 
-/// One trace shape's zero-knowledge opening: its row, the Akita setups that
-/// prove and verify it, and the residual shape at its cut.
+/// One trace shape's zero-knowledge opening: its row, the Akita verifier,
+/// the residual shape at its cut, and the prover's setup and backend, built
+/// only on the first prover call (a verifier never builds prover state).
 pub struct WhiteoutRow {
     scheme: AkitaCommitmentScheme<WhiteoutOneHot>,
-    prover: AkitaBackendProverSetup,
-    backend: AkitaBackend,
     verifier: AkitaVerifier<WhiteoutOneHot>,
     shape: ResidualShape,
     num_vars: usize,
     num_polys: usize,
+    prover: OnceLock<WhiteoutProver>,
+}
+
+/// The prover's half of a [`WhiteoutRow`].
+struct WhiteoutProver {
+    setup: AkitaBackendProverSetup,
+    backend: AkitaBackend,
 }
 
 impl WhiteoutRow {
@@ -189,26 +217,30 @@ impl WhiteoutRow {
             chunking,
         )?;
         let scheme = AkitaCommitmentScheme::new(catalog);
-        let prover = scheme.setup_prover(num_vars, num_polys)?;
-        let backend = AkitaBackend::new(Arc::clone(&prover.expanded))?;
-        let verifier = scheme.verifier(scheme.setup_verifier(&prover)?)?;
+        // Akita derives a verifier setup only from a prover setup; this one
+        // is dropped here.
+        let verifier =
+            scheme.verifier(scheme.setup_verifier(&scheme.setup_prover(num_vars, num_polys)?)?)?;
         Ok(Self {
             scheme,
-            prover,
-            backend,
             verifier,
             shape,
             num_vars,
             num_polys,
+            prover: OnceLock::new(),
         })
     }
 
-    pub fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    pub fn num_polys(&self) -> usize {
-        self.num_polys
+    /// The prover's setup and backend, built on first use.
+    fn prover(&self) -> Result<&WhiteoutProver, AkitaError> {
+        if let Some(prover) = self.prover.get() {
+            return Ok(prover);
+        }
+        let setup = self.scheme.setup_prover(self.num_vars, self.num_polys)?;
+        let backend = AkitaBackend::new(Arc::clone(&setup.expanded))?;
+        Ok(self
+            .prover
+            .get_or_init(|| WhiteoutProver { setup, backend }))
     }
 
     /// The residual commitment's ring dimension, which the pad commitment
@@ -235,7 +267,7 @@ impl WhiteoutRow {
         &self,
         source: &akita_pcs::SourceHandle<F, F>,
     ) -> Result<(CommittedGroup<F>, AkitaBackendHint), AkitaError> {
-        let output = self.backend.commit(
+        let output = self.prover()?.backend.commit(
             self.scheme.schedules(),
             source,
             GroupContext::scheduler_without_precommitted_groups(),
@@ -244,8 +276,12 @@ impl WhiteoutRow {
     }
 
     /// The backend the trace source is imported into.
-    pub fn backend(&self) -> &AkitaBackend {
-        &self.backend
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError`] if the prover's setup cannot be built.
+    pub fn backend(&self) -> Result<&AkitaBackend, AkitaError> {
+        Ok(&self.prover()?.backend)
     }
 
     /// Proves the masked levels through the cut for the trace group
@@ -271,6 +307,7 @@ impl WhiteoutRow {
         pads: &mut CommittedPads<F, WhiteoutPadOpening<F>>,
         transcript: &mut ProverTranscript<S>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
+        let prover = self.prover()?;
         let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             point,
             evaluations,
@@ -282,7 +319,7 @@ impl WhiteoutRow {
             self.scheme.schedules(),
         )?;
         transcript.public(&self.scheme.schedules().catalog_digest());
-        transcript.send(opening.selection().row_digest.as_bytes());
+        transcript.public(opening.selection().row_digest.as_bytes());
         let resolved = self
             .scheme
             .schedules()
@@ -291,13 +328,13 @@ impl WhiteoutRow {
             resolved.schedule(),
             opening.opening_layout(),
         )?;
-        let prefixes = self
+        let prefixes = prover
             .backend
-            .import_setup_prefixes(&self.prover.prefix_slots, &prefix_ids)?;
+            .import_setup_prefixes(&prover.setup.prefix_slots, &prefix_ids)?;
         prove_masked_prefix::<WhiteoutOneHot, _, _, _>(
-            self.prover.expanded.descriptor(),
+            prover.setup.expanded.descriptor(),
             self.scheme.schedules(),
-            &self.backend,
+            &prover.backend,
             &prefixes,
             opening,
             &forms.to_vec(),
@@ -338,13 +375,7 @@ impl WhiteoutRow {
         pads: &mut CommittedPadsView<C>,
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<MaskedPrefix<F, F>, AkitaError> {
-        transcript.public(&self.scheme.schedules().catalog_digest());
-        let selection = OpeningScheduleSelection {
-            row_digest: akita_params::ScheduleRowDigest::from_bytes(transcript.receive()?),
-        };
-        if selection != self.selection()? {
-            return Err(AkitaError::InvalidProof);
-        }
+        let selection = self.absorb_selection(transcript)?;
         self.verifier.verify_masked_prefix(
             transcript,
             pads,
@@ -355,8 +386,7 @@ impl WhiteoutRow {
     }
 
     /// The pad-layout replay of [`Self::verify_masked`]: counts the pads of
-    /// the masked messages. The selection is read but not checked (the
-    /// replay runs over zero bytes).
+    /// the masked messages.
     ///
     /// # Errors
     ///
@@ -369,15 +399,26 @@ impl WhiteoutRow {
         view: &mut CommittedPadsView<()>,
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<MaskedPrefix<F, F>, AkitaError> {
-        transcript.public(&self.scheme.schedules().catalog_digest());
-        let _: [u8; 32] = transcript.receive()?;
+        let selection = self.absorb_selection(transcript)?;
         self.verifier.count_masked_prefix(
             transcript,
             view,
-            self.statement(self.selection()?, commitment, point)?,
+            self.statement(selection, commitment, point)?,
             forms,
             BasisMode::Lagrange,
         )
+    }
+
+    /// Absorbs the catalog and the selected row, both derived from the
+    /// statement: the prover sends no selection.
+    fn absorb_selection<S: Sponge>(
+        &self,
+        transcript: &mut VerifierTranscript<'_, S>,
+    ) -> Result<OpeningScheduleSelection, AkitaError> {
+        let selection = self.selection()?;
+        transcript.public(&self.scheme.schedules().catalog_digest());
+        transcript.public(selection.row_digest.as_bytes());
+        Ok(selection)
     }
 
     /// Decodes a trace commitment under this row's profile.
@@ -659,17 +700,18 @@ impl WhiteoutShape {
     }
 }
 
-/// The planned shapes, keyed by `(num_vars, num_polys)`.
-type ShapeCache = BTreeMap<(usize, usize), Arc<WhiteoutShape>>;
-
-/// A setup's Whiteout parameters, with its masked opening shapes planned on
-/// first use (derived state, shared by clones and skipped by serde).
+/// A setup's Whiteout parameters, with its masked opening shape planned on
+/// first use (derived state, shared by clones and skipped by serde). A
+/// setup opens one shape (its trace group's), so the cache holds one.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct WhiteoutSetup {
     ranks: SigmaRanks,
     #[serde(skip)]
-    shapes: Arc<Mutex<ShapeCache>>,
+    shape: Arc<Mutex<Option<CachedShape>>>,
 }
+
+/// The planned shape and its `(num_vars, num_polys)`.
+type CachedShape = ((usize, usize), Arc<WhiteoutShape>);
 
 impl std::fmt::Debug for WhiteoutSetup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -687,11 +729,19 @@ impl PartialEq for WhiteoutSetup {
 
 impl Eq for WhiteoutSetup {}
 
+/// What production Whiteout waits on: A40 prices `A_p`/`A_D` at the Σ
+/// radius; A41 re-prices the zero-knowledge rows and binds the residual
+/// commitment u_a (§8). Implementing [`sigma_matrix_rank`] alone must not
+/// make Whiteout reachable.
+const PRODUCTION_PENDING: &str = "Akita A40 (Σ-binding ranks of A_p/A_D, W5e's \
+     sigma_binding_min_rank) and A41 (priced zero-knowledge rows and the binding of the \
+     residual commitment u_a/w_k)";
+
 impl WhiteoutSetup {
     pub(crate) fn new(ranks: SigmaRanks) -> Self {
         Self {
             ranks,
-            shapes: Arc::default(),
+            shape: Arc::default(),
         }
     }
 
@@ -700,17 +750,30 @@ impl WhiteoutSetup {
     ///
     /// # Errors
     ///
+    /// [`WhiteoutError::NotProductionReady`] under the production ranks, and
     /// [`ZkError`] if no zero-knowledge row exists for the shape.
-    pub fn shape(&self, num_vars: usize, num_polys: usize) -> Result<Arc<WhiteoutShape>, ZkError> {
-        let mut shapes = self.shapes.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(shape) = shapes.get(&(num_vars, num_polys)) {
-            return Ok(Arc::clone(shape));
+    pub(crate) fn shape(
+        &self,
+        num_vars: usize,
+        num_polys: usize,
+    ) -> Result<Arc<WhiteoutShape>, ZkError> {
+        if self.ranks == SigmaRanks::Priced {
+            return Err(WhiteoutError::NotProductionReady {
+                pending: PRODUCTION_PENDING,
+            }
+            .into());
+        }
+        let mut cached = self.shape.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((key, shape)) = cached.as_ref() {
+            if *key == (num_vars, num_polys) {
+                return Ok(Arc::clone(shape));
+            }
         }
         let shape = Arc::new(WhiteoutShape {
             row: WhiteoutRow::plan(num_vars, num_polys)?,
             tail: WhiteoutTail::new(self.ranks),
         });
-        let _ = shapes.insert((num_vars, num_polys), Arc::clone(&shape));
+        *cached = Some(((num_vars, num_polys), Arc::clone(&shape)));
         Ok(shape)
     }
 }
@@ -742,7 +805,7 @@ fn plan_response(num_vars: usize) -> Result<AkitaResponseProver<WhiteoutResponse
 
 mod opening;
 
-pub(crate) use opening::trace_shape;
+pub(crate) use opening::prover_trace_shape;
 pub use opening::WhiteoutResidual;
 
 #[cfg(test)]

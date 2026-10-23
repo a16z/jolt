@@ -15,15 +15,16 @@ fn whiteout(setup: &AkitaVerifierSetup) -> Result<&WhiteoutSetup, ZkError> {
     })
 }
 
-/// The masked opening of `trace`, the K=16 one-hot trace group of a
-/// single-chunk setup: the only shape this prototype opens.
+/// The masked opening of a K=16 one-hot trace group of `num_polys`
+/// polynomials in `num_vars` variables, on a single-chunk setup: the only
+/// shape this prototype opens. The verifier passes statement-derived sizes;
+/// the prover its own commitment's.
 pub(crate) fn trace_shape(
     setup: &AkitaVerifierSetup,
-    trace: &AkitaCommitment,
+    num_vars: usize,
+    num_polys: usize,
 ) -> Result<Arc<WhiteoutShape>, ZkError> {
-    if trace.backend_flavor() != AkitaBackendFlavor::OneHot
-        || trace.one_hot_k() != AKITA_ONE_HOT_K16
-        || setup.one_hot_k != AKITA_ONE_HOT_K16
+    if setup.one_hot_k != AKITA_ONE_HOT_K16
         || setup.akita_chunk_profile() != AkitaChunkProfile::Single
     {
         return Err(AkitaError::UnsupportedSchedule(
@@ -31,7 +32,32 @@ pub(crate) fn trace_shape(
         )
         .into());
     }
-    whiteout(setup)?.shape(trace.num_vars, trace.poly_count)
+    // One shape per setup, so the setup's shape cache holds at most one.
+    if num_vars != setup.max_num_vars || num_polys != setup.max_num_polys_per_commitment_group {
+        return Err(AkitaError::UnsupportedSchedule(format!(
+            "Whiteout opens the setup's trace group ({} variables, {} polynomials), not \
+             {num_vars} and {num_polys}",
+            setup.max_num_vars, setup.max_num_polys_per_commitment_group
+        ))
+        .into());
+    }
+    whiteout(setup)?.shape(num_vars, num_polys)
+}
+
+/// The prover's shape for its own `trace` commitment.
+pub(crate) fn prover_trace_shape(
+    setup: &AkitaVerifierSetup,
+    trace: &AkitaCommitment,
+) -> Result<Arc<WhiteoutShape>, ZkError> {
+    if trace.backend_flavor() != AkitaBackendFlavor::OneHot
+        || trace.one_hot_k() != AKITA_ONE_HOT_K16
+    {
+        return Err(AkitaError::UnsupportedSchedule(
+            "Whiteout opens one K=16 one-hot trace group".into(),
+        )
+        .into());
+    }
+    trace_shape(setup, trace.num_vars, trace.poly_count)
 }
 
 /// The one group a masked opening opens.
@@ -54,9 +80,10 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
 
     fn shape(
         setup: &AkitaVerifierSetup,
-        groups: &[&AkitaCommitment],
+        num_vars: usize,
+        num_polys: usize,
     ) -> Result<Arc<WhiteoutShape>, ZkError> {
-        trace_shape(setup, single(groups.to_vec())?)
+        trace_shape(setup, num_vars, num_polys)
     }
 
     fn receive_pads<H: Sponge>(
@@ -129,16 +156,7 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
     }
 }
 
-/// The prover's opening through the cut: the residual opening the Σ-protocol
-/// proves, and the masked levels' auxiliary values.
+/// The prover's residual opening at the cut, which the Σ-protocol proves.
 pub struct WhiteoutResidual {
     pub(crate) opening: ResidualOpening<F, F>,
-    pub(crate) auxiliary: Vec<F>,
-}
-
-impl WhiteoutResidual {
-    /// The masked levels' auxiliary values, which lead the auxiliary block.
-    pub fn auxiliary(&self) -> &[F] {
-        &self.auxiliary
-    }
 }

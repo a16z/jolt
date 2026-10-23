@@ -51,6 +51,18 @@ const CHALLENGE_INVENTORY: &str = "tests/fs_inventory/challenge-sites.inventory"
 const DELEGATION_INVENTORY: &str = "tests/fs_inventory/delegation-sites.inventory";
 const SITE_INVENTORY: &str = "tests/fs_inventory/site-tags.inventory";
 const SOURCE_INVENTORY: &str = "tests/fs_inventory/source-schema.inventory";
+const ZK_SITE_CLASSES: &str = "tests/fs_inventory/zk-site-classes";
+/// The masked-site census's classes (`specs/whiteout-jolt-integration.md` §7).
+const ZK_CLASSES: [&str; 8] = [
+    "statement",
+    "commitment",
+    "pads",
+    "masked-slot",
+    "challenge-derived",
+    "sigma",
+    "response",
+    "clear-only",
+];
 
 /// Public-input absorbs on a [`jolt_transcript::Channel`], and derived claims
 /// bound through the [`jolt_transcript::PrivateChannel`] seam.
@@ -182,6 +194,38 @@ fn fs_inventory_is_complete() {
     ] {
         check_inventory(&manifest_dir.join(file), label, actual);
     }
+    check_zk_site_classes(&manifest_dir.join(ZK_SITE_CLASSES), &census.absorb);
+}
+
+/// Every public absorb site has exactly one masked-site class (HT1). Never
+/// blessed: a new absorb site lands only once someone classifies it.
+fn check_zk_site_classes(path: &Path, absorb: &BTreeSet<String>) {
+    let mut classified = BTreeSet::new();
+    for line in fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        let (class, entry) = line
+            .split_once('\t')
+            .unwrap_or_else(|| panic!("zk-site-classes line has no class: {line}"));
+        assert!(
+            ZK_CLASSES.contains(&class),
+            "unknown class {class:?}: {line}"
+        );
+        assert!(
+            classified.insert(entry.to_owned()),
+            "absorb site classified twice: {entry}"
+        );
+    }
+    let unclassified = absorb.difference(&classified).collect::<Vec<_>>();
+    let stale = classified.difference(absorb).collect::<Vec<_>>();
+    assert!(
+        unclassified.is_empty() && stale.is_empty(),
+        "zk-site-classes disagrees with the public absorb sites.\nUnclassified: \
+         {unclassified:#?}\nNo longer present: {stale:#?}\nClassify each by hand \
+         (specs/whiteout-jolt-integration.md §7)."
+    );
 }
 
 fn production_sources(workspace: &Path) -> Vec<PackageSource> {

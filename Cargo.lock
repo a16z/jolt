@@ -3723,6 +3723,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tracer",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]

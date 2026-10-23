@@ -247,6 +247,17 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
         crate::mem::drop_in_background_thread(self.session);
     }
 
+    /// Discards an aborted execution's state and starts a fresh session over
+    /// the same witness, for a proof that reruns from stage 0 with fresh
+    /// randomness (Whiteout, `specs/whiteout-jolt-integration.md` §6).
+    ///
+    /// The fresh session is empty, so a rerun starts where an execution
+    /// bound by [`JoltBackend::with_witness`] does. A context built by
+    /// [`Self::new`] over a non-empty initial session must not be restarted.
+    pub fn restart(&mut self) {
+        crate::mem::drop_in_background_thread(std::mem::take(&mut self.session));
+    }
+
     pub fn park_residue<R: ConcreteSumcheck<F> + 'static>(
         &mut self,
         kernel: Box<dyn SumcheckKernel<F, Relation = R>>,

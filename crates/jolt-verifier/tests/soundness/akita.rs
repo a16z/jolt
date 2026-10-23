@@ -2,9 +2,10 @@
 //! field-inline disabled; the Akita field-inline eq-MLE fixture runs with
 //! it enabled.
 
+#[cfg(not(feature = "zk"))]
 use super::checks;
 
-#[cfg(not(feature = "field-inline"))]
+#[cfg(not(any(feature = "field-inline", feature = "zk")))]
 mod base {
     use super::checks;
     use crate::support::akita_fixtures::{
@@ -53,7 +54,7 @@ mod base {
     }
 }
 
-#[cfg(feature = "field-inline")]
+#[cfg(all(feature = "field-inline", not(feature = "zk")))]
 #[test]
 fn akita_field_inline_eqpoly_message_sweep() {
     use crate::support::akita_fixtures::akita_field_inline_eqpoly_case;

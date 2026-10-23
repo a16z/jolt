@@ -20,7 +20,12 @@ parallel = [
   "jolt-sumcheck/parallel",
   "dep:rayon",
 ]
-prover-fixtures = ["dep:jolt-host", "jolt-zk?/test-support"]
+prover-fixtures = [
+  "dep:jolt-host",
+  "dep:zeroize",
+  "jolt-zk?/test-support",
+  "jolt-akita?/test-support",
+]
 # Field-inline protocol composition: the field-inline prover — every stage
 # proves the composed protocol, and only field-inline guests are accepted (the
 # witness plane refuses classic-profile traces). The e2e acceptance lives in
@@ -116,6 +121,7 @@ jolt-verifier.workspace = true
 jolt-witness.workspace = true
 jolt-zk = { workspace = true, optional = true }
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
+zeroize = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true

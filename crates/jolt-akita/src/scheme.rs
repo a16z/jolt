@@ -86,7 +86,9 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     ) -> Result<WhiteoutPads<Self::Field>, jolt_zk::masking::ZkError>;
 
     /// Whiteout: proves the masked levels of `trace`'s opening through the
-    /// cut, its claims stated by `forms` (spec §2, row 5).
+    /// cut, its claims stated by `forms` (spec §2, row 5). Returns the
+    /// residual opening and the masked levels' auxiliary values, which lead
+    /// the auxiliary block.
     #[cfg(feature = "zk")]
     fn whiteout_prove_masked<H: Sponge>(
         setup: &Self::ProverSetup,
@@ -95,7 +97,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
         forms: &[jolt_zk::masking::AffineRow<Self::Field>],
         pads: &mut WhiteoutPads<Self::Field>,
         transcript: &mut ProverTranscript<H>,
-    ) -> Result<crate::whiteout::WhiteoutResidual, jolt_zk::masking::ZkError>;
+    ) -> Result<(crate::whiteout::WhiteoutResidual, Vec<Self::Field>), jolt_zk::masking::ZkError>;
 
     /// Whiteout: proves `relation` by the Σ-protocol and the response proof
     /// (spec §2, rows 7 and 8).
@@ -285,7 +287,7 @@ impl AkitaScheme {
                 .map_err(invalid_setup)?;
             let row = shape.row();
             let (backend_commitment, backend_hint) = with_backend_pool(|| {
-                let source = row.backend().import_source(source)?;
+                let source = row.backend()?.import_source(source)?;
                 row.commit_hiding(&source)
             })
             .map_err(commit_failed)?;
@@ -489,7 +491,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
     ) -> Result<WhiteoutPads<AkitaField>, jolt_zk::masking::ZkError> {
-        let shape = crate::whiteout::trace_shape(&setup.verifier, trace)?;
+        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, trace)?;
         shape
             .tail()
             .commit_pads(shape.row(), layout, transcript, rng)
@@ -503,8 +505,9 @@ impl TraceOneHotCommitment for AkitaScheme {
         forms: &[jolt_zk::masking::AffineRow<AkitaField>],
         pads: &mut WhiteoutPads<AkitaField>,
         transcript: &mut ProverTranscript<H>,
-    ) -> Result<crate::whiteout::WhiteoutResidual, jolt_zk::masking::ZkError> {
-        let shape = crate::whiteout::trace_shape(&setup.verifier, &trace.commitment)?;
+    ) -> Result<(crate::whiteout::WhiteoutResidual, Vec<AkitaField>), jolt_zk::masking::ZkError>
+    {
+        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, &trace.commitment)?;
         let (commitment, handle) = hint.backend.ok_or_else(|| {
             AkitaError::InvalidInput("the trace hint has no backend payload".into())
         })?;
@@ -517,7 +520,7 @@ impl TraceOneHotCommitment for AkitaScheme {
             pads,
             transcript,
         )?;
-        Ok(crate::whiteout::WhiteoutResidual { opening, auxiliary })
+        Ok((crate::whiteout::WhiteoutResidual { opening }, auxiliary))
     }
 
     #[cfg(feature = "zk")]
@@ -530,7 +533,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
     ) -> Result<(), jolt_zk::masking::ZkError> {
-        let shape = crate::whiteout::trace_shape(&setup.verifier, trace)?;
+        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, trace)?;
         shape.tail().prove(
             shape.row(),
             relation,
