@@ -19,7 +19,6 @@ use akita_config::{
     policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
 };
 use akita_params::sis::sigma_binding::sigma_binding_min_rank;
-use akita_params::sis::{min_secure_rank, SisMatrixRole};
 use akita_params::zk::{
     hiding_randomness_columns, DigitAlphabet, ImageShape, ZkOpeningSchedule, ZK_CUT_LEVEL,
 };
@@ -34,7 +33,7 @@ use akita_pcs::zk::{
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaError, AkitaVerifier, GroupContext, SelectedProverOpeningData,
 };
-use akita_schedules::planner_support::projected_collision_role_price;
+use akita_schedules::digit_commitment_min_rank;
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_crypto::lattice::{derive_public_matrix_prefix, PublicMatrixSeed};
@@ -106,8 +105,8 @@ pub(crate) fn sigma_matrix_rank(ring_dim: usize, width: usize) -> Result<usize, 
 
 /// The Module-SIS rank of `A_D`, of `width` challenge-ring columns of
 /// range-checked radix-2^[`RESPONSE_LOG_BASIS`] digits: Akita's ordinary
-/// pricing of a digit commitment (its D role at the digit-difference bound,
-/// `05_security.tex:31-33`), with the key Akita's planner builds for one.
+/// pricing of a digit commitment at the digit-difference bound
+/// (`05_security.tex:31-33`), [`digit_commitment_min_rank`].
 ///
 /// # Errors
 ///
@@ -115,19 +114,14 @@ pub(crate) fn sigma_matrix_rank(ring_dim: usize, width: usize) -> Result<usize, 
 /// matrix.
 pub(crate) fn digit_matrix_rank(width: usize) -> Result<usize, ZkError> {
     let policy = policy_of::<WhiteoutOneHot>(<JoltOneHotK16 as CatalogChunking>::CHUNKING);
-    projected_collision_role_price(
-        &policy,
-        SisMatrixRole::Open,
-        CHALLENGE_RING_DIM,
-        CHALLENGE_RING_DIM,
-        width,
-        RESPONSE_LOG_BASIS,
-    )
-    .and_then(|(key, width)| min_secure_rank(key, u64::try_from(width).ok()?))
-    .ok_or_else(|| {
-        AkitaError::UnsupportedSchedule(format!("no digit-commitment rank for A_D (width {width})"))
+    digit_commitment_min_rank(&policy, CHALLENGE_RING_DIM, width, RESPONSE_LOG_BASIS).ok_or_else(
+        || {
+            AkitaError::UnsupportedSchedule(format!(
+                "no digit-commitment rank for A_D (width {width})"
+            ))
             .into()
-    })
+        },
+    )
 }
 
 /// Jolt's public seeds for the streams `A_p` and `A_D` are cut from. They are
