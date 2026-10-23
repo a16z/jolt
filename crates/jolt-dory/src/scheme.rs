@@ -125,6 +125,19 @@ fn canonical_setup_log_n(max_num_vars: usize) -> usize {
     }
 }
 
+/// The matrix layout `(nu, sigma)` of a `num_vars`-variable polynomial:
+/// `2^nu` rows of `2^sigma` coefficients.
+///
+/// Commit, open and verify must all use it. dory reads `nu` and `sigma` from
+/// the proof and only checks that they sum to the point's length, with
+/// `nu <= sigma`. A commitment whose matrix is zero outside the top
+/// `2^nu'` rows is also a commitment under any wider layout `(nu', sigma')`,
+/// to a different polynomial. So the verifier rejects any other layout.
+fn matrix_shape(num_vars: usize) -> (usize, usize) {
+    let sigma = num_vars.div_ceil(2);
+    (num_vars - sigma, sigma)
+}
+
 impl DoryScheme {
     #[tracing::instrument(skip_all, name = "DoryScheme::setup_prover", fields(max_num_vars))]
     pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
@@ -235,10 +248,8 @@ impl CommitmentScheme for DoryScheme {
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
-        let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
+        let (nu, sigma) = matrix_shape(point.len());
 
         let (row_commitments, commit_blind) = match hint {
             Some(h) => h.into_ark_parts(),
@@ -285,6 +296,9 @@ impl CommitmentScheme for DoryScheme {
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
+        if (proof.0.nu, proof.0.sigma) != matrix_shape(point.len()) {
+            return Err(OpeningsError::VerificationFailed);
+        }
         if proof.0.e2.is_some()
             || proof.0.y_com.is_some()
             || proof.0.sigma1_proof.is_some()
@@ -382,10 +396,8 @@ impl ZkOpeningScheme for DoryScheme {
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
-        let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
+        let (nu, sigma) = matrix_shape(point.len());
         let (row_commitments, commit_blind) = hint.into_ark_parts();
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -423,6 +435,9 @@ impl ZkOpeningScheme for DoryScheme {
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
+        if (proof.0.nu, proof.0.sigma) != matrix_shape(point.len()) {
+            return Err(OpeningsError::VerificationFailed);
+        }
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
         // so the caller-side eval is unused here.
@@ -512,14 +527,13 @@ fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
     setup: &DoryProverSetup,
 ) -> Result<Vec<ArkG1>, OpeningsError> {
     let num_vars = poly.num_vars();
-    let sigma = num_vars.div_ceil(2);
+    let (nu, sigma) = matrix_shape(num_vars);
     let max_cols = setup.0.g1_vec.len();
     let max_rows = setup.0.g2_vec.len();
     // An oversized polynomial must surface as the commit API's Err, not as an
     // out-of-bounds slice panic on the SRS below.
-    let fits = sigma < usize::BITS as usize
-        && (1usize << sigma) <= max_cols
-        && (1usize << (num_vars - sigma)) <= max_rows;
+    let fits =
+        sigma < usize::BITS as usize && (1usize << sigma) <= max_cols && (1usize << nu) <= max_rows;
     if !fits {
         return Err(OpeningsError::PolynomialTooLarge {
             poly_size: num_vars,
@@ -527,7 +541,7 @@ fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
         });
     }
     let num_cols = 1usize << sigma;
-    let num_rows = 1usize << (num_vars - sigma);
+    let num_rows = 1usize << nu;
 
     Ok(if poly.is_one_hot() {
         commit_rows_one_hot(poly, num_rows, num_cols, &setup.0)
@@ -619,8 +633,9 @@ mod tests {
 
     use super::*;
     use jolt_crypto::{Pedersen, VectorCommitment};
-    use jolt_field::Ring;
+    use jolt_field::{Field, Ring};
     use jolt_poly::Polynomial;
+    use jolt_transcript::Blake2bTranscript;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -633,6 +648,155 @@ mod tests {
         assert!(
             matches!(err, OpeningsError::PolynomialTooLarge { .. }),
             "{err}"
+        );
+    }
+
+    /// The square layout of a 4-variable polynomial is 4 rows of 4.
+    const SQUARE_VARS: usize = 4;
+    /// A wider layout of the same 4 variables: 2 rows of 8.
+    const WIDE: (usize, usize) = (1, 3);
+
+    /// Returns a polynomial whose square matrix has zero rows 2 and 3, and
+    /// its wide twin: the same two nonzero rows, each padded with 4 zero
+    /// columns. The twin is a different polynomial, but the square
+    /// polynomial's commitment also commits to it under the wide layout.
+    fn square_and_wide_twin(rng: &mut ChaCha20Rng) -> (Polynomial<Fr>, Polynomial<Fr>) {
+        let zero = Fr::from_u64(0);
+        let rows: Vec<[Fr; 4]> = (0..2)
+            .map(|_| std::array::from_fn(|_| <Fr as Field>::random(rng)))
+            .collect();
+        let square = rows.iter().flatten().copied().chain([zero; 8]).collect();
+        let wide = rows
+            .iter()
+            .flat_map(|row| row.iter().copied().chain([zero; 4]))
+            .collect();
+        (Polynomial::new(square), Polynomial::new(wide))
+    }
+
+    /// Proves `wide` at `point` under the wide layout, against the square
+    /// commitment that `hint` belongs to.
+    fn prove_wide<M: Mode>(
+        wide: &[Fr],
+        point: &[Fr],
+        hint: DoryHint,
+        setup: &DoryProverSetup,
+    ) -> DoryProof {
+        let (mut row_commitments, commit_blind) = hint.into_ark_parts();
+        assert!(row_commitments
+            .iter()
+            .skip(1 << WIDE.0)
+            .all(|row| *row == <ArkG1 as DoryGroup>::identity()));
+        row_commitments.truncate(1 << WIDE.0);
+        let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
+        let mut transcript = Blake2bTranscript::new(b"matrix-shape");
+        let (proof, _) = dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, M>(
+            &DorySourceAdapter::new(wide),
+            &ark_point,
+            row_commitments,
+            commit_blind,
+            WIDE.0,
+            WIDE.1,
+            &setup.0,
+            &mut JoltToDoryTranscript::new(&mut transcript),
+        )
+        .unwrap();
+        DoryProof(proof)
+    }
+
+    /// Runs dory's own verifier on `proof`, with no layout check.
+    fn dory_accepts(
+        commitment: &DoryCommitment,
+        point: &[Fr],
+        eval: Fr,
+        proof: &DoryProof,
+        setup: &DoryVerifierSetup,
+    ) -> bool {
+        let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
+        let mut transcript = Blake2bTranscript::new(b"matrix-shape");
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
+            jolt_gt_to_ark(&commitment.0),
+            jolt_fr_to_ark(&eval),
+            &ark_point,
+            &proof.0,
+            setup.0.clone().into_inner(),
+            &mut JoltToDoryTranscript::new(&mut transcript),
+        )
+        .is_ok()
+    }
+
+    /// dory accepts an opening of a square commitment under a wider layout,
+    /// to the twin's evaluation. `verify` must reject it.
+    #[test]
+    fn verify_rejects_another_matrix_shape() {
+        let mut rng = ChaCha20Rng::seed_from_u64(701);
+        let prover_setup = DoryScheme::setup_prover(2 * WIDE.1);
+        let verifier_setup = DoryScheme::setup_verifier(2 * WIDE.1);
+        let (square, wide) = square_and_wide_twin(&mut rng);
+        let point: Vec<Fr> = (0..SQUARE_VARS)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let (commitment, hint) = DoryScheme::commit(square.evaluations(), &prover_setup).unwrap();
+        let wide_eval = wide.evaluate(&point);
+        assert_ne!(wide_eval, square.evaluate(&point));
+
+        let proof = prove_wide::<Transparent>(wide.evaluations(), &point, hint, &prover_setup);
+        assert!(dory_accepts(
+            &commitment,
+            &point,
+            wide_eval,
+            &proof,
+            &verifier_setup
+        ));
+
+        let mut transcript = Blake2bTranscript::new(b"matrix-shape");
+        let result = DoryScheme::verify(
+            &commitment,
+            &point,
+            wide_eval,
+            &proof,
+            &verifier_setup,
+            &mut transcript,
+        );
+        assert!(
+            matches!(result, Err(OpeningsError::VerificationFailed)),
+            "{result:?}"
+        );
+    }
+
+    /// The zero-knowledge version of [`verify_rejects_another_matrix_shape`].
+    #[test]
+    fn verify_zk_rejects_another_matrix_shape() {
+        let mut rng = ChaCha20Rng::seed_from_u64(702);
+        let prover_setup = DoryScheme::setup_prover(2 * WIDE.1);
+        let verifier_setup = DoryScheme::setup_verifier(2 * WIDE.1);
+        let (square, wide) = square_and_wide_twin(&mut rng);
+        let point: Vec<Fr> = (0..SQUARE_VARS)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let (commitment, hint) =
+            DoryScheme::commit_zk(square.evaluations(), &prover_setup).unwrap();
+
+        let proof = prove_wide::<ZK>(wide.evaluations(), &point, hint, &prover_setup);
+        // In ZK mode dory reads the evaluation from the proof's `y_com`.
+        assert!(dory_accepts(
+            &commitment,
+            &point,
+            Fr::from_u64(0),
+            &proof,
+            &verifier_setup
+        ));
+
+        let mut transcript = Blake2bTranscript::new(b"matrix-shape");
+        let result = DoryScheme::verify_zk(
+            &commitment,
+            &point,
+            &proof,
+            &verifier_setup,
+            &mut transcript,
+        );
+        assert!(
+            matches!(result, Err(OpeningsError::VerificationFailed)),
+            "{result:?}"
         );
     }
 
