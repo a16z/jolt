@@ -9,7 +9,7 @@
 //! move changes the framing and MUST change the state. A matching state would
 //! mean the framing convention fails to separate `[ab]` from `[a][b]`, the
 //! classic transcript-malleability footgun. The state is observed as the next
-//! four squeezed units: 4 bytes, or 4 `Fr` elements on Poseidon.
+//! 32 squeezed units: 32 bytes, or 32 `Fr` elements on Poseidon.
 
 use std::fmt::Debug;
 

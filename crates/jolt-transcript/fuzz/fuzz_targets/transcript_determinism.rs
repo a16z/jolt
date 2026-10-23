@@ -3,7 +3,7 @@
 //! Determinism and absorption oracles over the transcript sponges.
 //!
 //! Twin instances driven by the same fuzzer-chosen op sequence must agree on
-//! every squeeze and on the final state, observed as the next four squeezed
+//! every squeeze and on the final state, observed as the next 32 squeezed
 //! units (bytes, or `Fr` elements on Poseidon), and replaying the sequence
 //! with one absorbed byte flipped must reach a different final state — a
 //! matching state would mean absorbed bytes are ignored or collide.

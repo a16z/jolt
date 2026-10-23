@@ -2,8 +2,9 @@
 //!
 //! The prover runs spongefish's `ProverState` and the verifier its
 //! `VerifierState`. [`Transcript`] and [`FieldTranscript`] are the operations
-//! both sides share: public messages, field challenges through each field's
-//! [`ChallengeCodec`], and proof-of-work steps whose nonce the proof carries.
+//! both sides share: public messages, field challenges through the sponge's
+//! [`ChallengeSponge`] map, and proof-of-work steps whose nonce the proof
+//! carries.
 //! [`ProverTranscript`] and [`VerifierTranscript`] add the NARG string.
 //! [`prover_transcript`] and [`verifier_transcript`] bind the session and the
 //! public statement before the first message.

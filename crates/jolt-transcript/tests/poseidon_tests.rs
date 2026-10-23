@@ -236,13 +236,15 @@ fn challenges_are_full_width() {
 
 /// A short challenge squeezes two elements `x0` and `x1`, keeps the low `b`
 /// bits of `x0 + p * x1`, and squeezes nothing more. The verifier draws the
-/// same value.
+/// same value. The expected value is computed on unbounded integers.
 #[test]
 fn short_challenge_keeps_the_low_bits_of_two_elements() {
-    use ark_ff::BigInteger;
     use jolt_field::CanonicalEncoding;
+    use num_bigint::BigUint;
 
-    for (loss, bits) in [(1u64, 128u32), (4, 130)] {
+    let int = |x: Fr| BigUint::from_bytes_le(&le_bytes(x));
+    let modulus = int(-fr(1)) + 1u32;
+    for (loss, bits) in [(1u64, 128u32), (4, 130), (u64::MAX, 192)] {
         let mut widest = 0;
         for round in 0..64u32 {
             let statement = round.to_be_bytes();
@@ -251,13 +253,10 @@ fn short_challenge_keeps_the_low_bits_of_two_elements() {
             let value: Fr = short.challenge_short_scalar(loss).unwrap();
 
             let drawn = challenges(&mut manual, 3);
-            let [x0, x1] =
-                [drawn[0], drawn[1]].map(|x| BnFr::from_le_bytes_mod_order(&le_bytes(x)));
-            let mut sum = x1.into_bigint().mul_low(&BnFr::MODULUS);
-            sum.add_with_carry(&x0.into_bigint());
-            let len = bits.div_ceil(8) as usize;
-            let mut bytes = sum.to_bytes_le()[..len].to_vec();
-            *bytes.last_mut().unwrap() &= u8::MAX >> (8 * len as u32 - bits);
+            let expected =
+                (int(drawn[0]) + &modulus * int(drawn[1])) % (BigUint::from(1u32) << bits);
+            let mut bytes = expected.to_bytes_le();
+            bytes.resize(bits.div_ceil(8) as usize, 0);
             assert_eq!(value, Fr::from_bytes_le_reduced(&bytes));
             assert_eq!(challenges(&mut short, 1), [drawn[2]]);
 
@@ -269,4 +268,18 @@ fn short_challenge_keeps_the_low_bits_of_two_elements() {
         // The top bit is set with probability 1/2 per draw.
         assert_eq!(widest, bits, "loss={loss}");
     }
+}
+
+/// A zero loss factor is refused before anything is squeezed, and poisons the
+/// verifier.
+#[test]
+fn short_challenge_refuses_zero_loss_and_poisons() {
+    let mut prover = prover_transcript::<PoseidonSponge>(SESSION, &INSTANCE);
+    assert!(FieldTranscript::<Fr>::challenge_short_scalar(&mut prover, 0).is_err());
+    let mut fresh = prover_transcript::<PoseidonSponge>(SESSION, &INSTANCE);
+    assert_eq!(challenges(&mut prover, 1), challenges(&mut fresh, 1));
+
+    let mut verifier = verifier_transcript::<PoseidonSponge>(SESSION, &INSTANCE, &[]);
+    assert!(FieldTranscript::<Fr>::challenge_short_scalar(&mut verifier, 0).is_err());
+    assert!(verifier.check_eof().is_err());
 }

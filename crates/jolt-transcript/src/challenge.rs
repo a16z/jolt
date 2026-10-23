@@ -93,9 +93,10 @@ pub(crate) mod sealed {
 ///
 /// # Use outside this crate
 ///
-/// `ChallengeCodec` bounds the field of every `FieldTranscript<F>`
-/// implementation on spongefish's prover and verifier states, so a protocol
-/// that draws field challenges from them names it as a bound. Callers cannot
+/// `ChallengeCodec` bounds the field of the byte sponges' [`ChallengeSponge`]
+/// implementation, behind the `FieldTranscript<F>` implementations on
+/// spongefish's prover and verifier states, so a protocol that draws field
+/// challenges from a byte sponge can name it as a bound. Callers cannot
 /// implement it. The widths and decodings above are part of the transcript's
 /// wire format: changing one changes every proof that draws challenges in
 /// that field.

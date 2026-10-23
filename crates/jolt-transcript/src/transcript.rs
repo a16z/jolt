@@ -175,8 +175,9 @@ pub trait FieldTranscript<F>: Transcript {
     /// # Errors
     /// `VerificationError`, before any sponge operation, when
     /// [`challenge_bits_for_loss`] rejects `loss_factor` or `b` is not below
-    /// the bit length of the field order. The verifier's state is poisoned
-    /// then, so `check_eof` fails too.
+    /// the bit length of the field order, or if the squeezed units do not fit
+    /// [`SpongeUnit::short_word`], which no sponge allows. The verifier's state
+    /// is poisoned then, so `check_eof` fails too.
     ///
     /// [`UniformBytes`]: crate::UniformBytes
     fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>

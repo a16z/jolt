@@ -16,7 +16,9 @@
 //!
 //! Challenges are squeezed natively, one unit each. A squeezed unit is a
 //! uniform `Fr` up to the sponge's security, so `Fr` challenges need no
-//! decoding and have no reduction bias. Challenges in any other field are not
+//! decoding and have no reduction bias. A short challenge of `b` bits takes
+//! two units `x0` and `x1` and keeps the low `b` bits of `x0 + p * x1`
+//! ([`SpongeUnit::short_word`]). Challenges in any other field are not
 //! offered on this sponge.
 //!
 //! # Byte packing
@@ -54,8 +56,8 @@ const RATE: usize = 3;
 const CHUNK_BYTES: usize = 31;
 
 /// Duplex sponge over BN254 `Fr` with the Circom-compatible width-5 Poseidon
-/// permutation. See the [module documentation](self) for the layout and the
-/// byte packing.
+/// permutation: rate 3 elements, capacity 2. Each message is packed on its
+/// own as its byte length, then its bytes in 31-byte little-endian chunks.
 pub type PoseidonSponge = DuplexSponge<PoseidonPermutation, WIDTH, RATE>;
 
 /// One BN254 `Fr` element: the alphabet of [`PoseidonSponge`].
@@ -133,7 +135,8 @@ impl SpongeUnit for FrUnit {
             return None;
         };
         let mut word = high.0.into_bigint().mul_low(&InnerFr::MODULUS);
-        word.add_with_carry(&low.0.into_bigint());
+        // The carry out of bit 256 is dropped: the word is the sum mod 2^256.
+        let _carry = word.add_with_carry(&low.0.into_bigint());
         word.to_bytes_le().try_into().ok()
     }
 }
