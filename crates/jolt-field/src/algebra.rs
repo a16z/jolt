@@ -345,6 +345,17 @@ pub trait CanonicalBytes {
     /// Writes the canonical little-endian encoding into `out`.
     fn to_bytes_le(&self, out: &mut [u8]);
 
+    /// Writes the canonical encoding in big-endian byte order into `out`.
+    ///
+    /// `out` must have length [`NUM_BYTES`](Self::NUM_BYTES). This is the
+    /// byte reversal of [`to_bytes_le`](Self::to_bytes_le), including for
+    /// non-field encodings.
+    #[inline]
+    fn to_bytes_be(&self, out: &mut [u8]) {
+        self.to_bytes_le(out);
+        out.reverse();
+    }
+
     /// Returns the canonical little-endian encoding as a vector.
     #[inline]
     fn to_bytes_le_vec(&self) -> Vec<u8> {
