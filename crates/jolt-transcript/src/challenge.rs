@@ -90,6 +90,16 @@ mod sealed {
 ///
 /// The trait is sealed: every implementation lives in this module, next to
 /// the argument for its TV bound.
+///
+/// # Use outside this crate
+///
+/// `ChallengeCodec` bounds the field of every `FieldTranscript<F>`
+/// implementation on spongefish's prover and verifier states, so a protocol
+/// that draws field challenges from them names it as a bound. Akita's
+/// `akita-transcript` re-exports it for that purpose. Callers cannot
+/// implement it. The widths and decodings above are part of the transcript's
+/// wire format: changing one changes every proof that draws challenges in
+/// that field.
 pub trait ChallengeCodec: Sized + Sealed {
     /// `|Self|`, the number of values one challenge can take. Proof-of-work
     /// difficulties are priced from it ([`grind_bits_for_loss`]).
@@ -113,6 +123,10 @@ pub trait ChallengeCodec: Sized + Sealed {
 ///
 /// `PoseidonSponge` is not one: each block it squeezes is the little-endian
 /// encoding of a BN254 scalar, whose top bits are far from uniform.
+///
+/// It is public because it bounds the sponge of the public
+/// `FieldTranscript<F>` implementations. Callers name it only as that bound
+/// and cannot implement it.
 pub trait UniformBytes: DuplexSpongeInterface<U = u8> + Sealed {}
 
 #[cfg(feature = "transcript-keccak")]
@@ -126,7 +140,8 @@ impl UniformBytes for Blake2b512 {}
 
 /// Largest challenge message, in squeezed bytes. Larger requests are rejected
 /// before touching the sponge, so a length taken from the input cannot make
-/// the verifier allocate without bound.
+/// the verifier allocate without bound. Callers can compare a length against
+/// it before drawing.
 pub const MAX_CHALLENGE_BYTES: usize = 1 << 24;
 
 #[cfg(any(feature = "solinas", feature = "bn254"))]
