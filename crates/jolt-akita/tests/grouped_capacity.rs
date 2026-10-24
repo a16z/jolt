@@ -18,13 +18,14 @@ use jolt_akita::{
     GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
-    CommitmentGroupRole, CommitmentScheme, GroupOpeningClaim, TaggedGroupOpeningClaim,
-    TransparentObjectSetup,
+    CommitmentGroupRole, CommitmentScheme, GroupBatchOpening, GroupOpeningClaim,
+    TaggedGroupOpeningClaim, TransparentObjectSetup,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
-use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
+use jolt_transcript::{prover_transcript, verifier_transcript, Keccak, Transcript};
 use support::{f, layout, polynomial};
 
+const SESSION: &[u8] = b"akita-grouped-capacity";
 /// The smallest one-column K=16 Single arity whose scalar guide has a
 /// recursive child fold, which bounded grouped provisioning requires.
 const FINAL_NUM_VARS: usize = 18;
@@ -107,7 +108,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     .expect("trace group should commit against the larger advice object");
     let main = GroupOpeningClaim::new(trace_commitment, trace_point, vec![trace_evaluation]);
 
-    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
+    let mut prover_state = prover_transcript::<Keccak>(SESSION, b"");
     let proof = AkitaScheme::prove_batch(
         &prover_setup,
         vec![(advice_claim.clone(), advice_hint)],
@@ -116,30 +117,28 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         &mut prover_state,
     )
     .expect("grouped opening should prove");
+    let narg = prover_state.narg_string().to_vec();
+    let prover_tail = prover_state.verifier_message::<[u8; 32]>();
 
     let transported: AkitaVerifierSetup = serde_json::from_str(
         &serde_json::to_string(&verifier_setup).expect("verifier setup should serialize"),
     )
     .expect("verifier setup should deserialize");
-    let prover_tail = prover_state.verifier_message::<[u8; 32]>();
     for setup in [&verifier_setup, &transported] {
-        let mut verifier_transcript =
-            prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
-        AkitaScheme::verify_batch(
+        let mut verifier_state = verifier_transcript::<Keccak>(SESSION, b"", &narg);
+        let pending = AkitaScheme::verify_batch(
             setup,
             std::slice::from_ref(&advice_claim),
             &main,
             &proof,
-            &mut verifier_transcript,
+            &mut verifier_state,
         )
         .expect("grouped opening should verify");
-        assert_eq!(
-            prover_tail,
-            verifier_transcript.verifier_message::<[u8; 32]>()
-        );
+        assert_eq!(prover_tail, verifier_state.verifier_message::<[u8; 32]>());
+        AkitaScheme::check_eof(pending, verifier_state).expect("the argument is read whole");
     }
 
-    let mut other_context = prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
+    let mut other_context = verifier_transcript::<Keccak>(SESSION, b"", &narg);
     other_context.append_bytes(b"different preceding Jolt messages");
     assert!(AkitaScheme::verify_batch(
         &transported,

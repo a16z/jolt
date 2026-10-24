@@ -6,16 +6,16 @@ use std::sync::Arc;
 
 use akita_params::PolynomialGroupLayout;
 use jolt_akita::{
-    AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, GroupedScheduleParams, TraceOneHotRows,
-    AKITA_ONE_HOT_K16,
+    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
+    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
+    GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupOpeningClaim, OpeningsError,
-    VerifierOpeningClaim,
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupBatchOpening, GroupOpeningClaim,
+    OpeningsError, VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
-use jolt_transcript::{prover_transcript, Blake2b512};
+use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512, Keccak};
 use support::{
     batch_polynomials, f, layout, native_setup, native_statement, polynomial, setup_for,
     single_statement,
@@ -87,7 +87,8 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
     )
     .expect("streamed trace group should commit");
     let mut statement = GroupOpeningClaim::new(commitment, point, evaluations);
-    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-streamed-tamper", b"");
+    let session = b"akita-streamed-tamper";
+    let mut prover_state = prover_transcript::<Keccak>(session, b"");
     let proof = AkitaScheme::prove_batch(
         &prover_setup,
         Vec::new(),
@@ -96,30 +97,91 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
         &mut prover_state,
     )
     .expect("streamed trace batch should prove");
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-streamed-tamper", b"");
-    AkitaScheme::verify_batch(
-        &verifier_setup,
-        &[],
-        &statement,
-        &proof,
-        &mut verifier_transcript,
-    )
-    .expect("original streamed trace evaluations must verify");
+    let narg = prover_state.narg_string().to_vec();
+    let prover_tail = prover_state.verifier_message::<[u8; 32]>();
+    let verify_proof = |setup: &AkitaVerifierSetup,
+                        statement: &GroupOpeningClaim<_, _>,
+                        proof: &AkitaBatchProof,
+                        narg: &[u8]| {
+        let mut verifier_state = verifier_transcript::<Keccak>(session, b"", narg);
+        let pending = AkitaScheme::verify_batch(setup, &[], statement, proof, &mut verifier_state)?;
+        let tail = verifier_state.verifier_message::<[u8; 32]>();
+        AkitaScheme::check_eof(pending, verifier_state).map(|()| tail)
+    };
+    let verify_under =
+        |setup: &AkitaVerifierSetup, statement: &GroupOpeningClaim<_, _>, narg: &[u8]| {
+            verify_proof(setup, statement, &proof, narg)
+        };
+    let verify = |statement: &GroupOpeningClaim<_, _>, narg: &[u8]| {
+        verify_under(&verifier_setup, statement, narg)
+    };
     assert_eq!(
-        prover_state.verifier_message::<[u8; 32]>(),
-        verifier_transcript.verifier_message::<[u8; 32]>()
+        verify(&statement, &narg).expect("original streamed trace evaluations must verify"),
+        prover_tail,
+        "prover and verifier sponges must agree after the opening"
+    );
+
+    // The trace batch's argument lives in Jolt's string, so a proof that also
+    // carries a backend proof must reject.
+    let mut carrying = serde_json::to_value(&proof).expect("proof should serialize");
+    *carrying
+        .get_mut("backend_proof")
+        .expect("proof should expose backend_proof") = serde_json::json!([0]);
+    let carrying: AkitaBatchProof =
+        serde_json::from_value(carrying).expect("changed proof should deserialize");
+    let err = verify_proof(&verifier_setup, &statement, &carrying, &narg)
+        .expect_err("a non-empty backend proof must reject");
+    assert!(
+        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("standalone argument")),
+        "expected the embedded-argument rejection, got: {err}"
+    );
+
+    // The embedded opening absorbs no setup bytes of its own. Akita's
+    // descriptor binds the backend setup and the selected schedule, and the
+    // trace batch must match the verifier setup's shape, layout digest and K
+    // exactly, so a setup that differs in any of them rejects the proof.
+    let setup_json =
+        serde_json::to_value(&verifier_setup).expect("verifier setup should serialize");
+    for (field, value) in [
+        ("max_num_vars", serde_json::json!(NUM_VARS + 1)),
+        ("max_num_polys_per_commitment_group", serde_json::json!(3)),
+        ("default_layout_digest", serde_json::json!(layout(8))),
+        ("one_hot_k", serde_json::json!(AKITA_ONE_HOT_K256)),
+    ] {
+        let mut changed = setup_json.clone();
+        *changed.get_mut(field).expect("verifier setup field") = value;
+        let changed: AkitaVerifierSetup =
+            serde_json::from_value(changed).expect("changed verifier setup should deserialize");
+        assert!(
+            verify_under(&changed, &statement, &narg).is_err(),
+            "a verifier setup with a different {field} must reject"
+        );
+    }
+
+    // The argument lives in the caller's string, so its end is the string's
+    // end: one appended byte must reject.
+    let mut extended = narg.clone();
+    extended.push(0);
+    assert!(verify(&statement, &extended).is_err());
+
+    // A forged coefficient count must reject at the trusted shape check,
+    // before the decoder can reserve a payload-sized buffer.
+    let mut forged =
+        serde_json::to_value(&statement.commitment).expect("commitment should serialize");
+    *forged
+        .get_mut("backend_coeff_len")
+        .expect("commitment should expose backend_coeff_len") = (1u64 << 25).into();
+    let mut forged_statement = statement.clone();
+    forged_statement.commitment =
+        serde_json::from_value(forged).expect("forged commitment should deserialize");
+    let err = verify(&forged_statement, &narg).expect_err("forged backend_coeff_len should reject");
+    assert!(
+        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("coefficients")),
+        "expected a shape-guard rejection, got: {err}"
     );
 
     statement.evaluations.swap(0, 1);
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-streamed-tamper", b"");
-    assert!(AkitaScheme::verify_batch(
-        &verifier_setup,
-        &[],
-        &statement,
-        &proof,
-        &mut verifier_transcript,
-    )
-    .is_err());
+    assert!(verify(&statement, &narg).is_err());
 }
 
 #[test]

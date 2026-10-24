@@ -21,12 +21,10 @@ use akita_types::{
     AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup,
 };
-use jolt_field::{CanonicalBytes, Zero};
-use jolt_openings::{OpeningsError, VerifierOpeningClaim};
+use jolt_field::Zero;
+use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
-use jolt_transcript::{
-    BytesMsg, Encoding, FieldTranscript, Label, LabelWithCount, Transcript, U64Word,
-};
+use jolt_transcript::{BytesMsg, Encoding, Label, LabelWithCount, U64Word};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -669,60 +667,6 @@ impl PartialEq for BackendVerifierCache {
 
 impl Eq for BackendVerifierCache {}
 
-/// Binds one backend flavor's setup identity into the transcript. The backend
-/// key is determined by the absorbed dimensions and admitted catalog; binding
-/// the validated catalog digest avoids hashing the large serialized key while
-/// preventing cross-catalog replay.
-pub(crate) fn append_verifier_setup<T: Transcript>(
-    transcript: &mut T,
-    setup: &AkitaVerifierSetup,
-    flavor: AkitaBackendFlavor,
-) -> Result<(), OpeningsError> {
-    let akita_chunk_profile = setup.akita_chunk_profile();
-    transcript.append(&Label(b"akita_setup_key"));
-    transcript.append_bytes(b"akita/fp128");
-    transcript.append_bytes(flavor.transcript_label());
-    transcript.append(&U64Word(setup.max_num_vars as u64));
-    transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
-    transcript.append(&U64Word(setup.max_total_batch_polys as u64));
-    transcript.append(&U64Word(setup.one_hot_k as u64));
-    if flavor == AkitaBackendFlavor::OneHot {
-        transcript.append(&Label(b"akita_chunk_profile"));
-        transcript.append(&U64Word(akita_chunk_profile.chunks as u64));
-        transcript.append(&Label(b"akita_chunked_levels"));
-        transcript.append(&U64Word(akita_chunk_profile.levels as u64));
-    }
-    transcript.append_bytes(&setup.default_layout_digest);
-    let catalog_digest = match flavor {
-        AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog_digest(),
-        AkitaBackendFlavor::OneHot => {
-            with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| scheme
-                .schedules()
-                .catalog_digest())
-        }
-    };
-    transcript.append_bytes(&catalog_digest);
-    Ok(())
-}
-
-/// Binds the batch statement (commitment group, point, per-claim data) into
-/// the transcript.
-pub(crate) fn append_batch_statement<T: Transcript>(
-    transcript: &mut T,
-    statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
-    commitment: &AkitaCommitment,
-    point: &[AkitaField],
-) {
-    transcript.append(&Label(b"akita_batch_statement"));
-    transcript.append(&commitment);
-    transcript.append_values(b"akita_pcs_point", point);
-    transcript.append(&LabelWithCount(b"akita_claims", statement.len() as u64));
-    for claim in statement {
-        transcript.append(&claim.commitment);
-        transcript.append(&claim.evaluation.value);
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AkitaBackendFlavor {
@@ -1219,29 +1163,6 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
     OpeningsError::InvalidBatch(
         "Akita backend adapter is transparent-only and does not support ZK openings yet".to_owned(),
     )
-}
-
-/// Ends outer Jolt challenge derivation at one statement-bound challenge and
-/// uses it to domain-separate the nested Akita argument's session. No
-/// subsequent Jolt challenge consumes the terminal opening proof, so
-/// reabsorbing that proof into the outer transcript could not affect
-/// acceptance.
-pub(crate) fn bridged_akita_session<T>(
-    jolt_transcript: &mut T,
-    session_label: &[u8],
-) -> Result<Vec<u8>, OpeningsError>
-where
-    T: FieldTranscript<AkitaField>,
-{
-    let bridge = jolt_transcript.challenge()?;
-    let bridge_bytes = bridge.to_bytes_le_vec();
-    // Akita binds the concrete instance into its own Fiat-Shamir state but
-    // keeps the session bytes as domain separator, so the cross-protocol
-    // bridge belongs here.
-    let mut bridged_session = Vec::with_capacity(session_label.len() + bridge_bytes.len());
-    bridged_session.extend_from_slice(session_label);
-    bridged_session.extend_from_slice(&bridge_bytes);
-    Ok(bridged_session)
 }
 
 #[cfg(test)]

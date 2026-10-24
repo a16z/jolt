@@ -1,6 +1,5 @@
-use super::outputs::Stage8Output;
 #[cfg(not(feature = "akita"))]
-use super::outputs::{Stage8ClearOutput, Stage8ZkOutput};
+use super::outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput};
 #[cfg(not(feature = "akita"))]
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 #[cfg(feature = "akita")]
@@ -39,6 +38,8 @@ use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "akita")]
+use jolt_openings::GroupBatchOpening;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{
     AdditivelyHomomorphic, EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim,
@@ -46,11 +47,13 @@ use jolt_openings::{
 };
 #[cfg(not(feature = "akita"))]
 use jolt_poly::Point;
-#[cfg(feature = "akita")]
-use jolt_transcript::Encoding;
 use jolt_transcript::FieldTranscript;
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::LabelWithCount;
+#[cfg(feature = "akita")]
+use jolt_transcript::{Encoding, VerifierState};
+#[cfg(feature = "akita")]
+use std::borrow::BorrowMut;
 
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
@@ -675,7 +678,7 @@ mod tests {
     reason = "same signature as the homomorphic build's verify"
 )]
 #[jolt_verifier_derive::fs_scope(Stage8)]
-pub fn verify<F, PCS, VC, T, ZkProof>(
+pub fn verify<'a, F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -685,14 +688,14 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage4: &Stage4Output<F, VC::Output>,
     stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
-) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
+) -> Result<PCS::PendingEof, VerifierError>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + GroupBatchOpening,
     PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: super::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
-    T: FieldTranscript<F>,
+    T: FieldTranscript<F> + BorrowMut<VerifierState<'a, PCS::Sponge>>,
 {
     super::akita::verify(
         formula_dimensions,
@@ -710,7 +713,5 @@ where
         stage4.clear()?,
         stage6.clear()?,
         stage7.clear()?,
-    )?;
-
-    Ok(Stage8Output::Clear)
+    )
 }

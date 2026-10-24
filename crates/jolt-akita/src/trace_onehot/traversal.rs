@@ -240,7 +240,8 @@ where
     E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
 {
     plan.validate::<D>(source.num_vars)?;
-    let point = plan.point;
+    let tables = plan.tables;
+    let point = tables.point();
     let expected = point.num_live_positions();
     let actual = RootPolyShape::<AkitaField, D>::num_ring_elems(source);
     if actual != expected {
@@ -256,7 +257,7 @@ where
     let num_blocks = point.num_live_blocks();
     let subring_dimension = geometry.challenge_subring_dimension();
     let stride = geometry.subring_embedding_stride();
-    if point.packing_weights().len() != stride {
+    if tables.packing_weights().len() != stride {
         return Err(AkitaError::InvalidSetup(
             "coefficient-packing weight width disagrees with its geometry".to_string(),
         ));
@@ -268,8 +269,8 @@ where
     let positions_per_block = point.num_positions_per_block();
     let segment_rings = source.segment_ring_elems::<D>()?;
     let num_columns = source.rows.num_columns();
-    let position_weights = point.position_weights();
-    let packing_weights = point.packing_weights();
+    let position_weights = tables.position_weights();
+    let packing_weights = tables.packing_weights();
 
     // Segments and blocks are both powers of two, so a ring range inside one
     // `span` meets exactly one block per column, at consecutive positions.

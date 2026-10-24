@@ -740,6 +740,37 @@ fn akita_proof_shape_tampers_reject() {
     ));
 }
 
+/// Akita writes its opening into Jolt's argument string, so the verifier
+/// must read all of it: an appended byte fails the end-of-proof check, and a
+/// flipped byte inside Akita's messages fails the opening.
+#[test]
+fn akita_argument_string_tampers_reject() {
+    let muldiv = akita_muldiv_case();
+    assert!(
+        !muldiv.proof.narg.is_empty(),
+        "the embedded Akita opening must write into the argument string"
+    );
+
+    let mut proof = muldiv.proof.clone();
+    proof.narg.push(0);
+    assert!(
+        matches!(
+            muldiv.verify_proof(&proof),
+            Err(VerifierError::NargNotConsumed)
+        ),
+        "an appended argument-string byte must fail the end-of-proof check"
+    );
+
+    let mut proof = muldiv.proof.clone();
+    let middle = proof.narg.len() / 2;
+    proof.narg[middle] ^= 1;
+    assert_rejects(muldiv.verify_proof(&proof));
+
+    let mut proof = muldiv.proof.clone();
+    let _ = proof.narg.pop();
+    assert_rejects(muldiv.verify_proof(&proof));
+}
+
 /// The advice case fails closed when its trusted-advice commitment is absent:
 /// the direct dense opening has no commitment to bind against.
 #[test]
