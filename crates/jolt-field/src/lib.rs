@@ -121,9 +121,8 @@ pub mod solinas;
 mod unreduced;
 
 pub use algebra::{
-    reduction_width, Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field,
-    JoltField, MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring,
-    WithAccumulator,
+    Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
+    MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "binary")]
 pub use binary::{F128, F192, F64, F8};

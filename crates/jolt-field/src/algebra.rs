@@ -344,19 +344,6 @@ pub trait CanonicalEncoding:
     fn num_bits(&self) -> u32;
 }
 
-/// Bytes per element so that `2^share_bits` elements, each reduced modulo a
-/// `modulus_bits`-bit order from its own uniform bytes, are jointly within
-/// total variation `2^-161` of uniform.
-///
-/// Reducing `M = 2^(8w)` uniform values modulo `p` is within
-/// `r(p − r)/(pM) ≤ p/(4M)` of uniform, where `r = M mod p`. With
-/// `8w ≥ modulus_bits + 159 + share_bits` each element is within
-/// `2^-(161 + share_bits)`, and `2^share_bits` of them within `2^-161`.
-#[must_use]
-pub const fn reduction_width(modulus_bits: u32, share_bits: u32) -> usize {
-    (modulus_bits as usize + 159 + share_bits as usize).div_ceil(8)
-}
-
 /// Accumulates sums and products with potentially deferred modular reduction.
 ///
 /// The hot-loop pattern `acc += a * b` repeated hundreds of times per output
