@@ -55,7 +55,9 @@ pub use compression::{CompressedImage, ImageCompression};
 pub use error::WhiteoutError;
 pub use lift::{ChallengeRing, EvaluationClaims, LiftedRelation};
 pub use linear::{BlockTarget, ResidualBlock, ResidualGadget};
-pub use opening::{MaskedGroupClaim, MaskedGroupOpening};
+pub use opening::{
+    DenseSource, MaskedGroupClaim, MaskedGroupOpening, MaskedOpeningShape, PrecommittedShape,
+};
 #[cfg(feature = "whiteout-prover")]
 pub use pad_commitment::LatticePadOpening;
 pub use pad_commitment::{LatticePadCommitment, PAD_RANDOMNESS_LOG_BASIS};

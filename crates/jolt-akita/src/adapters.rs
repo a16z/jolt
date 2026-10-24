@@ -1177,9 +1177,23 @@ pub struct AkitaProverHint {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AkitaHintSource {
-    Dense { poly_count: usize },
-    OneHot { poly_count: usize, one_hot_k: usize },
-    TraceOneHot { poly_count: usize, one_hot_k: usize },
+    Dense {
+        poly_count: usize,
+    },
+    OneHot {
+        poly_count: usize,
+        one_hot_k: usize,
+    },
+    TraceOneHot {
+        poly_count: usize,
+        one_hot_k: usize,
+    },
+    /// Whiteout: one dense polynomial committed hiding, on the setup's
+    /// Whiteout backend, as a precommitted group of `shape`.
+    #[cfg(feature = "zk")]
+    WhiteoutPrecommitted {
+        shape: jolt_zk::whiteout::PrecommittedShape,
+    },
 }
 
 impl Default for AkitaHintSource {
@@ -1192,6 +1206,8 @@ impl AkitaHintSource {
     pub(crate) const fn backend_flavor(self) -> AkitaBackendFlavor {
         match self {
             Self::Dense { .. } => AkitaBackendFlavor::Dense,
+            #[cfg(feature = "zk")]
+            Self::WhiteoutPrecommitted { .. } => AkitaBackendFlavor::Dense,
             Self::OneHot { .. } | Self::TraceOneHot { .. } => AkitaBackendFlavor::OneHot,
         }
     }
@@ -1199,6 +1215,8 @@ impl AkitaHintSource {
     pub(crate) const fn kind(self) -> &'static str {
         match self {
             Self::Dense { .. } => "dense",
+            #[cfg(feature = "zk")]
+            Self::WhiteoutPrecommitted { .. } => "whiteout_precommitted",
             Self::OneHot { .. } => "one_hot",
             Self::TraceOneHot { .. } => "trace_one_hot",
         }
@@ -1209,6 +1227,8 @@ impl AkitaHintSource {
             Self::Dense { poly_count }
             | Self::OneHot { poly_count, .. }
             | Self::TraceOneHot { poly_count, .. } => poly_count,
+            #[cfg(feature = "zk")]
+            Self::WhiteoutPrecommitted { .. } => 1,
         }
     }
 }

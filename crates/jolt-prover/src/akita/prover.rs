@@ -3,6 +3,7 @@
 //! string is the [`JoltProof`]; Akita's opening messages are its tail.
 
 use common::jolt_device::JoltDevice;
+use jolt_akita::TraceOneHotCommitment;
 use jolt_algebra::JoltField;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::{
@@ -32,7 +33,7 @@ pub fn prove<F, PCS, VC, H>(
 ) -> Result<JoltProof, ProverError<F>>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F> + TraceOneHotCommitment + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + GroupCommitmentMetadata,

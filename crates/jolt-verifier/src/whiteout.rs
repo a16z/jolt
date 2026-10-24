@@ -4,8 +4,8 @@
 //! 0–1. the preamble and the commitments (`seed_transcript`);
 //! 2.   the pad commitment, on the layout [`pad_layout`] derives;
 //! 3.   stages 1–7, masked;
-//! 4–5. stage 8: the trace group's claims as affine forms, then Akita's
-//!      masked levels through the cut;
+//! 4–5. stage 8: each precommitted group's and the trace group's claims as
+//!      affine forms, then Akita's masked levels through the cut;
 //! 6.   the auxiliary block, Akita's part first, then Jolt's;
 //! 7–8. the Σ-protocol and the response proof;
 //! 9.   the end of the argument string.
@@ -15,20 +15,23 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_algebra::JoltField;
-use jolt_claims::protocols::jolt::lattice::OneHotTraceLayoutPlan;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Channel, Sponge, TranscriptError, VerifierTranscript};
 use jolt_zk::masking::{
     CommittedPadsView, OperandShapeDomain, PadLayout, ResidualRelation, ResidualRows,
 };
-use jolt_zk::whiteout::{LatticePadPayload, MaskedGroupClaim, MaskedGroupOpening};
+use jolt_zk::whiteout::{
+    LatticePadPayload, MaskedGroupClaim, MaskedGroupOpening, MaskedOpeningShape,
+};
 
 use crate::config::{validate_proof_config, JOLT_VERIFIER_CONFIG};
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
 use crate::sites::{PADS, STAGE8, WHITEOUT, WHITEOUT_SIGMA};
-use crate::stages::stage8::akita::{masked_trace_claim, whiteout_trace_plan};
+use crate::stages::stage8::akita::{
+    masked_group_claims, whiteout_opening_plan, WhiteoutOpeningPlan,
+};
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::stages::zk::residual::JoltResidual;
 use crate::verifier::{
@@ -56,22 +59,24 @@ where
 {
 }
 
-/// A Whiteout proof through stage 7 and stage 8's claims: the masked
-/// opening's shape, the pad view, the stage outputs' residual relation, and
-/// the trace group's masked claims.
+/// A Whiteout proof through stage 7 and stage 8's claims: the final
+/// opening's plan and the masked opening's shape, the pad view, the stage
+/// outputs' residual relation, and every group's masked claims (the
+/// precommitted groups in canonical order, then the trace group).
 pub struct WhiteoutStages<F: JoltField, PCS: WhiteoutScheme<F>>
 where
     PCS::Output: Clone + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
 {
+    pub plan: WhiteoutOpeningPlan<PCS::Output>,
     pub shape: <PCS as MaskedGroupOpening<F>>::Shape,
     pub pads: CommittedPadsView<LatticePadPayload<F>>,
     pub residual: JoltResidual<F>,
-    pub claim: MaskedGroupClaim<F, PCS::Output>,
+    pub claims: Vec<MaskedGroupClaim<F, PCS::Output>>,
 }
 
-/// The seeding messages, then the trace group's plan and the masked
-/// opening's shape, both from the statement: the commitment metadata is
+/// The seeding messages, then the final opening's plan and the masked
+/// opening's shape, both from the statement: the commitments' metadata is
 /// checked against the plan before any shape is built.
 fn seed<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -93,15 +98,17 @@ where
         trusted_advice_commitment,
         transcript,
     )?;
-    let plan = whiteout_trace_plan::<PCS, VC>(
+    let plan = whiteout_opening_plan::<PCS, VC>(
         &seeded.formula_dimensions,
         seeded.checked.one_hot_config,
         preprocessing,
         &seeded.commitments.one_hot_trace,
         seeded.commitments.untrusted_advice.as_ref(),
         trusted_advice_commitment,
+        #[cfg(feature = "field-inline")]
+        &seeded.commitments.field_inc,
     )?;
-    let shape = PCS::shape(&preprocessing.pcs_setup, plan.num_vars(), plan.ids().len())?;
+    let shape = PCS::shape(&preprocessing.pcs_setup, &plan.shape())?;
     Ok(Seed {
         seeded,
         plan,
@@ -116,39 +123,50 @@ where
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
 {
     seeded: SeededTranscript<PCS::Output>,
-    plan: OneHotTraceLayoutPlan,
+    plan: WhiteoutOpeningPlan<PCS::Output>,
     shape: <PCS as MaskedGroupOpening<F>>::Shape,
 }
 
 /// Stage 8's masked claims over `residual`, from the stage outputs.
-fn stage8_claim<F: JoltField, C: Clone>(
+fn stage8_claims<F: JoltField, C: Clone, H: Sponge>(
     seeded: &SeededTranscript<C>,
-    plan: &OneHotTraceLayoutPlan,
+    plan: &WhiteoutOpeningPlan<C>,
     stages: &StageOutputs<F>,
     residual: &JoltResidual<F>,
-) -> Result<MaskedGroupClaim<F, C>, VerifierError> {
-    masked_trace_claim(
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<Vec<MaskedGroupClaim<F, C>>, VerifierError> {
+    masked_group_claims(
         plan,
         seeded.checked.one_hot_config,
         &seeded.commitments.one_hot_trace,
         &seeded.checked.precommitted,
+        stages.stage4.output_points(),
         stages.stage6b.output_points(),
         &stages.stage7.zk()?.output_points,
         residual,
+        transcript,
     )
 }
 
 /// A pad layout [`pad_layout`] derived from a statement and its seeding
-/// messages. Only [`pad_layout`] builds one, so a caller that reuses a
-/// derived layout (the prover, a recording sponge's single transcript)
-/// cannot inject another.
+/// messages, with the masked opening's shape it was derived on. Only
+/// [`pad_layout`] builds one, so a caller that reuses a derived layout (the
+/// prover, a recording sponge's single transcript) cannot inject another.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DerivedPadLayout(PadLayout);
+pub struct DerivedPadLayout {
+    layout: PadLayout,
+    shape: MaskedOpeningShape,
+}
 
 impl DerivedPadLayout {
     /// The layout.
     pub fn layout(&self) -> &PadLayout {
-        &self.0
+        &self.layout
+    }
+
+    /// The masked opening's groups, from the statement.
+    pub fn shape(&self) -> &MaskedOpeningShape {
+        &self.shape
     }
 }
 
@@ -203,8 +221,8 @@ where
         )
         .and_then(|stages| {
             let residual = stages.residual(&seeded.checked, preprocessing)?;
-            let claim = stage8_claim(&seeded, &plan, &stages, &residual)?;
-            let prefix = PCS::count_masked(&shape, vec![claim], &mut counter, &mut transcript)
+            let claims = stage8_claims(&seeded, &plan, &stages, &residual, &mut transcript)?;
+            let prefix = PCS::count_masked(&shape, claims, &mut counter, &mut transcript)
                 .map_err(VerifierError::Masking)?;
             Ok((residual, prefix))
         });
@@ -212,7 +230,10 @@ where
             Ok((residual, prefix)) => {
                 let mut domain = OperandShapeDomain::new(counter.used());
                 PCS::prefix_shape(&prefix, &mut domain)?;
-                return Ok(DerivedPadLayout(residual.shape(domain)?.layout()?));
+                return Ok(DerivedPadLayout {
+                    layout: residual.shape(domain)?.layout()?,
+                    shape: plan.shape(),
+                });
             }
             Err(VerifierError::Transcript(TranscriptError::Truncated)) if padding < 1 << 24 => {
                 padding <<= 1;
@@ -263,7 +284,7 @@ where
             transcript.consumed(),
         )?,
     }
-    .0;
+    .layout;
     transcript.site(PADS);
     let mut pads = PCS::receive_pads(&shape, layout, transcript)?;
     let stages = verify_stages_1_to_7::<F, PCS, VC, H, LatticePadPayload<F>>(
@@ -275,12 +296,13 @@ where
     )?;
     let residual = stages.residual(&seeded.checked, preprocessing)?;
     transcript.site(STAGE8);
-    let claim = stage8_claim(&seeded, &plan, &stages, &residual)?;
+    let claims = stage8_claims(&seeded, &plan, &stages, &residual, transcript)?;
     Ok(WhiteoutStages {
+        plan,
         shape,
         pads,
         residual,
-        claim,
+        claims,
     })
 }
 
@@ -302,7 +324,7 @@ where
 {
     let prefix = PCS::verify_masked(
         &stages.shape,
-        vec![stages.claim.clone()],
+        stages.claims.clone(),
         &mut stages.pads,
         transcript,
     )?;

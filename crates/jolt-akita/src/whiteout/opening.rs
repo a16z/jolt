@@ -5,24 +5,22 @@ use jolt_zk::masking::{OperandShapeDomain, ResidualRows};
 use jolt_zk::whiteout::{MaskedGroupClaim, MaskedGroupOpening};
 
 use super::*;
-use crate::adapters::{reverse_point, AkitaBackendFlavor, AKITA_ONE_HOT_K16};
+use crate::adapters::{reverse_point, AKITA_ONE_HOT_K16};
 use crate::{AkitaChunkProfile, AkitaCommitment, AkitaScheme, AkitaVerifierSetup};
 
 /// The Whiteout parameters of `setup`.
-fn whiteout(setup: &AkitaVerifierSetup) -> Result<&WhiteoutSetup, ZkError> {
+pub(crate) fn whiteout(setup: &AkitaVerifierSetup) -> Result<&WhiteoutSetup, ZkError> {
     setup.whiteout.as_ref().ok_or_else(|| {
         AkitaError::InvalidSetup("the Akita setup has no Whiteout parameters".into()).into()
     })
 }
 
-/// The masked opening of a K=16 one-hot trace group of `num_polys`
-/// polynomials in `num_vars` variables, on a single-chunk setup: the only
-/// shape this prototype opens. The verifier passes statement-derived sizes;
-/// the prover its own commitment's.
-pub(crate) fn trace_shape(
+/// The masked opening of `groups`: a K=16 one-hot trace group on a
+/// single-chunk setup, the setup's own trace shape, beside precommitted
+/// groups the setup admits. Both roles pass the statement's shape.
+pub(crate) fn opening_shape(
     setup: &AkitaVerifierSetup,
-    num_vars: usize,
-    num_polys: usize,
+    groups: &MaskedOpeningShape,
 ) -> Result<Arc<WhiteoutShape>, ZkError> {
     if setup.one_hot_k != AKITA_ONE_HOT_K16
         || setup.akita_chunk_profile() != AkitaChunkProfile::Single
@@ -32,44 +30,59 @@ pub(crate) fn trace_shape(
         )
         .into());
     }
-    // One shape per setup, so the setup's shape cache holds at most one.
-    if num_vars != setup.max_num_vars || num_polys != setup.max_num_polys_per_commitment_group {
+    if groups.num_vars != setup.max_num_vars
+        || groups.num_polys != setup.max_num_polys_per_commitment_group
+    {
         return Err(AkitaError::UnsupportedSchedule(format!(
-            "Whiteout opens the setup's trace group ({} variables, {} polynomials), not \
-             {num_vars} and {num_polys}",
-            setup.max_num_vars, setup.max_num_polys_per_commitment_group
+            "Whiteout opens the setup's trace group ({} variables, {} polynomials), not {} and {}",
+            setup.max_num_vars,
+            setup.max_num_polys_per_commitment_group,
+            groups.num_vars,
+            groups.num_polys
         ))
         .into());
     }
-    whiteout(setup)?.shape(num_vars, num_polys)
+    whiteout(setup)?.shape(groups)
 }
 
-/// The prover's shape for its own `trace` commitment.
-pub(crate) fn prover_trace_shape(
-    setup: &AkitaVerifierSetup,
-    trace: &AkitaCommitment,
-) -> Result<Arc<WhiteoutShape>, ZkError> {
-    if trace.backend_flavor() != AkitaBackendFlavor::OneHot
-        || trace.one_hot_k() != AKITA_ONE_HOT_K16
-    {
-        return Err(AkitaError::UnsupportedSchedule(
-            "Whiteout opens one K=16 one-hot trace group".into(),
-        )
-        .into());
-    }
-    trace_shape(setup, trace.num_vars, trace.poly_count)
+/// Splits `groups` into the precommitted groups and the trace group, the
+/// last.
+fn split_trace<T>(mut groups: Vec<T>) -> Result<(Vec<T>, T), ZkError> {
+    let trace = groups.pop().ok_or_else(|| {
+        ZkError::from(AkitaError::InvalidInput(
+            "a Whiteout opening has a trace group".into(),
+        ))
+    })?;
+    Ok((groups, trace))
 }
 
-/// The one group a masked opening opens.
-fn single<T>(groups: Vec<T>) -> Result<T, ZkError> {
-    let mut groups = groups.into_iter();
-    match (groups.next(), groups.next()) {
-        (Some(group), None) => Ok(group),
-        (None, _) | (Some(_), Some(_)) => Err(AkitaError::UnsupportedSchedule(
-            "Whiteout opens exactly one group (precommitted groups are W6d)".into(),
-        )
-        .into()),
+/// The decoded commitments at their points in Akita's order, and the
+/// claims' forms in group order. A precommitted group's point is already in
+/// Akita's order; the trace group's is reversed, as in the clear grouped
+/// opening (`native_batching`).
+type DecodedGroups = (Vec<(CommittedGroup<F>, Vec<F>)>, Vec<AffineRow<F>>);
+
+fn decode(
+    shape: &WhiteoutShape,
+    groups: Vec<MaskedGroupClaim<F, AkitaCommitment>>,
+) -> Result<DecodedGroups, ZkError> {
+    let (precommitted, trace) = split_trace(groups)?;
+    let (precommitted_backend, trace_backend) = shape.row.backend_commitments(
+        &precommitted
+            .iter()
+            .map(|group| &group.commitment)
+            .collect::<Vec<_>>(),
+        &trace.commitment,
+    )?;
+    let mut decoded = Vec::with_capacity(precommitted.len() + 1);
+    let mut forms = Vec::new();
+    for (group, backend) in precommitted.into_iter().zip(precommitted_backend) {
+        decoded.push((backend, group.point));
+        forms.extend(group.evaluations);
     }
+    decoded.push((trace_backend, reverse_point(&trace.point)));
+    forms.extend(trace.evaluations);
+    Ok((decoded, forms))
 }
 
 impl MaskedGroupOpening<AkitaField> for AkitaScheme {
@@ -80,10 +93,9 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
 
     fn shape(
         setup: &AkitaVerifierSetup,
-        num_vars: usize,
-        num_polys: usize,
+        groups: &MaskedOpeningShape,
     ) -> Result<Arc<WhiteoutShape>, ZkError> {
-        trace_shape(setup, num_vars, num_polys)
+        opening_shape(setup, groups)
     }
 
     fn receive_pads<H: Sponge>(
@@ -100,15 +112,8 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         pads: &mut CommittedPadsView<P>,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<MaskedPrefix<F, F>, ZkError> {
-        let group = single(groups)?;
-        let commitment = shape.row.backend_commitment(&group.commitment)?;
-        Ok(shape.row.verify_masked(
-            &commitment,
-            reverse_point(&group.point),
-            group.evaluations,
-            pads,
-            transcript,
-        )?)
+        let (groups, forms) = decode(shape, groups)?;
+        Ok(shape.row.verify_masked(&groups, forms, pads, transcript)?)
     }
 
     fn count_masked<H: Sponge>(
@@ -117,15 +122,8 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         view: &mut CommittedPadsView<()>,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<MaskedPrefix<F, F>, ZkError> {
-        let group = single(groups)?;
-        let commitment = shape.row.backend_commitment(&group.commitment)?;
-        Ok(shape.row.count_masked(
-            &commitment,
-            reverse_point(&group.point),
-            group.evaluations,
-            view,
-            transcript,
-        )?)
+        let (groups, forms) = decode(shape, groups)?;
+        Ok(shape.row.count_masked(&groups, forms, view, transcript)?)
     }
 
     fn prefix_shape(

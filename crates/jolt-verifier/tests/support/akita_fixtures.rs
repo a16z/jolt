@@ -82,7 +82,6 @@ fn generate_muldiv() -> AkitaFixtureCase {
     prove_prepared(run, config, preprocessing, &[])
 }
 
-#[cfg(not(feature = "zk"))]
 fn generate_advice() -> AkitaFixtureCase {
     let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
     let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
@@ -105,7 +104,6 @@ fn generate_advice() -> AkitaFixtureCase {
     prove_prepared(run, config, preprocessing, &trusted_advice)
 }
 
-#[cfg(not(feature = "zk"))]
 fn generate_committed_muldiv() -> AkitaFixtureCase {
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
@@ -125,6 +123,23 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
 pub fn whiteout_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_whiteout_muldiv)
+}
+
+/// Whiteout's advice case (`akita,zk`): both advice kinds as hiding
+/// precommitted groups beside the trace group.
+#[cfg(feature = "zk")]
+pub fn whiteout_advice_case() -> &'static AkitaFixtureCase {
+    static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
+    CASE.get_or_init(generate_advice)
+}
+
+/// Whiteout's committed-program case (`akita,zk`): the bytecode and
+/// program-image objects as hiding precommitted groups beside the trace
+/// group.
+#[cfg(feature = "zk")]
+pub fn whiteout_committed_case() -> &'static AkitaFixtureCase {
+    static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
+    CASE.get_or_init(generate_committed_muldiv)
 }
 
 /// Whiteout's muldiv case proved with its first attempt aborted after the
@@ -340,6 +355,8 @@ mod field_inline {
             public_io,
             proof,
             trusted_advice_commitment: None,
+            #[cfg(feature = "zk")]
+            pads: jolt_prover::akita::whiteout_secrets::take().expect("the Whiteout proof's pads"),
         }
     }
 }

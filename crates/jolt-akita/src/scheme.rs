@@ -74,24 +74,44 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     /// Releases backend state that can be rebuilt before the opening proof.
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError>;
 
+    /// Whiteout: commits `polynomial`, one dense polynomial, hiding as a
+    /// precommitted group of `shape` on the setup's Whiteout backend, the one
+    /// that opens it (Akita §3.5, R6). Per-proof groups and statement-fixed
+    /// ones (trusted advice, a committed program) alike: a hiding commitment
+    /// cannot move to another backend.
+    #[cfg(feature = "zk")]
+    fn whiteout_commit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
+        setup: &Self::ProverSetup,
+        shape: jolt_zk::whiteout::PrecommittedShape,
+        polynomial: &P,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
+
     /// Whiteout: samples, commits and sends the pads of `layout` for the
-    /// masked opening of `trace` (spec §2, row 2).
+    /// masked opening of `shape` (spec §2, row 2).
     #[cfg(feature = "zk")]
     fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
         setup: &Self::ProverSetup,
-        trace: &Self::Output,
+        shape: &jolt_zk::whiteout::MaskedOpeningShape,
         layout: jolt_zk::masking::PadLayout,
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
     ) -> Result<WhiteoutPads<Self::Field>, jolt_zk::masking::ZkError>;
 
-    /// Whiteout: proves the masked levels of `trace`'s opening through the
-    /// cut, its claims stated by `forms` (spec §2, row 5). Returns the
-    /// residual opening and the masked levels' auxiliary values, which lead
-    /// the auxiliary block.
+    /// Whiteout: proves the masked levels of the opening of `shape` through
+    /// the cut: the `precommitted` groups in canonical order, then `trace`,
+    /// their claims stated by `forms` in the same order (spec §2, row 5).
+    /// Returns the residual opening and the masked levels' auxiliary values,
+    /// which lead the auxiliary block.
     #[cfg(feature = "zk")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the opening's groups, their forms, and the pads"
+    )]
     fn whiteout_prove_masked<H: Sponge>(
         setup: &Self::ProverSetup,
+        shape: &jolt_zk::whiteout::MaskedOpeningShape,
+        precommitted: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
         trace: GroupOpeningClaim<Self::Field, Self::Output>,
         hint: Self::OpeningHint,
         forms: &[jolt_zk::masking::AffineRow<Self::Field>],
@@ -104,7 +124,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     #[cfg(feature = "zk")]
     fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
         setup: &Self::ProverSetup,
-        trace: &Self::Output,
+        shape: &jolt_zk::whiteout::MaskedOpeningShape,
         relation: &jolt_zk::masking::ResidualRelation<Self::Field>,
         residual: &crate::whiteout::WhiteoutResidual,
         pads: &WhiteoutPads<Self::Field>,
@@ -258,11 +278,6 @@ impl AkitaScheme {
         rows: Arc<dyn TraceOneHotRows>,
         group_hints: &[&AkitaProverHint],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        let profiles = if group_hints.is_empty() {
-            None
-        } else {
-            Some(Self::group_profiles(setup, group_hints)?)
-        };
         let source = TraceOneHotColumn::new(setup.one_hot_k(), AKITA_SOURCE_RING_DIMENSION, rows)
             .map_err(commit_failed)?;
         let num_vars = RootPolyMeta::num_vars(
@@ -274,20 +289,32 @@ impl AkitaScheme {
         Self::validate_commit_shape(setup, num_vars, poly_count)?;
         let one_hot_k = setup.one_hot_k();
         #[cfg(feature = "zk")]
-        if let Some(whiteout) = setup.verifier.whiteout.as_ref() {
-            // Whiteout commits the trace group hiding, under its
-            // zero-knowledge row; its precommitted groups are W6d.
-            if profiles.is_some() {
-                return Err(invalid_batch(
-                    "Whiteout commits no precommitted groups yet (W6d)",
-                ));
-            }
-            let shape = whiteout
-                .shape(num_vars, poly_count)
-                .map_err(invalid_setup)?;
+        if setup.verifier.whiteout.is_some() {
+            // Whiteout commits the trace group hiding, under the
+            // zero-knowledge row keyed on its precommitted groups.
+            let precommitted = group_hints
+                .iter()
+                .map(|hint| match hint.source {
+                    AkitaHintSource::WhiteoutPrecommitted { shape } => Ok(shape),
+                    AkitaHintSource::Dense { .. }
+                    | AkitaHintSource::OneHot { .. }
+                    | AkitaHintSource::TraceOneHot { .. } => Err(invalid_batch(
+                        "a Whiteout trace group folds only hiding precommitted groups",
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let shape = crate::whiteout::opening_shape(
+                &setup.verifier,
+                &jolt_zk::whiteout::MaskedOpeningShape {
+                    precommitted,
+                    num_vars,
+                    num_polys: poly_count,
+                },
+            )
+            .map_err(invalid_setup)?;
             let row = shape.row();
             let (backend_commitment, backend_hint) = with_backend_pool(|| {
-                let source = row.backend()?.import_source(source)?;
+                let source = row.catalog().backend()?.import_source(source)?;
                 row.commit_hiding(&source)
             })
             .map_err(commit_failed)?;
@@ -302,6 +329,11 @@ impl AkitaScheme {
                 },
             );
         }
+        let profiles = if group_hints.is_empty() {
+            None
+        } else {
+            Some(Self::group_profiles(setup, group_hints)?)
+        };
         let (_, backend) = setup.one_hot_backend()?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
             let source = backend.import_source(source)?;
@@ -321,6 +353,47 @@ impl AkitaScheme {
                 poly_count,
                 one_hot_k,
             },
+        )
+    }
+
+    /// Whiteout: commits one dense polynomial hiding as a precommitted group
+    /// of `shape`, on the setup's Whiteout backend.
+    #[cfg(feature = "zk")]
+    fn commit_whiteout_precommitted<P: MultilinearPoly<AkitaField> + ?Sized>(
+        setup: &AkitaProverSetup,
+        shape: jolt_zk::whiteout::PrecommittedShape,
+        polynomial: &P,
+        layout_digest: [u8; 32],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let num_vars = polynomial.num_vars();
+        if num_vars != shape.num_vars {
+            return Err(invalid_batch(format!(
+                "a Whiteout precommitted group of {shape:?} cannot hold a {num_vars}-variable polynomial"
+            )));
+        }
+        let whiteout = crate::whiteout::whiteout(&setup.verifier).map_err(invalid_setup)?;
+        let catalog = whiteout
+            .catalog(
+                setup.max_num_vars(),
+                setup.max_num_polys_per_commitment_group(),
+            )
+            .map_err(invalid_setup)?;
+        let dense = vec![AkitaBackendDensePoly::from_field_evals(
+            num_vars,
+            akita_ordered_evaluations(polynomial)?,
+        )
+        .map_err(akita_error)?];
+        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+            let source = catalog.backend()?.import_source(dense)?;
+            catalog.commit_precommitted(shape, &source)
+        })
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintSource::WhiteoutPrecommitted { shape },
         )
     }
 
@@ -411,6 +484,8 @@ impl AkitaScheme {
         let backend_flavor = source.backend_flavor();
         let one_hot_k = match source {
             AkitaHintSource::Dense { .. } => 0,
+            #[cfg(feature = "zk")]
+            AkitaHintSource::WhiteoutPrecommitted { .. } => 0,
             AkitaHintSource::OneHot { one_hot_k, .. }
             | AkitaHintSource::TraceOneHot { one_hot_k, .. } => one_hot_k,
         };
@@ -484,14 +559,24 @@ impl TraceOneHotCommitment for AkitaScheme {
     }
 
     #[cfg(feature = "zk")]
+    fn whiteout_commit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
+        setup: &Self::ProverSetup,
+        shape: jolt_zk::whiteout::PrecommittedShape,
+        polynomial: &P,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Self::commit_whiteout_precommitted(setup, shape, polynomial, layout_digest)
+    }
+
+    #[cfg(feature = "zk")]
     fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
         setup: &Self::ProverSetup,
-        trace: &Self::Output,
+        shape: &jolt_zk::whiteout::MaskedOpeningShape,
         layout: jolt_zk::masking::PadLayout,
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
     ) -> Result<WhiteoutPads<AkitaField>, jolt_zk::masking::ZkError> {
-        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, trace)?;
+        let shape = crate::whiteout::opening_shape(&setup.verifier, shape)?;
         shape
             .tail()
             .commit_pads(shape.row(), layout, transcript, rng)
@@ -500,6 +585,8 @@ impl TraceOneHotCommitment for AkitaScheme {
     #[cfg(feature = "zk")]
     fn whiteout_prove_masked<H: Sponge>(
         setup: &Self::ProverSetup,
+        shape: &jolt_zk::whiteout::MaskedOpeningShape,
+        precommitted: Vec<GroupOpeningWithHint<AkitaField, AkitaCommitment, AkitaProverHint>>,
         trace: GroupOpeningClaim<AkitaField, AkitaCommitment>,
         hint: AkitaProverHint,
         forms: &[jolt_zk::masking::AffineRow<AkitaField>],
@@ -507,33 +594,61 @@ impl TraceOneHotCommitment for AkitaScheme {
         transcript: &mut ProverTranscript<H>,
     ) -> Result<(crate::whiteout::WhiteoutResidual, Vec<AkitaField>), jolt_zk::masking::ZkError>
     {
-        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, &trace.commitment)?;
+        if precommitted.len() != shape.precommitted.len() {
+            return Err(AkitaError::InvalidInput(
+                "the precommitted groups disagree with the opening's shape".into(),
+            )
+            .into());
+        }
+        let opening = crate::whiteout::opening_shape(&setup.verifier, shape)?;
+        let mut groups = Vec::with_capacity(precommitted.len() + 1);
+        for ((entry, hint), expected) in precommitted.into_iter().zip(&shape.precommitted) {
+            if !matches!(
+                hint.source,
+                AkitaHintSource::WhiteoutPrecommitted { shape } if shape == *expected
+            ) {
+                return Err(AkitaError::InvalidInput(format!(
+                    "the {} hint is not a hiding precommitted group of {expected:?}",
+                    entry.role.diagnostic_name()
+                ))
+                .into());
+            }
+            let (commitment, handle) = hint.backend.ok_or_else(|| {
+                AkitaError::InvalidInput("a precommitted hint has no backend payload".into())
+            })?;
+            groups.push(crate::whiteout::ProverGroup {
+                commitment,
+                handle,
+                point: entry.claim.point,
+                evaluations: entry.claim.evaluations,
+            });
+        }
         let (commitment, handle) = hint.backend.ok_or_else(|| {
             AkitaError::InvalidInput("the trace hint has no backend payload".into())
         })?;
-        let (opening, auxiliary) = shape.row().prove_masked(
+        groups.push(crate::whiteout::ProverGroup {
             commitment,
             handle,
-            crate::adapters::reverse_point(&trace.point),
-            trace.evaluations,
-            forms,
-            pads,
-            transcript,
-        )?;
+            point: crate::adapters::reverse_point(&trace.point),
+            evaluations: trace.evaluations,
+        });
+        let (opening, auxiliary) = opening
+            .row()
+            .prove_masked(groups, forms, pads, transcript)?;
         Ok((crate::whiteout::WhiteoutResidual { opening }, auxiliary))
     }
 
     #[cfg(feature = "zk")]
     fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
         setup: &Self::ProverSetup,
-        trace: &Self::Output,
+        shape: &jolt_zk::whiteout::MaskedOpeningShape,
         relation: &jolt_zk::masking::ResidualRelation<AkitaField>,
         residual: &crate::whiteout::WhiteoutResidual,
         pads: &WhiteoutPads<AkitaField>,
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
     ) -> Result<(), jolt_zk::masking::ZkError> {
-        let shape = crate::whiteout::prover_trace_shape(&setup.verifier, trace)?;
+        let shape = crate::whiteout::opening_shape(&setup.verifier, shape)?;
         shape.tail().prove(
             shape.row(),
             relation,
@@ -649,7 +764,7 @@ impl CommitmentScheme for AkitaScheme {
             #[cfg(feature = "zk")]
             whiteout: params
                 .whiteout
-                .then(crate::whiteout::WhiteoutSetup::default),
+                .then(|| crate::whiteout::WhiteoutSetup::new(params.grouped_schedule.clone())),
         };
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
             if params.flavor == AkitaSetupFlavor::OneHot {
@@ -912,6 +1027,18 @@ impl TransparentObjectSetup for AkitaScheme {
         layout_digest: [u8; 32],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let num_vars = poly.num_vars();
+        #[cfg(feature = "zk")]
+        if setup.verifier.whiteout.is_some() {
+            return Self::commit_whiteout_precommitted(
+                setup,
+                jolt_zk::whiteout::PrecommittedShape {
+                    num_vars,
+                    source: jolt_zk::whiteout::DenseSource::FullField,
+                },
+                poly,
+                layout_digest,
+            );
+        }
         let cached = setup.full_width.get(&num_vars).ok_or_else(|| {
             invalid_setup("full-width object arity was not admitted during preprocessing")
         })?;

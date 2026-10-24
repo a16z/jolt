@@ -24,6 +24,34 @@ pub struct MaskedGroupClaim<F, C> {
     pub evaluations: Vec<AffineRow<F>>,
 }
 
+/// The committed coefficients of a precommitted dense group, which fix the
+/// producer contract its one-shot fold digits are sized for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DenseSource {
+    /// Coefficients bounded by `u64` (advice words, committed programs).
+    Bounded,
+    /// Arbitrary field elements (field-register increments).
+    FullField,
+}
+
+/// One precommitted group a masked opening folds beside its final group:
+/// a single dense polynomial in `num_vars` variables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PrecommittedShape {
+    pub num_vars: usize,
+    pub source: DenseSource,
+}
+
+/// The groups one masked opening opens, as the statement fixes them: the
+/// precommitted groups in canonical order, then the final group of
+/// `num_polys` polynomials in `num_vars` variables.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MaskedOpeningShape {
+    pub precommitted: Vec<PrecommittedShape>,
+    pub num_vars: usize,
+    pub num_polys: usize,
+}
+
 /// The verifier side of a masked group opening.
 pub trait MaskedGroupOpening<F: JoltField> {
     type Setup;
@@ -35,19 +63,14 @@ pub trait MaskedGroupOpening<F: JoltField> {
     /// state and the residual claim at the cut.
     type Prefix;
 
-    /// The shape of the opening of one group of `num_polys` polynomials in
-    /// `num_vars` variables. The verifier derives both from the statement and
-    /// checks the commitment's metadata against them first: a commitment
-    /// header is prover-controlled.
+    /// The setup of the opening of `groups`. The verifier derives them from
+    /// the statement and checks the commitments' metadata against them
+    /// first: a commitment header is prover-controlled.
     ///
     /// # Errors
     ///
     /// [`ZkError`] if the setup has no masked opening of that shape.
-    fn shape(
-        setup: &Self::Setup,
-        num_vars: usize,
-        num_polys: usize,
-    ) -> Result<Self::Shape, ZkError>;
+    fn shape(setup: &Self::Setup, groups: &MaskedOpeningShape) -> Result<Self::Shape, ZkError>;
 
     /// Reads the pad commitment of `layout`, at its transcript position
     /// before the first challenge.
@@ -61,7 +84,8 @@ pub trait MaskedGroupOpening<F: JoltField> {
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError>;
 
-    /// Replays the masked levels of the opening of `groups` on `pads`.
+    /// Replays the masked levels of the opening of `groups` on `pads`. The
+    /// groups are in the shape's order: precommitted, then final.
     ///
     /// # Errors
     ///

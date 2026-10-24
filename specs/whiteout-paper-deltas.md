@@ -61,6 +61,7 @@ so the authors can fold it into the paper.
 | D28 | Public coordinates of w_k: the cut level's setup-prefix response and inner digits, at native-element granularity, with no zero cells | clarification, departure | implemented (Akita W5d) |
 | D29 | u_a enters N as a public (raw) target; the masked prefix sends it raw (19 × `R_64` after W5e) | departure (cost) | implemented (Akita W5d, re-sized W5e) |
 | D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
+| D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation | departure (stricter than paper), clarification | implemented (W6f) |
 
 ## D1. Constant-time Σ attempt
 
@@ -1041,8 +1042,8 @@ programs, but not for these groups.
 Lemma `wo:lem:stat-hiding` as the root's is. The rule is stricter than the
 paper for statement-fixed groups.
 
-**Status.** Closed by Akita W2b. W6 no longer needs to reject ZK proofs that
-contain these groups; it commits them hiding.
+**Status.** Closed by Akita W2b; Jolt commits and opens these groups hiding
+since W6f (D31).
 
 **For the paper.** In §3.1 "Advice and committed programs", state the rule
 by provenance: every group committed during proving gets randomness,
@@ -1074,10 +1075,9 @@ mode on both sides. #254's caller contract gains one item: in ZK mode Akita's
 root runs only after t_p and every masked slot its claims reference.
 `MaskedGroupClaim` enforces this by type.
 
-**Status.** Implemented for the trace group (W6d): stage 8 passes its claims
-to Akita as `MaskedGroupClaim` forms and absorbs no evaluation; precommitted
-groups, whose packing reduction would absorb evaluations, are rejected for
-now. What binds the final-opening claims is not a row a shift cannot
+**Status.** Implemented (W6d for the trace group, W6f for precommitted
+groups, D31): stage 8 passes every group's claims to Akita as
+`MaskedGroupClaim` forms and absorbs no evaluation. What binds the final-opening claims is not a row a shift cannot
 satisfy. jolt-verifier's `soundness::whiteout::shifts` probe, on muldiv's 56
 final-opening claims with every auxiliary value recomputed as a consistent
 cheater would, finds:
@@ -1294,3 +1294,105 @@ here. It has no power against small biases at these `N`; it is a smoke test
 for gross leaks (an unmasked or weakly masked slot), not evidence of
 statistical zero knowledge.
 
+## D31. Precommitted groups opened masked (W6f)
+
+**Paper says.** Advice committed during proving is witness data;
+precommitted trusted advice and committed programs are outside Whiteout's
+protection (`03_setting.tex:167-173`). The PCS receives each claim as an
+affine form over committed pads (`06_evaluation.tex:78-83`).
+
+**Implementation** (jolt `whiteout/dev` + W6f;
+`jolt:specs/whiteout-jolt-integration.md`, prototype deltas).
+
+- *Which groups.* Untrusted advice and `FieldInc` (per proof), trusted
+  advice and the two committed-program objects (statement-fixed) all open
+  as precommitted groups beside the trace group, in the clear stage 8's
+  canonical order. Each is committed under the root profile of the
+  zero-knowledge row of its own shape (`jolt:crates/jolt-akita/src/whiteout/mod.rs`,
+  `PrecommittedRow`), so it carries the masked root's B randomness
+  (Akita §3.5, R6). The trace row is planned keyed on those profiles.
+- *One backend.* Akita refuses to import a hiding commitment into another
+  backend (recomputing it would draw fresh randomness). Every hiding group
+  is therefore committed on the trace setup's Whiteout backend, the one
+  that opens it (`WhiteoutCatalog`), not on a transparent per-object setup
+  as in the clear build. A setup's catalog holds one row per admitted list
+  of precommitted groups (`GroupedScheduleParams::whiteout_admitted`), all
+  planned on first use in both roles; the opening absorbs the catalog's
+  digest, so both roles must plan the same list.
+- *Statement-fixed groups.* Trusted advice and committed programs are
+  committed hiding at preprocessing time (`commit_trusted_advice`,
+  `preprocess_committed`), and the prover keeps the randomness in its
+  `AdviceObject` / `CommittedProgramProverData`. The commitment is made
+  before any pad exists and is reused by every proof. This is sound and
+  hiding for the following reason. The commitment's randomness is a
+  commitment-level object: it hides the group's B images (Lemma
+  `wo:lem:stat-hiding`) and is placed in level 0's output witness, which
+  each proof commits afresh with its own randomness r₁ and then opens only
+  through masked levels whose messages are masked by that proof's pads.
+  The pads mask messages, never commitments, so the order of the two does
+  not matter; across proofs the reused randomness only ever reappears
+  inside witnesses that are themselves freshly hidden (Akita §3.5,
+  "A commitment reused across proofs is still one commitment"). The
+  per-proof groups (untrusted advice, `FieldInc`) draw fresh randomness in
+  every proof.
+- *Packing reduction.* An advice or committed-program object is
+  prefix-packed (`PrefixPackedLayout`). The clear reduction absorbs the
+  layout words, the digest, the common point and the evaluations, then
+  draws the selector s. Under Whiteout it absorbs the same items except
+  the evaluations (`PackedEvaluations::Masked`), and the reduced claim is
+  the affine form Σ_slot eq(s, slot) · eq(prefix, 0) · formᵢ, built by the
+  clear path's own geometry (`PrefixPackedObjectPlan::packed_leaves`,
+  `PrefixPackedLayout::select`).
+
+**Why it is sound.** Each formᵢ reads masked messages absorbed before s,
+and its coefficients are statement or earlier-challenge values, so the
+forms are fixed before s is drawn; t_p fixes the pads. The clear absorb of
+the evaluations adds nothing that the transcript does not already bind.
+The reduction's own Schwartz–Zippel over s is unchanged, and Akita binds
+the reduced claim through its EvaluationBatch challenges as for the trace
+group's claims (D25).
+
+**Deviations.**
+
+- *Stricter than the paper.* Statement-fixed groups are hidden (D24's rule,
+  enforced by Akita's admission).
+- *Setup-bound trusted advice.* A clear trusted-advice commitment is made
+  on a transparent setup and can be reused across trace setups and chunk
+  profiles. A Whiteout one is made on one trace setup's backend and opens
+  only there; its handle cannot move to another process or setup.
+- *Program commitments are not recomputable.* A committed program's
+  hiding commitment differs per preprocessing run, so nobody can recompute
+  it from the program. In the clear build the verifier need not trust the
+  prover's preprocessing: anyone holding P recomputes C and checks it.
+  Under Whiteout nothing ties C to P outside the committing process.
+- *Trust root of statement-fixed groups.* The hiding randomness of a
+  trusted-advice or committed-program commitment lives only in the
+  committing process's in-memory Akita handle (`CommitmentHandle`); Akita
+  can neither export it nor rebuild a hiding handle from given randomness.
+  So the commitment's trust root must be the committing prover's process:
+  that process commits and proves, a separately trusted party cannot hand
+  the prover a usable opening of a commitment it made, and an auditor
+  cannot open C to check which advice or program it binds. A verifier
+  accepts C on the strength of whoever ran that process, not by
+  recomputation. The remedy is follow-up Akita A44: export the hiding
+  randomness r of a hiding commitment, and re-import a hiding source with
+  given randomness. A trusted party could then ship (advice or program, r)
+  to the prover, and an auditor could open C.
+- *Unchunked precommitted rows.* A precommitted group's own ZK row is
+  planned unchunked: a masked level spans one witness chunk (D4), and the
+  group folds at the single-chunk trace row's root. Groups below 12
+  variables have no ZK row (Akita's audited fold domain); Jolt's dense
+  objects are at least 14.
+
+**Status.** Implemented (W6f) for advice, committed programs and
+field-inline's `FieldInc` (a full-field group, `ZkCommitmentConfig<JoltDenseFull>`):
+jolt-prover `whiteout_e2e` (honest proofs verify, tampers reject, a
+recommitted trusted advice or program commitment rejects; with
+`field-inline`, a field-ops proof with untrusted advice) and jolt-verifier's
+census and per-class tampers over the advice and committed-program cases.
+
+**For the paper.** In §3.1, state that a preprocessing commitment may
+carry randomness that the prover keeps and reuses, and that this needs no
+change to the hiding argument; and in §4.1 that a prefix-packed claim's
+reduction binds its forms through the masked messages, not through an
+absorbed value.

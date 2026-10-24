@@ -7,11 +7,15 @@
 //! PROTOTYPE (port map in the spec's prototype deltas):
 //! - Zero-knowledge rows are planned on first use for the exact shape, in
 //!   both roles, instead of shipped as artifacts.
-//! - One trace group under `JoltOneHotK16`, no precommitted groups.
+//! - One trace group under `JoltOneHotK16`, beside the precommitted dense
+//!   groups its setup admits (advice, field increments, committed programs),
+//!   each committed hiding under the profile of its own shape's
+//!   zero-knowledge row (Akita §3.5, R6).
 //! - `A_p` is priced at the Σ collision radius ([`sigma_matrix_rank`]),
 //!   `A_D` at its digits' difference bound ([`digit_matrix_rank`]).
 
-use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use akita_config::proof_optimized::fp128::ResponseDigits;
@@ -19,19 +23,21 @@ use akita_config::{
     policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
 };
 use akita_params::sis::sigma_binding::sigma_binding_min_rank;
+use akita_params::sis::CommittedSourceContract;
 use akita_params::zk::{
     hiding_randomness_columns, DigitAlphabet, ImageShape, ZkOpeningSchedule, ZK_CUT_LEVEL,
 };
 use akita_params::{
     BasisMode, CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningClaimsLayout,
-    OpeningScheduleSelection, PolynomialGroupLayout, ScheduleLookupKey,
+    OpeningScheduleSelection, PolynomialGroupLayout, PrecommittedGroupProfiles, ScheduleLookupKey,
 };
 use akita_pcs::zk::{
     prove_masked_prefix, AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualOpening,
     ResidualShape, ZkCommitmentConfig,
 };
 use akita_pcs::{
-    AkitaCommitmentScheme, AkitaError, AkitaVerifier, GroupContext, SelectedProverOpeningData,
+    AkitaCommitmentScheme, AkitaError, AkitaVerifier, CommitOutput, GroupContext,
+    SelectedProverOpeningData,
 };
 use akita_schedules::digit_commitment_min_rank;
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
@@ -42,14 +48,16 @@ use jolt_zk::masking::{
     AffineRow, CommittedPads, CommittedPadsView, PadLayout, ResidualRelation, ZkError,
 };
 use jolt_zk::whiteout::{
-    commit_lattice_pads, prove_sigma, receive_lattice_pads, verify_sigma, BlockTarget,
-    ImageCompression, LatticePadCommitment, LatticePadPayload, PadPlacement, SigmaSetup,
-    WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS, RESPONSE_LOG_BASIS,
+    commit_lattice_pads, prove_sigma, receive_lattice_pads, verify_sigma, BlockTarget, DenseSource,
+    ImageCompression, LatticePadCommitment, LatticePadPayload, MaskedOpeningShape, PadPlacement,
+    PrecommittedShape, SigmaSetup, WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS,
+    RESPONSE_LOG_BASIS,
 };
 use rand_core::{CryptoRng, RngCore};
 
 use crate::adapters::{AkitaBackend, AkitaBackendHint, AkitaBackendProverSetup, AkitaField};
-use crate::configs::{CatalogChunking, JoltOneHotK16};
+use crate::configs::{CatalogChunking, JoltDenseBounded, JoltDenseFull, JoltOneHotK16};
+use crate::schedule_registry::GroupedScheduleParams;
 
 type F = AkitaField;
 
@@ -135,74 +143,227 @@ fn public_stream(len: usize, seed: [u8; 32]) -> Result<Vec<F>, ZkError> {
         .map_err(|error| AkitaError::InvalidSetup(error.to_string()).into())
 }
 
-/// One trace shape's zero-knowledge opening: its row, the Akita verifier,
-/// the residual shape at its cut, and the prover's setup and backend, built
-/// only on the first prover call (a verifier never builds prover state).
-pub struct WhiteoutRow {
+/// The zero-knowledge configuration of a precommitted `u64`-bounded dense
+/// group (advice words, committed programs).
+pub type WhiteoutDenseBounded = ZkCommitmentConfig<JoltDenseBounded>;
+
+/// The zero-knowledge configuration of a precommitted full-field dense group
+/// (field-register increments).
+pub type WhiteoutDenseFull = ZkCommitmentConfig<JoltDenseFull>;
+
+/// A precommitted group's hiding commitment: the root profile of the
+/// zero-knowledge row of its own shape, which carries the masked root's
+/// `b_randomness_columns` (Akita §3.5, R6), and that row's one-row catalog,
+/// whose config admits the group's source at commit time.
+struct PrecommittedRow {
+    profile: GroupCommitPhaseParams,
+    catalog: PrecommittedCatalog,
+}
+
+enum PrecommittedCatalog {
+    Bounded(TrustedScheduleCatalog<WhiteoutDenseBounded>),
+    FullField(TrustedScheduleCatalog<WhiteoutDenseFull>),
+}
+
+impl PrecommittedRow {
+    fn plan(shape: PrecommittedShape) -> Result<Self, AkitaError> {
+        match shape.source {
+            DenseSource::Bounded => {
+                let (profile, catalog) = plan_precommitted::<WhiteoutDenseBounded>(shape.num_vars)?;
+                Ok(Self {
+                    profile,
+                    catalog: PrecommittedCatalog::Bounded(catalog),
+                })
+            }
+            DenseSource::FullField => {
+                let (profile, catalog) = plan_precommitted::<WhiteoutDenseFull>(shape.num_vars)?;
+                Ok(Self {
+                    profile,
+                    catalog: PrecommittedCatalog::FullField(catalog),
+                })
+            }
+        }
+    }
+
+    fn contract(&self) -> Result<CommittedSourceContract, AkitaError> {
+        match self.catalog {
+            PrecommittedCatalog::Bounded(_) => WhiteoutDenseBounded::committed_source_contract(),
+            PrecommittedCatalog::FullField(_) => WhiteoutDenseFull::committed_source_contract(),
+        }
+    }
+
+    /// Commits `source` under the hiding profile: the backend samples fresh
+    /// randomness for every B slice and keeps it in the handle.
+    fn commit(
+        &self,
+        backend: &AkitaBackend,
+        source: &akita_pcs::SourceHandle<F, F>,
+    ) -> Result<CommitOutput<F, F>, AkitaError> {
+        let context = GroupContext::explicit(&self.profile);
+        match &self.catalog {
+            PrecommittedCatalog::Bounded(catalog) => backend.commit(catalog, source, context),
+            PrecommittedCatalog::FullField(catalog) => backend.commit(catalog, source, context),
+        }
+    }
+}
+
+/// The root profile and one-row catalog of the zero-knowledge row of one
+/// `num_vars`-variable dense polynomial under `Cfg`, planned unchunked: a
+/// masked level spans one witness chunk (D4), and the group is folded at the
+/// single-chunk trace row's masked root.
+fn plan_precommitted<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
+    num_vars: usize,
+) -> Result<(GroupCommitPhaseParams, TrustedScheduleCatalog<Cfg>), AkitaError> {
+    let chunking = akita_params::ChunkedWitnessCfg::default_non_chunked();
+    let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+    let planned = akita_planner::find_zk_schedule(
+        &key,
+        Cfg::committed_source_contract()?,
+        &[],
+        &policy_of::<Cfg>(chunking),
+        Cfg::ring_challenge_config,
+        ZkOpeningSchedule::new(ZK_CUT_LEVEL)?,
+    )?;
+    let profile =
+        GroupCommitPhaseParams::try_from_params(key.final_group, &planned.schedule.root.params)?;
+    let catalog = TrustedScheduleCatalog::<Cfg>::try_from_rows(
+        [(
+            CommittedGroupBatchProfile {
+                final_group: profile,
+                precommitteds: Vec::new(),
+            },
+            planned.schedule,
+        )],
+        chunking,
+    )?;
+    Ok((profile, catalog))
+}
+
+/// A setup's zero-knowledge catalog: one row per masked opening shape the
+/// setup admits (its trace group with each admitted combination of
+/// precommitted groups), the precommitted groups' hiding profiles, the Akita
+/// verifier, and the prover's setup and backend, built only on the first
+/// prover call (a verifier never builds prover state). One backend commits
+/// every hiding group and proves every opening: Akita cannot import a hiding
+/// commitment into another backend.
+pub struct WhiteoutCatalog {
     scheme: AkitaCommitmentScheme<WhiteoutOneHot>,
     verifier: AkitaVerifier<WhiteoutOneHot>,
-    shape: ResidualShape,
+    precommitted: BTreeMap<PrecommittedShape, PrecommittedRow>,
     num_vars: usize,
     num_polys: usize,
+    max_num_vars: usize,
+    max_batched_polys: usize,
     prover: OnceLock<WhiteoutProver>,
 }
 
-/// The prover's half of a [`WhiteoutRow`].
+/// The prover's half of a [`WhiteoutCatalog`].
 struct WhiteoutProver {
     setup: AkitaBackendProverSetup,
     backend: AkitaBackend,
 }
 
-impl WhiteoutRow {
+impl WhiteoutCatalog {
     /// Plans the zero-knowledge row of a trace group of `num_polys` K=16
-    /// one-hot polynomials in `num_vars` variables and builds its setups.
-    /// Deterministic, so both roles derive the same row.
+    /// one-hot polynomials in `num_vars` variables beside each admitted
+    /// list of precommitted groups, and builds the verifier. Deterministic,
+    /// so both roles derive the same catalog, whose digest the opening
+    /// absorbs.
     ///
     /// # Errors
     ///
-    /// [`AkitaError`] if no zero-knowledge row exists for the shape.
-    pub fn plan(num_vars: usize, num_polys: usize) -> Result<Self, AkitaError> {
+    /// [`AkitaError`] if a shape has no zero-knowledge row.
+    fn plan(
+        num_vars: usize,
+        num_polys: usize,
+        admitted: &BTreeSet<Vec<PrecommittedShape>>,
+    ) -> Result<(Self, PlannedRows), AkitaError> {
         let chunking = <JoltOneHotK16 as CatalogChunking>::CHUNKING;
+        let mut precommitted = BTreeMap::new();
+        for shape in admitted.iter().flatten() {
+            if let Entry::Vacant(entry) = precommitted.entry(*shape) {
+                let _ = entry.insert(PrecommittedRow::plan(*shape)?);
+            }
+        }
         let final_group =
             OpeningClaimsLayout::new(num_vars, num_polys)?.root_final_group_layout()?;
-        let key = ScheduleLookupKey::single(final_group);
-        let planned = akita_planner::find_zk_schedule(
-            &key,
-            WhiteoutOneHot::committed_source_contract()?,
-            &[],
-            &policy_of::<WhiteoutOneHot>(chunking),
-            WhiteoutOneHot::ring_challenge_config,
-            ZkOpeningSchedule::new(ZK_CUT_LEVEL)?,
-        )?;
-        let profile = CommittedGroupBatchProfile {
-            final_group: GroupCommitPhaseParams::try_from_params(
-                key.final_group,
-                &planned.schedule.root.params,
-            )?,
-            precommitteds: Vec::new(),
-        };
-        let shape = ResidualShape::new(akita_params::zk::AdmittedZkSchedule::new(
-            &planned.schedule,
-            WhiteoutOneHot::committed_source_contract()?,
-            <WhiteoutOneHot as CommitmentConfig>::EXT_DEGREE,
-        )?)?;
-        let catalog = TrustedScheduleCatalog::<WhiteoutOneHot>::try_from_rows(
-            [(profile.clone(), planned.schedule)],
-            chunking,
-        )?;
+        let mut rows = Vec::with_capacity(admitted.len());
+        let mut residuals = BTreeMap::new();
+        for groups in admitted {
+            let rows_of = groups
+                .iter()
+                .map(|shape| {
+                    precommitted.get(shape).ok_or_else(|| {
+                        AkitaError::InvalidSetup("a precommitted shape was not planned".into())
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let key = ScheduleLookupKey {
+                final_group,
+                precommitteds: rows_of.iter().map(|row| row.profile).collect(),
+            };
+            let contracts = rows_of
+                .iter()
+                .map(|row| row.contract())
+                .collect::<Result<Vec<_>, _>>()?;
+            let planned = akita_planner::find_zk_schedule(
+                &key,
+                WhiteoutOneHot::committed_source_contract()?,
+                &contracts,
+                &policy_of::<WhiteoutOneHot>(chunking),
+                WhiteoutOneHot::ring_challenge_config,
+                ZkOpeningSchedule::new(ZK_CUT_LEVEL)?,
+            )?;
+            let residual = ResidualShape::new(akita_params::zk::AdmittedZkSchedule::new(
+                &planned.schedule,
+                WhiteoutOneHot::committed_source_contract()?,
+                <WhiteoutOneHot as CommitmentConfig>::EXT_DEGREE,
+            )?)?;
+            rows.push((
+                CommittedGroupBatchProfile {
+                    final_group: GroupCommitPhaseParams::try_from_params(
+                        key.final_group,
+                        &planned.schedule.root.params,
+                    )?,
+                    precommitteds: key.precommitteds.clone(),
+                },
+                planned.schedule,
+            ));
+            let _ = residuals.insert(groups.clone(), (key, residual));
+        }
+        let catalog = TrustedScheduleCatalog::<WhiteoutOneHot>::try_from_rows(rows, chunking)?;
         let scheme = AkitaCommitmentScheme::new(catalog);
+        let max_batched_polys = admitted
+            .iter()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0)
+            .checked_add(num_polys)
+            .ok_or_else(|| AkitaError::InvalidSetup("batched polynomial count overflows".into()))?;
+        // The setup's matrix covers the widest group: a precommitted group
+        // (a committed program's bytecode) can be wider than the trace.
+        let max_num_vars = precommitted
+            .keys()
+            .map(|shape| shape.num_vars)
+            .fold(num_vars, usize::max);
         // Akita derives a verifier setup only from a prover setup; this one
         // is dropped here.
-        let verifier =
-            scheme.verifier(scheme.setup_verifier(&scheme.setup_prover(num_vars, num_polys)?)?)?;
-        Ok(Self {
-            scheme,
-            verifier,
-            shape,
-            num_vars,
-            num_polys,
-            prover: OnceLock::new(),
-        })
+        let verifier = scheme.verifier(
+            scheme.setup_verifier(&scheme.setup_prover(max_num_vars, max_batched_polys)?)?,
+        )?;
+        Ok((
+            Self {
+                scheme,
+                verifier,
+                precommitted,
+                num_vars,
+                num_polys,
+                max_num_vars,
+                max_batched_polys,
+                prover: OnceLock::new(),
+            },
+            residuals,
+        ))
     }
 
     /// The prover's setup and backend, built on first use.
@@ -210,46 +371,16 @@ impl WhiteoutRow {
         if let Some(prover) = self.prover.get() {
             return Ok(prover);
         }
-        let setup = self.scheme.setup_prover(self.num_vars, self.num_polys)?;
+        let setup = self
+            .scheme
+            .setup_prover(self.max_num_vars, self.max_batched_polys)?;
         let backend = AkitaBackend::new(Arc::clone(&setup.expanded))?;
         Ok(self
             .prover
             .get_or_init(|| WhiteoutProver { setup, backend }))
     }
 
-    /// The residual commitment's ring dimension, which the pad commitment
-    /// and the Σ-protocol share.
-    pub fn ring_dim(&self) -> usize {
-        self.shape.ring_dim()
-    }
-
-    /// The schedule row both roles bind.
-    pub fn selection(&self) -> Result<OpeningScheduleSelection, AkitaError> {
-        let key = ScheduleLookupKey::single(
-            OpeningClaimsLayout::new(self.num_vars, self.num_polys)?.root_final_group_layout()?,
-        );
-        Ok(self.scheme.schedules().resolve_key(&key)?.selection())
-    }
-
-    /// Commits `source` hiding, under this row's profile: the backend draws
-    /// fresh randomness for every masked-level slice.
-    ///
-    /// # Errors
-    ///
-    /// The backend's errors.
-    pub fn commit_hiding(
-        &self,
-        source: &akita_pcs::SourceHandle<F, F>,
-    ) -> Result<(CommittedGroup<F>, AkitaBackendHint), AkitaError> {
-        let output = self.prover()?.backend.commit(
-            self.scheme.schedules(),
-            source,
-            GroupContext::scheduler_without_precommitted_groups(),
-        )?;
-        Ok((output.committed_group, output.private_handle))
-    }
-
-    /// The backend the trace source is imported into.
+    /// The backend every hiding source is imported into.
     ///
     /// # Errors
     ///
@@ -258,46 +389,142 @@ impl WhiteoutRow {
         Ok(&self.prover()?.backend)
     }
 
-    /// Proves the masked levels through the cut for the trace group
-    /// `commitment` at `point` (Akita's order), with true `evaluations` and
-    /// their masked `forms`. Returns the residual opening and Akita's
-    /// auxiliary values.
+    /// Commits `source`, one dense polynomial, hiding as a precommitted group
+    /// of `shape`.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::UnsupportedSchedule`] if no admitted opening folds a
+    /// group of `shape`, and the backend's errors.
+    pub fn commit_precommitted(
+        &self,
+        shape: PrecommittedShape,
+        source: &akita_pcs::SourceHandle<F, F>,
+    ) -> Result<(CommittedGroup<F>, AkitaBackendHint), AkitaError> {
+        let row = self.precommitted.get(&shape).ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(format!(
+                "no admitted Whiteout opening folds a precommitted group of {shape:?}"
+            ))
+        })?;
+        let output = row.commit(self.backend()?, source)?;
+        Ok((output.committed_group, output.private_handle))
+    }
+
+    /// Akita's setup stream, from which the residual blocks are cut.
+    fn stream(&self) -> &[F] {
+        self.verifier
+            .setup()
+            .expanded()
+            .shared_matrix()
+            .as_field_slice()
+    }
+}
+
+/// Each admitted list of precommitted groups' row key and residual shape.
+type PlannedRows = BTreeMap<Vec<PrecommittedShape>, (ScheduleLookupKey, ResidualShape)>;
+
+/// One masked opening shape's row: its catalog, the row's lookup key and the
+/// residual shape at its cut.
+pub struct WhiteoutRow {
+    catalog: Arc<WhiteoutCatalog>,
+    key: ScheduleLookupKey,
+    shape: ResidualShape,
+}
+
+impl WhiteoutRow {
+    /// The residual commitment's ring dimension, which the pad commitment
+    /// and the Σ-protocol share.
+    pub fn ring_dim(&self) -> usize {
+        self.shape.ring_dim()
+    }
+
+    /// The schedule row both roles bind.
+    pub fn selection(&self) -> Result<OpeningScheduleSelection, AkitaError> {
+        Ok(self
+            .catalog
+            .scheme
+            .schedules()
+            .resolve_key(&self.key)?
+            .selection())
+    }
+
+    /// The setup's catalog.
+    pub fn catalog(&self) -> &WhiteoutCatalog {
+        &self.catalog
+    }
+
+    /// Commits the trace group `source` hiding, under this row's profile,
+    /// keyed on its precommitted groups: the backend draws fresh randomness
+    /// for every masked-level slice.
+    ///
+    /// # Errors
+    ///
+    /// The backend's errors.
+    pub fn commit_hiding(
+        &self,
+        source: &akita_pcs::SourceHandle<F, F>,
+    ) -> Result<(CommittedGroup<F>, AkitaBackendHint), AkitaError> {
+        let backend = self.catalog.backend()?;
+        let schedules = self.catalog.scheme.schedules();
+        let output = if self.key.precommitteds.is_empty() {
+            backend.commit(
+                schedules,
+                source,
+                GroupContext::scheduler_without_precommitted_groups(),
+            )?
+        } else {
+            let profiles =
+                PrecommittedGroupProfiles::from_profiles(self.key.precommitteds.clone())?;
+            backend.commit(
+                schedules,
+                source,
+                GroupContext::scheduler_with_precommitted_groups(&profiles),
+            )?
+        };
+        Ok((output.committed_group, output.private_handle))
+    }
+
+    /// Proves the masked levels through the cut for `groups` (precommitted,
+    /// then the trace group; each its commitment, handle, point in Akita's
+    /// order and true evaluations), whose claims `forms` state in the same
+    /// order. Returns the residual opening and Akita's auxiliary values.
     ///
     /// # Errors
     ///
     /// [`AkitaError::FoldOverflow`] on a one-shot fold overflow (the caller
     /// reruns), and the masked prover's errors.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the group's commitment, handle, point and claims, their forms, and the pads"
-    )]
     pub fn prove_masked<S: Sponge>(
         &self,
-        commitment: CommittedGroup<F>,
-        handle: AkitaBackendHint,
-        point: Vec<F>,
-        evaluations: Vec<F>,
+        groups: Vec<ProverGroup>,
         forms: &[AffineRow<F>],
         pads: &mut CommittedPads<F, WhiteoutPadOpening<F>>,
         transcript: &mut ProverTranscript<S>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
-        let prover = self.prover()?;
-        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-            point,
-            evaluations,
-            commitment,
-        )?])?;
+        let prover = self.catalog.prover()?;
+        let mut claims = Vec::with_capacity(groups.len());
+        let mut handles = Vec::with_capacity(groups.len());
+        for group in groups {
+            claims.push(PolynomialGroupClaims::new(
+                group.point,
+                group.evaluations,
+                group.commitment,
+            )?);
+            handles.push(group.handle);
+        }
         let opening = SelectedProverOpeningData::from_committed_claims::<WhiteoutOneHot>(
-            claims,
-            vec![handle],
-            self.scheme.schedules(),
+            OpeningClaims::from_groups(claims)?,
+            handles,
+            self.catalog.scheme.schedules(),
         )?;
-        transcript.public(&self.scheme.schedules().catalog_digest());
+        if opening.selection() != self.selection()? {
+            return Err(AkitaError::InvalidInput(
+                "the opening's groups select another Whiteout row".into(),
+            ));
+        }
+        let schedules = self.catalog.scheme.schedules();
+        transcript.public(&schedules.catalog_digest());
         transcript.public(opening.selection().row_digest.as_bytes());
-        let resolved = self
-            .scheme
-            .schedules()
-            .resolve_selection(opening.selection())?;
+        let resolved = schedules.resolve_selection(opening.selection())?;
         let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
             resolved.schedule(),
             opening.opening_layout(),
@@ -307,7 +534,7 @@ impl WhiteoutRow {
             .import_setup_prefixes(&prover.setup.prefix_slots, &prefix_ids)?;
         prove_masked_prefix::<WhiteoutOneHot, _, _, _>(
             prover.setup.expanded.descriptor(),
-            self.scheme.schedules(),
+            schedules,
             &prover.backend,
             &prefixes,
             opening,
@@ -318,42 +545,25 @@ impl WhiteoutRow {
         )
     }
 
-    /// The verifier's statement for `commitment` at `point`: its evaluations
-    /// are never read, the masked forms replace them.
-    fn statement<'a>(
-        &self,
-        selection: OpeningScheduleSelection,
-        commitment: &'a CommittedGroup<F>,
-        point: Vec<F>,
-    ) -> Result<GroupBatchStatement<'a, F, F>, AkitaError> {
-        GroupBatchStatement::new(
-            selection,
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                point,
-                vec![F::default(); self.num_polys],
-                commitment,
-            )?])?,
-        )
-    }
-
-    /// Replays the masked levels through the cut on `pads`.
+    /// Replays the masked levels through the cut on `pads`; `groups` are the
+    /// decoded commitments at their points (Akita's order), precommitted
+    /// first.
     ///
     /// # Errors
     ///
     /// The masked verifier's errors, or a row other than this shape's.
     pub fn verify_masked<S: Sponge, C>(
         &self,
-        commitment: &CommittedGroup<F>,
-        point: Vec<F>,
+        groups: &[(CommittedGroup<F>, Vec<F>)],
         forms: Vec<AffineRow<F>>,
         pads: &mut CommittedPadsView<C>,
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<MaskedPrefix<F, F>, AkitaError> {
         let selection = self.absorb_selection(transcript)?;
-        self.verifier.verify_masked_prefix(
+        self.catalog.verifier.verify_masked_prefix(
             transcript,
             pads,
-            self.statement(selection, commitment, point)?,
+            masked_statement(selection, groups)?,
             forms,
             BasisMode::Lagrange,
         )
@@ -367,17 +577,16 @@ impl WhiteoutRow {
     /// The counting verifier's errors.
     pub fn count_masked<S: Sponge>(
         &self,
-        commitment: &CommittedGroup<F>,
-        point: Vec<F>,
+        groups: &[(CommittedGroup<F>, Vec<F>)],
         forms: Vec<AffineRow<F>>,
         view: &mut CommittedPadsView<()>,
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<MaskedPrefix<F, F>, AkitaError> {
         let selection = self.absorb_selection(transcript)?;
-        self.verifier.count_masked_prefix(
+        self.catalog.verifier.count_masked_prefix(
             transcript,
             view,
-            self.statement(selection, commitment, point)?,
+            masked_statement(selection, groups)?,
             forms,
             BasisMode::Lagrange,
         )
@@ -390,34 +599,67 @@ impl WhiteoutRow {
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<OpeningScheduleSelection, AkitaError> {
         let selection = self.selection()?;
-        transcript.public(&self.scheme.schedules().catalog_digest());
+        transcript.public(&self.catalog.scheme.schedules().catalog_digest());
         transcript.public(selection.row_digest.as_bytes());
         Ok(selection)
     }
 
-    /// Decodes a trace commitment under this row's profile.
-    pub(crate) fn backend_commitment(
+    /// Decodes the precommitted and trace commitments under this row's
+    /// profiles, in the row's group order.
+    pub(crate) fn backend_commitments(
         &self,
-        commitment: &crate::AkitaCommitment,
-    ) -> Result<CommittedGroup<F>, AkitaError> {
-        crate::shape_guard::deserialize_checked_backend_payload(
-            self.scheme.schedules(),
-            commitment,
+        precommitted: &[&crate::AkitaCommitment],
+        trace: &crate::AkitaCommitment,
+    ) -> Result<(Vec<CommittedGroup<F>>, CommittedGroup<F>), AkitaError> {
+        if precommitted.len() != self.key.precommitteds.len() {
+            return Err(AkitaError::InvalidInput(format!(
+                "the Whiteout row opens {} precommitted groups, not {}",
+                self.key.precommitteds.len(),
+                precommitted.len()
+            )));
+        }
+        crate::shape_guard::deserialize_checked_grouped_backend_payload(
+            self.catalog.scheme.schedules(),
+            precommitted,
+            trace,
             self.selection()?,
-            self.num_polys,
-            &vec![F::default(); self.num_vars],
         )
         .map_err(|error| AkitaError::InvalidSetup(error.to_string()))
     }
 
     /// Akita's setup stream, from which the residual blocks are cut.
     fn stream(&self) -> &[F] {
-        self.verifier
-            .setup()
-            .expanded()
-            .shared_matrix()
-            .as_field_slice()
+        self.catalog.stream()
     }
+}
+
+/// The verifier's statement for `groups` at their points (Akita's
+/// order): its evaluations are never read, the masked forms replace
+/// them.
+fn masked_statement(
+    selection: OpeningScheduleSelection,
+    groups: &[(CommittedGroup<F>, Vec<F>)],
+) -> Result<GroupBatchStatement<'_, F, F>, AkitaError> {
+    let claims = groups
+        .iter()
+        .map(|(commitment, point)| {
+            PolynomialGroupClaims::new(
+                point.clone(),
+                vec![F::default(); commitment.profile.group.num_polynomials()],
+                commitment,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    GroupBatchStatement::new(selection, OpeningClaims::from_groups(claims)?)
+}
+
+/// One group the prover opens: its commitment, the handle retaining its
+/// source, its point in Akita's order and its true evaluations.
+pub struct ProverGroup {
+    pub commitment: CommittedGroup<F>,
+    pub handle: AkitaBackendHint,
+    pub point: Vec<F>,
+    pub evaluations: Vec<F>,
 }
 
 /// The Σ-protocol's commitments for one pad layout: `A_p` and `A_D` with
@@ -660,8 +902,7 @@ impl WhiteoutTail {
     }
 }
 
-/// One masked opening shape: the trace group's row and the Σ-protocol's
-/// commitments.
+/// One masked opening shape: its row and the Σ-protocol's commitments.
 pub struct WhiteoutShape {
     row: WhiteoutRow,
     tail: WhiteoutTail,
@@ -677,57 +918,126 @@ impl WhiteoutShape {
     }
 }
 
-/// A setup's Whiteout state: its masked opening shape, planned on first use
-/// (derived state, shared by clones and skipped by serde). A setup opens one
-/// shape (its trace group's), so the cache holds one.
+/// A setup's Whiteout state: the grouped parameters that fix the masked
+/// opening shapes it admits (its trace group beside each admitted list of
+/// precommitted groups, `GroupedScheduleParams::whiteout_admitted`), and
+/// derived state planned on first use: the catalog and each shape's row
+/// (shared by clones and skipped by serde).
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct WhiteoutSetup {
+    grouped: Option<GroupedScheduleParams>,
     #[serde(skip)]
-    shape: Arc<Mutex<Option<CachedShape>>>,
+    planned: Arc<OnceLock<PlannedSetup>>,
 }
 
-/// The planned shape and its `(num_vars, num_polys)`.
-type CachedShape = ((usize, usize), Arc<WhiteoutShape>);
+/// [`WhiteoutSetup`]'s derived state.
+struct PlannedSetup {
+    catalog: Arc<WhiteoutCatalog>,
+    shapes: BTreeMap<Vec<PrecommittedShape>, Arc<WhiteoutShape>>,
+}
 
 impl std::fmt::Debug for WhiteoutSetup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WhiteoutSetup").finish_non_exhaustive()
+        f.debug_struct("WhiteoutSetup")
+            .field("grouped", &self.grouped)
+            .finish_non_exhaustive()
     }
 }
 
-/// Derived state only: every Whiteout setup is equal.
+/// Derived state aside, setups are equal when they admit the same shapes.
 impl PartialEq for WhiteoutSetup {
-    fn eq(&self, _: &Self) -> bool {
-        true
+    fn eq(&self, other: &Self) -> bool {
+        self.grouped == other.grouped
     }
 }
 
 impl Eq for WhiteoutSetup {}
 
 impl WhiteoutSetup {
-    /// The masked opening of a K=16 trace group of `num_polys` polynomials
-    /// in `num_vars` variables.
+    /// A setup admitting the trace group alone, or beside the precommitted
+    /// groups `grouped` admits.
+    pub(crate) fn new(grouped: Option<GroupedScheduleParams>) -> Self {
+        Self {
+            grouped,
+            planned: Arc::default(),
+        }
+    }
+
+    fn admitted(&self) -> BTreeSet<Vec<PrecommittedShape>> {
+        self.grouped.as_ref().map_or_else(
+            || std::iter::once(Vec::new()).collect(),
+            GroupedScheduleParams::whiteout_admitted,
+        )
+    }
+
+    /// Plans the catalog of a trace group of `num_polys` K=16 one-hot
+    /// polynomials in `num_vars` variables over every admitted shape, once.
+    fn planned(&self, num_vars: usize, num_polys: usize) -> Result<&PlannedSetup, ZkError> {
+        if let Some(planned) = self.planned.get() {
+            if (planned.catalog.num_vars, planned.catalog.num_polys) != (num_vars, num_polys) {
+                return Err(AkitaError::InvalidSetup(
+                    "the Whiteout catalog was planned for another trace group".into(),
+                )
+                .into());
+            }
+            return Ok(planned);
+        }
+        let (catalog, residuals) = WhiteoutCatalog::plan(num_vars, num_polys, &self.admitted())?;
+        let catalog = Arc::new(catalog);
+        let shapes = residuals
+            .into_iter()
+            .map(|(precommitted, (key, shape))| {
+                let row = WhiteoutRow {
+                    catalog: Arc::clone(&catalog),
+                    key,
+                    shape,
+                };
+                (
+                    precommitted,
+                    Arc::new(WhiteoutShape {
+                        row,
+                        tail: WhiteoutTail::new(),
+                    }),
+                )
+            })
+            .collect();
+        Ok(self
+            .planned
+            .get_or_init(|| PlannedSetup { catalog, shapes }))
+    }
+
+    /// The setup's catalog, for a trace group of `num_polys` polynomials in
+    /// `num_vars` variables.
     ///
     /// # Errors
     ///
-    /// [`ZkError`] if no zero-knowledge row exists for the shape.
-    pub(crate) fn shape(
+    /// [`ZkError`] if an admitted shape has no zero-knowledge row.
+    pub(crate) fn catalog(
         &self,
         num_vars: usize,
         num_polys: usize,
-    ) -> Result<Arc<WhiteoutShape>, ZkError> {
-        let mut cached = self.shape.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((key, shape)) = cached.as_ref() {
-            if *key == (num_vars, num_polys) {
-                return Ok(Arc::clone(shape));
-            }
-        }
-        let shape = Arc::new(WhiteoutShape {
-            row: WhiteoutRow::plan(num_vars, num_polys)?,
-            tail: WhiteoutTail::new(),
-        });
-        *cached = Some(((num_vars, num_polys), Arc::clone(&shape)));
-        Ok(shape)
+    ) -> Result<&WhiteoutCatalog, ZkError> {
+        Ok(&self.planned(num_vars, num_polys)?.catalog)
+    }
+
+    /// The masked opening of `groups`.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::UnsupportedSchedule`] if the setup does not admit the
+    /// shape, and [`ZkError`] if an admitted shape has no zero-knowledge row.
+    pub(crate) fn shape(&self, groups: &MaskedOpeningShape) -> Result<Arc<WhiteoutShape>, ZkError> {
+        self.planned(groups.num_vars, groups.num_polys)?
+            .shapes
+            .get(&groups.precommitted)
+            .cloned()
+            .ok_or_else(|| {
+                AkitaError::UnsupportedSchedule(format!(
+                    "the Whiteout setup does not admit the precommitted groups {:?}",
+                    groups.precommitted
+                ))
+                .into()
+            })
     }
 }
 
@@ -758,8 +1068,8 @@ fn plan_response(num_vars: usize) -> Result<AkitaResponseProver<WhiteoutResponse
 
 mod opening;
 
-pub(crate) use opening::prover_trace_shape;
 pub use opening::WhiteoutResidual;
+pub(crate) use opening::{opening_shape, whiteout};
 
 #[cfg(test)]
 #[expect(

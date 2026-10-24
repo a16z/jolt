@@ -98,6 +98,46 @@ impl GroupedScheduleParams {
         self.final_group
     }
 
+    /// Whiteout: every list of precommitted groups an opening under these
+    /// parameters may fold, in canonical order: each combination of the
+    /// optional advice groups, then the mandatory groups.
+    #[cfg(feature = "zk")]
+    pub(crate) fn whiteout_admitted(
+        &self,
+    ) -> std::collections::BTreeSet<Vec<jolt_zk::whiteout::PrecommittedShape>> {
+        use jolt_zk::whiteout::{DenseSource, PrecommittedShape};
+
+        let bounded = |num_vars| PrecommittedShape {
+            num_vars,
+            source: DenseSource::Bounded,
+        };
+        let mandatory = self
+            .mandatory_dense_layouts
+            .iter()
+            .map(|layout| match *layout {
+                DenseGroupLayout::Bounded { num_vars } => bounded(num_vars),
+                DenseGroupLayout::FullWidth { num_vars } => PrecommittedShape {
+                    num_vars,
+                    source: DenseSource::FullField,
+                },
+            })
+            .collect::<Vec<_>>();
+        let untrusted = [None, self.untrusted_physical_arity];
+        let trusted = [None, self.trusted_physical_arity];
+        untrusted
+            .iter()
+            .flat_map(|untrusted| trusted.iter().map(move |trusted| (*untrusted, *trusted)))
+            .map(|(untrusted, trusted)| {
+                untrusted
+                    .into_iter()
+                    .chain(trusted)
+                    .map(bounded)
+                    .chain(mandatory.iter().copied())
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Provision and audit the exact grouped rows before constructing backend matrices.
     /// Used by preprocessing and the offline grouped-schedule diagnostic.
     pub fn extend_catalog(

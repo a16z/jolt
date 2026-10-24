@@ -16,6 +16,8 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig};
 use jolt_crypto::VectorCommitment;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_openings::CommitmentGroupRole;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
@@ -25,15 +27,33 @@ use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use crate::stages::stage4::outputs::Stage4OutputPoints;
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "akita", feature = "zk"))]
 use crate::stages::stage6b::outputs::Stage6bOutputPoints;
 use crate::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputPoints};
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
+#[cfg(all(feature = "akita", feature = "zk"))]
+use crate::stages::zk::residual::JoltResidual;
 use crate::stages::PrecommittedSchedule;
 use crate::VerifierError;
+#[cfg(all(feature = "akita", feature = "zk", feature = "field-inline"))]
+use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::lattice::{field_inc_group_role, FieldIncLayout};
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_claims::protocols::jolt::geometry::dimensions::CommitmentMatrixShape;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_claims::protocols::jolt::geometry::ram::val_check_advice_opening;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_openings::PackedEvaluations;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_zk::masking::AffineRow;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_zk::whiteout::{DenseSource, MaskedGroupClaim, MaskedOpeningShape, PrecommittedShape};
 
 fn batch_failed(reason: impl ToString) -> VerifierError {
     VerifierError::FinalOpeningBatchFailed {
@@ -358,43 +378,106 @@ where
     Ok(())
 }
 
-/// Whiteout's trace group, from the statement: its layout plan, after the
-/// sent commitment's and the setup's metadata are checked against it. The
-/// masked opening's shape is derived from this plan, never from the
-/// prover's commitment header.
+/// One Whiteout precommitted object, as the statement fixes it.
+#[cfg(all(feature = "akita", feature = "zk"))]
+#[derive(Clone, Debug)]
+pub enum WhiteoutObject<C> {
+    /// An advice or committed-program object, prefix-packed.
+    Packed {
+        plan: PrefixPackedObjectPlan,
+        commitment: C,
+    },
+    /// The field-increment polynomial, committed full width.
+    #[cfg(feature = "field-inline")]
+    FieldInc {
+        layout: FieldIncLayout,
+        commitment: C,
+    },
+}
+
+#[cfg(all(feature = "akita", feature = "zk"))]
+impl<C> WhiteoutObject<C> {
+    /// The object's group role in the clear opening's canonical order.
+    pub fn role(&self) -> CommitmentGroupRole {
+        match self {
+            Self::Packed { plan, .. } => plan.group_role(),
+            #[cfg(feature = "field-inline")]
+            Self::FieldInc { .. } => field_inc_group_role(),
+        }
+    }
+
+    fn commitment(&self) -> &C {
+        match self {
+            Self::Packed { commitment, .. } => commitment,
+            #[cfg(feature = "field-inline")]
+            Self::FieldInc { commitment, .. } => commitment,
+        }
+    }
+
+    fn shape(&self) -> PrecommittedShape {
+        match self {
+            Self::Packed { plan, .. } => PrecommittedShape {
+                num_vars: plan.packing().packed_num_vars(),
+                source: DenseSource::Bounded,
+            },
+            #[cfg(feature = "field-inline")]
+            Self::FieldInc { layout, .. } => PrecommittedShape {
+                num_vars: layout.num_vars(),
+                source: DenseSource::FullField,
+            },
+        }
+    }
+}
+
+/// Whiteout's final opening, from the statement: the trace group's layout
+/// plan and the precommitted objects in the clear stage 8's canonical order
+/// (advice, then the field increments or the committed program), every
+/// commitment's and the setup's metadata checked against them. The masked
+/// opening's shape is derived from this plan, never from a commitment
+/// header.
+#[cfg(all(feature = "akita", feature = "zk"))]
+#[derive(Clone, Debug)]
+pub struct WhiteoutOpeningPlan<C> {
+    pub trace: OneHotTraceLayoutPlan,
+    pub objects: Vec<WhiteoutObject<C>>,
+}
+
+#[cfg(all(feature = "akita", feature = "zk"))]
+impl<C> WhiteoutOpeningPlan<C> {
+    /// The masked opening's groups: the objects, then the trace group.
+    pub fn shape(&self) -> MaskedOpeningShape {
+        MaskedOpeningShape {
+            precommitted: self.objects.iter().map(WhiteoutObject::shape).collect(),
+            num_vars: self.trace.num_vars(),
+            num_polys: self.trace.ids().len(),
+        }
+    }
+}
+
+/// [`WhiteoutOpeningPlan`] of a statement. An advice object's word arity is
+/// the memory layout's, the arity stage 4 opens it at.
 ///
 /// # Errors
 ///
-/// [`VerifierError::ProtocolAxisUnimplemented`] for a proof with advice, a
-/// committed program or field increments (their groups are not opened
-/// yet), and the errors of the clear stage 8's shape checks.
+/// The errors of the clear stage 8's shape checks.
 #[cfg(all(feature = "akita", feature = "zk"))]
-pub fn whiteout_trace_plan<PCS, VC>(
+pub fn whiteout_opening_plan<PCS, VC>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
     preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-) -> Result<OneHotTraceLayoutPlan, VerifierError>
+    #[cfg(feature = "field-inline")] field_inc_commitment: &PCS::Output,
+) -> Result<WhiteoutOpeningPlan<PCS::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    if untrusted_advice_commitment.is_some()
-        || trusted_advice_commitment.is_some()
-        || preprocessing.program.committed().is_some()
-        || cfg!(feature = "field-inline")
-    {
-        return Err(VerifierError::ProtocolAxisUnimplemented {
-            axis: "zk (Whiteout)",
-            pending: "precommitted groups: advice, committed programs, field increments",
-        });
-    }
     let chunk_width = one_hot_config.committed_chunk_bits();
-    let plan = ONE_HOT_TRACE_LAYOUT
+    let trace = ONE_HOT_TRACE_LAYOUT
         .plan(&OneHotTraceShape {
             ra_layout: formula_dimensions.ra_layout,
             log_t: formula_dimensions.trace.log_t(),
@@ -404,52 +487,323 @@ where
     validate_one_hot_trace_metadata(
         one_hot_trace_commitment,
         &preprocessing.pcs_setup,
-        plan.layout_digest(),
-        plan.num_vars(),
-        plan.ids().len(),
+        trace.layout_digest(),
+        trace.num_vars(),
+        trace.ids().len(),
         1 << chunk_width,
     )?;
-    Ok(plan)
+    let memory_layout = preprocessing.program.memory_layout();
+    let mut objects = Vec::with_capacity(4);
+    for (kind, commitment, max_bytes) in [
+        (
+            JoltAdviceKind::Untrusted,
+            untrusted_advice_commitment,
+            memory_layout.max_untrusted_advice_size,
+        ),
+        (
+            JoltAdviceKind::Trusted,
+            trusted_advice_commitment,
+            memory_layout.max_trusted_advice_size,
+        ),
+    ] {
+        if let Some(commitment) = commitment {
+            let max_bytes = usize::try_from(max_bytes).map_err(|_| {
+                batch_failed(format!("{kind:?} advice size {max_bytes} exceeds usize"))
+            })?;
+            let plan = advice_packing_plan(
+                kind,
+                CommitmentMatrixShape::advice_from_max_bytes(max_bytes).total_vars(),
+            )
+            .map_err(batch_failed)?;
+            validate_packed_object_metadata(commitment, &plan)?;
+            objects.push(WhiteoutObject::Packed {
+                plan,
+                commitment: commitment.clone(),
+            });
+        }
+    }
+    #[cfg(feature = "field-inline")]
+    {
+        let layout = FieldIncLayout::new(formula_dimensions.trace.log_t());
+        validate_group_commitment_metadata(
+            field_inc_commitment,
+            layout.layout_digest(),
+            layout.num_vars(),
+        )?;
+        objects.push(WhiteoutObject::FieldInc {
+            layout,
+            commitment: field_inc_commitment.clone(),
+        });
+    }
+    if let Some(committed) = preprocessing.program.committed() {
+        let plan = committed_program_packing_plan(
+            preprocessing.program.bytecode_len(),
+            preprocessing.program.program_image_len_words(),
+            committed.trace_order,
+        )
+        .map_err(batch_failed)?;
+        for (plan, commitment) in [
+            (plan.bytecode, &committed.bytecode_commitment),
+            (plan.program_image, &committed.program_image_commitment),
+        ] {
+            validate_packed_object_metadata(commitment, &plan)?;
+            objects.push(WhiteoutObject::Packed {
+                plan,
+                commitment: commitment.clone(),
+            });
+        }
+    }
+    Ok(WhiteoutOpeningPlan { trace, objects })
 }
 
-/// Whiteout's stage 8: the trace group's claims as affine forms over the
-/// pads, each column's form the masked opening of its final claim, for the
-/// masked Akita opening. Nothing is absorbed here: the forms are built from
-/// masked messages already absorbed, under challenges that precede none of
-/// them, and Akita's masked root binds them without absorbing values
-/// (`specs/whiteout-jolt-integration.md` §8, D25).
+/// One group of a Whiteout opening: its commitment, its opening point (the
+/// caller's order) and one value per member, a masked form on the
+/// verifier's side and its decoding on the prover's.
+#[cfg(all(feature = "akita", feature = "zk"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WhiteoutGroup<F, V, C> {
+    pub commitment: C,
+    pub point: Vec<F>,
+    pub values: Vec<V>,
+}
+
+/// `Σ cᵢ · vᵢ` over a value type: a clear evaluation's or a masked form's.
+#[cfg(all(feature = "akita", feature = "zk"))]
+type LinearCombination<'a, F, V> = dyn Fn(&[(F, &V)]) -> V + 'a;
+
+/// Whiteout's stage 8 over `plan`: each precommitted object's claim, then
+/// the trace group's, from the committed columns' `leaves` (and, with
+/// field-inline, the field increments' `field_inc` leaf) by the clear stage
+/// 8's leaf geometry. A packed object's reduction binds its layout and point
+/// and absorbs no evaluation: its values are affine forms of masked messages
+/// already absorbed, under challenges that precede none of them, and Akita's
+/// masked root binds them without absorbing values (spec §8, D25). The
+/// prover runs it over the forms' decodings, so both roles draw the same
+/// selectors; `combine` is the value type's linear combination.
 ///
 /// # Errors
 ///
 /// The errors of the clear stage 8's leaf geometry.
 #[cfg(all(feature = "akita", feature = "zk"))]
-pub fn masked_trace_claim<F, C: Clone>(
-    plan: &OneHotTraceLayoutPlan,
+fn whiteout_groups<F, V, C, Ch>(
+    plan: &WhiteoutOpeningPlan<C>,
+    chunk_width: usize,
+    trace_commitment: &C,
+    leaves: &BTreeMap<JoltCommittedPolynomial, Leaf<F, V>>,
+    #[cfg(feature = "field-inline")] field_inc: Leaf<F, V>,
+    combine: &LinearCombination<'_, F, V>,
+    transcript: &mut Ch,
+) -> Result<Vec<WhiteoutGroup<F, V, C>>, VerifierError>
+where
+    F: JoltField,
+    V: Clone,
+    C: Clone,
+    Ch: Channel,
+{
+    // An advice leaf and its object (its commitment) are present together.
+    for polynomial in [
+        JoltCommittedPolynomial::UntrustedAdvice,
+        JoltCommittedPolynomial::TrustedAdvice,
+    ] {
+        let committed = plan.objects.iter().any(|object| {
+            matches!(object, WhiteoutObject::Packed { plan, .. } if plan.packing().slot_index(&polynomial).is_some())
+        });
+        if leaves.contains_key(&polynomial) != committed {
+            return Err(batch_failed(format!(
+                "{polynomial:?} final claim and commitment must be both present or both absent"
+            )));
+        }
+    }
+    let mut groups = Vec::with_capacity(plan.objects.len().saturating_add(1));
+    #[cfg(feature = "field-inline")]
+    let mut field_inc = Some(field_inc);
+    for object in &plan.objects {
+        let (point, value) = match object {
+            WhiteoutObject::Packed { plan, .. } => {
+                let packed = plan
+                    .packed_leaves(|id| {
+                        leaves
+                            .get(&id)
+                            .map(|leaf| (leaf.point.as_slice(), &leaf.value))
+                    })
+                    .map_err(batch_failed)?;
+                let selection = plan
+                    .packing()
+                    .select(
+                        &plan.layout_digest(),
+                        &packed.point,
+                        PackedEvaluations::Masked {
+                            count: packed.slots.len(),
+                        },
+                        transcript,
+                    )
+                    .map_err(batch_failed)?;
+                let terms = selection
+                    .weights
+                    .iter()
+                    .zip(&packed.slots)
+                    .map(|(weight, (scale, value))| (*weight * *scale, *value))
+                    .collect::<Vec<_>>();
+                (selection.point, combine(&terms))
+            }
+            #[cfg(feature = "field-inline")]
+            WhiteoutObject::FieldInc { layout, .. } => {
+                let leaf = field_inc.take().ok_or_else(|| {
+                    batch_failed("a Whiteout opening has one field-increment group")
+                })?;
+                (
+                    layout.opening_point(&leaf.point).map_err(batch_failed)?,
+                    leaf.value,
+                )
+            }
+        };
+        groups.push(WhiteoutGroup {
+            commitment: object.commitment().clone(),
+            point,
+            values: vec![value],
+        });
+    }
+    let (point, values) = one_hot_trace_group(&plan.trace, chunk_width, leaves)?;
+    groups.push(WhiteoutGroup {
+        commitment: trace_commitment.clone(),
+        point,
+        values,
+    });
+    Ok(groups)
+}
+
+/// Whiteout's stage 8 on the verifier's side: [`whiteout_groups`] over the
+/// residual's opening forms, each column's form the masked opening of its
+/// final claim, for the masked Akita opening.
+///
+/// # Errors
+///
+/// The errors of the clear stage 8's leaf geometry.
+#[cfg(all(feature = "akita", feature = "zk"))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the stage outputs are passed separately by the verifier driver"
+)]
+pub fn masked_group_claims<F, C, Ch>(
+    plan: &WhiteoutOpeningPlan<C>,
     one_hot_config: JoltOneHotConfig,
     one_hot_trace_commitment: &C,
     schedule: &PrecommittedSchedule,
+    stage4_points: &Stage4OutputPoints<F>,
     stage6b_points: &Stage6bOutputPoints<F>,
     stage7_points: &Stage7OutputPoints<F>,
-    residual: &crate::stages::zk::residual::JoltResidual<F>,
-) -> Result<jolt_zk::whiteout::MaskedGroupClaim<F, C>, VerifierError>
+    residual: &JoltResidual<F>,
+    transcript: &mut Ch,
+) -> Result<Vec<MaskedGroupClaim<F, C>>, VerifierError>
 where
     F: JoltField,
+    C: Clone,
+    Ch: Channel,
 {
-    use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
-
     let leaves = leaves(
         stage7_points,
         precommitted_final_openings(schedule, stage7_points, stage6b_points, None)?,
-        &mut |_| Ok(None),
+        &mut |kind| {
+            let points = &stage4_points.ram_val_check;
+            let point = match kind {
+                JoltAdviceKind::Untrusted => points.untrusted_advice.as_ref(),
+                JoltAdviceKind::Trusted => points.trusted_advice.as_ref(),
+            };
+            point
+                .map(|point| {
+                    Ok(Leaf {
+                        point: point.clone(),
+                        value: residual.opening_form(&val_check_advice_opening(kind).into())?,
+                    })
+                })
+                .transpose()
+        },
         &mut |polynomial, _| residual.opening_form(&final_opening_id(polynomial).into()),
     )?;
-    let (point, evaluations) =
-        one_hot_trace_group(plan, one_hot_config.committed_chunk_bits(), &leaves)?;
-    Ok(jolt_zk::whiteout::MaskedGroupClaim {
-        commitment: one_hot_trace_commitment.clone(),
-        point,
-        evaluations,
-    })
+    let groups = whiteout_groups(
+        plan,
+        one_hot_config.committed_chunk_bits(),
+        one_hot_trace_commitment,
+        &leaves,
+        #[cfg(feature = "field-inline")]
+        Leaf {
+            point: stage6b_points.field_registers_inc_opening_point().to_vec(),
+            value: residual.opening_form(&field_rd_inc_reduced().into())?,
+        },
+        &|terms: &[(F, &AffineRow<F>)]| {
+            terms.iter().fold(
+                AffineRow::constant(F::zero()),
+                |sum, (coefficient, form)| sum.add_scaled(form, *coefficient),
+            )
+        },
+        transcript,
+    )?;
+    Ok(groups
+        .into_iter()
+        .map(|group| MaskedGroupClaim {
+            commitment: group.commitment,
+            point: group.point,
+            evaluations: group.values,
+        })
+        .collect())
+}
+
+/// Whiteout's stage 8 on the prover's side: [`whiteout_groups`] over the
+/// clear leaf claims (and field-increment claim), the decodings of the
+/// verifier's forms, on the prover's transcript.
+///
+/// # Errors
+///
+/// The errors of the clear stage 8's leaf geometry.
+#[cfg(all(feature = "akita", feature = "zk"))]
+pub fn clear_group_claims<F, C, Ch>(
+    plan: &WhiteoutOpeningPlan<C>,
+    one_hot_config: JoltOneHotConfig,
+    one_hot_trace_commitment: &C,
+    leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+    #[cfg(feature = "field-inline")] stage6b: &Stage6bClearOutput<F>,
+    transcript: &mut Ch,
+) -> Result<Vec<WhiteoutGroup<F, F, C>>, VerifierError>
+where
+    F: JoltField,
+    C: Clone,
+    Ch: Channel,
+{
+    let leaves = leaves
+        .iter()
+        .map(|(polynomial, claim)| {
+            (
+                *polynomial,
+                Leaf {
+                    point: claim.point.as_slice().to_vec(),
+                    value: claim.value,
+                },
+            )
+        })
+        .collect();
+    whiteout_groups(
+        plan,
+        one_hot_config.committed_chunk_bits(),
+        one_hot_trace_commitment,
+        &leaves,
+        #[cfg(feature = "field-inline")]
+        Leaf {
+            point: stage6b
+                .output_points
+                .field_registers_inc_opening_point()
+                .to_vec(),
+            value: stage6b
+                .output_values
+                .field_registers_inc_claim_reduction
+                .rd_inc,
+        },
+        &|terms: &[(F, &F)]| {
+            terms.iter().fold(F::zero(), |sum, (coefficient, value)| {
+                sum + *coefficient * **value
+            })
+        },
+        transcript,
+    )
 }
 
 /// Assembles the native `OneHotTrace` group claim: every canonical

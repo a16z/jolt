@@ -283,7 +283,8 @@ delegate_preset!(
     Dense,
     <Dense as CommitmentConfig>::committed_source_class(),
     AkitaChunkProfile::Eight.witness_cfg(),
-    "jolt-fp128-dense-full"
+    "jolt-fp128-dense-full",
+    zk: "jolt-fp128-dense-full-zk"
 );
 
 #[cfg(test)]
