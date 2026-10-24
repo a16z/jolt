@@ -34,6 +34,7 @@ use spongefish::{DuplexSpongeInterface, VerificationError};
 
 #[cfg(feature = "transcript-blake2b")]
 use crate::Blake2b512;
+use crate::ChallengeSetSize;
 
 use sealed::Sealed;
 
@@ -100,6 +101,12 @@ mod sealed {
 /// transcript's wire format: changing one changes every proof that draws
 /// challenges in that field.
 pub trait ChallengeCodec: Sized + Sealed {
+    /// `|Self|`, the number of values one challenge can take. Proof-of-work
+    /// difficulties are priced from it ([`grind_bits_for_loss`]).
+    ///
+    /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
+    const CHALLENGE_SET_SIZE: ChallengeSetSize;
+
     /// Bytes squeezed for `len` elements; depends only on the type and `len`.
     /// Returns `None` on arithmetic overflow or an unattainable rejection bound.
     fn challenge_bytes(len: usize) -> Option<usize>;
@@ -165,6 +172,14 @@ fn pool_bytes<F: PseudoMersenne>(len: usize) -> Option<usize> {
     }
 }
 
+/// `|F|^degree`, where a pseudo-Mersenne base has order
+/// `2^MODULUS_BITS - OFFSET`.
+#[cfg(feature = "solinas")]
+const fn pseudo_mersenne_power<F: PseudoMersenne>(degree: usize) -> ChallengeSetSize {
+    let modulus = (u128::MAX >> (128 - F::MODULUS_BITS)) - (F::OFFSET - 1);
+    ChallengeSetSize::from_u128(modulus).pow(degree as u32)
+}
+
 #[cfg(feature = "solinas")]
 fn decode_pool<F, E, const D: usize>(bytes: &[u8], len: usize) -> Option<Vec<E>>
 where
@@ -201,6 +216,8 @@ macro_rules! prime_codec {
         impl<const P: $word> Sealed for $field<P> {}
 
         impl<const P: $word> ChallengeCodec for $field<P> {
+            const CHALLENGE_SET_SIZE: ChallengeSetSize = pseudo_mersenne_power::<Self>(1);
+
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<Self>(len)
             }
@@ -248,6 +265,8 @@ macro_rules! extension_codec {
         impl<F: TowerBase> Sealed for $extension<F> {}
 
         impl<F: TowerBase> ChallengeCodec for $extension<F> {
+            const CHALLENGE_SET_SIZE: ChallengeSetSize = pseudo_mersenne_power::<F>(Self::DEGREE);
+
             fn challenge_bytes(len: usize) -> Option<usize> {
                 pool_bytes::<F>(len.checked_mul(Self::DEGREE)?)
             }
@@ -276,10 +295,14 @@ fn reduction_width<F: CanonicalEncoding>(len: usize) -> Option<usize> {
 
 #[cfg(feature = "bn254")]
 macro_rules! reduction_codec {
-    ($($field:ty),+ $(,)?) => {$(
+    ($($field:ident),+ $(,)?) => {$(
         impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
+            const CHALLENGE_SET_SIZE: ChallengeSetSize = ChallengeSetSize::from_limbs(
+                <ark_bn254::$field as ark_ff::PrimeField>::MODULUS.0,
+            );
+
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(reduction_width::<Self>(len)?)
             }
@@ -310,6 +333,10 @@ macro_rules! binary_codec {
         impl Sealed for $field {}
 
         impl ChallengeCodec for $field {
+            const CHALLENGE_SET_SIZE: ChallengeSetSize = ChallengeSetSize::power_of_two(
+                8 * <Self as jolt_field::CanonicalBytes>::NUM_BYTES as u32,
+            );
+
             fn challenge_bytes(len: usize) -> Option<usize> {
                 len.checked_mul(<Self as jolt_field::CanonicalBytes>::NUM_BYTES)
             }

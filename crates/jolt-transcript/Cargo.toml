@@ -24,6 +24,11 @@ spongefish = [
   "spongefish/turboshake128",
 ]
 digest = ["dep:digest"]
+# The prover's proof-of-work nonce search. It copies the sponge state, which
+# spongefish 0.8.0 exposes only under `yolocrypto`; verifier builds leave it off.
+prover-grinding = ["spongefish", "spongefish/yolocrypto"]
+# Searches proof-of-work nonces on all threads; the nonce found is the same.
+parallel = ["prover-grinding", "dep:rayon"]
 solinas = ["jolt-field/solinas"]
 binary = ["jolt-field/binary"]
 bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
@@ -39,6 +44,7 @@ spongefish = { workspace = true, optional = true }
 blake2 = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
+rayon = { workspace = true, optional = true }
 
 # spongefish seeds the prover's private RNG from getrandom 0.4, which needs
 # an explicit backend on wasm32-unknown-unknown.
@@ -47,6 +53,7 @@ getrandom_v04 = { workspace = true, features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+num-bigint = { workspace = true }
 
 [[bench]]
 name = "transcript_ops"
@@ -68,6 +75,18 @@ required-features = ["bn254", "transcript-blake2b"]
 [[test]]
 name = "keccak_tests"
 required-features = ["bn254", "transcript-keccak"]
+
+[[test]]
+name = "pow_tests"
+required-features = [
+  "transcript-keccak",
+  "transcript-blake2b",
+  "transcript-poseidon",
+  "prover-grinding",
+  "bn254",
+  "solinas",
+  "binary",
+]
 
 [[test]]
 name = "poseidon_tests"

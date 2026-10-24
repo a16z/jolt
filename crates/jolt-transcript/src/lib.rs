@@ -37,9 +37,12 @@ mod challenge;
 mod codec;
 #[cfg(feature = "digest")]
 mod digest;
+mod grind_bits;
 mod legacy;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
+#[cfg(feature = "spongefish")]
+mod pow;
 #[cfg(feature = "spongefish")]
 mod prover;
 #[cfg(feature = "spongefish")]
@@ -54,12 +57,15 @@ pub use challenge::{ChallengeCodec, MAX_CHALLENGE_BYTES};
 pub use codec::BytesMsg;
 #[cfg(feature = "digest")]
 pub use digest::DigestTranscript;
+pub use grind_bits::{grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS};
 #[cfg(feature = "spongefish")]
 pub use legacy::SpongeTranscript;
 pub use legacy::{
     append_length_prefixed, AppendToTranscript, Label, LabelWithCount, Transcript, U64Word,
     MAX_LABEL_LEN,
 };
+#[cfg(feature = "prover-grinding")]
+pub use pow::{MessageSearch, Probe};
 #[cfg(feature = "spongefish")]
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
 

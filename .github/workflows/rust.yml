@@ -105,6 +105,9 @@ jobs:
       # that no workspace consumer enables together, so lint them all here.
       - name: cargo clippy -p jolt-transcript --all-features
         run: cargo clippy -p jolt-transcript --all-targets --all-features
+      # --all-features turns on parallel; lint the sequential nonce search too.
+      - name: cargo clippy -p jolt-transcript --features bn254,solinas,binary,prover-grinding
+        run: cargo clippy -p jolt-transcript --all-targets --features bn254,solinas,binary,prover-grinding
       # jolt-poly's and jolt-sumcheck's binary features gate the F8 sumcheck
       # domain. No workspace crate enables them, so build them explicitly.
       - name: cargo clippy -p jolt-poly -p jolt-sumcheck --features binary
@@ -780,6 +783,9 @@ jobs:
       - name: Test jolt-transcript with all features
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-transcript --all-features --cargo-quiet
+      - name: Test jolt-transcript with sequential grinding
+        if: matrix.shard == 1
+        run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,prover-grinding --cargo-quiet
       # jolt-witness's parallel feature is not a default, so the shard loop
       # above tests only the serial paths; the shipped provers enable it
       # (via jolt-kernels' default), so test the rayon fast paths directly.
