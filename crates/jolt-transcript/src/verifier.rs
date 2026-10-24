@@ -1,6 +1,7 @@
 //! Verifier-only operations on `spongefish::VerifierState`.
 
-use crate::{pow::SpongePow, verifier_transcript, Transcript};
+use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
+use crate::{verifier_transcript, Transcript, TAG_BYTES};
 use spongefish::{
     DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, Transcript as _,
     VerificationError, VerifierState,
@@ -19,10 +20,10 @@ pub trait VerifierTranscript: Transcript {
     /// Checks a proof of work of `bits` bits whose nonce is in the NARG string.
     ///
     /// For `bits == 0` this does nothing. For `1 <= bits <= MAX_POW_BITS`, it
-    /// reads a nonce below `2^(bits + 7)` as canonical LEB128, one byte per
-    /// prover message, then squeezes `ceil(bits / 8)` bytes and requires their
-    /// low `bits` bits to be zero. The layout is the one proposed in
-    /// arkworks-rs/spongefish#301.
+    /// reads a nonce below `2^(bits + 7)` as canonical LEB128 from the NARG
+    /// string and absorbs it as one `u64` little-endian word, then squeezes
+    /// eight bytes and requires the low `bits` bits of their little-endian
+    /// `u64` to be zero.
     ///
     /// The step protects the verifier messages drawn after it, up to the next
     /// prover message. The protocol must draw the challenges it protects
@@ -71,11 +72,19 @@ pub trait VerifierTranscript: Transcript {
 /// proof's NARG string, as [`verifier_transcript`] does.
 pub trait VerifierInit<'a>: VerifierTranscript + Sized {
     /// The transcript bound to `session` and `statement` over `narg`.
-    fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self;
+    fn init(
+        session: &[u8; TAG_BYTES],
+        statement: &(impl Encoding + ?Sized),
+        narg: &'a [u8],
+    ) -> Self;
 }
 
 impl<'a, H: DuplexSpongeInit<U = u8>> VerifierInit<'a> for VerifierState<'a, H> {
-    fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self {
+    fn init(
+        session: &[u8; TAG_BYTES],
+        statement: &(impl Encoding + ?Sized),
+        narg: &'a [u8],
+    ) -> Self {
         verifier_transcript::<H>(session, statement, narg)
     }
 }
@@ -95,12 +104,19 @@ where
         let Some(pow) = SpongePow::new(bits) else {
             return self.check(|| false);
         };
-        // Failed reads poison the state themselves; failed checks poison it
-        // through `check`, so `check_eof` fails afterwards too.
-        let nonce = pow.read_nonce(|| VerifierState::prover_message::<u8>(self))?;
-        self.check(|| nonce.is_some())?;
+        // A truncated, non-canonical or out-of-range nonce fails the read,
+        // which poisons the state and absorbs nothing; a failed check poisons
+        // it through `check`. Either way `check_eof` fails afterwards too.
+        let _nonce: u32 = VerifierState::prover_message_with(
+            self,
+            |reader| {
+                pow.read_nonce(|| reader.read::<u8>())?
+                    .ok_or(VerificationError)
+            },
+            |&nonce| nonce_word(nonce),
+        )?;
         let passes =
-            VerifierState::verifier_message_as(self, pow.word_len(), |check| pow.accepts(check));
+            VerifierState::verifier_message_as(self, CHECK_BYTES, |check| pow.accepts(check));
         self.check(|| passes)
     }
 
