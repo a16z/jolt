@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 
 use jolt_field::JoltField;
 use jolt_poly::{eq_index_msb, Point, HIGH_TO_LOW};
-use jolt_transcript::{FieldTranscript, Label, U64Word};
+use jolt_transcript::FieldTranscript;
 
 use crate::{EvaluationClaim, OpeningsError};
 
@@ -205,13 +205,11 @@ where
             )));
         }
 
-        transcript.append(&Label(b"prefix_packed_claim"));
-        transcript.append(&U64Word(self.logical_num_vars as u64));
-        transcript.append(&U64Word(self.slot_capacity as u64));
-        transcript.append(&Label(b"prefix_pack_layout"));
-        transcript.append_bytes(&claims.layout_digest);
-        transcript.append_values(b"prefix_pack_point", claims.point.as_slice());
-        transcript.append_values(b"prefix_pack_evals", &claims.evaluations);
+        transcript.append(&(self.logical_num_vars as u64));
+        transcript.append(&(self.slot_capacity as u64));
+        transcript.append(&claims.layout_digest);
+        transcript.append_values(claims.point.as_slice());
+        transcript.append_values(&claims.evaluations);
 
         let selector = transcript.challenge_vector(self.selector_num_vars)?;
         let point = self.pack_point(&selector, claims.point.as_slice())?;

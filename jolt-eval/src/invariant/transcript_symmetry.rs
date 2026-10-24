@@ -9,12 +9,13 @@ use spongefish::instantiations::Keccak;
 use spongefish::{DuplexSpongeInit, VerificationError};
 
 use jolt_transcript::{
-    prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge,
+    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge,
+    ProverTranscript, TAG_BYTES,
 };
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
-const SESSION: &[u8] = b"jolt-eval/transcript-symmetry/v1";
+const SESSION: [u8; TAG_BYTES] = protocol_tag(b"jolt-eval/transcript-symmetry/v1");
 const INSTANCE_DIGEST: [u8; 32] = [0u8; 32];
 
 /// One operation in the prover/verifier sequence.
@@ -71,15 +72,19 @@ fn run_check<H>(input: &Input) -> Result<(), CheckError>
 where
     H: DuplexSpongeInit<U = u8>,
 {
-    let mut prover = prover_transcript::<H>(SESSION, &INSTANCE_DIGEST);
+    let mut prover = prover_transcript::<H>(&SESSION, &INSTANCE_DIGEST);
     let mut prover_challenges: Vec<[u8; 32]> = Vec::new();
 
     for op in &input.ops {
         match op {
             Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
             Op::PublicScalar(f) => prover.public_message(&scalar_bytes(*f)),
-            Op::ProverBytes(b) => prover.prover_message(&BytesMsg(b.clone())),
-            Op::ProverScalar(f) => prover.prover_message(&scalar_bytes(*f)),
+            Op::ProverBytes(b) => {
+                ProverTranscript::prover_message(&mut prover, &BytesMsg(b.clone()));
+            }
+            Op::ProverScalar(f) => {
+                ProverTranscript::prover_message(&mut prover, &scalar_bytes(*f));
+            }
             Op::Challenge => {
                 let c: [u8; 32] = prover.verifier_message();
                 prover_challenges.push(c);
@@ -88,7 +93,7 @@ where
     }
 
     let narg: Vec<u8> = prover.narg_string().to_vec();
-    let mut verifier = verifier_transcript::<H>(SESSION, &INSTANCE_DIGEST, &narg);
+    let mut verifier = verifier_transcript::<H>(&SESSION, &INSTANCE_DIGEST, &narg);
     let mut challenge_idx = 0usize;
 
     for (op_idx, op) in input.ops.iter().enumerate() {

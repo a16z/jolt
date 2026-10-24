@@ -329,7 +329,7 @@ mod tests {
 
         let mut want = recorder();
         for value in [901, 903, 904, 905, 906, 907, 902].map(fr) {
-            want.append_labeled(b"opening_claim", &value);
+            want.append(&value);
         }
 
         assert_eq!(got.absorbed(), want.absorbed());
@@ -356,7 +356,7 @@ mod tests {
             stage5_gamma: gamma,
         };
         let mut transcript = ScriptedTranscript::with_script(
-            prover_transcript::<Keccak>(b"stage-gamma-powers", b""),
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"stage-gamma-powers"), b""),
             vec![gamma; BYTECODE_STAGE_GAMMA_COUNTS.len()],
         );
         for (powers, len) in challenges

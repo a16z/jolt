@@ -4,8 +4,8 @@ use jolt_field::{Field, F128, F192, F64, F8};
 use jolt_poly::lagrange::F8DomainSizeError;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    grind_round, ClearProof, ClearSumcheckProof, F8Domain, LabeledRoundPoly, RoundMessage,
-    SumcheckClaim, SumcheckDomain, SumcheckError, SumcheckProof, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    grind_round, ClearProof, ClearSumcheckProof, F8Domain, RoundMessage, SumcheckClaim,
+    SumcheckDomain, SumcheckError, SumcheckProof,
 };
 use jolt_transcript::{
     prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState, ProverTranscript,
@@ -15,7 +15,7 @@ use jolt_transcript::{
 const LABEL: &[u8] = b"f8-uniskip-reduction";
 
 fn blake2b() -> ProverState<Blake2b512> {
-    prover_transcript::<Blake2b512>(LABEL, b"")
+    prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(LABEL), b"")
 }
 
 fn horner<F: Field>(coefficients: &[F], point: F) -> F {
@@ -92,8 +92,7 @@ where
     T: FieldTranscript<F> + ProverTranscript,
 {
     let round_polynomial = UnivariatePoly::new(coefficients);
-    LabeledRoundPoly::new(&round_polynomial, UNISKIP_ROUND_TRANSCRIPT_LABEL)
-        .append_to_transcript(&mut transcript);
+    round_polynomial.append_to_transcript(&mut transcript);
     let mut pow_nonces = Vec::new();
     grind_round::<F, T>(claim.degree, 0, &mut pow_nonces, &mut transcript)?;
     Ok(SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof {
@@ -117,7 +116,6 @@ where
     let reduced = full_clear_round(&claim, coefficients.to_vec(), new_transcript())?.verify(
         &claim,
         domain,
-        UNISKIP_ROUND_TRANSCRIPT_LABEL,
         &mut transcript,
     )?;
     assert_eq!(reduced.point.as_slice().len(), 1);
@@ -145,7 +143,6 @@ where
         full_clear_round(&claim, changed_cubic, new_transcript())?.verify(
             &claim,
             domain,
-            UNISKIP_ROUND_TRANSCRIPT_LABEL,
             &mut transcript,
         ),
         Err(SumcheckError::RoundCheckFailed { round: 0, .. })
@@ -160,7 +157,6 @@ where
     let reduced = full_clear_round(&claim, changed_constant, new_transcript())?.verify(
         &claim,
         domain,
-        UNISKIP_ROUND_TRANSCRIPT_LABEL,
         &mut transcript,
     )?;
     let challenge = *reduced

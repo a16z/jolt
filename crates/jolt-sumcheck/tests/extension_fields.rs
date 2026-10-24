@@ -6,8 +6,7 @@ use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
     CenteredIntegerDomain, ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds,
     SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
-    SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    SumcheckVerifier,
 };
 use jolt_transcript::{
     prover_transcript, verifier_transcript, Blake2b512, ChallengeCodec, Encoding, FieldTranscript,
@@ -113,7 +112,8 @@ where
     let right = affine_table(right_coefficients);
     let input_claim: F = left.iter().zip(&right).map(|(&a, &b)| a * b).sum();
 
-    let mut prover_state = prover_transcript::<Blake2b512>(b"extension-sumcheck", b"");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"extension-sumcheck"), b"");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[input_claim], &mut prover_state);
     let coefficient = prover_state.challenge().unwrap();
@@ -148,21 +148,23 @@ where
         bincode::serde::decode_from_slice(&wire, bincode::config::standard()).unwrap();
     assert_eq!(read, wire.len());
 
-    let mut verifier_transcript =
-        verifier_transcript::<Blake2b512>(b"extension-sumcheck", b"", &[]);
-    verifier_transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, &input_claim);
+    let mut verifier_transcript = verifier_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"extension-sumcheck"),
+        b"",
+        &[],
+    );
+    verifier_transcript.append(&input_claim);
     let verifier_coefficient: F = verifier_transcript.challenge().unwrap();
     assert_eq!(verifier_coefficient, coefficient);
     let reduced = SumcheckVerifier::verify_compressed(
         &SumcheckClaim::new(2, 2, coefficient * input_claim),
         &proof,
         BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
         &mut verifier_transcript,
     )
     .unwrap();
     for claim in &proved.member_claims {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, claim);
+        verifier_transcript.append(claim);
     }
 
     let point: [F; 2] = reduced.point.as_slice().try_into().unwrap();
@@ -185,21 +187,25 @@ where
         .into_iter()
         .map(|point| polynomial.evaluate(F::from_i64(point)))
         .sum();
-    let mut prover_state = prover_transcript::<Blake2b512>(b"extension-uniskip", b"");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"extension-uniskip"), b"");
     let proved =
         prove_uniskip_clear::<F, _>(polynomial.clone(), input_claim, 2, 3, &mut prover_state)
             .unwrap();
 
-    let mut verifier_transcript = verifier_transcript::<Blake2b512>(b"extension-uniskip", b"", &[]);
+    let mut verifier_transcript = verifier_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"extension-uniskip"),
+        b"",
+        &[],
+    );
     let reduced = SumcheckProof::<F, ()>::from(proved.proof)
         .verify(
             &SumcheckClaim::new(1, 2, input_claim),
             CenteredIntegerDomain::new(3),
-            UNISKIP_ROUND_TRANSCRIPT_LABEL,
             &mut verifier_transcript,
         )
         .unwrap();
-    verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &reduced.value);
+    verifier_transcript.append(&reduced.value);
 
     assert_eq!(reduced.point.as_slice(), &[proved.challenge]);
     assert_eq!(reduced.value, polynomial.evaluate(proved.challenge));

@@ -1,6 +1,6 @@
 use jolt_field::Field;
 use jolt_poly::UnivariatePolynomial;
-use jolt_transcript::{Encoding, FieldTranscript, LabelWithCount};
+use jolt_transcript::{Encoding, FieldTranscript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
@@ -93,7 +93,6 @@ impl SumcheckVerifier {
         claim: &SumcheckClaim<F>,
         proof: &CompressedSumcheckProof<F>,
         domain: BooleanHypercube,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
@@ -124,10 +123,9 @@ impl SumcheckVerifier {
                 return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
             }
 
-            transcript.append(&LabelWithCount(round_label, coeffs.len() as u64));
-            for coeff in coeffs {
-                transcript.append(coeff);
-            }
+            // The count word: the prover chooses the degree up to the bound.
+            transcript.append(&(coeffs.len() as u64));
+            transcript.append_values(coeffs);
             pow.check(round, transcript)?;
             let r: F = transcript.challenge()?;
             running_sum = round_proof.evaluate_with_hint(running_sum, r);
@@ -193,13 +191,12 @@ where
         &self,
         claim: &SumcheckClaim<F>,
         domain: BooleanHypercube,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         T: FieldTranscript<F>,
     {
-        SumcheckVerifier::verify_compressed(claim, self, domain, round_label, transcript)
+        SumcheckVerifier::verify_compressed(claim, self, domain, transcript)
     }
 }
 

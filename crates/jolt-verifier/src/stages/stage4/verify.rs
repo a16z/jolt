@@ -163,9 +163,8 @@ where
     };
 
     // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
-    // the field-register read-write gamma (each a single `challenge()`), then the RAM
-    // value-check gamma behind its `b"ram_val_check_gamma"` domain separator (the relation's
-    // `draw_challenges` override replays the separator at its exact transcript position).
+    // the field-register read-write gamma, then the RAM value-check gamma, each a single
+    // `challenge()` in one squeeze run behind the stage-4 proof of work.
     check_pow(
         PowSite::Stage4,
         sumchecks.challenge_loss(),

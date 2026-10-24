@@ -14,11 +14,10 @@ use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::CompressedPoly;
 use jolt_sumcheck::{
     round_pow_bits, BooleanHypercube, CompressedSumcheckProof, EvaluationClaim, SumcheckClaim,
-    SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    SumcheckVerifier,
 };
 use jolt_transcript::{
-    prover_transcript, Blake2b512, FieldTranscript, LabelWithCount, ProverState, ProverTranscript,
-    Transcript,
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript, Transcript,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -55,16 +54,16 @@ fuzz_target!(|data: &[u8]| {
     // grinding each round's proof of work the way an honest prover does.
     let bits =
         round_pow_bits::<Fr, ProverState<Blake2b512>>(degree).expect("difficulty for degree <= 4");
-    let mut transcript = prover_transcript::<Blake2b512>(b"jolt-sumcheck-diff-fuzz", b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-diff-fuzz"),
+        b"",
+    );
     let mut running_sum = claimed_sum;
     let mut challenges: Vec<Fr> = Vec::with_capacity(num_vars);
     let mut pow_nonces = Vec::with_capacity(num_vars);
     for round in &wire_rounds {
         let stored = round.coeffs_except_linear_term();
-        transcript.append(&LabelWithCount(
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-            stored.len() as u64,
-        ));
+        transcript.append(&(stored.len() as u64));
         for coefficient in stored {
             transcript.append(coefficient);
         }
@@ -80,14 +79,12 @@ fuzz_target!(|data: &[u8]| {
         round_polynomials: wire_rounds,
         pow_nonces,
     };
-    let mut transcript = prover_transcript::<Blake2b512>(b"jolt-sumcheck-diff-fuzz", b"");
-    let production = SumcheckVerifier::verify_compressed(
-        &claim,
-        &proof,
-        BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        &mut transcript,
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-diff-fuzz"),
+        b"",
     );
+    let production =
+        SumcheckVerifier::verify_compressed(&claim, &proof, BooleanHypercube, &mut transcript);
 
     let production_claim = production.expect("verify_compressed rejected well-formed wire rounds");
     assert_eq!(

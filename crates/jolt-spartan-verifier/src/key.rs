@@ -2,7 +2,7 @@ use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
-use jolt_transcript::{Encoding, FieldTranscript, Label};
+use jolt_transcript::{Encoding, FieldTranscript};
 
 use crate::{outer_relation, SpartanError};
 
@@ -156,14 +156,11 @@ impl<F: JoltField + Encoding> SpartanKey<F> {
         transcript: &mut impl FieldTranscript<F>,
     ) -> Result<Vec<F>, SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
-        transcript.append(&Label(b"spartan-clear-v1"));
-        transcript.append_bytes(&self.relation_digest);
-        transcript.append_bytes(&self.policy_id);
-        transcript.append_values(b"public-inputs", public_inputs);
-        transcript.append_labeled(b"witness-commitment", commitment);
-        let tau = transcript.challenge_vector(self.row_vars())?;
-        transcript.append_labeled(b"spartan-outer", &F::zero());
-        Ok(tau)
+        transcript.append(&self.relation_digest);
+        transcript.append(&self.policy_id);
+        transcript.append_values(public_inputs);
+        transcript.append(commitment);
+        Ok(transcript.challenge_vector(self.row_vars())?)
     }
 
     /// Absorb outer claims, draw matrix weights, and bind the inner input claim.
@@ -175,7 +172,7 @@ impl<F: JoltField + Encoding> SpartanKey<F> {
         transcript: &mut impl FieldTranscript<F>,
     ) -> Result<([F; 3], F), SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
-        transcript.append_values(b"outer-evaluations", &evaluations);
+        transcript.append_values(&evaluations);
         let weights = [
             transcript.challenge()?,
             transcript.challenge()?,
@@ -197,12 +194,12 @@ impl<F: JoltField + Encoding> SpartanKey<F> {
             .map(|(weight, evaluation)| *weight * evaluation)
             .sum::<F>()
             - contribution;
-        transcript.append_labeled(b"spartan-inner", &claim);
+        transcript.append(&claim);
         Ok((weights, claim))
     }
 
     /// Binds the terminal witness claim before the PCS opening transcript.
     pub fn append_witness_evaluation(evaluation: F, transcript: &mut impl FieldTranscript<F>) {
-        transcript.append_labeled(b"witness-evaluation", &evaluation);
+        transcript.append(&evaluation);
     }
 }

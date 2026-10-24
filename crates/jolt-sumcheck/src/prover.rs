@@ -36,8 +36,7 @@ use crate::error::SumcheckError;
 use crate::pow::grind_round;
 use crate::proof::{ClearSumcheckProof, SumcheckProof};
 use crate::recorder::SumcheckRecorder;
-use crate::round_proof::{LabeledRoundPoly, RoundMessage};
-use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
+use crate::round_proof::RoundMessage;
 
 /// One batch member's prove-side round interface, consumed by
 /// [`prove_batch`]'s round loop. Object-safe on purpose: a stage's members are
@@ -413,17 +412,13 @@ fn check_uniskip_round<F: Field + Encoding>(
             max: degree,
         });
     }
-    CenteredIntegerDomain::new(domain_size).check_round_sum(
-        0,
-        input_claim,
-        &LabeledRoundPoly::uniskip(round_poly),
-    )
+    CenteredIntegerDomain::new(domain_size).check_round_sum(0, input_claim, round_poly)
 }
 
 /// Prove a clear uni-skip first round, mirroring the verifier's
-/// `uniskip::verify_clear`: absorb the full labeled round polynomial, grind its
-/// proof of work, squeeze the reduction challenge, evaluate the output claim,
-/// and absorb it under `b"opening_claim"` — before any post-uni-skip draw
+/// `uniskip::verify_clear`: absorb the full round polynomial, grind its proof
+/// of work, squeeze the reduction challenge, evaluate the output claim, and
+/// absorb it — before any post-uni-skip draw
 /// (the remainder batch's coefficient squeeze in particular), which is why the
 /// absorb lives here and not in the stage.
 #[tracing::instrument(skip_all, name = "prove_uniskip_clear")]
@@ -440,12 +435,12 @@ where
 {
     check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
 
-    LabeledRoundPoly::uniskip(&round_poly).append_to_transcript(transcript);
+    round_poly.append_to_transcript(transcript);
     let mut pow_nonces = Vec::new();
     grind_round(degree, 0, &mut pow_nonces, transcript)?;
     let challenge = transcript.challenge()?;
     let output_claim = round_poly.evaluate(challenge);
-    transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &output_claim);
+    transcript.append(&output_claim);
 
     Ok(ProvedUniskip {
         proof: ClearSumcheckProof {

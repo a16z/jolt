@@ -4,10 +4,8 @@ use jolt_field::{Fr, Ring};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::ClearSumcheckProof;
-use jolt_sumcheck::round_proof::{CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
-use jolt_sumcheck::{
-    round_pow_bits, BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-};
+use jolt_sumcheck::round_proof::{CompressedRoundPoly, RoundMessage};
+use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckVerifier};
 use jolt_transcript::{
     prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript,
 };
@@ -106,7 +104,8 @@ fn degree3_final_eval_correct() {
     let g_evals: Vec<F> = (0..n).map(|i| F::from_u64((i * 5 + 2) as u64)).collect();
     let h_evals: Vec<F> = (0..n).map(|i| F::from_u64((i + 7) as u64)).collect();
 
-    let mut pt = prover_transcript::<Blake2b512>(b"sumcheck-roundtrip", b"");
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
     let (proof, claimed_sum) = prove_product(
         &[f_evals.clone(), g_evals.clone(), h_evals.clone()],
         num_vars,
@@ -119,7 +118,8 @@ fn degree3_final_eval_correct() {
         claimed_sum,
     };
 
-    let mut vt = prover_transcript::<Blake2b512>(b"sumcheck-roundtrip", b"");
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
     let EvaluationClaim {
         point: challenges,
         value: final_eval,
@@ -141,17 +141,17 @@ fn degree3_final_eval_correct() {
 #[test]
 fn compressed_round_verifier_roundtrip() {
     // Full prover-verifier roundtrip where both the prover and the verifier
-    // absorb through `CompressedLabeledRoundPoly` — the wrapper is the
+    // absorb through `CompressedRoundPoly` — the wrapper is the
     // single source of truth for the compressed wire format.
     let num_vars = 3;
     let n = 1 << num_vars;
-    let label = SUMCHECK_ROUND_TRANSCRIPT_LABEL;
     let degree = 2;
 
     let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
     let g: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 * 2 + 3)).collect();
 
-    let mut pt = prover_transcript::<Blake2b512>(b"sumcheck-roundtrip", b"");
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
     let mut bufs = vec![f.clone(), g.clone()];
     let claimed_sum: F = (0..n).map(|i| bufs[0][i] * bufs[1][i]).sum();
     let mut round_polys = Vec::with_capacity(num_vars);
@@ -183,11 +183,8 @@ fn compressed_round_verifier_roundtrip() {
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        let compressed = CompressedLabeledRoundPoly::new(&round_poly, label);
-        <CompressedLabeledRoundPoly<'_, F> as RoundMessage>::append_to_transcript(
-            &compressed,
-            &mut pt,
-        );
+        let compressed = CompressedRoundPoly::new(&round_poly);
+        <CompressedRoundPoly<'_, F> as RoundMessage>::append_to_transcript(&compressed, &mut pt);
         grind_round(degree, &mut pt, &mut pow_nonces);
 
         let r: F = pt.challenge().unwrap();
@@ -211,13 +208,14 @@ fn compressed_round_verifier_roundtrip() {
         claimed_sum,
     };
 
-    let wrapped: Vec<CompressedLabeledRoundPoly<'_, F>> = proof
+    let wrapped: Vec<CompressedRoundPoly<'_, F>> = proof
         .round_polynomials
         .iter()
-        .map(|p| CompressedLabeledRoundPoly::new(p, label))
+        .map(CompressedRoundPoly::new)
         .collect();
 
-    let mut vt = prover_transcript::<Blake2b512>(b"sumcheck-roundtrip", b"");
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
     let result = SumcheckVerifier::verify(
         &claim,
         &wrapped,
@@ -233,17 +231,16 @@ fn compressed_round_verifier_roundtrip() {
 }
 
 #[test]
-fn labeled_round_verifier_roundtrip() {
-    // Test the labeled round verifier path (used by jolt-verifier)
+fn full_round_verifier_roundtrip() {
+    // Test the full round verifier path (used by jolt-verifier)
     let num_vars = 3;
     let n = 1 << num_vars;
 
     let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
     let g: Vec<F> = (0..n).map(|i| F::from_u64((i + 5) as u64)).collect();
 
-    let label = SUMCHECK_ROUND_TRANSCRIPT_LABEL;
-
-    let mut pt = prover_transcript::<Blake2b512>(b"sumcheck-roundtrip", b"");
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
     let degree = 2;
     let mut bufs = vec![f.clone(), g.clone()];
     let claimed_sum: F = (0..n).map(|i| bufs[0][i] * bufs[1][i]).sum();
@@ -276,8 +273,7 @@ fn labeled_round_verifier_roundtrip() {
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        let labeled = LabeledRoundPoly::new(&round_poly, label);
-        <LabeledRoundPoly<'_, F> as RoundMessage>::append_to_transcript(&labeled, &mut pt);
+        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, &mut pt);
         grind_round(degree, &mut pt, &mut pow_nonces);
 
         let r: F = pt.challenge().unwrap();
@@ -302,23 +298,18 @@ fn labeled_round_verifier_roundtrip() {
         claimed_sum,
     };
 
-    let wrapped: Vec<LabeledRoundPoly<'_, F>> = proof
-        .round_polynomials
-        .iter()
-        .map(|p| LabeledRoundPoly::new(p, label))
-        .collect();
-
-    let mut vt = prover_transcript::<Blake2b512>(b"sumcheck-roundtrip", b"");
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
     let result = SumcheckVerifier::verify(
         &claim,
-        &wrapped,
+        &proof.round_polynomials,
         &proof.pow_nonces,
         BooleanHypercube,
         &mut vt,
     );
     assert!(
         result.is_ok(),
-        "labeled round verifier roundtrip failed: {:?}",
+        "full round verifier roundtrip failed: {:?}",
         result.err()
     );
 }

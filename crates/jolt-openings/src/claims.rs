@@ -1,6 +1,6 @@
 use jolt_field::JoltField;
 use jolt_poly::EvaluationClaim;
-use jolt_transcript::{Encoding, Label, LabelWithCount};
+use jolt_transcript::Encoding;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZkEvaluationClaim<'a, F, C> {
@@ -23,14 +23,10 @@ where
     C: Encoding,
 {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = LabelWithCount(b"zk_opening_point", self.point.len() as u64)
-            .encode()
-            .as_ref()
-            .to_vec();
+        let mut out = Vec::new();
         for coordinate in self.point {
             out.extend_from_slice(coordinate.encode().as_ref());
         }
-        out.extend_from_slice(Label(b"zk_eval_commitment").encode().as_ref());
         out.extend_from_slice(self.hiding_commitment.encode().as_ref());
         out
     }
@@ -49,10 +45,7 @@ where
     F: JoltField,
 {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = LabelWithCount(b"rlc_claims", self.0.len() as u64)
-            .encode()
-            .as_ref()
-            .to_vec();
+        let mut out = Vec::new();
         for claim in self.0 {
             out.extend_from_slice(claim.evaluation.value.encode().as_ref());
         }

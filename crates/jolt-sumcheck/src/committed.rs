@@ -3,7 +3,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, JoltField};
 #[cfg(all(feature = "committed", feature = "prover"))]
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{Encoding, LabelWithCount, Transcript};
+use jolt_transcript::{Encoding, Transcript};
 #[cfg(all(feature = "committed", feature = "prover"))]
 use jolt_transcript::{FieldTranscript, ProverTranscript};
 #[cfg(all(feature = "committed", feature = "prover"))]
@@ -18,9 +18,6 @@ use crate::pow::{Nonced, NoncedRef};
 use crate::proof::SumcheckProof;
 use crate::round_proof::RoundMessage;
 
-const SUMCHECK_COMMITMENT_LABEL: &[u8] = b"sumcheck_commitment";
-const OUTPUT_CLAIMS_LABEL: &[u8] = b"output_claims_coms";
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedRound<C> {
     pub commitment: C,
@@ -33,13 +30,11 @@ impl<C: Encoding> RoundMessage for CommittedRound<C> {
     }
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        // The degree is packed into the label word so the round's degree —
-        // which fixes the BlindFold R1CS coefficient layout — is
-        // Fiat-Shamir-bound, not free prover-chosen wire data.
-        transcript.append(&LabelWithCount(
-            SUMCHECK_COMMITMENT_LABEL,
-            self.degree as u64,
-        ));
+        // The degree is absorbed as its own `u64` word so the round's
+        // degree — which fixes the BlindFold R1CS coefficient layout and which
+        // the prover chooses up to the bound — is Fiat-Shamir-bound, not free
+        // prover-chosen wire data.
+        transcript.append(&(self.degree as u64));
         transcript.append(&self.commitment);
     }
 }
@@ -49,14 +44,12 @@ pub struct CommittedOutputClaims<C> {
     pub commitments: Vec<C>,
 }
 
-/// A [`LabelWithCount`] word carrying the number of commitments, then each
-/// commitment.
+/// Each commitment, with no count: the verifier fixes the number of
+/// commitments from the hidden-claim count and the vector-commitment capacity
+/// and rejects any other count before the proof is accepted.
 impl<C: Encoding> Encoding for CommittedOutputClaims<C> {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = LabelWithCount(OUTPUT_CLAIMS_LABEL, self.commitments.len() as u64)
-            .encode()
-            .as_ref()
-            .to_vec();
+        let mut out = Vec::new();
         for commitment in &self.commitments {
             out.extend_from_slice(commitment.encode().as_ref());
         }

@@ -50,8 +50,6 @@ use jolt_poly::Point;
 use jolt_transcript::Encoding;
 use jolt_transcript::FieldTranscript;
 #[cfg(not(feature = "akita"))]
-use jolt_transcript::LabelWithCount;
-
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
@@ -230,10 +228,7 @@ where
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
 
-    transcript.append(&LabelWithCount(
-        b"rlc_claims",
-        crate::num::u64_from_usize(opening_claims.len()),
-    ));
+    // The verifier builds `opening_claims`, so its length needs no word.
     for claim in &opening_claims {
         transcript.append(&claim.evaluation.value);
     }
