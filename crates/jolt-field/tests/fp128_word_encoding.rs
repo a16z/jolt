@@ -1,5 +1,5 @@
-#![expect(clippy::unwrap_used, reason = "tests construct canonical fixtures")]
 #![cfg(feature = "solinas")]
+#![expect(clippy::unwrap_used, reason = "tests construct canonical fixtures")]
 
 use jolt_field::solinas::Prime128OffsetA7F7 as Field;
 use jolt_field::{CanonicalBytes, CanonicalEncoding};
