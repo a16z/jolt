@@ -37,6 +37,8 @@ mod trace_onehot;
 mod whiteout;
 
 pub use akita_pcs::AkitaError;
+#[cfg(feature = "zk")]
+pub use akita_pcs::HidingRandomness;
 
 #[cfg(feature = "profiling")]
 #[doc(hidden)]

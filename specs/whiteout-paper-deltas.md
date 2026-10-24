@@ -61,7 +61,7 @@ so the authors can fold it into the paper.
 | D28 | Public coordinates of w_k: the cut level's setup-prefix response and inner digits, at native-element granularity, with no zero cells | clarification, departure | implemented (Akita W5d) |
 | D29 | u_a enters N as a public (raw) target; the masked prefix sends it raw (19 × `R_64` after W5e) | departure (cost) | implemented (Akita W5d, re-sized W5e) |
 | D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
-| D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation | departure (stricter than paper), clarification | implemented (W6f) |
+| D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation; their trust root is the holder of r | departure (stricter than paper), clarification | implemented (W6f, A44) |
 
 ## D1. Constant-time Σ attempt
 
@@ -1359,25 +1359,44 @@ group's claims (D25).
 - *Setup-bound trusted advice.* A clear trusted-advice commitment is made
   on a transparent setup and can be reused across trace setups and chunk
   profiles. A Whiteout one is made on one trace setup's backend and opens
-  only there; its handle cannot move to another process or setup.
-- *Program commitments are not recomputable.* A committed program's
-  hiding commitment differs per preprocessing run, so nobody can recompute
-  it from the program. In the clear build the verifier need not trust the
-  prover's preprocessing: anyone holding P recomputes C and checks it.
-  Under Whiteout nothing ties C to P outside the committing process.
-- *Trust root of statement-fixed groups.* The hiding randomness of a
-  trusted-advice or committed-program commitment lives only in the
-  committing process's in-memory Akita handle (`CommitmentHandle`); Akita
-  can neither export it nor rebuild a hiding handle from given randomness.
-  So the commitment's trust root must be the committing prover's process:
-  that process commits and proves, a separately trusted party cannot hand
-  the prover a usable opening of a commitment it made, and an auditor
-  cannot open C to check which advice or program it binds. A verifier
-  accepts C on the strength of whoever ran that process, not by
-  recomputation. The remedy is follow-up Akita A44: export the hiding
-  randomness r of a hiding commitment, and re-import a hiding source with
-  given randomness. A trusted party could then ship (advice or program, r)
-  to the prover, and an auditor could open C.
+  only on that setup: its Akita handle never leaves the process, and a
+  rebuild from (advice, r) (below) reproduces C only under the same setup
+  parameters.
+- *Program commitments are recomputable only with r.* A committed
+  program's hiding commitment differs per preprocessing run. In the clear
+  build anyone holding P recomputes C and checks it, so the verifier need
+  not trust the prover's preprocessing. Under Whiteout only a holder of
+  (P, r) can: `preprocess_committed_reopened` rebuilds C from them or
+  fails.
+- *Trust root of statement-fixed groups (Akita A44).* The trust root of a
+  trusted-advice or committed-program commitment C is whoever holds its
+  hiding randomness r. The committing process exports r from its Akita
+  handle (`AdviceObject::hiding_opening`,
+  `DirectProgramObjects::hiding_openings`, over Akita's
+  `CommitmentHandle::hiding_randomness`) as a `HidingRandomness`
+  (zeroized on drop, redacted `Debug`, a versioned, length-checked wire
+  form), and ships C with it. The prover rebuilds its hint from (data, r)
+  (`reopen_trusted_advice`, `preprocess_committed_reopened`, over Akita's
+  `CpuBackend::recommit_hiding`), which replays r into the same commit
+  path and fails closed unless the rebuilt commitment's coefficients equal
+  C's (Akita) and its header equals C's (jolt-akita). The same call is the
+  auditor's check that C binds the advice or program. A verifier accepts C
+  on the strength of whoever produced and holds r: the committing process,
+  or a separately trusted party that ships (data, r) to the prover.
+  - *r is as secret as the data.* Given r, C is a deterministic function
+    of m, so a holder of r who lacks m can test guesses of m: for that
+    holder C is no more hiding than a clear commitment. The proofs add nothing: r sits in
+    level 0's output witness, which each proof recommits with fresh
+    randomness and opens only through masked levels (the argument above),
+    so they stay simulatable from C.
+  - *No reuse of r.* The hiding lemma covers one commitment per draw of
+    r. Committing other data m′ under the same r is outside it: the B·r
+    term of the two outer images cancels in their difference, a clear
+    image of m − m′. Akita offers no way to do so: `recommit_hiding`,
+    the only consumer of exported randomness, returns a handle only when
+    the rebuilt commitment equals the expected one, so it never yields a
+    second commitment under r. The wire form carries no copy of C; the
+    binding is that check.
 - *Unchunked precommitted rows.* A precommitted group's own ZK row is
   planned unchunked: a masked level spans one witness chunk (D4), and the
   group folds at the single-chunk trace row's root. Groups below 12
@@ -1390,6 +1409,12 @@ jolt-prover `whiteout_e2e` (honest proofs verify, tampers reject, a
 recommitted trusted advice or program commitment rejects; with
 `field-inline`, a field-ops proof with untrusted advice) and jolt-verifier's
 census and per-class tampers over the advice and committed-program cases.
+The A44 trust root: `whiteout_e2e`'s `*_reopens_from_shipped_randomness`
+(a trusted party ships C and r as bytes and drops its handle; a separately
+preprocessed prover rebuilds, proves, and the verifier accepts against the
+shipped C; altered or swapped randomness and other advice fail at rebuild;
+an auditor's rebuild reproduces C) and Akita's
+`exported_hiding_randomness_rebuilds_exactly_its_commitment`.
 
 **For the paper.** In §3.1, state that a preprocessing commitment may
 carry randomness that the prover keeps and reuses, and that this needs no

@@ -1,5 +1,7 @@
 use akita_params::{PolynomialGroupLayout, PrecommittedGroupProfiles};
 use akita_pcs::custom_source::RootPolyMeta;
+#[cfg(feature = "zk")]
+use akita_pcs::HidingRandomness;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
 use jolt_crypto::Commitment;
 use jolt_openings::{
@@ -9,6 +11,8 @@ use jolt_openings::{
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+#[cfg(feature = "zk")]
+use jolt_zk::whiteout::PrecommittedShape;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -82,10 +86,34 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     #[cfg(feature = "zk")]
     fn whiteout_commit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
         setup: &Self::ProverSetup,
-        shape: jolt_zk::whiteout::PrecommittedShape,
+        shape: PrecommittedShape,
         polynomial: &P,
         layout_digest: [u8; 32],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
+
+    /// Whiteout: rebuilds the hint of the hiding precommitted group
+    /// `commitment` of `shape` from `polynomial` and the randomness it was
+    /// made with, so a process other than the committing one can open it
+    /// (D31). Fails unless they rebuild exactly `commitment`, which makes
+    /// this the check of `commitment` against (`polynomial`, `randomness`)
+    /// too.
+    #[cfg(feature = "zk")]
+    fn whiteout_recommit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
+        setup: &Self::ProverSetup,
+        shape: PrecommittedShape,
+        polynomial: &P,
+        layout_digest: [u8; 32],
+        commitment: &Self::Output,
+        randomness: &HidingRandomness,
+    ) -> Result<Self::OpeningHint, OpeningsError>;
+
+    /// Whiteout: the randomness a hiding precommitted group's hint was
+    /// committed with, for
+    /// [`whiteout_recommit_precommitted`](Self::whiteout_recommit_precommitted).
+    #[cfg(feature = "zk")]
+    fn whiteout_hiding_randomness(
+        hint: &Self::OpeningHint,
+    ) -> Result<HidingRandomness, OpeningsError>;
 
     /// Whiteout: samples, commits and sends the pads of `layout` for the
     /// masked opening of `shape` (spec §2, row 2).
@@ -357,13 +385,16 @@ impl AkitaScheme {
     }
 
     /// Whiteout: commits one dense polynomial hiding as a precommitted group
-    /// of `shape`, on the setup's Whiteout backend.
+    /// of `shape`, on the setup's Whiteout backend: with fresh randomness,
+    /// or, given `reopen`, rebuilding exactly that commitment from the
+    /// randomness it was made with.
     #[cfg(feature = "zk")]
     fn commit_whiteout_precommitted<P: MultilinearPoly<AkitaField> + ?Sized>(
         setup: &AkitaProverSetup,
-        shape: jolt_zk::whiteout::PrecommittedShape,
+        shape: PrecommittedShape,
         polynomial: &P,
         layout_digest: [u8; 32],
+        reopen: Option<(&AkitaCommitment, &HidingRandomness)>,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let num_vars = polynomial.num_vars();
         if num_vars != shape.num_vars {
@@ -383,18 +414,39 @@ impl AkitaScheme {
             akita_ordered_evaluations(polynomial)?,
         )
         .map_err(akita_error)?];
+        let expected = reopen
+            .map(|(commitment, randomness)| {
+                crate::adapters::deserialize_akita(
+                    &commitment.serialized_backend_bytes,
+                    &commitment.backend_coeff_len,
+                )
+                .map(|payload| (payload, randomness))
+            })
+            .transpose()?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
             let source = catalog.backend()?.import_source(dense)?;
-            catalog.commit_precommitted(shape, &source)
+            match &expected {
+                None => catalog.commit_precommitted(shape, &source),
+                Some((payload, randomness)) => {
+                    catalog.recommit_precommitted(shape, &source, randomness, payload)
+                }
+            }
         })
         .map_err(commit_failed)?;
-        Self::package_commitment(
+        let (commitment, hint) = Self::package_commitment(
             layout_digest,
             num_vars,
             backend_commitment,
             backend_hint,
             AkitaHintSource::WhiteoutPrecommitted { shape },
-        )
+        )?;
+        // The backend matched the payload; the header must match too.
+        if reopen.is_some_and(|(expected, _)| *expected != commitment) {
+            return Err(invalid_batch(
+                "the rebuilt commitment's header differs from the expected commitment",
+            ));
+        }
+        Ok((commitment, hint))
     }
 
     fn commit_one_hot_backend(
@@ -561,11 +613,46 @@ impl TraceOneHotCommitment for AkitaScheme {
     #[cfg(feature = "zk")]
     fn whiteout_commit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
         setup: &Self::ProverSetup,
-        shape: jolt_zk::whiteout::PrecommittedShape,
+        shape: PrecommittedShape,
         polynomial: &P,
         layout_digest: [u8; 32],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Self::commit_whiteout_precommitted(setup, shape, polynomial, layout_digest)
+        Self::commit_whiteout_precommitted(setup, shape, polynomial, layout_digest, None)
+    }
+
+    #[cfg(feature = "zk")]
+    fn whiteout_recommit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
+        setup: &Self::ProverSetup,
+        shape: PrecommittedShape,
+        polynomial: &P,
+        layout_digest: [u8; 32],
+        commitment: &Self::Output,
+        randomness: &HidingRandomness,
+    ) -> Result<Self::OpeningHint, OpeningsError> {
+        Self::commit_whiteout_precommitted(
+            setup,
+            shape,
+            polynomial,
+            layout_digest,
+            Some((commitment, randomness)),
+        )
+        .map(|(_, hint)| hint)
+    }
+
+    #[cfg(feature = "zk")]
+    fn whiteout_hiding_randomness(
+        hint: &Self::OpeningHint,
+    ) -> Result<HidingRandomness, OpeningsError> {
+        if !matches!(hint.source, AkitaHintSource::WhiteoutPrecommitted { .. }) {
+            return Err(invalid_batch(
+                "only a hiding precommitted group's hint exports its randomness",
+            ));
+        }
+        let (_, handle) = hint
+            .backend
+            .as_ref()
+            .ok_or_else(|| invalid_batch("a precommitted hint has no backend payload"))?;
+        handle.hiding_randomness().map_err(akita_error)
     }
 
     #[cfg(feature = "zk")]
@@ -1031,12 +1118,13 @@ impl TransparentObjectSetup for AkitaScheme {
         if setup.verifier.whiteout.is_some() {
             return Self::commit_whiteout_precommitted(
                 setup,
-                jolt_zk::whiteout::PrecommittedShape {
+                PrecommittedShape {
                     num_vars,
                     source: jolt_zk::whiteout::DenseSource::FullField,
                 },
                 poly,
                 layout_digest,
+                None,
             );
         }
         let cached = setup.full_width.get(&num_vars).ok_or_else(|| {

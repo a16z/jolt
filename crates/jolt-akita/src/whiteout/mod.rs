@@ -36,11 +36,13 @@ use akita_pcs::zk::{
     ResidualShape, ZkCommitmentConfig,
 };
 use akita_pcs::{
-    AkitaCommitmentScheme, AkitaError, AkitaVerifier, CommitOutput, GroupContext,
-    SelectedProverOpeningData,
+    AkitaCommitmentScheme, AkitaError, AkitaVerifier, CommitOutput, GroupContext, HidingRandomness,
+    SelectedProverOpeningData, SourceHandle,
 };
 use akita_schedules::digit_commitment_min_rank;
-use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_types::{
+    Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_crypto::lattice::{derive_public_matrix_prefix, PublicMatrixSeed};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
@@ -197,12 +199,33 @@ impl PrecommittedRow {
     fn commit(
         &self,
         backend: &AkitaBackend,
-        source: &akita_pcs::SourceHandle<F, F>,
+        source: &SourceHandle<F, F>,
     ) -> Result<CommitOutput<F, F>, AkitaError> {
         let context = GroupContext::explicit(&self.profile);
         match &self.catalog {
             PrecommittedCatalog::Bounded(catalog) => backend.commit(catalog, source, context),
             PrecommittedCatalog::FullField(catalog) => backend.commit(catalog, source, context),
+        }
+    }
+
+    /// Rebuilds the commitment `expected` of `source` under the hiding
+    /// profile from the randomness it was made with; fails unless the
+    /// rebuilt commitment is `expected`.
+    fn recommit(
+        &self,
+        backend: &AkitaBackend,
+        source: &SourceHandle<F, F>,
+        randomness: &HidingRandomness,
+        expected: &Commitment<F>,
+    ) -> Result<CommitOutput<F, F>, AkitaError> {
+        let context = GroupContext::explicit(&self.profile);
+        match &self.catalog {
+            PrecommittedCatalog::Bounded(catalog) => {
+                backend.recommit_hiding(catalog, source, context, randomness, expected)
+            }
+            PrecommittedCatalog::FullField(catalog) => {
+                backend.recommit_hiding(catalog, source, context, randomness, expected)
+            }
         }
     }
 }
@@ -399,7 +422,7 @@ impl WhiteoutCatalog {
     pub fn commit_precommitted(
         &self,
         shape: PrecommittedShape,
-        source: &akita_pcs::SourceHandle<F, F>,
+        source: &SourceHandle<F, F>,
     ) -> Result<(CommittedGroup<F>, AkitaBackendHint), AkitaError> {
         let row = self.precommitted.get(&shape).ok_or_else(|| {
             AkitaError::UnsupportedSchedule(format!(
@@ -407,6 +430,30 @@ impl WhiteoutCatalog {
             ))
         })?;
         let output = row.commit(self.backend()?, source)?;
+        Ok((output.committed_group, output.private_handle))
+    }
+
+    /// Rebuilds the hiding commitment `expected` of `source`, a precommitted
+    /// group of `shape`, from the randomness it was made with (D31).
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidInput`] unless (`source`, `randomness`) rebuild
+    /// exactly `expected`, and [`commit_precommitted`](Self::commit_precommitted)'s
+    /// errors.
+    pub fn recommit_precommitted(
+        &self,
+        shape: PrecommittedShape,
+        source: &SourceHandle<F, F>,
+        randomness: &HidingRandomness,
+        expected: &Commitment<F>,
+    ) -> Result<(CommittedGroup<F>, AkitaBackendHint), AkitaError> {
+        let row = self.precommitted.get(&shape).ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(format!(
+                "no admitted Whiteout opening folds a precommitted group of {shape:?}"
+            ))
+        })?;
+        let output = row.recommit(self.backend()?, source, randomness, expected)?;
         Ok((output.committed_group, output.private_handle))
     }
 
@@ -462,7 +509,7 @@ impl WhiteoutRow {
     /// The backend's errors.
     pub fn commit_hiding(
         &self,
-        source: &akita_pcs::SourceHandle<F, F>,
+        source: &SourceHandle<F, F>,
     ) -> Result<(CommittedGroup<F>, AkitaBackendHint), AkitaError> {
         let backend = self.catalog.backend()?;
         let schedules = self.catalog.scheme.schedules();
