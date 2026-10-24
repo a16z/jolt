@@ -31,13 +31,16 @@ use akita_params::{
     BasisMode, CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningClaimsLayout,
     OpeningScheduleSelection, PolynomialGroupLayout, PrecommittedGroupProfiles, ScheduleLookupKey,
 };
+#[cfg(feature = "zk-prover")]
+use akita_pcs::zk::{prove_masked_prefix, ResidualOpening};
 use akita_pcs::zk::{
-    prove_masked_prefix, AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualOpening,
-    ResidualShape, ZkCommitmentConfig,
+    AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualShape, ZkCommitmentConfig,
 };
+#[cfg(feature = "zk-prover")]
+use akita_pcs::SelectedProverOpeningData;
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaError, AkitaVerifier, CommitOutput, GroupContext, HidingRandomness,
-    SelectedProverOpeningData, SourceHandle,
+    SourceHandle,
 };
 use akita_schedules::digit_commitment_min_rank;
 use akita_types::{
@@ -45,16 +48,20 @@ use akita_types::{
 };
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_crypto::lattice::{derive_public_matrix_prefix, PublicMatrixSeed};
-use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
-use jolt_zk::masking::{
-    AffineRow, CommittedPads, CommittedPadsView, PadLayout, ResidualRelation, ZkError,
-};
+#[cfg(feature = "zk-prover")]
+use jolt_transcript::ProverTranscript;
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+#[cfg(feature = "zk-prover")]
+use jolt_zk::masking::CommittedPads;
+use jolt_zk::masking::{AffineRow, CommittedPadsView, PadLayout, ResidualRelation, ZkError};
+#[cfg(feature = "zk-prover")]
+use jolt_zk::whiteout::{commit_lattice_pads, prove_sigma, ImageCompression, WhiteoutPadOpening};
 use jolt_zk::whiteout::{
-    commit_lattice_pads, prove_sigma, receive_lattice_pads, verify_sigma, BlockTarget, DenseSource,
-    ImageCompression, LatticePadCommitment, LatticePadPayload, MaskedOpeningShape, PadPlacement,
-    PrecommittedShape, SigmaSetup, WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS,
-    RESPONSE_LOG_BASIS,
+    receive_lattice_pads, verify_sigma, BlockTarget, DenseSource, LatticePadCommitment,
+    LatticePadPayload, MaskedOpeningShape, PadPlacement, PrecommittedShape, SigmaSetup,
+    PAD_RANDOMNESS_LOG_BASIS, RESPONSE_LOG_BASIS,
 };
+#[cfg(feature = "zk-prover")]
 use rand_core::{CryptoRng, RngCore};
 
 use crate::adapters::{AkitaBackend, AkitaBackendHint, AkitaBackendProverSetup, AkitaField};
@@ -282,6 +289,10 @@ pub struct WhiteoutCatalog {
 
 /// The prover's half of a [`WhiteoutCatalog`].
 struct WhiteoutProver {
+    #[cfg_attr(
+        not(feature = "zk-prover"),
+        expect(dead_code, reason = "only the masked prover reads the setup")
+    )]
     setup: AkitaBackendProverSetup,
     backend: AkitaBackend,
 }
@@ -540,6 +551,7 @@ impl WhiteoutRow {
     ///
     /// [`AkitaError::FoldOverflow`] on a one-shot fold overflow (the caller
     /// reruns), and the masked prover's errors.
+    #[cfg(feature = "zk-prover")]
     pub fn prove_masked<S: Sponge>(
         &self,
         groups: Vec<ProverGroup>,
@@ -702,6 +714,7 @@ fn masked_statement(
 
 /// One group the prover opens: its commitment, the handle retaining its
 /// source, its point in Akita's order and its true evaluations.
+#[cfg(feature = "zk-prover")]
 pub struct ProverGroup {
     pub commitment: CommittedGroup<F>,
     pub handle: AkitaBackendHint,
@@ -826,6 +839,7 @@ impl WhiteoutTail {
         Ok(prover)
     }
 
+    #[cfg(feature = "zk-prover")]
     /// Samples, commits and sends the pads of `layout` (row 2).
     ///
     /// # Errors
@@ -872,6 +886,7 @@ impl WhiteoutTail {
         })
     }
 
+    #[cfg(feature = "zk-prover")]
     /// Proves `relation` over the committed pads and the residual opening:
     /// the Σ-protocol, then the response proof (rows 7 and 8).
     ///
@@ -1115,10 +1130,11 @@ fn plan_response(num_vars: usize) -> Result<AkitaResponseProver<WhiteoutResponse
 
 mod opening;
 
+#[cfg(feature = "zk-prover")]
 pub use opening::WhiteoutResidual;
 pub(crate) use opening::{opening_shape, whiteout};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "zk-prover"))]
 #[expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,

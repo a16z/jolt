@@ -117,7 +117,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 
     /// Whiteout: samples, commits and sends the pads of `layout` for the
     /// masked opening of `shape` (spec §2, row 2).
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
         setup: &Self::ProverSetup,
         shape: &jolt_zk::whiteout::MaskedOpeningShape,
@@ -131,7 +131,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     /// their claims stated by `forms` in the same order (spec §2, row 5).
     /// Returns the residual opening and the masked levels' auxiliary values,
     /// which lead the auxiliary block.
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     #[expect(
         clippy::too_many_arguments,
         reason = "the opening's groups, their forms, and the pads"
@@ -149,7 +149,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 
     /// Whiteout: proves `relation` by the Σ-protocol and the response proof
     /// (spec §2, rows 7 and 8).
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
         setup: &Self::ProverSetup,
         shape: &jolt_zk::whiteout::MaskedOpeningShape,
@@ -162,7 +162,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 }
 
 /// Whiteout's committed pads.
-#[cfg(feature = "zk")]
+#[cfg(feature = "zk-prover")]
 pub type WhiteoutPads<F> =
     jolt_zk::masking::CommittedPads<F, jolt_zk::whiteout::WhiteoutPadOpening<F>>;
 
@@ -655,7 +655,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         handle.hiding_randomness().map_err(akita_error)
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
         setup: &Self::ProverSetup,
         shape: &jolt_zk::whiteout::MaskedOpeningShape,
@@ -669,7 +669,7 @@ impl TraceOneHotCommitment for AkitaScheme {
             .commit_pads(shape.row(), layout, transcript, rng)
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_prove_masked<H: Sponge>(
         setup: &Self::ProverSetup,
         shape: &jolt_zk::whiteout::MaskedOpeningShape,
@@ -725,7 +725,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         Ok((crate::whiteout::WhiteoutResidual { opening }, auxiliary))
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
         setup: &Self::ProverSetup,
         shape: &jolt_zk::whiteout::MaskedOpeningShape,

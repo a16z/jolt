@@ -265,3 +265,35 @@ fn whiteout_ranks_sit_at_the_tables_minimum() {
     assert_eq!(digit_matrix_rank(93_935).unwrap(), 1);
     assert!(digit_matrix_rank(93_936).unwrap() > 1);
 }
+
+/// `A_p`'s rank and randomness fixed point across Akita's Σ-binding brackets
+/// at d 64 (`sigma_binding_infinity_width.csv`: rank 16 to width 65, 17 to
+/// 179, 18 to 2463, 19 to 26,544). A layout of `operands` operand pads has
+/// base width `32 + 16·operands`, and `r_p` takes 578 columns at rank 18 and
+/// 610 at rank 19 (Akita's `hiding_randomness_columns`), so:
+/// - the empty layout starts at rank 16 and climbs past rank 17's bracket to
+///   rank 18 (width 610); no pad commitment at d 64 lands below rank 18;
+/// - 115 operands sit at width 2450, the last step inside rank 18's bracket;
+/// - 116 operands would take width 2466 at rank 18, past 2463, so the rank
+///   steps to 19 and the wider `r_p` keeps it there (width 2498).
+#[test]
+fn whiteout_pad_rank_steps_at_the_sigma_binding_brackets() {
+    for (operands, rank, randomness_columns, width) in [
+        (0, 18, 578, 610),
+        (115, 18, 578, 2450),
+        (116, 19, 610, 2498),
+    ] {
+        let mut layout = PadLayout::new(operands, 0).unwrap();
+        layout.operand_pads = (0..operands).map(PadIndex).collect();
+        let placement = PadPlacement::new(&layout).unwrap();
+        assert_eq!(
+            WhiteoutTail::pad_rank::<64>(&placement).unwrap(),
+            (rank, randomness_columns),
+            "{operands} operand pads"
+        );
+        assert_eq!(
+            LatticePadCommitment::<F, 64>::width(&placement, randomness_columns).unwrap(),
+            width
+        );
+    }
+}

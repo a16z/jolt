@@ -147,6 +147,24 @@ jobs:
           cargo clippy -p jolt-verifier --all-targets --features akita,zk,prover-fixtures,logging
           cargo clippy -p jolt-prover --all-targets --features akita,zk
           cargo clippy -p jolt-prover --all-targets --features akita,zk,prover-fixtures
+      # jolt-akita's Whiteout halves: the verifier's `zk` alone (gating), then
+      # the prover's `zk-prover`.
+      - name: cargo clippy -p jolt-akita --features zk / zk-prover
+        run: |
+          cargo clippy -p jolt-akita --all-targets --features zk
+          cargo clippy -p jolt-akita --all-targets --features zk-prover
+      # I6: a Whiteout verifier's normal-edge graph compiles no prover
+      # sampler (jolt-zk's `whiteout-prover`, jolt-dit, jolt-crypto's
+      # `sample`); only jolt-akita's `zk-prover` may reach them.
+      - name: Whiteout verifier graph is sampler-free
+        run: |
+          for pkg in "jolt-akita --features zk" "jolt-verifier --features akita,zk"; do
+            cargo tree -p $pkg -e features,normal > "$RUNNER_TEMP/zk-tree.txt"
+            if grep -E 'whiteout-prover|jolt-dit|feature "sample' "$RUNNER_TEMP/zk-tree.txt"; then
+              echo "::error::$pkg reaches a prover sampler"
+              exit 1
+            fi
+          done
       # The Dory arms of the guest x mode matrix and the e2e suites compile
       # only under prover-fixtures; lint both protocols like the akita pair.
       - name: cargo clippy -p jolt-prover --features prover-fixtures
@@ -566,8 +584,8 @@ jobs:
         run: >-
           cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
       # Whiteout's masked opening of one hiding trace group, on jolt-akita's API.
-      - name: Run jolt-akita Whiteout opening (zk)
-        run: cargo nextest run --cargo-profile ci -p jolt-akita --features zk -E 'test(whiteout)'
+      - name: Run jolt-akita Whiteout opening (zk-prover)
+        run: cargo nextest run --cargo-profile ci -p jolt-akita --features zk-prover -E 'test(whiteout)'
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita,logging --test-threads 1
 

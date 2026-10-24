@@ -67,7 +67,7 @@ zk = [
   "jolt-kernels/zk",
   "dep:jolt-zk",
   "dep:rand_core",
-  "jolt-akita?/zk",
+  "jolt-akita?/zk-prover",
 ]
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
