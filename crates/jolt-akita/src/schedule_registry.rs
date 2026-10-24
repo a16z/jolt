@@ -9,7 +9,7 @@
 //! plan schedules.
 
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{
@@ -25,7 +25,9 @@ use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FormatResult};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
-use crate::one_hot_family::{with_one_hot_family, OneHotFamily, AKITA_ONE_HOT_K256};
+use crate::one_hot_family::{
+    with_one_hot_family, AkitaOneHotBackendScheme, OneHotFamily, AKITA_ONE_HOT_K256,
+};
 
 const MAX_PROVISIONED_ROWS: usize = 128;
 
@@ -38,6 +40,16 @@ pub enum GroupedScheduleError {
         final_group: PolynomialGroupLayout,
     },
     Backend(AkitaError),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroupedAdmission {
+    /// Every required row is published; setups share the catalog unchanged.
+    Covered,
+    /// Rows are missing; `extend_catalog` adapts them, giving a per-request catalog.
+    Planned,
+    /// The scalar guide cannot serve this request.
+    Unsupported,
 }
 
 impl From<AkitaError> for GroupedScheduleError {
@@ -167,6 +179,125 @@ impl GroupedScheduleParams {
     }
 }
 
+/// A one-hot catalog bound to the dense catalogs its grouped rows draw from.
+/// The catalogs are validated once; classifying or extending many requests
+/// reuses that work.
+pub struct GroupedCatalog {
+    dense: ValidatedScheduleCatalog,
+    full_dense: ValidatedScheduleCatalog,
+    family: OneHotFamily,
+    one_hot: AkitaOneHotBackendScheme,
+}
+
+impl GroupedCatalog {
+    pub fn new(
+        dense_catalog: ValidatedScheduleCatalog,
+        full_dense_catalog: ValidatedScheduleCatalog,
+        one_hot_catalog: ValidatedScheduleCatalog,
+        one_hot_k: usize,
+        profile: AkitaChunkProfile,
+    ) -> Result<Self, GroupedScheduleError> {
+        validate_dense_catalogs(&dense_catalog, &full_dense_catalog)?;
+        let family = OneHotFamily::from_parts(one_hot_k, profile)?;
+        Ok(Self {
+            dense: dense_catalog,
+            full_dense: full_dense_catalog,
+            family,
+            one_hot: AkitaOneHotBackendScheme::from_catalog(family, one_hot_catalog)?,
+        })
+    }
+
+    /// Classify `request` without planning rows: every required advice subset
+    /// and mandatory group already published, missing but adaptable from the
+    /// scalar guide, or unsupported.
+    pub fn admission(
+        &self,
+        request: &GroupedScheduleParams,
+    ) -> Result<GroupedAdmission, GroupedScheduleError> {
+        self.family.validate_num_vars(
+            request.final_group.num_vars(),
+            request.final_group.num_polynomials(),
+        )?;
+        with_one_hot_family!(scheme & self.one_hot, |scheme, Cfg| {
+            self.admission_for::<Cfg>(scheme.schedules(), request)
+        })
+    }
+
+    fn admission_for<Cfg: CommitmentConfig>(
+        &self,
+        catalog: &TrustedScheduleCatalog<Cfg>,
+        request: &GroupedScheduleParams,
+    ) -> Result<GroupedAdmission, GroupedScheduleError> {
+        match catalog.resolve_key(&ScheduleLookupKey::single(request.final_group)) {
+            Ok(_) => {}
+            Err(AkitaError::UnsupportedSchedule(_)) => return Ok(GroupedAdmission::Unsupported),
+            Err(error) => return Err(error.into()),
+        }
+        let combinations = match group_combinations_unchecked::<Cfg>(
+            &self.dense,
+            &self.full_dense,
+            catalog,
+            request,
+            self.family.k(),
+        ) {
+            Ok(combinations) => combinations,
+            Err(
+                GroupedScheduleError::MissingRecursiveGuide { .. }
+                | GroupedScheduleError::Backend(AkitaError::UnsupportedSchedule(_)),
+            ) => return Ok(GroupedAdmission::Unsupported),
+            Err(error) => return Err(error),
+        };
+        for producers in combinations {
+            let key = GroupedGenerationRequest::new(request.final_group, producers).key();
+            match catalog.resolve_key(&key) {
+                Ok(_) => {}
+                Err(AkitaError::UnsupportedSchedule(_)) => return Ok(GroupedAdmission::Planned),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(GroupedAdmission::Covered)
+    }
+
+    /// Add the rows that every request needs and the catalog lacks, so all of
+    /// them resolve against the returned catalog. Grouped lookup keys that
+    /// several requests share are planned once.
+    pub fn extend(
+        &self,
+        requests: &[GroupedScheduleParams],
+    ) -> Result<ValidatedScheduleCatalog, GroupedScheduleError> {
+        for request in requests {
+            self.family.validate_num_vars(
+                request.final_group.num_vars(),
+                request.final_group.num_polynomials(),
+            )?;
+        }
+        with_one_hot_family!(scheme & self.one_hot, |scheme, Cfg| {
+            let catalog = scheme.schedules();
+            let mut keys = HashSet::new();
+            let mut unique = Vec::new();
+            for request in requests {
+                let combinations = group_combinations_unchecked::<Cfg>(
+                    &self.dense,
+                    &self.full_dense,
+                    catalog,
+                    request,
+                    self.family.k(),
+                )?;
+                checked_combinations(&combinations)?;
+                for producers in combinations {
+                    let key =
+                        GroupedGenerationRequest::new(request.final_group, producers.clone()).key();
+                    if keys.insert(key) {
+                        unique.push((request.final_group, producers));
+                    }
+                }
+            }
+            let rows = provision_rows::<Cfg>(catalog, &unique)?;
+            Ok(extend_catalog::<Cfg>(catalog, &rows)?)
+        })
+    }
+}
+
 /// Rows adapted for one concrete setup before they are frozen into a catalog.
 #[derive(Clone, Debug, Default)]
 pub struct RegisteredRows {
@@ -253,11 +384,9 @@ fn plan_row<Cfg: CommitmentConfig>(
     ResolvedScheduleRow::try_new(profiles, schedule, base.policy()).map(Some)
 }
 
-fn provision_producers<Cfg: CommitmentConfig>(
-    base: &TrustedScheduleCatalog<Cfg>,
+fn checked_combinations(
     group_combinations: &[Vec<PrecommittedProducer>],
-    final_group: PolynomialGroupLayout,
-) -> Result<RegisteredRows, AkitaError> {
+) -> Result<(), AkitaError> {
     if group_combinations.iter().any(Vec::is_empty) {
         return Err(AkitaError::InvalidSetup(
             "a grouped row must have at least one auxiliary group".to_owned(),
@@ -269,13 +398,32 @@ fn provision_producers<Cfg: CommitmentConfig>(
             group_combinations.len()
         )));
     }
+    Ok(())
+}
 
-    let workers = akita_planner::emit::offline_planning_worker_count(group_combinations.len());
+fn provision_producers<Cfg: CommitmentConfig>(
+    base: &TrustedScheduleCatalog<Cfg>,
+    group_combinations: &[Vec<PrecommittedProducer>],
+    final_group: PolynomialGroupLayout,
+) -> Result<RegisteredRows, AkitaError> {
+    checked_combinations(group_combinations)?;
+    let rows: Vec<_> = group_combinations
+        .iter()
+        .map(|producers| (final_group, producers.clone()))
+        .collect();
+    provision_rows::<Cfg>(base, &rows)
+}
+
+fn provision_rows<Cfg: CommitmentConfig>(
+    base: &TrustedScheduleCatalog<Cfg>,
+    rows: &[(PolynomialGroupLayout, Vec<PrecommittedProducer>)],
+) -> Result<RegisteredRows, AkitaError> {
+    let workers = akita_planner::emit::offline_planning_worker_count(rows.len());
     let planned = akita_planner::emit::bounded_parallel_filter_map(
-        group_combinations,
+        rows,
         workers,
-        |producers| {
-            plan_row::<Cfg>(base, final_group, producers).map_err(|error| error.to_string())
+        |(final_group, producers)| {
+            plan_row::<Cfg>(base, *final_group, producers).map_err(|error| error.to_string())
         },
     )
     .map_err(AkitaError::InvalidSetup)?;
@@ -339,14 +487,10 @@ impl AdvicePrecommitLayouts {
 pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(14, 1);
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
-fn provision_groups_for_config<Cfg: CommitmentConfig>(
+fn validate_dense_catalogs(
     dense_catalog: &ValidatedScheduleCatalog,
     full_dense_catalog: &ValidatedScheduleCatalog,
-    one_hot_catalog: &TrustedScheduleCatalog<Cfg>,
-    params: &GroupedScheduleParams,
-    one_hot_k: usize,
-) -> Result<RegisteredRows, GroupedScheduleError> {
-    let final_group = params.final_group;
+) -> Result<(), GroupedScheduleError> {
     akita_config::validate_config_policy::<JoltDenseBounded>(dense_catalog.policy().witness_chunk)?;
     dense_catalog.validate_binding(
         JoltDenseBounded::schedule_family_name(),
@@ -358,6 +502,34 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
         &policy_of::<JoltDenseFull>(full_dense_catalog.policy().witness_chunk),
         JoltDenseFull::ring_challenge_config,
     )?;
+    Ok(())
+}
+
+fn group_combinations_for_config<Cfg: CommitmentConfig>(
+    dense_catalog: &ValidatedScheduleCatalog,
+    full_dense_catalog: &ValidatedScheduleCatalog,
+    one_hot_catalog: &TrustedScheduleCatalog<Cfg>,
+    params: &GroupedScheduleParams,
+    one_hot_k: usize,
+) -> Result<Vec<Vec<PrecommittedProducer>>, GroupedScheduleError> {
+    validate_dense_catalogs(dense_catalog, full_dense_catalog)?;
+    group_combinations_unchecked::<Cfg>(
+        dense_catalog,
+        full_dense_catalog,
+        one_hot_catalog,
+        params,
+        one_hot_k,
+    )
+}
+
+fn group_combinations_unchecked<Cfg: CommitmentConfig>(
+    dense_catalog: &ValidatedScheduleCatalog,
+    full_dense_catalog: &ValidatedScheduleCatalog,
+    one_hot_catalog: &TrustedScheduleCatalog<Cfg>,
+    params: &GroupedScheduleParams,
+    one_hot_k: usize,
+) -> Result<Vec<Vec<PrecommittedProducer>>, GroupedScheduleError> {
+    let final_group = params.final_group;
     let layouts = AdvicePrecommitLayouts {
         untrusted: params
             .untrusted_physical_arity
@@ -378,7 +550,7 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
         .collect::<Result<Vec<Vec<_>>, _>>()?;
     if mandatory.is_empty() {
         if combinations.is_empty() {
-            return Ok(RegisteredRows::default());
+            return Ok(combinations);
         }
     } else {
         for combination in &mut combinations {
@@ -415,10 +587,27 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
             final_group,
         });
     }
+    Ok(combinations)
+}
+
+fn provision_groups_for_config<Cfg: CommitmentConfig>(
+    dense_catalog: &ValidatedScheduleCatalog,
+    full_dense_catalog: &ValidatedScheduleCatalog,
+    one_hot_catalog: &TrustedScheduleCatalog<Cfg>,
+    params: &GroupedScheduleParams,
+    one_hot_k: usize,
+) -> Result<RegisteredRows, GroupedScheduleError> {
+    let combinations = group_combinations_for_config::<Cfg>(
+        dense_catalog,
+        full_dense_catalog,
+        one_hot_catalog,
+        params,
+        one_hot_k,
+    )?;
     Ok(provision_producers::<Cfg>(
         one_hot_catalog,
         &combinations,
-        final_group,
+        params.final_group,
     )?)
 }
 
@@ -454,8 +643,169 @@ pub fn provision_groups_for_k(
 #[expect(clippy::unwrap_used, reason = "schedule tests should fail loudly")]
 mod tests {
     use super::*;
+    use crate::configs::JoltOneHotK16;
     use crate::AkitaScheduleArtifacts;
     use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+
+    fn admit(
+        dense: &ValidatedScheduleCatalog,
+        full_dense: &ValidatedScheduleCatalog,
+        one_hot: &ValidatedScheduleCatalog,
+        profile: AkitaChunkProfile,
+        params: &GroupedScheduleParams,
+    ) -> GroupedAdmission {
+        GroupedCatalog::new(
+            dense.clone(),
+            full_dense.clone(),
+            one_hot.clone(),
+            AKITA_ONE_HOT_K16,
+            profile,
+        )
+        .unwrap()
+        .admission(params)
+        .unwrap()
+    }
+
+    #[test]
+    fn a_final_shape_without_a_scalar_row_is_unsupported_not_an_error() {
+        let profile = AkitaChunkProfile::new(8, 2);
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory(profile);
+        let dense = artifacts.dense_catalog().unwrap();
+        let full_dense = artifacts.full_dense_catalog().unwrap();
+        let base = artifacts
+            .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
+            .unwrap();
+        let params = GroupedScheduleParams::new(
+            Some(14),
+            None,
+            vec![DenseGroupLayout::Bounded { num_vars: 14 }],
+            PolynomialGroupLayout::singleton(21),
+        );
+        assert_eq!(
+            admit(&dense, &full_dense, &base, profile, &params),
+            GroupedAdmission::Unsupported
+        );
+    }
+
+    #[test]
+    fn one_extension_covers_every_request_and_plans_shared_rows_once() {
+        let profile = AkitaChunkProfile::new(8, 2);
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory(profile);
+        let dense = artifacts.dense_catalog().unwrap();
+        let full_dense = artifacts.full_dense_catalog().unwrap();
+        let base = artifacts
+            .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
+            .unwrap();
+        let request = |advice_vars| {
+            GroupedScheduleParams::new(
+                Some(advice_vars),
+                None,
+                vec![DenseGroupLayout::Bounded { num_vars: 14 }],
+                PolynomialGroupLayout::singleton(20),
+            )
+        };
+        let requests = [request(14), request(15)];
+        let extended = GroupedCatalog::new(
+            dense.clone(),
+            full_dense.clone(),
+            base.clone(),
+            AKITA_ONE_HOT_K16,
+            profile,
+        )
+        .unwrap()
+        .extend(&requests)
+        .unwrap();
+        for request in &requests {
+            assert_eq!(
+                admit(&dense, &full_dense, &extended, profile, request),
+                GroupedAdmission::Covered
+            );
+        }
+        let single = requests[0]
+            .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
+            .unwrap();
+        let repeated = GroupedCatalog::new(
+            dense.clone(),
+            full_dense.clone(),
+            base.clone(),
+            AKITA_ONE_HOT_K16,
+            profile,
+        )
+        .unwrap()
+        .extend(&[request(14), request(14)])
+        .unwrap();
+        assert_eq!(
+            single.to_artifact_bytes().unwrap(),
+            repeated.to_artifact_bytes().unwrap()
+        );
+    }
+
+    #[test]
+    fn frozen_admission_requires_every_program_and_advice_subset() {
+        let profile = AkitaChunkProfile::new(8, 2);
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory(profile);
+        let dense = artifacts.dense_catalog().unwrap();
+        let full_dense = artifacts.full_dense_catalog().unwrap();
+        let base = artifacts
+            .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
+            .unwrap();
+        let params = GroupedScheduleParams::new(
+            Some(14),
+            Some(15),
+            vec![
+                DenseGroupLayout::Bounded { num_vars: 14 },
+                DenseGroupLayout::Bounded { num_vars: 15 },
+            ],
+            PolynomialGroupLayout::singleton(20),
+        );
+        assert_eq!(
+            admit(&dense, &full_dense, &base, profile, &params),
+            GroupedAdmission::Planned
+        );
+        let catalog = params
+            .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
+            .unwrap();
+        let bytes = |catalog: &ValidatedScheduleCatalog| catalog.to_artifact_bytes().unwrap();
+        assert_eq!(
+            bytes(&catalog),
+            bytes(
+                &params
+                    .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            bytes(&catalog),
+            bytes(
+                &params
+                    .extend_catalog(&dense, &full_dense, &catalog, AKITA_ONE_HOT_K16, profile)
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            admit(&dense, &full_dense, &catalog, profile, &params),
+            GroupedAdmission::Covered
+        );
+        let rows: Vec<_> = catalog
+            .rows()
+            .filter(|row| {
+                row.profiles().final_group.group != params.final_group
+                    || row.profiles().precommitteds.len() != 2
+            })
+            .map(|row| (row.profiles().clone(), row.schedule().clone()))
+            .collect();
+        let incomplete = ValidatedScheduleCatalog::try_new(
+            catalog.family_name(),
+            rows,
+            catalog.policy(),
+            JoltOneHotK16::ring_challenge_config,
+        )
+        .unwrap();
+        assert_eq!(
+            admit(&dense, &full_dense, &incomplete, profile, &params),
+            GroupedAdmission::Planned
+        );
+    }
 
     #[test]
     fn provisioning_rejects_geometry_mismatch_with_and_without_advice() {
