@@ -38,6 +38,14 @@ field-inline = [
   "tracer?/field-inline",
   "jolt-host?/field-inline",
 ]
+# Misaligned loads and stores (RISC-V Zicclsm). The e2e acceptance lives in
+# tests/e2e_matrix.rs under prover-fixtures,zicclsm[,zk|,akita].
+zicclsm = [
+  "jolt-verifier/zicclsm",
+  "jolt-witness/zicclsm",
+  "tracer?/zicclsm",
+  "jolt-host?/zicclsm",
+]
 # The Akita lattice protocol. Like jolt-verifier, one compiled
 # prover proves exactly one protocol: this feature swaps the proof shape to
 # the Akita envelope, so the Dory (elliptic-curve) path `src/dory` is

@@ -6,7 +6,7 @@ pub enum SourceExpansion {
     /// One sequence, run by every execution.
     Single(Vec<JoltInstruction>),
     /// Two sequences at the same address; each execution runs the one its
-    /// effective address selects.
+    /// effective address selects. Only `zicclsm` builds expand any.
     Dual(DualExpansion),
 }
 
@@ -28,8 +28,10 @@ impl SourceExpansion {
     }
 }
 
-/// A top-level `LH`/`LHU`/`LW`/`LWU`/`LD`/`SH`/`SW`/`SD`, expanded once for
-/// naturally aligned and once for misaligned effective addresses.
+/// A top-level `LH`/`LHU`/`LW`/`LWU`/`LD`/`SH`/`SW`/`SD` in a `zicclsm` build,
+/// expanded once for naturally aligned and once for misaligned effective
+/// addresses. Without the feature it has only the aligned sequence, and a
+/// misaligned access cannot be proven.
 ///
 /// The aligned sequence is the native `LD`/`SD` row or the natural-width
 /// floor-addressed rows: a misaligned address leaves low bits in its

@@ -293,6 +293,7 @@ where
 /// aligned and leaves the model's architectural registers and memory. Its RAM
 /// records touch exactly the doublewords holding accessed bytes, and replayed
 /// in order, each read and each write's pre-value matches the memory so far.
+/// Without `zicclsm` a misaligned access aborts instead.
 #[test]
 fn loads_and_stores_follow_byte_semantics_at_every_offset() {
     const DOUBLEWORD: u64 = DRAM_BASE + 0x100;
@@ -353,6 +354,14 @@ fn loads_and_stores_follow_byte_semantics_at_every_offset() {
                     cpu.write_register(RS2 as usize, VALUE as i64);
                     let mut expected_registers = cpu.x;
 
+                    let misaligned = !offset.is_multiple_of(width);
+                    if misaligned && !cfg!(feature = "zicclsm") {
+                        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                            instruction.trace(&mut cpu, Some(&mut Vec::new()));
+                        }));
+                        assert!(result.is_err(), "{case} traced without zicclsm");
+                        continue;
+                    }
                     let mut trace = Vec::new();
                     instruction.trace(&mut cpu, Some(&mut trace));
 
@@ -395,7 +404,6 @@ fn loads_and_stores_follow_byte_semantics_at_every_offset() {
                         .iter()
                         .map(|cycle| cycle.instruction().try_jolt_instruction_row().unwrap())
                         .collect();
-                    let misaligned = !offset.is_multiple_of(width);
                     assert!(
                         rows.iter().all(|row| row.misaligned_variant == misaligned),
                         "{case}"

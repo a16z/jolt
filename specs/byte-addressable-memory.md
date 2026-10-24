@@ -4,7 +4,7 @@
 |-------------|--------------------------------|
 | Author(s)   | @mzhu, Claude                  |
 | Created     | 2026-07-30                     |
-| Status      | Tiers 0, 1 and 2 implemented   |
+| Status      | Tiers 0 and 1 implemented; Tier 2 behind `zicclsm` |
 | PR          | #1761, #1762, #1768 (Tier 0); Tiers 1 and 2 for #2013 |
 
 ## Summary
@@ -330,10 +330,10 @@ enters and in how applicability is encoded; both deviations remove protocol surf
   - Constraint 0 adds `Rs1Value + Imm` unwrapped, so an access whose sum carries past 2^64 is
     unprovable. Decoded offsets are signed 12-bit, and `materialize_inline` rejects an inline load
     or store offset outside that range, so such an access lands within 2 KiB of 0 or 2^64 (2054
-    bytes with Tier 2's misaligned rows; see Tier 2 as implemented), outside the memory layout of
-    any program the tracer can run. The tracer faults there or reads a load as 0, which is
-    unprovable anyway except in the no-access zero doubleword (the argument is constraint 0's
-    NOTE in `rv64.rs`).
+    bytes under `zicclsm`, whose misaligned rows add up to 7; see Tier 2 as implemented), outside
+    the memory layout of any program the tracer can run. The tracer faults there or reads a load
+    as 0, which is unprovable anyway except in the no-access zero doubleword (the argument is
+    constraint 0's NOTE in `rv64.rs`).
   - On main, narrow accesses formed the address with wrapping lookups (`AlignAddr` for loads,
     `ADDI` for stores), so any inline offset worked and a narrow load carrying into the zero
     doubleword proved; only carrying `LD`/`SD` accesses were unprovable. The inline bound is
@@ -371,8 +371,8 @@ enters and in how applicability is encoded; both deviations remove protocol surf
     R1CS-consistent address. `jolt-prover/tests/misaligned_memory.rs` checks, for each of
     `LH`/`LHU`/`LW`/`LWU`/`SH`/`SW`, that the witness satisfies every R1CS row and that the
     stage-2 batch, which holds RAF evaluation, rejects it.
-  - Tier 2 as implemented supersedes both points: such an access runs its misaligned sequence,
-    and the hook is now `force_aligned_sequences`.
+  - Under `zicclsm`, Tier 2 as implemented supersedes the abort above: such an access runs its
+    misaligned sequence. In either build the hook is now `force_aligned_sequences`.
   - The MMU now records every access against its containing doubleword, fixing the
     `trace_load`/`trace_store*` defects listed in the acceptance criteria.
 - **Measured** at the profile harness's scale-20 inputs (exact trace rows, origin/main →
@@ -464,6 +464,23 @@ rejected for now.
 
 ### Tier 2 as implemented
 
+Tier 2 sits behind the `zicclsm` Cargo feature. Every program pays the bytecode cost measured
+below, while only guests that make misaligned accesses gain, so they opt in. Without the feature
+a build proves exactly what Tier 1 does: loads and stores expand once, a misaligned one aborts
+the trace, and the two tables and their virtual instructions do not exist (55 tables, 462
+lanes, 472 with field-inline). Like `field-inline`, the feature is declared by every crate that
+expands the instruction-kind lists or matches on them (jolt-riscv, jolt-lookup-tables,
+jolt-program, the tracer, the x86 backend, jolt-witness, the z3 verifier) and forwarded by
+jolt-claims, jolt-host, the verifier, the prover and the SDK. It selects its own
+program-preprocessing digest domain, so a prover and a separately built verifier must agree on
+it. A committed program records its bytecode lane count
+(`CommittedProgramPreprocessing::bytecode_lanes`), which the feature changes and the 512-lane
+commitment padding would otherwise hide, and the verifier rejects one whose count differs from
+its own; every `field-inline` × `zicclsm` combination has a distinct count. Only the semantic
+pieces are gated:
+the dual-expansion plumbing below (row flag, `PcSlot` run, `SourceExpansion`, tracer selection,
+x86 dispatch) is shared, and without the feature it never sees a misaligned sequence.
+
 The implementation keeps Tier 2's mechanism: both sequences sit in the committed bytecode at
 distinct PCs, the prover picks the entry, and R1CS control flow is unchanged. It deviates in four
 places, each of which removes a table family or a memory-layout change.
@@ -504,7 +521,8 @@ places, each of which removes a table family or a memory-layout change.
     top. The halves are disjoint, so `ADD` is carry-free. A store scales by
     `2^(8·(ea mod 8)) = −m`: `MUL` places a value's low bytes in the first doubleword's frame
     and `MULHU` the bytes that spill into the second's.
-  - 57 tables; the committed bytecode is 464 of 512 lanes (474 with field-inline).
+  - 57 tables; the committed bytecode is 464 of 512 lanes (474 with field-inline). Builds
+    without `zicclsm` keep Tier 1's 55 tables and 462 lanes (472 with field-inline).
 - **Sequences** (rows, aligned → misaligned): `LH`/`LHU` 3 → 8, `LW`/`LWU` 3 → 7, `LD` 1 → 6,
   `SH`/`SW` 6 → 16, `SD` 1 → 12. `LB`/`LBU`/`SB` stay single. The misaligned loads are
   `[VirtualLoadB lo][VirtualLoadB hi][VirtualWindowMaskD m][VirtualPext][VirtualFunnelHigh][ADD]`,
@@ -517,7 +535,8 @@ places, each of which removes a table family or a memory-layout change.
   - `JoltInstructionRow::misaligned_variant` tells the two runs apart for PC resolution.
     `stamp_sequence_metadata` writes it, the only writer of sequence metadata. It is prover
     metadata, not a bytecode lane, but the row is serialized into the full-mode program digest,
-    whose domains move to `dory-whole-bytecode/v3` and `akita-whole-bytecode/v2`.
+    whose domains move to `dory-whole-bytecode/v3` and `akita-whole-bytecode/v2`
+    (`…/zicclsm/v3` and `…/zicclsm/v2` with the feature).
     `JoltTraceRow` keeps it in control bit 7.
   - `BytecodePCMapper`: `PcSlot` gains `misaligned_sequence_length` (still 8 bytes), and PCs
     resolve by `(address, virtual_sequence_remaining, misaligned_variant)`. The entry PC is the
@@ -538,9 +557,9 @@ places, each of which removes a table family or a memory-layout change.
     instruction. The jump table, pause checks and row observations are unchanged.
   - The Lean export renders only the aligned sequence, since its model raises the alignment
     fault on a misaligned access.
-- **Measured** at the profile harness's scale-20 inputs (Tier 1 → Tier 2; prover times are
-  means of three interleaved runs of the optimized backend). Aligned programs run identical
-  traces: `btreemap` 489,836 rows, `sha2-chain` 572,466, `sha3-chain` 718,801, `fibonacci`
+- **Measured** at the profile harness's scale-20 inputs (Tier 1 → Tier 2 with `zicclsm`; prover
+  times are means of three interleaved runs of the optimized backend; builds without the
+  feature match Tier 1). Aligned programs run identical traces: `btreemap` 489,836 rows, `sha2-chain` 572,466, `sha3-chain` 718,801, `fibonacci`
   787,317. The expanded bytecode grows 1.7–2.9×:
 
   | Workload | Bytecode rows | Prover time |
@@ -624,8 +643,8 @@ Verified shape of the blast radius:
 - **Two hard budgets** (the legacy prover's `MAX_SUFFIXES` and `LC` term caps went away with
   it): the optimized instruction read-RAF kernel packs the table index into 6 bits
   (`PACKED_TABLE_BITS`, `jolt-kernels/src/optimized/instruction_read_raf.rs`), so
-  `LookupTableKind::COUNT ≤ 63` (55 after Tier 1, 57 after Tier 2). The committed bytecode width
-  is 464 of 512 lanes after Tier 2 (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` —
+  `LookupTableKind::COUNT ≤ 63` (55 after Tier 1, 57 with Tier 2's `zicclsm`). The committed
+  bytecode width is 464 of 512 lanes with `zicclsm` (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` —
   `3·128 + 2 + 14 + 6 + 57 + 1`; 474 with field-inline); every new lookup table and every new
   circuit flag consumes a lane, and crossing 512 doubles the committed width.
 - New virtual instructions touch the known ring: `jolt-riscv` kind macros, tracer exec impls,
@@ -709,9 +728,10 @@ arithmetic. Fallback if dual-expansion mapping proves uglier than expected.
 - [x] All RV64IM loads/stores execute and prove correctly at every `ea mod 8` × width
       combination, including doubleword-crossing, matching the reference emulator byte-exactly
       (differential test over all 8 offsets × {LB,LBU,LH,LHU,LW,LWU,LD,SB,SH,SW,SD}).
-      As implemented: the tracer's byte-model test and the x86 per-source difftest cover every
-      offset of every width, and the memory-ops guest proves every in-bounds offset of every
-      width in clear, ZK and Akita modes.
+      As implemented, under `zicclsm`: the tracer's byte-model test and the x86 per-source
+      difftest cover every offset of every width, and the memory-ops guest's
+      `misaligned_memory_ops` proves every in-bounds offset of every width in clear, ZK and
+      Akita modes.
 - [ ] A guest compiled for rv64im+zicclsm-style codegen (misaligned `memcpy`,
       `ptr::read_unaligned`, packed structs) traces and proves end-to-end.
 - [x] Wrong-variant executions are unsatisfiable: negative tests that force the tracer to emit

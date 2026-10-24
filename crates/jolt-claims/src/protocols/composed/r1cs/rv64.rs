@@ -230,10 +230,11 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // far below either field modulus, so that identity holds over the
     // integers, and an access misaligned for its width (any misaligned
     // `LD`/`SD`; `LH`/`LW`/`SH`/`SW` whose `ea` is not a multiple of the width)
-    // has no satisfying RAM address. A top-level such load or store runs the
-    // misaligned sequence of its dual expansion instead (jolt-program
-    // `DualExpansion`), whose memory rows are all byte-class; the rows nested
-    // in atomics have none, so a misaligned atomic stays unprovable.
+    // has no satisfying RAM address. Under `zicclsm`, a top-level such load or
+    // store runs the misaligned sequence of its dual expansion instead
+    // (jolt-program `DualExpansion`), whose memory rows are all byte-class;
+    // without the feature, and for the rows nested in atomics, there is none,
+    // so such an access stays unprovable.
     // jolt-lookup-tables pins that a memory row looks up no table or an
     // `AddressOffset` table; any other table would shift its RAM address.
     //
@@ -241,11 +242,11 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // 2^64, so an access whose sum carries has no satisfying RAM address on
     // any layout the tracer can allocate. Load and store immediates lie in
     // [-2048, 2054]: decoded and inline rows carry signed 12-bit offsets
-    // (inline rows by jolt-program's `materialize_inline`), and a misaligned
-    // sequence's last-byte rows add `width − 1` to the decoded offset
-    // (jolt-program `last_byte_offset`). So such an access lands within 2054
-    // bytes of 0 or 2^64: past that RAM, or below `lowest_address`, which is
-    // at least 2^30 because `MemoryLayout::try_new` pads I/O below
+    // (inline rows by jolt-program's `materialize_inline`), and under `zicclsm`
+    // a misaligned sequence's last-byte rows add `width − 1` to the decoded
+    // offset (jolt-program `last_byte_offset`). So such an access lands within
+    // 2054 bytes of 0 or 2^64: past that RAM, or below `lowest_address`, which
+    // is at least 2^30 because `MemoryLayout::try_new` pads I/O below
     // `RAM_START_ADDRESS` = 2^31 to a power of two and rejects a region
     // reaching 0. The tracer faults there, except that it reads loads below
     // `lowest_address` as 0. Those are unprovable unwrapped too, except in the
@@ -395,10 +396,10 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // non-virtual or the first step of a new sequence, and the
     // bytecode-row commitment ties `NextPC` to a row matching both
     // properties. That row is unique except at a dual load or store
-    // (jolt-program `DualExpansion`), where `NextPC` may name the head of
-    // either of its sequences: the aligned one has no satisfying RAM address
-    // for a misaligned access (see #0) and the misaligned one is correct at
-    // every offset, so either computes the access. If any of those are ever
+    // (jolt-program `DualExpansion`, `zicclsm` only), where `NextPC` may name
+    // the head of either of its sequences: the aligned one has no satisfying
+    // RAM address for a misaligned access (see #0) and the misaligned one is
+    // correct at every offset, so either computes the access. If any of those are ever
     // removed or weakened, revisit the terminal-sequence flag semantics to
     // avoid an unconstrained-`NextPC` exploit.
     a_rows.push(row::<F>(&[

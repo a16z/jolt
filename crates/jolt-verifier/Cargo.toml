@@ -29,6 +29,13 @@ field-inline = [
   "jolt-host/field-inline",
   "jolt-prover/field-inline",
 ]
+zicclsm = [
+  "jolt-lookup-tables/zicclsm",
+  "jolt-program/zicclsm",
+  "jolt-riscv/zicclsm",
+  "jolt-host/zicclsm",
+  "jolt-prover/zicclsm",
+]
 zk = ["jolt-prover/zk"]
 # The Akita commitment mode: native one-hot trace columns and auxiliary
 # objects share one batch opening. Mutually exclusive with

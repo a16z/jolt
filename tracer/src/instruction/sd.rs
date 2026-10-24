@@ -36,8 +36,9 @@ impl SD {
 }
 
 impl RISCVTrace for SD {
-    /// An aligned `SD` runs as its native row, the aligned sequence of its dual
-    /// expansion; a misaligned one runs the misaligned sequence.
+    /// An `SD` runs as its native row, which aborts on a misaligned address,
+    /// except that under `zicclsm` a misaligned one runs the misaligned
+    /// sequence of its dual expansion.
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let access = DualAccess {
             base: self.operands.rs1,

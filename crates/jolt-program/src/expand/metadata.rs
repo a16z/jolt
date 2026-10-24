@@ -20,6 +20,7 @@ pub(super) fn stamp_instruction_sequence(
 
 /// Same as `stamp_instruction_sequence` for the misaligned sequence of a dual
 /// load or store.
+#[cfg(feature = "zicclsm")]
 pub(super) fn stamp_misaligned_sequence(
     rows: Vec<JoltInstructionRow>,
     is_compressed: bool,

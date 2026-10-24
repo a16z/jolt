@@ -954,6 +954,7 @@ impl DynasmEmitter {
                 );
                 e.store_rd(RAX, row.operands.rd);
             }
+            #[cfg(feature = "zicclsm")]
             K::WindowMaskD(_) => {
                 e.load_reg(RCX, row.operands.rs1);
                 e.load_imm(RAX, row.operands.imm as i64);
@@ -967,6 +968,7 @@ impl DynasmEmitter {
                 );
                 e.store_rd(RAX, row.operands.rd);
             }
+            #[cfg(feature = "zicclsm")]
             K::FunnelHigh(_) => {
                 // rd = the bits of x[rs1] at zeros of x[rs2], packed into the
                 // top z = popcount(!x[rs2]) bits: pext by the complement, then

@@ -447,6 +447,7 @@ where
                         reason: "committed-program trace order disagrees with the proof".to_owned(),
                     });
                 }
+                committed.check_bytecode_lanes()?;
                 let meta = &committed.meta;
                 let program_image_start_index = memory_layout
                     .remapped_word_address(meta.min_bytecode_address)
@@ -1126,6 +1127,7 @@ where
                         reason: "committed-program trace order disagrees with the proof".to_owned(),
                     });
                 }
+                committed.check_bytecode_lanes()?;
                 let program_image_start_index = memory_layout
                     .remapped_word_address(committed.meta.min_bytecode_address)
                     .map_err(|error| VerifierError::InvalidCommittedProgram {

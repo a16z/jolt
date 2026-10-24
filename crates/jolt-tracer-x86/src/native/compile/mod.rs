@@ -75,11 +75,11 @@ impl CompiledProgram {
         // (PextSigned and FunnelHigh also `popcnt`); refuse on CPUs without
         // them rather than fault at run time. Gated per program so pext-free
         // guests keep compiling on pre-BMI2 hosts.
-        let uses_pext = rows.iter().any(|row| {
-            matches!(
-                row.instruction_kind,
-                Kind::PextSigned(_) | Kind::Pext(_) | Kind::FunnelHigh(_)
-            )
+        let uses_pext = rows.iter().any(|row| match row.instruction_kind {
+            Kind::PextSigned(_) | Kind::Pext(_) => true,
+            #[cfg(feature = "zicclsm")]
+            Kind::FunnelHigh(_) => true,
+            _ => false,
         });
         if uses_pext
             && (!std::arch::is_x86_feature_detected!("bmi2")

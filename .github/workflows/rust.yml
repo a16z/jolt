@@ -215,6 +215,36 @@ jobs:
           --features host,field-inline
           --
           -D warnings
+      # The zicclsm feature (misaligned loads and stores) is off by default too.
+      # Lint the crates that declare it, and the prover and SDK that forward it,
+      # so the misaligned-access path keeps compiling.
+      - name: cargo clippy --features zicclsm
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p jolt-riscv
+          -p jolt-lookup-tables
+          -p jolt-program
+          -p tracer
+          -p jolt-tracer-x86
+          -p jolt-witness
+          -p jolt-claims
+          -p jolt-host
+          -p jolt-verifier
+          -p z3-verifier
+          --all-targets
+          --features zicclsm
+          --
+          -D warnings
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,zicclsm
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,zicclsm
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,zicclsm,zk
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,zicclsm,zk
+      - name: cargo clippy -p jolt-prover --features akita,prover-fixtures,zicclsm
+        run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures,zicclsm
+      - name: cargo clippy -p jolt-sdk --features host,zicclsm
+        run: cargo clippy -p jolt-sdk --all-targets --features host,zicclsm
 
   machete:
     runs-on: ubuntu-latest
@@ -358,6 +388,10 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Test jolt-tracer-x86
         run: cargo nextest run --cargo-profile ci -p jolt-tracer-x86
+      # Dual-load/store dispatch at every offset, including the per-source
+      # difftest's misaligned cases and the misaligned memory-ops guest.
+      - name: Test jolt-tracer-x86 with zicclsm
+        run: cargo nextest run --cargo-profile ci -p jolt-tracer-x86 --features zicclsm
 
   test-prover-zk:
     runs-on: ubuntu-latest
@@ -502,6 +536,58 @@ jobs:
       - name: Run the field-ops example tests
         run: cargo nextest run --cargo-profile ci -p field-ops --features field-inline --cargo-quiet
 
+  test-prover-zicclsm:
+    runs-on: ubuntu-latest
+    name: Test jolt-prover (zicclsm matrix)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: nextest
+      # Every guest carries misaligned sequences in its bytecode, and the
+      # matrix's misaligned_memory_ops runs them at every offset. The full
+      # package also proves committed programs, whose artifacts record the
+      # zicclsm lane count, and misaligned_memory checks that the aligned
+      # sequence still rejects a misaligned access.
+      - name: Run jolt-prover with zicclsm (clear)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zicclsm
+      - name: Run jolt-prover with zicclsm (zk)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zicclsm,zk
+      - name: Run jolt-prover with zicclsm (akita)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures,zicclsm
+      # The field-inline table under zicclsm: its own digest domains and
+      # committed lane count.
+      - name: Run field-inline matrix with zicclsm (clear)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,zicclsm -E 'binary(e2e_matrix)'
+      - name: Run field-inline matrix with zicclsm (zk)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,zicclsm,zk -E 'binary(e2e_matrix)'
+      - name: Run field-inline matrix with zicclsm (akita)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures,field-inline,zicclsm -E 'binary(e2e_matrix)'
+
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest
     name: Test jolt-prover (Akita field-inline matrix and e2e)
@@ -610,6 +696,46 @@ jobs:
       # prover generates at test time.
       - name: Run jolt-verifier field-inline fixture and tamper suites
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline --test-threads 1
+
+  test-verifier-zicclsm-fixtures:
+    runs-on: ubuntu-latest
+    name: Test jolt-verifier (zicclsm fixtures)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: nextest
+      # The fixture and tamper suites over bytecode with misaligned sequences,
+      # including the zicclsm arm of the BlindFold shape golden
+      # (completeness/zk.rs).
+      - name: Run jolt-verifier zicclsm fixture and tamper suites (clear)
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zicclsm --test-threads 1
+      - name: Run jolt-verifier zicclsm fixture and tamper suites (zk)
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zicclsm,zk --test-threads 1
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest
@@ -816,6 +942,12 @@ jobs:
       - name: Test jolt-witness with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-witness --features test-utils,parallel --cargo-quiet
+      # Dual expansion, the two zicclsm tables, and the Dory zicclsm digest goldens.
+      - name: Test crates with zicclsm
+        if: matrix.shard == 2
+        run: >-
+          cargo nextest run -p jolt-riscv -p jolt-lookup-tables -p jolt-program
+          -p jolt-witness -p jolt-verifier --features zicclsm --no-tests=pass --cargo-quiet
       # Same non-default-parallel pattern: jolt-utils' latch/collector tests
       # only exist behind its parallel feature.
       - name: Test jolt-utils with parallel
@@ -836,6 +968,16 @@ jobs:
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
+      # The zicclsm digest goldens of the Akita, field-inline and Akita
+      # field-inline profiles.
+      - name: Test jolt-verifier digest goldens with zicclsm profiles
+        if: matrix.shard == 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          for features in akita,zicclsm field-inline,zicclsm field-inline,akita,zicclsm; do
+            cargo nextest run -p jolt-verifier --lib --features "$features" --cargo-quiet
+          done
       - name: Test crates with field-inline
         if: matrix.shard == 1
         shell: bash
@@ -980,6 +1122,8 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
+      - name: Run tracer tests with zicclsm
+        run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,zicclsm --cargo-quiet
       # The Akita chain's two-limb field value encoding on the tracer side.
       - name: Run tracer tests with field-inline,fp128-field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet

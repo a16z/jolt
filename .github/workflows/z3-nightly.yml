@@ -3,15 +3,17 @@
 # pinned vendored source (`vendored-z3`), so results don't depend on runner
 # packages or on whatever z3-src happens to be current.
 #
-# SCOPE — this suite is narrower than "the expansion pipeline". The main step
-# runs 130 of the crate's 150 tests:
+# SCOPE — this suite is narrower than "the expansion pipeline". Both steps
+# build with `zicclsm`, whose expansions contain every row a build without it
+# runs. The main step runs 130 of the crate's 150 tests:
 #   * 74 virtual-sequence proofs: 36 mnemonics x correctness+consistency
 #     (ADDIW ADDW MULW SUBW, the loads and stores LB LBU LH LHU LW LWU LD SB
 #     SH SW SD, the nine word AMOs, and the twelve shifts) plus two
 #     negative-immediate checks. Both sequences of a dual load or store are
 #     proved at each of the eight doubleword offsets of the effective address,
-#     and its aligned sequence is shown to admit only the naturally aligned
-#     ones. Exhaustive over register values, but at one fixed operand
+#     and its aligned sequence, the only one a build without `zicclsm` has, is
+#     shown to admit only the naturally aligned ones. Exhaustive over register
+#     values, but at one fixed operand
 #     assignment (rd=x1, rs1=x2, rs2=x3, imm=1234), so immediate-form
 #     sequences are proved at a single shift amount and the rd=x0 expansion
 #     path is never taken.
@@ -63,7 +65,7 @@ jobs:
         # fails this step and the reporting step below still runs.
         timeout-minutes: 75
         # --locked so the pinned z3-src in Cargo.lock is what actually gets built.
-        run: cargo nextest run -p z3-verifier --features vendored-z3 --locked --cargo-quiet --no-fail-fast
+        run: cargo nextest run -p z3-verifier --features vendored-z3,zicclsm --locked --cargo-quiet --no-fail-fast
       - name: Run signed DIV/REM proofs at 8-bit width
         # `!cancelled()` (not the default `success()`) so a main-suite failure
         # doesn't hide this step's verdict; the reporting step below covers both.
@@ -74,7 +76,7 @@ jobs:
         env:
           Z3_VERIFIER_BV_BITS: 8
         run: >-
-          cargo nextest run -p z3-verifier --features vendored-z3 --locked
+          cargo nextest run -p z3-verifier --features vendored-z3,zicclsm --locked
           --cargo-quiet --no-fail-fast --run-ignored=only
           -E 'test(/test_(DIV|DIVW|REM|REMW)_(correctness|consistency)$/)'
       - name: File failure issue
