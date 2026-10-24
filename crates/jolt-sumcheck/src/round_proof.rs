@@ -53,10 +53,10 @@ impl<F: Field + Encoding> ClearRound<F> for UnivariatePoly<F> {
 
 /// Absorbs a compressed round's sent coefficients `[c0, c2, ..., cd]`: one
 /// `u64` count word, then the coefficients as one message zero-padded to a
-/// word. The prover ([`CompressedRoundPoly`] and the recorder) and the
-/// verifier's compressed-proof loop all call this, so the encoding has one
-/// owner.
-pub(crate) fn append_compressed_round<F: Encoding, T: Transcript>(transcript: &mut T, sent: &[F]) {
+/// word. The prover ([`CompressedRoundPoly`] and the recorder), the
+/// verifier's compressed-proof loop and the BlindFold prover all call this,
+/// so the encoding has one owner.
+pub fn append_compressed_round<F: Encoding, T: Transcript>(transcript: &mut T, sent: &[F]) {
     transcript.append(&(sent.len() as u64));
     transcript.append_values(sent);
 }

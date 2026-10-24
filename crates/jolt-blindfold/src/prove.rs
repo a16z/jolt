@@ -2,7 +2,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpeni
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
-use jolt_sumcheck::{grind_round, CompressedSumcheckProof};
+use jolt_sumcheck::{append_compressed_round, grind_round, CompressedSumcheckProof};
 use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript, Transcript};
 use rand_core::RngCore;
 use rayon::prelude::*;
@@ -878,9 +878,7 @@ where
             });
         }
         let compressed = round_poly.compress();
-        let sent = compressed.coeffs_except_linear_term();
-        transcript.append(&(sent.len() as u64));
-        transcript.append_values(sent);
+        append_compressed_round(transcript, compressed.coeffs_except_linear_term());
         grind_round(OUTER_SUMCHECK_DEGREE, round, &mut pow_nonces, transcript)?;
         let challenge = transcript.challenge()?;
         running_sum = round_poly.evaluate(challenge);
@@ -961,9 +959,7 @@ where
             });
         }
         let compressed = round_poly.compress();
-        let sent = compressed.coeffs_except_linear_term();
-        transcript.append(&(sent.len() as u64));
-        transcript.append_values(sent);
+        append_compressed_round(transcript, compressed.coeffs_except_linear_term());
         grind_round(INNER_SUMCHECK_DEGREE, round, &mut pow_nonces, transcript)?;
         let challenge = transcript.challenge()?;
         running_sum = round_poly.evaluate(challenge);

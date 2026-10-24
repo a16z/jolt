@@ -158,5 +158,5 @@ pub use r1cs::{
 #[cfg(all(feature = "committed", feature = "prover"))]
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
-pub use round_proof::{ClearRound, CompressedRoundPoly, RoundMessage};
+pub use round_proof::{append_compressed_round, ClearRound, CompressedRoundPoly, RoundMessage};
 pub use verifier::SumcheckVerifier;
