@@ -46,6 +46,13 @@ pub enum PreprocessingError {
     },
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
+    #[error(
+        "bytecode rows at index {bytecode_index} (address {address:#x}) do not place a non-empty aligned sequence before the misaligned sequence"
+    )]
+    MisalignedSequenceOrder {
+        bytecode_index: usize,
+        address: usize,
+    },
     #[cfg(feature = "field-inline")]
     #[error("invalid field-inline instruction: {0}")]
     InvalidFieldInlineInstruction(#[from] FieldInlineInstructionError),

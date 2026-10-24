@@ -9,7 +9,29 @@ pub(super) fn stamp_instruction_sequence(
     is_compressed: bool,
     profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
-    stamp_sequence_metadata(rows, is_compressed, MAX_FINAL_ROWS_PER_SOURCE, profile)
+    stamp_sequence_metadata(
+        rows,
+        is_compressed,
+        false,
+        MAX_FINAL_ROWS_PER_SOURCE,
+        profile,
+    )
+}
+
+/// Same as `stamp_instruction_sequence` for the misaligned sequence of a dual
+/// load or store.
+pub(super) fn stamp_misaligned_sequence(
+    rows: Vec<JoltInstructionRow>,
+    is_compressed: bool,
+    profile: JoltInstructionProfile,
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
+    stamp_sequence_metadata(
+        rows,
+        is_compressed,
+        true,
+        MAX_FINAL_ROWS_PER_SOURCE,
+        profile,
+    )
 }
 
 /// Same as `stamp_instruction_sequence` but for inline provider output (higher capacity limit).
@@ -18,12 +40,19 @@ pub(super) fn stamp_inline_sequence(
     is_compressed: bool,
     profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
-    stamp_sequence_metadata(rows, is_compressed, MAX_METADATA_SEQUENCE_ROWS, profile)
+    stamp_sequence_metadata(
+        rows,
+        is_compressed,
+        false,
+        MAX_METADATA_SEQUENCE_ROWS,
+        profile,
+    )
 }
 
 fn stamp_sequence_metadata(
     mut rows: Vec<JoltInstructionRow>,
     is_compressed: bool,
+    misaligned_variant: bool,
     capacity: usize,
     profile: JoltInstructionProfile,
 ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
@@ -49,6 +78,7 @@ fn stamp_sequence_metadata(
         row.is_first_in_sequence = index == 0;
         row.virtual_sequence_remaining = Some((len - index - 1) as u16);
         row.is_compressed = index == len - 1 && is_compressed;
+        row.misaligned_variant = misaligned_variant;
     }
     Ok(rows)
 }
@@ -81,6 +111,7 @@ mod tests {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         }];
 
         assert!(matches!(

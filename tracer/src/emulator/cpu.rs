@@ -621,17 +621,19 @@ impl Cpu {
     }
 
     /// Runs `f` with `source`'s inline sequence, cached per PC alongside the
-    /// decoded instruction.
+    /// decoded instruction. For a dual load or store, `f` gets the sequence
+    /// its effective address selects from the registers before any row runs.
     ///
-    /// Expansion is a pure function of the instruction: `inline_sequence`
+    /// Expansion is a pure function of the instruction: `inline_expansion`
     /// builds a fresh `ExpansionAllocator` per call and every virtual-register
     /// guard is released by the time it returns, so the first execution's
-    /// sequence can be reused by later executions at the same PC. Callers that
-    /// need per-execution advice values patch them into *copies* of the rows,
-    /// never into the cached template.
+    /// expansion can be reused by later executions at the same PC; each
+    /// execution still selects its own sequence from it. Callers that need
+    /// per-execution advice values patch them into *copies* of the rows, never
+    /// into the cached template.
     ///
-    /// The rows are moved out of the cache entry while `f` runs (so `f` can
-    /// borrow the CPU mutably) and put back afterwards. Text-store
+    /// The expansion is moved out of the cache entry while `f` runs (so `f`
+    /// can borrow the CPU mutably) and put back afterwards. Text-store
     /// invalidation clears the decode slot, orphaning the entry along with its
     /// expansion, so a rewritten instruction can never be served stale rows.
     #[inline]
@@ -641,16 +643,12 @@ impl Cpu {
         f: impl FnOnce(&mut Cpu, &[Instruction]),
     ) {
         let token = self.mmu.decode_cache.expansion_slot(source);
-        let rows: Box<[Instruction]> = token
+        let expansion = token
             .and_then(|index| self.mmu.decode_cache.take_expansion(index))
-            .unwrap_or_else(|| {
-                source
-                    .inline_sequence(&self.vr_allocator)
-                    .into_boxed_slice()
-            });
-        f(self, &rows);
+            .unwrap_or_else(|| source.inline_expansion(&self.vr_allocator));
+        f(self, expansion.select(&self.x));
         if let Some(index) = token {
-            self.mmu.decode_cache.put_expansion(index, rows);
+            self.mmu.decode_cache.put_expansion(index, expansion);
         }
     }
 

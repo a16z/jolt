@@ -18,6 +18,7 @@ macro_rules! declare_riscv_instr {
             pub virtual_sequence_remaining: Option<u16>,
             pub is_first_in_sequence: bool,
             pub is_compressed: bool,
+            pub misaligned_variant: bool,
         }
 
         impl $crate::instruction::RISCVInstruction for $name {
@@ -59,6 +60,7 @@ macro_rules! declare_riscv_instr {
                     virtual_sequence_remaining: None,
                     is_first_in_sequence: false,
                     is_compressed: compressed,
+                    misaligned_variant: false,
                 }
             }
 
@@ -72,6 +74,7 @@ macro_rules! declare_riscv_instr {
                     virtual_sequence_remaining: None,
                     is_first_in_sequence: false,
                     is_compressed: false,
+                    misaligned_variant: false,
                 }
             }
 
@@ -90,6 +93,7 @@ macro_rules! declare_riscv_instr {
                     virtual_sequence_remaining: None,
                     is_first_in_sequence: false,
                     is_compressed: row.is_compressed,
+                    misaligned_variant: false,
                 }
             }
         }

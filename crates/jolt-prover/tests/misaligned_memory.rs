@@ -1,11 +1,13 @@
-//! Soundness: a sub-word access misaligned for its width cannot be proven.
+//! Soundness: a load or store's aligned sequence cannot prove an access
+//! misaligned for its width.
 //!
-//! The tracer aborts on such an access, so these tests trace one with
-//! misaligned floor accesses allowed. Each floor-addressed row then records the
-//! RAM address R1CS constraint 0 assigns, `ea − AddressOffset(ea)`, which is
-//! not a multiple of 8. The witness satisfies every R1CS row, and `RamAddress`
-//! is consumed only by RAM RAF evaluation, which admits only multiples of 8, so
-//! that sumcheck is what must reject the proof.
+//! The tracer runs the misaligned sequence on such an access, so these tests
+//! trace one with aligned sequences forced. Each floor-addressed row then
+//! records the RAM address R1CS constraint 0 assigns, `ea − AddressOffset(ea)`,
+//! and a native `LD`/`SD` row records `ea`, neither a multiple of 8. The
+//! witness satisfies every R1CS row, and `RamAddress` is consumed only by RAM
+//! RAF evaluation, which admits only multiples of 8, so that sumcheck is what
+//! must reject the proof.
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -35,7 +37,7 @@ mod clear {
     use jolt_sumcheck::SumcheckError;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
-    use tracer::instruction::floor_access::allow_misaligned_floor_accesses;
+    use tracer::instruction::floor_access::force_aligned_sequences;
 
     use crate::support::{self, GuestCase};
 
@@ -56,16 +58,17 @@ mod clear {
         }
     }
 
-    /// Traces the memory-ops guest's misaligned access of `kind` and asserts
-    /// that its witness satisfies R1CS yet cannot be proven.
-    fn assert_misaligned_access_rejected(kind: u8) {
-        let misaligned = allow_misaligned_floor_accesses();
+    /// Traces the memory-ops guest's misaligned access of `kind` through its
+    /// aligned sequence and asserts that the witness satisfies R1CS yet cannot
+    /// be proven.
+    fn assert_aligned_sequence_rejected(kind: u8) {
+        let forced = force_aligned_sequences();
         let prepared = support::prepare(&GuestCase {
             func: Some("misaligned_access"),
             inputs: postcard::to_stdvec(&kind).expect("serialize access kind"),
             ..GuestCase::new("memory-ops-guest")
         });
-        drop(misaligned);
+        drop(forced);
         assert!(
             prepared
                 .trace
@@ -133,32 +136,42 @@ mod clear {
     }
 
     #[test]
-    fn misaligned_lh_is_rejected() {
-        assert_misaligned_access_rejected(0);
+    fn aligned_lh_sequence_rejects_a_misaligned_access() {
+        assert_aligned_sequence_rejected(0);
     }
 
     #[test]
-    fn misaligned_lhu_is_rejected() {
-        assert_misaligned_access_rejected(1);
+    fn aligned_lhu_sequence_rejects_a_misaligned_access() {
+        assert_aligned_sequence_rejected(1);
     }
 
     #[test]
-    fn misaligned_lw_is_rejected() {
-        assert_misaligned_access_rejected(2);
+    fn aligned_lw_sequence_rejects_a_misaligned_access() {
+        assert_aligned_sequence_rejected(2);
     }
 
     #[test]
-    fn misaligned_lwu_is_rejected() {
-        assert_misaligned_access_rejected(3);
+    fn aligned_lwu_sequence_rejects_a_crossing_access() {
+        assert_aligned_sequence_rejected(3);
     }
 
     #[test]
-    fn misaligned_sh_is_rejected() {
-        assert_misaligned_access_rejected(4);
+    fn aligned_sh_sequence_rejects_a_misaligned_access() {
+        assert_aligned_sequence_rejected(4);
     }
 
     #[test]
-    fn misaligned_sw_is_rejected() {
-        assert_misaligned_access_rejected(5);
+    fn aligned_sw_sequence_rejects_a_crossing_access() {
+        assert_aligned_sequence_rejected(5);
+    }
+
+    #[test]
+    fn native_ld_rejects_a_misaligned_access() {
+        assert_aligned_sequence_rejected(6);
+    }
+
+    #[test]
+    fn native_sd_rejects_a_misaligned_access() {
+        assert_aligned_sequence_rejected(7);
     }
 }

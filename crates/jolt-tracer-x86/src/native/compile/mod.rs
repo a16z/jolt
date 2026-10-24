@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use dynasmrt::{x64::Assembler, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
 use jolt_program::{
     execution::{JoltProgram, TraceError},
+    expand::DualAccess,
     preprocess::BytecodePCMapper,
 };
 use jolt_riscv::SourceInstructionKind;
@@ -70,13 +71,16 @@ impl CompiledProgram {
         if rows.is_empty() {
             return Err(TraceError::Backend("program has no expanded bytecode"));
         }
-        // VirtualPextSigned and VirtualPext use `pext` (PextSigned also
-        // `popcnt`); refuse on CPUs without them rather than fault at run
-        // time. Gated per program so pext-free guests keep compiling on
-        // pre-BMI2 hosts.
-        let uses_pext = rows
-            .iter()
-            .any(|row| matches!(row.instruction_kind, Kind::PextSigned(_) | Kind::Pext(_)));
+        // VirtualPextSigned, VirtualPext and VirtualFunnelHigh use `pext`
+        // (PextSigned and FunnelHigh also `popcnt`); refuse on CPUs without
+        // them rather than fault at run time. Gated per program so pext-free
+        // guests keep compiling on pre-BMI2 hosts.
+        let uses_pext = rows.iter().any(|row| {
+            matches!(
+                row.instruction_kind,
+                Kind::PextSigned(_) | Kind::Pext(_) | Kind::FunnelHigh(_)
+            )
+        });
         if uses_pext
             && (!std::arch::is_x86_feature_detected!("bmi2")
                 || !std::arch::is_x86_feature_detected!("popcnt"))
@@ -289,44 +293,76 @@ impl CompiledBody {
 
         let entry = emitter.emit_prologue();
 
-        let mut previous_address = None;
-        for (row_index, row) in rows.iter().enumerate() {
-            emitter.row_index = row_index;
-            let address = row.address as u64;
-            if previous_address != Some(address) {
-                // Group start: define the branch-target label, record the jump
-                // table offset, and emit this group's advice computation (which
-                // must observe the pre-group register state) before its rows.
-                let label = emitter.label_for(address);
-                let offset = emitter.ops.offset();
-                emitter.ops.dynamic_label(label);
-                emitter.group_offsets.push((address, offset));
-                if emitter.pausable {
-                    emitter.emit_group_pause_check(address);
-                }
-                previous_address = Some(address);
-                emitter.finish_advice_group()?;
-                emitter.advice_slot = 0;
-                emitter.advice_ready = false;
-                if let Some(source) = sources.get(&address) {
-                    if let Some(compute) = AdviceCompute::from_source(source)? {
-                        emitter.advice_jobs.push(AdviceJob {
-                            compute,
-                            advice_rows: 0,
-                        });
-                        let index = emitter.advice_jobs.len() - 1;
-                        emitter.current_advice_job = Some(index);
-                        emitters.emit_advice_compute(&mut emitter, index)?;
-                        emitter.advice_ready = true;
-                    }
+        // Misaligned sequences of dual loads and stores, emitted after the
+        // program body: (label, first row index, rows).
+        let mut misaligned_blocks = Vec::new();
+        let mut group_start = 0;
+        for group in rows.chunk_by(|a, b| a.address == b.address) {
+            let address = group[0].address as u64;
+            // Group start: define the branch-target label, record the jump
+            // table offset, and emit this group's advice computation (which
+            // must observe the pre-group register state) before its rows.
+            let label = emitter.label_for(address);
+            let offset = emitter.ops.offset();
+            emitter.ops.dynamic_label(label);
+            emitter.group_offsets.push((address, offset));
+            if emitter.pausable {
+                emitter.emit_group_pause_check(address);
+            }
+            emitter.finish_advice_group()?;
+            emitter.advice_slot = 0;
+            emitter.advice_ready = false;
+            if let Some(source) = sources.get(&address) {
+                if let Some(compute) = AdviceCompute::from_source(source)? {
+                    emitter.advice_jobs.push(AdviceJob {
+                        compute,
+                        advice_rows: 0,
+                    });
+                    let index = emitter.advice_jobs.len() - 1;
+                    emitter.current_advice_job = Some(index);
+                    emitters.emit_advice_compute(&mut emitter, index)?;
+                    emitter.advice_ready = true;
                 }
             }
-            emitters.emit_row(&mut emitter, row)?;
+
+            // The mapper has checked that a dual group's misaligned rows
+            // follow all of its aligned rows.
+            let split = group
+                .iter()
+                .position(|row| row.misaligned_variant)
+                .unwrap_or(group.len());
+            let (aligned, misaligned) = group.split_at(split);
+            if !misaligned.is_empty() {
+                let access =
+                    DualAccess::from_aligned_head(&group[0]).ok_or(TraceError::Backend(
+                        "dual load or store does not open with a natural-width access",
+                    ))?;
+                let block = emitter.ops.new_dynamic_label();
+                emitter.emit_dual_dispatch(access, block);
+                misaligned_blocks.push((block, group_start + split, misaligned));
+            }
+            for (row_index, row) in (group_start..).zip(aligned) {
+                emitter.row_index = row_index;
+                emitters.emit_row(&mut emitter, row)?;
+            }
+            group_start += group.len();
         }
         emitter.finish_advice_group()?;
 
         // Execution falling off the end of the program is a bad jump.
         emitter.emit_jump_to_bad_jump();
+        emitter.advice_slot = 0;
+        emitter.advice_ready = false;
+        for (block, first_row, misaligned) in misaligned_blocks {
+            emitter.ops.dynamic_label(block);
+            for (row_index, row) in (first_row..).zip(misaligned) {
+                emitter.row_index = row_index;
+                emitters.emit_row(&mut emitter, row)?;
+            }
+            if let Some(last) = misaligned.last() {
+                emitter.emit_jump_past(last);
+            }
+        }
         emitter.emit_unmapped_target_stubs();
         let stubs = emitter.emit_stubs();
 

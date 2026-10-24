@@ -36,6 +36,7 @@ fn row(kind: JoltInstructionKind, operands: Operands) -> JoltInstructionRow {
         virtual_sequence_remaining: None,
         is_first_in_sequence: true,
         is_compressed: false,
+        misaligned_variant: false,
     }
 }
 

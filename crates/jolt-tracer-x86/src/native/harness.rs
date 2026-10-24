@@ -5,7 +5,10 @@
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{JoltProgram, TraceError};
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
+use jolt_program::expand::{expand_instruction, ExpansionAllocator, ExpansionError};
+use jolt_riscv::{
+    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, SourceInstruction, RV64IMAC_JOLT,
+};
 
 /// The row-emission seam, re-exported so emitter A/B experiments (benches,
 /// integration tests, the Alternative 11 stencil spike) can build their own
@@ -47,6 +50,7 @@ pub fn terminal_row(address: u64) -> JoltInstructionRow {
         virtual_sequence_remaining: None,
         is_first_in_sequence: true,
         is_compressed: false,
+        misaligned_variant: false,
     }
 }
 
@@ -68,6 +72,34 @@ pub fn single_row_program(row: JoltInstructionRow) -> JoltProgram {
         RAM_START_ADDRESS + 1024,
         TEST_ADDR,
     )
+}
+
+/// Synthetic program around one source instruction's expanded bytecode (both
+/// sequences of a dual load or store): terminals at `TEST_ADDR - 8`, at the
+/// next instruction, and at `TEST_ADDR + 8`.
+pub fn source_program(source: SourceInstruction) -> Result<JoltProgram, ExpansionError> {
+    let row = source.row();
+    assert_eq!(
+        row.address as u64, TEST_ADDR,
+        "source must sit at TEST_ADDR"
+    );
+    let next = TEST_ADDR + if row.is_compressed { 2 } else { 4 };
+    let expanded = expand_instruction(&source, &mut ExpansionAllocator::new(), RV64IMAC_JOLT)?;
+    let mut rows = vec![terminal_row(TEST_ADDR - 8)];
+    rows.extend(
+        expanded
+            .into_bytecode()
+            .into_iter()
+            .map(JoltInstructionRow::from),
+    );
+    rows.extend([terminal_row(next), terminal_row(TEST_ADDR + 8)]);
+    Ok(JoltProgram::from_parts(
+        Vec::new(),
+        rows,
+        Vec::new(),
+        RAM_START_ADDRESS + 1024,
+        TEST_ADDR,
+    ))
 }
 
 /// A straight-line program: `count` copies of the row at consecutive

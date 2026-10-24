@@ -9,10 +9,14 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::expect_used, clippy::panic)]
 
-use common::constants::STACK_CANARY_SIZE;
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
+use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
+use jolt_riscv::{
+    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, SourceInstruction,
+    SourceInstructionKind, SourceInstructionRow,
+};
 use jolt_tracer_x86::harness::{
-    compile_program, memory_config, run_program, single_row_program, Outcome, TEST_ADDR,
+    compile_program, memory_config, run_program, single_row_program, source_program, Outcome,
+    MEM_CAPACITY, TEST_ADDR,
 };
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
@@ -35,6 +39,7 @@ fn row(
         virtual_sequence_remaining: None,
         is_first_in_sequence: true,
         is_compressed: false,
+        misaligned_variant: false,
     }
 }
 
@@ -123,6 +128,46 @@ fn out_of_bounds_store_reports_a_fault() {
         "expected the out-of-bounds exit reason, got {} ({:?})",
         outcome.exit, outcome.helper_error
     );
+}
+
+/// A misaligned access whose last bytes lie past the plane faults at the
+/// doubleword holding them, on the second row of its misaligned sequence:
+/// both doublewords are loaded before any store.
+#[test]
+fn misaligned_access_past_the_plane_reports_a_fault() {
+    let plane_end = RAM_START_ADDRESS + MEM_CAPACITY;
+    for (kind, rd, rs2) in [
+        (SourceInstructionKind::LD, Some(2), None),
+        (SourceInstructionKind::SW, None, Some(3)),
+    ] {
+        let source = SourceInstruction::new(
+            kind,
+            SourceInstructionRow {
+                address: TEST_ADDR as usize,
+                operands: NormalizedOperands {
+                    rs1: Some(1),
+                    rs2,
+                    rd,
+                    imm: 0,
+                },
+                inline: None,
+                is_compressed: false,
+            },
+        );
+        let program = source_program(source).expect("expansion failed");
+        let mut pre = [0u64; REGS];
+        pre[1] = plane_end - 3;
+        pre[3] = 0xdead_beef;
+
+        let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
+        assert_eq!(
+            outcome.exit, 2,
+            "{kind:?}: expected the out-of-bounds exit reason, got {} ({:?})",
+            outcome.exit, outcome.helper_error
+        );
+        assert_eq!(outcome.fault_addr, plane_end, "{kind:?}");
+        assert_eq!(outcome.trace_len, 2, "{kind:?}");
+    }
 }
 
 /// Run a single `SD` of `0xdead_beef` to `address` in the harness layout.

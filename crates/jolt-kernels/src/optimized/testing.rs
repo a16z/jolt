@@ -119,6 +119,7 @@ pub(crate) fn with_ram_fixture_init<R>(
         virtual_sequence_remaining: None,
         is_first_in_sequence: false,
         is_compressed: false,
+        misaligned_variant: false,
     };
     let store = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::SD,

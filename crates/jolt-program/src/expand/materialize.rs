@@ -11,8 +11,10 @@ use crate::expand::{
         is_source_only, ExpandedInstructionSequence, ExpansionOp, InlineTempId, RegisterOperand,
         RowTemplate, SourceInstructionRowTemplate, TempId, TemplateOperands,
     },
-    metadata::{stamp_inline_sequence, stamp_instruction_sequence},
+    memory::expand_misaligned,
+    metadata::{stamp_inline_sequence, stamp_instruction_sequence, stamp_misaligned_sequence},
     operands::{handles_rd_zero_internally, noop_for},
+    variant::DualAccess,
     ExpansionError,
 };
 
@@ -64,6 +66,35 @@ impl ExpansionState {
         let result = self.dispatch_source(instruction);
         self.allocator.exit_expansion();
         result
+    }
+
+    /// Expand a top-level source instruction and, for a dual load or store, its
+    /// misaligned sequence after it from the same allocator state.
+    ///
+    /// Only top-level instructions get a misaligned sequence: a nested `LW`/`SW`
+    /// (inside `LR.W`/`SC.W`) is spliced into one straight-line parent and keeps
+    /// the aligned rows, so misaligned atomics stay unprovable.
+    pub(super) fn expand_source_top_level(
+        &mut self,
+        instruction: &SourceInstruction,
+    ) -> Result<TopLevelRows, ExpansionError> {
+        let aligned = self.expand_source_recursive(instruction)?;
+        let Some((access, sequence)) = expand_misaligned(instruction, aligned.first())? else {
+            return Ok(TopLevelRows::Single(aligned));
+        };
+        let misaligned = self.materialize_with_options(
+            sequence,
+            MaterializeOptions {
+                capacity: MAX_FINAL_ROWS_PER_SOURCE,
+                append_inline_resets: false,
+                stamp: stamp_misaligned_sequence,
+            },
+        )?;
+        Ok(TopLevelRows::Dual {
+            access,
+            aligned,
+            misaligned,
+        })
     }
 
     /// Route one source instruction to its final-row representation.
@@ -168,6 +199,7 @@ impl ExpansionState {
                     virtual_sequence_remaining: Some(0),
                     is_first_in_sequence: false,
                     is_compressed: false,
+                    misaligned_variant: false,
                 })?;
             }
         }
@@ -207,6 +239,16 @@ impl ExpansionState {
         }
         materializer.finish()
     }
+}
+
+/// Rows of one top-level expansion before the target-profile check.
+pub(super) enum TopLevelRows {
+    Single(Vec<JoltInstructionRow>),
+    Dual {
+        access: DualAccess,
+        aligned: Vec<JoltInstructionRow>,
+        misaligned: Vec<JoltInstructionRow>,
+    },
 }
 
 #[derive(Debug)]
@@ -354,6 +396,7 @@ impl SequenceMaterializer {
             virtual_sequence_remaining: Some(0),
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         })
     }
 

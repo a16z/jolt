@@ -19,6 +19,7 @@ pub mod address_offset;
 pub mod and;
 pub mod andn;
 pub mod equal;
+pub mod funnel_high;
 pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
@@ -58,6 +59,7 @@ pub mod virtual_xor_rot;
 pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod window_mask_b;
+pub mod window_mask_d;
 pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod xor;
@@ -69,6 +71,7 @@ use address_offset::AddressOffsetTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
+use funnel_high::FunnelHighTable;
 use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
@@ -106,6 +109,7 @@ use virtual_xor_rot::VirtualXORROTTable;
 use virtual_xor_rotl1::VirtualXORROTL1Table;
 use virtual_xor_rotw::VirtualXORROTWTable;
 use window_mask_b::WindowMaskBTable;
+use window_mask_d::WindowMaskDTable;
 use window_mask_h::WindowMaskHTable;
 use window_mask_w::WindowMaskWTable;
 use xor::XorTable;
@@ -190,6 +194,8 @@ pub enum LookupTableKind<const XLEN: usize> {
     AddressOffsetB(AddressOffsetTable<XLEN, 1>),
     AddressOffsetH(AddressOffsetTable<XLEN, 2>),
     AddressOffsetW(AddressOffsetTable<XLEN, 4>),
+    WindowMaskD(WindowMaskDTable<XLEN>),
+    FunnelHigh(FunnelHighTable<XLEN>),
 }
 
 macro_rules! dispatch {
@@ -250,6 +256,8 @@ macro_rules! dispatch {
             Self::AddressOffsetB($t) => $expr,
             Self::AddressOffsetH($t) => $expr,
             Self::AddressOffsetW($t) => $expr,
+            Self::WindowMaskD($t) => $expr,
+            Self::FunnelHigh($t) => $expr,
         }
     };
 }
@@ -345,7 +353,7 @@ mod tests {
 
     #[test]
     fn proof_format_indices_are_stable() {
-        const EXPECTED: [&str; 55] = [
+        const EXPECTED: [&str; 57] = [
             "RangeCheck",
             "RangeCheckAligned",
             "And",
@@ -401,6 +409,8 @@ mod tests {
             "AddressOffsetB",
             "AddressOffsetH",
             "AddressOffsetW",
+            "WindowMaskD",
+            "FunnelHigh",
         ];
 
         let actual = LookupTableKind::<64>::iter()

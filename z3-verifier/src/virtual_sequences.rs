@@ -74,6 +74,7 @@ use tracer::{
         virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
+        virtual_funnel_high::VirtualFunnelHigh,
         virtual_load_b::VirtualLoadB,
         virtual_load_h::VirtualLoadH,
         virtual_load_w::VirtualLoadW,
@@ -103,11 +104,12 @@ use tracer::{
         virtual_store_h::VirtualStoreH,
         virtual_store_w::VirtualStoreW,
         virtual_window_mask_b::VirtualWindowMaskB,
+        virtual_window_mask_d::VirtualWindowMaskD,
         virtual_window_mask_h::VirtualWindowMaskH,
         virtual_window_mask_w::VirtualWindowMaskW,
         virtual_zero_extend_word::VirtualZeroExtendWord,
         xor::XOR,
-        Cycle, Instruction, RISCVCycle, RISCVInstruction, RISCVTrace,
+        Cycle, InlineExpansion, Instruction, RISCVCycle, RISCVInstruction, RISCVTrace,
     },
     utils::virtual_registers::VirtualRegisterAllocator,
 };
@@ -164,17 +166,14 @@ struct SymbolicCpu {
     var_prefix: String,
     x: [BV; REGISTER_COUNT as usize],
     /// RAM at doubleword granularity: an array from (aligned) addresses to
-    /// bv_bits-wide values. The memory sequences only access the containing
-    /// aligned doubleword, so keys never partially alias.
-    ///
-    /// WARNING: the LD/SD arms key by the raw `rs1 + imm`; the
-    /// no-partial-alias invariant is guaranteed by the expansions, not the
-    /// arms. `expand_amo_d` loads from a raw `rs1`, so a future AMO.D entry
-    /// must revisit this model. The floor-addressed arms key by
-    /// [`floor_address`], which assumes the access is aligned.
+    /// bv_bits-wide values. Every arm keys by [`floor_address`], which assumes
+    /// the recorded address is aligned, so keys never partially alias.
     mem: Array,
     advice_vars: Vec<BV>,
     asserts: Vec<Bool>,
+    /// The doubleword offset of the effective address a dual load or store's
+    /// obligation fixes, which the byte-level access model reads.
+    ea_mod_8: Option<u64>,
     bv_bits: u32,
     word_bits: u32,
 }
@@ -201,6 +200,7 @@ impl SymbolicCpu {
             mem,
             advice_vars: Vec::new(),
             asserts,
+            ea_mod_8: None,
             bv_bits,
             word_bits,
         }
@@ -467,11 +467,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         }
         Instruction::LD(LD { operands, .. }) => {
             // Tracer LD truncates the immediate through i32 (see ld.rs).
-            let addr = cpu.x[operands.rs1 as usize].clone() + (operands.imm as i32) as i64;
+            let addr = floor_address(cpu, operands.rs1, (operands.imm as i32) as i64, 0);
             cpu.x[operands.rd as usize] = cpu.mem.select(&addr).as_bv().unwrap();
         }
         Instruction::SD(SD { operands, .. }) => {
-            let addr = cpu.x[operands.rs1 as usize].clone() + operands.imm;
+            let addr = floor_address(cpu, operands.rs1, operands.imm, 0);
             let value = cpu.x[operands.rs2 as usize].clone();
             cpu.mem = cpu.mem.store(&addr, &value);
         }
@@ -524,6 +524,12 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let shift = offset * cpu.bv_u64(half_bits);
             let half_mask = cpu.bv_u64((1u64 << half_bits) - 1);
             cpu.x[operands.rd as usize] = half_mask.bvshl(shift);
+        }
+        Instruction::VirtualWindowMaskD(VirtualWindowMaskD { operands, .. }) => {
+            let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
+            let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
+            let shift = offset * cpu.bv_u64((cpu.bv_bits / 8) as u64);
+            cpu.x[operands.rd as usize] = cpu.bv_ones().bvshl(shift);
         }
         Instruction::VirtualShiftDataB(VirtualShiftDataB { operands, .. }) => {
             let byte_bits = (cpu.bv_bits / 8) as u64;
@@ -591,6 +597,19 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let contiguous = (normalized.clone() & (normalized + cpu.bv_u64(1))).eq(cpu.bv_zero());
             let havoc = BV::fresh_const(&format!("{}_pext_nc", cpu.var_prefix), cpu.bv_bits);
             cpu.x[operands.rd as usize] = contiguous.ite(&extracted, &havoc);
+        }
+        Instruction::VirtualFunnelHigh(VirtualFunnelHigh { operands, .. }) => {
+            // (rs1 mod 2^s) << (bv_bits − s) for a leading-ones rs2 = !0 << s
+            // (s = bv_bits for rs2 = 0), the only shape WindowMaskD produces.
+            // Any other operand havocs rd, as in the Pext arm.
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            let low = rs2.bvnot();
+            let leading_ones = (low.clone() & (low + cpu.bv_u64(1))).eq(cpu.bv_zero());
+            let s = trailing_zeros(&rs2, cpu.bv_bits);
+            let shifted = rs1.bvshl(cpu.bv_u64(cpu.bv_bits as u64) - s);
+            let havoc = BV::fresh_const(&format!("{}_funnel_nm", cpu.var_prefix), cpu.bv_bits);
+            cpu.x[operands.rd as usize] = leading_ones.ite(&shifted, &havoc);
         }
         Instruction::VirtualSignExtendWord(VirtualSignExtendWord { operands, .. }) => {
             let val = cpu.x[operands.rs1 as usize].clone();
@@ -680,34 +699,120 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
     }
 }
 
+/// The doubleword offset `ea mod 8`, assumed of `ea = x[base] + offset`, at
+/// which each sequence of a dual load or store is checked.
+#[derive(Clone, Copy)]
+struct OffsetAssumption {
+    base: u8,
+    offset: i128,
+    ea_mod_8: u64,
+}
+
+impl OffsetAssumption {
+    fn assume(self, cpu: &mut SymbolicCpu) {
+        let ea = cpu.x[self.base as usize].clone() + (self.offset as i64);
+        let assumption = (ea & cpu.bv_u64(7)).eq(cpu.bv_u64(self.ea_mod_8));
+        cpu.asserts.push(assumption);
+    }
+}
+
+/// One row sequence to verify.
+struct Obligation {
+    rows: Box<[Instruction]>,
+    offset: Option<OffsetAssumption>,
+    /// Whether the rows' own address assumptions admit `offset`. The aligned
+    /// sequence of a dual load or store must exclude every misaligned offset:
+    /// that exclusion is what pins it.
+    admitted: bool,
+}
+
+/// Every row sequence `instruction` can run. Each sequence of a dual load or
+/// store is verified once per doubleword offset of its effective address: the
+/// misaligned sequence at all of them, and the aligned one at the naturally
+/// aligned ones while its rows must exclude the rest. A fixed offset also keeps
+/// the misaligned sequence's multiplications by `2^(8·offset)` constant.
+fn obligations(instruction: &Instruction) -> Vec<Obligation> {
+    match instruction.inline_expansion(&VirtualRegisterAllocator::default()) {
+        InlineExpansion::Single(rows) => vec![Obligation {
+            rows,
+            offset: None,
+            admitted: true,
+        }],
+        InlineExpansion::Dual {
+            access,
+            aligned,
+            misaligned,
+        } => (0..8)
+            .flat_map(|ea_mod_8| {
+                let offset = Some(OffsetAssumption {
+                    base: access.base,
+                    offset: access.offset,
+                    ea_mod_8,
+                });
+                [
+                    Obligation {
+                        rows: aligned.clone(),
+                        offset,
+                        admitted: ea_mod_8 % access.width.bytes() == 0,
+                    },
+                    Obligation {
+                        rows: misaligned.clone(),
+                        offset,
+                        admitted: true,
+                    },
+                ]
+            })
+            .collect(),
+    }
+}
+
 fn test_correctness<I: RISCVInstruction + RISCVTrace>(
-    expected: impl FnOnce(&I, &mut SymbolicCpu),
+    expected: impl Fn(&I, &mut SymbolicCpu),
     instr: &I,
 ) where
     RISCVCycle<I>: Into<Cycle>,
 {
+    let instruction: Instruction = (*instr).into();
+    for obligation in obligations(&instruction) {
+        check_correctness(&expected, instr, &obligation);
+    }
+}
+
+fn check_correctness<I: RISCVInstruction>(
+    expected: &impl Fn(&I, &mut SymbolicCpu),
+    instr: &I,
+    obligation: &Obligation,
+) {
     let mut solver_params = Params::default();
     solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();
     solver.set_params(&solver_params);
-    let allocator = VirtualRegisterAllocator::default();
     let bv_bits = verifier_bv_bits();
     let mut cpu = SymbolicCpu::new("cpu1", bv_bits);
 
     let cpu_initial = cpu.clone();
     let mut cpu_expected = cpu.clone();
+    if let Some(offset) = obligation.offset {
+        offset.assume(&mut cpu);
+        cpu_expected.ea_mod_8 = Some(offset.ea_mod_8);
+    }
     expected(instr, &mut cpu_expected);
 
-    let instruction: Instruction = (*instr).into();
-    let seq = instruction.inline_sequence(&allocator);
-    for instr in seq {
-        symbolic_exec(&instr, &mut cpu);
+    for instr in &obligation.rows {
+        symbolic_exec(instr, &mut cpu);
     }
 
     for assert in cpu.asserts {
         solver += assert;
+    }
+    if !obligation.admitted {
+        assert!(
+            matches!(solver.check(), SatResult::Unsat),
+            "the aligned sequence admits a misaligned effective address"
+        );
+        return;
     }
     // Guard against vacuous proofs: the assert assumptions alone must be
     // satisfiable, or the disequality below would be refuted trivially.
@@ -758,13 +863,20 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
 }
 
 fn test_consistency(instr: &Instruction) {
+    for obligation in obligations(instr) {
+        if obligation.admitted {
+            check_consistency(instr, &obligation);
+        }
+    }
+}
+
+fn check_consistency(instr: &Instruction, obligation: &Obligation) {
     let mut solver_params = Params::default();
     solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();
     solver.set_params(&solver_params);
-    let allocator = VirtualRegisterAllocator::default();
     let bv_bits = verifier_bv_bits();
     let (mut cpu1, mut cpu2) = (
         SymbolicCpu::new("cpu1", bv_bits),
@@ -777,8 +889,11 @@ fn test_consistency(instr: &Instruction) {
     }
     solver += &cpu1.mem.eq(&cpu2.mem);
 
-    let seq = instr.inline_sequence(&allocator);
-    for instr in &seq {
+    if let Some(offset) = obligation.offset {
+        offset.assume(&mut cpu1);
+        offset.assume(&mut cpu2);
+    }
+    for instr in &obligation.rows {
         symbolic_exec(instr, &mut cpu1);
         symbolic_exec(instr, &mut cpu2);
     }
@@ -873,9 +988,11 @@ fn floor_address(cpu: &mut SymbolicCpu, rs1: u8, imm: i64, offset_mask: u64) -> 
     address
 }
 
-/// The scaled sub-word load semantics: the `eighths`-byte lane of the
-/// containing doubleword at `rs1 + imm` (lanes are `bv_bits/8` wide so
-/// reduced solver widths stay faithful), sign- or zero-extended.
+/// The contained-lane load semantics: the `eighths`-byte lane of the
+/// containing doubleword at `rs1 + imm` (lanes are `bv_bits/8` wide so reduced
+/// solver widths stay faithful), sign- or zero-extended. It is the RISC-V
+/// semantics of a naturally aligned access, which its rows' address
+/// assumptions guarantee.
 fn lane_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, eighths: u32, signed: bool) -> BV {
     let ea = cpu.x[rs1 as usize].clone() + imm;
     let aligned = ea.clone() & cpu.bv_u64(-8i64 as u64);
@@ -892,8 +1009,8 @@ fn lane_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, eighths: u32, signed: bool) -
     }
 }
 
-/// The scaled sub-word store semantics: replace the `eighths`-byte lane of
-/// the containing doubleword at `rs1 + imm` with the low lane of `data`.
+/// The contained-lane store semantics: replace the `eighths`-byte lane of the
+/// containing doubleword at `rs1 + imm` with the low lane of `data`.
 fn lane_store(cpu: &mut SymbolicCpu, rs1: u8, data: BV, imm: i64, eighths: u32) {
     let ea = cpu.x[rs1 as usize].clone() + imm;
     let aligned = ea.clone() & cpu.bv_u64(-8i64 as u64);
@@ -907,6 +1024,67 @@ fn lane_store(cpu: &mut SymbolicCpu, rs1: u8, data: BV, imm: i64, eighths: u32) 
     let data = (data & lane_ones).bvshl(&shift);
     let updated = (old & mask.bvnot()) | data;
     cpu.mem = cpu.mem.store(&aligned, &updated);
+}
+
+/// The doubleword holding byte `ea` and the one after it, and the parts of a
+/// `width`-byte access at `ea` that fall in each, as `(doubleword, first byte
+/// position, byte count)`, at the obligation's fixed `ea mod 8`.
+fn access_parts(cpu: &SymbolicCpu, rs1: u8, imm: i64, width: u32) -> Vec<(BV, u32, u32)> {
+    let ea_mod_8 = cpu
+        .ea_mod_8
+        .expect("byte-level accesses are verified at a fixed doubleword offset");
+    let lo = cpu.x[rs1 as usize].clone() + imm - cpu.bv_u64(ea_mod_8);
+    let in_lo = width.min(8 - ea_mod_8 as u32);
+    let mut parts = vec![(lo.clone(), ea_mod_8 as u32, in_lo)];
+    if width > in_lo {
+        parts.push((lo + cpu.bv_u64(8), 0, width - in_lo));
+    }
+    parts
+}
+
+/// The RISC-V load semantics: the `width` bytes from `rs1 + imm` on at any
+/// alignment, sign- or zero-extended.
+fn bytes_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, width: u32, signed: bool) -> BV {
+    let byte_bits = cpu.bv_bits / 8;
+    let value = access_parts(cpu, rs1, imm, width)
+        .into_iter()
+        .map(|(doubleword, first, count)| {
+            cpu.mem
+                .select(&doubleword)
+                .as_bv()
+                .unwrap()
+                .extract(byte_bits * (first + count) - 1, byte_bits * first)
+        })
+        .reduce(|low, high| high.concat(&low))
+        .unwrap();
+    let extension = cpu.bv_bits - width * byte_bits;
+    if extension == 0 {
+        value
+    } else if signed {
+        value.sign_ext(extension)
+    } else {
+        value.zero_ext(extension)
+    }
+}
+
+/// The RISC-V store semantics: the low `width` bytes of `data` to the bytes
+/// from `rs1 + imm` on, at any alignment.
+fn bytes_store(cpu: &mut SymbolicCpu, rs1: u8, data: BV, imm: i64, width: u32) {
+    let byte_bits = cpu.bv_bits / 8;
+    let mut stored = 0;
+    for (doubleword, first, count) in access_parts(cpu, rs1, imm, width) {
+        let old = cpu.mem.select(&doubleword).as_bv().unwrap();
+        let bytes = data.extract(byte_bits * (stored + count) - 1, byte_bits * stored);
+        let shift = u64::from(byte_bits * first);
+        let mask = cpu
+            .bv_u64(u64::MAX >> (64 - byte_bits * count))
+            .bvshl(cpu.bv_u64(shift));
+        let bytes = bytes
+            .zero_ext(cpu.bv_bits - byte_bits * count)
+            .bvshl(cpu.bv_u64(shift));
+        cpu.mem = cpu.mem.store(&doubleword, &((old & mask.bvnot()) | bytes));
+        stored += count;
+    }
 }
 
 macro_rules! test_sequence {
@@ -923,6 +1101,7 @@ macro_rules! test_sequence {
                     is_compressed: false,
                     is_first_in_sequence: false,
                     virtual_sequence_remaining: None,
+                    misaligned_variant: false,
                 };
                 test_correctness($expected, &instr);
             }
@@ -938,6 +1117,7 @@ macro_rules! test_sequence {
                     is_compressed: false,
                     is_first_in_sequence: false,
                     virtual_sequence_remaining: None,
+                    misaligned_variant: false,
                 };
                 test_consistency(&Instruction::$instr(instr));
             }
@@ -1030,19 +1210,23 @@ test_sequence!(LBU, FormatLoad, |instr: &LBU, cpu| {
     cpu.x[instr.operands.rd as usize] = v;
 });
 test_sequence!(LH, FormatLoad, |instr: &LH, cpu| {
-    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 2, true);
+    let v = bytes_load(cpu, instr.operands.rs1, instr.operands.imm, 2, true);
     cpu.x[instr.operands.rd as usize] = v;
 });
 test_sequence!(LHU, FormatLoad, |instr: &LHU, cpu| {
-    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 2, false);
+    let v = bytes_load(cpu, instr.operands.rs1, instr.operands.imm, 2, false);
     cpu.x[instr.operands.rd as usize] = v;
 });
 test_sequence!(LW, FormatLoad, |instr: &LW, cpu| {
-    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 4, true);
+    let v = bytes_load(cpu, instr.operands.rs1, instr.operands.imm, 4, true);
     cpu.x[instr.operands.rd as usize] = v;
 });
 test_sequence!(LWU, FormatLoad, |instr: &LWU, cpu| {
-    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 4, false);
+    let v = bytes_load(cpu, instr.operands.rs1, instr.operands.imm, 4, false);
+    cpu.x[instr.operands.rd as usize] = v;
+});
+test_sequence!(LD, FormatLoad, |instr: &LD, cpu| {
+    let v = bytes_load(cpu, instr.operands.rs1, instr.operands.imm, 8, true);
     cpu.x[instr.operands.rd as usize] = v;
 });
 test_sequence!(
@@ -1147,11 +1331,15 @@ test_sequence!(SB, FormatS, |instr: &SB, cpu| {
 });
 test_sequence!(SH, FormatS, |instr: &SH, cpu| {
     let data = cpu.x[instr.operands.rs2 as usize].clone();
-    lane_store(cpu, instr.operands.rs1, data, instr.operands.imm, 2);
+    bytes_store(cpu, instr.operands.rs1, data, instr.operands.imm, 2);
 });
 test_sequence!(SW, FormatS, |instr: &SW, cpu| {
     let data = cpu.x[instr.operands.rs2 as usize].clone();
-    lane_store(cpu, instr.operands.rs1, data, instr.operands.imm, 4);
+    bytes_store(cpu, instr.operands.rs1, data, instr.operands.imm, 4);
+});
+test_sequence!(SD, FormatS, |instr: &SD, cpu| {
+    let data = cpu.x[instr.operands.rs2 as usize].clone();
+    bytes_store(cpu, instr.operands.rs1, data, instr.operands.imm, 8);
 });
 
 /// The word AMO semantics: the word lane at `rs1` receives the low word of
@@ -1226,6 +1414,7 @@ fn test_LB_negative_imm_correctness() {
         is_compressed: false,
         is_first_in_sequence: false,
         virtual_sequence_remaining: None,
+        misaligned_variant: false,
     };
     test_correctness(
         |instr: &LB, cpu| {
@@ -1249,11 +1438,12 @@ fn test_SH_negative_imm_correctness() {
         is_compressed: false,
         is_first_in_sequence: false,
         virtual_sequence_remaining: None,
+        misaligned_variant: false,
     };
     test_correctness(
         |instr: &SH, cpu| {
             let data = cpu.x[instr.operands.rs2 as usize].clone();
-            lane_store(cpu, instr.operands.rs1, data, instr.operands.imm, 2);
+            bytes_store(cpu, instr.operands.rs1, data, instr.operands.imm, 2);
         },
         &instr,
     );

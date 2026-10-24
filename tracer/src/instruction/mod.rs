@@ -128,6 +128,7 @@ use virtual_assert_lte::VirtualAssertLTE;
 use virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
+use virtual_funnel_high::VirtualFunnelHigh;
 use virtual_load_b::VirtualLoadB;
 use virtual_load_h::VirtualLoadH;
 use virtual_load_w::VirtualLoadW;
@@ -163,6 +164,7 @@ use virtual_store_b::VirtualStoreB;
 use virtual_store_h::VirtualStoreH;
 use virtual_store_w::VirtualStoreW;
 use virtual_window_mask_b::VirtualWindowMaskB;
+use virtual_window_mask_d::VirtualWindowMaskD;
 use virtual_window_mask_h::VirtualWindowMaskH;
 use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
@@ -181,6 +183,7 @@ use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, NormalizedOperands};
+use jolt_program::expand::{DualAccess, SourceExpansion};
 pub use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{
     JoltInstructionKind, RamAccess, RamRead, RamWrite, SourceInlineKey, SourceInstructionKind,
@@ -196,6 +199,62 @@ pub mod registers;
 
 pub use crate::utils::instruction_macros;
 
+/// A source instruction's final rows as tracer instructions.
+#[derive(Clone, Debug)]
+pub enum InlineExpansion {
+    Single(Box<[Instruction]>),
+    /// See [`jolt_program::expand::DualExpansion`].
+    Dual {
+        access: DualAccess,
+        aligned: Box<[Instruction]>,
+        misaligned: Box<[Instruction]>,
+    },
+}
+
+impl InlineExpansion {
+    /// The rows an execution from register file `x` runs. A dual expansion's
+    /// sequence is chosen before any of its rows overwrites the base register.
+    #[inline]
+    pub fn select(&self, x: &[i64]) -> &[Instruction] {
+        match self {
+            Self::Single(rows) => rows,
+            Self::Dual {
+                access,
+                aligned,
+                misaligned,
+            } => {
+                if runs_misaligned_sequence(*access, x) {
+                    misaligned
+                } else {
+                    aligned
+                }
+            }
+        }
+    }
+}
+
+/// Whether an execution of a dual load or store from register file `x` runs
+/// its misaligned sequence.
+#[inline]
+fn runs_misaligned_sequence(access: DualAccess, x: &[i64]) -> bool {
+    access.is_misaligned(x[access.base as usize] as u64)
+        && !floor_access::aligned_sequences_forced()
+}
+
+impl Instruction {
+    /// Traces one row of an expanded sequence as itself. Unlike a top-level
+    /// `LD`/`SD`, an `LD`/`SD` row of an atomic or inline sequence never takes
+    /// a misaligned expansion, so a misaligned address still aborts it.
+    #[inline]
+    fn trace_row(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        match self {
+            Instruction::LD(instr) => trace_final_row(instr, cpu, trace),
+            Instruction::SD(instr) => trace_final_row(instr, cpu, trace),
+            _ => self.trace_raw(cpu, trace),
+        }
+    }
+}
+
 /// Trace a multi-row instruction through its per-PC cached inline sequence.
 pub(crate) fn trace_inline_sequence(
     source: &Instruction,
@@ -205,7 +264,7 @@ pub(crate) fn trace_inline_sequence(
     let mut trace = trace;
     cpu.with_cached_inline_sequence(source, |cpu, rows| {
         for instr in rows {
-            instr.trace(cpu, trace.as_deref_mut());
+            instr.trace_row(cpu, trace.as_deref_mut());
         }
     });
 }
@@ -231,7 +290,7 @@ pub(crate) fn trace_inline_sequence_with_advice(
                 advice.advice = *value;
                 filled += 1;
             }
-            instr.trace(cpu, trace.as_deref_mut());
+            instr.trace_row(cpu, trace.as_deref_mut());
         }
         if filled != 0 && filled != values.len() {
             panic!("inline sequence did not contain enough virtual advice instructions");
@@ -343,6 +402,7 @@ pub mod virtual_assert_lte;
 pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
+pub mod virtual_funnel_high;
 pub mod virtual_host_io;
 pub mod virtual_load_b;
 pub mod virtual_load_h;
@@ -379,6 +439,7 @@ pub mod virtual_store_b;
 pub mod virtual_store_h;
 pub mod virtual_store_w;
 pub mod virtual_window_mask_b;
+pub mod virtual_window_mask_d;
 pub mod virtual_window_mask_h;
 pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
@@ -440,27 +501,40 @@ where
     RISCVCycle<Self>: Into<Cycle>,
 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let mut ram_access = Self::RamAccess::default();
-        match trace {
-            Some(trace_vec) => {
-                let mut register_state = Self::RegisterState::capture_pre(self, cpu);
-                self.execute(cpu, &mut ram_access);
-                register_state.capture_post(self, cpu);
-                trace_vec.push(
-                    RISCVCycle {
-                        instruction: *self,
-                        register_state,
-                        ram_access,
-                    }
-                    .into(),
-                );
-            }
-            None => {
-                self.execute(cpu, &mut ram_access);
-                // Execute and trace modes walk the same expanded rows; only
-                // register observation is skipped when no trace is requested.
-                cpu.trace_len += 1;
-            }
+        trace_final_row(self, cpu, trace);
+    }
+}
+
+/// Executes `instruction` as one final row and records it when `trace` is
+/// given: the default [`RISCVTrace::trace`].
+#[inline]
+fn trace_final_row<I: RISCVInstruction>(
+    instruction: &I,
+    cpu: &mut Cpu,
+    trace: Option<&mut Vec<Cycle>>,
+) where
+    RISCVCycle<I>: Into<Cycle>,
+{
+    let mut ram_access = I::RamAccess::default();
+    match trace {
+        Some(trace_vec) => {
+            let mut register_state = I::RegisterState::capture_pre(instruction, cpu);
+            instruction.execute(cpu, &mut ram_access);
+            register_state.capture_post(instruction, cpu);
+            trace_vec.push(
+                RISCVCycle {
+                    instruction: *instruction,
+                    register_state,
+                    ram_access,
+                }
+                .into(),
+            );
+        }
+        None => {
+            instruction.execute(cpu, &mut ram_access);
+            // Execute and trace modes walk the same expanded rows; only
+            // register observation is skipped when no trace is requested.
+            cpu.trace_len += 1;
         }
     }
 }
@@ -643,7 +717,7 @@ macro_rules! define_rv64imac_enums {
                     let mut trace = trace;
                     cpu.with_cached_inline_sequence(self, |cpu, rows| {
                         for instr in rows {
-                            instr.trace_raw(cpu, trace.as_deref_mut());
+                            instr.trace_row(cpu, trace.as_deref_mut());
                         }
                     });
                     return;
@@ -686,7 +760,7 @@ macro_rules! define_rv64imac_enums {
                 if self.takes_rd0_expansion() {
                     cpu.with_cached_inline_sequence(self, |cpu, rows| {
                         for instr in rows {
-                            instr.trace_raw(cpu, None);
+                            instr.trace_row(cpu, None);
                         }
                     });
                     return;
@@ -723,6 +797,7 @@ macro_rules! define_rv64imac_enums {
                                 virtual_sequence_remaining: instr.virtual_sequence_remaining,
                                 is_first_in_sequence: instr.is_first_in_sequence,
                                 is_compressed: instr.is_compressed,
+                                misaligned_variant: instr.misaligned_variant,
                             })
                         },
                     )*
@@ -818,27 +893,38 @@ macro_rules! define_rv64imac_enums {
                 is_field_inline_instruction(self)
             }
 
-            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+            pub fn inline_expansion(&self, allocator: &VirtualRegisterAllocator) -> InlineExpansion {
                 if let Instruction::INLINE(inline) = self {
-                    return inline.inline_sequence(allocator);
+                    return InlineExpansion::Single(inline.inline_sequence(allocator).into());
                 }
                 if self.is_field_inline() {
-                    return vec![self.clone()];
+                    return InlineExpansion::Single(Box::new([*self]));
                 }
                 let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
-                jolt_program::expand::expand_instruction(
+                let rows = |rows: Vec<jolt_riscv::JoltInstruction>| -> Box<[Instruction]> {
+                    rows.into_iter()
+                        .map(JoltInstructionRow::from)
+                        .map(|instruction| {
+                            Instruction::try_from_jolt_instruction_row(instruction).expect(
+                                "jolt-program expansion produced an instruction unknown to tracer",
+                            )
+                        })
+                        .collect()
+                };
+                match jolt_program::expand::expand_instruction(
                     &self.source_instruction(),
                     &mut expansion_allocator,
                     RV64IMAC_JOLT,
                 )
                 .expect("jolt-program bytecode expansion failed")
-                .into_iter()
-                .map(JoltInstructionRow::from)
-                .map(|instruction| {
-                    Instruction::try_from_jolt_instruction_row(instruction)
-                        .expect("jolt-program expansion produced an instruction unknown to tracer")
-                })
-                .collect()
+                {
+                    SourceExpansion::Single(sequence) => InlineExpansion::Single(rows(sequence)),
+                    SourceExpansion::Dual(dual) => InlineExpansion::Dual {
+                        access: dual.access,
+                        aligned: rows(dual.aligned),
+                        misaligned: rows(dual.misaligned),
+                    },
+                }
             }
 
             pub fn try_from_jolt_instruction_row(instruction: JoltInstructionRow) -> Result<Self, &'static str> {
@@ -999,6 +1085,7 @@ macro_rules! impl_final_jolt_row_data {
                         is_compressed: instr.is_compressed,
                         virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         is_first_in_sequence: instr.is_first_in_sequence,
+                        misaligned_variant: instr.misaligned_variant,
                     }
                 }
             }
@@ -1016,6 +1103,7 @@ macro_rules! impl_final_jolt_row_data {
                     virtual_sequence_remaining: row.virtual_sequence_remaining,
                     is_first_in_sequence: row.is_first_in_sequence,
                     is_compressed: row.is_compressed,
+                    misaligned_variant: row.misaligned_variant,
                 }
             }
         }
@@ -2253,6 +2341,7 @@ mod tests {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         };
         let mut trace = Vec::new();
         Instruction::from(instruction).trace(&mut cpu, Some(&mut trace));
@@ -2944,7 +3033,9 @@ mod tests {
         // DIV has no final Jolt row; it must be expanded
         assert!(div.try_jolt_instruction_row().is_err());
 
-        let sequence = div.inline_sequence(&cpu.vr_allocator);
+        let InlineExpansion::Single(sequence) = div.inline_expansion(&cpu.vr_allocator) else {
+            panic!("DIV has a single expansion");
+        };
         assert!(
             sequence.len() > 1,
             "DIV must expand to multiple instructions"

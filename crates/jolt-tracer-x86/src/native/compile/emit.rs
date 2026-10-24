@@ -17,8 +17,8 @@
 //!   (`JoltInstructionRow::self_jump_repeats`).
 
 use common::constants::STACK_CANARY_SIZE;
-use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynasmApi, DynasmLabelApi};
-use jolt_program::execution::TraceError;
+use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
+use jolt_program::{execution::TraceError, expand::DualAccess};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 
 use super::super::helpers;
@@ -188,6 +188,28 @@ impl Emitter {
             ; jmp ->exit
             ; go:
         );
+    }
+
+    /// Branches to `misaligned` when a dual load or store's effective address
+    /// is not a multiple of its width, mirroring `DualAccess::is_misaligned`;
+    /// the aligned sequence follows inline.
+    pub(super) fn emit_dual_dispatch(&mut self, access: DualAccess, misaligned: DynamicLabel) {
+        self.load_reg(RAX, Some(access.base));
+        self.load_imm(RCX, access.offset as i64);
+        let mask = (access.width.bytes() - 1) as i8;
+        dynasm!(self.ops
+            ; .arch x64
+            ; add rax, rcx
+            ; test al, mask
+            ; jnz =>misaligned
+        );
+    }
+
+    /// Ends an out-of-line sequence by jumping to the instruction after
+    /// `row`'s, where the inline sequence would fall through.
+    pub(super) fn emit_jump_past(&mut self, row: &JoltInstructionRow) {
+        let next = self.label_for(link_value(row) as u64);
+        dynasm!(self.ops ; .arch x64 ; jmp =>next);
     }
 
     /// Falling off the end of the compiled program is a bad jump.
@@ -929,6 +951,37 @@ impl DynasmEmitter {
                     ; neg ecx
                     ; shl rax, cl
                     ; sar rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::WindowMaskD(_) => {
+                e.load_reg(RCX, row.operands.rs1);
+                e.load_imm(RAX, row.operands.imm as i64);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; add rcx, rax
+                    ; and ecx, 7
+                    ; shl ecx, 3
+                    ; mov rax, -1
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::FunnelHigh(_) => {
+                // rd = the bits of x[rs1] at zeros of x[rs2], packed into the
+                // top z = popcount(!x[rs2]) bits: pext by the complement, then
+                // shift left by 64 - z. cl = -z ≡ 64-z (mod 64) as in
+                // PextSigned, so z = 0 shifts the zero pext by 0 and z = 64 is
+                // the identity. Requires BMI2/POPCNT (checked once).
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_reg(RCX, row.operands.rs2);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; not rcx
+                    ; pext rax, rax, rcx
+                    ; popcnt rcx, rcx
+                    ; neg ecx
+                    ; shl rax, cl
                 );
                 e.store_rd(RAX, row.operands.rd);
             }

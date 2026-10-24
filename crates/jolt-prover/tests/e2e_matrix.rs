@@ -81,7 +81,8 @@ mod matrix {
 
     /// Byte-array model of the memory-ops guest: RISC-V load and store
     /// semantics over its 24-byte scratch, folding every loaded value into the
-    /// hash in program order.
+    /// hash in program order. The guest runs its accesses twice, by immediate
+    /// and then from one PC per kind with a walking base.
     #[cfg(not(feature = "field-inline"))]
     fn memory_ops_reference() -> (u64, [u64; 3]) {
         fn load(scratch: &[u8; 24], offset: i64, width: usize, signed: bool) -> u64 {
@@ -95,27 +96,29 @@ mod matrix {
         }
         let mut scratch: [u8; 24] = std::array::from_fn(|i| 0x80 | (i as u8).wrapping_mul(37));
         let mut hash = 0u64;
-        for (width, signed) in [
-            (1, true),
-            (1, false),
-            (2, true),
-            (2, false),
-            (4, true),
-            (4, false),
-            (8, true),
-        ] {
-            for offset in (-8..16).step_by(width) {
-                hash = hash.rotate_left(7) ^ load(&scratch, offset, width, signed);
-            }
-        }
         let mut value = 0u64;
-        for width in [1, 2, 4, 8] {
-            for offset in (-8i64..16).step_by(width) {
-                value = value.rotate_left(13) ^ 0x9e37_79b9_7f4a_7c15;
-                let start = (offset + 8) as usize;
-                scratch[start..start + width].copy_from_slice(&value.to_le_bytes()[..width]);
-                for read_back in [-8, 0, 8] {
-                    hash = hash.rotate_left(7) ^ load(&scratch, read_back, 8, true);
+        for _ in 0..2 {
+            for (width, signed) in [
+                (1, true),
+                (1, false),
+                (2, true),
+                (2, false),
+                (4, true),
+                (4, false),
+                (8, true),
+            ] {
+                for offset in -8..=16 - width as i64 {
+                    hash = hash.rotate_left(7) ^ load(&scratch, offset, width, signed);
+                }
+            }
+            for width in [1, 2, 4, 8] {
+                for offset in -8..=16 - width as i64 {
+                    value = value.rotate_left(13) ^ 0x9e37_79b9_7f4a_7c15;
+                    let start = (offset + 8) as usize;
+                    scratch[start..start + width].copy_from_slice(&value.to_le_bytes()[..width]);
+                    for read_back in [-8, 0, 8] {
+                        hash = hash.rotate_left(7) ^ load(&scratch, read_back, 8, true);
+                    }
                 }
             }
         }

@@ -26,11 +26,13 @@ mod operands;
 mod shifts;
 #[cfg(test)]
 mod tests;
+mod variant;
 
 pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
 pub use grammar::{is_source_only, ExpandedInstructionSequence};
 pub use inline::{InlineExpansionBuilder, InlineOperands, InlineRegister, Value};
+pub use variant::{DualAccess, DualExpansion, DualWidth, SourceExpansion};
 
 #[doc(hidden)]
 pub mod asm_support {
@@ -49,7 +51,7 @@ use jolt_riscv::{
     JoltInstruction, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
     NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow,
 };
-use materialize::ExpansionState;
+use materialize::{ExpansionState, TopLevelRows};
 use memory::*;
 use operands::*;
 use shifts::*;
@@ -97,7 +99,7 @@ pub fn expand_instruction(
     instruction: &SourceInstruction,
     allocator: &mut ExpansionAllocator,
     profile: JoltInstructionProfile,
-) -> Result<Vec<JoltInstruction>, ExpansionError> {
+) -> Result<SourceExpansion, ExpansionError> {
     expand_instruction_with_provider(
         instruction,
         allocator,
@@ -119,7 +121,7 @@ pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     allocator: &mut ExpansionAllocator,
     inline_provider: &mut P,
     profile: JoltInstructionProfile,
-) -> Result<Vec<JoltInstruction>, ExpansionError> {
+) -> Result<SourceExpansion, ExpansionError> {
     expand_source_instruction_with_provider(instruction, allocator, inline_provider, profile)
 }
 
@@ -128,7 +130,7 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     allocator: &mut ExpansionAllocator,
     inline_provider: &mut P,
     profile: JoltInstructionProfile,
-) -> Result<Vec<JoltInstruction>, ExpansionError> {
+) -> Result<SourceExpansion, ExpansionError> {
     let rewritten_source;
     let mut allocated_rd_zero_register = None;
     let instruction = if instruction.row().operands.rd == Some(0)
@@ -142,7 +144,8 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
             rewritten_source = SourceInstruction::new(instruction.kind(), row);
             &rewritten_source
         } else {
-            return final_rows_to_instructions(vec![noop_for(*instruction.row())], profile);
+            return final_rows_to_instructions(vec![noop_for(*instruction.row())], profile)
+                .map(SourceExpansion::Single);
         }
     } else {
         instruction
@@ -153,15 +156,29 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         let result = inline_provider
             .expand_inline(instruction, profile)
             .and_then(|sequence| state.materialize_inline(sequence))
-            .and_then(|rows| final_rows_to_instructions(rows, profile));
+            .and_then(|rows| final_rows_to_instructions(rows, profile))
+            .map(SourceExpansion::Single);
         *allocator = state.into_allocator();
         result
     } else {
         let owned_allocator = std::mem::take(allocator);
         let mut state = ExpansionState::new(owned_allocator, profile);
         let result = state
-            .expand_source_recursive(instruction)
-            .and_then(|rows| final_rows_to_instructions(rows, profile));
+            .expand_source_top_level(instruction)
+            .and_then(|rows| match rows {
+                TopLevelRows::Single(rows) => {
+                    final_rows_to_instructions(rows, profile).map(SourceExpansion::Single)
+                }
+                TopLevelRows::Dual {
+                    access,
+                    aligned,
+                    misaligned,
+                } => Ok(SourceExpansion::Dual(DualExpansion {
+                    access,
+                    aligned: final_rows_to_instructions(aligned, profile)?,
+                    misaligned: final_rows_to_instructions(misaligned, profile)?,
+                })),
+            });
         *allocator = state.into_allocator();
         result
     };
@@ -296,12 +313,15 @@ pub fn expand_program_with_provider<P: InlineExpansionProvider + ?Sized>(
     let mut allocator = ExpansionAllocator::new();
     let mut expanded = Vec::new();
     for instruction in instructions {
-        expanded.extend(expand_source_instruction_with_provider(
-            instruction,
-            &mut allocator,
-            inline_provider,
-            profile,
-        )?);
+        expanded.extend(
+            expand_source_instruction_with_provider(
+                instruction,
+                &mut allocator,
+                inline_provider,
+                profile,
+            )?
+            .into_bytecode(),
+        );
     }
     Ok(expanded)
 }
