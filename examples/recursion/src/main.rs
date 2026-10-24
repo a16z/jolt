@@ -900,7 +900,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("l3-compression-weights");
     #[cfg(feature = "word-transcript")]
     program.add_guest_feature("word-transcript");
-    #[cfg(feature = "word-decode")]
+    #[cfg(all(feature = "akita", feature = "word-decode"))]
     program.add_guest_feature("word-decode");
     #[cfg(feature = "ont-static-base")]
     program.add_guest_feature("ont-static-base");

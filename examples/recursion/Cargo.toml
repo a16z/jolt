@@ -24,15 +24,16 @@ akita = [
 # (and the host's Akita) evaluate the compression relation weights by factor;
 # same field values. L2: the inner Akita proofs carry the terminal A-row
 # quotient (protocol identifier v7-l2tq1) and the guest checks it at two
-# points instead of the exact product. Turn both off with
-# --no-default-features.
-default = ["l3-compression-weights", "l2-terminal-quotient"]
+# points instead of the exact product. Word decoding: the guest decodes
+# fixed-wire field elements by word with the same canonicality checks. Turn
+# all three off with --no-default-features.
+default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode"]
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
+word-decode = ["jolt-akita?/word-decode"]
 
-# Each arm is selected independently and forwarded to the guest.
+# Each remaining arm is selected independently and forwarded to the guest.
 word-transcript = ["akita", "jolt-akita/word-transcript"]
-word-decode = ["akita", "jolt-akita/word-decode"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
 
 [dependencies]
