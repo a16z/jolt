@@ -91,7 +91,10 @@ fn owned_group_opens_through_native_batching_and_verifies() {
         .collect();
     let statement = native_statement(commitment, &point, evaluations.iter().copied());
 
-    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-owned-one-hot", b"");
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-owned-one-hot"),
+        b"",
+    );
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
@@ -101,7 +104,10 @@ fn owned_group_opens_through_native_batching_and_verifies() {
     )
     .expect("owned one-hot group should prove");
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-owned-one-hot", b"");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-owned-one-hot"),
+        b"",
+    );
     <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &statement,
@@ -116,7 +122,10 @@ fn owned_group_opens_through_native_batching_and_verifies() {
 
     let mut tampered = statement.clone();
     tampered[0].evaluation.value += f(1);
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-owned-one-hot", b"");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-owned-one-hot"),
+        b"",
+    );
     assert!(
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
@@ -128,7 +137,10 @@ fn owned_group_opens_through_native_batching_and_verifies() {
         "tampered evaluation must reject"
     );
 
-    let mut transcript = prover_transcript::<Blake2b512>(b"akita-owned-one-hot", b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-owned-one-hot"),
+        b"",
+    );
     let err = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement[..1].to_vec(),

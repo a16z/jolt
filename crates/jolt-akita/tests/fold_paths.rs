@@ -30,7 +30,8 @@ struct ProofFixture {
 
 impl ProofFixture {
     fn verify(&self, proof: &AkitaBatchProof) -> Result<(), OpeningsError> {
-        let mut transcript = prover_transcript::<Blake2b512>(self.label, b"");
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(self.label), b"");
         AkitaScheme::verify(
             &self.commitment,
             &self.point,
@@ -50,7 +51,8 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
     let (commitment, hint) =
         AkitaScheme::commit(&poly, &prover_setup).expect("dense commit should succeed");
 
-    let mut prover_state = prover_transcript::<Blake2b512>(label, b"");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
     let proof = AkitaScheme::open(
         &poly,
         &point,
@@ -61,7 +63,8 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
     )
     .expect("fold-schedule proof should be produced");
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(label, b"");
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
     AkitaScheme::verify(
         &commitment,
         &point,
@@ -107,7 +110,8 @@ fn deep_recursive_fold_schedule_roundtrips() {
 
     let mut tampered_eval = fixture.eval;
     tampered_eval += f(1);
-    let mut transcript = prover_transcript::<Blake2b512>(fixture.label, b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(fixture.label), b"");
     assert!(
         AkitaScheme::verify(
             &fixture.commitment,

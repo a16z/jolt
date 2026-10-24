@@ -284,7 +284,7 @@ fn dense_geometry_survives_verifier_transport() {
         evaluation,
         &prover,
         Some(hint),
-        &mut prover_transcript::<Blake2b512>(DOMAIN, b""),
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap();
     let mut encoded = serde_json::to_value(&verifier).unwrap();
@@ -297,7 +297,7 @@ fn dense_geometry_survives_verifier_transport() {
         evaluation,
         &proof,
         &transported,
-        &mut prover_transcript::<Blake2b512>(DOMAIN, b""),
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap();
     let mut tampered = encoded.clone();
@@ -315,7 +315,7 @@ fn dense_geometry_survives_verifier_transport() {
         evaluation,
         &proof,
         &tampered,
-        &mut prover_transcript::<Blake2b512>(DOMAIN, b""),
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap_err();
     assert!(
@@ -331,7 +331,7 @@ fn dense_geometry_survives_verifier_transport() {
         evaluation,
         &proof,
         &wrong,
-        &mut prover_transcript::<Blake2b512>(DOMAIN, b"")
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"")
     )
     .is_err());
 }

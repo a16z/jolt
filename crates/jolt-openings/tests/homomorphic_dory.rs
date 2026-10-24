@@ -26,7 +26,8 @@ fn dory_homomorphic_batch_roundtrip_clear_many_polynomials() {
     let verifier_setup = DoryScheme::setup_verifier(point.len());
     let (claims, hints) = clear_claims::<DoryScheme>(&polynomials, &point, &prover_setup);
 
-    let mut prover_state = prover_transcript::<Blake2b512>(b"dory-batch", b"");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"dory-batch"), b"");
     let proof = <HomomorphicDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         claims.clone(),
@@ -36,7 +37,8 @@ fn dory_homomorphic_batch_roundtrip_clear_many_polynomials() {
     )
     .expect("Dory homomorphic batch proof should be produced");
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"dory-batch", b"");
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"dory-batch"), b"");
     <HomomorphicDoryBatch as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &claims,
@@ -58,7 +60,8 @@ fn dory_homomorphic_batch_rejects_tampered_value() {
     let verifier_setup = DoryScheme::setup_verifier(point.len());
     let (claims, hints) = clear_claims::<DoryScheme>(&polynomials, &point, &prover_setup);
 
-    let mut prover_state = prover_transcript::<Blake2b512>(b"dory-batch-tamper", b"");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"dory-batch-tamper"), b"");
     let proof = <HomomorphicDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         claims.clone(),
@@ -71,7 +74,8 @@ fn dory_homomorphic_batch_rejects_tampered_value() {
     let mut tampered = claims;
     tampered[1].evaluation.value += fr(1);
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"dory-batch-tamper", b"");
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"dory-batch-tamper"), b"");
     let result = <HomomorphicDoryBatch as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &tampered,
@@ -90,7 +94,10 @@ fn dory_homomorphic_batch_rejects_wrong_witness_dimension() {
     let mut polynomial_sources = sources(&polynomials);
     polynomial_sources[0] = &wrong_witness;
 
-    let mut transcript = prover_transcript::<Blake2b512>(b"dory-batch-witness-dim", b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"dory-batch-witness-dim"),
+        b"",
+    );
     let result = <HomomorphicDoryBatch as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         claims,
@@ -117,7 +124,8 @@ fn dory_homomorphic_zk_batch_roundtrip() {
         evaluations.push(polynomial.evaluate(&point));
     }
 
-    let mut prover_state = prover_transcript::<Blake2b512>(b"dory-batch-zk", b"");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"dory-batch-zk"), b"");
     let opening = <HomomorphicDoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
         &prover_setup,
         point.clone(),
@@ -129,7 +137,8 @@ fn dory_homomorphic_zk_batch_roundtrip() {
     )
     .expect("Dory ZK homomorphic batch proof should be produced");
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"dory-batch-zk", b"");
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"dory-batch-zk"), b"");
     let verifier_hiding = <HomomorphicDoryBatch as ZkBatchOpeningScheme>::verify_batch_zk(
         &verifier_setup,
         point,
@@ -168,7 +177,8 @@ fn zk_batch_fixture(seed: u64, label: &'static [u8]) -> ZkBatchFixture {
         evaluations.push(polynomial.evaluate(&point));
     }
 
-    let mut transcript = prover_transcript::<Blake2b512>(label, b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
     let opening = <HomomorphicDoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
         &prover_setup,
         point.clone(),
@@ -195,7 +205,8 @@ fn verify_zk_fixture(
     commitments: Vec<DoryCommitment>,
     proof: &DoryProof,
 ) -> Result<<DoryScheme as ZkOpeningScheme>::HidingCommitment, OpeningsError> {
-    let mut transcript = prover_transcript::<Blake2b512>(label, b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
     <HomomorphicDoryBatch as ZkBatchOpeningScheme>::verify_batch_zk(
         &fixture.verifier_setup,
         point,

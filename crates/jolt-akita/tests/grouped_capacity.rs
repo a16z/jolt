@@ -107,7 +107,10 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     .expect("trace group should commit against the larger advice object");
     let main = GroupOpeningClaim::new(trace_commitment, trace_point, vec![trace_evaluation]);
 
-    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-grouped-capacity"),
+        b"",
+    );
     let proof = AkitaScheme::prove_batch(
         &prover_setup,
         vec![(advice_claim.clone(), advice_hint)],
@@ -123,8 +126,10 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     .expect("verifier setup should deserialize");
     let prover_tail = prover_state.verifier_message::<[u8; 32]>();
     for setup in [&verifier_setup, &transported] {
-        let mut verifier_transcript =
-            prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-grouped-capacity"),
+            b"",
+        );
         AkitaScheme::verify_batch(
             setup,
             std::slice::from_ref(&advice_claim),
@@ -139,7 +144,10 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         );
     }
 
-    let mut other_context = prover_transcript::<Blake2b512>(b"akita-grouped-capacity", b"");
+    let mut other_context = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-grouped-capacity"),
+        b"",
+    );
     other_context.append_bytes(b"different preceding Jolt messages");
     assert!(AkitaScheme::verify_batch(
         &transported,

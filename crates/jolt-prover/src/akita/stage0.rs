@@ -103,11 +103,12 @@ where
         config.trace_polynomial_order,
         config.one_hot_config,
         trusted_advice.is_some(),
+        untrusted_advice_present,
         false,
     )?;
 
     let mut transcript = T::init(
-        JOLT_SESSION,
+        &JOLT_SESSION,
         &JoltStatement {
             checked: &checked,
             config: ProofTranscriptConfig {

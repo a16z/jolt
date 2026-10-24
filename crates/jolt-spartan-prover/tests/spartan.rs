@@ -41,7 +41,7 @@ fn witness() -> [Fr; 3] {
     [3, 9, 27].map(Fr::from_u64)
 }
 fn transcript() -> ProverState<Blake2b512> {
-    prover_transcript::<Blake2b512>(b"spartan-test", b"")
+    prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"spartan-test"), b"")
 }
 
 fn hyperkzg_setup() -> (

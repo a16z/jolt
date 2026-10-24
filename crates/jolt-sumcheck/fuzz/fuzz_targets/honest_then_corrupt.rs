@@ -68,7 +68,10 @@ fuzz_target!(|data: &[u8]| {
     let two_inverse = Fr::from_u64(2).inverse().expect("2 is invertible");
     let mut a = evals_a.clone();
     let mut b = evals_b.clone();
-    let mut transcript = prover_transcript::<Blake2b512>(b"jolt-sumcheck-corrupt-fuzz", b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-corrupt-fuzz"),
+        b"",
+    );
     let mut rounds: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
     let mut pow_nonces = Vec::with_capacity(num_vars);
     for _ in 0..num_vars {
@@ -138,8 +141,10 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let claim = SumcheckClaim::new(num_vars, 2, claimed_sum);
-    let mut verifier_transcript =
-        prover_transcript::<Blake2b512>(b"jolt-sumcheck-corrupt-fuzz", b"");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-corrupt-fuzz"),
+        b"",
+    );
     let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &rounds,

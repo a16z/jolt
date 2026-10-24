@@ -506,7 +506,8 @@ impl BucketTracker {
 
     fn record_append<A: Encoding>(&mut self, name: impl Into<String>, value: &A) {
         let name = name.into();
-        let mut transcript = prover_transcript::<Keccak>(b"jolt-zk-stat", b"");
+        let mut transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"jolt-zk-stat"), b"");
         transcript.append_bytes(name.as_bytes());
         transcript.append(value);
         self.record_projected(
@@ -562,7 +563,8 @@ impl BucketTracker {
     }
 
     fn record_bytes(&mut self, name: String, bytes: &[u8]) {
-        let mut transcript = prover_transcript::<Keccak>(b"jolt-zk-stat", b"");
+        let mut transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"jolt-zk-stat"), b"");
         transcript.append_bytes(name.as_bytes());
         transcript.append_bytes(bytes);
         self.record_projected(

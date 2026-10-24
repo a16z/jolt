@@ -90,7 +90,10 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
 
     let point: Vec<_> = (0..ONE_HOT_VARS).map(|index| f(index as u64 + 5)).collect();
     let eval = MultilinearPoly::evaluate(&one_hot, &point);
-    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-k16-transported", b"");
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-k16-transported"),
+        b"",
+    );
     let proof = AkitaScheme::open(
         &one_hot,
         &point,
@@ -106,7 +109,10 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
         serde_json::from_str(&json).expect("verifier setup deserializes");
     assert_eq!(transported, verifier_setup);
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-k16-transported", b"");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-k16-transported"),
+        b"",
+    );
     AkitaScheme::verify(
         &commitment,
         &point,
@@ -130,11 +136,13 @@ fn open_without_hint_recommits_deterministically() {
     let eval = poly.evaluate(&point);
     let (commitment, _) = AkitaScheme::commit(&poly, &prover_setup).expect("commit succeeds");
 
-    let mut prover_state = prover_transcript::<Blake2b512>(b"akita-no-hint", b"");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-no-hint"), b"");
     let proof = AkitaScheme::open(&poly, &point, eval, &prover_setup, None, &mut prover_state)
         .expect("hint-free opening should prove");
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-no-hint", b"");
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-no-hint"), b"");
     AkitaScheme::verify(
         &commitment,
         &point,
@@ -158,7 +166,8 @@ fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
     let eval = poly.evaluate(&point);
     let (_, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).expect("commit_zk succeeds");
 
-    let mut transcript = prover_transcript::<Blake2b512>(b"akita-hiding", b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-hiding"), b"");
     let (_, hiding, ()) = AkitaScheme::open_zk(
         &poly,
         &point,
@@ -171,7 +180,10 @@ fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
 
     // The next squeeze after binding a hiding commitment.
     let bound = |hiding: &AkitaHidingCommitment| {
-        let mut transcript = prover_transcript::<Blake2b512>(b"akita-hiding-bind", b"");
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-hiding-bind"),
+            b"",
+        );
         transcript.append(hiding);
         transcript.verifier_message::<[u8; 32]>()
     };
@@ -181,7 +193,8 @@ fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
     other_point[DENSE_VARS - 1] += f(1);
     let other_eval = poly.evaluate(&other_point);
     assert_ne!(eval, other_eval, "fixture needs distinct evaluations");
-    let mut transcript = prover_transcript::<Blake2b512>(b"akita-hiding", b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-hiding"), b"");
     let (_, other_hiding, ()) = AkitaScheme::open_zk(
         &poly,
         &other_point,

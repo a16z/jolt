@@ -157,7 +157,7 @@ where
     }
 
     let mut transcript = T::init(
-        JOLT_SESSION,
+        &JOLT_SESSION,
         &JoltStatement {
             checked: &checked,
             config: ProofTranscriptConfig {
@@ -484,9 +484,11 @@ mod field_inline_tests {
             direct_dense_commitment(&column, &setup)
         );
 
-        let mut prover_state = prover_transcript::<Keccak>(b"Jolt", b"");
+        let mut prover_state =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"Jolt"), b"");
         absorb_transcript_commitments(&commitments, None, None, &mut prover_state);
-        let mut verifier_transcript = prover_transcript::<Keccak>(b"Jolt", b"");
+        let mut verifier_transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"Jolt"), b"");
         jolt_verifier::absorb_transcript_commitments(
             &commitments,
             None,
@@ -500,7 +502,8 @@ mod field_inline_tests {
 
         let mut stripped = commitments.clone();
         stripped.field_inline = None;
-        let mut stripped_transcript = prover_transcript::<Keccak>(b"Jolt", b"");
+        let mut stripped_transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"Jolt"), b"");
         absorb_transcript_commitments(&stripped, None, None, &mut stripped_transcript);
         assert_ne!(
             expected,

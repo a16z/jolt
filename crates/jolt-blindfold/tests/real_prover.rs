@@ -18,7 +18,10 @@ fn prove_real(
     instance: &ProtocolBackedInstance,
     rng: &mut ChaCha20Rng,
 ) -> Result<BlindFoldProof<F, Bn254G1>, ProverError<F>> {
-    let mut transcript = prover_transcript::<Blake2b512>(PROTOCOL_BACKED_TRANSCRIPT_LABEL, b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
     append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
     prove::<F, VC, _, _>(
         &instance.setup,
@@ -38,7 +41,10 @@ fn verify_real(
     instance: &ProtocolBackedInstance,
     proof: &BlindFoldProof<F, Bn254G1>,
 ) -> Result<(), VerificationError<F>> {
-    let mut transcript = prover_transcript::<Blake2b512>(PROTOCOL_BACKED_TRANSCRIPT_LABEL, b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
     append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
     instance
         .protocol

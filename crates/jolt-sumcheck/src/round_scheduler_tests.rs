@@ -60,7 +60,8 @@ fn traversal_fixture() -> (
     let long = DenseMember::with_sum(3, sum_long, 7);
     let short = DenseMember::with_sum(1, sum_short, 13);
 
-    let mut transcript = prover_transcript::<Blake2b512>(b"traversal-seam", b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"traversal-seam"), b"");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[sum_long, sum_short], &mut transcript);
     let coeff_long: F = transcript.challenge().unwrap();

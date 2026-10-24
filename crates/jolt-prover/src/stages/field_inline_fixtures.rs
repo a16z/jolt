@@ -414,6 +414,7 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
+        untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
         precommitted: PrecommittedSchedule {

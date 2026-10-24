@@ -37,7 +37,8 @@ fn unit_hints(count: usize) -> Vec<()> {
 
 #[test]
 fn homomorphic_batch_opening_rejects_empty_claims() {
-    let mut transcript = prover_transcript::<Blake2b512>(b"batch-empty", b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"batch-empty"), b"");
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         Vec::new(),
@@ -54,7 +55,10 @@ fn homomorphic_batch_opening_rejects_mismatched_points() {
     let (mut claims, _) = clear_claims::<MockPCS>(&polynomials, &point, &());
     claims[1].evaluation.point = Point::new(vec![fr(8), fr(13), fr(21)]);
 
-    let mut transcript = prover_transcript::<Blake2b512>(b"batch-point-mismatch", b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"batch-point-mismatch"),
+        b"",
+    );
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims,
@@ -70,7 +74,8 @@ fn homomorphic_batch_opening_rejects_mismatched_witness_count() {
     let (polynomials, point) = batch_polynomials();
     let (claims, _) = clear_claims::<MockPCS>(&polynomials, &point, &());
 
-    let mut transcript = prover_transcript::<Blake2b512>(b"batch-mismatch", b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"batch-mismatch"), b"");
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims,
@@ -104,7 +109,8 @@ fn homomorphic_zk_batch_opening_rejects_witness_count_mismatch() {
     let (polynomials, point) = batch_polynomials();
     let commitments = zk_commitments(&polynomials);
 
-    let mut transcript = prover_transcript::<Blake2b512>(b"batch-zk-mismatch", b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"batch-zk-mismatch"), b"");
     let result = <HomomorphicTestBatch as ZkBatchOpeningScheme>::prove_batch_zk(
         &(),
         point.clone(),
