@@ -159,6 +159,7 @@ where
             JoltAdviceKind::Untrusted,
             &public_io.untrusted_advice,
             max_bytes,
+            None,
         )?;
         #[cfg(not(feature = "zk"))]
         let object = commit_advice::<PCS>(
