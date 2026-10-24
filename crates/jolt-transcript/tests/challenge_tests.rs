@@ -503,8 +503,11 @@ fn append_values_is_unchanged_for_whole_word_encodings() {
 
 /// An odd count of 4-byte values is padded once, at the end, to a whole word
 /// (R6): three `Prime32Offset99` values absorb as their 12 bytes and 4 zeros,
-/// so the next message starts on a word boundary. Trailing zeros alone do not
-/// change Keccak's next squeeze, so the check absorbs one more word first.
+/// so the next message starts on a word boundary. Keccak absorbs by
+/// overwriting state bytes. In this fixture the 4 padding bytes land on state
+/// bytes that are still zero and stay inside one rate block, so padding alone
+/// would leave the next squeeze unchanged here. The check therefore absorbs
+/// one more word after the padding.
 #[cfg(feature = "solinas")]
 #[test]
 fn append_values_pads_an_odd_count_of_four_byte_values() {
