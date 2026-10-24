@@ -162,7 +162,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 }
 
 /// Whiteout's committed pads.
-#[cfg(feature = "zk")]
+#[cfg(feature = "zk-prover")]
 pub type WhiteoutPads<F> =
     jolt_zk::masking::CommittedPads<F, jolt_zk::whiteout::WhiteoutPadOpening<F>>;
 

@@ -153,6 +153,18 @@ jobs:
         run: |
           cargo clippy -p jolt-akita --all-targets --features zk
           cargo clippy -p jolt-akita --all-targets --features zk-prover
+      # I6: a Whiteout verifier's normal-edge graph compiles no prover
+      # sampler (jolt-zk's `whiteout-prover`, jolt-dit, jolt-crypto's
+      # `sample`); only jolt-akita's `zk-prover` may reach them.
+      - name: Whiteout verifier graph is sampler-free
+        run: |
+          for pkg in "jolt-akita --features zk" "jolt-verifier --features akita,zk"; do
+            cargo tree -p $pkg -e features,normal > "$RUNNER_TEMP/zk-tree.txt"
+            if grep -E 'whiteout-prover|jolt-dit|feature "sample' "$RUNNER_TEMP/zk-tree.txt"; then
+              echo "::error::$pkg reaches a prover sampler"
+              exit 1
+            fi
+          done
       # The Dory arms of the guest x mode matrix and the e2e suites compile
       # only under prover-fixtures; lint both protocols like the akita pair.
       - name: cargo clippy -p jolt-prover --features prover-fixtures

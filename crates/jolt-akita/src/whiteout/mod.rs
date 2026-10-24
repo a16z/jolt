@@ -31,13 +31,16 @@ use akita_params::{
     BasisMode, CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningClaimsLayout,
     OpeningScheduleSelection, PolynomialGroupLayout, PrecommittedGroupProfiles, ScheduleLookupKey,
 };
+#[cfg(feature = "zk-prover")]
+use akita_pcs::zk::{prove_masked_prefix, ResidualOpening};
 use akita_pcs::zk::{
-    prove_masked_prefix, AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualOpening,
-    ResidualShape, ZkCommitmentConfig,
+    AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualShape, ZkCommitmentConfig,
 };
+#[cfg(feature = "zk-prover")]
+use akita_pcs::SelectedProverOpeningData;
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaError, AkitaVerifier, CommitOutput, GroupContext, HidingRandomness,
-    SelectedProverOpeningData, SourceHandle,
+    SourceHandle,
 };
 use akita_schedules::digit_commitment_min_rank;
 use akita_types::{
@@ -45,16 +48,18 @@ use akita_types::{
 };
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_crypto::lattice::{derive_public_matrix_prefix, PublicMatrixSeed};
-use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
-use jolt_zk::masking::{
-    AffineRow, CommittedPads, CommittedPadsView, PadLayout, ResidualRelation, ZkError,
-};
 #[cfg(feature = "zk-prover")]
-use jolt_zk::whiteout::{commit_lattice_pads, prove_sigma, ImageCompression};
+use jolt_transcript::ProverTranscript;
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+#[cfg(feature = "zk-prover")]
+use jolt_zk::masking::CommittedPads;
+use jolt_zk::masking::{AffineRow, CommittedPadsView, PadLayout, ResidualRelation, ZkError};
+#[cfg(feature = "zk-prover")]
+use jolt_zk::whiteout::{commit_lattice_pads, prove_sigma, ImageCompression, WhiteoutPadOpening};
 use jolt_zk::whiteout::{
     receive_lattice_pads, verify_sigma, BlockTarget, DenseSource, LatticePadCommitment,
     LatticePadPayload, MaskedOpeningShape, PadPlacement, PrecommittedShape, SigmaSetup,
-    WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS, RESPONSE_LOG_BASIS,
+    PAD_RANDOMNESS_LOG_BASIS, RESPONSE_LOG_BASIS,
 };
 #[cfg(feature = "zk-prover")]
 use rand_core::{CryptoRng, RngCore};
@@ -284,6 +289,10 @@ pub struct WhiteoutCatalog {
 
 /// The prover's half of a [`WhiteoutCatalog`].
 struct WhiteoutProver {
+    #[cfg_attr(
+        not(feature = "zk-prover"),
+        expect(dead_code, reason = "only the masked prover reads the setup")
+    )]
     setup: AkitaBackendProverSetup,
     backend: AkitaBackend,
 }
@@ -542,6 +551,7 @@ impl WhiteoutRow {
     ///
     /// [`AkitaError::FoldOverflow`] on a one-shot fold overflow (the caller
     /// reruns), and the masked prover's errors.
+    #[cfg(feature = "zk-prover")]
     pub fn prove_masked<S: Sponge>(
         &self,
         groups: Vec<ProverGroup>,
@@ -704,6 +714,7 @@ fn masked_statement(
 
 /// One group the prover opens: its commitment, the handle retaining its
 /// source, its point in Akita's order and its true evaluations.
+#[cfg(feature = "zk-prover")]
 pub struct ProverGroup {
     pub commitment: CommittedGroup<F>,
     pub handle: AkitaBackendHint,

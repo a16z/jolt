@@ -24,9 +24,14 @@ zk = [
   "akita-planner/zk",
 ]
 # Whiteout's prover half: hiding commitments, pads and the response prover
-# (jolt-zk's `whiteout-prover` sampler). jolt-prover's `zk` with `akita`
-# selects it.
-zk-prover = ["zk", "dep:rand_core", "jolt-zk/whiteout-prover"]
+# (jolt-zk's `whiteout-prover` sampler and akita-pcs's hiding sampler).
+# jolt-prover's `zk` with `akita` selects it.
+zk-prover = [
+  "zk",
+  "dep:rand_core",
+  "jolt-zk/whiteout-prover",
+  "akita-pcs/zk-prover",
+]
 
 [dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
