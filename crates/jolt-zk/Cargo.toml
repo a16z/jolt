@@ -15,8 +15,9 @@ workspace = true
 whiteout = ["jolt-algebra/solinas", "jolt-crypto/lattice"]
 # Whiteout's prover-only pieces (the zero-constant-term mask sampler, the
 # witness alphabet check, the rejection rule). A verifier that enables only
-# `whiteout` does not compile them; jolt-akita's `zk` enables them for its
-# prover half, so an Akita verifier build does (a follow-up splits it).
+# `whiteout` does not compile them; jolt-akita's `zk-prover` enables them for
+# its prover half, and its verifier-facing `zk` does not (akita-pcs's `zk`
+# still does: specs/whiteout-jolt-integration.md, W6g).
 whiteout-prover = ["dep:jolt-dit", "jolt-crypto/sample", "whiteout"]
 # Synthetic Σ-protocol statements and the statement-checking response
 # prover, for response provers' tests (Akita's W5). Test support only.

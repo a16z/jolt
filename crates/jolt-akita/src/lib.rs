@@ -60,7 +60,7 @@ pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 pub use scheme::WhiteoutPads;
 pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
-#[cfg(feature = "zk")]
+#[cfg(feature = "zk-prover")]
 pub use whiteout::WhiteoutResidual;
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw

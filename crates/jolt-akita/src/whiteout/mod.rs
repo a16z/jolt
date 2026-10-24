@@ -49,12 +49,14 @@ use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use jolt_zk::masking::{
     AffineRow, CommittedPads, CommittedPadsView, PadLayout, ResidualRelation, ZkError,
 };
+#[cfg(feature = "zk-prover")]
+use jolt_zk::whiteout::{commit_lattice_pads, prove_sigma, ImageCompression};
 use jolt_zk::whiteout::{
-    commit_lattice_pads, prove_sigma, receive_lattice_pads, verify_sigma, BlockTarget, DenseSource,
-    ImageCompression, LatticePadCommitment, LatticePadPayload, MaskedOpeningShape, PadPlacement,
-    PrecommittedShape, SigmaSetup, WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS,
-    RESPONSE_LOG_BASIS,
+    receive_lattice_pads, verify_sigma, BlockTarget, DenseSource, LatticePadCommitment,
+    LatticePadPayload, MaskedOpeningShape, PadPlacement, PrecommittedShape, SigmaSetup,
+    WhiteoutPadOpening, PAD_RANDOMNESS_LOG_BASIS, RESPONSE_LOG_BASIS,
 };
+#[cfg(feature = "zk-prover")]
 use rand_core::{CryptoRng, RngCore};
 
 use crate::adapters::{AkitaBackend, AkitaBackendHint, AkitaBackendProverSetup, AkitaField};
@@ -826,6 +828,7 @@ impl WhiteoutTail {
         Ok(prover)
     }
 
+    #[cfg(feature = "zk-prover")]
     /// Samples, commits and sends the pads of `layout` (row 2).
     ///
     /// # Errors
@@ -872,6 +875,7 @@ impl WhiteoutTail {
         })
     }
 
+    #[cfg(feature = "zk-prover")]
     /// Proves `relation` over the committed pads and the residual opening:
     /// the Σ-protocol, then the response proof (rows 7 and 8).
     ///
@@ -1115,10 +1119,11 @@ fn plan_response(num_vars: usize) -> Result<AkitaResponseProver<WhiteoutResponse
 
 mod opening;
 
+#[cfg(feature = "zk-prover")]
 pub use opening::WhiteoutResidual;
 pub(crate) use opening::{opening_shape, whiteout};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "zk-prover"))]
 #[expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,

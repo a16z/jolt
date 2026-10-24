@@ -155,6 +155,7 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
 }
 
 /// The prover's residual opening at the cut, which the Σ-protocol proves.
+#[cfg(feature = "zk-prover")]
 pub struct WhiteoutResidual {
     pub(crate) opening: ResidualOpening<F, F>,
 }
