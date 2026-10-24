@@ -1728,7 +1728,9 @@ mod tests {
     #[test]
     fn constant_suffix_cycle_rounds_match_reference() {
         for prefix in [0, 1, 15, 16, 17, 33, 63] {
-            assert_parity_prefix(6, 8, 123, None, Some(prefix));
+            for exceptional in [None].into_iter().chain(ExceptionalEq::ALL.map(Some)) {
+                assert_parity_prefix(6, 8, 123, exceptional, Some(prefix));
+            }
         }
     }
 

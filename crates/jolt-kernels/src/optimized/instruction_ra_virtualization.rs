@@ -492,7 +492,19 @@ mod tests {
     fn constant_suffix_matches_dense_rounds() {
         for prefix in [0, 1, 15, 16, 17, 31, 32, 33, 63] {
             for factors in [1, 2, 4, 8] {
-                assert_parity_case(6, 2, factors, 2, 277, true, fr(31), None, Some(prefix));
+                for exceptional in [None].into_iter().chain(ExceptionalEq::ALL.map(Some)) {
+                    assert_parity_case(
+                        6,
+                        2,
+                        factors,
+                        2,
+                        277,
+                        true,
+                        fr(31),
+                        exceptional,
+                        Some(prefix),
+                    );
+                }
             }
         }
     }

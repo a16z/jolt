@@ -20,11 +20,13 @@
 //! Pre-scaling keeps the round-loop gathers multiplication-free — one table
 //! lookup and one addition per branch — because the eq weights are folded
 //! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
-//! instead of multiplied per cycle. Only the fourth bind materializes dense
-//! vectors, at `T/16` length, and drops the index source. Peak memory falls
-//! from `N·T` field elements to the index source plus `N·T/16`. A consumer
-//! whose base tables are too large to stay cache-resident as they double
-//! materializes a bind earlier, at `T/8` (`max_width`).
+//! instead of multiplied per cycle. The fourth bind materializes the explicit
+//! prefix and drops the index source. If the source establishes a constant
+//! suffix starting at `P`, each vector holds `ceil(P/16)` elements and one
+//! implicit tail value; otherwise it holds `T/16`. Low-bit binding preserves
+//! a constant suffix and rounds its boundary upward. A consumer whose base
+//! tables are too large to stay cache-resident materializes a bind earlier,
+//! at branch width eight (`max_width`).
 //!
 //! A polynomial whose base table is too large to tensor out (a virtual RA
 //! over a wide lookup-index chunk) is served as the product of `factors`
@@ -39,6 +41,7 @@
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
 
+use super::support::bind_prefix_pairs;
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
@@ -69,7 +72,7 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
 
 /// `N` address-folded selector polynomials bound `LowToHigh`, lazily until
 /// the bind past `max_width` branches (by default the fourth) materializes
-/// dense.
+/// the explicit prefix.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -95,15 +98,10 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
         tail: Vec<F>,
         source: S,
     },
-    /// Past `max_width`: plain dense multilinears (`T/(2·max_width)` at
-    /// entry).
+    /// Sources without a constant-suffix guarantee retain the dense path.
     Dense(Vec<Polynomial<F>>),
     /// Explicit nonconstant evaluations followed by one constant per column.
-    Prefix {
-        values: Vec<Vec<F>>,
-        tail: Vec<F>,
-        domain_len: usize,
-    },
+    Prefix { values: Vec<Vec<F>>, tail: Vec<F> },
 }
 
 impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
@@ -298,7 +296,6 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                         Self::Prefix {
                             values: (0..tail.len()).map(materialize_poly).collect(),
                             tail,
-                            domain_len: source.cycles() / branches,
                         }
                     } else {
                         Self::Dense(materialize(&tables, factors, &source, width * 2))
@@ -315,28 +312,11 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 }
                 Self::Dense(polys)
             }
-            Self::Prefix {
-                mut values,
-                tail,
-                domain_len,
-            } => {
+            Self::Prefix { mut values, tail } => {
                 for (values, &tail) in values.iter_mut().zip(&tail) {
-                    let bind_pair = |pair: &[F]| {
-                        let lo = pair[0];
-                        let hi = pair.get(1).copied().unwrap_or(tail);
-                        lo + challenge * (hi - lo)
-                    };
-                    #[cfg(feature = "parallel")]
-                    let bound = values.par_chunks(2).map(bind_pair).collect();
-                    #[cfg(not(feature = "parallel"))]
-                    let bound = values.chunks(2).map(bind_pair).collect();
-                    *values = bound;
+                    bind_prefix_pairs(values, challenge, tail);
                 }
-                Self::Prefix {
-                    values,
-                    tail,
-                    domain_len: domain_len / 2,
-                }
+                Self::Prefix { values, tail }
             }
         };
     }

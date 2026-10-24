@@ -14,16 +14,20 @@ pub struct TensorEqTable<F: JoltField> {
 
 impl<F: JoltField> TensorEqTable<F> {
     pub fn new(point: &[F]) -> Self {
+        Self::new_with_scaling(point, F::one())
+    }
+
+    pub fn new_with_scaling(point: &[F], scale: F) -> Self {
         let split = point.len() / 2;
         let (out_point, in_point) = point.split_at(split);
         #[cfg(feature = "parallel")]
         let (e_out, e_in) = rayon::join(
-            || EqPolynomial::<F>::evals(out_point, None),
+            || EqPolynomial::<F>::evals(out_point, Some(scale)),
             || EqPolynomial::<F>::evals(in_point, None),
         );
         #[cfg(not(feature = "parallel"))]
         let (e_out, e_in) = (
-            EqPolynomial::<F>::evals(out_point, None),
+            EqPolynomial::<F>::evals(out_point, Some(scale)),
             EqPolynomial::<F>::evals(in_point, None),
         );
         Self {
@@ -478,16 +482,22 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// The current variable's linear factor and bound scalar are applied by
     /// the Gruen reconstruction, not included in this weight.
     pub fn suffix_weight(&self, start: usize) -> F {
-        let outer = self.e_out_current();
-        let inner = self.e_in_current();
-        assert!(start <= outer.len() * inner.len());
-        let block = start / inner.len();
-        if block == outer.len() {
-            return F::zero();
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                EqPolynomial::suffix_sum(&self.point[..self.current_index.saturating_sub(1)], start)
+            }
+            BindingOrder::HighToLow => {
+                // group_index orders outer bits before the surviving inner bits.
+                let point = &self.point[(self.current_index + 1).min(self.point.len())..];
+                let split = self.e_in_current_len().ilog2() as usize;
+                let reordered: Vec<F> = point[split..]
+                    .iter()
+                    .chain(&point[..split])
+                    .copied()
+                    .collect();
+                EqPolynomial::suffix_sum(&reordered, start)
+            }
         }
-        let offset = start % inner.len();
-        outer[block] * inner[offset..].iter().copied().sum::<F>()
-            + outer[block + 1..].iter().copied().sum::<F>() * inner.iter().copied().sum::<F>()
     }
 
     #[inline]
@@ -622,6 +632,28 @@ mod tests {
     fn random_point(len: usize, seed: u64) -> Vec<Fr> {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
         (0..len).map(|_| Fr::random(&mut rng)).collect()
+    }
+
+    #[test]
+    fn high_to_low_suffix_respects_tensor_group_order() {
+        for bits in 1..9 {
+            let point = random_point(bits, 581);
+            let mut split = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::HighToLow);
+            for round in 0..bits {
+                let weights: Vec<_> = split
+                    .e_out_current()
+                    .iter()
+                    .flat_map(|out| split.e_in_current().iter().map(move |inner| *out * *inner))
+                    .collect();
+                for start in 0..=weights.len() {
+                    assert_eq!(
+                        split.suffix_weight(start),
+                        weights[start..].iter().copied().sum::<Fr>()
+                    );
+                }
+                split.bind(Fr::from_u64(17 + round as u64));
+            }
+        }
     }
 
     #[test]
