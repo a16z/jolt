@@ -27,7 +27,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
-use jolt_transcript::{Encoding, FieldTranscript, Label, Probe, ProverInit};
+use jolt_transcript::{Encoding, FieldTranscript, Probe, ProverInit};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::stages::zk::{blindfold, inputs::BlindFoldInputs};
 use jolt_verifier::stages::{
@@ -157,7 +157,6 @@ where
         .ok_or(ProverError::Verifier(
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
-    transcript.append(&Label(b"BlindFold"));
     let proof = jolt_blindfold::prove::<F, VC, T, _>(
         vc_setup,
         &protocol,
@@ -202,7 +201,7 @@ where
         public_io,
         shell,
         trusted_advice_commitment,
-        |statement| T::init(JOLT_SESSION, statement),
+        |statement| T::init(&JOLT_SESSION, statement),
     )?;
     let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
         shell,

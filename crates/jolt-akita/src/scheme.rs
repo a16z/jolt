@@ -955,15 +955,21 @@ mod tests {
         // The next squeeze after binding `setup` under `flavor`: equal for
         // two bindings exactly when they absorbed the same bytes.
         let bound = |setup: &AkitaVerifierSetup, flavor| {
-            let mut transcript = prover_transcript::<Blake2b512>(b"akita-setup-key-test", b"");
+            let mut transcript = prover_transcript::<Blake2b512>(
+                &jolt_transcript::protocol_tag(b"akita-setup-key-test"),
+                b"",
+            );
             append_verifier_setup(&mut transcript, setup, flavor).unwrap();
             transcript.verifier_message::<[u8; 32]>()
         };
         let baseline = bound(&setup, AkitaBackendFlavor::Dense);
         assert_ne!(
             baseline,
-            prover_transcript::<Blake2b512>(b"akita-setup-key-test", b"")
-                .verifier_message::<[u8; 32]>()
+            prover_transcript::<Blake2b512>(
+                &jolt_transcript::protocol_tag(b"akita-setup-key-test"),
+                b""
+            )
+            .verifier_message::<[u8; 32]>()
         );
         assert_eq!(baseline, bound(&setup, AkitaBackendFlavor::Dense));
         assert_ne!(baseline, bound(&setup, AkitaBackendFlavor::OneHot));
@@ -1045,7 +1051,10 @@ mod tests {
                 evaluation: EvaluationClaim::new(point.clone(), polynomial.evaluate(&point)),
             })
             .collect::<Vec<_>>();
-        let mut prover_state = prover_transcript::<Blake2b512>(b"akita-one-hot-k", b"");
+        let mut prover_state = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-one-hot-k"),
+            b"",
+        );
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
@@ -1057,7 +1066,10 @@ mod tests {
             &mut prover_state,
         )
         .unwrap();
-        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-one-hot-k", b"");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-one-hot-k"),
+            b"",
+        );
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &statement,
@@ -1101,7 +1113,10 @@ mod tests {
                 // Transport drops the honest setup's primed backend caches.
                 let bytes = serde_json::to_vec(&tampered).unwrap();
                 let transported: AkitaVerifierSetup = serde_json::from_slice(&bytes).unwrap();
-                let mut transcript = prover_transcript::<Blake2b512>(b"akita-one-hot-k", b"");
+                let mut transcript = prover_transcript::<Blake2b512>(
+                    &jolt_transcript::protocol_tag(b"akita-one-hot-k"),
+                    b"",
+                );
                 let error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
                     &transported,
                     &statement,
@@ -1119,7 +1134,10 @@ mod tests {
         } else {
             AKITA_ONE_HOT_K16
         };
-        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-one-hot-k", b"");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-one-hot-k"),
+            b"",
+        );
         let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &wrong_k_statement,
@@ -1282,7 +1300,8 @@ mod tests {
             commitment,
             evaluation: EvaluationClaim::new(point, value),
         }];
-        let mut prover_state = prover_transcript::<Blake2b512>(b"catalog-replay", b"");
+        let mut prover_state =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"catalog-replay"), b"");
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
@@ -1345,7 +1364,8 @@ mod tests {
             alternate_artifacts,
         ))
         .unwrap();
-        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"catalog-replay", b"");
+        let mut verifier_transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"catalog-replay"), b"");
         let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &alternate_verifier_setup,
             &statement,
@@ -1354,7 +1374,8 @@ mod tests {
         )
         .expect_err("a proof must not replay across catalogs with different digests");
 
-        let mut original_transcript = prover_transcript::<Blake2b512>(b"catalog-replay", b"");
+        let mut original_transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"catalog-replay"), b"");
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &statement,
@@ -1391,7 +1412,10 @@ mod tests {
             evaluation: EvaluationClaim::new(point.clone(), claim),
         }];
 
-        let mut prover_state = prover_transcript::<Blake2b512>(b"akita-direct-layout", b"");
+        let mut prover_state = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-direct-layout"),
+            b"",
+        );
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
@@ -1401,7 +1425,10 @@ mod tests {
         )
         .expect("direct proof should prove");
 
-        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-direct-layout", b"");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-direct-layout"),
+            b"",
+        );
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &statement,
@@ -1416,7 +1443,10 @@ mod tests {
 
         let mut changed_commitment_statement = statement.clone();
         changed_commitment_statement[0].commitment.layout_digest = [15; 32];
-        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-direct-layout", b"");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-direct-layout"),
+            b"",
+        );
         let _error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &changed_commitment_statement,
@@ -1427,7 +1457,10 @@ mod tests {
 
         let mut changed_setup = verifier_setup;
         changed_setup.default_layout_digest = commitment_digest;
-        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"akita-direct-layout", b"");
+        let mut verifier_transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-direct-layout"),
+            b"",
+        );
         let _error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &changed_setup,
             &statement,

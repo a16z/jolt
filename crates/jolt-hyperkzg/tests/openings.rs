@@ -32,7 +32,7 @@ fn setup(beta: u64, capacity: usize) -> (HyperKZGProverSetup, HyperKZGVerifierSe
 }
 
 fn transcript() -> ProverState<Blake2b512> {
-    prover_transcript::<Blake2b512>(b"hyperkzg-test", b"")
+    prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"hyperkzg-test"), b"")
 }
 
 fn multilinear_oracle(table: &[Fr], point: &[Fr]) -> Fr {

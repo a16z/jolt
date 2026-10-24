@@ -449,9 +449,8 @@ mod tests {
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
-        append_sumcheck_claim, prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder,
-        ProveRounds, SequentialRounds, SumcheckProof, SumcheckRecorder,
-        OPENING_CLAIM_TRANSCRIPT_LABEL,
+        prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds,
+        SequentialRounds, SumcheckProof, SumcheckRecorder,
     };
     use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -647,7 +646,8 @@ mod tests {
             symbolic: ToySymbolic::new(ROUNDS),
             reference_point: reference_point(),
         };
-        let mut prover_state = prover_transcript::<Blake2b512>(b"naive-toy", b"");
+        let mut prover_state =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"naive-toy"), b"");
         let challenges = relation.draw_challenges(&mut prover_state).unwrap();
         let gamma = challenges.gamma;
 
@@ -736,14 +736,15 @@ mod tests {
             symbolic: ToySymbolic::new(ROUNDS),
             reference_point: reference_point(),
         };
-        let mut verifier_transcript = prover_transcript::<Blake2b512>(b"naive-toy", b"");
+        let mut verifier_transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"naive-toy"), b"");
         let verifier_challenges = verifier_relation
             .draw_challenges(&mut verifier_transcript)
             .unwrap();
         let verifier_input_claim = verifier_relation
             .input_claim(&inputs, &verifier_challenges)
             .unwrap();
-        append_sumcheck_claim(&mut verifier_transcript, &verifier_input_claim);
+        verifier_transcript.append(&verifier_input_claim);
         let verifier_coefficient: Fr = verifier_transcript.challenge().unwrap();
         let reduction = SumcheckProof::<Fr, Fr>::from(recorded.proof)
             .verify_compressed_boolean(
@@ -754,7 +755,7 @@ mod tests {
             )
             .unwrap();
         for value in output_claims.opening_values() {
-            verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &value);
+            verifier_transcript.append(&value);
         }
 
         assert_eq!(reduction.value, proved.final_claim);
@@ -775,7 +776,8 @@ mod tests {
             symbolic: ToySymbolic::new(ROUNDS),
             reference_point: reference_point(),
         };
-        let mut transcript = prover_transcript::<Blake2b512>(b"naive-drift", b"");
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"naive-drift"), b"");
         let challenges = relation.draw_challenges(&mut transcript).unwrap();
         let gamma = challenges.gamma;
 

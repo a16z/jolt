@@ -165,7 +165,10 @@ mod field_inline_round_trip {
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
-        let mut prover_state = prover_transcript::<Keccak>(b"stage1-field-inline", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline"),
+            b"",
+        );
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
@@ -191,7 +194,10 @@ mod field_inline_round_trip {
             assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
         }
 
-        let mut transcript = prover_transcript::<Keccak>(b"stage1-field-inline", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline"),
+            b"",
+        );
         twins::replay_stage1(&mut transcript, &out);
 
         assert_eq!(
@@ -236,7 +242,10 @@ mod field_inline_zk {
         let mut context = backend.with_witness(&witness);
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
-        let mut prover_state = prover_transcript::<Keccak>(b"stage1-field-inline-zk", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline-zk"),
+            b"",
+        );
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
@@ -286,6 +295,7 @@ mod field_inline_zk {
             ram_K: 1 << 4,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
+            untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),
             precommitted: PrecommittedSchedule {
@@ -295,7 +305,10 @@ mod field_inline_zk {
                 program_image: None,
             },
         };
-        let mut transcript = prover_transcript::<Keccak>(b"stage1-field-inline-zk", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline-zk"),
+            b"",
+        );
         let tau = draw_spartan_outer_tau(&mut transcript, LOG_T).unwrap();
         let uniskip_step = uniskip::verify_zk(
             &checked,

@@ -29,7 +29,6 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
-use jolt_transcript::{FieldTranscript, Label};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
@@ -181,18 +180,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         let mut openings = self.symbolic().expected_output_openings::<F>();
         openings.extend(self.contribution_openings.iter().copied());
         openings
-    }
-
-    /// Draws the RAM value-check gamma behind its `b"ram_val_check_gamma"`
-    /// domain-separator label.
-    fn draw_challenges<T: FieldTranscript<F>>(
-        &self,
-        transcript: &mut T,
-    ) -> Result<RamValCheckChallenges<F>, VerifierError> {
-        transcript.append(&Label(b"ram_val_check_gamma"));
-        Ok(RamValCheckChallenges {
-            gamma: transcript.challenge()?,
-        })
     }
 
     fn derive_opening_points(
@@ -557,32 +544,25 @@ mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, TranscriptEvent};
     use jolt_field::Fr;
-    use jolt_transcript::{Encoding, Transcript};
+    use jolt_transcript::FieldTranscript;
 
-    // Overrides the default to absorb the `b"ram_val_check_gamma"` domain
-    // separator label before the gamma draw; the label is part of the
-    // soundness-critical byte stream, so it must appear in `draw_challenges` too.
+    // The RAM value-check gamma is one draw with no absorb before it, so it
+    // continues the squeeze run of the gammas drawn before it in stage 4.
     #[test]
-    fn draw_challenges_absorbs_domain_separator_then_draws_gamma() {
+    fn draw_challenges_draws_gamma_with_no_absorb() {
         let relation = RamValCheck::<Fr>::new(
             TraceDimensions::new(4),
             3,
             RamValCheckInit::from(Fr::from(0u64)),
         );
 
-        let (inline_events, inline_gamma) = record(|t| {
-            t.append(&Label(b"ram_val_check_gamma"));
-            t.challenge().unwrap()
-        });
+        let (inline_events, inline_gamma) = record(|t| t.challenge().unwrap());
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
         assert_eq!(
             draw_events,
-            [
-                TranscriptEvent::Absorb(Label(b"ram_val_check_gamma").encode().as_ref().to_vec()),
-                TranscriptEvent::Challenges(vec![inline_gamma]),
-            ]
+            [TranscriptEvent::Challenges(vec![inline_gamma])]
         );
         assert_eq!(challenges.gamma, inline_gamma);
     }

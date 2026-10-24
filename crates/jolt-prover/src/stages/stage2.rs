@@ -244,7 +244,10 @@ mod field_inline_round_trip {
         let config = test_prover_config();
         let public_io = test_public_io();
 
-        let mut prover_state = prover_transcript::<Keccak>(b"stage2-field-inline", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage2-field-inline"),
+            b"",
+        );
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
@@ -273,7 +276,10 @@ mod field_inline_round_trip {
         assert_eq!(reduction.rs2_value, appendage.rs2_value);
         assert_eq!(reduction.rd_value, appendage.rd_value);
 
-        let mut transcript = prover_transcript::<Keccak>(b"stage2-field-inline", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage2-field-inline"),
+            b"",
+        );
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &out);
 
@@ -317,7 +323,10 @@ mod field_inline_zk {
         let config = test_prover_config();
         let public_io = test_public_io();
 
-        let mut prover_state = prover_transcript::<Keccak>(b"stage2-field-inline-zk", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage2-field-inline-zk"),
+            b"",
+        );
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
@@ -353,6 +362,7 @@ mod field_inline_zk {
             ram_K: 1 << 4,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
+            untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),
             precommitted: PrecommittedSchedule {
@@ -362,7 +372,10 @@ mod field_inline_zk {
                 program_image: None,
             },
         };
-        let mut transcript = prover_transcript::<Keccak>(b"stage2-field-inline-zk", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage2-field-inline-zk"),
+            b"",
+        );
         {
             let tau = uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T).unwrap();
             let uniskip_step = uniskip::verify_zk(

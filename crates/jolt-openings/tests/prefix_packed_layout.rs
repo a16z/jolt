@@ -82,7 +82,10 @@ fn claim_reduction_binds_statement_before_drawing_selector() {
     let layout = PrefixPackedLayout::new(2, 4, [0_u64, 1, 2]).unwrap();
     let claims =
         PrefixPackedClaims::new([9_u8; 32], vec![fr(3), fr(5)], vec![fr(7), fr(11), fr(13)]);
-    let mut transcript = prover_transcript::<Blake2b512>(b"prefix-packed-claim", b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"prefix-packed-claim"),
+        b"",
+    );
     let reduced = layout.reduce_claims(&claims, &mut transcript).unwrap();
 
     assert_eq!(reduced.point.len(), layout.packed_num_vars());
@@ -100,7 +103,10 @@ fn claim_reduction_binds_statement_before_drawing_selector() {
             .unwrap()
     );
 
-    let mut changed_transcript = prover_transcript::<Blake2b512>(b"prefix-packed-claim", b"");
+    let mut changed_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"prefix-packed-claim"),
+        b"",
+    );
     let changed =
         PrefixPackedClaims::new([9_u8; 32], vec![fr(3), fr(5)], vec![fr(7), fr(11), fr(17)]);
     let changed_reduced = layout

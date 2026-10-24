@@ -1,16 +1,16 @@
 //! Proof of work on the transcript sponge, as a standalone step.
 //!
-//! The prover
-//! sends a nonce below `2^(bits + 7)` as canonical LEB128, one byte per prover
-//! message, and both parties squeeze `ceil(bits / 8)` bytes and accept iff
-//! their low `bits` bits are zero. The step protects the verifier messages
-//! that follow it, up to the next prover message. The check is squeezed in one
-//! call; on every sponge here that gives the same bytes as squeezing it one
-//! byte at a time, because each buffers its squeeze output.
+//! The prover sends a nonce below `2^(bits + 7)`. The NARG string carries it
+//! as canonical LEB128; the sponge absorbs it as one `u64` little-endian word,
+//! in one prover message. Both parties then squeeze eight bytes and accept iff
+//! the low `bits` bits of their little-endian `u64` are zero. The absorb and
+//! the check are each one word, so the step keeps the transcript word
+//! aligned. The step protects the verifier messages that follow it, up to the
+//! next prover message.
 //!
-//! The same layout, search primitive and probe are proposed for spongefish in
-//! arkworks-rs/spongefish#301 (`PowTranscriptExt::sponge_pow`,
-//! `MessageSearch`, `Probe`); none of them is in the published 0.8.0.
+//! The search primitive and probe follow the ones proposed for spongefish in
+//! arkworks-rs/spongefish#301 (`MessageSearch`, `Probe`), which are not in the
+//! published 0.8.0.
 //!
 //! The prover searches by evaluating candidate nonces on a copy of the sponge
 //! state ([`MessageSearch`]). Spongefish 0.8.0 exposes that state only under
@@ -49,15 +49,12 @@ pub trait Probe: Sync {
 /// a proof-of-work nonce, or a retry counter whose following challenges must
 /// satisfy a prover-side condition.
 ///
-/// A probe absorbs the candidate one byte per absorb call, exactly as sending
-/// it as single-byte prover messages does. For the Keccak and Blake2b sponges
-/// this equals one absorb of the whole candidate; [`PoseidonSponge`] absorbs a
-/// length with every call, so for it only the byte-by-byte form matches.
+/// A probe absorbs the candidate in one absorb call, exactly as sending it as
+/// one prover message does, so the candidate must be that message's absorbed
+/// form. A proof-of-work nonce's absorbed form is its `u64` word.
 ///
 /// It holds no private randomness, writes no proof bytes and cannot restore
 /// or advance the live prover state.
-///
-/// [`PoseidonSponge`]: crate::PoseidonSponge
 #[cfg(feature = "prover-grinding")]
 #[derive(Clone)]
 pub struct MessageSearch<H> {
@@ -75,9 +72,7 @@ impl<H> MessageSearch<H> {
 impl<H: DuplexSpongeInterface<U = u8> + Sync> Probe for MessageSearch<H> {
     fn probe(&self, candidate: &[u8], out: &mut [u8]) {
         let mut sponge = self.sponge.clone();
-        for byte in candidate {
-            let _ = sponge.absorb(core::slice::from_ref(byte));
-        }
+        let _ = sponge.absorb(candidate);
         let _ = sponge.squeeze(out);
     }
 }
@@ -90,6 +85,14 @@ impl<H: DuplexSpongeInterface<U = u8> + Sync> Probe for MessageSearch<H> {
 /// here.
 #[cfg(feature = "parallel")]
 const CALLER_NONCES: u32 = 1024;
+
+/// Bytes squeezed for a proof-of-work check: one word.
+pub(crate) const CHECK_BYTES: usize = 8;
+
+/// The absorbed form of a proof-of-work nonce: one `u64` little-endian word.
+pub(crate) fn nonce_word(nonce: u32) -> [u8; 8] {
+    u64::from(nonce).to_le_bytes()
+}
 
 /// The layout of one proof-of-work step at a difficulty of `1..=MAX_POW_BITS`.
 #[derive(Clone, Copy)]
@@ -117,20 +120,15 @@ impl SpongePow {
         (self.bits as usize + 13) / 7
     }
 
-    /// `ceil(bits / 8)` squeezed bytes carry the checked bits, at most 4.
-    pub(crate) const fn word_len(self) -> usize {
-        (self.bits as usize).div_ceil(8)
-    }
-
-    /// The low `bits` bits of the little-endian check bytes are zero.
-    /// Rejects check bytes of the wrong length.
+    /// The low `bits` bits of the little-endian `u64` of the
+    /// [`CHECK_BYTES`] check bytes are zero. Rejects check bytes of the wrong
+    /// length.
     pub(crate) fn accepts(self, check: &[u8]) -> bool {
-        let mut word = [0u8; 4];
-        match word.get_mut(..self.word_len()) {
-            Some(prefix) if prefix.len() == check.len() => prefix.copy_from_slice(check),
-            _ => return false,
-        }
-        u32::from_le_bytes(word) & ((1u32 << self.bits) - 1) == 0
+        let Ok(word) = <[u8; CHECK_BYTES]>::try_from(check) else {
+            return false;
+        };
+        // `bits <= MAX_POW_BITS < 64`, so the shift cannot overflow.
+        u64::from_le_bytes(word) & ((1u64 << self.bits) - 1) == 0
     }
 
     /// Reads a nonce byte by byte through `next`. Returns `None` unless its
@@ -158,12 +156,9 @@ impl SpongePow {
     /// Whether sending `nonce` makes the next squeezed bytes pass the check.
     #[cfg(feature = "prover-grinding")]
     fn accepts_nonce(self, probe: &impl Probe, nonce: u32) -> bool {
-        let mut check = [0u8; 4];
-        let Some(out) = check.get_mut(..self.word_len()) else {
-            return false;
-        };
-        probe.probe(Leb128::new(nonce).as_bytes(), out);
-        self.accepts(out)
+        let mut check = [0u8; CHECK_BYTES];
+        probe.probe(&nonce_word(nonce), &mut check);
+        self.accepts(&check)
     }
 
     /// The least accepted nonce. The calling thread scans the first
@@ -214,13 +209,16 @@ impl SpongePow {
 }
 
 /// The canonical LEB128 encoding of a `u32`: seven bits per byte, least
-/// significant first, the high bit set on every byte but the last.
+/// significant first, the high bit set on every byte but the last. This is
+/// the nonce's NARG form; [`SpongePow::read_nonce`] parses it.
+#[cfg(feature = "prover-grinding")]
 #[derive(Clone, Copy)]
 pub(crate) struct Leb128 {
     bytes: [u8; 5],
     len: usize,
 }
 
+#[cfg(feature = "prover-grinding")]
 impl Leb128 {
     pub(crate) fn new(mut value: u32) -> Self {
         let mut bytes = [0u8; 5];
@@ -258,12 +256,30 @@ mod tests {
     fn layout() {
         let layout = |bits| {
             let pow = SpongePow::new(bits).unwrap();
-            (pow.last_nonce(), pow.max_nonce_len(), pow.word_len())
+            (pow.last_nonce(), pow.max_nonce_len())
         };
-        assert_eq!(layout(1), (255, 2, 1));
-        assert_eq!(layout(8), ((1 << 15) - 1, 3, 1));
-        assert_eq!(layout(10), ((1 << 17) - 1, 3, 2));
-        assert_eq!(layout(25), (u32::MAX, 5, 4));
+        assert_eq!(layout(1), (255, 2));
+        assert_eq!(layout(8), ((1 << 15) - 1, 3));
+        assert_eq!(layout(10), ((1 << 17) - 1, 3));
+        assert_eq!(layout(25), (u32::MAX, 5));
+    }
+
+    #[test]
+    fn check_reads_the_low_bits_of_one_le_word() {
+        let pow = SpongePow::new(9).unwrap();
+        // Bits 0..9 zero, every higher bit set: accepted.
+        let pass = (u64::MAX << 9).to_le_bytes();
+        assert!(pow.accepts(&pass));
+        // Bit 8, in the second byte, set: rejected.
+        let fail = (1u64 << 8).to_le_bytes();
+        assert!(!pow.accepts(&fail));
+        // Seven or nine bytes: rejected whatever their value.
+        assert!(!pow.accepts(&[0u8; 7]));
+        assert!(!pow.accepts(&[0u8; 9]));
+        let full = SpongePow::new(MAX_POW_BITS).unwrap();
+        assert!(full.accepts(&(u64::MAX << MAX_POW_BITS).to_le_bytes()));
+        assert!(!full.accepts(&(1u64 << (MAX_POW_BITS - 1)).to_le_bytes()));
+        assert_eq!(super::nonce_word(0x0102_0304), [4, 3, 2, 1, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -294,7 +310,7 @@ mod tests {
 
     #[cfg(feature = "prover-grinding")]
     mod search {
-        use super::super::{Leb128, Probe, SpongePow, MAX_POW_BITS};
+        use super::super::{nonce_word, Leb128, Probe, SpongePow, MAX_POW_BITS};
 
         #[test]
         fn leb128_is_canonical() {
@@ -326,9 +342,7 @@ mod tests {
 
         impl Probe for AcceptOnly {
             fn probe(&self, candidate: &[u8], out: &mut [u8]) {
-                let hit = self
-                    .0
-                    .is_some_and(|target| candidate == Leb128::new(target).as_bytes());
+                let hit = self.0.is_some_and(|target| candidate == nonce_word(target));
                 out.fill(if hit { 0 } else { 0xff });
             }
         }
@@ -351,10 +365,7 @@ mod tests {
 
         impl Probe for AcceptAny {
             fn probe(&self, candidate: &[u8], out: &mut [u8]) {
-                let hit = self
-                    .0
-                    .iter()
-                    .any(|&target| candidate == Leb128::new(target).as_bytes());
+                let hit = self.0.iter().any(|&target| candidate == nonce_word(target));
                 out.fill(if hit { 0 } else { 0xff });
             }
         }

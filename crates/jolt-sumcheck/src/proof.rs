@@ -3,9 +3,8 @@ use crate::{
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
     domain::{BooleanHypercube, SumcheckDomain},
     error::SumcheckError,
-    round_proof::LabeledRoundPoly,
     verifier::SumcheckVerifier,
-    Nonced, NoncedRef, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    Nonced, NoncedRef,
 };
 use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
@@ -134,7 +133,6 @@ impl<F: Field, C> SumcheckProof<F, C> {
         &self,
         claim: &SumcheckClaim<F>,
         domain: D,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
@@ -143,14 +141,13 @@ impl<F: Field, C> SumcheckProof<F, C> {
         D: SumcheckDomain<F>,
     {
         match self {
-            Self::Clear(ClearProof::Full(proof)) => {
-                let rounds = proof
-                    .round_polynomials
-                    .iter()
-                    .map(|poly| LabeledRoundPoly::new(poly, round_label))
-                    .collect::<Vec<_>>();
-                SumcheckVerifier::verify(claim, &rounds, &proof.pow_nonces, domain, transcript)
-            }
+            Self::Clear(ClearProof::Full(proof)) => SumcheckVerifier::verify(
+                claim,
+                &proof.round_polynomials,
+                &proof.pow_nonces,
+                domain,
+                transcript,
+            ),
             Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "full clear",
                 got: "compressed clear",
@@ -184,7 +181,6 @@ impl<F: Field, C> SumcheckProof<F, C> {
                 &SumcheckClaim::new(num_vars, degree, claimed_sum),
                 proof,
                 BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
                 transcript,
             ),
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {

@@ -6,7 +6,7 @@ jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::folded_instance_from_proof:
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#0
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#1
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#2
-jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenge_vector#1
+jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenge_vector#0
 jolt-claims::r1cs.rs::lower_claim_expr::challenge#0
 jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge#1
 jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge_short_scalar#0
@@ -14,10 +14,10 @@ jolt-hyperkzg::kzg.rs::absorb_evaluations::challenge_powers#1
 jolt-hyperkzg::kzg.rs::absorb_witnesses::challenge#1
 jolt-hyperkzg::scheme.rs::HyperKZGScheme::open_table::challenge#1
 jolt-hyperkzg::scheme.rs::HyperKZGScheme::verify_opening::challenge#1
-jolt-openings::prefix.rs::PrefixPackedLayout<Id>::reduce_claims::challenge_vector#7
+jolt-openings::prefix.rs::PrefixPackedLayout<Id>::reduce_claims::challenge_vector#5
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_powers#0
-jolt-spartan-verifier::key.rs::SpartanKey<F>::begin::challenge_vector#5
+jolt-spartan-verifier::key.rs::SpartanKey<F>::begin::challenge_vector#4
 jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#1
 jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#2
 jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#3
@@ -36,7 +36,6 @@ jolt-verifier::stages/stage2/outputs.rs::Stage2BatchSumchecks::<generated>::batc
 jolt-verifier::stages/stage2/ram_output_check.rs::RamOutputCheck<F>::draw_challenges::challenge#0
 jolt-verifier::stages/stage3/outputs.rs::Stage3Sumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage4/outputs.rs::Stage4Sumchecks::<generated>::batching_coefficient[*]
-jolt-verifier::stages/stage4/ram_val_check.rs::RamValCheck<F>::draw_challenges::challenge#1
 jolt-verifier::stages/stage5/outputs.rs::Stage5Sumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage6a/booleanity.rs::BooleanityAddressPhase<F>::draw_challenges::challenge#1
 jolt-verifier::stages/stage6a/booleanity.rs::BooleanityAddressPhase<F>::draw_challenges::challenge_vector#0
@@ -45,6 +44,6 @@ jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge#0
 jolt-verifier::stages/stage6b/outputs.rs::Stage6bSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage7/outputs.rs::Stage7Sumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#0
-jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#4
+jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#3
 jolt-verifier::stages/uniskip.rs::draw_spartan_outer_tau::challenge_vector#0
 jolt-verifier::stages/uniskip.rs::draw_spartan_product_tau_high::challenge#0

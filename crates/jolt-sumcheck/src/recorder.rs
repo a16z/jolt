@@ -30,7 +30,6 @@ use jolt_transcript::{FieldTranscript, ProverTranscript};
 #[cfg(all(feature = "committed", feature = "prover"))]
 use rand_core::RngCore;
 
-use crate::append_sumcheck_claim;
 #[cfg(all(feature = "committed", feature = "prover"))]
 use crate::committed::CommittedSumcheckBuilder;
 use crate::committed::CommittedSumcheckWitness;
@@ -42,9 +41,7 @@ use crate::proof::CompressedSumcheckProof;
 #[cfg(all(feature = "committed", feature = "prover"))]
 use crate::proof::SumcheckProof;
 #[cfg(feature = "prover")]
-use crate::round_proof::{CompressedLabeledRoundPoly, RoundMessage};
-#[cfg(feature = "prover")]
-use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
+use crate::round_proof::{CompressedRoundPoly, RoundMessage};
 
 /// Records one sumcheck's proof material, abstracting over clear vs. committed
 /// (ZK) recording: `absorb_input_claims` once (from `begin_batch`),
@@ -56,7 +53,7 @@ pub trait SumcheckRecorder<F: Field> {
     type Proof;
 
     /// Absorb the batch's per-member input claims (present members, in
-    /// declaration order). Clear: each appended under `b"sumcheck_claim"`.
+    /// declaration order). Clear: each appended in that order.
     /// Committed: no-op — the claims' commitments were already absorbed by the
     /// stage that produced them, so the transcript never sees the scalars.
     fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T);
@@ -64,7 +61,7 @@ pub trait SumcheckRecorder<F: Field> {
     /// Record one round polynomial, grind the round's proof of work at the
     /// difficulty for `degree_bound` (the batch's degree bound, which the
     /// verifier prices the round at), and squeeze the round challenge. Clear:
-    /// appended compressed under `b"sumcheck_poly"`. Committed: Pedersen
+    /// appended compressed, after its count word. Committed: Pedersen
     /// commitment appended.
     #[cfg(feature = "prover")]
     fn absorb_round<T>(
@@ -77,8 +74,8 @@ pub trait SumcheckRecorder<F: Field> {
         T: FieldTranscript<F> + ProverTranscript;
 
     /// Record the flattened output-claim values (canonical absorb order) and
-    /// assemble the proof. Clear: each value appended under
-    /// `b"opening_claim"`. Committed: values are row-committed and only the
+    /// assemble the proof. Clear: each value appended in that order.
+    /// Committed: values are row-committed and only the
     /// commitments are absorbed.
     #[cfg(feature = "prover")]
     fn finish<T>(
@@ -132,7 +129,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
 
     fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T) {
         for input_claim in input_claims {
-            append_sumcheck_claim(transcript, input_claim);
+            transcript.append(input_claim);
         }
     }
 
@@ -146,7 +143,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
     where
         T: FieldTranscript<F> + ProverTranscript,
     {
-        CompressedLabeledRoundPoly::sumcheck(round_poly).append_to_transcript(transcript);
+        CompressedRoundPoly::new(round_poly).append_to_transcript(transcript);
         grind_round(
             degree_bound,
             self.round_polynomials.len(),
@@ -168,7 +165,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
         T: FieldTranscript<F> + ProverTranscript,
     {
         for opening_claim in output_claim_values {
-            transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, opening_claim);
+            transcript.append(opening_claim);
         }
         Ok(RecordedSumcheck {
             proof: CompressedSumcheckProof {

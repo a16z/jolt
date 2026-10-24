@@ -8,6 +8,10 @@
 //! [`prover_transcript`] and [`verifier_transcript`] bind the session and the
 //! public statement before the first message.
 //!
+//! The transcript is positional and word aligned: no message carries a label,
+//! and every absorb and squeeze is a whole number of eight-byte words
+//! ([`PROTOCOL_ID`] lists the layout).
+//!
 //! Three sponges are feature-gated: `transcript-keccak` (spongefish `Keccak`,
 //! the default), `transcript-blake2b` (spongefish `Blake2b512`) and
 //! `transcript-poseidon` (a Circom-compatible BN254 [`PoseidonSponge`]).
@@ -45,7 +49,7 @@ mod transcript;
 mod verifier;
 
 pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
-pub use codec::{BytesMsg, Label, LabelWithCount, U64Word, MAX_LABEL_LEN};
+pub use codec::{protocol_tag, word_padding, BytesMsg, NargMessage, TAG_BYTES, WORD_BYTES};
 pub use grind_bits::{
     challenge_bits_for_loss, grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS,
     SECURITY_BITS,

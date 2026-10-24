@@ -587,7 +587,7 @@ fn append_opening_claims<F, T>(
     // Single-sourced with the prover-curation order: both fronts absorb the
     // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
     for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
-        transcript.append_labeled(b"opening_claim", &value);
+        transcript.append(&value);
     }
 }
 
@@ -876,7 +876,7 @@ mod tests {
 
         let mut want = recorder();
         for value in (1..=last).map(fr) {
-            want.append_labeled(b"opening_claim", &value);
+            want.append(&value);
         }
 
         assert_eq!(got.absorbed(), want.absorbed());

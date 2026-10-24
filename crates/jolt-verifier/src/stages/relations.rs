@@ -44,12 +44,12 @@ pub use jolt_claims::protocols::composed::ComposedOpeningId;
 /// single-sourced by [`OutputClaims::opening_values`] and cannot disagree with it.
 pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
     /// Append every produced opening to the transcript in canonical
-    /// ([`OutputClaims::opening_values`]) order, each under the `b"opening_claim"`
-    /// label. This is the Fiat-Shamir order and MUST match the order in which the
+    /// ([`OutputClaims::opening_values`]) order. This is the Fiat-Shamir order
+    /// and MUST match the order in which the
     /// prover commits the openings.
     fn append_openings<T: FieldTranscript<F>>(&self, transcript: &mut T) {
         for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
+            transcript.append(&value);
         }
     }
 }
@@ -567,7 +567,7 @@ pub(crate) mod draw_recording {
     /// A fresh [`DrawRecordingTranscript`].
     pub(crate) fn recorder() -> DrawRecordingTranscript {
         ScriptedTranscript::with_script(
-            prover_transcript::<Keccak>(b"draw-recording", b""),
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"draw-recording"), b""),
             (1..=4096).map(Fr::from_u64).collect(),
         )
     }
@@ -627,7 +627,7 @@ mod tests {
 
         let mut via_values = recorder();
         for value in claims.opening_values() {
-            via_values.append_labeled(b"opening_claim", &value);
+            via_values.append(&value);
         }
 
         assert_eq!(via_append.absorbed(), via_values.absorbed());
@@ -1248,8 +1248,8 @@ mod begin_batch_tests {
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
     use jolt_field::{Fr, JoltField, Ring};
-    use jolt_sumcheck::{append_sumcheck_claim, BatchMember, ClearSumcheckRecorder};
-    use jolt_transcript::FieldTranscript;
+    use jolt_sumcheck::{BatchMember, ClearSumcheckRecorder};
+    use jolt_transcript::{FieldTranscript, Transcript};
 
     #[derive(super::SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
@@ -1279,8 +1279,7 @@ mod begin_batch_tests {
 
     /// `begin_batch` with a clear recorder must reproduce the exact head
     /// Fiat-Shamir sequence `verify_clear` performed before the factoring —
-    /// per-member `input_claim` absorbed under `b"sumcheck_claim"` in
-    /// declaration order, then one coefficient squeeze per member — and pack
+    /// per-member `input_claim` absorbed in declaration order, then one coefficient squeeze per member — and pack
     /// the prelude's engine and named views consistently.
     #[test]
     fn begin_batch_matches_head_replica_and_packs_prelude() {
@@ -1319,8 +1318,8 @@ mod begin_batch_tests {
             )
             .unwrap();
         let (replica_events, (instruction_coeff, registers_coeff)) = record(|t| {
-            append_sumcheck_claim(t, &instruction_sum);
-            append_sumcheck_claim(t, &registers_sum);
+            t.append(&instruction_sum);
+            t.append(&registers_sum);
             (t.challenge().unwrap(), t.challenge().unwrap())
         });
         assert_eq!(events, replica_events);

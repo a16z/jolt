@@ -13,11 +13,19 @@
 //! for a public message and for a prover message, so the challenges are those
 //! of the same protocol with the field sent through the NARG string.
 //!
-//! The sponge absorbs a message's bytes with no length or separator, so the
-//! messages absorbed between two squeezes must decode uniquely from their
-//! concatenation. Every [`Encoding`] a protocol absorbs is therefore of fixed
-//! width, or of a length fixed by bound data, or carries its own count, as
-//! [`append_values`](Transcript::append_values) and [`BytesMsg`] do.
+//! The transcript is positional: a message's place in the protocol's
+//! schedule says what it is, so no message carries a label. The sponge
+//! absorbs a message's bytes with no length or separator, so the messages
+//! absorbed between two squeezes must decode uniquely from their
+//! concatenation, given everything the verifier knows before it reads them.
+//! Every [`Encoding`] a protocol absorbs is therefore of fixed width, or of a
+//! length fixed by bound data before the proof is accepted, or carries its own
+//! `u64` count or length, as [`BytesMsg`] does.
+//!
+//! Every absorb and every squeeze is a whole number of eight-byte words, so
+//! each starts and ends on a word boundary of the sponge's rate. Encodings
+//! shorter than a word are zero-padded to one; the padding is injective
+//! because its length follows from the message's own length.
 
 use jolt_field::{CanonicalEncoding, Ring};
 use spongefish::{
@@ -26,8 +34,8 @@ use spongefish::{
 };
 
 use crate::challenge::message_bytes;
-use crate::codec::{BytesMsg, Label, LabelWithCount};
-use crate::pow::{Leb128, SpongePow};
+use crate::codec::{word_padding, BytesMsg, WORD_BYTES};
+use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
 use crate::{
     challenge_bits_for_loss, ChallengeCodec, ChallengeSetSize, UniformBytes, SECURITY_BITS,
 };
@@ -60,22 +68,30 @@ pub trait Transcript: Sealed {
         self.absorb(message);
     }
 
-    /// Absorbs a [`Label`] word, then `message`.
-    fn append_labeled<M: Encoding + ?Sized>(&mut self, label: &'static [u8], message: &M) {
-        self.absorb(&Label(label));
-        self.absorb(message);
-    }
-
-    /// Absorbs a [`LabelWithCount`] word carrying `values.len()`, then each
-    /// value in order.
-    fn append_values<M: Encoding>(&mut self, label: &'static [u8], values: &[M]) {
-        self.absorb(&LabelWithCount(label, values.len() as u64));
-        for value in values {
-            self.absorb(value);
+    /// Absorbs the values' encodings, concatenated in order and zero-padded
+    /// to the next word, as one message with no count: the caller's schedule
+    /// must fix `values.len()` from bound data. A protocol whose count the
+    /// prover chooses absorbs that count as a `u64` word first.
+    ///
+    /// For values whose encodings are whole words, such as every production
+    /// field element and Dory's compressed group elements, the padding is
+    /// empty and the sponge absorbs the bytes that one absorb per value would.
+    /// Shorter encodings, such as an odd count of 4-byte elements, are padded
+    /// once at the end. An empty slice absorbs nothing.
+    fn append_values<M: Encoding>(&mut self, values: &[M]) {
+        if values.is_empty() {
+            return;
         }
+        let mut bytes = Vec::new();
+        for value in values {
+            bytes.extend_from_slice(value.encode().as_ref());
+        }
+        bytes.resize(bytes.len() + word_padding(bytes.len()), 0);
+        self.absorb(&WordAligned(bytes));
     }
 
-    /// Absorbs `bytes` as a length-prefixed [`BytesMsg`].
+    /// Absorbs `bytes` as a [`BytesMsg`]: a `u64` length, the bytes, and zero
+    /// padding to the next word.
     fn append_bytes(&mut self, bytes: &[u8]) {
         self.absorb(&BytesMsg(bytes));
     }
@@ -85,12 +101,12 @@ pub trait Transcript: Sealed {
     ///
     /// For `bits == 0` the proof carries no nonce and the transcript is
     /// unchanged. For `1 <= bits <= MAX_POW_BITS` the nonce must be at most
-    /// `2^(bits + 7) - 1`; its canonical LEB128 encoding is absorbed one byte
-    /// per public message, then `ceil(bits / 8)` bytes are squeezed and their
-    /// low `bits` bits must be zero. This is the layout of
+    /// `2^(bits + 7) - 1`; it is absorbed as one `u64` little-endian word in a
+    /// public message, then eight bytes are squeezed and the low `bits` bits
+    /// of their little-endian `u64` must be zero. This is the layout of
     /// [`VerifierTranscript::check_grind`](crate::VerifierTranscript::check_grind)
     /// with the nonce absorbed as a public message instead of read from the
-    /// NARG string; the sponge absorbs the same bytes.
+    /// NARG string; the sponge absorbs the same word.
     ///
     /// The step protects the challenges drawn after it, up to the next
     /// absorbed message. The difficulty and the position of the step must be
@@ -111,15 +127,22 @@ pub trait Transcript: Sealed {
         let Some(nonce) = nonce.filter(|&nonce| nonce <= pow.last_nonce()) else {
             return self.require(false);
         };
-        for byte in Leb128::new(nonce).as_bytes() {
-            self.absorb(byte);
-        }
-        let passes = self.squeeze(pow.word_len(), |check| pow.accepts(check));
+        self.absorb(&nonce_word(nonce));
+        let passes = self.squeeze(CHECK_BYTES, |check| pow.accepts(check));
         self.require(passes)
     }
 }
 
 impl<T: Sealed + ?Sized> Transcript for T {}
+
+/// Bytes already padded to a whole number of words, absorbed as they are.
+struct WordAligned(Vec<u8>);
+
+impl Encoding for WordAligned {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.as_slice()
+    }
+}
 
 /// A transcript that draws challenges in `F`.
 pub trait FieldTranscript<F>: Transcript {
@@ -156,8 +179,10 @@ pub trait FieldTranscript<F>: Transcript {
     /// that needs no proof of work. A group scalar this short costs about
     /// half as much as a full-width BN254 element.
     ///
-    /// It squeezes `ceil(b / 8)` bytes, clears the bits above `b`, and
-    /// decodes the little-endian integer. As `b` is below the bit length of
+    /// It squeezes `ceil(b / 8)` bytes rounded up to a whole word, keeps the
+    /// low `b` bits of their little-endian integer, and decodes that. The
+    /// value depends only on those `b` bits, so the extra bytes change
+    /// nothing but the squeeze's alignment. As `b` is below the bit length of
     /// the field order, distinct integers decode to distinct elements. The
     /// sponge's bytes are uniform ([`UniformBytes`]), so the integer is too.
     ///
@@ -230,19 +255,33 @@ where
         .filter(|&bits| bits < F::MODULUS_BITS);
     transcript.require(bits.is_some())?;
     let bits = bits.ok_or(VerificationError)?;
-    // `bits < MODULUS_BITS <= 256`, so the bytes fit one 32-byte word.
-    let len = bits.div_ceil(8) as usize;
-    let excess = 8 * len as u32 - bits;
-    Ok(transcript.squeeze(len, |tape| {
-        let mut word = [0u8; 32];
-        if let Some(bytes) = word.get_mut(..tape.len()) {
-            bytes.copy_from_slice(tape);
-        }
-        if let Some(top) = word.get_mut(len.saturating_sub(1)) {
-            *top &= u8::MAX >> excess;
-        }
-        F::from_bytes_le_reduced(word.get(..len).unwrap_or(&word))
+    Ok(transcript.squeeze(short_scalar_squeeze(bits), |tape| {
+        F::from_bytes_le_reduced(&short_scalar_bytes(tape, bits))
     }))
+}
+
+/// Bytes squeezed for a `bits`-bit short scalar: `ceil(bits / 8)` rounded up
+/// to a whole word.
+pub(crate) const fn short_scalar_squeeze(bits: u32) -> usize {
+    (bits as usize).div_ceil(8).div_ceil(WORD_BYTES) * WORD_BYTES
+}
+
+/// The low `bits` bits of `tape`'s little-endian integer, as 32 LE bytes.
+/// Every byte at index `ceil(bits / 8)` or later is zero, and the top partial
+/// byte keeps only its low `bits mod 8` bits, so the result depends only on
+/// the low `bits` bits whatever the tape's length. `bits <= 256`.
+pub(crate) fn short_scalar_bytes(tape: &[u8], bits: u32) -> [u8; 32] {
+    let len = (bits as usize).div_ceil(8);
+    let mut word = [0u8; 32];
+    for (out, byte) in word.iter_mut().zip(tape).take(len) {
+        *out = *byte;
+    }
+    // `8 * len - bits` is in `0..8`, so the shift cannot overflow.
+    let excess = (8 * len as u32).saturating_sub(bits) % 8;
+    if let Some(top) = len.checked_sub(1).and_then(|top| word.get_mut(top)) {
+        *top &= u8::MAX >> excess;
+    }
+    word
 }
 
 impl<H, R> Sealed for ProverState<H, R>
@@ -320,5 +359,58 @@ where
         F: CanonicalEncoding,
     {
         draw_short_scalar(self, loss_factor)
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests")]
+mod tests {
+    use super::{short_scalar_bytes, short_scalar_squeeze};
+    use crate::{challenge_bits_for_loss, SECURITY_BITS};
+
+    /// The little-endian integer of `bytes` is below `2^bits`.
+    fn below_power_of_two(bytes: &[u8; 32], bits: u32) -> bool {
+        let full = bits as usize / 8;
+        let partial = bits % 8;
+        bytes
+            .iter()
+            .enumerate()
+            .all(|(i, &byte)| match i.cmp(&full) {
+                core::cmp::Ordering::Less => true,
+                core::cmp::Ordering::Equal => u32::from(byte) < 1 << partial,
+                core::cmp::Ordering::Greater => byte == 0,
+            })
+    }
+
+    /// Every short width squeezes whole words, and an all-ones tape of that
+    /// length decodes below `2^b`: the extra bytes are cleared, not just the
+    /// top byte masked.
+    #[test]
+    fn short_scalars_squeeze_words_and_keep_only_the_low_bits() {
+        let mut widths: Vec<u32> = (1..=255).collect();
+        // The Dory widths: losses 2, 3 and 4.
+        for loss in [2, 3, 4] {
+            let bits = challenge_bits_for_loss(loss, SECURITY_BITS).unwrap();
+            assert!(bits == 129 || bits == 130, "loss {loss}: {bits} bits");
+            assert_eq!(short_scalar_squeeze(bits), 24);
+            widths.push(bits);
+        }
+        for bits in widths {
+            let len = short_scalar_squeeze(bits);
+            assert_eq!(len % 8, 0, "{bits} bits");
+            assert!(len >= (bits as usize).div_ceil(8) && len <= 32);
+            let ones = vec![0xffu8; len];
+            let value = short_scalar_bytes(&ones, bits);
+            assert!(below_power_of_two(&value, bits), "{bits} bits");
+            // The low `bits` bits all survive.
+            let set: u32 = value.iter().map(|byte| byte.count_ones()).sum();
+            assert_eq!(set, bits, "{bits} bits");
+            // Bytes past `ceil(bits / 8)` do not change the value.
+            let mut other = ones.clone();
+            for byte in other.iter_mut().skip((bits as usize).div_ceil(8)) {
+                *byte = 0;
+            }
+            assert_eq!(short_scalar_bytes(&other, bits), value, "{bits} bits");
+        }
     }
 }

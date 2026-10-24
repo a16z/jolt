@@ -8,8 +8,6 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearSumcheckRecorder, ProveRounds,
     SequentialRounds, SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
-    OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{
     prover_transcript, verifier_transcript, FieldTranscript, Keccak, Transcript,
@@ -44,7 +42,8 @@ impl ProveRounds<F> for LinearRound {
 
 fn main() -> Result<(), SumcheckError<F>> {
     let claim = SumcheckClaim::new(1, 1, F::from_u64(8));
-    let mut prover_state = prover_transcript::<Keccak>(SESSION, &claim.claimed_sum);
+    let mut prover_state =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(SESSION), &claim.claimed_sum);
     let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[claim.claimed_sum], &mut prover_state);
     let coefficient = prover_state.challenge()?;
@@ -71,8 +70,12 @@ fn main() -> Result<(), SumcheckError<F>> {
     let proof = recorded.proof;
 
     let narg = prover_state.narg_string().to_vec();
-    let mut verifier_transcript = verifier_transcript::<Keccak>(SESSION, &claim.claimed_sum, &narg);
-    verifier_transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, &claim.claimed_sum);
+    let mut verifier_transcript = verifier_transcript::<Keccak>(
+        &jolt_transcript::protocol_tag(SESSION),
+        &claim.claimed_sum,
+        &narg,
+    );
+    verifier_transcript.append(&claim.claimed_sum);
     let verifier_coefficient: F = verifier_transcript.challenge()?;
     let combined_claim = SumcheckClaim::new(
         claim.num_vars,
@@ -83,11 +86,10 @@ fn main() -> Result<(), SumcheckError<F>> {
         &combined_claim,
         &proof,
         BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
         &mut verifier_transcript,
     )?;
     for opening_claim in &proved.member_claims {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, opening_claim);
+        verifier_transcript.append(opening_claim);
     }
 
     let challenge = proved.challenges[0];

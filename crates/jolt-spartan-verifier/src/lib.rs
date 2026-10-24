@@ -25,10 +25,7 @@ use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrixEvalError;
-use jolt_sumcheck::{
-    BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckError,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-};
+use jolt_sumcheck::{BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckError};
 use jolt_transcript::{Encoding, FieldTranscript, VerificationError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -121,7 +118,6 @@ impl<F: JoltField + Encoding> SpartanKey<F> {
                 claimed_sum: F::zero(),
             },
             BooleanHypercube,
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )?;
         self.check_outer(
@@ -144,7 +140,6 @@ impl<F: JoltField + Encoding> SpartanKey<F> {
                 claimed_sum: claim,
             },
             BooleanHypercube,
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )?;
         let column_weights = EqPolynomial::new(inner.point.as_slice().to_vec()).evaluations();

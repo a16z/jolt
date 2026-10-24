@@ -218,7 +218,10 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_state = prover_transcript::<Keccak>(b"stage6a-field-inline", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage6a-field-inline"),
+            b"",
+        );
         let (((stage1, stage2, stage3), stage4), stage5) = FixtureProver {
             backend: &mut context,
             mode: &mode,
@@ -255,7 +258,10 @@ mod field_inline_round_trip {
         let zero = Fr::from_u64(0);
         assert!(appendage.rd_wa_read_write != zero);
 
-        let mut transcript = prover_transcript::<Keccak>(b"stage6a-field-inline", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage6a-field-inline"),
+            b"",
+        );
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);

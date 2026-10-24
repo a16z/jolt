@@ -22,7 +22,7 @@ fn short_scalar_refuses_a_field_without_room() {
     let next: Fr = refused.challenge().unwrap();
     assert_eq!(next, untouched.challenge().unwrap());
 
-    let mut verifier = verifier_transcript::<Keccak>(SESSION, b"narw", &[]);
+    let mut verifier = verifier_transcript::<Keccak>(&SESSION, b"narw", &[]);
     assert!(
         FieldTranscript::<Prime128Offset275>::challenge_short_scalar(&mut verifier, 1).is_err()
     );
@@ -35,27 +35,27 @@ fn test_keccak_known_vector() {
     transcript.append(&12345u64);
     let challenge: Fr = transcript.challenge().unwrap();
     // Pins the session derived from PROTOCOL_ID, the instance absorb, one
-    // `u64` public message and one 52-byte challenge squeeze reduced mod r.
+    // `u64` public message and one 56-byte challenge squeeze reduced mod r.
     assert_eq!(
         format!("{challenge:?}"),
-        "1766718655065384849885355460798243624214294877158123096419747417635580052889"
+        "12245913755514758687269313047689373645644388575530658576000096080939340770669"
     );
 }
 
 #[test]
 fn public_message_after_challenge_agrees_including_empty() {
-    use jolt_transcript::BytesMsg;
+    use jolt_transcript::{BytesMsg, ProverTranscript};
 
+    const PUBLIC: [u8; 32] = protocol_tag(b"keccak-public");
     for public in [b"public after squeeze".as_slice(), &[]] {
-        let mut prover = prover_transcript::<Keccak>(b"keccak-public", &[0u8; 32]);
+        let mut prover = prover_transcript::<Keccak>(&PUBLIC, &[0u8; 32]);
         let first: [u8; 17] = prover.verifier_message();
         prover.public_message_as(public, |bytes| bytes);
         let second: [u8; 32] = prover.verifier_message();
-        prover.prover_message(&BytesMsg(b"response".to_vec()));
+        prover.send(&BytesMsg(b"response".to_vec()));
         let third: [u8; 32] = prover.verifier_message();
 
-        let mut verifier =
-            verifier_transcript::<Keccak>(b"keccak-public", &[0u8; 32], prover.narg_string());
+        let mut verifier = verifier_transcript::<Keccak>(&PUBLIC, &[0u8; 32], prover.narg_string());
         assert_eq!(verifier.verifier_message::<[u8; 17]>(), first);
         verifier.public_message_as(public, |bytes| bytes);
         assert_eq!(verifier.verifier_message::<[u8; 32]>(), second);
@@ -66,7 +66,7 @@ fn public_message_after_challenge_agrees_including_empty() {
         assert_eq!(verifier.verifier_message::<[u8; 32]>(), third);
         verifier.check_eof().unwrap();
 
-        let mut uninterrupted = prover_transcript::<Keccak>(b"keccak-public", &[0u8; 32]);
+        let mut uninterrupted = prover_transcript::<Keccak>(&PUBLIC, &[0u8; 32]);
         let stream: [u8; 49] = uninterrupted.verifier_message();
         assert_eq!(&stream[..17], &first);
         if public.is_empty() {

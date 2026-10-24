@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
-    SumcheckStatement, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    SumcheckStatement,
 };
 use jolt_transcript::{Encoding, FieldTranscript};
 
@@ -147,8 +147,8 @@ pub struct UniskipZk<F: JoltField, C> {
 /// Protocol contract (byte-exact; the prover's uni-skip round must mirror it):
 /// the wire proof is verified as a one-round sumcheck of `params`' degree over
 /// `params`' centered integer domain, the reduced value is hard-checked
-/// against `output_claim`, and `output_claim` is then absorbed under the
-/// `b"opening_claim"` label — BEFORE any post-uni-skip draw (the remainder
+/// against `output_claim`, and `output_claim` is then absorbed — BEFORE any
+/// post-uni-skip draw (the remainder
 /// batch's coefficient squeeze in particular). Errors are attributed to
 /// `params`' stage.
 pub fn verify_clear<F, C, T>(
@@ -166,7 +166,6 @@ where
         .verify(
             &SumcheckClaim::new(UNISKIP_ROUNDS, params.degree, input_claim),
             CenteredIntegerDomain::new(params.domain_size),
-            UNISKIP_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )
         .map_err(|error| params.sumcheck_failed(error))?;
@@ -179,7 +178,7 @@ where
     // Match the prover transcript: the uni-skip output is absorbed as an
     // opening claim before any post-uni-skip draw (the remainder batch's RLC
     // coefficient squeeze in particular).
-    transcript.append_labeled(b"opening_claim", &output_claim);
+    transcript.append(&output_claim);
 
     let [challenge] = reduction.point.as_slice() else {
         return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));

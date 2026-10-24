@@ -35,7 +35,10 @@ enum Event {
 type Recording = ScriptedTranscript<ProverState<Blake2b512>, Fr>;
 
 fn recording(label: &[u8]) -> Recording {
-    ScriptedTranscript::new(prover_transcript::<Blake2b512>(label, b""))
+    ScriptedTranscript::new(prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(label),
+        b"",
+    ))
 }
 
 /// The log, with one event per absorb and per draw.

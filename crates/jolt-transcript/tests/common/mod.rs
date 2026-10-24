@@ -8,14 +8,15 @@ macro_rules! transcript_tests {
     ($sponge:ty) => {
         use jolt_field::Fr;
         use jolt_transcript::{
-            prover_transcript, verifier_transcript, FieldTranscript, Label, ProverState, Transcript,
+            protocol_tag, prover_transcript, verifier_transcript, FieldTranscript, ProverState,
+            Transcript,
         };
         use std::collections::HashSet;
 
-        const SESSION: &[u8] = b"jolt-transcript/tests";
+        const SESSION: [u8; 32] = protocol_tag(b"jolt-transcript/tests");
 
         fn transcript(statement: &[u8; 4]) -> ProverState<$sponge> {
-            prover_transcript::<$sponge>(SESSION, statement)
+            prover_transcript::<$sponge>(&SESSION, statement)
         }
 
         fn challenge_after<F: FnOnce(&mut ProverState<$sponge>)>(statement: &[u8; 4], f: F) -> Fr {
@@ -44,14 +45,15 @@ macro_rules! transcript_tests {
         fn test_session_and_statement_separation() {
             let base = challenge_after(b"stmt", |_| {});
             assert_ne!(base, challenge_after(b"STMT", |_| {}));
-            let mut other = prover_transcript::<$sponge>(b"another session", b"stmt");
+            let mut other =
+                prover_transcript::<$sponge>(&protocol_tag(b"another session"), b"stmt");
             assert_ne!(base, other.challenge().unwrap());
         }
 
         #[test]
         fn test_prover_and_verifier_agree() {
             let mut prover = transcript(b"pair");
-            let mut verifier = verifier_transcript::<$sponge>(SESSION, b"pair", &[]);
+            let mut verifier = verifier_transcript::<$sponge>(&SESSION, b"pair", &[]);
             schedule(&mut prover);
             schedule(&mut verifier);
             let p: Vec<Fr> = prover.challenge_vector(3).unwrap();
@@ -62,8 +64,8 @@ macro_rules! transcript_tests {
 
         /// The same message schedule, on either side.
         fn schedule<T: FieldTranscript<Fr>>(t: &mut T) {
-            t.append_labeled(b"value", &Fr::from(7u64));
-            t.append_values(b"values", &[Fr::from(1u64), Fr::from(2u64)]);
+            t.append(&Fr::from(7u64));
+            t.append_values(&[Fr::from(1u64), Fr::from(2u64)]);
             let _: Fr = t.challenge().unwrap();
             t.append_bytes(b"tail");
         }
@@ -123,24 +125,10 @@ macro_rules! transcript_tests {
         }
 
         #[test]
-        fn test_label_framing() {
-            let labeled = challenge_after(b"labl", |t| t.append_labeled(b"x", &1u64));
-            let explicit = challenge_after(b"labl", |t| {
-                t.append(&Label(b"x"));
-                t.append(&1u64);
-            });
-            assert_eq!(labeled, explicit);
-            assert_ne!(
-                labeled,
-                challenge_after(b"labl", |t| t.append_labeled(b"y", &1u64))
-            );
-        }
-
-        #[test]
         #[should_panic(expected = "exceeds 32 bytes")]
-        fn test_label_too_long() {
-            let long_label: &'static [u8; 33] = &[b'x'; 33];
-            transcript(b"long").append(&Label(long_label));
+        fn test_protocol_tag_too_long() {
+            let long_name = std::hint::black_box([b'x'; 33]);
+            let _ = protocol_tag(&long_name);
         }
 
         #[test]
@@ -161,9 +149,10 @@ macro_rules! transcript_tests {
             );
         }
 
-        /// A short challenge is the squeezed little-endian integer with the
-        /// bits above its width cleared, and it squeezes nothing more. The
-        /// verifier draws the same value.
+        /// A short challenge is the little-endian integer of the first
+        /// `ceil(bits / 8)` squeezed bytes with the bits above its width
+        /// cleared. The squeeze is padded to whole words and takes nothing
+        /// more. The verifier draws the same value.
         #[test]
         fn test_challenge_short_scalar() {
             use jolt_field::CanonicalEncoding;
@@ -177,14 +166,16 @@ macro_rules! transcript_tests {
                     let value: Fr = short.challenge_short_scalar(loss).unwrap();
 
                     let len = bits.div_ceil(8) as usize;
-                    let mut bytes = manual.verifier_message_as(len, <[u8]>::to_vec);
+                    let mut bytes =
+                        manual.verifier_message_as(len.next_multiple_of(8), <[u8]>::to_vec);
+                    bytes.truncate(len);
                     let excess = 8 * len as u32 - bits;
                     *bytes.last_mut().unwrap() &= u8::MAX >> excess;
                     assert_eq!(value, Fr::from_bytes_le_reduced(&bytes));
                     let next: Fr = short.challenge().unwrap();
                     assert_eq!(next, manual.challenge().unwrap());
 
-                    let mut verifier = verifier_transcript::<$sponge>(SESSION, &statement, &[]);
+                    let mut verifier = verifier_transcript::<$sponge>(&SESSION, &statement, &[]);
                     let verified: Fr = verifier.challenge_short_scalar(loss).unwrap();
                     assert_eq!(verified, value);
                     widest = widest.max(value.num_bits());

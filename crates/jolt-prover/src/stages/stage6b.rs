@@ -288,7 +288,8 @@ mod field_inline_round_trip {
         let public_io = test_public_io();
         let checked = test_checked_inputs();
 
-        let mut prover_state = prover_transcript::<Keccak>(label, b"");
+        let mut prover_state =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
             backend: &mut context,
             mode: &mode,
@@ -319,7 +320,8 @@ mod field_inline_round_trip {
         // the upstream replays. The private wire-shape validator is
         // transcript-free and elided; `verify_clear`'s hard checks and the
         // final state equality pin the protocol content.
-        let mut transcript = prover_transcript::<Keccak>(label, b"");
+        let mut transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
@@ -441,7 +443,7 @@ mod field_inline_round_trip {
             &cycle_points.bytecode_read_raf.bytecode_ra,
             &booleanity_point,
         ) {
-            transcript.append_labeled(b"opening_claim", &value);
+            transcript.append(&value);
         }
 
         assert_eq!(
@@ -569,7 +571,10 @@ mod field_inline_zk {
         let checked = test_checked_inputs();
         let preprocessing = addi_only_preprocessing();
 
-        let mut transcript = prover_transcript::<Keccak>(b"stage6b-field-inline-zk", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage6b-field-inline-zk"),
+            b"",
+        );
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
             backend: &mut context,
             mode: &mode,

@@ -9,23 +9,25 @@
 #![expect(clippy::expect_used, reason = "tests")]
 
 use blake2::Blake2b512;
-use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg};
+use jolt_transcript::{
+    protocol_tag, prover_transcript, verifier_transcript, BytesMsg, ProverTranscript,
+};
 use spongefish::instantiations::Hash;
 use spongefish::VerifierState;
 
-const SESSION: &[u8] = b"narg-eof-test";
+const SESSION: [u8; 32] = protocol_tag(b"narg-eof-test");
 const INSTANCE: [u8; 32] = [0x42; 32];
 
 fn build_valid_narg(messages: &[&[u8]]) -> Vec<u8> {
-    let mut prover = prover_transcript::<Hash<Blake2b512>>(SESSION, &INSTANCE);
+    let mut prover = prover_transcript::<Hash<Blake2b512>>(&SESSION, &INSTANCE);
     for m in messages {
-        prover.prover_message(&BytesMsg(m.to_vec()));
+        prover.send(&BytesMsg(m.to_vec()));
     }
     prover.narg_string().to_vec()
 }
 
 fn build_verifier(narg: &[u8]) -> VerifierState<'_, Hash<Blake2b512>> {
-    verifier_transcript::<Hash<Blake2b512>>(SESSION, &INSTANCE, narg)
+    verifier_transcript::<Hash<Blake2b512>>(&SESSION, &INSTANCE, narg)
 }
 
 #[test]

@@ -44,10 +44,11 @@ fn committed_rounds(
 fn grind_nonces(
     rounds: &[CommittedRound<Bn254G1>],
     degree: usize,
-    label: &'static [u8],
+    session: &'static [u8],
 ) -> Vec<u32> {
     let bits = round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap();
-    let mut transcript = prover_transcript::<Blake2b512>(label, b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(session), b"");
     rounds
         .iter()
         .filter_map(|round| {
@@ -72,7 +73,10 @@ fn committed_rounds_complete_with_pedersen_commitments() {
     );
 
     let bits = round_pow_bits::<F, ProverState<Blake2b512>>(2).unwrap();
-    let mut prover_state = prover_transcript::<Blake2b512>(b"committed-roundtrip", b"");
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"committed-roundtrip"),
+        b"",
+    );
     let mut expected_challenges: Vec<F> = Vec::new();
     let mut pow_nonces = Vec::new();
     for round in &rounds {
@@ -81,7 +85,10 @@ fn committed_rounds_complete_with_pedersen_commitments() {
         expected_challenges.push(prover_state.challenge().unwrap());
     }
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"committed-roundtrip", b"");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"committed-roundtrip"),
+        b"",
+    );
     let consistency = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(rounds.len(), 2),
         &rounds,
@@ -115,7 +122,10 @@ fn tampered_committed_round_changes_challenges() {
     )
     .remove(0);
 
-    let mut original_transcript = prover_transcript::<Blake2b512>(b"committed-roundtrip", b"");
+    let mut original_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"committed-roundtrip"),
+        b"",
+    );
     let original = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(2, 2),
         &rounds,
@@ -124,7 +134,10 @@ fn tampered_committed_round_changes_challenges() {
     )
     .unwrap();
 
-    let mut tampered_transcript = prover_transcript::<Blake2b512>(b"committed-roundtrip", b"");
+    let mut tampered_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"committed-roundtrip"),
+        b"",
+    );
     let tampered = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(2, 2),
         &tampered,

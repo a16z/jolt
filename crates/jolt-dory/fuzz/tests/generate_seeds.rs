@@ -30,7 +30,7 @@ fn generate_deser_commitment_seeds() {
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).expect("commit");
-    let mut transcript = prover_transcript::<Blake2b512>(b"seed-gen", b"");
+    let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"seed-gen"), b"");
     let proof = DoryScheme::open(
         &poly,
         &point,

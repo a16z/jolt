@@ -474,8 +474,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
         // Collect each present member's claimed sum, in declaration order, for
         // the recorder absorb — the Fiat-Shamir binding that must precede the
-        // batching-coefficient draw (a clear recorder appends each under
-        // `b"sumcheck_claim"`).
+        // batching-coefficient draw (a clear recorder appends each in order).
         let sum_ident = format_ident!("__sum");
         let sum_collects = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
             per_member(
@@ -1110,15 +1109,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
 
             /// Append every absorbed opening to the transcript in canonical order,
-            /// each under the `b"opening_claim"` label, matching the prover's
-            /// commitment order.
+            /// matching the prover's commitment order. The generated output
+            /// struct fixes the value count, so no count word is absorbed.
             pub fn append_output_claims<__T: ::jolt_transcript::Transcript>(
                 &self,
                 transcript: &mut __T,
                 claims: &#output_claims_name<#f>,
             ) {
                 for value in self.opening_values(claims) {
-                    transcript.append_labeled(b"opening_claim", &value);
+                    transcript.append(&value);
                 }
             }
         }

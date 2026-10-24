@@ -1,17 +1,56 @@
 //! Message encodings for byte-oriented spongefish transcripts.
 //!
-//! [`BytesMsg`] is a byte string with an eight-byte little-endian length,
-//! followed by the body. [`Label`], [`LabelWithCount`] and [`U64Word`] are the
-//! 32-byte words that name what the next messages are.
+//! Every absorbed message starts and ends on an eight-byte word boundary.
+//! [`BytesMsg`] is a byte string absorbed as an eight-byte little-endian
+//! length, the body, then zero padding to the next word. Its NARG form is
+//! the length and the body with no padding: [`NargMessage`] sends it so.
+//! Counts and other integers are bare `u64` words, which spongefish encodes
+//! little-endian. [`protocol_tag`] pads a protocol name to the 32-byte tag
+//! that opens a sub-protocol.
 
 use spongefish::{Encoding, FromNarg, NargReader, VerificationError};
 
-/// Maximum label length in bytes accepted by [`Label`].
-pub const MAX_LABEL_LEN: usize = 32;
+/// Bytes in one absorbed word.
+pub const WORD_BYTES: usize = 8;
+
+/// Bytes in a protocol tag: four words.
+pub const TAG_BYTES: usize = 32;
+
+/// Zero bytes that pad `len` bytes to the next word.
+#[must_use]
+pub const fn word_padding(len: usize) -> usize {
+    (WORD_BYTES - len % WORD_BYTES) % WORD_BYTES
+}
+
+/// `name` zero-padded to a 32-byte protocol tag.
+///
+/// A tag names a protocol and its version and opens that protocol's part of
+/// the transcript. It has a fixed width, so it carries no length. Tags are
+/// constants: a name longer than 32 bytes fails const evaluation.
+#[must_use]
+pub const fn protocol_tag(name: &[u8]) -> [u8; TAG_BYTES] {
+    assert!(name.len() <= TAG_BYTES, "protocol tag exceeds 32 bytes");
+    let mut tag = [0u8; TAG_BYTES];
+    let mut i = 0;
+    while i < name.len() {
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "i < name.len() <= 32 == tag.len(); const-evaluated, so an out-of-bounds index fails compilation"
+        )]
+        {
+            tag[i] = name[i];
+        }
+        i += 1;
+    }
+    tag
+}
 
 /// Length-prefixed byte string, owned (`Vec<u8>`, the default) or borrowed.
-/// The 8-byte LE length keeps `BytesMsg(a) ; BytesMsg(b)` distinguishable
-/// from `BytesMsg(a||b)`.
+///
+/// Absorbed as an eight-byte LE length, the body, then zero padding to the
+/// next word. The length keeps `BytesMsg(a) ; BytesMsg(b)` distinguishable
+/// from `BytesMsg(a||b)` and fixes the number of padding bytes. In the NARG
+/// string it is the length and the body, with no padding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytesMsg<B = Vec<u8>>(pub B);
 
@@ -31,9 +70,11 @@ impl From<Vec<u8>> for BytesMsg {
 impl<B: AsRef<[u8]>> Encoding for BytesMsg<B> {
     fn encode(&self) -> impl AsRef<[u8]> {
         let body = self.0.as_ref();
-        let mut out = Vec::with_capacity(8 + body.len());
+        let pad = word_padding(body.len());
+        let mut out = Vec::with_capacity(WORD_BYTES + body.len() + pad);
         out.extend_from_slice(&(body.len() as u64).to_le_bytes());
         out.extend_from_slice(body);
+        out.resize(out.len() + pad, 0);
         out
     }
 }
@@ -50,75 +91,74 @@ impl FromNarg for BytesMsg {
     }
 }
 
-/// 32-byte zero-padded label word.
+/// A prover message: absorbed as its [`Encoding`], and written to the NARG
+/// string by [`write_narg`](Self::write_narg).
 ///
-/// Labels are protocol constants; encoding one longer than
-/// [`MAX_LABEL_LEN`] bytes panics.
-#[derive(Clone, Copy, Debug)]
-pub struct Label(pub &'static [u8]);
+/// The two forms differ only where the absorbed form pads to a word. The NARG
+/// form must be the one the message's [`FromNarg`] reads, so the verifier
+/// parses it and absorbs the same [`Encoding`] as the prover.
+pub trait NargMessage: Encoding {
+    /// Appends the message's NARG form to `narg`.
+    fn write_narg(&self, narg: &mut Vec<u8>);
+}
 
-impl Encoding for Label {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        assert!(
-            self.0.len() <= MAX_LABEL_LEN,
-            "label {:?} exceeds 32 bytes",
-            core::str::from_utf8(self.0)
-        );
-        let mut padded = [0u8; 32];
-        let (head, _) = padded.split_at_mut(self.0.len());
-        head.copy_from_slice(self.0);
-        padded
+impl<B: AsRef<[u8]>> NargMessage for BytesMsg<B> {
+    fn write_narg(&self, narg: &mut Vec<u8>) {
+        let body = self.0.as_ref();
+        narg.extend_from_slice(&(body.len() as u64).to_le_bytes());
+        narg.extend_from_slice(body);
     }
 }
 
-/// Packed label (24 bytes) + count (8-byte big-endian) in one 32-byte word.
-///
-/// Labels are protocol constants; encoding one longer than 24 bytes panics.
-#[derive(Clone, Copy, Debug)]
-pub struct LabelWithCount(pub &'static [u8], pub u64);
-
-impl Encoding for LabelWithCount {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        assert!(
-            self.0.len() <= 24,
-            "label {:?} exceeds 24 bytes",
-            core::str::from_utf8(self.0)
-        );
-        let mut packed = [0u8; 32];
-        let (head, tail) = packed.split_at_mut(24);
-        let (label, _) = head.split_at_mut(self.0.len());
-        label.copy_from_slice(self.0);
-        tail.copy_from_slice(&self.1.to_be_bytes());
-        packed
+impl NargMessage for u64 {
+    fn write_narg(&self, narg: &mut Vec<u8>) {
+        narg.extend_from_slice(&self.to_le_bytes());
     }
 }
 
-/// EVM-compatible left-padded u64: 24 zero bytes + 8-byte BE value.
-#[derive(Clone, Copy, Debug)]
-pub struct U64Word(pub u64);
-
-impl Encoding for U64Word {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        let mut packed = [0u8; 32];
-        let (_, value) = packed.split_at_mut(24);
-        value.copy_from_slice(&self.0.to_be_bytes());
-        packed
+impl<const N: usize> NargMessage for [u8; N] {
+    fn write_narg(&self, narg: &mut Vec<u8>) {
+        narg.extend_from_slice(self);
     }
 }
 
 #[cfg(test)]
-#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+#[expect(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    reason = "tests index fixture data"
+)]
 mod tests {
     use super::*;
 
     #[test]
-    fn bytes_msg_is_length_prefixed() {
+    fn bytes_msg_is_length_prefixed_and_word_padded() {
         let m = BytesMsg(vec![1, 2, 3, 4]);
         let enc = m.encode();
         let bytes = enc.as_ref();
-        assert_eq!(bytes.len(), 8 + 4);
+        assert_eq!(bytes.len(), 8 + 8);
         assert_eq!(&bytes[..8], &4u64.to_le_bytes());
-        assert_eq!(&bytes[8..], &[1, 2, 3, 4]);
+        assert_eq!(&bytes[8..12], &[1, 2, 3, 4]);
+        assert_eq!(&bytes[12..], &[0; 4]);
+        for len in 0..=17 {
+            let encoded = BytesMsg(vec![0xA5u8; len]).encode().as_ref().to_vec();
+            assert_eq!(encoded.len(), 8 + len.div_ceil(8) * 8, "length {len}");
+            assert_eq!(&encoded[..8], &(len as u64).to_le_bytes());
+            assert!(encoded[8 + len..].iter().all(|&byte| byte == 0));
+        }
+    }
+
+    #[test]
+    fn bytes_msg_narg_form_has_no_padding_and_round_trips() {
+        let m = BytesMsg(vec![9u8, 8, 7]);
+        let mut narg = Vec::new();
+        m.write_narg(&mut narg);
+        assert_eq!(narg.len(), 8 + 3);
+        assert_eq!(&narg[..8], &3u64.to_le_bytes());
+        assert_eq!(&narg[8..], &[9, 8, 7]);
+        let mut reader = NargReader::new(&narg);
+        assert_eq!(BytesMsg::from_narg(&mut reader).unwrap(), m);
+        assert!(reader.read::<u8>().is_err());
     }
 
     #[test]
@@ -129,28 +169,28 @@ mod tests {
     }
 
     #[test]
-    fn label_words_pad_and_pack() {
-        let label = Label(b"abc");
-        let encoded = label.encode();
-        assert_eq!(&encoded.as_ref()[..3], b"abc");
-        assert!(encoded.as_ref()[3..].iter().all(|&byte| byte == 0));
-
-        let counted = LabelWithCount(b"xy", 0x0102);
-        let encoded = counted.encode();
-        assert_eq!(&encoded.as_ref()[..2], b"xy");
-        assert_eq!(&encoded.as_ref()[24..], &0x0102u64.to_be_bytes());
-
-        let word = U64Word(7);
-        let encoded = word.encode();
-        assert!(encoded.as_ref()[..31].iter().all(|&byte| byte == 0));
-        assert_eq!(encoded.as_ref()[31], 7);
+    fn protocol_tags_pad_to_four_words() {
+        let tag = protocol_tag(b"abc");
+        assert_eq!(tag.len(), 32);
+        assert_eq!(&tag[..3], b"abc");
+        assert!(tag[3..].iter().all(|&byte| byte == 0));
+        let full = [0x41u8; 32];
+        assert_eq!(
+            protocol_tag(&full),
+            full,
+            "a 32-byte name is passed through"
+        );
+        assert_eq!(word_padding(0), 0);
+        assert_eq!(word_padding(1), 7);
+        assert_eq!(word_padding(8), 0);
+        assert_eq!(word_padding(13), 3);
     }
 
     #[test]
     fn bytes_msg_narg_rejects_truncation() {
         let m = BytesMsg(vec![9, 8, 7]);
         let mut narg: Vec<u8> = Vec::new();
-        narg.extend_from_slice(m.encode().as_ref());
+        m.write_narg(&mut narg);
         let _ = narg.pop();
         let mut reader = NargReader::new(&narg);
         let result = BytesMsg::from_narg(&mut reader);

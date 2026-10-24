@@ -31,6 +31,8 @@ use jolt_field::{F128, F192, F64, F8};
 use spongefish::instantiations::Keccak;
 use spongefish::{DuplexSpongeInterface, VerificationError};
 
+#[cfg(any(feature = "solinas", feature = "binary"))]
+use crate::codec::WORD_BYTES;
 #[cfg(feature = "transcript-blake2b")]
 use crate::Blake2b512;
 use crate::ChallengeSetSize;
@@ -69,24 +71,31 @@ mod sealed {
 /// non-field towers over `Prime128OffsetA7F7` and arbitrary quadratic configs
 /// have no implementation.
 ///
+/// Every message is a whole number of eight-byte words, so each squeeze starts
+/// and ends on a word boundary of the sponge's rate. A pool of four-byte
+/// candidates is rounded up to an even count. Squeezing is prefix-consistent,
+/// so the larger pool starts with the same candidates: its first `len`
+/// accepted values are those of the smaller pool whenever that one succeeds,
+/// and it runs out only if the smaller pool does. The extra candidate only
+/// adds rejection reserve.
+///
 /// # BN254 (`bn254`)
 ///
-/// `Fr` and `Fq` reduce each consecutive w-byte little-endian chunk independently.
-/// For M = 2^(8w) and r = M mod p, reduction has exact conventional TV
-/// δ = r(p-r)/(pM) ≤ p/(4M), since r(p-r) ≤ p²/4.
-/// For len independent reductions, TV ≤ len·δ. With
-/// w = ceil((MODULUS_BITS + 159 + ceil(log2(len)))/8),
-/// len·2δ ≤ len·2^MODULUS_BITS / 2^(8w+1) ≤ 2^-160,
-/// so the whole message has conventional TV ≤ 2^-161. For BN254's 254-bit
-/// modulus this gives 52 bytes per element for len 1–8, 53 for len 9–2048,
-/// and 54 above, up to the [`MAX_CHALLENGE_BYTES`] cap (310,689 elements).
-/// The 55-byte width would need more than 524,288 elements.
+/// `Fr` and `Fq` reduce each consecutive 56-byte little-endian chunk
+/// independently, whatever the message length. For M = 2^448 and
+/// r = M mod p, reduction has exact conventional TV
+/// δ = r(p-r)/(pM) ≤ p/(4M) < 2^254 / 2^450 = 2^-196, since r(p-r) ≤ p²/4.
+/// For len independent reductions, TV ≤ len·δ. The [`MAX_CHALLENGE_BYTES`]
+/// cap allows at most 299,593 < 2^19 elements, so the whole message has
+/// TV < 2^-177, within the 2^-161 budget; the width would meet the budget up
+/// to 2^35 elements.
 ///
 /// # Binary fields (`binary`)
 ///
 /// `F8`, `F64`, `F128`, and `F192` decode consecutive `NUM_BYTES` chunks with
 /// checked little-endian decoding. Every correctly sized pattern is canonical,
-/// making the map a bijection with zero bias and no exhaustion.
+/// making the map a bijection with zero bias and no exhaustion. An `F8`
+/// message squeezes `ceil(len / 8)` words and decodes its first `len` bytes.
 ///
 /// The trait is sealed: every implementation lives in this module, next to
 /// the argument for its TV bound.
@@ -143,7 +152,7 @@ impl UniformBytes for Blake2b512 {}
 /// it before drawing.
 pub const MAX_CHALLENGE_BYTES: usize = 1 << 24;
 
-#[cfg(any(feature = "solinas", feature = "bn254"))]
+#[cfg(feature = "solinas")]
 fn ceil_log2(n: u128) -> u32 {
     u128::BITS - n.saturating_sub(1).leading_zeros()
 }
@@ -164,7 +173,12 @@ fn pool_bytes<F: PseudoMersenne>(len: usize) -> Option<usize> {
             .checked_mul(usize::try_from(margin).ok()?)?
             >= 161
         {
-            return candidates.checked_mul(F::NUM_BYTES);
+            // Whole words: candidates narrower than a word come in groups
+            // that fill one. Registered bases have 4, 8 or 16 bytes.
+            let per_word = (WORD_BYTES / F::NUM_BYTES).max(1);
+            return candidates
+                .checked_next_multiple_of(per_word)?
+                .checked_mul(F::NUM_BYTES);
         }
         k = k.checked_add(1)?;
     }
@@ -277,15 +291,9 @@ extension_codec!(FpExt4, 4);
 #[cfg(feature = "solinas")]
 extension_codec!(FpExt8, 8);
 
-/// Bytes per element of a `len`-element message: `len` reduced elements
-/// share the `2^-161` budget.
+/// Bytes per BN254 element in every message: seven words.
 #[cfg(feature = "bn254")]
-fn element_bytes<F: CanonicalEncoding>(len: usize) -> Option<usize> {
-    Some(jolt_field::reduction_width(
-        F::MODULUS_BITS,
-        ceil_log2(u128::try_from(len).ok()?),
-    ))
-}
+const BN254_ELEMENT_BYTES: usize = 56;
 
 #[cfg(feature = "bn254")]
 macro_rules! reduction_codec {
@@ -297,7 +305,7 @@ macro_rules! reduction_codec {
                 ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
 
             fn challenge_bytes(len: usize) -> Option<usize> {
-                len.checked_mul(element_bytes::<Self>(len)?)
+                len.checked_mul(BN254_ELEMENT_BYTES)
             }
 
             fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
@@ -305,7 +313,7 @@ macro_rules! reduction_codec {
                     return None;
                 }
                 let mut result = Vec::with_capacity(len);
-                for chunk in bytes.chunks_exact(element_bytes::<Self>(len)?) {
+                for chunk in bytes.chunks_exact(BN254_ELEMENT_BYTES) {
                     result.push(Self::from_bytes_le_reduced(chunk));
                 }
                 Some(result)
@@ -330,15 +338,18 @@ macro_rules! binary_codec {
                 ChallengeSetSize::from_limbs(<Self as CanonicalEncoding>::CHALLENGE_SET_LIMBS);
 
             fn challenge_bytes(len: usize) -> Option<usize> {
-                len.checked_mul(<Self as jolt_field::CanonicalBytes>::NUM_BYTES)
+                len.checked_mul(<Self as jolt_field::CanonicalBytes>::NUM_BYTES)?
+                    .checked_next_multiple_of(WORD_BYTES)
             }
 
             fn decode_challenges(bytes: &[u8], len: usize) -> Option<Vec<Self>> {
                 if bytes.len() != Self::challenge_bytes(len)? {
                     return None;
                 }
+                let width = <Self as jolt_field::CanonicalBytes>::NUM_BYTES;
+                let decoded = bytes.get(..len.checked_mul(width)?)?;
                 let mut result = Vec::with_capacity(len);
-                for chunk in bytes.chunks_exact(<Self as jolt_field::CanonicalBytes>::NUM_BYTES) {
+                for chunk in decoded.chunks_exact(width) {
                     result.push(Self::from_bytes_le_checked(chunk)?);
                 }
                 Some(result)
@@ -364,7 +375,9 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
 #[cfg(all(test, feature = "solinas"))]
 mod tests {
     use super::{Prime64Offset59, Sealed, UniformBytes};
-    use crate::{prover_transcript, verifier_transcript, BytesMsg, FieldTranscript};
+    use crate::{
+        prover_transcript, verifier_transcript, BytesMsg, FieldTranscript, ProverTranscript,
+    };
     use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
     /// A sponge whose output is all ones, so every pooled candidate is
@@ -394,18 +407,18 @@ mod tests {
     impl Sealed for Saturated {}
     impl UniformBytes for Saturated {}
 
-    const SESSION: &[u8] = b"jolt/challenge-codecs/v1";
+    const SESSION: [u8; 32] = crate::protocol_tag(b"jolt/challenge-codecs/v1");
     const INSTANCE: [u8; 32] = [0x42; 32];
 
     #[test]
     fn exhaustion_fails_on_both_sides_and_poisons_the_verifier() {
-        let mut prover = prover_transcript::<Saturated>(SESSION, &INSTANCE);
+        let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
         assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut prover, 3).is_err());
 
-        let mut prover = prover_transcript::<Saturated>(SESSION, &INSTANCE);
-        prover.prover_message(&BytesMsg(b"after".to_vec()));
+        let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
+        prover.send(&BytesMsg(b"after".to_vec()));
         let mut verifier =
-            verifier_transcript::<Saturated>(SESSION, &INSTANCE, prover.narg_string());
+            verifier_transcript::<Saturated>(&SESSION, &INSTANCE, prover.narg_string());
         assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut verifier, 3).is_err());
         assert!(verifier.prover_message::<BytesMsg>().is_err());
         assert!(verifier.check_eof().is_err());

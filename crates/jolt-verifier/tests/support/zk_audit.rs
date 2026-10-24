@@ -67,7 +67,7 @@ where
         public_io,
         proof,
         trusted_advice_commitment,
-        |statement| T::init(JOLT_SESSION, statement, &proof.narg),
+        |statement| T::init(&JOLT_SESSION, statement, &proof.narg),
     )?;
 
     let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(

@@ -115,7 +115,8 @@ mod tests {
 
     #[test]
     fn bn254_sites_read_no_nonces() {
-        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-pow", b"");
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"blindfold-pow"), b"");
         let mut nonces = PowNonces::new(&[]);
         for site in SITES {
             nonces
@@ -148,7 +149,8 @@ mod tests {
             [Some(2), Some(4), Some(1)]
         );
 
-        let mut prover = prover_transcript::<Blake2b512>(b"blindfold-pow", b"");
+        let mut prover =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"blindfold-pow"), b"");
         let ground = SITES.map(|site| {
             let nonce = prover
                 .public_grind(site.bits::<P, T>().expect("difficulty in reach"))
@@ -158,7 +160,8 @@ mod tests {
             nonce
         });
 
-        let mut verifier = prover_transcript::<Blake2b512>(b"blindfold-pow", b"");
+        let mut verifier =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"blindfold-pow"), b"");
         let mut nonces = PowNonces::new(&ground);
         for site in SITES {
             nonces
@@ -172,7 +175,8 @@ mod tests {
             prover.verifier_message::<[u8; 32]>()
         );
 
-        let mut verifier = prover_transcript::<Blake2b512>(b"blindfold-pow", b"");
+        let mut verifier =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"blindfold-pow"), b"");
         let mut nonces = PowNonces::new(&ground[..1]);
         nonces
             .check::<P, _>(SITES[0], &mut verifier)
