@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792797075282,
+  "lastUpdate": 1792837526560,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -199210,6 +199210,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861452,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f3265b5a9981f0c1359f2b63008824616f0c82fa",
+          "message": "feat(transcript): proof of work on the transcript sponge (#2099)\n\n* Add fixed-tape field challenge codecs\n\n* Declare legacy transcript test feature requirements\n\n* fix(transcript): bound, poison and seal field challenge messages\n\nReject unsupported lengths and messages above MAX_CHALLENGE_BYTES before\ntouching the sponge; return early on empty messages; poison the verifier on\npool exhaustion; seal ChallengeCodec; correct the BN254 width table; lint and\ntest jolt-transcript with all features in CI.\n\n* style(transcript): import Sealed, Transcript and sponge traits by name\n\n* feat(transcript): proof of work on the transcript sponge\n\nAdd grind / check_grind: a standalone proof-of-work step on the transcript\nsponge that protects the challenges drawn after it, up to the next prover\nmessage. The nonce is canonical LEB128 below 2^(bits+7), one byte per prover\nmessage; the check squeezes ceil(bits/8) bytes and needs the low bits zero.\nDifficulty is at most 25 bits. MessageSearch probes byte by byte so sponges\nthat absorb a length per call (Poseidon) replay the real transcript. Failed\nchecks poison the verifier. CI lints and tests the sequential search.\n\n* fix(transcript): field challenges only on uniform sponges; poison rejected lengths\n\nPoseidonSponge squeezes the bytes of a BN254 scalar, so its output is far\nfrom uniform and the codecs' TV bound fails there. Restrict field_challenges\nto sponges with uniform output (sealed UniformBytes: Keccak, Blake2b512).\nThe verifier now also poisons on a rejected length.\n\n* test(verifier): list the proof-of-work probe absorb in the FS inventory\n\n* feat(transcript): price proof-of-work difficulty from the challenge-set size (#2106)\n\n* docs(transcript): document the external challenge-codec contract; trim comments\n\n- ChallengeCodec, UniformBytes and MAX_CHALLENGE_BYTES stay public because\n  they bound the public field_challenges methods; their docs now state that\n  contract and name Akita's transcript as the consumer.\n- Remove the doc block on the crate-private message_bytes helper.\n- Remove the test-file heading and a comment that restated its assertions.\n- Correct the CI comment: default features already cover BN254 and every\n  sponge; the all-features run adds the Solinas and binary codecs.\n\n* docs(transcript): drop the unmerged Akita consumer from the ChallengeCodec contract\n\n* test(transcript): drop round_trips, already covered by the layout and sponge tests\n\n* test(transcript): drop known_answers, covered by the unbounded-oracle test",
+          "timestamp": "2026-10-24T05:30:52-04:00",
+          "tree_id": "29f573c3ab4f995989b1d59f8d8e5d3a682b318a",
+          "url": "https://github.com/a16z/jolt/commit/f3265b5a9981f0c1359f2b63008824616f0c82fa"
+        },
+        "date": 1792837518730,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.8499,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.5911,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 502404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 508952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8888,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 506932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 998996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.739,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 506988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0627,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.0498,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 213140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.7054,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.7522,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 497640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5679,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 504268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.3487,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.0308,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.1214,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1980988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.5491,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 653296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 76.5894,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1165872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5977,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.8231,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 502284,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.3333,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 859588,
             "unit": "KB",
             "extra": ""
           }
