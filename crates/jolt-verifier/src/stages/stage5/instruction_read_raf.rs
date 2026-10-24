@@ -263,7 +263,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "fixed valid dimensions in test fixtures")]
+#[expect(
+    clippy::unwrap_used,
+    reason = "fixed valid dimensions in test fixtures"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::ConcreteSumcheck;
@@ -398,12 +401,7 @@ mod tests {
         last_chunk.extend([one, zero, zero]);
         let mut points = InstructionReadRafOutputClaims {
             lookup_table_flags: vec![vec![zero; 2]; LookupTableKind::<RISCV_XLEN>::COUNT],
-            instruction_ra: vec![
-                vec![zero; 34],
-                vec![zero; 34],
-                vec![zero; 34],
-                last_chunk,
-            ],
+            instruction_ra: vec![vec![zero; 34], vec![zero; 34], vec![zero; 34], last_chunk],
             instruction_raf_flag: vec![zero; 2],
         };
         let values = InstructionReadRafOutputClaims {
@@ -439,5 +437,4 @@ mod tests {
             Err(VerifierError::StageClaimPublicInputFailed { .. })
         ));
     }
-
 }
