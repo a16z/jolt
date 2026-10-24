@@ -130,7 +130,9 @@ const SUPPORTED: &[&str] = &[
     "StoreB",
     "StoreH",
     "StoreW",
+    #[cfg(feature = "zicclsm")]
     "WindowMaskD",
+    #[cfg(feature = "zicclsm")]
     "FunnelHigh",
 ];
 
@@ -327,6 +329,7 @@ fn shift_reg_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
 
 /// FunnelHigh's honest operand is a `WindowMaskD` byte mask; random operands
 /// check the total-domain definition the tracer and x86 must share.
+#[cfg(feature = "zicclsm")]
 fn funnel_high(rng: &mut StdRng) -> Instance {
     let mut i = alu_rr(rng, kind_by_name("VirtualFunnelHigh"));
     let rs2 = i.row.operands.rs2.unwrap();
@@ -681,8 +684,9 @@ fn run_difftest(name: &str, generate: fn(&mut StdRng) -> Instance) {
 }
 
 macro_rules! difftests {
-    ($($test:ident => $gen:expr;)*) => {
+    ($($(#[$meta:meta])* $test:ident => $gen:expr;)*) => {
         $(
+            $(#[$meta])*
             #[test]
             fn $test() {
                 run_difftest(stringify!($test), $gen);
@@ -785,7 +789,9 @@ difftests! {
     diff_window_mask_w => |r| alu_ri(r, kind_by_name("VirtualWindowMaskW"), false);
     diff_window_mask_b => |r| alu_ri(r, kind_by_name("VirtualWindowMaskB"), false);
     diff_window_mask_h => |r| alu_ri(r, kind_by_name("VirtualWindowMaskH"), false);
+    #[cfg(feature = "zicclsm")]
     diff_window_mask_d => |r| alu_ri(r, kind_by_name("VirtualWindowMaskD"), false);
+    #[cfg(feature = "zicclsm")]
     diff_funnel_high => funnel_high;
     diff_pext_signed => |r| alu_rr(r, kind_by_name("VirtualPextSigned"));
     diff_pext => |r| alu_rr(r, kind_by_name("VirtualPext"));

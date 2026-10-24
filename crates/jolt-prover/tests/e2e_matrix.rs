@@ -3,7 +3,8 @@
 //! Every case checks native expected output, proves with the optimized backend,
 //! and verifies through the public verifier API. Field-inline builds select the
 //! active field-ops and field-limbs cases and the inactive muldiv case; ordinary
-//! builds select the general guest table. Specialized suites retain tampering, reference-backend parity,
+//! builds select the general guest table, to which `zicclsm` builds add the
+//! misaligned memory-ops case. Specialized suites retain tampering, reference-backend parity,
 //! committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
@@ -82,9 +83,10 @@ mod matrix {
     /// Byte-array model of the memory-ops guest: RISC-V load and store
     /// semantics over its 24-byte scratch, folding every loaded value into the
     /// hash in program order. The guest runs its accesses twice, by immediate
-    /// and then from one PC per kind with a walking base.
+    /// and then from one PC per kind with a walking base, at every naturally
+    /// aligned offset or, when `misaligned`, at every offset.
     #[cfg(not(feature = "field-inline"))]
-    fn memory_ops_reference() -> (u64, [u64; 3]) {
+    fn memory_ops_reference(misaligned: bool) -> (u64, [u64; 3]) {
         fn load(scratch: &[u8; 24], offset: i64, width: usize, signed: bool) -> u64 {
             let start = (offset + 8) as usize;
             let mut bytes = [0u8; 8];
@@ -94,6 +96,9 @@ mod matrix {
             }
             u64::from_le_bytes(bytes)
         }
+        let offsets = |width: usize| {
+            (-8..=16 - width as i64).filter(move |offset| misaligned || offset % width as i64 == 0)
+        };
         let mut scratch: [u8; 24] = std::array::from_fn(|i| 0x80 | (i as u8).wrapping_mul(37));
         let mut hash = 0u64;
         let mut value = 0u64;
@@ -107,12 +112,12 @@ mod matrix {
                 (4, false),
                 (8, true),
             ] {
-                for offset in -8..=16 - width as i64 {
+                for offset in offsets(width) {
                     hash = hash.rotate_left(7) ^ load(&scratch, offset, width, signed);
                 }
             }
             for width in [1, 2, 4, 8] {
-                for offset in -8..=16 - width as i64 {
+                for offset in offsets(width) {
                     value = value.rotate_left(13) ^ 0x9e37_79b9_7f4a_7c15;
                     let start = (offset + 8) as usize;
                     scratch[start..start + width].copy_from_slice(&value.to_le_bytes()[..width]);
@@ -177,7 +182,13 @@ mod matrix {
                 };
                 memory_ops => GuestCase {
                     func: Some("memory_ops"),
-                    expected_output: Some(encode(&memory_ops_reference())),
+                    expected_output: Some(encode(&memory_ops_reference(false))),
+                    ..GuestCase::new("memory-ops-guest")
+                };
+                #[cfg(feature = "zicclsm")]
+                misaligned_memory_ops => GuestCase {
+                    func: Some("misaligned_memory_ops"),
+                    expected_output: Some(encode(&memory_ops_reference(true))),
                     ..GuestCase::new("memory-ops-guest")
                 };
                 // 127 bytes: one full block through the initial compression,
@@ -262,8 +273,9 @@ mod matrix {
     }
 
     macro_rules! emit_tests {
-        ($($test:ident => $case:expr;)*) => {
+        ($($(#[$meta:meta])* $test:ident => $case:expr;)*) => {
             $(
+                $(#[$meta])*
                 #[test]
                 fn $test() {
                     super::mode::prove_and_verify(&$case);

@@ -128,6 +128,7 @@ use virtual_assert_lte::VirtualAssertLTE;
 use virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
+#[cfg(feature = "zicclsm")]
 use virtual_funnel_high::VirtualFunnelHigh;
 use virtual_load_b::VirtualLoadB;
 use virtual_load_h::VirtualLoadH;
@@ -164,6 +165,7 @@ use virtual_store_b::VirtualStoreB;
 use virtual_store_h::VirtualStoreH;
 use virtual_store_w::VirtualStoreW;
 use virtual_window_mask_b::VirtualWindowMaskB;
+#[cfg(feature = "zicclsm")]
 use virtual_window_mask_d::VirtualWindowMaskD;
 use virtual_window_mask_h::VirtualWindowMaskH;
 use virtual_window_mask_w::VirtualWindowMaskW;
@@ -233,11 +235,13 @@ impl InlineExpansion {
     }
 }
 
-/// Whether an execution of a dual load or store from register file `x` runs
-/// its misaligned sequence.
+/// Whether an execution of a load or store from register file `x` runs its
+/// misaligned sequence. Without `zicclsm` none has one, and a misaligned
+/// access aborts in its aligned rows.
 #[inline]
 fn runs_misaligned_sequence(access: DualAccess, x: &[i64]) -> bool {
-    access.is_misaligned(x[access.base as usize] as u64)
+    cfg!(feature = "zicclsm")
+        && access.is_misaligned(x[access.base as usize] as u64)
         && !floor_access::aligned_sequences_forced()
 }
 
@@ -402,6 +406,7 @@ pub mod virtual_assert_lte;
 pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
+#[cfg(feature = "zicclsm")]
 pub mod virtual_funnel_high;
 pub mod virtual_host_io;
 pub mod virtual_load_b;
@@ -439,6 +444,7 @@ pub mod virtual_store_b;
 pub mod virtual_store_h;
 pub mod virtual_store_w;
 pub mod virtual_window_mask_b;
+#[cfg(feature = "zicclsm")]
 pub mod virtual_window_mask_d;
 pub mod virtual_window_mask_h;
 pub mod virtual_window_mask_w;

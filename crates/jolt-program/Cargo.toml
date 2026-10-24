@@ -18,6 +18,9 @@ std = ["common/std"]
 parallel = ["dep:rayon"]
 image = ["dep:object"]
 field-inline = ["jolt-riscv/field-inline"]
+# Misaligned loads and stores (RISC-V Zicclsm): a top-level LH/LHU/LW/LWU/LD/
+# SH/SW/SD expands to an aligned and a misaligned sequence.
+zicclsm = ["jolt-riscv/zicclsm"]
 
 [dependencies]
 ark-serialize = { workspace = true, optional = true }

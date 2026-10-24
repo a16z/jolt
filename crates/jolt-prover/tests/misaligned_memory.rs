@@ -1,13 +1,13 @@
 //! Soundness: a load or store's aligned sequence cannot prove an access
 //! misaligned for its width.
 //!
-//! The tracer runs the misaligned sequence on such an access, so these tests
-//! trace one with aligned sequences forced. Each floor-addressed row then
-//! records the RAM address R1CS constraint 0 assigns, `ea − AddressOffset(ea)`,
-//! and a native `LD`/`SD` row records `ea`, neither a multiple of 8. The
-//! witness satisfies every R1CS row, and `RamAddress` is consumed only by RAM
-//! RAF evaluation, which admits only multiples of 8, so that sumcheck is what
-//! must reject the proof.
+//! The tracer runs the misaligned sequence on such an access under `zicclsm`
+//! and aborts on it otherwise, so these tests trace one with aligned sequences
+//! forced. Each floor-addressed row then records the RAM address R1CS
+//! constraint 0 assigns, `ea − AddressOffset(ea)`, and a native `LD`/`SD` row
+//! records `ea`, neither a multiple of 8. The witness satisfies every R1CS row,
+//! and `RamAddress` is consumed only by RAM RAF evaluation, which admits only
+//! multiples of 8, so that sumcheck is what must reject the proof.
 
 #[cfg(all(
     feature = "prover-fixtures",

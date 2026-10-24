@@ -737,6 +737,24 @@ fn akita_proof_shape_tampers_reject() {
         &committed.proof,
         None,
     ));
+
+    let mut preprocessing = committed.preprocessing.clone();
+    let ProgramPreprocessing::Committed(program) = &mut preprocessing.program else {
+        panic!("committed fixture must carry committed preprocessing");
+    };
+    // The two lanes by which builds with and without `zicclsm` differ.
+    program.bytecode_lanes += 2;
+    assert_rejects(jolt_verifier::verify::<
+        AkitaField,
+        AkitaScheme,
+        AkitaVc,
+        AkitaTranscript,
+    >(
+        &preprocessing,
+        &committed.public_io,
+        &committed.proof,
+        None,
+    ));
 }
 
 /// The advice case fails closed when its trusted-advice commitment is absent:

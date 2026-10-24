@@ -1,9 +1,9 @@
 //! Per-source differential tests for loads and stores: each source
 //! instruction's real expansion (both sequences of a dual load or store) runs
 //! through the AOT backend and the reference interpreter at every doubleword
-//! offset, plain, compressed and with `rd = x0`, comparing registers, PC,
-//! scratch memory and the row count, which pins the sequence the dispatch
-//! chose.
+//! offset (every aligned one without `zicclsm`), plain, compressed and with
+//! `rd = x0`, comparing registers, PC, scratch memory and the row count, which
+//! pins the sequence the dispatch chose.
 
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::unwrap_used)]
@@ -78,12 +78,20 @@ fn reference_run(source: SourceInstruction, pre_regs: &[u64; REGS], scratch: &[u
 fn loads_and_stores_match_the_interpreter_at_every_offset() {
     use SourceInstructionKind as S;
     let mut rng = StdRng::seed_from_u64(0xD0A1_5EED);
-    let loads = [S::LB, S::LBU, S::LH, S::LHU, S::LW, S::LWU, S::LD];
-    let stores = [S::SB, S::SH, S::SW, S::SD];
-    for (kind, is_store) in loads
+    let loads = [
+        (S::LB, 1),
+        (S::LBU, 1),
+        (S::LH, 2),
+        (S::LHU, 2),
+        (S::LW, 4),
+        (S::LWU, 4),
+        (S::LD, 8),
+    ];
+    let stores = [(S::SB, 1), (S::SH, 2), (S::SW, 4), (S::SD, 8)];
+    for ((kind, width), is_store) in loads
         .into_iter()
-        .map(|kind| (kind, false))
-        .chain(stores.into_iter().map(|kind| (kind, true)))
+        .map(|access| (access, false))
+        .chain(stores.into_iter().map(|access| (access, true)))
     {
         let rds: &[Option<u8>] = if is_store {
             &[None]
@@ -92,7 +100,9 @@ fn loads_and_stores_match_the_interpreter_at_every_offset() {
         };
         for &rd in rds {
             for is_compressed in [false, true] {
-                for offset in 0..8u64 {
+                for offset in (0..8u64)
+                    .filter(|offset| cfg!(feature = "zicclsm") || offset.is_multiple_of(width))
+                {
                     for imm in [offset as i128 + 24, offset as i128 - 40] {
                         let source = SourceInstruction::new(
                             kind,

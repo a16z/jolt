@@ -1,5 +1,6 @@
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use common::jolt_device::MemoryLayout;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode;
 use jolt_claims::protocols::jolt::{JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
@@ -23,7 +24,31 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub max_padded_trace_length: usize,
     pub program_image_commitment: PCS::Output,
     pub bytecode_commitment: PCS::Output,
+    /// Lanes in each committed bytecode row: `bytecode::total_lanes()` of the
+    /// build that committed it. The commitment pads them to
+    /// `COMMITTED_BYTECODE_LANE_CAPACITY`, so without this a build with another
+    /// `zicclsm` setting, whose rows carry two more or fewer lookup-table
+    /// lanes, would commit an artifact of the same shape.
+    pub bytecode_lanes: usize,
     pub trace_order: TracePolynomialOrder,
+}
+
+impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
+    /// Rejects an artifact whose recorded lane count differs from this
+    /// build's. Every `field-inline` × `zicclsm` combination has its own count;
+    /// a layout change that kept the count would pass.
+    pub(crate) fn check_bytecode_lanes(&self) -> Result<(), VerifierError> {
+        if self.bytecode_lanes != bytecode::total_lanes() {
+            return Err(VerifierError::InvalidCommittedProgram {
+                reason: format!(
+                    "committed bytecode rows have {} lanes; this build reads {}",
+                    self.bytecode_lanes,
+                    bytecode::total_lanes()
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Program preprocessing in one of two modes. `Full` carries the bytecode
@@ -139,21 +164,50 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 
 /// Domain separator for [`ProgramPreprocessing::digest`]. Bump the version
 /// whenever the digest input changes: it is the only compatibility switch a
-/// deployed verifier sees.
-#[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
+/// deployed verifier sees. The extended instruction profiles (`field-inline`,
+/// `zicclsm`) each add a tag.
+#[cfg(all(
+    not(feature = "akita"),
+    not(feature = "field-inline"),
+    not(feature = "zicclsm")
+))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
     b"jolt/program-preprocessing/dory-whole-bytecode/v3";
+#[cfg(all(
+    not(feature = "akita"),
+    not(feature = "field-inline"),
+    feature = "zicclsm"
+))]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
+    b"jolt/program-preprocessing/dory-whole-bytecode/zicclsm/v3";
 // Field flags use the common circuit columns; preprocessing has no side table.
-#[cfg(all(not(feature = "akita"), feature = "field-inline"))]
+#[cfg(all(
+    not(feature = "akita"),
+    feature = "field-inline",
+    not(feature = "zicclsm")
+))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
     b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v3";
+#[cfg(all(not(feature = "akita"), feature = "field-inline", feature = "zicclsm"))]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
+    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/zicclsm/v3";
 
-#[cfg(all(feature = "akita", not(feature = "field-inline")))]
+#[cfg(all(
+    feature = "akita",
+    not(feature = "field-inline"),
+    not(feature = "zicclsm")
+))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
     b"jolt/program-preprocessing/akita-whole-bytecode/v2";
-#[cfg(all(feature = "akita", feature = "field-inline"))]
+#[cfg(all(feature = "akita", not(feature = "field-inline"), feature = "zicclsm"))]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
+    b"jolt/program-preprocessing/akita-whole-bytecode/zicclsm/v2";
+#[cfg(all(feature = "akita", feature = "field-inline", not(feature = "zicclsm")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
     b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v2";
+#[cfg(all(feature = "akita", feature = "field-inline", feature = "zicclsm"))]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
+    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/zicclsm/v2";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -162,8 +216,9 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// (mode, bytecode or its commitments, RAM image, memory layout, trace
     /// bound) without a hand-maintained field list, so a field added to any
     /// preprocessing type enters the digest by construction. A prover and a
-    /// separately built verifier must agree on `field-inline` (selects the
-    /// domain tag) and on the PCS (`Committed` carries PCS-specific fields).
+    /// separately built verifier must agree on `field-inline` and `zicclsm`
+    /// (they select the domain tag) and on the PCS (`Committed` carries
+    /// PCS-specific fields).
     pub(crate) fn digest(&self) -> Result<[u8; 32], VerifierError> {
         let encoded =
             bincode::serde::encode_to_vec(self, bincode::config::standard()).map_err(|error| {
@@ -287,52 +342,124 @@ mod tests {
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_riscv::RV64IMAC_JOLT;
 
-    use super::{CommittedProgramPreprocessing, ProgramPreprocessing};
+    use super::{bytecode, CommittedProgramPreprocessing, ProgramPreprocessing};
 
     /// Golden digests. A change here is a Fiat-Shamir break for every
     /// deployed verifier: bump `PROGRAM_PREPROCESSING_DIGEST_DOMAIN` and say so
-    /// in the PR. Pinned separately with and without `jolt-program/field-inline`:
-    /// the bytecode row schema is shared, while field-inline selects its own
-    /// digest domain for the extended instruction and proof profile.
-    #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
+    /// in the PR. Pinned separately per `field-inline` and `zicclsm`: the
+    /// bytecode row schema is shared, while each selects its own digest domain
+    /// for the extended instruction and proof profile.
+    #[cfg(all(
+        not(feature = "akita"),
+        not(feature = "field-inline"),
+        not(feature = "zicclsm")
+    ))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         210, 191, 0, 84, 62, 128, 103, 70, 77, 151, 55, 117, 243, 19, 62, 125, 251, 197, 144, 253,
         15, 247, 188, 75, 75, 195, 220, 212, 192, 29, 83, 195,
     ];
-    #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
+    #[cfg(all(
+        not(feature = "akita"),
+        not(feature = "field-inline"),
+        feature = "zicclsm"
+    ))]
+    const FULL_PROGRAM_DIGEST: [u8; 32] = [
+        82, 219, 149, 37, 129, 182, 240, 85, 146, 153, 255, 58, 123, 143, 184, 0, 142, 190, 240,
+        83, 146, 111, 22, 152, 67, 114, 83, 44, 48, 177, 235, 68,
+    ];
+    #[cfg(all(
+        not(feature = "akita"),
+        feature = "field-inline",
+        not(feature = "zicclsm")
+    ))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         199, 62, 95, 115, 80, 16, 91, 120, 9, 45, 132, 232, 22, 36, 35, 193, 106, 40, 132, 174, 34,
         116, 228, 50, 138, 147, 85, 45, 223, 179, 78, 189,
     ];
-    #[cfg(all(feature = "akita", not(feature = "field-inline")))]
+    #[cfg(all(not(feature = "akita"), feature = "field-inline", feature = "zicclsm"))]
+    const FULL_PROGRAM_DIGEST: [u8; 32] = [
+        210, 157, 226, 127, 150, 35, 197, 82, 117, 254, 36, 172, 154, 152, 131, 104, 122, 83, 97,
+        72, 136, 180, 235, 119, 137, 152, 77, 212, 90, 175, 183, 122,
+    ];
+    #[cfg(all(
+        feature = "akita",
+        not(feature = "field-inline"),
+        not(feature = "zicclsm")
+    ))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         105, 5, 115, 202, 3, 231, 207, 114, 177, 20, 72, 32, 241, 244, 126, 223, 135, 229, 84, 99,
         12, 39, 4, 126, 119, 56, 125, 112, 154, 151, 99, 101,
     ];
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    #[cfg(all(feature = "akita", not(feature = "field-inline"), feature = "zicclsm"))]
+    const FULL_PROGRAM_DIGEST: [u8; 32] = [
+        161, 203, 129, 76, 175, 88, 0, 55, 46, 102, 51, 132, 96, 129, 141, 96, 164, 162, 117, 155,
+        82, 253, 81, 65, 166, 160, 178, 6, 171, 120, 181, 163,
+    ];
+    #[cfg(all(feature = "akita", feature = "field-inline", not(feature = "zicclsm")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         90, 176, 88, 183, 239, 99, 144, 139, 34, 165, 161, 59, 174, 18, 12, 249, 211, 247, 109,
         224, 96, 181, 147, 97, 109, 204, 137, 72, 21, 53, 110, 119,
     ];
-    #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
-    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        246, 248, 73, 74, 122, 243, 15, 108, 30, 37, 53, 154, 143, 101, 17, 194, 43, 23, 11, 115,
-        76, 136, 39, 254, 180, 218, 222, 229, 163, 23, 181, 40,
+    #[cfg(all(feature = "akita", feature = "field-inline", feature = "zicclsm"))]
+    const FULL_PROGRAM_DIGEST: [u8; 32] = [
+        201, 139, 113, 170, 145, 27, 212, 117, 144, 104, 83, 34, 139, 232, 46, 229, 47, 63, 18, 78,
+        111, 23, 91, 37, 151, 82, 132, 95, 204, 127, 103, 244,
     ];
-    #[cfg(all(feature = "akita", not(feature = "field-inline")))]
+    #[cfg(all(
+        not(feature = "akita"),
+        not(feature = "field-inline"),
+        not(feature = "zicclsm")
+    ))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        208, 21, 155, 187, 138, 4, 109, 254, 171, 55, 78, 62, 196, 221, 101, 218, 185, 46, 173,
-        215, 93, 244, 54, 158, 234, 119, 79, 160, 2, 161, 30, 38,
+        122, 93, 232, 246, 35, 255, 146, 122, 161, 45, 188, 171, 87, 148, 43, 176, 86, 252, 16,
+        206, 86, 55, 152, 139, 31, 169, 131, 111, 199, 223, 4, 171,
     ];
-    #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
+    #[cfg(all(
+        not(feature = "akita"),
+        not(feature = "field-inline"),
+        feature = "zicclsm"
+    ))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        165, 245, 100, 173, 215, 60, 208, 52, 245, 88, 115, 43, 81, 86, 132, 162, 159, 212, 236,
-        153, 118, 5, 155, 64, 42, 117, 122, 228, 204, 16, 170, 211,
+        104, 180, 8, 135, 251, 193, 145, 120, 116, 209, 63, 44, 30, 127, 148, 0, 116, 156, 45, 12,
+        39, 183, 129, 81, 4, 108, 156, 144, 33, 181, 121, 0,
     ];
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    #[cfg(all(
+        not(feature = "akita"),
+        feature = "field-inline",
+        not(feature = "zicclsm")
+    ))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        161, 132, 171, 90, 192, 240, 166, 237, 251, 183, 226, 78, 82, 126, 11, 23, 39, 134, 168,
-        146, 92, 112, 221, 68, 202, 139, 220, 169, 87, 137, 84, 62,
+        154, 239, 41, 59, 3, 219, 83, 222, 150, 175, 249, 18, 121, 158, 82, 140, 177, 217, 245,
+        119, 38, 98, 119, 26, 93, 18, 23, 69, 206, 139, 85, 92,
+    ];
+    #[cfg(all(not(feature = "akita"), feature = "field-inline", feature = "zicclsm"))]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        201, 109, 244, 43, 132, 197, 210, 87, 69, 141, 18, 22, 39, 91, 190, 150, 234, 191, 204, 4,
+        165, 188, 120, 236, 167, 180, 24, 74, 61, 168, 54, 157,
+    ];
+    #[cfg(all(
+        feature = "akita",
+        not(feature = "field-inline"),
+        not(feature = "zicclsm")
+    ))]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        75, 123, 228, 60, 22, 206, 3, 58, 37, 98, 160, 147, 118, 236, 167, 26, 31, 254, 111, 29,
+        215, 153, 192, 91, 215, 135, 1, 197, 200, 217, 164, 237,
+    ];
+    #[cfg(all(feature = "akita", not(feature = "field-inline"), feature = "zicclsm"))]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        250, 167, 133, 200, 159, 0, 156, 168, 84, 181, 110, 54, 48, 65, 156, 86, 169, 187, 5, 72,
+        126, 114, 206, 63, 106, 255, 94, 90, 216, 177, 77, 190,
+    ];
+    #[cfg(all(feature = "akita", feature = "field-inline", not(feature = "zicclsm")))]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        162, 230, 220, 176, 188, 98, 198, 82, 157, 54, 145, 50, 21, 172, 157, 132, 250, 224, 182,
+        53, 254, 129, 201, 181, 44, 252, 79, 105, 186, 60, 174, 47,
+    ];
+    #[cfg(all(feature = "akita", feature = "field-inline", feature = "zicclsm"))]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        74, 49, 122, 235, 29, 23, 89, 114, 174, 235, 13, 153, 158, 54, 235, 191, 121, 246, 213,
+        121, 111, 222, 67, 232, 199, 95, 252, 60, 31, 136, 64, 48,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout
@@ -366,6 +493,7 @@ mod tests {
             max_padded_trace_length: full.max_padded_trace_length,
             program_image_commitment: Commitment::default(),
             bytecode_commitment: Commitment::default(),
+            bytecode_lanes: bytecode::total_lanes(),
             trace_order: TracePolynomialOrder::CycleMajor,
         }
     }

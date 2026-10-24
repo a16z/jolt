@@ -51,7 +51,7 @@ use jolt_riscv::{
     JoltInstruction, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
     NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow,
 };
-use materialize::{ExpansionState, TopLevelRows};
+use materialize::ExpansionState;
 use memory::*;
 use operands::*;
 use shifts::*;
@@ -163,22 +163,7 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     } else {
         let owned_allocator = std::mem::take(allocator);
         let mut state = ExpansionState::new(owned_allocator, profile);
-        let result = state
-            .expand_source_top_level(instruction)
-            .and_then(|rows| match rows {
-                TopLevelRows::Single(rows) => {
-                    final_rows_to_instructions(rows, profile).map(SourceExpansion::Single)
-                }
-                TopLevelRows::Dual {
-                    access,
-                    aligned,
-                    misaligned,
-                } => Ok(SourceExpansion::Dual(DualExpansion {
-                    access,
-                    aligned: final_rows_to_instructions(aligned, profile)?,
-                    misaligned: final_rows_to_instructions(misaligned, profile)?,
-                })),
-            });
+        let result = state.expand_source_top_level(instruction);
         *allocator = state.into_allocator();
         result
     };

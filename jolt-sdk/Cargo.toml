@@ -26,6 +26,14 @@ field-inline = [
   "jolt-witness?/field-inline",
   "tracer?/field-inline",
 ]
+zicclsm = [
+  "jolt-prover?/zicclsm",
+  "jolt-verifier?/zicclsm",
+  "jolt-host?/zicclsm",
+  "jolt-program?/zicclsm",
+  "jolt-witness?/zicclsm",
+  "tracer?/zicclsm",
+]
 
 host = [
   "dep:bincode",

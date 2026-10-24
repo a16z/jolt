@@ -47,7 +47,8 @@ Run on an access misaligned for its width, such as an `LH` at an odd address or 
 
 ### Misaligned accesses
 
-`LH`, `LHU`, `LW`, `LWU`, `LD`, `SH`, `SW` and `SD` therefore expand twice, into an *aligned* sequence (the rows above, or the native `LD`/`SD` row) and a *misaligned* one, and the bytecode holds both at the instruction's address.
+By default that is where it ends: the tracer aborts on a misaligned access, so a program that makes one cannot be proven.
+With the `zicclsm` feature (RISC-V's Zicclsm: misaligned loads and stores are supported), `LH`, `LHU`, `LW`, `LWU`, `LD`, `SH`, `SW` and `SD` instead expand twice, into an *aligned* sequence (the rows above, or the native `LD`/`SD` row) and a *misaligned* one, and the bytecode holds both at the instruction's address.
 Each execution runs one of them: the tracer picks the misaligned sequence exactly when the effective address is not a multiple of the access width.
 Nothing in the proof pins that choice, and nothing needs to: the aligned sequence cannot prove a misaligned access, and the misaligned sequence is correct at every offset.
 

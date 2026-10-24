@@ -3,6 +3,10 @@ use crate::template_format;
 use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 use std::env;
 use std::fmt::Write;
+#[cfg(feature = "zicclsm")]
+use tracer::instruction::{
+    virtual_funnel_high::VirtualFunnelHigh, virtual_window_mask_d::VirtualWindowMaskD,
+};
 use tracer::{
     instruction::{
         add::ADD,
@@ -74,7 +78,6 @@ use tracer::{
         virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-        virtual_funnel_high::VirtualFunnelHigh,
         virtual_load_b::VirtualLoadB,
         virtual_load_h::VirtualLoadH,
         virtual_load_w::VirtualLoadW,
@@ -104,7 +107,6 @@ use tracer::{
         virtual_store_h::VirtualStoreH,
         virtual_store_w::VirtualStoreW,
         virtual_window_mask_b::VirtualWindowMaskB,
-        virtual_window_mask_d::VirtualWindowMaskD,
         virtual_window_mask_h::VirtualWindowMaskH,
         virtual_window_mask_w::VirtualWindowMaskW,
         virtual_zero_extend_word::VirtualZeroExtendWord,
@@ -525,6 +527,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let half_mask = cpu.bv_u64((1u64 << half_bits) - 1);
             cpu.x[operands.rd as usize] = half_mask.bvshl(shift);
         }
+        #[cfg(feature = "zicclsm")]
         Instruction::VirtualWindowMaskD(VirtualWindowMaskD { operands, .. }) => {
             let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
             let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
@@ -598,6 +601,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let havoc = BV::fresh_const(&format!("{}_pext_nc", cpu.var_prefix), cpu.bv_bits);
             cpu.x[operands.rd as usize] = contiguous.ite(&extracted, &havoc);
         }
+        #[cfg(feature = "zicclsm")]
         Instruction::VirtualFunnelHigh(VirtualFunnelHigh { operands, .. }) => {
             // (rs1 mod 2^s) << (bv_bits − s) for a leading-ones rs2 = !0 << s
             // (s = bv_bits for rs2 = 0), the only shape WindowMaskD produces.
@@ -1029,10 +1033,13 @@ fn lane_store(cpu: &mut SymbolicCpu, rs1: u8, data: BV, imm: i64, eighths: u32) 
 /// The doubleword holding byte `ea` and the one after it, and the parts of a
 /// `width`-byte access at `ea` that fall in each, as `(doubleword, first byte
 /// position, byte count)`, at the obligation's fixed `ea mod 8`.
-fn access_parts(cpu: &SymbolicCpu, rs1: u8, imm: i64, width: u32) -> Vec<(BV, u32, u32)> {
-    let ea_mod_8 = cpu
-        .ea_mod_8
-        .expect("byte-level accesses are verified at a fixed doubleword offset");
+fn access_parts(
+    cpu: &SymbolicCpu,
+    ea_mod_8: u64,
+    rs1: u8,
+    imm: i64,
+    width: u32,
+) -> Vec<(BV, u32, u32)> {
     let lo = cpu.x[rs1 as usize].clone() + imm - cpu.bv_u64(ea_mod_8);
     let in_lo = width.min(8 - ea_mod_8 as u32);
     let mut parts = vec![(lo.clone(), ea_mod_8 as u32, in_lo)];
@@ -1043,10 +1050,17 @@ fn access_parts(cpu: &SymbolicCpu, rs1: u8, imm: i64, width: u32) -> Vec<(BV, u3
 }
 
 /// The RISC-V load semantics: the `width` bytes from `rs1 + imm` on at any
-/// alignment, sign- or zero-extended.
+/// alignment, sign- or zero-extended. A single-sequence access (every one
+/// without `zicclsm`) fixes no offset and is checked against the
+/// contained-lane semantics, RISC-V's on the naturally aligned addresses its
+/// rows admit; `zicclsm` builds prove that admission per offset on the same
+/// rows.
 fn bytes_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, width: u32, signed: bool) -> BV {
+    let Some(ea_mod_8) = cpu.ea_mod_8 else {
+        return lane_load(cpu, rs1, imm, width, signed);
+    };
     let byte_bits = cpu.bv_bits / 8;
-    let value = access_parts(cpu, rs1, imm, width)
+    let value = access_parts(cpu, ea_mod_8, rs1, imm, width)
         .into_iter()
         .map(|(doubleword, first, count)| {
             cpu.mem
@@ -1068,11 +1082,15 @@ fn bytes_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, width: u32, signed: bool) ->
 }
 
 /// The RISC-V store semantics: the low `width` bytes of `data` to the bytes
-/// from `rs1 + imm` on, at any alignment.
+/// from `rs1 + imm` on, at any alignment; see [`bytes_load`] for an access
+/// that fixes no offset.
 fn bytes_store(cpu: &mut SymbolicCpu, rs1: u8, data: BV, imm: i64, width: u32) {
+    let Some(ea_mod_8) = cpu.ea_mod_8 else {
+        return lane_store(cpu, rs1, data, imm, width);
+    };
     let byte_bits = cpu.bv_bits / 8;
     let mut stored = 0;
-    for (doubleword, first, count) in access_parts(cpu, rs1, imm, width) {
+    for (doubleword, first, count) in access_parts(cpu, ea_mod_8, rs1, imm, width) {
         let old = cpu.mem.select(&doubleword).as_bv().unwrap();
         let bytes = data.extract(byte_bits * (stored + count) - 1, byte_bits * stored);
         let shift = u64::from(byte_bits * first);

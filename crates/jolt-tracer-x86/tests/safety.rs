@@ -10,13 +10,9 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use jolt_riscv::{
-    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, SourceInstruction,
-    SourceInstructionKind, SourceInstructionRow,
-};
+use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
-    compile_program, memory_config, run_program, single_row_program, source_program, Outcome,
-    MEM_CAPACITY, TEST_ADDR,
+    compile_program, memory_config, run_program, single_row_program, Outcome, TEST_ADDR,
 };
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
@@ -97,7 +93,7 @@ fn out_of_bounds_load_reports_a_fault() {
     let mut pre = [0u64; REGS];
     // Far past the plane, but still in the RAM region so it is not routed to
     // the device helpers: the bounds check is what must catch it.
-    pre[1] = common::constants::RAM_START_ADDRESS + (1u64 << 40);
+    pre[1] = RAM_START_ADDRESS + (1u64 << 40);
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
     assert_eq!(
@@ -119,7 +115,7 @@ fn out_of_bounds_store_reports_a_fault() {
     store.operands.rs2 = Some(3);
     let program = single_row_program(store);
     let mut pre = [0u64; REGS];
-    pre[1] = common::constants::RAM_START_ADDRESS + (1u64 << 40);
+    pre[1] = RAM_START_ADDRESS + (1u64 << 40);
     pre[3] = 0xdead_beef;
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
@@ -134,7 +130,11 @@ fn out_of_bounds_store_reports_a_fault() {
 /// doubleword holding them, on the second row of its misaligned sequence:
 /// both doublewords are loaded before any store.
 #[test]
+#[cfg(feature = "zicclsm")]
 fn misaligned_access_past_the_plane_reports_a_fault() {
+    use jolt_riscv::{SourceInstruction, SourceInstructionKind, SourceInstructionRow};
+    use jolt_tracer_x86::harness::{source_program, MEM_CAPACITY};
+
     let plane_end = RAM_START_ADDRESS + MEM_CAPACITY;
     for (kind, rd, rs2) in [
         (SourceInstructionKind::LD, Some(2), None),
