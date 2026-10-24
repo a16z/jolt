@@ -44,6 +44,11 @@ cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'bin
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
 
+# zicclsm (misaligned loads and stores): the ordinary cases plus misaligned_memory_ops.
+cargo nextest run -p jolt-prover --features prover-fixtures,zicclsm -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,zicclsm,zk -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features akita,prover-fixtures,zicclsm -E 'binary(e2e_matrix)' --cargo-quiet
+
 # Full prover suites and the verifier fixtures (mirror CI)
 cargo nextest run -p jolt-verifier standard_muldiv --features prover-fixtures --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures --cargo-quiet

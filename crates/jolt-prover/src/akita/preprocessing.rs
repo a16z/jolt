@@ -7,6 +7,7 @@ use jolt_akita::{
 };
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode;
 use jolt_claims::protocols::jolt::lattice::{advice_packing_plan, committed_program_packing_plan};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
@@ -198,6 +199,7 @@ pub fn preprocess_committed_with_advice(
         max_padded_trace_length: program.max_padded_trace_length,
         bytecode_commitment: direct_program.bytecode.commitment.clone(),
         program_image_commitment: direct_program.program_image.commitment.clone(),
+        bytecode_lanes: bytecode::total_lanes(),
         trace_order,
     };
     let verifier = JoltVerifierPreprocessing::new(

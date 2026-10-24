@@ -73,6 +73,7 @@ impl FieldRegisterTraceFixture {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         };
         self.bytecode.push(instruction);
         instruction

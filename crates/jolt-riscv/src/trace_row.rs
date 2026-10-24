@@ -62,6 +62,7 @@ const VIRTUAL_SEQUENCE_PRESENT: u8 = 1 << 3;
 const INTEGER_RS1: u8 = 1 << 4;
 const INTEGER_RS2: u8 = 1 << 5;
 const INTEGER_RD: u8 = 1 << 6;
+const MISALIGNED_VARIANT: u8 = 1 << 7;
 
 const _: () = {
     assert!(NUM_CIRCUIT_FLAGS <= META_INSTRUCTION_FLAGS_SHIFT as usize);
@@ -75,8 +76,10 @@ const _: () = {
     assert!(capture_mask.count_ones() == 3);
     assert!(integer_mask.count_ones() == 3);
     assert!(capture_mask & integer_mask == 0);
-    assert!((capture_mask | integer_mask) & VIRTUAL_SEQUENCE_PRESENT == 0);
-    assert!(capture_mask | integer_mask | VIRTUAL_SEQUENCE_PRESENT == 0x7f);
+    let sequence_mask = VIRTUAL_SEQUENCE_PRESENT | MISALIGNED_VARIANT;
+    assert!((capture_mask | integer_mask) & sequence_mask == 0);
+    assert!(VIRTUAL_SEQUENCE_PRESENT & MISALIGNED_VARIANT == 0);
+    assert!(capture_mask | integer_mask | sequence_mask == 0xff);
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,7 +369,8 @@ impl JoltTraceRow {
                 * VIRTUAL_SEQUENCE_PRESENT)
             | (u8::from(integer_operands.rs1.is_some()) * INTEGER_RS1)
             | (u8::from(integer_operands.rs2.is_some()) * INTEGER_RS2)
-            | (u8::from(integer_operands.rd.is_some()) * INTEGER_RD);
+            | (u8::from(integer_operands.rd.is_some()) * INTEGER_RD)
+            | (u8::from(instruction.misaligned_variant) * MISALIGNED_VARIANT);
 
         Ok(Self {
             values,
@@ -484,6 +488,7 @@ impl JoltTraceRow {
             virtual_sequence_remaining: self.virtual_sequence_remaining(),
             is_first_in_sequence: self.circuit_flags().get(CircuitFlags::IsFirstInSequence),
             is_compressed: self.circuit_flags().get(CircuitFlags::IsCompressed),
+            misaligned_variant: self.control & MISALIGNED_VARIANT != 0,
         }
     }
 
@@ -637,6 +642,7 @@ mod tests {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         }
     }
 
@@ -682,7 +688,10 @@ mod tests {
 
     #[test]
     fn instruction_and_capture_presence_round_trip_independently() {
-        for remaining in [None, Some(0), Some(u16::MAX)] {
+        for (remaining, misaligned_variant) in [None, Some(0), Some(u16::MAX)]
+            .into_iter()
+            .flat_map(|remaining| [(remaining, false), (remaining, true)])
+        {
             let mut source = instruction(
                 JoltInstructionKind::ADDI,
                 NormalizedOperands {
@@ -695,6 +704,7 @@ mod tests {
             source.virtual_sequence_remaining = remaining;
             source.is_first_in_sequence = true;
             source.is_compressed = true;
+            source.misaligned_variant = misaligned_variant;
             for read in [
                 None,
                 Some(RegisterRead {

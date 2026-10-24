@@ -137,15 +137,22 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
         modular.eval_commitments
     );
 
-    // Golden shape of the muldiv fixture at trace_length 1024 / ram_K 8192.
-    // The config is pinned alongside so a drift here reads as a protocol
-    // change rather than a fixture change.
+    // Golden shape of the muldiv fixture at trace_length 1024 / ram_K 8192 /
+    // bytecode length 4096, or 8192 under `zicclsm`, whose misaligned sequences
+    // add a bytecode address round. The config is pinned alongside so a drift
+    // here reads as a protocol change rather than a fixture change.
+    let (bytecode_len, coefficient_rows, auxiliary_rows) = if cfg!(feature = "zicclsm") {
+        (8192, 228, 38)
+    } else {
+        (4096, 227, 37)
+    };
     assert_eq!(case.proof.trace_length, 1024);
     assert_eq!(case.proof.ram_K, 8192);
-    assert_eq!(modular.coefficient_rows, 227);
+    assert_eq!(case.preprocessing.program.bytecode_len(), bytecode_len);
+    assert_eq!(modular.coefficient_rows, coefficient_rows);
     assert_eq!(modular.output_claim_rows, 16);
     assert_eq!(modular.eval_commitments, 1);
-    assert_eq!(modular.auxiliary_rows, 37);
+    assert_eq!(modular.auxiliary_rows, auxiliary_rows);
     assert_eq!(modular.error_row_count, 64);
 }
 

@@ -1,6 +1,4 @@
 use core::panic::AssertUnwindSafe;
-#[cfg(test)]
-use std::any::Any;
 use std::panic;
 
 use crate::emulator::cpu::Cpu;
@@ -10,20 +8,24 @@ use jolt_riscv::RamAccess;
 use jolt_riscv::RV64IMAC_JOLT;
 
 #[cfg(test)]
-use super::format::{format_load::FormatLoad, format_s::FormatS};
+use super::format::{
+    format_amo::FormatAMO, format_load::FormatLoad, format_r::FormatR, format_s::FormatS,
+};
 #[cfg(test)]
 use super::{
     addiw::ADDIW, addw::ADDW, amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,
     amoandw::AMOANDW, amomaxd::AMOMAXD, amomaxud::AMOMAXUD, amomaxuw::AMOMAXUW, amomaxw::AMOMAXW,
     amomind::AMOMIND, amominud::AMOMINUD, amominuw::AMOMINUW, amominw::AMOMINW, amoord::AMOORD,
     amoorw::AMOORW, amoswapd::AMOSWAPD, amoswapw::AMOSWAPW, amoxord::AMOXORD, amoxorw::AMOXORW,
-    div::DIV, divu::DIVU, divuw::DIVUW, divw::DIVW, lb::LB, lbu::LBU, lh::LH, lhu::LHU, lw::LW,
-    lwu::LWU, mulh::MULH, mulhsu::MULHSU, mulw::MULW, rem::REM, remu::REMU, remuw::REMUW,
-    remw::REMW, sb::SB, sh::SH, sll::SLL, slli::SLLI, slliw::SLLIW, sllw::SLLW, sra::SRA,
-    srai::SRAI, sraiw::SRAIW, sraw::SRAW, srl::SRL, srli::SRLI, srliw::SRLIW, srlw::SRLW,
-    subw::SUBW, sw::SW,
+    div::DIV, divu::DIVU, divuw::DIVUW, divw::DIVW, lb::LB, lbu::LBU, ld::LD, lh::LH, lhu::LHU,
+    lrd::LRD, lrw::LRW, lw::LW, lwu::LWU, mulh::MULH, mulhsu::MULHSU, mulw::MULW, rem::REM,
+    remu::REMU, remuw::REMUW, remw::REMW, sb::SB, sd::SD, sh::SH, sll::SLL, slli::SLLI,
+    slliw::SLLIW, sllw::SLLW, sra::SRA, srai::SRAI, sraiw::SRAIW, sraw::SRAW, srl::SRL, srli::SRLI,
+    srliw::SRLIW, srlw::SRLW, subw::SUBW, sw::SW,
 };
 
+#[cfg(test)]
+use super::JoltInstructionRow;
 use super::{Instruction, RISCVInstruction, RISCVTrace};
 
 use crate::emulator::terminal::DummyTerminal;
@@ -284,27 +286,30 @@ where
     }
 }
 
-/// Traces every sub-word load and store at each offset within a doubleword,
-/// reaching the address with a non-negative and with a negative immediate.
-/// Against a byte-array model of RISC-V semantics, an access aligned to its
-/// width reads or writes only the containing doubleword, whose address its RAM
-/// records carry; a misaligned one aborts.
+/// Traces every load and store at each offset within a doubleword, reaching
+/// the address with a non-negative and a negative immediate, plain, compressed
+/// and (for loads) with `rd = x0`. Against a byte-array model of RISC-V
+/// semantics: the access runs its aligned sequence exactly when naturally
+/// aligned and leaves the model's architectural registers and memory. Its RAM
+/// records touch exactly the doublewords holding accessed bytes, and replayed
+/// in order, each read and each write's pre-value matches the memory so far.
+/// Without `zicclsm` a misaligned access aborts instead.
 #[test]
-fn sub_word_accesses_touch_only_the_containing_doubleword() {
+fn loads_and_stores_follow_byte_semantics_at_every_offset() {
     const DOUBLEWORD: u64 = DRAM_BASE + 0x100;
-    const OLD: u64 = 0x8899_aabb_ccdd_eeff;
+    const OLD: [u64; 2] = [0x8899_aabb_ccdd_eeff, 0x7766_5544_3322_1100];
     const VALUE: u64 = 0xf1e2_d3c4_b5a6_9788;
-    const RD: u8 = 10;
     const RS2: u8 = 11;
 
     macro_rules! access {
-        ($instr:ident, $operands:expr) => {
+        ($instr:ident, $operands:expr, $is_compressed:expr) => {
             Instruction::from($instr {
                 address: DRAM_BASE,
                 operands: $operands,
                 virtual_sequence_remaining: None,
                 is_first_in_sequence: false,
-                is_compressed: false,
+                is_compressed: $is_compressed,
+                misaligned_variant: false,
             })
         };
     }
@@ -314,99 +319,173 @@ fn sub_word_accesses_touch_only_the_containing_doubleword() {
             (DOUBLEWORD, offset as i64),
             (DOUBLEWORD + 16, offset as i64 - 16),
         ] {
-            let load = FormatLoad {
-                rd: RD,
-                rs1: 1,
-                imm,
-            };
-            let store = FormatS {
-                rs1: 1,
-                rs2: RS2,
-                imm,
-            };
-            let accesses = [
-                (access!(LB, load), 1, Some(true)),
-                (access!(LBU, load), 1, Some(false)),
-                (access!(LH, load), 2, Some(true)),
-                (access!(LHU, load), 2, Some(false)),
-                (access!(LW, load), 4, Some(true)),
-                (access!(LWU, load), 4, Some(false)),
-                (access!(SB, store), 1, None),
-                (access!(SH, store), 2, None),
-                (access!(SW, store), 4, None),
-            ];
-            for (instruction, width, signed_load) in accesses {
-                let lane = offset as usize..(offset + width) as usize;
-                let mut cpu = test_cpu();
-                cpu.mmu.store_doubleword(DOUBLEWORD, OLD).unwrap();
-                cpu.write_register(1, base as i64);
-                cpu.write_register(RS2 as usize, VALUE as i64);
-
-                let mut trace = Vec::new();
-                let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    instruction.trace(&mut cpu, Some(&mut trace));
-                }));
-                if !offset.is_multiple_of(width) {
-                    let message = panic_message(result.expect_err("misaligned access traced"));
-                    let class = if width == 2 { "halfword" } else { "word" };
-                    assert!(
-                        message.contains(&format!("not {class} aligned")),
-                        "{instruction:?}: {message}"
-                    );
-                    continue;
+            for (rd, c) in [(10, false), (10, true), (0, false)] {
+                let load = FormatLoad { rd, rs1: 1, imm };
+                let store = FormatS {
+                    rs1: 1,
+                    rs2: RS2,
+                    imm,
+                };
+                let mut accesses = vec![
+                    (access!(LB, load, c), 1, Some(true)),
+                    (access!(LBU, load, c), 1, Some(false)),
+                    (access!(LH, load, c), 2, Some(true)),
+                    (access!(LHU, load, c), 2, Some(false)),
+                    (access!(LW, load, c), 4, Some(true)),
+                    (access!(LWU, load, c), 4, Some(false)),
+                    (access!(LD, load, c), 8, Some(true)),
+                ];
+                if rd != 0 {
+                    accesses.extend([
+                        (access!(SB, store, c), 1, None),
+                        (access!(SH, store, c), 2, None),
+                        (access!(SW, store, c), 4, None),
+                        (access!(SD, store, c), 8, None),
+                    ]);
                 }
-                assert!(result.is_ok(), "{instruction:?} at offset {offset}");
+                for (instruction, width, signed_load) in accesses {
+                    let case = format!("{instruction:?} at offset {offset}");
+                    let lane = offset as usize..(offset + width) as usize;
+                    let mut cpu = test_cpu();
+                    for (doubleword, old) in [DOUBLEWORD, DOUBLEWORD + 8].into_iter().zip(OLD) {
+                        cpu.mmu.store_doubleword(doubleword, old).unwrap();
+                    }
+                    cpu.write_register(1, base as i64);
+                    cpu.write_register(RS2 as usize, VALUE as i64);
+                    let mut expected_registers = cpu.x;
 
-                let mut expected = OLD.to_le_bytes();
-                match signed_load {
-                    Some(signed) => {
-                        let mut extended = [0u8; 8];
-                        extended[..lane.len()].copy_from_slice(&expected[lane.clone()]);
-                        if signed && expected[lane.end - 1] & 0x80 != 0 {
-                            extended[lane.len()..].fill(0xff);
+                    let misaligned = !offset.is_multiple_of(width);
+                    if misaligned && !cfg!(feature = "zicclsm") {
+                        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                            instruction.trace(&mut cpu, Some(&mut Vec::new()));
+                        }));
+                        assert!(result.is_err(), "{case} traced without zicclsm");
+                        continue;
+                    }
+                    let mut trace = Vec::new();
+                    instruction.trace(&mut cpu, Some(&mut trace));
+
+                    let mut expected = [OLD[0].to_le_bytes(), OLD[1].to_le_bytes()].concat();
+                    match signed_load {
+                        Some(signed) => {
+                            let mut extended = [0u8; 8];
+                            extended[..lane.len()].copy_from_slice(&expected[lane.clone()]);
+                            if signed && expected[lane.end - 1] & 0x80 != 0 {
+                                extended[lane.len()..].fill(0xff);
+                            }
+                            if rd != 0 {
+                                expected_registers[rd as usize] =
+                                    u64::from_le_bytes(extended) as i64;
+                            }
                         }
+                        None => expected[lane.clone()]
+                            .copy_from_slice(&VALUE.to_le_bytes()[..lane.len()]),
+                    }
+                    let expected: Vec<u64> = expected
+                        .chunks_exact(8)
+                        .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap()))
+                        .collect();
+                    let architectural = ..RISCV_REGISTER_COUNT as usize;
+                    assert_eq!(
+                        cpu.x[architectural], expected_registers[architectural],
+                        "{case}"
+                    );
+                    for (doubleword, expected) in
+                        [DOUBLEWORD, DOUBLEWORD + 8].into_iter().zip(&expected)
+                    {
                         assert_eq!(
-                            cpu.x[RD as usize] as u64,
-                            u64::from_le_bytes(extended),
-                            "{instruction:?} at offset {offset}"
+                            cpu.mmu.memory.read_doubleword(doubleword),
+                            *expected,
+                            "{case}"
                         );
                     }
-                    None => {
-                        expected[lane.clone()].copy_from_slice(&VALUE.to_le_bytes()[..lane.len()])
-                    }
-                }
-                let expected = u64::from_le_bytes(expected);
-                assert_eq!(cpu.mmu.memory.read_doubleword(DOUBLEWORD), expected);
 
-                let records: Vec<_> = trace
-                    .iter()
-                    .map(Cycle::ram_access)
-                    .filter(|access| !matches!(access, RamAccess::NoOp))
-                    .collect();
-                assert_eq!(records.len(), if signed_load.is_some() { 1 } else { 2 });
-                for record in records {
-                    match record {
-                        RamAccess::Read(read) => {
-                            assert_eq!((read.address, read.value), (DOUBLEWORD, OLD));
+                    let rows: Vec<JoltInstructionRow> = trace
+                        .iter()
+                        .map(|cycle| cycle.instruction().try_jolt_instruction_row().unwrap())
+                        .collect();
+                    assert!(
+                        rows.iter().all(|row| row.misaligned_variant == misaligned),
+                        "{case}"
+                    );
+                    assert_eq!(rows.last().unwrap().is_compressed, c, "{case}");
+
+                    let touched: Vec<u64> = [DOUBLEWORD, DOUBLEWORD + 8]
+                        .into_iter()
+                        .filter(|doubleword| {
+                            lane.clone()
+                                .any(|byte| (DOUBLEWORD + byte as u64) & !7 == *doubleword)
+                        })
+                        .collect();
+                    let mut memory = OLD;
+                    let mut recorded = Vec::new();
+                    for access in trace.iter().map(Cycle::ram_access) {
+                        let (address, observed, written) = match access {
+                            RamAccess::Read(read) => (read.address, read.value, None),
+                            RamAccess::Write(write) => {
+                                (write.address, write.pre_value, Some(write.post_value))
+                            }
+                            RamAccess::NoOp => continue,
+                        };
+                        assert!(touched.contains(&address), "{case}: touched {address:#x}");
+                        let slot = ((address - DOUBLEWORD) / 8) as usize;
+                        assert_eq!(observed, memory[slot], "{case}: record at {address:#x}");
+                        if let Some(written) = written {
+                            memory[slot] = written;
                         }
-                        RamAccess::Write(write) => assert_eq!(
-                            (write.address, write.pre_value, write.post_value),
-                            (DOUBLEWORD, OLD, expected)
-                        ),
-                        RamAccess::NoOp => unreachable!(),
+                        recorded.push(address);
                     }
+                    assert!(
+                        touched
+                            .iter()
+                            .all(|doubleword| recorded.contains(doubleword)),
+                        "{case}"
+                    );
+                    assert_eq!(memory.as_slice(), expected.as_slice(), "{case}");
                 }
             }
         }
     }
 }
 
-#[cfg(test)]
-fn panic_message(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => payload
-            .downcast_ref::<&str>()
-            .map_or_else(String::new, |message| (*message).to_string()),
+/// Atomics keep their aligned rows: a misaligned word or doubleword atomic
+/// aborts instead of taking a misaligned sequence.
+#[test]
+fn misaligned_atomics_abort() {
+    const DOUBLEWORD: u64 = DRAM_BASE + 0x100;
+
+    macro_rules! atomic {
+        ($instr:ident, $format:ident) => {
+            Instruction::from($instr {
+                address: DRAM_BASE,
+                operands: $format {
+                    rd: 10,
+                    rs1: 1,
+                    rs2: 11,
+                },
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+                misaligned_variant: false,
+            })
+        };
+    }
+
+    for (instruction, width) in [
+        (atomic!(AMOADDW, FormatAMO), 4),
+        (atomic!(AMOSWAPW, FormatAMO), 4),
+        (atomic!(LRW, FormatR), 4),
+        (atomic!(AMOADDD, FormatAMO), 8),
+        (atomic!(AMOSWAPD, FormatAMO), 8),
+        (atomic!(LRD, FormatR), 8),
+    ] {
+        for offset in (1..8u64).filter(|offset| !offset.is_multiple_of(width)) {
+            let mut cpu = test_cpu();
+            cpu.write_register(1, (DOUBLEWORD + offset) as i64);
+            let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                instruction.trace(&mut cpu, Some(&mut Vec::new()));
+            }));
+            assert!(result.is_err(), "{instruction:?} traced at offset {offset}");
+        }
     }
 }

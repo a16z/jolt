@@ -104,6 +104,8 @@ pub use m::Rem;
 pub use m::RemU;
 pub use m::RemUW;
 pub use m::RemW;
+#[cfg(feature = "zicclsm")]
+pub use virt::FunnelHigh;
 pub use virt::LoadB;
 pub use virt::LoadH;
 pub use virt::LoadW;
@@ -155,6 +157,8 @@ pub use virt::VirtualXorRotW7;
 pub use virt::VirtualXorRotW8;
 pub use virt::VirtualZeroExtendWord;
 pub use virt::WindowMaskB;
+#[cfg(feature = "zicclsm")]
+pub use virt::WindowMaskD;
 pub use virt::WindowMaskH;
 pub use virt::WindowMaskW;
 
@@ -442,6 +446,10 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
+    #[cfg(feature = "zicclsm")]
+    WindowMaskD(WindowMaskD<T>),
+    #[cfg(feature = "zicclsm")]
+    FunnelHigh(FunnelHigh<T>),
     #[cfg(feature = "field-inline")]
     FieldAdd(FieldAdd<T>),
     #[cfg(feature = "field-inline")]
@@ -670,6 +678,10 @@ impl_jolt_instructions_flags! {
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLoad => VirtualAdviceLoad,
     VirtualHostIO => VirtualHostIO,
+    #[cfg(feature = "zicclsm")]
+    WindowMaskD => VirtualWindowMaskD,
+    #[cfg(feature = "zicclsm")]
+    FunnelHigh => VirtualFunnelHigh,
     #[cfg(feature = "field-inline")]
     FieldAdd => FIELD_ADD,
     #[cfg(feature = "field-inline")]

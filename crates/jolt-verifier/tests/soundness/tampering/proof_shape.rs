@@ -112,3 +112,23 @@ fn committed_program_rejects_mismatched_trace_order() {
         Err(VerifierError::InvalidCommittedProgram { .. })
     ));
 }
+
+#[cfg(feature = "prover-fixtures")]
+#[test]
+fn committed_program_rejects_foreign_bytecode_lanes() {
+    use jolt_verifier::preprocessing::ProgramPreprocessing;
+    use jolt_verifier::VerifierError;
+
+    #[cfg(not(feature = "zk"))]
+    let mut case = crate::support::verifier_fixtures::standard_committed_muldiv_case();
+    #[cfg(feature = "zk")]
+    let mut case = crate::support::verifier_fixtures::zk_committed_muldiv_case();
+    // The two lanes by which builds with and without `zicclsm` differ.
+    if let ProgramPreprocessing::Committed(program) = &mut case.preprocessing.program {
+        program.bytecode_lanes += 2;
+    }
+    assert!(matches!(
+        case.verify(),
+        Err(VerifierError::InvalidCommittedProgram { .. })
+    ));
+}

@@ -16,6 +16,7 @@ field-inline = [
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
+zicclsm = ["jolt-program/zicclsm", "jolt-riscv/zicclsm", "tracer/zicclsm"]
 
 [dependencies]
 common = { workspace = true, features = ["std"] }

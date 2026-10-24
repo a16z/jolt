@@ -499,6 +499,12 @@ macro_rules! source_extension_for_marker {
     (StoreW) => {
         Some(SourceExtension::JoltCustom)
     };
+    (WindowMaskD) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (FunnelHigh) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (FieldAdd) => {
         Some(SourceExtension::FieldInline)
     };
@@ -994,6 +1000,12 @@ macro_rules! source_side_effects_for_marker {
     (StoreW) => {
         true
     };
+    (WindowMaskD) => {
+        false
+    };
+    (FunnelHigh) => {
+        false
+    };
     (FieldAdd) => {
         true
     };
@@ -1299,6 +1311,12 @@ macro_rules! jolt_target_extension_for_marker {
     };
     (StoreW) => {
         Some(JoltTargetExtension::LoadStore64)
+    };
+    (WindowMaskD) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (FunnelHigh) => {
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (FieldAdd) => {
         Some(JoltTargetExtension::FieldInline)
@@ -1635,6 +1653,12 @@ macro_rules! jolt_side_effects_for_marker {
     };
     (StoreW) => {
         true
+    };
+    (WindowMaskD) => {
+        false
+    };
+    (FunnelHigh) => {
+        false
     };
 }
 

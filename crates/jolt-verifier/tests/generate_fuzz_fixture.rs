@@ -8,7 +8,7 @@
 
 #![cfg(all(
     feature = "prover-fixtures",
-    not(any(feature = "akita", feature = "field-inline"))
+    not(any(feature = "akita", feature = "field-inline", feature = "zicclsm"))
 ))]
 #![expect(
     clippy::expect_used,
