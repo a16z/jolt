@@ -41,7 +41,7 @@ use crate::proof::CompressedSumcheckProof;
 #[cfg(all(feature = "committed", feature = "prover"))]
 use crate::proof::SumcheckProof;
 #[cfg(feature = "prover")]
-use crate::round_proof::{CompressedRoundPoly, RoundMessage};
+use crate::round_proof::append_compressed_round;
 
 /// Records one sumcheck's proof material, abstracting over clear vs. committed
 /// (ZK) recording: `absorb_input_claims` once (from `begin_batch`),
@@ -143,7 +143,8 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
     where
         T: FieldTranscript<F> + ProverTranscript,
     {
-        CompressedRoundPoly::new(round_poly).append_to_transcript(transcript);
+        let compressed = round_poly.compress();
+        append_compressed_round(transcript, compressed.coeffs_except_linear_term());
         grind_round(
             degree_bound,
             self.round_polynomials.len(),
@@ -151,7 +152,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
             transcript,
         )?;
         let challenge = transcript.challenge()?;
-        self.round_polynomials.push(round_poly.compress());
+        self.round_polynomials.push(compressed);
         Ok(challenge)
     }
 

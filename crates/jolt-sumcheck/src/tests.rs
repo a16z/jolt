@@ -8,7 +8,7 @@
 )]
 
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
+use jolt_field::{Field, Fr, Prime128OffsetA7F7, Prime32Offset99, Ring};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{
     prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState, ProverTranscript,
@@ -22,7 +22,7 @@ use crate::committed::{
 };
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
-use crate::round_proof::{ClearRound, CompressedRoundPoly, RoundMessage};
+use crate::round_proof::{append_compressed_round, ClearRound, CompressedRoundPoly, RoundMessage};
 use crate::verifier::SumcheckVerifier;
 use crate::{
     round_pow_bits, BatchedCommittedSumcheckConsistency, BooleanHypercube, CenteredIntegerDomain,
@@ -517,6 +517,50 @@ fn clear_round_verifier_compressed_matches_manual_absorption() {
         ch1, ch2,
         "compressed absorption must omit c1 and match manual c0+c2..cd absorption"
     );
+}
+
+/// The prover's compressed round and the verifier's compressed-proof loop
+/// absorb alike: one count word, then `[c0, c2, c3]` as one message
+/// zero-padded to a word. For 4-byte coefficients that is 12 bytes and 4
+/// zeros, so the next message starts on a word boundary; for BN254 there is
+/// no padding.
+fn compressed_round_absorbs_like_the_verifier<E: Field + Encoding>() {
+    let poly = UnivariatePoly::new((1..=4).map(|i| E::from_u64(i * 1000 + 7)).collect());
+    let coeffs = poly.coefficients();
+    let mut layout = 3u64.to_le_bytes().to_vec();
+    for c in [coeffs[0], coeffs[2], coeffs[3]] {
+        layout.extend_from_slice(c.encode().as_ref());
+    }
+    layout.resize(layout.len().next_multiple_of(8), 0);
+    let next = 0x0123_4567_89ab_cdef_u64;
+    let transcript =
+        || prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+
+    let mut prover = transcript();
+    <CompressedRoundPoly<'_, E> as RoundMessage>::append_to_transcript(
+        &CompressedRoundPoly::new(&poly),
+        &mut prover,
+    );
+    prover.append(&next);
+    let mut verifier = transcript();
+    append_compressed_round(&mut verifier, poly.compress().coeffs_except_linear_term());
+    verifier.append(&next);
+    let mut expected = transcript();
+    for byte in &layout {
+        expected.public_message(byte);
+    }
+    expected.public_message(&next);
+
+    let challenge = prover.verifier_message::<[u8; 32]>();
+    assert_eq!(challenge, verifier.verifier_message::<[u8; 32]>());
+    assert_eq!(challenge, expected.verifier_message::<[u8; 32]>());
+}
+
+#[test]
+fn compressed_round_absorbs_like_the_verifier_for_four_byte_and_bn254_fields() {
+    assert_eq!(Prime32Offset99::from_u64(1).encode().as_ref().len(), 4);
+    compressed_round_absorbs_like_the_verifier::<Prime32Offset99>();
+    compressed_round_absorbs_like_the_verifier::<F>();
 }
 
 #[test]

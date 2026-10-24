@@ -25,7 +25,7 @@ jolt-sumcheck::r1cs.rs::append_sumcheck_r1cs_constraints_for_domain::challenge#0
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_round::challenge#1
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::challenge#1
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_committed_round_consistency::challenge#1
-jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::challenge#2
+jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::challenge#1
 jolt-transcript::scripted.rs::ScriptedTranscript<T,F,S>::challenge_short_scalar::challenge_short_scalar#0
 jolt-transcript::scripted.rs::ScriptedTranscript<T,F,S>::challenge_vector::challenge_vector#0
 jolt-transcript::transcript.rs::FieldTranscript::challenge::challenge_vector#0

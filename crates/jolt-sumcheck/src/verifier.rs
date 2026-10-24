@@ -10,7 +10,7 @@ use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::pow::RoundNonces;
 use crate::proof::CompressedSumcheckProof;
-use crate::round_proof::{ClearRound, RoundMessage};
+use crate::round_proof::{append_compressed_round, ClearRound, RoundMessage};
 
 pub struct SumcheckVerifier;
 
@@ -124,8 +124,7 @@ impl SumcheckVerifier {
             }
 
             // The count word: the prover chooses the degree up to the bound.
-            transcript.append(&(coeffs.len() as u64));
-            transcript.append_values(coeffs);
+            append_compressed_round(transcript, coeffs);
             pow.check(round, transcript)?;
             let r: F = transcript.challenge()?;
             running_sum = round_proof.evaluate_with_hint(running_sum, r);

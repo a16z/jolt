@@ -51,10 +51,20 @@ impl<F: Field + Encoding> ClearRound<F> for UnivariatePoly<F> {
     }
 }
 
+/// Absorbs a compressed round's sent coefficients `[c0, c2, ..., cd]`: one
+/// `u64` count word, then the coefficients as one message zero-padded to a
+/// word. The prover ([`CompressedRoundPoly`] and the recorder) and the
+/// verifier's compressed-proof loop all call this, so the encoding has one
+/// owner.
+pub(crate) fn append_compressed_round<F: Encoding, T: Transcript>(transcript: &mut T, sent: &[F]) {
+    transcript.append(&(sent.len() as u64));
+    transcript.append_values(sent);
+}
+
 /// Compressed round polynomial. Wire format omits the linear coefficient
 /// `c_1`; the verifier recovers it from the sum-check invariant
-/// `running_sum = s(0) + s(1) = 2·c_0 + c_1 + c_2 + … + c_d`. It absorbs one
-/// `u64` count word for the sent coefficients, then those coefficients.
+/// `running_sum = s(0) + s(1) = 2·c_0 + c_1 + c_2 + … + c_d`. It absorbs the
+/// sent coefficients through [`append_compressed_round`].
 pub struct CompressedRoundPoly<'a, F: Field> {
     poly: &'a UnivariatePoly<F>,
 }
@@ -71,19 +81,13 @@ impl<F: Field + Encoding> RoundMessage for CompressedRoundPoly<'_, F> {
     }
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let coeffs = self.poly.coefficients();
-        // An empty round polynomial would absorb nothing (not even the
-        // count word) and silently desynchronize the prover and verifier
-        // transcripts; every construction path produces >= 2 coefficients.
-        debug_assert!(!coeffs.is_empty(), "round polynomial has no coefficients");
-        let Some((constant, rest)) = coeffs.split_first() else {
-            return;
-        };
-        transcript.append(&((coeffs.len() - 1) as u64));
-        transcript.append(constant);
-        for c in rest.iter().skip(1) {
-            transcript.append(c);
-        }
+        // Every construction path produces >= 2 coefficients; the verifier
+        // rejects fewer (`check_round_well_formed`).
+        debug_assert!(
+            !self.poly.coefficients().is_empty(),
+            "round polynomial has no coefficients"
+        );
+        append_compressed_round(transcript, self.poly.compress().coeffs_except_linear_term());
     }
 }
 
