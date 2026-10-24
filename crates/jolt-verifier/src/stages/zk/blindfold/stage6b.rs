@@ -464,6 +464,7 @@ mod field_inline_tests {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         };
         let entry_bytecode_index = 1usize;
 

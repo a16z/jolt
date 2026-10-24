@@ -521,6 +521,7 @@ mod tests {
             virtual_sequence_remaining,
             is_first_in_sequence: first,
             is_compressed: false,
+            misaligned_variant: false,
         }
     }
 

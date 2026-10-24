@@ -4,8 +4,8 @@
 |-------------|--------------------------------|
 | Author(s)   | @mzhu, Claude                  |
 | Created     | 2026-07-30                     |
-| Status      | Tiers 0 and 1 implemented      |
-| PR          | #1761, #1762, #1768 (Tier 0); Tier 1 for #2013 |
+| Status      | Tiers 0, 1 and 2 implemented   |
+| PR          | #1761, #1762, #1768 (Tier 0); Tiers 1 and 2 for #2013 |
 
 ## Summary
 
@@ -329,10 +329,11 @@ enters and in how applicability is encoded; both deviations remove protocol surf
     `AddOperands` rows would put `RamAddress` `2^64` away.
   - Constraint 0 adds `Rs1Value + Imm` unwrapped, so an access whose sum carries past 2^64 is
     unprovable. Decoded offsets are signed 12-bit, and `materialize_inline` rejects an inline load
-    or store offset outside that range, so such an access lands within 2 KiB of 0 or 2^64, outside
-    the memory layout of any program the tracer can run. The tracer faults there or reads a load
-    as 0, which is unprovable anyway except in the no-access zero doubleword (the argument is
-    constraint 0's NOTE in `rv64.rs`).
+    or store offset outside that range, so such an access lands within 2 KiB of 0 or 2^64 (2054
+    bytes with Tier 2's misaligned rows; see Tier 2 as implemented), outside the memory layout of
+    any program the tracer can run. The tracer faults there or reads a load as 0, which is
+    unprovable anyway except in the no-access zero doubleword (the argument is constraint 0's
+    NOTE in `rv64.rs`).
   - On main, narrow accesses formed the address with wrapping lookups (`AlignAddr` for loads,
     `ADDI` for stores), so any inline offset worked and a narrow load carrying into the zero
     doubleword proved; only carrying `LD`/`SD` accesses were unprovable. The inline bound is
@@ -370,6 +371,8 @@ enters and in how applicability is encoded; both deviations remove protocol surf
     R1CS-consistent address. `jolt-prover/tests/misaligned_memory.rs` checks, for each of
     `LH`/`LHU`/`LW`/`LWU`/`SH`/`SW`, that the witness satisfies every R1CS row and that the
     stage-2 batch, which holds RAF evaluation, rejects it.
+  - Tier 2 as implemented supersedes both points: such an access runs its misaligned sequence,
+    and the hook is now `force_aligned_sequences`.
   - The MMU now records every access against its containing doubleword, fixing the
     `trace_load`/`trace_store*` defects listed in the acceptance criteria.
 - **Measured** at the profile harness's scale-20 inputs (exact trace rows, origin/main →
@@ -459,6 +462,97 @@ A shared "millicode" crossing handler (JAL into a common block) would cap the gr
 the frozen-`UnexpandedPC` invariant inside sequences (constraint 18's `DoNotUpdate` freeze);
 rejected for now.
 
+### Tier 2 as implemented
+
+The implementation keeps Tier 2's mechanism: both sequences sit in the committed bytecode at
+distinct PCs, the prover picks the entry, and R1CS control flow is unchanged. It deviates in four
+places, each of which removes a table family or a memory-layout change.
+
+- **Aligned/misaligned, not non-crossing/crossing.** The aligned sequence is exactly Tier 1's
+  (the native `LD`/`SD` row, the 3-row loads and the 6-row stores). Its floor rows pin it to
+  naturally aligned addresses through Tier 1's `AddressOffset` argument, unchanged, so an
+  aligned program runs the same rows as under Tier 1. Splitting at natural alignment rather
+  than at the doubleword boundary needs no non-crossing tables (open question 4): a misaligned
+  access within one doubleword (`LH` at offsets 1, 3, 5; `LW` at 1–3) takes the misaligned
+  sequence too.
+- **An unpinned, universal misaligned sequence.** It is correct at every offset, aligned ones
+  included, so it needs no applicability table: a prover that runs it on an aligned access still
+  computes the access. The honest tracer runs it exactly when `ea mod width ≠ 0`
+  (`DualAccess::is_misaligned` in jolt-program, the one owner of the rule; the x86 dispatch stub
+  mirrors it). Soundness is then: the aligned rows are pinned by constraint 0 and RAM RAF
+  evaluation, and the misaligned rows are right unconditionally. The z3 suite proves each
+  sequence at all eight doubleword offsets, and that the aligned sequence's own address
+  assumptions admit only the naturally aligned ones.
+- **No guard doubleword.** The second doubleword is addressed at `floor(ea + width − 1)`, the
+  one holding the last accessed byte, which is the first doubleword when the access does not
+  cross. The sequence touches only doublewords holding accessed bytes, so an in-bounds access
+  never remaps past `heap_end`, and `MemoryLayout` is unchanged. Stores write that doubleword
+  first: when it is the first doubleword, it writes back the value it loaded, and the merged
+  first doubleword lands last.
+  - Its last-byte rows carry the decoded offset plus `width − 1`, up to 2054, past the signed
+    12-bit range `materialize_inline` holds inline rows to; these rows are built outside it. A
+    carrying access still lands within 2054 bytes of 0 or 2^64, so Tier 1's completeness
+    argument at constraint 0 still applies.
+- **Mask-based tables, not funnel-shift tables.** Two tables, both reusing existing prefix and
+  suffix families, instead of rank-8/9 funnel and shifted-store tables:
+  - `WindowMaskD(ea) = 2^64 − 2^(8·(ea mod 8))`, on the `AddOperands` path (prefix
+    `Pow2OffsetB`, suffixes `One` and `Pow2OffsetB`);
+  - `FunnelHigh(x, M)`, the left-shift half of `VirtualROTR`: on `M = !0 << s` it is
+    `(x mod 2^s) << (64 − s)`, and 0 at `s = 0` (prefixes `LeftShiftHelper` and `LeftShift`).
+  - With `m = WindowMaskD(ea)`, a load sums `Pext(lo, m)`, the bytes from `ea` on moved to the
+    bottom, and `FunnelHigh(hi, m)`, the second doubleword's bytes below the offset moved to the
+    top. The halves are disjoint, so `ADD` is carry-free. A store scales by
+    `2^(8·(ea mod 8)) = −m`: `MUL` places a value's low bytes in the first doubleword's frame
+    and `MULHU` the bytes that spill into the second's.
+  - 57 tables; the committed bytecode is 464 of 512 lanes (474 with field-inline).
+- **Sequences** (rows, aligned → misaligned): `LH`/`LHU` 3 → 8, `LW`/`LWU` 3 → 7, `LD` 1 → 6,
+  `SH`/`SW` 6 → 16, `SD` 1 → 12. `LB`/`LBU`/`SB` stay single. The misaligned loads are
+  `[VirtualLoadB lo][VirtualLoadB hi][VirtualWindowMaskD m][VirtualPext][VirtualFunnelHigh][ADD]`,
+  then `VirtualSignExtendWord`/`VirtualZeroExtendWord` for words or
+  `VirtualWindowMaskH(x0, 0)` and `VirtualPextSigned`/`VirtualPext` for halfwords.
+- **Only top-level instructions are dual.** The `LW`/`SW` that `LR.W`/`SC.W` embed and the
+  `LD`/`SD` rows of the doubleword atomics keep their aligned rows, so a misaligned atomic stays
+  unprovable and still aborts the trace.
+- **Plumbing.**
+  - `JoltInstructionRow::misaligned_variant` tells the two runs apart for PC resolution.
+    `stamp_sequence_metadata` writes it, the only writer of sequence metadata. It is prover
+    metadata, not a bytecode lane, but the row is serialized into the full-mode program digest,
+    whose domains move to `dory-whole-bytecode/v3` and `akita-whole-bytecode/v2`.
+    `JoltTraceRow` keeps it in control bit 7.
+  - `BytecodePCMapper`: `PcSlot` gains `misaligned_sequence_length` (still 8 bytes), and PCs
+    resolve by `(address, virtual_sequence_remaining, misaligned_variant)`. The entry PC is the
+    aligned head, so a program whose first instruction is a dual access cannot prove a first
+    execution that is misaligned (liveness only).
+  - `expand_instruction` returns `SourceExpansion::{Single, Dual(DualExpansion)}`; whole-program
+    expansion lays out the aligned sequence, then the misaligned one.
+  - Tracer: each PC caches an `InlineExpansion`, and the sequence is chosen from `x[rs1]`
+    before any row runs. An aligned `LD`/`SD` keeps the native row as its fast path. Sequence
+    rows run through a non-dispatching row executor, so an `LD`/`SD` row inside an atomic or
+    inline sequence never takes a misaligned sequence. The `test-utils` hook
+    `force_aligned_sequences` replaces `allow_misaligned_floor_accesses`: dual accesses run their
+    aligned sequence, and floor rows and native `LD`/`SD` record the misaligned address.
+    `jolt-prover/tests/misaligned_memory.rs` checks that each of `LH`/`LHU`/`LW`/`LWU`/`SH`/`SW`/
+    `LD`/`SD` so traced satisfies every R1CS row and is rejected by RAF evaluation.
+  - x86 AOT backend: each dual group head carries a dispatch stub on `ea & (width − 1)`. The
+    misaligned rows are emitted out of line after the program body and jump back to the next
+    instruction. The jump table, pause checks and row observations are unchanged.
+  - The Lean export renders only the aligned sequence, since its model raises the alignment
+    fault on a misaligned access.
+- **Measured** at the profile harness's scale-20 inputs (Tier 1 → Tier 2; prover times are
+  means of three interleaved runs of the optimized backend). Aligned programs run identical
+  traces: `btreemap` 489,836 rows, `sha2-chain` 572,466, `sha3-chain` 718,801, `fibonacci`
+  787,317. The expanded bytecode grows 1.7–2.9×:
+
+  | Workload | Bytecode rows | Prover time |
+  |---|---|---|
+  | `btreemap` | 5,576 → 16,209 | 4.85 s → 4.98 s |
+  | `sha2-chain` | 4,700 → 9,125 | 6.84 s → 6.88 s |
+  | `sha3-chain` | 5,891 → 10,168 | 7.21 s → 7.29 s |
+  | `fibonacci` | 2,722 → 6,657 | 7.04 s → 7.26 s |
+
+  The padded bytecode doubles on all four, adding one bytecode address round. Prover time
+  rises 0.6–3.2%, within run-to-run noise but consistently upward.
+
 ### Tier 3 (optional) — same-cycle fusion
 
 Route the RAM read value into the lookup operands and the lookup output into the store value.
@@ -530,11 +624,10 @@ Verified shape of the blast radius:
 - **Two hard budgets** (the legacy prover's `MAX_SUFFIXES` and `LC` term caps went away with
   it): the optimized instruction read-RAF kernel packs the table index into 6 bits
   (`PACKED_TABLE_BITS`, `jolt-kernels/src/optimized/instruction_read_raf.rs`), so
-  `LookupTableKind::COUNT ≤ 63` (55 after Tier 1). The committed bytecode width is 462 of 512
-  lanes after Tier 1 (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` —
-  `3·128 + 2 + 14 + 6 + 55 + 1`; 472 with field-inline); every new lookup table and every new
-  circuit flag consumes a lane, and crossing 512 doubles the committed width. Tier 2 adds tables
-  and possibly flags, so economize the table family (parameterize widths where the MLE allows).
+  `LookupTableKind::COUNT ≤ 63` (55 after Tier 1, 57 after Tier 2). The committed bytecode width
+  is 464 of 512 lanes after Tier 2 (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` —
+  `3·128 + 2 + 14 + 6 + 57 + 1`; 474 with field-inline); every new lookup table and every new
+  circuit flag consumes a lane, and crossing 512 doubles the committed width.
 - New virtual instructions touch the known ring: `jolt-riscv` kind macros, tracer exec impls,
   `zkvm/instruction/` + the lookup-tables **hand-maintained mirror** (append-only enum — the
   discriminant is read by unsafe pointer cast), `jolt-program` expansion, and the z3-verifier's
@@ -613,27 +706,36 @@ arithmetic. Fallback if dual-expansion mapping proves uglier than expected.
 
 ### Acceptance Criteria
 
-- [ ] All RV64IM loads/stores execute and prove correctly at every `ea mod 8` × width
+- [x] All RV64IM loads/stores execute and prove correctly at every `ea mod 8` × width
       combination, including doubleword-crossing, matching the reference emulator byte-exactly
       (differential test over all 8 offsets × {LB,LBU,LH,LHU,LW,LWU,LD,SB,SH,SW,SD}).
+      As implemented: the tracer's byte-model test and the x86 per-source difftest cover every
+      offset of every width, and the memory-ops guest proves every in-bounds offset of every
+      width in clear, ZK and Akita modes.
 - [ ] A guest compiled for rv64im+zicclsm-style codegen (misaligned `memcpy`,
       `ptr::read_unaligned`, packed structs) traces and proves end-to-end.
-- [ ] Wrong-variant executions are unsatisfiable: negative tests that force the tracer to emit
+- [x] Wrong-variant executions are unsatisfiable: negative tests that force the tracer to emit
       the non-crossing variant for a crossing access (and vice versa) must fail verification.
-- [ ] `muldiv` e2e passes in `--features host` and `--features host,zk`; advice e2e passes
+      As implemented the split is aligned/misaligned: `misaligned_memory.rs` forces the aligned
+      sequence on misaligned `LH`/`LHU`/`LW`/`LWU`/`SH`/`SW`/`LD`/`SD`. The converse is correct by
+      design, since the misaligned sequence is right at every offset (z3).
+- [x] `muldiv` e2e passes in `--features host` and `--features host,zk`; advice e2e passes
       (standard mode `input_claim` reconstruction); akita acceptance suites pass.
 - [ ] `source_to_jolt_expansion_equivalence` (jolt-eval) covers the new expansions and both
       variants; new lookup tables get `mle_random` / `prefix_suffix` / `mle_full_hypercube`
       tests and fuzz targets.
 - [ ] Guard-doubleword bounds: crossing access at the top of the heap neither panics nor
-      escapes `ram_K`.
+      escapes `ram_K`. As implemented no guard doubleword is needed: the misaligned sequence
+      touches only doublewords holding accessed bytes. The prover's `ram_K` sizing has no `+1`
+      on the highest touched index (`jolt-prover/src/config.rs`), which can exclude an access
+      at the very top of memory whether or not it is misaligned; that is not addressed here.
 - [ ] The RISC-V arch-test `misaligned-ldst-01` (ACT4 submodule) passes, and
       `tests/arch-tests/jolt/sail.json` is flipped to `"misaligned": {"supported": true}`
       (plus `load_address_misaligned` / `samo_address_misaligned`) with Zicclsm declared.
       (The test name at `tests/arch-tests/README.md:113` is a sample-output placeholder, not a
       known-failure registry; per the README policy a failing non-privileged test reds CI.)
-- [ ] The three latent MMU trace-recording bugs currently masked by alignment asserts are
-      fixed: `trace_load` truncates the address to 4 bytes (`(ea >> 2) << 2`) while recording
+- [x] The three latent MMU trace-recording bugs currently masked by alignment asserts are
+      fixed (in Tier 1): `trace_load` truncates the address to 4 bytes (`(ea >> 2) << 2`) while recording
       an 8-byte value (`tracer/src/emulator/mmu.rs:517-543`); `trace_store_byte` merges an
       8-byte `pre_value` with 32-bit masks under a `% 4` dispatch, zeroing the top half
       (`mmu.rs:548-585`); `trace_store_halfword` has the same truncation and 32-bit-mask

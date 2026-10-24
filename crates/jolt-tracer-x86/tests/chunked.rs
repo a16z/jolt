@@ -151,6 +151,14 @@ fn fibonacci_chunks_compose_with_dense_boundaries() {
     );
 }
 
+/// Dense boundaries around dual loads and stores: a chunk may end inside
+/// either sequence, and resuming at a dual group re-runs its dispatch from
+/// restored registers.
+#[test]
+fn memory_ops_chunks_compose_with_dense_boundaries() {
+    assert_chunks_compose_spaced("memory-ops-guest", "memory_ops", Vec::new(), &[7, 64], true);
+}
+
 /// Dense boundaries across DIV/REM advice groups: resuming at a group whose
 /// advice computation re-runs from restored registers must reproduce the
 /// eager rows exactly.

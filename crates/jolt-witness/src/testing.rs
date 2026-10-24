@@ -28,6 +28,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend) -> R) -> R {
         virtual_sequence_remaining: None,
         is_first_in_sequence: false,
         is_compressed: false,
+        misaligned_variant: false,
     };
     let store = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::SD,

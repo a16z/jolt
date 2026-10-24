@@ -23,6 +23,7 @@ pub fn cycle_to_trace_row(
         .ok_or(TraceError::MissingBytecodePc {
             address: instruction.address as u64,
             virtual_sequence_remaining: instruction.virtual_sequence_remaining,
+            misaligned_variant: instruction.misaligned_variant,
         })?;
     let bytecode_pc = u32::try_from(pc).map_err(|_| TraceError::BytecodePcTooWide { pc })?;
     let expected = bytecode
@@ -31,6 +32,7 @@ pub fn cycle_to_trace_row(
         .ok_or(TraceError::MissingBytecodePc {
             address: instruction.address as u64,
             virtual_sequence_remaining: instruction.virtual_sequence_remaining,
+            misaligned_variant: instruction.misaligned_variant,
         })?;
     if *expected != instruction {
         return Err(TraceError::BytecodeInstructionMismatch {
@@ -207,6 +209,7 @@ mod tests {
             TraceError::MissingBytecodePc {
                 address,
                 virtual_sequence_remaining: None,
+                misaligned_variant: false,
             } if address == TEXT + 0x1000
         ));
 

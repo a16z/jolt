@@ -517,6 +517,7 @@ mod field_inline_tests {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         };
         rows[1] = JoltInstructionRow {
             instruction_kind: Kind::FIELD_MUL,

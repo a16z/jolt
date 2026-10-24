@@ -45,8 +45,9 @@ impl Invariant for SourceToJoltExpansionEquivalenceInvariant {
     }
 
     fn description(&self) -> String {
-        "Decoded source instructions must expand to the same canonical Jolt rows \
-         as the checked baseline parity corpus."
+        "Decoded source instructions must expand to the same canonical Jolt rows, \
+         both sequences of a dual load or store in bytecode order, as the checked \
+         baseline parity corpus."
             .to_string()
     }
 
@@ -81,8 +82,11 @@ impl Invariant for SourceToJoltExpansionEquivalenceInvariant {
                     format!("case={}, error={error}", case.name),
                 ))
             })?;
-        let expanded_rows: Vec<JoltInstructionRow> =
-            expanded.into_iter().map(JoltInstructionRow::from).collect();
+        let expanded_rows: Vec<JoltInstructionRow> = expanded
+            .into_bytecode()
+            .into_iter()
+            .map(JoltInstructionRow::from)
+            .collect();
         let encoded = serde_json::to_vec(&expanded_rows).map_err(|error| {
             CheckError::Violation(InvariantViolation::with_details(
                 "expanded row serialization failed",

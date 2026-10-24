@@ -16,10 +16,13 @@ pub enum TraceError {
     Preprocessing(#[from] PreprocessingError),
     #[error("cycle contains source-only instruction {0:?}")]
     SourceOnlyCycle(SourceInstructionKind),
-    #[error("no bytecode PC for address {address:#x}, sequence {virtual_sequence_remaining:?}")]
+    #[error(
+        "no bytecode PC for address {address:#x}, sequence {virtual_sequence_remaining:?} (misaligned: {misaligned_variant})"
+    )]
     MissingBytecodePc {
         address: u64,
         virtual_sequence_remaining: Option<u16>,
+        misaligned_variant: bool,
     },
     #[error("bytecode PC {pc} does not fit u32")]
     BytecodePcTooWide { pc: usize },

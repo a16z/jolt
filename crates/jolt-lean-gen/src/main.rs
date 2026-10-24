@@ -17,7 +17,7 @@ use std::{fmt::Write as _, fs, path::Path};
 
 use common::constants::RISCV_REGISTER_COUNT;
 use jolt_program::expand::{
-    expand_instruction, is_source_only, ExpansionAllocator, ExpansionError,
+    expand_instruction, is_source_only, ExpansionAllocator, ExpansionError, SourceExpansion,
 };
 use jolt_riscv::{
     JoltInstructionRow, NormalizedOperands, SourceInstruction, SourceInstructionKind,
@@ -355,8 +355,15 @@ fn expand_rows(
 ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = source_instruction(kind, rd, imm);
-    expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)
-        .map(|expanded| expanded.into_iter().map(JoltInstructionRow::from).collect())
+    expand_instruction(&input, &mut allocator, RV64IMAC_JOLT).map(|expansion| {
+        // The Lean model raises the alignment fault on a misaligned access, so
+        // a dual load or store renders only its aligned sequence.
+        let rows = match expansion {
+            SourceExpansion::Single(rows) => rows,
+            SourceExpansion::Dual(dual) => dual.aligned,
+        };
+        rows.into_iter().map(JoltInstructionRow::from).collect()
+    })
 }
 
 fn same_row_except_imm(lhs: &JoltInstructionRow, rhs: &JoltInstructionRow) -> bool {

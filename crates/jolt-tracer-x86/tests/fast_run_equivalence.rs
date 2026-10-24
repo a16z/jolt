@@ -125,6 +125,13 @@ fn muldiv_record_matches_reference() {
     });
 }
 
+/// Every load and store width at every offset: the dual groups' dispatch,
+/// both sequences, and the misaligned rows' bytecode PCs.
+#[test]
+fn memory_ops_record_matches_reference() {
+    assert_record_matches("memory-ops-guest", "memory_ops", Vec::new());
+}
+
 #[test]
 fn sha2_chain_record_matches_reference() {
     let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
@@ -157,6 +164,11 @@ fn fibonacci_fast_run_matches_reference() {
         "fib",
         postcard::to_stdvec(&100u32).unwrap(),
     );
+}
+
+#[test]
+fn memory_ops_fast_run_matches_reference() {
+    assert_fast_run_matches("memory-ops-guest", "memory_ops", Vec::new());
 }
 
 #[test]

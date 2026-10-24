@@ -230,21 +230,27 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // far below either field modulus, so that identity holds over the
     // integers, and an access misaligned for its width (any misaligned
     // `LD`/`SD`; `LH`/`LW`/`SH`/`SW` whose `ea` is not a multiple of the width)
-    // has no satisfying RAM address. jolt-lookup-tables pins that a memory row
-    // looks up no table or an `AddressOffset` table; any other table would
-    // shift its RAM address.
+    // has no satisfying RAM address. A top-level such load or store runs the
+    // misaligned sequence of its dual expansion instead (jolt-program
+    // `DualExpansion`), whose memory rows are all byte-class; the rows nested
+    // in atomics have none, so a misaligned atomic stays unprovable.
+    // jolt-lookup-tables pins that a memory row looks up no table or an
+    // `AddressOffset` table; any other table would shift its RAM address.
     //
     // `Rs1Value + Imm` is the unwrapped sum, while the tracer wraps `ea` mod
     // 2^64, so an access whose sum carries has no satisfying RAM address on
-    // any layout the tracer can allocate. Load and store immediates are signed
-    // 12-bit (decoded rows by encoding, inline rows by jolt-program's
-    // `materialize_inline`), so such an access lands within 2 KiB of 0 or
-    // 2^64: past that RAM, or below `lowest_address`, which is at least 2^30
-    // because `MemoryLayout::try_new` pads I/O below `RAM_START_ADDRESS` = 2^31
-    // to a power of two and rejects a region reaching 0. The tracer faults
-    // there, except that it reads loads below `lowest_address` as 0. Those are
-    // unprovable unwrapped too, except in the no-access zero doubleword: a
-    // load that carries into it runs but cannot be proven.
+    // any layout the tracer can allocate. Load and store immediates lie in
+    // [-2048, 2054]: decoded and inline rows carry signed 12-bit offsets
+    // (inline rows by jolt-program's `materialize_inline`), and a misaligned
+    // sequence's last-byte rows add `width − 1` to the decoded offset
+    // (jolt-program `last_byte_offset`). So such an access lands within 2054
+    // bytes of 0 or 2^64: past that RAM, or below `lowest_address`, which is
+    // at least 2^30 because `MemoryLayout::try_new` pads I/O below
+    // `RAM_START_ADDRESS` = 2^31 to a power of two and rejects a region
+    // reaching 0. The tracer faults there, except that it reads loads below
+    // `lowest_address` as 0. Those are unprovable unwrapped too, except in the
+    // no-access zero doubleword: a load that carries into it runs but cannot
+    // be proven.
     a_rows.push(row::<F>(&[(V_FLAG_LOAD, 1), (V_FLAG_STORE, 1)]));
     b_rows.push(row::<F>(&[
         (V_RAM_ADDRESS, 1),
@@ -382,16 +388,19 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // NOTE: `IsLastInSequence` fires for every cycle whose
     // `virtual_sequence_remaining == Some(0)`, not just `JALR`. That
     // looks lax — at a non-`JALR` terminal step the guard zeros out and
-    // `NextPC` isn't pinned to `PC + 1` here — but `NextPC` is still
-    // uniquely determined by the rest of the system: #14
-    // (`NextUnexpPCEqLookupIfShouldJump`) / #16
+    // `NextPC` isn't pinned to `PC + 1` here — but the rest of the system
+    // constrains it: #14 (`NextUnexpPCEqLookupIfShouldJump`) / #16
     // (`NextUnexpPCUpdateOtherwise`) constrain `NextUnexpandedPC`, #18
     // (`MustStartSequenceFromBeginning`) forces the next row to be
     // non-virtual or the first step of a new sequence, and the
-    // bytecode-row commitment ties `NextPC` to a unique row matching both
-    // properties. If any of those are ever removed or weakened, revisit the
-    // terminal-sequence flag semantics to avoid an unconstrained-`NextPC`
-    // exploit.
+    // bytecode-row commitment ties `NextPC` to a row matching both
+    // properties. That row is unique except at a dual load or store
+    // (jolt-program `DualExpansion`), where `NextPC` may name the head of
+    // either of its sequences: the aligned one has no satisfying RAM address
+    // for a misaligned access (see #0) and the misaligned one is correct at
+    // every offset, so either computes the access. If any of those are ever
+    // removed or weakened, revisit the terminal-sequence flag semantics to
+    // avoid an unconstrained-`NextPC` exploit.
     a_rows.push(row::<F>(&[
         (V_FLAG_VIRTUAL_INSTRUCTION, 1),
         (V_FLAG_IS_LAST_IN_SEQUENCE, -1),

@@ -96,6 +96,7 @@ fn instruction_row(row: &TraceRow) -> JoltInstructionRow {
             .then_some(u16::from(!circuit_flags[CircuitFlags::IsLastInSequence])),
         is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],
         is_compressed: circuit_flags[CircuitFlags::IsCompressed],
+        misaligned_variant: false,
     }
 }
 

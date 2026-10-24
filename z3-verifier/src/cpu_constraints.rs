@@ -463,6 +463,7 @@ macro_rules! test_instruction_constraints {
                     is_compressed: false,
                     is_first_in_sequence: false,
                     virtual_sequence_remaining: None,
+                    misaligned_variant: false,
                 });
                 do_test(stringify!(instr), &instr);
             }

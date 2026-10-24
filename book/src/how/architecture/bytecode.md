@@ -129,6 +129,10 @@ Each instruction in the bytecode has two associated "addresses":
 - **Bytecode index $k$**: its index in the **expanded** bytecode. "Expanded" bytecode refers to the preprocessed bytecode, after instructions are expanded to their [virtual sequences](./emulation.md#virtual-instructions-and-sequences). This is what the $\widetilde{\textsf{ra}}(k, j)$ polynomial uses to indicate which bytecode row is accessed.
 - **ELF/memory address $\texttt{unexpanded\_pc}(k)$**: its memory address as given by the ELF. All the instructions in a virtual sequence are assigned the address of the "real" instruction they were expanded from. This is stored as part of the instruction data in bytecode row $k$.
 
+A load or store with a [misaligned sequence](./ram.md#misaligned-accesses) has two sequences at the same ELF address, the aligned one first (for `LD`/`SD`, the native row). The prover-side mapper from a traced row to its bytecode index tells them apart by a per-row `misaligned_variant` bit; the proof sees only the bytecode index each cycle reads.
+
+[Trace-time validation](#trace-time-validation) compares that bit with the rest of the row, so it checks each row against the sequence the tracer chose, not the choice itself: the aligned sequence is unprovable at a misaligned address, and the misaligned sequence is correct at every offset.
+
 The bytecode index $k$ is used for addressing within the sumcheck (the $k$ variable in the double sum).
 The ELF address $\texttt{unexpanded\_pc}(k)$ is used to enforce program counter updates in the [R1CS constraints](./r1cs_constraints.md), and is treated as a part of the tuple of values in the preprocessed bytecode.
 

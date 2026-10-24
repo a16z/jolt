@@ -44,6 +44,7 @@ impl SelfJump {
             virtual_sequence_remaining: None,
             is_first_in_sequence: true,
             is_compressed: self.is_compressed,
+            misaligned_variant: false,
         };
         let len = if self.is_compressed { 2 } else { 4 };
         let program = JoltProgram::from_parts(

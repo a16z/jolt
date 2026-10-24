@@ -64,6 +64,7 @@ impl SourceInstructionRow {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: self.is_compressed,
+            misaligned_variant: false,
         }
     }
 }
@@ -80,6 +81,10 @@ pub struct JoltInstructionRow {
     pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
     pub is_compressed: bool,
+    /// The row belongs to the misaligned-access expansion of a load or store
+    /// that has one alongside its aligned expansion at the same address. It
+    /// lets PC resolution tell the two runs apart; it is not a bytecode lane.
+    pub misaligned_variant: bool,
 }
 
 impl JoltInstructionRow {

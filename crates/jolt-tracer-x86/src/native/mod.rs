@@ -330,6 +330,7 @@ impl Observation {
                     .ok_or(TraceError::MissingBytecodePc {
                         address: row.address as u64,
                         virtual_sequence_remaining: row.virtual_sequence_remaining,
+                        misaligned_variant: row.misaligned_variant,
                     })?;
                 let pc = u32::try_from(pc).map_err(|_| TraceError::BytecodePcTooWide { pc })?;
                 let operands = row.integer_operands();
@@ -709,6 +710,7 @@ mod tests {
             virtual_sequence_remaining: None,
             is_first_in_sequence: true,
             is_compressed: false,
+            misaligned_variant: false,
         };
         JoltProgram::from_parts_with_profile(
             Vec::new(),
