@@ -220,15 +220,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake2"
-version = "0.11.0-rc.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "061f1a09225e328e1ffbb378d2d49923c0ca5fee19fb5ac1cc9c1e9d52b93690"
-dependencies = [
- "digest 0.11.3",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -271,12 +262,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "cmov"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
-
-[[package]]
 name = "common"
 version = "0.2.0"
 dependencies = [
@@ -285,6 +270,12 @@ dependencies = [
  "serde",
  "syn 3.0.3",
 ]
+
+[[package]]
+name = "const-oid"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "cpufeatures"
@@ -350,15 +341,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctutils"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
-dependencies = [
- "cmov",
-]
-
-[[package]]
 name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -397,8 +379,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.1",
+ "const-oid",
  "crypto-common 0.2.2",
- "ctutils",
 ]
 
 [[package]]
@@ -424,7 +406,7 @@ dependencies = [
  "ark-serialize",
  "ark-std",
  "bincode 1.3.3",
- "blake2 0.10.6",
+ "blake2",
  "digest 0.10.7",
  "dory-derive",
  "rand_core",
@@ -582,7 +564,6 @@ dependencies = [
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-claims-derive",
  "jolt-field",
@@ -594,6 +575,7 @@ dependencies = [
  "jolt-utils",
  "rayon",
  "serde",
+ "sha3",
  "thiserror",
 ]
 
@@ -785,7 +767,6 @@ version = "0.1.0"
 dependencies = [
  "ark-serialize",
  "bincode 2.0.1",
- "blake2 0.11.0-rc.6",
  "common",
  "jolt-blindfold",
  "jolt-claims",
@@ -802,6 +783,7 @@ dependencies = [
  "jolt-verifier-derive",
  "num-traits",
  "serde",
+ "sha3",
  "thiserror",
 ]
 
@@ -1066,6 +1048,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "sha3"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc9bad02c26382724b2d2692c6f179285e4b54eeecd7968f52a50059c3c11759"
+dependencies = [
+ "digest 0.11.3",
+ "keccak",
+ "sponge-cursor",
 ]
 
 [[package]]

@@ -1,4 +1,3 @@
-use blake2::{digest::consts::U32, Blake2b, Digest};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
@@ -6,6 +5,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 use std::sync::Arc;
 
 use crate::VerifierError;
@@ -157,7 +157,7 @@ const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
-    /// preamble: Blake2b-256 over the domain tag and this value's bincode
+    /// preamble: Keccak-256 over the domain tag and this value's bincode
     /// encoding. Hashing the whole type binds every field the verifier trusts
     /// (mode, bytecode or its commitments, RAM image, memory layout, trace
     /// bound) without a hand-maintained field list, so a field added to any
@@ -172,7 +172,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                 }
             })?;
         Ok(
-            Blake2b::<U32>::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
+            Keccak256::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
                 .chain_update(encoded)
                 .finalize()
                 .into(),
@@ -296,43 +296,43 @@ mod tests {
     /// digest domain for the extended instruction and proof profile.
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        133, 6, 248, 64, 134, 10, 13, 97, 113, 88, 4, 183, 242, 201, 144, 120, 30, 151, 164, 146,
-        90, 21, 172, 40, 66, 30, 227, 116, 84, 61, 239, 152,
+        23, 9, 238, 207, 133, 20, 16, 33, 80, 129, 75, 173, 213, 255, 216, 148, 7, 130, 28, 82, 63,
+        0, 69, 198, 207, 121, 229, 155, 12, 245, 112, 80,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        87, 168, 29, 207, 44, 118, 157, 60, 27, 174, 47, 253, 183, 18, 104, 176, 123, 105, 194,
-        163, 209, 235, 110, 178, 34, 44, 192, 6, 174, 150, 43, 232,
+        238, 167, 191, 46, 16, 102, 48, 37, 170, 184, 226, 229, 146, 108, 116, 231, 76, 125, 23,
+        18, 126, 249, 167, 198, 107, 230, 139, 73, 218, 41, 242, 185,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        10, 241, 10, 25, 152, 236, 113, 66, 234, 148, 180, 8, 19, 181, 13, 175, 248, 211, 234, 243,
-        37, 208, 9, 65, 14, 159, 55, 184, 173, 177, 237, 213,
+        125, 22, 250, 26, 51, 15, 93, 42, 33, 78, 107, 204, 250, 70, 100, 73, 126, 185, 49, 168,
+        22, 190, 21, 132, 203, 66, 211, 177, 185, 154, 59, 93,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        15, 187, 25, 179, 115, 141, 121, 127, 18, 224, 184, 85, 46, 153, 30, 31, 49, 77, 174, 174,
-        246, 42, 254, 70, 82, 144, 107, 4, 129, 86, 83, 51,
+        159, 93, 125, 67, 131, 73, 96, 13, 71, 134, 80, 145, 82, 111, 86, 242, 78, 159, 145, 111,
+        156, 92, 140, 24, 150, 30, 20, 212, 109, 3, 204, 220,
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        220, 129, 247, 129, 71, 22, 158, 201, 54, 160, 53, 213, 136, 185, 9, 158, 7, 132, 235, 185,
-        244, 193, 125, 23, 91, 203, 88, 8, 160, 200, 9, 233,
+        106, 87, 66, 104, 75, 69, 86, 145, 157, 114, 60, 52, 109, 33, 107, 30, 65, 139, 87, 36,
+        101, 37, 243, 96, 67, 87, 161, 177, 246, 108, 209, 120,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        46, 218, 61, 222, 109, 82, 229, 196, 36, 71, 22, 191, 255, 174, 216, 201, 97, 149, 220, 63,
-        57, 1, 117, 198, 80, 239, 126, 253, 235, 189, 178, 98,
+        231, 103, 249, 229, 239, 117, 43, 105, 111, 116, 58, 85, 186, 38, 209, 219, 20, 168, 8, 38,
+        219, 113, 225, 208, 83, 181, 96, 101, 123, 206, 11, 194,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        26, 26, 41, 3, 13, 169, 36, 76, 85, 80, 178, 178, 64, 96, 136, 8, 103, 212, 167, 121, 31,
-        194, 26, 112, 238, 167, 211, 248, 248, 82, 15, 246,
+        215, 15, 140, 34, 162, 171, 29, 119, 75, 133, 159, 109, 103, 225, 56, 87, 219, 246, 252,
+        185, 47, 46, 229, 18, 248, 65, 196, 27, 71, 81, 211, 166,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        137, 52, 205, 208, 140, 177, 124, 190, 165, 69, 252, 53, 193, 68, 174, 237, 91, 43, 197,
-        129, 25, 27, 4, 20, 124, 93, 228, 56, 33, 25, 6, 75,
+        71, 223, 233, 127, 130, 119, 105, 72, 0, 231, 227, 215, 173, 152, 63, 181, 141, 15, 188,
+        92, 241, 218, 113, 61, 173, 95, 3, 187, 200, 120, 172, 72,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout
