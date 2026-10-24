@@ -103,7 +103,7 @@ jolt-transcript::scripted.rs::ScriptedTranscript<T,F,S>::init::init#0::T::init(s
 jolt-transcript::scripted.rs::ScriptedTranscript<T,F,S>::init::init#1::T::init(session,statement)
 jolt-transcript::transcript.rs::Transcript::append::absorb#0::self.absorb(message)
 jolt-transcript::transcript.rs::Transcript::append_bytes::absorb#0::self.absorb(&BytesMsg(bytes))
-jolt-transcript::transcript.rs::Transcript::append_values::absorb#0::self.absorb(value)
+jolt-transcript::transcript.rs::Transcript::append_values::absorb#0::self.absorb(&WordAligned(bytes))
 jolt-transcript::transcript.rs::Transcript::check_public_grind::absorb#0::self.absorb(&nonce_word(nonce))
 jolt-verifier::stages/pow.rs::check_pow::check_public_grind#0::transcript.check_public_grind(pow_bits::<F,T>(site,loss)?,nonces.get(site))
 jolt-verifier::stages/relations.rs::OutputAppend::append_openings::append#0::transcript.append(&value)

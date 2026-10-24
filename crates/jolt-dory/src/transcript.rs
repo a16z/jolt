@@ -175,7 +175,9 @@ mod tests {
 
     fn bare(bytes: &[u8]) -> [u8; 32] {
         let mut expected = transcript();
-        expected.append_values(bytes);
+        for byte in bytes {
+            expected.public_message(byte);
+        }
         expected.verifier_message::<[u8; 32]>()
     }
 

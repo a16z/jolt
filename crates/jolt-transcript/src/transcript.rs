@@ -34,7 +34,7 @@ use spongefish::{
 };
 
 use crate::challenge::message_bytes;
-use crate::codec::{BytesMsg, WORD_BYTES};
+use crate::codec::{word_padding, BytesMsg, WORD_BYTES};
 use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
 use crate::{
     challenge_bits_for_loss, ChallengeCodec, ChallengeSetSize, UniformBytes, SECURITY_BITS,
@@ -68,13 +68,26 @@ pub trait Transcript: Sealed {
         self.absorb(message);
     }
 
-    /// Absorbs each value in order, with no count: the caller's schedule must
-    /// fix `values.len()` from bound data. A protocol whose count the prover
-    /// chooses absorbs that count as a `u64` word first.
+    /// Absorbs the values' encodings, concatenated in order and zero-padded
+    /// to the next word, as one message with no count: the caller's schedule
+    /// must fix `values.len()` from bound data. A protocol whose count the
+    /// prover chooses absorbs that count as a `u64` word first.
+    ///
+    /// For values whose encodings are whole words, such as every production
+    /// field element and Dory's compressed group elements, the padding is
+    /// empty and the sponge absorbs the bytes that one absorb per value would.
+    /// Shorter encodings, such as an odd count of 4-byte elements, are padded
+    /// once at the end. An empty slice absorbs nothing.
     fn append_values<M: Encoding>(&mut self, values: &[M]) {
-        for value in values {
-            self.absorb(value);
+        if values.is_empty() {
+            return;
         }
+        let mut bytes = Vec::new();
+        for value in values {
+            bytes.extend_from_slice(value.encode().as_ref());
+        }
+        bytes.resize(bytes.len() + word_padding(bytes.len()), 0);
+        self.absorb(&WordAligned(bytes));
     }
 
     /// Absorbs `bytes` as a [`BytesMsg`]: a `u64` length, the bytes, and zero
@@ -121,6 +134,15 @@ pub trait Transcript: Sealed {
 }
 
 impl<T: Sealed + ?Sized> Transcript for T {}
+
+/// Bytes already padded to a whole number of words, absorbed as they are.
+struct WordAligned(Vec<u8>);
+
+impl Encoding for WordAligned {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.as_slice()
+    }
+}
 
 /// A transcript that draws challenges in `F`.
 pub trait FieldTranscript<F>: Transcript {

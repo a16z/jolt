@@ -443,3 +443,94 @@ fn keccak_rate_boundary_known_answers() {
         "c2b46113194844a89e30b78d844247eb",
     );
 }
+
+/// `append_values` against one absorb per value: the challenge after each is
+/// the same exactly when every value's encoding is a whole number of words.
+fn append_values_matches_per_value_absorbs<M: spongefish::Encoding>(values: &[M]) {
+    use jolt_transcript::Transcript;
+    let width = values[0].encode().as_ref().len();
+    assert_eq!(width % 8, 0, "{width}-byte encoding");
+    let mut batched = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    batched.append_values(values);
+    let mut separate = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    for value in values {
+        separate.public_message(value);
+    }
+    assert_eq!(
+        batched.verifier_message::<[u8; 32]>(),
+        separate.verifier_message::<[u8; 32]>(),
+        "{width}-byte values"
+    );
+}
+
+/// For every production width the one padded absorb is byte-identical to the
+/// per-value absorbs it replaced: BN254 `Fr` and `Fq` (32 bytes), `Fp64` (8),
+/// `Fp128` (16), their extensions, and Dory's compressed G1, G2 and GT bytes
+/// (32, 64 and 384 one-byte values).
+#[cfg(all(feature = "solinas", feature = "bn254"))]
+#[test]
+fn append_values_is_unchanged_for_whole_word_encodings() {
+    use jolt_field::Ring;
+    fn elements<F: Ring>(len: u64) -> Vec<F> {
+        (1..=len)
+            .map(|i| F::from_u64(i * 0x1234_5678_9abc))
+            .collect()
+    }
+    for len in [1, 3, 8] {
+        append_values_matches_per_value_absorbs(&elements::<Fr>(len));
+        append_values_matches_per_value_absorbs(&elements::<Fq>(len));
+        append_values_matches_per_value_absorbs(&elements::<Prime64Offset59>(len));
+        append_values_matches_per_value_absorbs(&elements::<Prime128OffsetA7F7>(len));
+        append_values_matches_per_value_absorbs(&elements::<Prime128Offset275>(len));
+        append_values_matches_per_value_absorbs(&elements::<FpExt4<Prime32Offset99>>(len));
+        append_values_matches_per_value_absorbs(&elements::<Ext2<Prime64Offset59>>(len));
+    }
+    for len in [32usize, 64, 384] {
+        let group: Vec<u8> = (0..len).map(|i| i as u8 ^ 0x5a).collect();
+        let mut batched = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        jolt_transcript::Transcript::append_values(&mut batched, &group);
+        let mut separate = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        for byte in &group {
+            separate.public_message(byte);
+        }
+        assert_eq!(
+            batched.verifier_message::<[u8; 32]>(),
+            separate.verifier_message::<[u8; 32]>(),
+            "{len} group bytes"
+        );
+    }
+}
+
+/// An odd count of 4-byte values is padded once, at the end, to a whole word
+/// (R6): three `Prime32Offset99` values absorb as their 12 bytes and 4 zeros,
+/// so the next message starts on a word boundary. Trailing zeros alone do not
+/// change Keccak's next squeeze, so the check absorbs one more word first.
+#[cfg(feature = "solinas")]
+#[test]
+fn append_values_pads_an_odd_count_of_four_byte_values() {
+    use jolt_field::Ring;
+    use jolt_transcript::Transcript;
+    use spongefish::Encoding;
+    let values: Vec<Prime32Offset99> = (1..=3).map(|i| Prime32Offset99::from_u64(i * 77)).collect();
+    let mut padded = [0u8; 16];
+    for (chunk, value) in padded.chunks_mut(4).zip(&values) {
+        let bytes = value.encode();
+        assert_eq!(bytes.as_ref().len(), 4);
+        chunk.copy_from_slice(bytes.as_ref());
+    }
+    let next = 0x0123_4567_89ab_cdef_u64;
+    let mut batched = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    batched.append_values(&values);
+    batched.append(&next);
+    let mut expected = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    expected.public_message(&padded);
+    expected.public_message(&next);
+    let mut unpadded = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    for value in &values {
+        unpadded.public_message(value);
+    }
+    unpadded.public_message(&next);
+    let challenge = batched.verifier_message::<[u8; 32]>();
+    assert_eq!(challenge, expected.verifier_message::<[u8; 32]>());
+    assert_ne!(challenge, unpadded.verifier_message::<[u8; 32]>());
+}
