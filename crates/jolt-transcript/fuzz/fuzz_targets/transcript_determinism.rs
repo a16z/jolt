@@ -8,7 +8,9 @@
 //! a different final state — a matching state would mean absorbed bytes are
 //! ignored or collide.
 
-use jolt_transcript::{prover_transcript, Blake2b512, Keccak, PoseidonSponge, Transcript};
+use jolt_transcript::{
+    protocol_tag, prover_transcript, Blake2b512, Keccak, PoseidonSponge, Transcript,
+};
 use libfuzzer_sys::fuzz_target;
 use spongefish::DuplexSpongeInit;
 
@@ -45,7 +47,7 @@ fn run<H: DuplexSpongeInit<U = u8>>(
     ops: &[Op<'_>],
     flip: Option<(usize, u8)>,
 ) -> (Vec<[u8; 16]>, [u8; 32]) {
-    let mut transcript = prover_transcript::<H>(b"fuzz-determinism", b"");
+    let mut transcript = prover_transcript::<H>(&protocol_tag(b"fuzz-determinism"), b"");
     let mut challenges = Vec::new();
     let mut absorbed = 0usize;
     for op in ops {

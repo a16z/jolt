@@ -1,8 +1,9 @@
 //! Prover-only operations on `spongefish::ProverState`.
 
+use crate::codec::NargMessage;
 #[cfg(feature = "prover-grinding")]
-use crate::pow::{Leb128, MessageSearch, SpongePow};
-use crate::{prover_transcript, Transcript};
+use crate::pow::{nonce_word, Leb128, MessageSearch, SpongePow, CHECK_BYTES};
+use crate::{prover_transcript, Transcript, TAG_BYTES};
 #[cfg(feature = "prover-grinding")]
 use spongefish::VerificationError;
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState};
@@ -13,8 +14,9 @@ pub trait ProverTranscript: Transcript {
     /// The duplex sponge behind the transcript.
     type Sponge: DuplexSpongeInterface<U = u8> + Sync;
 
-    /// Absorbs `msg` and appends its NARG-serialized form for verifier replay.
-    fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M);
+    /// Absorbs `msg`'s [`Encoding`] and appends its NARG form
+    /// ([`NargMessage::write_narg`]) for verifier replay.
+    fn prover_message<M: NargMessage + ?Sized>(&mut self, msg: &M);
 
     /// Bytes accumulated in the NARG so far.
     fn narg_string(&self) -> &[u8];
@@ -32,10 +34,11 @@ pub trait ProverTranscript: Transcript {
     /// A proof of work of `bits` bits whose nonce goes into the NARG string.
     ///
     /// For `bits == 0` this does nothing. For `1 <= bits <= MAX_POW_BITS`, the
-    /// prover sends the least nonce below `2^(bits + 7)` for which the next
-    /// `ceil(bits / 8)` squeezed bytes have their low `bits` bits zero, as
-    /// canonical LEB128 with one byte per prover message, and squeezes those
-    /// bytes. The layout is the one proposed in arkworks-rs/spongefish#301.
+    /// prover sends the least nonce below `2^(bits + 7)` for which the low
+    /// `bits` bits of the next eight squeezed bytes, read as a little-endian
+    /// `u64`, are zero, and squeezes those bytes. The nonce is one prover
+    /// message: canonical LEB128 in the NARG string, one `u64` LE word in the
+    /// sponge.
     ///
     /// The step protects the verifier messages drawn after it, up to the next
     /// prover message. The protocol must draw the challenges it protects
@@ -80,14 +83,14 @@ pub trait ProverTranscript: Transcript {
 /// [`prover_transcript`] does.
 pub trait ProverInit: ProverTranscript + Sized {
     /// The transcript bound to `session` and `statement`.
-    fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self;
+    fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self;
 }
 
 impl<H> ProverInit for ProverState<H>
 where
     H: DuplexSpongeInit<U = u8> + Sync,
 {
-    fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
+    fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self {
         prover_transcript::<H>(session, statement)
     }
 }
@@ -99,8 +102,15 @@ where
 {
     type Sponge = H;
 
-    fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M) {
-        ProverState::prover_message(self, msg);
+    fn prover_message<M: NargMessage + ?Sized>(&mut self, msg: &M) {
+        ProverState::prover_message_with(
+            self,
+            msg,
+            |msg| msg.encode(),
+            |msg, narg| {
+                msg.write_narg(narg);
+            },
+        );
     }
 
     fn narg_string(&self) -> &[u8] {
@@ -121,10 +131,13 @@ where
         let nonce = pow
             .search(&self.message_search())
             .ok_or(VerificationError)?;
-        for byte in Leb128::new(nonce).as_bytes() {
-            ProverState::prover_message(self, byte);
-        }
-        if ProverState::verifier_message_as(self, pow.word_len(), |check| pow.accepts(check)) {
+        ProverState::prover_message_with(
+            self,
+            &nonce,
+            |&nonce| nonce_word(nonce),
+            |&nonce, narg| narg.extend_from_slice(Leb128::new(nonce).as_bytes()),
+        );
+        if ProverState::verifier_message_as(self, CHECK_BYTES, |check| pow.accepts(check)) {
             Ok(())
         } else {
             Err(VerificationError)

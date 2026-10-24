@@ -8,12 +8,13 @@ use criterion::{
 };
 use jolt_field::Fr;
 use jolt_transcript::{
-    prover_transcript, Blake2b512, FieldTranscript, Keccak, PoseidonSponge, ProverState, Transcript,
+    protocol_tag, prover_transcript, Blake2b512, FieldTranscript, Keccak, PoseidonSponge,
+    ProverState, Transcript,
 };
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
 fn fresh<H: DuplexSpongeInterface<U = u8> + DuplexSpongeInit>() -> ProverState<H> {
-    prover_transcript::<H>(b"bench", b"bench")
+    prover_transcript::<H>(&protocol_tag(b"bench"), b"bench")
 }
 
 fn bench_append_bytes_with<H>(

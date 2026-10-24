@@ -1,58 +1,69 @@
 //! Native spongefish transcript initialization.
 //!
 //! The session identifier is derived from [`PROTOCOL_ID`]. Each transcript
-//! absorbs one instance: the length-prefixed caller session followed by the
-//! length-prefixed encoding of the public statement.
+//! absorbs one instance: the caller's 32-byte session tag, then the encoding
+//! of the public statement as a [`BytesMsg`].
 
 use spongefish::instantiations::TurboShake128;
 use spongefish::{DuplexSpongeInit, Encoding, ProverState, SessionId, VerifierState};
 
-/// Crate-wide protocol identifier (ASCII left, zero-padded to 64 bytes).
-/// [`session_id`] derives the spongefish session identifier from it.
-pub const PROTOCOL_ID: [u8; 64] = pad_id(b"a16z/jolt-transcript/v1");
+use crate::codec::{protocol_tag, BytesMsg, TAG_BYTES};
 
-const fn pad_id(src: &[u8]) -> [u8; 64] {
-    assert!(src.len() <= 64, "protocol id exceeds 64 bytes");
-    let mut buf = [0u8; 64];
-    let mut i = 0;
-    while i < src.len() {
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "i < src.len() <= 64 == buf.len(); const-evaluated, so an out-of-bounds index fails compilation"
-        )]
-        {
-            buf[i] = src[i];
-        }
-        i += 1;
-    }
-    buf
-}
+/// Crate-wide protocol tag, `a16z/jolt-transcript/v2` zero-padded to 32
+/// bytes. [`session_id`] derives the spongefish session identifier from it,
+/// so a change to anything below changes every proof's challenges.
+///
+/// Version 2 fixes:
+/// - **The absorb layout.** The transcript is positional: no message carries
+///   a label, and a count or length is absorbed, as one `u64` LE word, only
+///   where the prover chooses it. Every absorb and squeeze is a whole number
+///   of eight-byte words. Byte strings are a `u64` length, the bytes, and zero
+///   padding to a word. Integers are `u64` LE words. The instance is the
+///   caller's 32-byte session tag, then the statement as a byte string.
+///   Version strings that version-1 protocols absorbed mid-transcript
+///   (`spartan-clear-v1`, `hyperkzg-binary-bn254-v1`, `BlindFold`) are
+///   covered by this tag.
+/// - **The challenge codec.** Each field's [`ChallengeCodec`]: BN254 `Fr` and
+///   `Fq` take 56 bytes per element; pseudo-Mersenne pools of four-byte
+///   candidates hold an even number of them; `F8` messages pad their squeeze
+///   to a word. Short scalars squeeze `ceil(b / 8)` bytes rounded up to a
+///   word and keep their low `b` bits.
+/// - **The proof-of-work layout.** The nonce is canonical LEB128 in the NARG
+///   string and one `u64` LE word in the sponge; the check is eight squeezed
+///   bytes whose little-endian `u64` has its low `bits` bits zero.
+///
+/// The tag does not name the sponge: a different sponge is a different hash
+/// function and changes every output by itself.
+///
+/// [`ChallengeCodec`]: crate::ChallengeCodec
+pub const PROTOCOL_ID: [u8; TAG_BYTES] = protocol_tag(b"a16z/jolt-transcript/v2");
 
-/// The spongefish instance: the session and the statement, each with an
-/// eight-byte little-endian length. Never empty, so spongefish's constructors
-/// accept it, and self-delimiting, so the statement cannot run into the first
-/// message.
+/// The spongefish instance: the 32-byte session tag, then the statement as a
+/// [`BytesMsg`]. Never empty, so spongefish's constructors accept it. The tag
+/// has a fixed width and the statement carries its length, so the instance
+/// cannot run into the first message, and it ends on a word boundary.
 struct Instance<'a, S: ?Sized> {
-    session: &'a [u8],
+    session: &'a [u8; TAG_BYTES],
     statement: &'a S,
 }
 
 impl<S: Encoding + ?Sized> Encoding for Instance<'_, S> {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let statement = self.statement.encode();
-        let statement = statement.as_ref();
-        let mut out = Vec::with_capacity(16 + self.session.len() + statement.len());
-        out.extend_from_slice(&(self.session.len() as u64).to_le_bytes());
+        let body = self.statement.encode();
+        let message = BytesMsg(body.as_ref());
+        let framed = message.encode();
+        let framed = framed.as_ref();
+        let mut out = Vec::with_capacity(TAG_BYTES + framed.len());
         out.extend_from_slice(self.session);
-        out.extend_from_slice(&(statement.len() as u64).to_le_bytes());
-        out.extend_from_slice(statement);
+        out.extend_from_slice(framed);
         out
     }
 }
 
 /// Build a prover transcript bound to `session` and `statement`.
 ///
-/// `session` is protocol-version bytes (e.g. `b"jolt-rv64imac/v1"`).
+/// `session` is the caller's 32-byte protocol tag ([`protocol_tag`], e.g.
+/// `protocol_tag(b"jolt-rv64imac/v1")`).
 /// `statement` is the public statement, which the encoding must determine
 /// completely: everything the verifier is given rather than reads from the
 /// proof. Spongefish initializes a fresh state of backend `H` with
@@ -62,23 +73,26 @@ impl<S: Encoding + ?Sized> Encoding for Instance<'_, S> {
 ///
 /// ```
 /// use jolt_transcript::{
-///     prover_transcript, verifier_transcript, BytesMsg, Keccak, ProverTranscript,
+///     protocol_tag, prover_transcript, verifier_transcript, BytesMsg, Keccak, ProverTranscript,
 ///     VerifierTranscript,
 /// };
 ///
-/// const SESSION: &[u8] = b"jolt-rv64imac/v1";
+/// const SESSION: [u8; 32] = protocol_tag(b"jolt-rv64imac/v1");
 /// let statement: [u8; 32] = [0xAB; 32];
 ///
-/// let mut prover = prover_transcript::<Keccak>(SESSION, &statement);
+/// let mut prover = prover_transcript::<Keccak>(&SESSION, &statement);
 /// prover.prover_message(&BytesMsg(b"commitment-a".to_vec()));
 /// let narg = prover.narg_string().to_vec();
 ///
-/// let mut verifier = verifier_transcript::<Keccak>(SESSION, &statement, &narg);
+/// let mut verifier = verifier_transcript::<Keccak>(&SESSION, &statement, &narg);
 /// let _: BytesMsg = verifier.prover_message().unwrap();
 /// verifier.check_eof().unwrap();
 /// ```
 #[must_use]
-pub fn prover_transcript<H>(session: &[u8], statement: &(impl Encoding + ?Sized)) -> ProverState<H>
+pub fn prover_transcript<H>(
+    session: &[u8; TAG_BYTES],
+    statement: &(impl Encoding + ?Sized),
+) -> ProverState<H>
 where
     H: DuplexSpongeInit<U = u8>,
 {
@@ -91,7 +105,7 @@ where
 /// state of backend `H` with [`DuplexSpongeInit::init`].
 #[must_use]
 pub fn verifier_transcript<'a, H>(
-    session: &[u8],
+    session: &[u8; TAG_BYTES],
     statement: &(impl Encoding + ?Sized),
     narg: &'a [u8],
 ) -> VerifierState<'a, H>
@@ -114,44 +128,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pad_id_left_aligns_and_zero_pads_to_64_bytes() {
-        assert_eq!(
-            pad_id(b"a16z/jolt-transcript/v1"),
-            PROTOCOL_ID,
-            "PROTOCOL_ID must be the padded ASCII identifier"
+    fn protocol_id_is_the_padded_v2_tag() {
+        assert_eq!(&PROTOCOL_ID[..23], b"a16z/jolt-transcript/v2");
+        assert!(PROTOCOL_ID[23..].iter().all(|&byte| byte == 0));
+        assert_ne!(
+            PROTOCOL_ID[..],
+            protocol_tag(b"a16z/jolt-transcript/v1")[..],
+            "the v2 tag differs from v1"
         );
-        let short = pad_id(b"xy");
-        assert_eq!(&short[..2], b"xy");
-        assert!(short[2..].iter().all(|&byte| byte == 0));
-        let full = [0x41u8; 64];
-        assert_eq!(pad_id(&full), full, "a 64-byte id is passed through");
     }
 
     #[test]
-    fn instance_encoding_frames_session_and_statement() {
+    fn instance_encoding_is_the_tag_then_the_statement_as_bytes() {
+        let tag = protocol_tag(b"session");
         let digest = [0xA5u8; 32];
         let encoded = Instance {
-            session: b"",
+            session: &tag,
             statement: &digest,
         }
         .encode()
         .as_ref()
         .to_vec();
-        let mut expected = vec![0; 8];
+        let mut expected = tag.to_vec();
         expected.extend_from_slice(&32u64.to_le_bytes());
         expected.extend_from_slice(&digest);
         assert_eq!(encoded, expected);
 
         let encoded = Instance {
-            session: b"session",
+            session: &tag,
             statement: &[0u8; 0],
         }
         .encode()
         .as_ref()
         .to_vec();
-        let mut expected = 7u64.to_le_bytes().to_vec();
-        expected.extend_from_slice(b"session");
+        let mut expected = tag.to_vec();
         expected.extend_from_slice(&0u64.to_le_bytes());
         assert_eq!(encoded, expected);
+
+        // A 5-byte statement pads to a word, so the instance ends aligned.
+        let encoded = Instance {
+            session: &tag,
+            statement: b"stmt!",
+        }
+        .encode()
+        .as_ref()
+        .to_vec();
+        let mut expected = tag.to_vec();
+        expected.extend_from_slice(&5u64.to_le_bytes());
+        expected.extend_from_slice(b"stmt!\0\0\0");
+        assert_eq!(encoded, expected);
+        assert_eq!(encoded.len() % 8, 0);
     }
 }

@@ -9,8 +9,8 @@ use jolt_field::CanonicalEncoding;
 use crate::pow::MessageSearch;
 use crate::transcript::sealed::Sealed;
 use crate::{
-    ChallengeSetSize, FieldTranscript, ProverInit, ProverTranscript, VerifierInit,
-    VerifierTranscript,
+    ChallengeSetSize, FieldTranscript, NargMessage, ProverInit, ProverTranscript, VerifierInit,
+    VerifierTranscript, TAG_BYTES,
 };
 use spongefish::{Encoding, FromNarg, VerificationError};
 
@@ -196,7 +196,7 @@ where
 impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscript<T, F, S> {
     type Sponge = T::Sponge;
 
-    fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M) {
+    fn prover_message<M: NargMessage + ?Sized>(&mut self, msg: &M) {
         self.events
             .push(TranscriptEvent::Absorb(msg.encode().as_ref().to_vec()));
         self.inner.prover_message(msg);
@@ -242,13 +242,17 @@ impl<T: VerifierTranscript, F, S: Script<F>> VerifierTranscript for ScriptedTran
 impl<'a, T: VerifierInit<'a>, F, S: Script<F> + Default> VerifierInit<'a>
     for ScriptedTranscript<T, F, S>
 {
-    fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self {
+    fn init(
+        session: &[u8; TAG_BYTES],
+        statement: &(impl Encoding + ?Sized),
+        narg: &'a [u8],
+    ) -> Self {
         Self::scripted_by(T::init(session, statement, narg), S::default())
     }
 }
 
 impl<T: ProverInit, F, S: Script<F> + Default> ProverInit for ScriptedTranscript<T, F, S> {
-    fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
+    fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self {
         Self::scripted_by(T::init(session, statement), S::default())
     }
 }

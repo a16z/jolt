@@ -14,9 +14,9 @@ fn test_blake2b_known_vector() {
     transcript.append(&12345u64);
     let challenge: Fr = transcript.challenge().unwrap();
     // Pins the session derived from PROTOCOL_ID, the instance absorb, one
-    // `u64` public message and one 52-byte challenge squeeze reduced mod r.
+    // `u64` public message and one 56-byte challenge squeeze reduced mod r.
     assert_eq!(
         format!("{challenge:?}"),
-        "14920194216516765013403414582981910349784849177391089841728389970502116847106"
+        "18793778572527438931167002525786312417669516031467570196084319916574544498697"
     );
 }
