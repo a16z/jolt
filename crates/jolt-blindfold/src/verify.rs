@@ -469,8 +469,6 @@ where
             });
         }
 
-        append_vector_opening(transcript, &proof.witness_opening);
-
         Ok(())
     }
 }

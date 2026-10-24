@@ -31,7 +31,6 @@ jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::folded_instance_from_proof:
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::folded_instance_from_proof::append_values#2::transcript.append_values(&proof.cross_term_error_row_commitments)
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_folded_eval_witness_bindings::append_vector_opening#0::append_vector_opening(transcript,opening)
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_folded_eval_witness_bindings::append_vector_opening#1::append_vector_opening(transcript,opening)
-jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::append_vector_opening#3::append_vector_opening(transcript,&proof.witness_opening)
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::append_values#1::transcript.append_values(&[proof.az_rx,proof.bz_rx,proof.cz_rx])
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::append_vector_opening#2::append_vector_opening(transcript,&proof.error_opening)
 jolt-blindfold::verify.rs::RelaxedInstance<F,Com>::append_to_transcript::append#0::transcript.append(&self.u)
