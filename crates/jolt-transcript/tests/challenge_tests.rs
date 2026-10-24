@@ -28,10 +28,10 @@ const INSTANCE: [u8; 32] = [0x42; 32];
 fn round_trip<F: ChallengeCodec + PartialEq + Debug>() {
     for len in [1, 17, 28] {
         let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
-        ProverTranscript::prover_message(&mut prover, &BytesMsg(b"before".to_vec()));
+        prover.send(&BytesMsg(b"before".to_vec()));
         let expected = FieldTranscript::<F>::challenge_vector(&mut prover, len).unwrap();
         assert_eq!(expected.len(), len);
-        ProverTranscript::prover_message(&mut prover, &BytesMsg(b"after".to_vec()));
+        prover.send(&BytesMsg(b"after".to_vec()));
         let tail: [u8; 32] = prover.verifier_message();
 
         let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
@@ -354,10 +354,10 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
     continuation: &str,
 ) {
     let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
-    ProverTranscript::prover_message(&mut prover, &BytesMsg(b"before".to_vec()));
+    prover.send(&BytesMsg(b"before".to_vec()));
     let values = FieldTranscript::<F>::challenge_vector(&mut prover, len).unwrap();
     let tail: [u8; 16] = prover.verifier_message();
-    ProverTranscript::prover_message(&mut prover, &BytesMsg(b"after".to_vec()));
+    prover.send(&BytesMsg(b"after".to_vec()));
     let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
     assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
     assert_eq!(

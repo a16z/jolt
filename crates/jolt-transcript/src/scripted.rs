@@ -196,10 +196,10 @@ where
 impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscript<T, F, S> {
     type Sponge = T::Sponge;
 
-    fn prover_message<M: NargMessage + ?Sized>(&mut self, msg: &M) {
+    fn send<M: NargMessage + ?Sized>(&mut self, msg: &M) {
         self.events
             .push(TranscriptEvent::Absorb(msg.encode().as_ref().to_vec()));
-        self.inner.prover_message(msg);
+        self.inner.send(msg);
     }
 
     fn narg_string(&self) -> &[u8] {

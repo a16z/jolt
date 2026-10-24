@@ -52,7 +52,7 @@ fn public_message_after_challenge_agrees_including_empty() {
         let first: [u8; 17] = prover.verifier_message();
         prover.public_message_as(public, |bytes| bytes);
         let second: [u8; 32] = prover.verifier_message();
-        ProverTranscript::prover_message(&mut prover, &BytesMsg(b"response".to_vec()));
+        prover.send(&BytesMsg(b"response".to_vec()));
         let third: [u8; 32] = prover.verifier_message();
 
         let mut verifier = verifier_transcript::<Keccak>(&PUBLIC, &[0u8; 32], prover.narg_string());

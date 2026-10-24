@@ -375,7 +375,9 @@ pub(crate) fn message_bytes<F: ChallengeCodec>(len: usize) -> Result<usize, Veri
 #[cfg(all(test, feature = "solinas"))]
 mod tests {
     use super::{Prime64Offset59, Sealed, UniformBytes};
-    use crate::{prover_transcript, verifier_transcript, BytesMsg, FieldTranscript};
+    use crate::{
+        prover_transcript, verifier_transcript, BytesMsg, FieldTranscript, ProverTranscript,
+    };
     use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
     /// A sponge whose output is all ones, so every pooled candidate is
@@ -414,7 +416,7 @@ mod tests {
         assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut prover, 3).is_err());
 
         let mut prover = prover_transcript::<Saturated>(&SESSION, &INSTANCE);
-        prover.prover_message(&BytesMsg(b"after".to_vec()));
+        prover.send(&BytesMsg(b"after".to_vec()));
         let mut verifier =
             verifier_transcript::<Saturated>(&SESSION, &INSTANCE, prover.narg_string());
         assert!(FieldTranscript::<Prime64Offset59>::challenge_vector(&mut verifier, 3).is_err());

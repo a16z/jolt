@@ -17,7 +17,7 @@ const INSTANCE: [u8; 32] = [0x24; 32];
 
 fn prover() -> ProverState<Keccak> {
     let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
-    ProverTranscript::prover_message(&mut prover, &BytesMsg(b"before".to_vec()));
+    prover.send(&BytesMsg(b"before".to_vec()));
     prover
 }
 
@@ -138,7 +138,7 @@ fn layout_matches_the_manual_transcript() {
 
 fn sponge_prover<H: DuplexSpongeInit<U = u8> + Sync>() -> ProverState<H> {
     let mut prover = prover_transcript::<H>(&SESSION, &INSTANCE);
-    ProverTranscript::prover_message(&mut prover, &BytesMsg(b"before".to_vec()));
+    prover.send(&BytesMsg(b"before".to_vec()));
     prover
 }
 
@@ -156,7 +156,7 @@ fn verify_nonce<H: DuplexSpongeInit<U = u8> + Sync>(
     bits: u32,
 ) -> (bool, [u8; 16], bool) {
     let mut after = sponge_prover::<H>();
-    ProverTranscript::prover_message(&mut after, &BytesMsg(b"after".to_vec()));
+    after.send(&BytesMsg(b"after".to_vec()));
     let suffix = &after.narg_string()[prefix.len()..];
     let narg = [prefix, nonce, suffix].concat();
     let mut verifier = sponge_verifier::<H>(&narg);
@@ -267,7 +267,7 @@ fn message_search_matches_sending_then_squeezing_and_leaves_the_transcript() {
 
     // One prover message of the candidate's bytes, absorbed in one call.
     let mut sent = prover();
-    sent.prover_message(b"candidate");
+    sent.send(b"candidate");
     assert_eq!(sent.verifier_message::<[u8; 200]>(), probed);
 
     let mut untouched = prover();

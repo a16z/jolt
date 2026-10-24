@@ -16,7 +16,16 @@ pub trait ProverTranscript: Transcript {
 
     /// Absorbs `msg`'s [`Encoding`] and appends its NARG form
     /// ([`NargMessage::write_narg`]) for verifier replay.
-    fn prover_message<M: NargMessage + ?Sized>(&mut self, msg: &M);
+    ///
+    /// This is not spongefish's inherent `ProverState::prover_message`, which
+    /// writes the absorbed encoding to the NARG string: for a [`BytesMsg`]
+    /// that is the padded form, which the verifier's [`FromNarg`] does not
+    /// read. The distinct name keeps the inherent method from shadowing this
+    /// one on a concrete `ProverState`.
+    ///
+    /// [`BytesMsg`]: crate::BytesMsg
+    /// [`FromNarg`]: spongefish::FromNarg
+    fn send<M: NargMessage + ?Sized>(&mut self, msg: &M);
 
     /// Bytes accumulated in the NARG so far.
     fn narg_string(&self) -> &[u8];
@@ -102,7 +111,7 @@ where
 {
     type Sponge = H;
 
-    fn prover_message<M: NargMessage + ?Sized>(&mut self, msg: &M) {
+    fn send<M: NargMessage + ?Sized>(&mut self, msg: &M) {
         ProverState::prover_message_with(
             self,
             msg,

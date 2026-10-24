@@ -21,7 +21,7 @@ const INSTANCE: [u8; 32] = [0x42; 32];
 fn build_valid_narg(messages: &[&[u8]]) -> Vec<u8> {
     let mut prover = prover_transcript::<Hash<Blake2b512>>(&SESSION, &INSTANCE);
     for m in messages {
-        ProverTranscript::prover_message(&mut prover, &BytesMsg(m.to_vec()));
+        prover.send(&BytesMsg(m.to_vec()));
     }
     prover.narg_string().to_vec()
 }

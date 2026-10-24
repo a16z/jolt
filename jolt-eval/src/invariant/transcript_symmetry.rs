@@ -70,7 +70,7 @@ fn arb_scalar(u: &mut Unstructured<'_>) -> ArbitraryResult<JFr> {
 
 fn run_check<H>(input: &Input) -> Result<(), CheckError>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit<U = u8> + Sync,
 {
     let mut prover = prover_transcript::<H>(&SESSION, &INSTANCE_DIGEST);
     let mut prover_challenges: Vec<[u8; 32]> = Vec::new();
@@ -80,10 +80,10 @@ where
             Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
             Op::PublicScalar(f) => prover.public_message(&scalar_bytes(*f)),
             Op::ProverBytes(b) => {
-                ProverTranscript::prover_message(&mut prover, &BytesMsg(b.clone()));
+                prover.send(&BytesMsg(b.clone()));
             }
             Op::ProverScalar(f) => {
-                ProverTranscript::prover_message(&mut prover, &scalar_bytes(*f));
+                prover.send(&scalar_bytes(*f));
             }
             Op::Challenge => {
                 let c: [u8; 32] = prover.verifier_message();

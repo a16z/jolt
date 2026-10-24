@@ -81,7 +81,7 @@ impl<S: Encoding + ?Sized> Encoding for Instance<'_, S> {
 /// let statement: [u8; 32] = [0xAB; 32];
 ///
 /// let mut prover = prover_transcript::<Keccak>(&SESSION, &statement);
-/// prover.prover_message(&BytesMsg(b"commitment-a".to_vec()));
+/// prover.send(&BytesMsg(b"commitment-a".to_vec()));
 /// let narg = prover.narg_string().to_vec();
 ///
 /// let mut verifier = verifier_transcript::<Keccak>(&SESSION, &statement, &narg);
