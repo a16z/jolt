@@ -47,7 +47,9 @@ use jolt_field::{Accumulator, JoltField};
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::{SuffixEval, Suffixes};
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
+};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
@@ -112,6 +114,20 @@ const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
 const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
 
 impl InstructionCycleRow {
+    /// Equality weights for the explicit prefix and one representative suffix row.
+    pub(crate) fn suffix_weighted_eq<F: JoltField>(rows: &[Self], point: &[F]) -> Vec<F> {
+        let suffix_start = Self::constant_suffix_start(rows);
+        let eq = TensorEqTable::new(point);
+        let suffix_weight = EqPolynomial::suffix_sum(point, suffix_start);
+        map_indices(suffix_start + 1, |index| {
+            if index == suffix_start {
+                suffix_weight
+            } else {
+                eq.evaluate_index(index)
+            }
+        })
+    }
+
     pub(crate) fn constant_suffix_start(rows: &[Self]) -> usize {
         let Some(last) = rows.last() else {
             return 0;
@@ -878,7 +894,8 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     r_reduction: Vec<F>,
     rows: Arc<Vec<InstructionCycleRow>>,
     blocks: Vec<ScanBlock>,
-    /// Condensed per-cycle eq weights (see the reference kernel).
+    /// The final weight aggregates the constant row suffix. Every address
+    /// phase is linear in these weights and condenses identical rows equally.
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -943,13 +960,15 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
+        let u_evals = InstructionCycleRow::suffix_weighted_eq(&rows, r_reduction);
+        let scan_rows = &rows[..u_evals.len()];
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
         let present_tables = map_reduce_chunks(
-            rows.len(),
-            scan_chunk_size(rows.len()),
+            scan_rows.len(),
+            scan_chunk_size(scan_rows.len()),
             |range| {
                 let mut present = 0u64;
-                for row in &rows[range] {
+                for row in &scan_rows[range] {
                     if let Some(table) = row.table_index() {
                         if table >= num_tables {
                             return Err(KernelError::InvariantViolation {
@@ -978,8 +997,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .filter_map(|(index, present)| present.then_some(index))
             .collect();
 
-        let blocks = map_indices(rows.len().div_ceil(SCAN_BLOCK), |block| {
-            ScanBlock::new(&rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(rows.len())])
+        let blocks = map_indices(scan_rows.len().div_ceil(SCAN_BLOCK), |block| {
+            ScanBlock::new(
+                &scan_rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(scan_rows.len())],
+            )
         });
         let mut kernel = Self {
             dimensions,
@@ -987,7 +1008,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             r_reduction: r_reduction.to_vec(),
             rows,
             blocks,
-            u_evals: eq_table(r_reduction),
+            u_evals,
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
                 .map(|prefix| prefix.default_checkpoint::<F>())
@@ -1038,7 +1059,11 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             upper_suffix_bits: suffix_len.saturating_sub(self.address_bits() / 2),
             tables: LookupTableKind::<RISCV_XLEN>::iter().collect(),
         };
-        let PhaseSums { raf, suffixes } = scan.run(&self.blocks, &self.rows, &mut self.u_evals);
+        let PhaseSums { raf, suffixes } = scan.run(
+            &self.blocks,
+            &self.rows[..self.u_evals.len()],
+            &mut self.u_evals,
+        );
 
         let q_shift_half: Vec<F> = raf
             .shift_half
@@ -1726,10 +1751,12 @@ mod tests {
     }
 
     #[test]
-    fn constant_suffix_cycle_rounds_match_reference() {
+    fn constant_suffix_rounds_match_reference() {
         for prefix in [0, 1, 15, 16, 17, 33, 63] {
             for exceptional in [None].into_iter().chain(ExceptionalEq::ALL.map(Some)) {
-                assert_parity_prefix(6, 8, 123, exceptional, Some(prefix));
+                for zero_tail in [true, false] {
+                    assert_parity_prefix(6, 8, 123, exceptional, Some((prefix, zero_tail)));
+                }
             }
         }
     }
@@ -1739,7 +1766,7 @@ mod tests {
         num_virtual_ra_polys: usize,
         seed: u64,
         exceptional: Option<ExceptionalEq>,
-        prefix: Option<usize>,
+        prefix: Option<(usize, bool)>,
     ) {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
@@ -1747,11 +1774,15 @@ mod tests {
             NonZeroUsize::new(num_virtual_ra_polys).unwrap(),
         );
         let mut rows = fixture_rows(log_t, seed);
-        if let Some(prefix) = prefix {
+        if let Some((prefix, zero_tail)) = prefix {
+            let mut tail = rows[rows.len() - 1];
+            if zero_tail {
+                tail.lookup_index = LookupIndex(0);
+                tail.table_index = TableIndex(None);
+                tail.raf_flag = InstructionRafFlag(false);
+            }
             for row in &mut rows[prefix..] {
-                row.lookup_index = LookupIndex(0);
-                row.table_index = TableIndex(None);
-                row.raf_flag = InstructionRafFlag(false);
+                *row = tail;
             }
         }
         let r_reduction: Vec<Fr> = exceptional.map_or_else(

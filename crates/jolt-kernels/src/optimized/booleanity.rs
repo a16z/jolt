@@ -75,7 +75,8 @@ use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningI
 use jolt_claims::OutputClaims;
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
-    try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
+    try_eq_mle, BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, TensorEqTable,
+    UnivariatePoly,
 };
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -238,6 +239,8 @@ fn cycle_pushforward<F: JoltField>(
     let e_out = eq.e_out();
     let e_in = eq.e_in();
     let in_len = e_in.len();
+    let suffix_start = InstructionCycleRow::constant_suffix_start(rows);
+    let blocks = suffix_start.div_ceil(in_len);
 
     struct State<F: JoltField> {
         partial: Vec<Vec<F::Accumulator>>,
@@ -249,7 +252,7 @@ fn cycle_pushforward<F: JoltField>(
     };
     let scatter = |mut state: State<F>, x_out: usize| {
         let base = x_out * in_len;
-        for (x_in, e) in e_in.iter().enumerate() {
+        for (x_in, e) in e_in.iter().take(suffix_start - base).enumerate() {
             let row = &rows[base + x_in];
             for (selector, block) in selectors.iter().zip(state.block.iter_mut()) {
                 if let Some(k) = selector.index(row) {
@@ -285,19 +288,24 @@ fn cycle_pushforward<F: JoltField>(
     };
 
     #[cfg(feature = "parallel")]
-    {
-        finish(
-            (0..e_out.len())
-                .into_par_iter()
-                .fold(zero, scatter)
-                .reduce(zero, merge),
-        )
-    }
+    let mut masses = finish(
+        (0..blocks)
+            .into_par_iter()
+            .fold(zero, scatter)
+            .reduce(zero, merge),
+    );
     #[cfg(not(feature = "parallel"))]
-    {
+    let mut masses = {
         let _ = merge;
-        finish((0..e_out.len()).fold(zero(), scatter))
+        finish((0..blocks).fold(zero(), scatter))
+    };
+    let suffix_mass = EqPolynomial::suffix_sum(point, suffix_start);
+    for (selector, mass) in selectors.iter().zip(&mut masses) {
+        if let Some(k) = selector.index(&rows[suffix_start]) {
+            mass[k] += suffix_mass;
+        }
     }
+    masses
 }
 
 pub struct OptimizedBooleanityAddress;
@@ -1151,6 +1159,40 @@ mod tests {
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
     use crate::ReferenceBackend;
+
+    #[test]
+    fn address_masses_include_constant_suffix_at_exceptional_points() {
+        with_booleanity_backend(6, 4, |backend, dimensions| {
+            let columns = BooleanityColumns::new::<Fr>(backend, dimensions).unwrap();
+            let original = InstructionCycleRow::collect::<Fr>(backend, 64).unwrap();
+            for prefix in [0, 1, 7, 8, 9, 33, 63] {
+                let mut rows = original.clone();
+                rows[prefix..].fill(original[0]);
+                for point in [point(19, 6), vec![Fr::zero(); 6], vec![Fr::from_u64(1); 6]] {
+                    let weights = EqPolynomial::<Fr>::evals(&point, None);
+                    let expected: Vec<Vec<Fr>> = columns
+                        .selectors
+                        .iter()
+                        .map(|selector| {
+                            (0..16)
+                                .map(|k| {
+                                    rows.iter()
+                                        .zip(&weights)
+                                        .filter(|(row, _)| selector.index(row) == Some(k))
+                                        .map(|(_, weight)| *weight)
+                                        .sum()
+                                })
+                                .collect()
+                        })
+                        .collect();
+                    assert_eq!(
+                        cycle_pushforward(&rows, &columns.selectors, 16, &point),
+                        expected,
+                    );
+                }
+            }
+        });
+    }
 
     #[expect(clippy::type_complexity)]
     fn drive_lockstep<R>(

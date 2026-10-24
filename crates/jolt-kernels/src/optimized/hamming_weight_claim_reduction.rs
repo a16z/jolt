@@ -188,7 +188,7 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         let cycles = 1usize << r_cycle.len();
 
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        let eq_cycle = eq_table(r_cycle);
+        let eq_cycle = InstructionCycleRow::suffix_weighted_eq(&rows, r_cycle);
         let selectors = FamilySelectors::new(
             (layout.instruction(), layout.bytecode(), layout.ram()),
             dimensions.log_k_chunk,
@@ -209,7 +209,7 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
                 width: dimensions.log_k_chunk,
             });
         }
-        let g_evals = pushforwards(&rows, &eq_cycle, &selectors, k_chunk);
+        let g_evals = pushforwards(&rows[..eq_cycle.len()], &eq_cycle, &selectors, k_chunk);
         #[cfg(feature = "akita")]
         let mut g_evals = g_evals;
         #[cfg(feature = "akita")]
