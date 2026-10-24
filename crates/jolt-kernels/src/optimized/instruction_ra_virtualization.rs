@@ -215,6 +215,14 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         }
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
+        let prefix_pairs = folded_ra.prefix_len().div_ceil(2);
+        let tail = folded_ra
+            .tail_values()
+            .chunks_exact(n)
+            .take(self.active_virtuals)
+            .map(|values| values.iter().copied().product::<F>())
+            .sum::<F>();
+        let tail_mass = self.gruen.suffix_weight(prefix_pairs) * tail;
 
         struct Scratch<F: JoltField> {
             lanes: Vec<F::Accumulator>,
@@ -225,7 +233,8 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             grid: Vec<F>,
         }
 
-        let block_lanes = self.gruen.par_fold_out_in(
+        let block_lanes = self.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || Scratch {
                 lanes: vec![F::Accumulator::default(); n],
                 row_lanes: vec![F::Accumulator::default(); n],
@@ -274,31 +283,38 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             },
         );
 
-        let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        let mut q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        // Finite grid values receive the constant suffix; its leading
+        // coefficient (the infinity evaluation) is zero.
+        for value in q_evals.iter_mut().take(n - 1) {
+            *value += tail_mass;
+        }
         self.gruen
             .checked_toom(&q_evals, previous_claim, round, || {
-                self.gruen.par_fold_out_in(
-                    || {
-                        (
-                            vec![(F::zero(), F::zero()); num_committed],
-                            F::Accumulator::default(),
-                        )
-                    },
-                    |(pairs, sum), row, _, weight| {
-                        folded_ra.lo_hi_all(row, pairs);
-                        let value = pairs.chunks_exact(n).take(self.active_virtuals).fold(
-                            F::zero(),
-                            |sum, factors| {
-                                sum + factors
-                                    .iter()
-                                    .fold(F::one(), |product, pair| product * pair.0)
-                            },
-                        );
-                        sum.fmadd(weight, value);
-                    },
-                    |_, weight, (_, sum)| weight * sum.reduce(),
-                    |a, b| a + b,
-                )
+                tail_mass
+                    + self.gruen.par_fold_out_in_prefix(
+                        prefix_pairs,
+                        || {
+                            (
+                                vec![(F::zero(), F::zero()); num_committed],
+                                F::Accumulator::default(),
+                            )
+                        },
+                        |(pairs, sum), row, _, weight| {
+                            folded_ra.lo_hi_all(row, pairs);
+                            let value = pairs.chunks_exact(n).take(self.active_virtuals).fold(
+                                F::zero(),
+                                |sum, factors| {
+                                    sum + factors
+                                        .iter()
+                                        .fold(F::one(), |product, pair| product * pair.0)
+                                },
+                            );
+                            sum.fmadd(weight, value);
+                        },
+                        |_, weight, (_, sum)| weight * sum.reduce(),
+                        |a, b| a + b,
+                    )
             })
     }
 
@@ -312,7 +328,16 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
-        let mut q_evals = self.gruen.par_fold_out_in(
+        let prefix_pairs = folded_ra.prefix_len().div_ceil(2);
+        let tail = folded_ra
+            .tail_values()
+            .iter()
+            .take(self.active_virtuals)
+            .copied()
+            .sum::<F>();
+        let tail_mass = self.gruen.suffix_weight(prefix_pairs) * tail;
+        let mut q_evals = self.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || ([F::zero(); 3], vec![(F::zero(), F::zero()); num_committed]),
             |(acc, pairs), row, _x_in, e_in| {
                 folded_ra.lo_hi_all(row, pairs);
@@ -341,6 +366,9 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 a
             },
         );
+        for value in &mut q_evals {
+            *value += tail_mass;
+        }
 
         self.gruen
             .checked_round_poly(&mut q_evals, previous_claim, round)
@@ -460,6 +488,15 @@ mod tests {
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
+    #[test]
+    fn constant_suffix_matches_dense_rounds() {
+        for prefix in [0, 1, 15, 16, 17, 31, 32, 33, 63] {
+            for factors in [1, 2, 4, 8] {
+                assert_parity_case(6, 2, factors, 2, 277, true, fr(31), None, Some(prefix));
+            }
+        }
+    }
+
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
             .map(|row| {
@@ -576,6 +613,7 @@ mod tests {
             with_session,
             gamma,
             None,
+            None,
         );
     }
 
@@ -592,6 +630,7 @@ mod tests {
         with_session: bool,
         gamma: Fr,
         exceptional: Option<ExceptionalEq>,
+        prefix: Option<usize>,
     ) {
         let num_committed = num_virtual * per_virtual;
         let dimensions = InstructionRaVirtualizationDimensions::new(
@@ -600,7 +639,12 @@ mod tests {
             NonZeroUsize::new(per_virtual).unwrap(),
         )
         .unwrap();
-        let rows = fixture_rows(log_t, seed);
+        let mut rows = fixture_rows(log_t, seed);
+        if let Some(prefix) = prefix {
+            for row in &mut rows[prefix..] {
+                row.lookup_index = LookupIndex(0);
+            }
+        }
         let instruction_address: Vec<Fr> = (0..num_committed * chunk_bits)
             .map(|i| fr(300 + 13 * i as u64))
             .collect();
@@ -836,7 +880,7 @@ mod tests {
     fn parity_exceptional_eq_in_lazy_and_dense_virtualization() {
         for factors in [1usize, 2, 4] {
             for case in ExceptionalEq::ALL {
-                assert_parity_case(6, 2, factors, 2, 277, true, fr(31), Some(case));
+                assert_parity_case(6, 2, factors, 2, 277, true, fr(31), Some(case), None);
             }
         }
     }

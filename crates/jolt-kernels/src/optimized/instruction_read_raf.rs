@@ -89,7 +89,7 @@ const _: () = assert!(
 /// packed fused-inc sources used by later one-hot kernels. The lookup index
 /// is split into native limbs and the PC/table/flags share one word, keeping
 /// the retained row at 40 bytes in Akita mode.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct InstructionCycleRow {
     lookup_index_lo: u64,
@@ -112,6 +112,15 @@ const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
 const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
 
 impl InstructionCycleRow {
+    pub(crate) fn constant_suffix_start(rows: &[Self]) -> usize {
+        let Some(last) = rows.last() else {
+            return 0;
+        };
+        rows.iter()
+            .rposition(|row| row != last)
+            .map_or(0, |index| index + 1)
+    }
+
     pub(crate) fn new(
         lookup_index: u128,
         table_index: Option<usize>,
@@ -318,6 +327,7 @@ impl InstructionCycleRow {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct LookupIndexChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
+    prefix_len: usize,
     chunks: usize,
     chunk_bits: usize,
 }
@@ -328,8 +338,10 @@ impl LookupIndexChunks {
         chunks: usize,
         chunk_bits: usize,
     ) -> Self {
+        let prefix_len = InstructionCycleRow::constant_suffix_start(&rows);
         Self {
             rows,
+            prefix_len,
             chunks,
             chunk_bits,
         }
@@ -337,6 +349,9 @@ impl LookupIndexChunks {
 }
 
 impl ChunkIndexSource for LookupIndexChunks {
+    fn constant_suffix_start(&self) -> usize {
+        self.prefix_len
+    }
     fn num_columns(&self) -> usize {
         self.chunks
     }
@@ -359,6 +374,14 @@ impl ChunkIndexSource for LookupIndexChunks {
 struct ClaimBytes(Arc<Vec<u8>>);
 
 impl ChunkIndexSource for ClaimBytes {
+    fn constant_suffix_start(&self) -> usize {
+        let Some(last) = self.0.last() else { return 0 };
+        self.0
+            .iter()
+            .rposition(|value| value != last)
+            .map_or(0, |i| i + 1)
+    }
+
     fn num_columns(&self) -> usize {
         1
     }
@@ -1209,7 +1232,21 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             grid: Vec<F>,
         }
 
-        let block_lanes = cycle.gruen.par_fold_out_in(
+        let prefix_pairs = cycle
+            .combined_val
+            .prefix_len()
+            .max(cycle.ra.prefix_len())
+            .div_ceil(2);
+        let tail_mass = cycle.gruen.suffix_weight(prefix_pairs)
+            * cycle
+                .combined_val
+                .tail_values()
+                .first()
+                .copied()
+                .unwrap_or(F::zero())
+            * cycle.ra.tail_values().iter().copied().product::<F>();
+        let block_lanes = cycle.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || Scratch {
                 lanes: vec![F::Accumulator::default(); factors],
                 pairs: vec![(F::zero(), F::zero()); factors],
@@ -1253,29 +1290,34 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 a
             },
         );
-        let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        let mut q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        for value in &mut q_evals[..factors - 1] {
+            *value += tail_mass;
+        }
         cycle
             .gruen
             .checked_toom(&q_evals, previous_claim, round, || {
-                cycle.gruen.par_fold_out_in(
-                    || {
-                        (
-                            vec![(F::zero(), F::zero()); factors],
-                            F::Accumulator::default(),
-                        )
-                    },
-                    |(pairs, sum), row, _, weight| {
-                        let (val, ra) = pairs.split_at_mut(1);
-                        cycle.combined_val.lo_hi_all(row, val);
-                        cycle.ra.lo_hi_all(row, ra);
-                        let value = pairs
-                            .iter()
-                            .fold(F::one(), |product, pair| product * pair.0);
-                        sum.fmadd(weight, value);
-                    },
-                    |_, weight, (_, sum)| weight * sum.reduce(),
-                    |a, b| a + b,
-                )
+                tail_mass
+                    + cycle.gruen.par_fold_out_in_prefix(
+                        prefix_pairs,
+                        || {
+                            (
+                                vec![(F::zero(), F::zero()); factors],
+                                F::Accumulator::default(),
+                            )
+                        },
+                        |(pairs, sum), row, _, weight| {
+                            let (val, ra) = pairs.split_at_mut(1);
+                            cycle.combined_val.lo_hi_all(row, val);
+                            cycle.ra.lo_hi_all(row, ra);
+                            let value = pairs
+                                .iter()
+                                .fold(F::one(), |product, pair| product * pair.0);
+                            sum.fmadd(weight, value);
+                        },
+                        |_, weight, (_, sum)| weight * sum.reduce(),
+                        |a, b| a + b,
+                    )
             })
     }
 
@@ -1680,12 +1722,36 @@ mod tests {
         seed: u64,
         exceptional: Option<ExceptionalEq>,
     ) {
+        assert_parity_prefix(log_t, num_virtual_ra_polys, seed, exceptional, None);
+    }
+
+    #[test]
+    fn constant_suffix_cycle_rounds_match_reference() {
+        for prefix in [0, 1, 15, 16, 17, 33, 63] {
+            assert_parity_prefix(6, 8, 123, None, Some(prefix));
+        }
+    }
+
+    fn assert_parity_prefix(
+        log_t: usize,
+        num_virtual_ra_polys: usize,
+        seed: u64,
+        exceptional: Option<ExceptionalEq>,
+        prefix: Option<usize>,
+    ) {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
             2 * RISCV_XLEN,
             NonZeroUsize::new(num_virtual_ra_polys).unwrap(),
         );
-        let rows = fixture_rows(log_t, seed);
+        let mut rows = fixture_rows(log_t, seed);
+        if let Some(prefix) = prefix {
+            for row in &mut rows[prefix..] {
+                row.lookup_index = LookupIndex(0);
+                row.table_index = TableIndex(None);
+                row.raf_flag = InstructionRafFlag(false);
+            }
+        }
         let r_reduction: Vec<Fr> = exceptional.map_or_else(
             || (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect(),
             |case| case.point(log_t, challenge(dimensions.instruction_address_bits())),

@@ -149,7 +149,7 @@ pub(super) fn commit_columns<const D: usize>(
                     debug_assert_eq!(ring_start % rings_per_row, 0);
                     debug_assert_eq!(ring_end % rings_per_row, 0);
                     let row_start = ring_start / rings_per_row;
-                    let row_end = ring_end / rings_per_row;
+                    let row_end = (ring_end / rings_per_row).min(source.rows.nonzero_prefix_len());
                     let mut selected_rows = vec![NO_SELECTED_ROW; num_columns];
                     let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
                     let mut ring_masks = vec![[0u32; 4]; K256_ROW_BATCH];

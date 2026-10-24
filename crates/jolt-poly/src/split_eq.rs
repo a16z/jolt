@@ -474,6 +474,22 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         (x_out << in_bits) | x_in
     }
 
+    /// Sum of the remaining-variable equality weights on `start..domain_len`.
+    /// The current variable's linear factor and bound scalar are applied by
+    /// the Gruen reconstruction, not included in this weight.
+    pub fn suffix_weight(&self, start: usize) -> F {
+        let outer = self.e_out_current();
+        let inner = self.e_in_current();
+        assert!(start <= outer.len() * inner.len());
+        let block = start / inner.len();
+        if block == outer.len() {
+            return F::zero();
+        }
+        let offset = start % inner.len();
+        outer[block] * inner[offset..].iter().copied().sum::<F>()
+            + outer[block + 1..].iter().copied().sum::<F>() * inner.iter().copied().sum::<F>()
+    }
+
     #[inline]
     pub fn par_fold_out_in<
         OuterAcc: Send,
@@ -489,15 +505,44 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         outer_step: OuterStep,
         merge: Merge,
     ) -> OuterAcc {
+        self.par_fold_out_in_prefix(
+            self.e_out_current_len() * self.e_in_current_len(),
+            make_inner,
+            inner_step,
+            outer_step,
+            merge,
+        )
+    }
+
+    /// Fold only the first `len` remaining-variable rows. A caller with a
+    /// constant suffix can add its contribution using [`Self::suffix_weight`].
+    pub fn par_fold_out_in_prefix<
+        OuterAcc: Send,
+        InnerAcc: Send,
+        MakeInner: Fn() -> InnerAcc + Sync + Send,
+        InnerStep: Fn(&mut InnerAcc, usize, usize, F) + Sync + Send,
+        OuterStep: Fn(usize, F, InnerAcc) -> OuterAcc + Sync + Send,
+        Merge: Fn(OuterAcc, OuterAcc) -> OuterAcc + Sync + Send,
+    >(
+        &self,
+        len: usize,
+        make_inner: MakeInner,
+        inner_step: InnerStep,
+        outer_step: OuterStep,
+        merge: Merge,
+    ) -> OuterAcc {
         let e_out = self.e_out_current();
         let e_in = self.e_in_current();
+        assert!(len <= e_out.len() * e_in.len());
+        let outer_len = len.div_ceil(e_in.len());
         #[cfg(feature = "parallel")]
         {
-            (0..e_out.len())
+            (0..outer_len)
                 .into_par_iter()
                 .map(|x_out| {
                     let mut inner_acc = make_inner();
-                    for (x_in, &e_in) in e_in.iter().enumerate() {
+                    let inner_len = (len - x_out * e_in.len()).min(e_in.len());
+                    for (x_in, &e_in) in e_in[..inner_len].iter().enumerate() {
                         let row = self.group_index(x_out, x_in);
                         inner_step(&mut inner_acc, row, x_in, e_in);
                     }
@@ -512,9 +557,10 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         #[cfg(not(feature = "parallel"))]
         {
             let mut acc = None;
-            for (x_out, &e_out_val) in e_out.iter().enumerate() {
+            for (x_out, &e_out_val) in e_out[..outer_len].iter().enumerate() {
                 let mut inner_acc = make_inner();
-                for (x_in, &e_in_val) in e_in.iter().enumerate() {
+                let inner_len = (len - x_out * e_in.len()).min(e_in.len());
+                for (x_in, &e_in_val) in e_in[..inner_len].iter().enumerate() {
                     let row = self.group_index(x_out, x_in);
                     inner_step(&mut inner_acc, row, x_in, e_in_val);
                 }
@@ -544,6 +590,32 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
     use std::cell::Cell;
+
+    #[test]
+    fn gruen_prefix_and_suffix_cover_the_remaining_equality_domain() {
+        for bits in 1..9 {
+            let point = random_point(bits, 319 + bits as u64);
+            let mut split = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
+            for round in 0..bits {
+                let weights = EqPolynomial::<Fr>::evals(&point[..bits - round - 1], None);
+                for len in 0..=weights.len() {
+                    let prefix = split.par_fold_out_in_prefix(
+                        len,
+                        Fr::zero,
+                        |sum, _, _, weight| *sum += weight,
+                        |_, weight, sum| weight * sum,
+                        |a, b| a + b,
+                    );
+                    assert_eq!(prefix, weights[..len].iter().copied().sum::<Fr>());
+                    assert_eq!(
+                        split.suffix_weight(len),
+                        weights[len..].iter().copied().sum::<Fr>()
+                    );
+                }
+                split.bind(Fr::from_u64(5 + round as u64));
+            }
+        }
+    }
 
     use super::*;
 

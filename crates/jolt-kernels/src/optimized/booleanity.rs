@@ -543,6 +543,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             tables: LazyFoldedRa::new(
                 tables,
                 BooleanityChunks {
+                    prefix_len: InstructionCycleRow::constant_suffix_start(&rows),
                     rows,
                     selectors: columns.selectors,
                 },
@@ -557,11 +558,15 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BooleanityChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
+    prefix_len: usize,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<ColumnSelector>,
 }
 
 impl ChunkIndexSource for BooleanityChunks {
+    fn constant_suffix_start(&self) -> usize {
+        self.prefix_len
+    }
     fn num_columns(&self) -> usize {
         self.selectors.len()
     }
@@ -689,8 +694,11 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
         eq: &GruenSplitEqPolynomial<F>,
         round: usize,
         claim: F,
+        prefix_pairs: usize,
+        tail_mass: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let lanes = eq.par_fold_out_in(
+        let lanes = eq.par_fold_out_in_prefix(
+            prefix_pairs,
             || [F::Accumulator::default(); 2],
             |lanes, row, _, weight| {
                 let mut constant = F::zero();
@@ -716,22 +724,30 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                 a
             },
         );
-        eq.checked_cubic(lanes[0].reduce(), lanes[1].reduce(), claim, round, || {
-            eq.par_fold_out_in(
-                F::zero,
-                |sum, row, _, weight| {
-                    let value = self.products.iter().enumerate().fold(
-                        F::zero(),
-                        |value, (family, (constants, _))| {
-                            value + constants[self.state(family, 2 * row + 1)]
+        eq.checked_cubic(
+            lanes[0].reduce() + tail_mass,
+            lanes[1].reduce(),
+            claim,
+            round,
+            || {
+                tail_mass
+                    + eq.par_fold_out_in_prefix(
+                        prefix_pairs,
+                        F::zero,
+                        |sum, row, _, weight| {
+                            let value = self.products.iter().enumerate().fold(
+                                F::zero(),
+                                |value, (family, (constants, _))| {
+                                    value + constants[self.state(family, 2 * row + 1)]
+                                },
+                            );
+                            *sum += weight * value;
                         },
-                    );
-                    *sum += weight * value;
-                },
-                |_, weight, sum| weight * sum,
-                |a, b| a + b,
-            )
-        })
+                        |_, weight, sum| weight * sum,
+                        |a, b| a + b,
+                    )
+            },
+        )
     }
 }
 
@@ -749,6 +765,16 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
+        let prefix_pairs = self.tables.prefix_len().div_ceil(2);
+        let tail = self
+            .tables
+            .tail_values()
+            .iter()
+            .zip(&self.gamma_powers)
+            .take_while(|(_, rho)| !rho.is_zero())
+            .map(|(value, rho)| *value * (*value - *rho))
+            .sum::<F>();
+        let tail_mass = self.eq.suffix_weight(prefix_pairs) * tail;
         if let LazyFoldedRa::Lazy {
             tables,
             width,
@@ -765,7 +791,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 )
             {
                 let products = CategoricalProducts::new(tables, *width, source, &self.gamma_powers);
-                return products.lookup(&self.eq, round, previous_claim);
+                return products.lookup(&self.eq, round, previous_claim, prefix_pairs, tail_mass);
             }
         }
         let tables = &self.tables;
@@ -784,7 +810,8 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         // Per-row products accumulate unreduced, reduce once, and fold into
         // the block lanes by `e_in`; blocks fold by `e_out` (legacy
         // `par_fold_out_in_unreduced`).
-        let block_lanes = self.eq.par_fold_out_in(
+        let block_lanes = self.eq.par_fold_out_in_prefix(
+            prefix_pairs,
             || Scratch {
                 lanes: [F::Accumulator::default(); 2],
                 pairs: vec![(F::zero(), F::zero()); num_polys],
@@ -814,29 +841,32 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
             },
         );
         self.eq.checked_cubic(
-            block_lanes[0].reduce(),
+            block_lanes[0].reduce() + tail_mass,
             block_lanes[1].reduce(),
             previous_claim,
             round,
             || {
-                self.eq.par_fold_out_in(
-                    || {
-                        (
-                            vec![(F::zero(), F::zero()); num_polys],
-                            F::Accumulator::default(),
-                        )
-                    },
-                    |(pairs, sum), row, _, weight| {
-                        tables.lo_hi_all(row, pairs);
-                        let mut value = F::Accumulator::default();
-                        for ((_, hi), rho) in pairs.iter().zip(gamma_powers).take(active_polys) {
-                            value.fmadd(*hi, *hi - *rho);
-                        }
-                        sum.fmadd(weight, value.reduce());
-                    },
-                    |_, weight, (_, sum)| weight * sum.reduce(),
-                    |a, b| a + b,
-                )
+                tail_mass
+                    + self.eq.par_fold_out_in_prefix(
+                        prefix_pairs,
+                        || {
+                            (
+                                vec![(F::zero(), F::zero()); num_polys],
+                                F::Accumulator::default(),
+                            )
+                        },
+                        |(pairs, sum), row, _, weight| {
+                            tables.lo_hi_all(row, pairs);
+                            let mut value = F::Accumulator::default();
+                            for ((_, hi), rho) in pairs.iter().zip(gamma_powers).take(active_polys)
+                            {
+                                value.fmadd(*hi, *hi - *rho);
+                            }
+                            sum.fmadd(weight, value.reduce());
+                        },
+                        |_, weight, (_, sum)| weight * sum.reduce(),
+                        |a, b| a + b,
+                    )
             },
         )
     }
@@ -1687,7 +1717,15 @@ mod categorical_tests {
                         unreachable!()
                     };
                     let products = CategoricalProducts::new(tables, *width, source, &rho);
-                    let polynomial = products.lookup(&eq, round, direct[0] + direct[1]).unwrap();
+                    let polynomial = products
+                        .lookup(
+                            &eq,
+                            round,
+                            direct[0] + direct[1],
+                            dense[0].len() / 2,
+                            F::zero(),
+                        )
+                        .unwrap();
                     for (x, value) in direct.iter().enumerate() {
                         assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
                     }

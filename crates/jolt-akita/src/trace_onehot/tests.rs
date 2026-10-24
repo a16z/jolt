@@ -327,15 +327,62 @@ fn assert_production_kernels_match_materialized<const D: usize>(
     committed_zero_column: Option<usize>,
     num_digits: usize,
 ) {
+    assert_prefix_kernels_match_materialized::<D>(
+        k,
+        rows,
+        num_positions,
+        committed_zero_column,
+        num_digits,
+        rows,
+    );
+}
+
+#[derive(Debug)]
+struct PrefixTestRows {
+    inner: TestRows,
+    prefix: usize,
+}
+
+impl TraceOneHotRows for PrefixTestRows {
+    fn num_rows(&self) -> usize {
+        self.inner.rows
+    }
+    fn num_columns(&self) -> usize {
+        self.inner.columns
+    }
+    fn nonzero_prefix_len(&self) -> usize {
+        self.prefix
+    }
+    fn fill_row(&self, row: usize, selected: &mut [u8]) {
+        assert!(row < self.prefix, "the zero padding must not be read");
+        self.inner.fill_row(row, selected);
+    }
+    fn committed_digit_zero_mask(&self, row: usize) -> u64 {
+        assert!(row < self.prefix);
+        self.inner.committed_digit_zero_mask(row)
+    }
+}
+
+fn assert_prefix_kernels_match_materialized<const D: usize>(
+    k: usize,
+    rows: usize,
+    num_positions: usize,
+    committed_zero_column: Option<usize>,
+    num_digits: usize,
+    prefix: usize,
+) {
     const COLUMNS: usize = 3;
     let columns = TraceOneHotColumn::new(
         k,
         64,
-        Arc::new(TestRows {
-            rows,
-            columns: COLUMNS,
-            k,
-            committed_zero_column,
+        Arc::new(PrefixTestRows {
+            inner: TestRows {
+                rows,
+                columns: COLUMNS,
+                k,
+                committed_zero_column,
+            },
+            prefix,
         }),
     )
     .unwrap();
@@ -345,7 +392,8 @@ fn assert_production_kernels_match_materialized<const D: usize>(
             let indices = (0..rows)
                 .map(|row| {
                     let hot = ((row * (2 * column + 1) + column) % k) as u8;
-                    (hot != 0 || committed_zero_column == Some(column)).then_some(hot)
+                    (row < prefix && (hot != 0 || committed_zero_column == Some(column)))
+                        .then_some(hot)
                 })
                 .collect();
             OneHotPoly::<AkitaField, u8>::new(k, indices).unwrap()
@@ -471,6 +519,14 @@ fn assert_production_kernels_match_materialized<const D: usize>(
     )
     .unwrap();
     assert_eq!(streamed, materialized);
+}
+
+#[test]
+fn zero_suffix_kernels_match_materialized_onehot() {
+    for prefix in [0, 1, 3, 4, 5, 17, 31, 32] {
+        assert_prefix_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2, prefix);
+        assert_prefix_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2, prefix);
+    }
 }
 
 #[test]
