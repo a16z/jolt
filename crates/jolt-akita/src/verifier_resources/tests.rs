@@ -5,7 +5,10 @@
     reason = "fixtures assert provisioning outcomes and fail loudly"
 )]
 use super::*;
-use crate::{AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
+use crate::{
+    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaSetupParams,
+};
 use jolt_field::Ring;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
@@ -25,10 +28,10 @@ fn metadata(params: &AkitaSetupParams) -> AkitaVerifierSetup {
 }
 
 struct DenseFixture {
-    commitment: crate::AkitaCommitment,
+    commitment: AkitaCommitment,
     point: Vec<AkitaField>,
     evaluation: AkitaField,
-    proof: crate::AkitaBatchProof,
+    proof: AkitaBatchProof,
 }
 
 impl DenseFixture {
