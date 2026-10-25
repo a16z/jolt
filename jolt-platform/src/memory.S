@@ -1,7 +1,7 @@
 // The CLI wraps external calls and leaves the existing implementation as
 // __real_memcpy/__real_memmove. Small copies load completely before storing.
 .macro copy name, fallback
-.section .text.\name,"ax",@progbits
+.pushsection .text.\name,"ax",@progbits
 .globl \name
 .hidden \name
 .type \name,@function
@@ -432,6 +432,7 @@
     tail \fallback
 .option pop
 .size \name, .-\name
+.popsection
 .endm
 
 copy __wrap_memcpy, __real_memcpy
@@ -440,7 +441,7 @@ copy __wrap_memmove, __real_memmove
 // Both wrappers reach this leaf only for differing offsets and length >= 544.
 // Aligned source words are combined into aligned destination words. Byte edges
 // keep every aligned load inside the original source range.
-.section .text.__jolt_copy_misaligned,"ax",@progbits
+.pushsection .text.__jolt_copy_misaligned,"ax",@progbits
 .hidden __jolt_copy_misaligned
 .type __jolt_copy_misaligned,@function
 __jolt_copy_misaligned:
@@ -734,3 +735,4 @@ __jolt_copy_misaligned:
     ret
 .option pop
 .size __jolt_copy_misaligned, .-__jolt_copy_misaligned
+.popsection
