@@ -132,8 +132,101 @@ def stats(values):
         return "—"
     median = statistics.median(values)
     if len(values) == 1:
-        return f"{median:.2f}"
-    return f"{median:.2f} [{min(values):.2f}–{max(values):.2f}]"
+        return f"{median:.1f}"
+    return f"{median:.1f} [{min(values):.1f}–{max(values):.1f}]"
+
+
+def label_total(spans, label, context=None):
+    """`label`'s time in `context` (any context when None), fields included."""
+    total = 0.0
+    for key, value in spans.items():
+        head, _, name = key.rpartition("/")
+        if (context is None or head == context) and (
+            name == label or name.startswith(label + "[")
+        ):
+            total += value
+    return total
+
+
+RESPONSE = "AkitaResponseProver::verify"
+
+
+def buckets(spans, build):
+    """Named buckets of one verify, in ms; indented names are nested."""
+    get = lambda key: spans.get(key, 0.0)
+    total = get("total")
+    if build == "akita":
+        stages = get("verify_stages_1_to_7")
+        opening = get("AkitaVerifier::batched_verify")
+        return [
+            ("total", total),
+            ("stages 1–7 (verify_stages_1_to_7)", stages),
+            ("stage 8 Akita opening (AkitaVerifier::batched_verify)", opening),
+            ("rest (seed, stage-8 claims)", total - stages - opening),
+        ]
+    stages, replay, pads = (
+        get("whiteout_verify_stages"),
+        get("whiteout_pad_layout"),
+        get("whiteout_receive_pads"),
+    )
+    tail, sigma, response = (
+        get("whiteout_verify_tail"),
+        get("whiteout_verify_sigma"),
+        get(RESPONSE),
+    )
+    product = lambda block: label_total(spans, f"whiteout_nz_product[{block}]")
+    entries = lambda block: label_total(spans, f"whiteout_nz_field_entries[{block}]")
+    rows = [
+        ("total", total),
+        ("seed, stages 1–7, stage-8 claims", stages - replay - pads),
+        ("  of which stages 1–7 (verify_stages_1_to_7)", get("verify_stages_1_to_7")),
+        ("pad-layout replay [recomputed]", replay),
+        ("pad receipt (pad commitment setup) [recomputed]", pads),
+        ("masked prefix", get("whiteout_verify_prefix")),
+    ]
+    rows += [
+        (f"  level {level}", get(f"masked_prefix_level[{level}]"))
+        for level in range(8)
+        if f"masked_prefix_level[{level}]" in spans
+    ]
+    rows += [
+        ("relation (auxiliary block)", get("whiteout_verify_relation")),
+        ("tail", tail),
+        ("  Σ setup [recomputed]", get("whiteout_sigma_setup")),
+        ("    pad commitment", tail and label_total(spans, "whiteout_pad_commitment_setup", "") - pads),
+        ("    residual matrices A_a, [B_a|B'_a] (NTT)", get("whiteout_residual_matrices")),
+        ("    A_D", get("whiteout_v_matrix_setup")),
+        ("  response lookup (rebuilds the Σ setup) [recomputed]", get("whiteout_response_lookup")),
+        ("  lift", get("whiteout_lift")),
+        ("  Σ check (verify_sigma minus the response proof)", sigma - response),
+        ("  response proof", response),
+        ("    product sumcheck", get(f"{RESPONSE}/response_product_sumcheck")),
+        ("    row batch", get(f"{RESPONSE}/response_row_batch")),
+        ("    digit range", get(f"{RESPONSE}/response_digit_range")),
+        ("    fused sumcheck", get(f"{RESPONSE}/response_fused_sumcheck")),
+        ("    A(r) weight", get(f"{RESPONSE}/response_weight_at")),
+        ("      eq dual", get(f"{RESPONSE}/whiteout_weight_dual")),
+        ("      A_D·V", get(f"{RESPONSE}/whiteout_weight_v_image")),
+        ("      N·z", get(f"{RESPONSE}/whiteout_weight_nz")),
+        ("        field entries A_a [recomputed]", entries("residual_a")),
+        ("        field entries [B_a|B'_a] [recomputed]", entries("residual_b")),
+        ("        field entries pad [recomputed]", entries("pad")),
+        ("        product A_a (CPU)", product("residual_a")),
+        ("        product [B_a|B'_a] (CPU)", product("residual_b")),
+        ("        product pad (CPU)", product("pad")),
+        ("      lifted rows (item 4)", get(f"{RESPONSE}/whiteout_weight_lifted_rows")),
+        ("    opening E(r) (AkitaVerifier::batched_verify)", get(f"{RESPONSE}/AkitaVerifier::batched_verify")),
+        ("rest", total - stages - get("whiteout_verify_prefix") - get("whiteout_verify_relation") - tail),
+        ("= residual N·z products, A_a + [B_a|B'_a] (CPU)", product("residual_a") + product("residual_b")),
+        ("= residual all-in: products + field entries + matrix setup (both Σ setups)",
+         product("residual_a") + product("residual_b") + entries("residual_a")
+         + entries("residual_b") + label_total(spans, "whiteout_residual_matrices")),
+        ("= recomputed per verify (replay, pad setup, both Σ setups, field entries)",
+         replay + pads + get("whiteout_sigma_setup")
+         + get("whiteout_response_lookup/whiteout_sigma_setup")
+         + label_total(spans, "whiteout_nz_field_entries")),
+    ]
+    return rows
 
 
 def report(args):
@@ -144,17 +237,29 @@ def report(args):
     for record in records:
         groups[(record["workload"], record["build"])].append(record)
     for (workload, build), runs in sorted(groups.items()):
-        print(f"## {workload} {build} (n = {len(runs)})")
-        print(f"proof bytes {stats([r['proof_bytes'] for r in runs])}")
-        for mode in MODES:
-            print(f"verify {mode} ms: {stats([r['verify_ms'][mode] for r in runs])}")
+        print(f"## {workload} {build} (n = {len(runs)})\n")
+        print(f"proof bytes {stats([r['proof_bytes'] for r in runs])}; "
+              f"load {stats([r['load_1m'] for r in runs])}\n")
         modes = [m for m in MODES if any(m in r["spans_ms"] for r in runs)]
-        keys = sorted({k for r in runs for m in modes for k in r["spans_ms"].get(m, {})})
-        print("| span | " + " | ".join(modes) + " |")
-        print("|---|" + "---|" * len(modes))
-        for key in keys:
-            cells = [stats([r["spans_ms"].get(m, {}).get(key) for r in runs]) for m in modes]
-            print(f"| {key} | " + " | ".join(cells) + " |")
+        print("| ms | " + " | ".join(modes) + " |")
+        print("|---|" + "---:|" * len(modes))
+        print("| harness verify time | " + " | ".join(
+            stats([r["verify_ms"][m] for r in runs]) for m in modes) + " |")
+        per_run = {m: [dict(buckets(r["spans_ms"][m], build)) for r in runs
+                       if m in r["spans_ms"]] for m in modes}
+        names = [name for name, _ in buckets(runs[0]["spans_ms"][modes[0]], build)]
+        for name in names:
+            cells = []
+            for m in modes:
+                values = [b.get(name) for b in per_run[m]]
+                shares = [b.get(name, 0) / b["total"] * 100 for b in per_run[m] if b["total"]]
+                cells.append(f"{stats(values)} ({statistics.median(shares):.0f}%)")
+            print(f"| {name} | " + " | ".join(cells) + " |")
+        if args.all_spans:
+            keys = sorted({k for r in runs for m in modes for k in r["spans_ms"].get(m, {})})
+            for key in keys:
+                print(f"| `{key}` | " + " | ".join(
+                    stats([r["spans_ms"].get(m, {}).get(key) for r in runs]) for m in modes) + " |")
         print()
 
 
@@ -169,6 +274,7 @@ def main():
     runner.add_argument("--keep-traces", action="store_true")
     reporter = sub.add_parser("report")
     reporter.add_argument("log")
+    reporter.add_argument("--all-spans", action="store_true")
     parsed = parser.parse_args()
     {"run": run, "report": report}[parsed.command](parsed)
 
