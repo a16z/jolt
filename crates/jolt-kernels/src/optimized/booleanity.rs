@@ -94,6 +94,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::constant_suffix::ConstantSuffix;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
@@ -229,7 +230,7 @@ impl BooleanityColumns {
 /// per-chunk cycle masses exactly — same terms, regrouped through the
 /// `eq = E_out ⊗ E_in` factorization.
 fn cycle_pushforward<F: JoltField>(
-    rows: &[InstructionCycleRow],
+    rows: &ConstantSuffix<InstructionCycleRow>,
     selectors: &[ColumnSelector],
     k_chunk: usize,
     point: &[F],
@@ -239,7 +240,7 @@ fn cycle_pushforward<F: JoltField>(
     let e_out = eq.e_out();
     let e_in = eq.e_in();
     let in_len = e_in.len();
-    let suffix_start = InstructionCycleRow::constant_suffix_start(rows);
+    let suffix_start = rows.prefix_len();
     let blocks = suffix_start.div_ceil(in_len);
 
     struct State<F: JoltField> {
@@ -551,7 +552,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             tables: LazyFoldedRa::new(
                 tables,
                 BooleanityChunks {
-                    prefix_len: InstructionCycleRow::constant_suffix_start(&rows),
+                    prefix_len: rows.prefix_len(),
                     rows,
                     selectors: columns.selectors,
                 },
@@ -565,7 +566,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BooleanityChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<ConstantSuffix<InstructionCycleRow>>,
     prefix_len: usize,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<ColumnSelector>,
@@ -1166,7 +1167,7 @@ mod tests {
             let columns = BooleanityColumns::new::<Fr>(backend, dimensions).unwrap();
             let original = InstructionCycleRow::collect::<Fr>(backend, 64).unwrap();
             for prefix in [0, 1, 7, 8, 9, 33, 63] {
-                let mut rows = original.clone();
+                let mut rows: Vec<_> = (0..original.len()).map(|i| original[i]).collect();
                 rows[prefix..].fill(original[0]);
                 for point in [point(19, 6), vec![Fr::zero(); 6], vec![Fr::from_u64(1); 6]] {
                     let weights = EqPolynomial::<Fr>::evals(&point, None);
@@ -1186,7 +1187,7 @@ mod tests {
                         })
                         .collect();
                     assert_eq!(
-                        cycle_pushforward(&rows, &columns.selectors, 16, &point),
+                        cycle_pushforward(&rows.clone().into(), &columns.selectors, 16, &point),
                         expected,
                     );
                 }

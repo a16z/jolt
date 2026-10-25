@@ -117,13 +117,39 @@ impl<F: JoltField> TensorEqTable<F> {
         outer_step: OuterStep,
         merge: Merge,
     ) -> OuterAcc {
+        self.par_fold_out_in_prefix(self.len(), make_inner, inner_step, outer_step, merge)
+    }
+
+    /// Fold the first `len` rows; callers account for any omitted suffix separately.
+    pub fn par_fold_out_in_prefix<
+        OuterAcc: Send,
+        InnerAcc: Send,
+        MakeInner: Fn() -> InnerAcc + Sync + Send,
+        InnerStep: Fn(&mut InnerAcc, usize, usize, F) + Sync + Send,
+        OuterStep: Fn(usize, F, InnerAcc) -> OuterAcc + Sync + Send,
+        Merge: Fn(OuterAcc, OuterAcc) -> OuterAcc + Sync + Send,
+    >(
+        &self,
+        len: usize,
+        make_inner: MakeInner,
+        inner_step: InnerStep,
+        outer_step: OuterStep,
+        merge: Merge,
+    ) -> OuterAcc {
+        assert!(len <= self.len());
+        let outer_len = len.div_ceil(self.e_in.len());
         #[cfg(feature = "parallel")]
         {
-            (0..self.e_out.len())
+            (0..outer_len)
                 .into_par_iter()
                 .map(|x_out| {
                     let mut inner_acc = make_inner();
-                    for (x_in, &e_in) in self.e_in.iter().enumerate() {
+                    for (x_in, &e_in) in self
+                        .e_in
+                        .iter()
+                        .take(len - x_out * self.e_in.len())
+                        .enumerate()
+                    {
                         let row = self.group_index(x_out, x_in);
                         inner_step(&mut inner_acc, row, x_in, e_in);
                     }
@@ -138,9 +164,14 @@ impl<F: JoltField> TensorEqTable<F> {
         #[cfg(not(feature = "parallel"))]
         {
             let mut acc = None;
-            for (x_out, &e_out) in self.e_out.iter().enumerate() {
+            for (x_out, &e_out) in self.e_out.iter().take(outer_len).enumerate() {
                 let mut inner_acc = make_inner();
-                for (x_in, &e_in) in self.e_in.iter().enumerate() {
+                for (x_in, &e_in) in self
+                    .e_in
+                    .iter()
+                    .take(len - x_out * self.e_in.len())
+                    .enumerate()
+                {
                     let row = self.group_index(x_out, x_in);
                     inner_step(&mut inner_acc, row, x_in, e_in);
                 }
@@ -674,23 +705,32 @@ mod tests {
 
     #[test]
     fn tensor_eq_fold_matches_full_table_dot_product() {
-        let point = random_point(9, 211);
-        let values = random_point(1 << point.len(), 307);
-        let tensor = TensorEqTable::<Fr>::new(&point);
-        let folded = tensor.par_fold_out_in(
-            || Fr::from_u64(0),
-            |inner, row, _x_in, e_in| {
-                *inner += e_in * values[row];
-            },
-            |_x_out, e_out, inner| e_out * inner,
-            |left, right| left + right,
-        );
-        let full = EqPolynomial::<Fr>::evals(&point, None)
-            .into_iter()
-            .zip(values)
-            .map(|(eq, value)| eq * value)
-            .sum::<Fr>();
-        assert_eq!(folded, full);
+        for point in [
+            random_point(9, 211),
+            vec![Fr::zero(); 9],
+            vec![Fr::one(); 9],
+        ] {
+            let values = random_point(1 << point.len(), 307);
+            let tensor = TensorEqTable::<Fr>::new(&point);
+            let eq = EqPolynomial::<Fr>::evals(&point, None);
+            for prefix in 0..=values.len() {
+                let folded = tensor.par_fold_out_in_prefix(
+                    prefix,
+                    Fr::zero,
+                    |inner, row, _x_in, e_in| {
+                        *inner += e_in * values[row];
+                    },
+                    |_x_out, e_out, inner| e_out * inner,
+                    |left, right| left + right,
+                );
+                let full: Fr = eq[..prefix]
+                    .iter()
+                    .zip(&values)
+                    .map(|(eq, value)| *eq * *value)
+                    .sum();
+                assert_eq!(folded, full);
+            }
+        }
     }
 
     #[test]

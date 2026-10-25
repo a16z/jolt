@@ -209,7 +209,12 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
                 width: dimensions.log_k_chunk,
             });
         }
-        let g_evals = pushforwards(&rows[..eq_cycle.len()], &eq_cycle, &selectors, k_chunk);
+        let g_evals = pushforwards(
+            &rows.representatives()[..eq_cycle.len()],
+            &eq_cycle,
+            &selectors,
+            k_chunk,
+        );
         #[cfg(feature = "akita")]
         let mut g_evals = g_evals;
         #[cfg(feature = "akita")]

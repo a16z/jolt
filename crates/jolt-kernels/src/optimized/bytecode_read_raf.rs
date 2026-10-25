@@ -53,7 +53,9 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
 use jolt_field::JoltField;
-use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
+use jolt_poly::{
+    EqPolynomial, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
+};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
@@ -67,6 +69,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::constant_suffix::ConstantSuffix;
 use super::eq_prefix::EqPrefix;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
@@ -97,6 +100,25 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     let log_t = first_stage.len();
     let base_stages = base_cycle_points.len();
     let num_stages = base_stages + weighted_cycle_points.len();
+    // The caller retains an explicit prefix and one representative tail row.
+    let prefix_len = rows.len() - 1;
+    let tail = &rows[prefix_len];
+    let finish = |mut outputs: Vec<Vec<F>>| {
+        let address = pc(tail);
+        for (stage, point) in base_cycle_points
+            .iter()
+            .chain(weighted_cycle_points)
+            .enumerate()
+        {
+            let weight = if stage < base_stages {
+                F::one()
+            } else {
+                row_weight(tail)
+            };
+            outputs[stage][address] += EqPolynomial::suffix_sum(point, prefix_len) * weight;
+        }
+        outputs
+    };
     let lo_bits = log_t / 2;
     let hi_bits = log_t - lo_bits;
     let in_len = 1usize << lo_bits;
@@ -161,7 +183,7 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                 }
                 tile.seen[address] = false;
             }
-            for lo in 0..in_len {
+            for lo in 0..in_len.min(prefix_len - hi * in_len) {
                 let row = &rows[hi * in_len + lo];
                 let address = pc(row);
                 if !tile.seen[address] {
@@ -196,24 +218,30 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                 }
                 left
             };
-            let out_len = 1usize << hi_bits;
+            let out_len = prefix_len.div_ceil(in_len);
             let jobs = rayon::current_num_threads()
-                .min(out_len)
+                .min(out_len.max(1))
                 .min(SCRATCH_BYTES / scratch_per_job);
-            let chunk = out_len.div_ceil(jobs);
-            return (0..out_len)
-                .into_par_iter()
-                .step_by(chunk)
-                .map(|start| {
-                    (start..(start + chunk).min(out_len))
-                        .fold(tile(), accumulate)
-                        .partial
-                })
-                .reduce_with(merge)
-                .unwrap_or_default();
+            let chunk = out_len.div_ceil(jobs).max(1);
+            return finish(
+                (0..out_len)
+                    .into_par_iter()
+                    .step_by(chunk)
+                    .map(|start| {
+                        (start..(start + chunk).min(out_len))
+                            .fold(tile(), accumulate)
+                            .partial
+                    })
+                    .reduce_with(merge)
+                    .unwrap_or_else(|| tile().partial),
+            );
         }
         #[cfg(not(feature = "parallel"))]
-        return (0..1usize << hi_bits).fold(tile(), accumulate).partial;
+        return finish(
+            (0..prefix_len.div_ceil(in_len))
+                .fold(tile(), accumulate)
+                .partial,
+        );
     }
 
     struct RoutedRow<F> {
@@ -225,7 +253,7 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     let mut outputs = (0..num_stages)
         .map(|_| vec![F::zero(); addresses])
         .collect::<Vec<_>>();
-    for (batch_index, batch) in rows.chunks(BATCH_ROWS).enumerate() {
+    for (batch_index, batch) in rows[..prefix_len].chunks(BATCH_ROWS).enumerate() {
         let mut tiles: HashMap<usize, Vec<RoutedRow<F>>> = HashMap::new();
         for (index, row) in batch.iter().enumerate() {
             let address = pc(row);
@@ -342,7 +370,7 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
         #[cfg(not(feature = "parallel"))]
         outputs.iter_mut().enumerate().for_each(accumulate_stage);
     }
-    outputs
+    finish(outputs)
 }
 
 /// Stage-6a address phase: `PrepareKernel` front of the optimized kernel.
@@ -398,7 +426,12 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
         let push_pc = InstructionCycleRow::bytecode_pc;
         let entry_bytecode_index = relation.entry_bytecode_index();
-        if entry_bytecode_index >= addresses || rows.iter().any(|row| push_pc(row) >= addresses) {
+        if entry_bytecode_index >= addresses
+            || rows
+                .representatives()
+                .iter()
+                .any(|row| push_pc(row) >= addresses)
+        {
             return Err(KernelError::InvariantViolation {
                 reason: "bytecode index outside the padded bytecode domain",
             });
@@ -482,7 +515,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let mut pushforwards = stage_pushforwards::<F, _>(
             walk_points,
             fused_cycle_points,
-            &rows,
+            rows.representatives(),
             addresses,
             push_pc,
             row_weight,
@@ -774,7 +807,7 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
 enum LazyFusedInc<F: JoltField> {
     Lazy {
         branch_weights: Vec<F>,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         prefix_len: usize,
         tail: F,
     },
@@ -786,7 +819,7 @@ enum LazyFusedInc<F: JoltField> {
 
 #[cfg(feature = "akita")]
 impl<F: JoltField> LazyFusedInc<F> {
-    fn new(rows: Arc<Vec<InstructionCycleRow>>, prefix_len: usize) -> Self {
+    fn new(rows: Arc<ConstantSuffix<InstructionCycleRow>>, prefix_len: usize) -> Self {
         let tail = rows[rows.len() - 1].fused_inc::<F>();
         Self::Lazy {
             branch_weights: vec![F::one()],
@@ -889,7 +922,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             });
         }
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        let prefix_len = InstructionCycleRow::constant_suffix_start(&rows).max(1);
+        let prefix_len = rows.prefix_len().max(1);
 
         // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
         // one-hot grid, served lazily off the sparse per-cycle indices for
@@ -1035,7 +1068,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
 /// cold on unmapped cycles, off the shared stage-5 rows.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BytecodePcChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<ConstantSuffix<InstructionCycleRow>>,
     prefix_len: usize,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<RaChunkSelector>,
@@ -1327,25 +1360,29 @@ mod stage_pushforward_tests {
                 (address, weight)
             })
             .collect::<Vec<_>>();
-        let actual = stage_pushforwards(
-            &points[..base_stages],
-            &points[base_stages..],
-            &rows,
-            addresses,
-            |row| row.0,
-            |row| row.1,
-        );
-        for (stage, point) in points.iter().enumerate() {
-            let eq = eq_table(point);
-            let mut expected = vec![F::zero(); addresses];
-            for ((address, weight), value) in rows.iter().zip(eq) {
-                expected[*address] += if stage < base_stages {
-                    value
-                } else {
-                    value * *weight
-                };
+        for prefix in [0, 1, 9, rows.len() / 2 + 1, rows.len()] {
+            let mut dense = rows.clone();
+            dense[prefix..].fill((addresses - 1, F::from_u64(7)));
+            let actual = stage_pushforwards(
+                &points[..base_stages],
+                &points[base_stages..],
+                &dense[..(prefix + 1).min(dense.len())],
+                addresses,
+                |row| row.0,
+                |row| row.1,
+            );
+            for (stage, point) in points.iter().enumerate() {
+                let eq = eq_table(point);
+                let mut expected = vec![F::zero(); addresses];
+                for ((address, weight), value) in dense.iter().zip(eq) {
+                    expected[*address] += if stage < base_stages {
+                        value
+                    } else {
+                        value * *weight
+                    };
+                }
+                assert_eq!(actual[stage], expected);
             }
-            assert_eq!(actual[stage], expected);
         }
     }
 

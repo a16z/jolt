@@ -36,6 +36,7 @@
 
 use std::sync::Arc;
 
+use super::constant_suffix::ConstantSuffix;
 use super::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
 use super::lazy_ra::LazyFoldedRa;
 use super::support::{
@@ -112,7 +113,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let num_committed = num_virtual * num_committed_per_virtual;
@@ -724,7 +725,7 @@ mod tests {
                 let shape = FixtureShape { log_t, ram_k: 16 };
                 with_ram_fixture(shape, Vec::new(), |witness| {
                     let mut session = ProofSession::default();
-                    session.park(SharedInstructionRows(Arc::new(pack(&rows))));
+                    session.park(SharedInstructionRows(Arc::new(pack(&rows).into())));
                     let kernel = OptimizedInstructionRaVirtualization
                         .prepare(
                             &mut session,
@@ -753,7 +754,7 @@ mod tests {
                         &instruction_address,
                         &r_cycle,
                         chunk_bits,
-                        Arc::new(pack(&rows)),
+                        Arc::new(pack(&rows).into()),
                         gamma,
                     )
                     .unwrap(),
@@ -849,7 +850,7 @@ mod tests {
                 &instruction_address,
                 &[fr(3), fr(5)],
                 1,
-                Arc::new(pack(&fixture_rows(log_t, 47))),
+                Arc::new(pack(&fixture_rows(log_t, 47)).into()),
                 fr(7),
             );
             if supported {
