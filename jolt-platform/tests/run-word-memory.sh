@@ -11,6 +11,6 @@ mkdir -p "$test_out"
 riscv64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror \
     -fno-builtin -fno-tree-loop-distribute-patterns \
     -march=rv64gc -mabi=lp64d \
-    "$test_dir/word_memory.c" "$test_dir/../src/word_memory.S" \
+    "$test_dir/word_memory.c" "$test_dir/word_memory_with_section_probe.S" \
     -o "$test_out/word-memory-tests"
 qemu-riscv64 "$test_out/word-memory-tests"

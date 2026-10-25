@@ -3,7 +3,8 @@
  * destination. Overlapping ranges retain memcpy's ordinary undefined contract.
  * memcmp returns the difference of the first unequal unsigned bytes.
  */
-.text
+/* global_asm blocks share assembler state inside the linked Rust unit. */
+.pushsection .text.jolt_word_memory,"ax",@progbits
 .option push
 .option norvc
 .p2align 2
@@ -204,4 +205,6 @@ memcmp:
     ret
 .size memcmp, .-memcmp
 .option pop
-.section .note.GNU-stack,"",@progbits
+.popsection
+.pushsection .note.GNU-stack,"",@progbits
+.popsection

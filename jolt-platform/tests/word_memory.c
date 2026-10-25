@@ -13,6 +13,7 @@
 
 static void *(*volatile copy_fn)(void *, const void *, size_t) = memcpy;
 static int (*volatile compare_fn)(const void *, const void *, size_t) = memcmp;
+extern int word_memory_section_probe(void);
 
 static int byte_compare(const volatile unsigned char *a,
                         const volatile unsigned char *b, size_t n) {
@@ -124,6 +125,8 @@ static void uninitialized_object_copy(void) {
 }
 
 int main(void) {
+    assert(word_memory_section_probe() == 291);
+    puts("PASS assembler_section_restored_for_subsequent_code");
     all_copy_alignments();
     all_compare_alignments();
     guard_pages_and_long_copies();
