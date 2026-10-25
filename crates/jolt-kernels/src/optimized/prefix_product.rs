@@ -11,6 +11,14 @@ pub(crate) struct PrefixColumn<F: JoltField> {
 }
 
 impl<F: JoltField> PrefixColumn<F> {
+    #[inline]
+    pub(crate) fn value(&self, index: usize) -> F {
+        self.values
+            .get(index)
+            .copied()
+            .unwrap_or(self.tail[index & 1])
+    }
+
     pub(crate) fn pair(&self, row: usize) -> (F, F) {
         (
             self.values.get(2 * row).copied().unwrap_or(self.tail[0]),

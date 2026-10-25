@@ -3,11 +3,11 @@
 //! Summand: `inc(j) · ra(j) · (LT(j, r_cycle) + γ)`.
 //! [`LazyFoldedRa`] delays the dense `ra` table to `T/16`; [`SplitLt`] stores
 //! `LT + γ` in ~√T space. [`IncColumn`] derives `inc` from raw trace values
-//! for two rounds, then materializes at `T/4`.
+//! for two rounds, then retains an explicit prefix with a zero suffix.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
+use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -17,10 +17,10 @@ use jolt_witness::JoltWitnessPlane;
 use std::sync::Arc;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::ram_trace::{RamAccessColumns, RamAddresses, NO_ACCESS};
 use super::support::{
-    bind_raw_twice, bound_pair, pin_derived_term, triple_product_round_evals, RoundProgress,
-    SplitLt,
+    bind_prefix_pairs, bound_pair, map_indices, pin_derived_term, triple_product_round_evals,
+    RoundProgress, SplitLt,
 };
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -30,10 +30,14 @@ use crate::{
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
-    addresses: Arc<Vec<u32>>,
+    addresses: Arc<RamAddresses>,
 }
 
 impl ChunkIndexSource for RamAddressIndices {
+    fn constant_suffix_start(&self) -> usize {
+        self.addresses.prefix_len()
+    }
+
     fn num_columns(&self) -> usize {
         1
     }
@@ -81,7 +85,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
-/// Raw trace values for two rounds; a dense `T/4` table afterward.
+/// Raw trace values for two rounds; an explicit prefix with a zero suffix afterward.
 /// Reads have `post == pre`, and no-ops are zero, matching `RamInc`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncColumn<F: JoltField> {
@@ -91,12 +95,7 @@ enum IncColumn<F: JoltField> {
         #[cfg_attr(feature = "allocative", allocative(skip))]
         r1: F,
     },
-    Bound(Polynomial<F>),
-}
-
-#[inline]
-fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
-    F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
+    Bound(Vec<F>),
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -111,10 +110,10 @@ impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         let mut freed_columns = false;
         if let IncColumn::Bound(inc) = &mut self.inc {
-            inc.bind_with_order(challenge, BindingOrder::LowToHigh);
+            bind_prefix_pairs(inc, challenge, F::zero());
         } else {
             let placeholder = IncColumn::Raw(RamAccessColumns {
-                addresses: Arc::new(Vec::new()),
+                addresses: Arc::new(Vec::new().into()),
                 pre_values: Vec::new(),
                 post_values: Vec::new(),
             });
@@ -125,12 +124,10 @@ impl<F: JoltField> RamValCheckKernel<F> {
                 },
                 IncColumn::RawBound { columns, r1 } => {
                     freed_columns = true;
-                    IncColumn::Bound(bind_raw_twice(
-                        |j| raw_inc(&columns, j),
-                        columns.addresses.len(),
-                        r1,
-                        challenge,
-                    ))
+                    IncColumn::Bound(map_indices(columns.value_prefix_len().div_ceil(4), |y| {
+                        let first = |j| bound_pair(|k| columns.increment(k), r1, j);
+                        bound_pair(first, challenge, y)
+                    }))
                 }
                 IncColumn::Bound(_) => unreachable!("bound inc binds in place above"),
             };
@@ -165,24 +162,26 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
         let lt = |y: usize| self.lt.pair(y);
         let evals = match &self.inc {
             IncColumn::Raw(columns) => triple_product_round_evals(
-                columns.addresses.len() / 2,
-                |y| (raw_inc(columns, 2 * y), raw_inc(columns, 2 * y + 1)),
+                columns.value_prefix_len().div_ceil(2),
+                |y| (columns.increment(2 * y), columns.increment(2 * y + 1)),
                 ra,
                 lt,
             ),
             IncColumn::RawBound { columns, r1 } => triple_product_round_evals(
-                columns.addresses.len() / 4,
+                columns.value_prefix_len().div_ceil(4),
                 |y| {
-                    let inc = |j| raw_inc(columns, j);
+                    let inc = |j| columns.increment(j);
                     (bound_pair(inc, *r1, 2 * y), bound_pair(inc, *r1, 2 * y + 1))
                 },
                 ra,
                 lt,
             ),
-            IncColumn::Bound(inc) => {
-                let inc = inc.evals();
-                triple_product_round_evals(inc.len() / 2, |y| (inc[2 * y], inc[2 * y + 1]), ra, lt)
-            }
+            IncColumn::Bound(inc) => triple_product_round_evals(
+                inc.len().div_ceil(2),
+                |y| (inc[2 * y], inc.get(2 * y + 1).copied().unwrap_or(F::zero())),
+                ra,
+                lt,
+            ),
         };
 
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
@@ -209,9 +208,9 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
             program_image: inputs.program_image,
             ram_ra: self.ra.final_values()[0],
             ram_inc: match &self.inc {
-                IncColumn::Raw(columns) => raw_inc(columns, 0),
-                IncColumn::RawBound { columns, r1 } => bound_pair(|j| raw_inc(columns, j), *r1, 0),
-                IncColumn::Bound(inc) => inc.evals()[0],
+                IncColumn::Raw(columns) => columns.increment(0),
+                IncColumn::RawBound { columns, r1 } => bound_pair(|j| columns.increment(j), *r1, 0),
+                IncColumn::Bound(inc) => inc.first().copied().unwrap_or(F::zero()),
             },
         })
     }
@@ -378,6 +377,19 @@ mod tests {
             ops,
             37,
         );
+    }
+
+    #[test]
+    fn zero_suffix_boundaries_match_reference() {
+        let shape = FixtureShape {
+            log_t: 5,
+            ram_k: 16,
+        };
+        for prefix in [0, 1, 2, 3, 6, 7, 8, 14, 15, 16, 30, 31] {
+            let ops = mixed_ops().into_iter().cycle().take(prefix).collect();
+            run_parity(shape, ops, 401 + prefix as u64);
+        }
+        run_parity(FixtureShape { log_t: 5, ram_k: 1 }, vec![RamOp::None], 499);
     }
 
     #[test]

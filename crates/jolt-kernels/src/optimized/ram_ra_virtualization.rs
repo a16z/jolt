@@ -34,7 +34,7 @@ use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
+use super::ram_trace::{RamAddresses, SharedRamAddresses, NO_ACCESS};
 use super::support::{
     accumulate_product_grid, pin_derived_term, product_grid_scratch_len, GruenRoundMessage,
     RoundProgress, MAX_GRID_FACTORS,
@@ -111,17 +111,14 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
-    addresses: Arc<Vec<u32>>,
+    addresses: Arc<RamAddresses>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
 
 impl ChunkIndexSource for RamAddressChunks {
     fn constant_suffix_start(&self) -> usize {
-        self.addresses
-            .iter()
-            .rposition(|&address| address != NO_ACCESS)
-            .map_or(0, |i| i + 1)
+        self.addresses.prefix_len()
     }
 
     fn num_columns(&self) -> usize {
