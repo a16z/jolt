@@ -86,6 +86,9 @@ const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 const SAFETY_MARGIN: f64 = 0.9;
+/// muldiv's max padded trace length, as its e2e tests and verifier fixtures
+/// preprocess it.
+const MULDIV_SCALE: u32 = 16;
 const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
 const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
 
@@ -95,12 +98,15 @@ fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
 
 /// The compiled protocol's artifact-name suffix: one compiled harness proves
 /// exactly one protocol, and the Akita runs must never collide with the
-/// homomorphic runs' trace names, `latest_` links, or CSV rows (the Dory
-/// names stay unsuffixed — they are the paths existing consumers key on).
+/// homomorphic runs' trace names, `latest_` links, or CSV rows, nor Whiteout
+/// (`akita,zk`) runs the clear Akita ones (the Dory names stay unsuffixed —
+/// they are the paths existing consumers key on).
 #[cfg(not(feature = "akita"))]
 const PROTOCOL_SUFFIX: &str = "";
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 const PROTOCOL_SUFFIX: &str = "_akita";
+#[cfg(all(feature = "akita", feature = "zk"))]
+const PROTOCOL_SUFFIX: &str = "_whiteout";
 
 /// The run identity `modular_{workload}{protocol}_{scale}{backend}` — the
 /// trace-name stem shared by the run directory, the `latest_` link (which
@@ -125,6 +131,9 @@ pub enum Workload {
     Sha3Chain,
     #[value(name = "btreemap")]
     BTreeMap,
+    /// The e2e and verifier-fixture guest (`examples/muldiv`, inputs
+    /// `[9, 5, 3]`). Fixed-size, so it is not in the default sweep list.
+    Muldiv,
     /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
     /// that exercises the field-inline columns and kernels. Fixed-size (its input does
     /// not scale), so it is not in the default sweep list.
@@ -141,6 +150,7 @@ impl Workload {
             Self::Sha2Chain => "sha2-chain",
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
+            Self::Muldiv => "muldiv",
             #[cfg(feature = "field-inline")]
             Self::FieldOps => "field-ops",
         }
@@ -160,6 +170,7 @@ impl Workload {
             Self::Sha2Chain => 22,
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
+            Self::Muldiv => MULDIV_SCALE,
             #[cfg(feature = "field-inline")]
             Self::FieldOps => 16,
         }
@@ -187,6 +198,7 @@ impl Workload {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP))
                     .expect("serialize input")
             }
+            Self::Muldiv => postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize input"),
             #[cfg(feature = "field-inline")]
             Self::FieldOps => eqpoly_inputs(),
         }
@@ -621,6 +633,10 @@ struct ProvenRun {
     setup_duration: Duration,
     verifier_parallel: VerificationRun,
     verifier_single_threaded: VerificationRun,
+    /// The Akita verifier's first verify against preprocessing after a serde
+    /// round trip, which plans its derived state (Whiteout's catalog and
+    /// response prover) instead of sharing the prover's.
+    verifier_transported: Option<VerificationRun>,
     proof_size: usize,
 }
 
@@ -633,6 +649,8 @@ struct VerificationRun {
 enum VerificationMode {
     Parallel,
     SingleThreaded,
+    #[cfg(feature = "akita")]
+    Transported,
 }
 
 impl VerificationRun {
@@ -650,6 +668,10 @@ fn measure_verifier(
         VerificationMode::Parallel => tracing::info_span!("profile_verifier_parallel", threads),
         VerificationMode::SingleThreaded => {
             tracing::info_span!("profile_verifier_single_threaded", threads)
+        }
+        #[cfg(feature = "akita")]
+        VerificationMode::Transported => {
+            tracing::info_span!("profile_verifier_transported", threads)
         }
     };
     let _guard = span.enter();
@@ -755,6 +777,13 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         run.verifier_parallel.threads,
         run.verifier_single_threaded.seconds() * 1e3,
     );
+    if let Some(transported) = &run.verifier_transported {
+        println!(
+            "modular {bench_name} (2^{scale}, {backend_label}): Verifier {:.3}ms on transported preprocessing, first use ({} threads)",
+            transported.seconds() * 1e3,
+            transported.threads,
+        );
+    }
     let peak = PeakMemory::sample();
     for (label, bytes) in [
         ("Peak RSS", peak.rss_bytes),
@@ -907,6 +936,7 @@ fn prove_workload(
         setup_duration,
         verifier_parallel,
         verifier_single_threaded,
+        verifier_transported: None,
         proof_size,
     }
 }
@@ -1022,12 +1052,33 @@ fn prove_workload(
     let verifier_single_threaded = jolt_akita::with_single_threaded_verifier_backend(|| {
         measure_verifier(VerificationMode::SingleThreaded, 1, verify)
     });
+    // A verifier in another process holds transported preprocessing, whose
+    // derived state (Whiteout catalog, response plan) its first verify plans.
+    let encoded =
+        bincode::serde::encode_to_vec(&prover_preprocessing.verifier, bincode::config::standard())
+            .expect("encode verifier preprocessing");
+    let transported: JoltVerifierPreprocessing<AkitaScheme, AkitaVc> =
+        bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+            .expect("decode verifier preprocessing")
+            .0;
+    let verifier_transported = jolt_akita::with_host_parallel_verifier_backend(|| {
+        measure_verifier(VerificationMode::Transported, parallel_threads, || {
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+                &transported,
+                &public_io,
+                &proof,
+                None,
+            )
+            .expect("modular Akita proof verifies on transported preprocessing");
+        })
+    });
 
     ProvenRun {
         duration,
         setup_duration,
         verifier_parallel,
         verifier_single_threaded,
+        verifier_transported: Some(verifier_transported),
         proof_size,
     }
 }

@@ -191,6 +191,7 @@ The caller contract of #254 gains one item: in ZK mode, Akita's root may run onl
   - Clippy passes for `host,akita,zk`.
   - The `akita,zk` CI lane runs.
   - Proof bytes and prover time are recorded against the paper's model.
+    Recorded in `specs/whiteout-v6-costs.md`. On the measured shapes (T = 2^12–2^20) a proof grows by 28.8–31.0 KB, of which raw u_a is 19.5 KB (D29). Σ is 160 B, as predicted. Steady prover overhead is +1.2–2.5 s, and the verifier takes 185–250 ms against the paper's +0.8 ms. A fresh process pays 12–16 s of one-time planning to prove, and 12–14 s to verify, because the Whiteout catalog and response plan are `serde(skip)`.
   - W6f (N5): a Whiteout verifier plans its setup's whole catalog, every admitted combination of precommitted groups (up to four trace rows plus one dense row per group shape), on first use, and builds an Akita prover setup twice (once to derive the verifier setup, once lazily for the prover). Recorded, not optimized; shipping the rows as artifacts or deriving the verifier setup without a prover setup removes both.
 
 Unverified: whether the ZK planner finds a schedule at muldiv's T (Akita A26). If it does not, V1 uses `for_tests`.

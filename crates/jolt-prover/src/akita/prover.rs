@@ -13,7 +13,7 @@ use jolt_transcript::Sponge;
 use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
 use jolt_verifier::proof::JoltProof;
 
-use super::spine::prove_stages_1_to_7;
+use super::spine::{mark_region, prove_stages_1_to_7};
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
 use super::witness::AdviceObject;
@@ -51,6 +51,7 @@ where
     let log_t = config.trace_length.ilog2() as usize;
     finish_stage("stage0", log_t, backend.session(), &());
     let mut transcript = stage0.transcript;
+    mark_region("stage0", &transcript);
     let (stage4, stage6b, stage7) = prove_stages_1_to_7::<F, PCS, VC, H>(
         &mut backend,
         &mut mode,
@@ -79,6 +80,7 @@ where
         &stage7,
         &mut transcript,
     )?;
+    mark_region("stage8", &transcript);
     finish_stage("stage8", log_t, backend.session(), &());
     backend.finish();
 

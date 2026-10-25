@@ -24,6 +24,16 @@ use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
 use jolt_kernels::{JoltBackend, KernelContext};
 
+/// Logs the argument string's length at the end of `region`, so a profile
+/// log splits the proof's bytes by region (`specs/whiteout-v6-costs.md`).
+pub(super) fn mark_region<H: Sponge>(region: &'static str, transcript: &ProverTranscript<H>) {
+    tracing::info!(
+        region,
+        narg_bytes = transcript.narg().len(),
+        "argument string"
+    );
+}
+
 /// Stages 1–7 in `mode`; returns the clear carriers stage 8 reads.
 #[expect(clippy::type_complexity, reason = "the three carriers stage 8 reads")]
 pub(super) fn prove_stages_1_to_7<F, PCS, VC, H>(
@@ -54,6 +64,7 @@ where
     let log_t = config.trace_length.ilog2() as usize;
     let stage1 = prove_stage1::<F, PCS, VC, H>(backend, mode, log_t, transcript)?;
     finish_stage("stage1", log_t, backend.session(), &stage1.clear_output);
+    mark_region("stage1", transcript);
     let stage2 = prove_stage2::<F, PCS, VC, H>(
         backend,
         mode,
@@ -63,6 +74,7 @@ where
         transcript,
     )?;
     finish_stage("stage2", log_t, backend.session(), &stage2.clear_output);
+    mark_region("stage2", transcript);
     let stage3 = prove_stage3::<F, PCS, VC, H>(
         backend,
         mode,
@@ -72,6 +84,7 @@ where
         transcript,
     )?;
     finish_stage("stage3", log_t, backend.session(), &stage3.clear_output);
+    mark_region("stage3", transcript);
     let stage4 = prove_stage4::<F, PCS, VC, H>(
         backend,
         mode,
@@ -83,6 +96,7 @@ where
         transcript,
     )?;
     finish_stage("stage4", log_t, backend.session(), &stage4.clear_output);
+    mark_region("stage4", transcript);
     let stage5 = prove_stage5::<F, PCS, VC, H>(
         backend,
         mode,
@@ -94,6 +108,7 @@ where
         transcript,
     )?;
     finish_stage("stage5", log_t, backend.session(), &stage5.clear_output);
+    mark_region("stage5", transcript);
     let stage6a = prove_stage6a::<F, PCS, VC, H>(
         backend,
         mode,
@@ -108,6 +123,7 @@ where
         transcript,
     )?;
     finish_stage("stage6a", log_t, backend.session(), &stage6a.clear_output);
+    mark_region("stage6a", transcript);
     let stage6b = prove_stage6b::<F, PCS, VC, H>(
         backend,
         mode,
@@ -123,6 +139,7 @@ where
         transcript,
     )?;
     finish_stage("stage6b", log_t, backend.session(), &stage6b.clear_output);
+    mark_region("stage6b", transcript);
     let stage7 = prove_stage7::<F, PCS, VC, H>(
         backend,
         mode,
@@ -134,6 +151,7 @@ where
         transcript,
     )?;
     finish_stage("stage7", log_t, backend.session(), &stage7.clear_output);
+    mark_region("stage7", transcript);
     Ok((
         stage4.clear_output,
         stage6b.clear_output,
