@@ -1602,7 +1602,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
 mod tests {
     use crate::optimized::parity::ExceptionalEq;
     use std::num::NonZeroUsize;
-    use std::sync::{Arc, Weak};
+    use std::sync::Arc;
 
     use jolt_claims::protocols::jolt::geometry::instruction::{
         InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
