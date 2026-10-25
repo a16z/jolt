@@ -14,6 +14,7 @@ use akita_params::transcript_site::{
     SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
     SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_SUMCHECK,
 };
+use akita_params::zk::ZK_CUT_LEVEL;
 use akita_params::{GrindingSite, ProtocolSiteId};
 use jolt_akita::AkitaField;
 use jolt_akita::AkitaScheme;
@@ -625,6 +626,44 @@ fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
         }
     }
     assert!(failures.is_empty(), "accepted tampers: {failures:#?}");
+}
+
+/// A47: the cut level sends u_a compressed, one 8-coefficient payload per
+/// chunk of Akita's split chain (muldiv's u_a is 19 × `R_64`, 1,216
+/// coefficients: chunks of 512, 512 and 192), and a flipped byte in any
+/// chunk rejects.
+#[test]
+fn whiteout_compressed_residual_commitment_chunks_reject_tampers() {
+    const CHUNK_BYTES: usize = 8 * FIELD_BYTES;
+    let (case, trace) = honest();
+    let cut = classify(&trace)
+        .into_iter()
+        .find(|item| {
+            item.region == Region::Stage8
+                && matches!(
+                    Site::of(trace.events[item.index].site),
+                    Site::Akita(site)
+                        if site.family == SITE_FAMILY_NEXT_WITNESS && site.level == ZK_CUT_LEVEL
+                )
+        })
+        .expect("the cut level's successor payload");
+    let range = trace.events[cut.index]
+        .narg
+        .clone()
+        .expect("a message has a range");
+    assert_eq!(
+        range.len(),
+        3 * CHUNK_BYTES,
+        "cm(u_a) is three chunk payloads"
+    );
+    for chunk in range.step_by(CHUNK_BYTES) {
+        let mut tampered = case.proof().clone();
+        tampered.narg[chunk + CHUNK_BYTES / 2] ^= 1;
+        assert!(
+            case.verify_proof(&tampered).is_err(),
+            "a flipped byte in the chunk at {chunk} is accepted"
+        );
+    }
 }
 
 /// N4: one byte of an Akita masked-level message, and one in each part of

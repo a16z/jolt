@@ -176,6 +176,11 @@ fn prove(fixture: &Fixture, seed: u64) -> Vec<u8> {
         .unwrap();
     let masked = pads.send(&fixture.evaluations, &mut transcript).unwrap();
     let forms = own_pads(&masked, 0);
+    let compression = fixture
+        .shape
+        .tail()
+        .compression(fixture.shape.row(), &layout)
+        .unwrap();
     let (residual, auxiliary) = fixture
         .shape
         .row()
@@ -189,6 +194,7 @@ fn prove(fixture: &Fixture, seed: u64) -> Vec<u8> {
             &forms,
             &mut pads,
             &mut transcript,
+            compression.as_ref(),
         )
         .unwrap();
     let _ = pads.send(&auxiliary, &mut transcript).unwrap();

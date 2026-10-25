@@ -551,7 +551,9 @@ impl WhiteoutRow {
     /// Proves the masked levels through the cut for `groups` (precommitted,
     /// then the trace group; each its commitment, handle, point in Akita's
     /// order and true evaluations), whose claims `forms` state in the same
-    /// order. Returns the residual opening and Akita's auxiliary values.
+    /// order, sending u_a compressed under `compression`
+    /// ([`WhiteoutTail::compression`]). Returns the residual opening and
+    /// Akita's auxiliary values.
     ///
     /// # Errors
     ///
@@ -564,6 +566,7 @@ impl WhiteoutRow {
         forms: &[AffineRow<F>],
         pads: &mut CommittedPads<F, WhiteoutPadOpening<F>>,
         transcript: &mut ProverTranscript<S>,
+        compression: &dyn ImageCompression<F>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
         let prover = self.catalog.prover()?;
         let mut claims = Vec::with_capacity(groups.len());
@@ -606,6 +609,7 @@ impl WhiteoutRow {
             &forms.to_vec(),
             pads,
             transcript,
+            compression,
             BasisMode::Lagrange,
         )
     }
@@ -630,6 +634,7 @@ impl WhiteoutRow {
             pads,
             masked_statement(selection, groups)?,
             forms,
+            &CompressionShape::<WhiteoutResponse>::default(),
             BasisMode::Lagrange,
         )
     }
@@ -653,6 +658,7 @@ impl WhiteoutRow {
             view,
             masked_statement(selection, groups)?,
             forms,
+            &CompressionShape::<WhiteoutResponse>::default(),
             BasisMode::Lagrange,
         )
     }
@@ -791,16 +797,18 @@ impl WhiteoutTail {
         )?)
     }
 
-    /// The Σ setup over `row`'s residual with commitment `u_a`, the pad
-    /// commitment of `layout` with image `pad_image`.
+    /// The Σ setup over `row`'s residual with commitment `cm(u_a)` =
+    /// `u_a_payload` (and u_a, on the prover's side), the pad commitment of
+    /// `layout` with image `pad_image`.
     fn sigma<const D: usize>(
         row: &WhiteoutRow,
         layout: &PadLayout,
-        u_a: &[F],
+        u_a_payload: &[F],
+        u_a: Option<&[F]>,
         pad_image: BlockTarget<F, D>,
     ) -> Result<SigmaSetup<F, D>, ZkError> {
         let pads = Self::pad_commitment::<D>(layout)?;
-        let blocks = row.shape.blocks::<D>(row.stream(), u_a)?;
+        let blocks = row.shape.blocks::<D>(row.stream(), u_a_payload, u_a)?;
         let v_rank = digit_matrix_rank(SigmaSetup::<F, D>::v_width(&blocks, &pads))?;
         let v_stream = public_stream(
             SigmaSetup::<F, D>::v_stream_len(&blocks, &pads, v_rank),
@@ -823,11 +831,11 @@ impl WhiteoutTail {
         row: &WhiteoutRow,
         layout: &PadLayout,
     ) -> Result<Arc<AkitaResponseProver<WhiteoutResponse>>, ZkError> {
-        let u_a = vec![F::default(); row.shape.geometry().profile.outer.matrix.output_rank() * D];
         let sigma = Self::sigma::<D>(
             row,
             layout,
-            &u_a,
+            &[],
+            None,
             BlockTarget::Compressed {
                 payload: Vec::new(),
                 image: None,
@@ -843,6 +851,22 @@ impl WhiteoutTail {
         let prover = Arc::new(plan_response(num_vars)?);
         let _ = cache.insert(num_vars, Arc::clone(&prover));
         Ok(prover)
+    }
+
+    #[cfg(feature = "zk-prover")]
+    /// The response prover for `row` and `layout`, as the image compression
+    /// the masked prefix sends u_a under: the chain the response proof
+    /// checks (Akita A47).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::commit_pads`].
+    pub fn compression(
+        &self,
+        row: &WhiteoutRow,
+        layout: &PadLayout,
+    ) -> Result<Arc<AkitaResponseProver<WhiteoutResponse>>, ZkError> {
+        with_ring_dim!(row.ring_dim(), D, self.response::<D>(row, layout))
     }
 
     #[cfg(feature = "zk-prover")]
@@ -915,7 +939,8 @@ impl WhiteoutTail {
             let sigma = Self::sigma::<D>(
                 row,
                 &layout,
-                &residual.residual_commitment,
+                &residual.residual_payload,
+                Some(&residual.residual_commitment),
                 BlockTarget::Compressed {
                     payload: opening.payload().to_vec(),
                     image: Some(opening.image::<D>()?),
@@ -959,6 +984,7 @@ impl WhiteoutTail {
                 row,
                 &layout,
                 claim.commitment(),
+                None,
                 BlockTarget::Compressed {
                     payload: pads.commitment().payload.clone(),
                     image: None,
