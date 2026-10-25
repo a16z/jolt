@@ -426,6 +426,8 @@
 .Lmismatched_\name:
     li t0, 11
     bgeu t0, a2, .Lsmall_bytes_\name
+    li t0, 544
+    bgeu a2, t0, __jolt_copy_misaligned
 .Lfallback_\name:
     tail \fallback
 .option pop
@@ -434,3 +436,301 @@
 
 copy __wrap_memcpy, __real_memcpy
 copy __wrap_memmove, __real_memmove
+
+// Both wrappers reach this leaf only for differing offsets and length >= 544.
+// Aligned source words are combined into aligned destination words. Byte edges
+// keep every aligned load inside the original source range.
+.section .text.__jolt_copy_misaligned,"ax",@progbits
+.hidden __jolt_copy_misaligned
+.type __jolt_copy_misaligned,@function
+__jolt_copy_misaligned:
+.option push
+.option norelax
+    mv a7, a0
+    bltu a1, a0, .Lmis_backward
+    mv a6, a1
+.Lmis_forward_peel:
+    andi t0, a7, 7
+    beqz t0, .Lmis_forward_bound
+    lbu t1, 0(a1)
+    sb t1, 0(a7)
+    addi a1, a1, 1
+    addi a7, a7, 1
+    addi a2, a2, -1
+    j .Lmis_forward_peel
+.Lmis_forward_bound:
+    andi t2, a1, -8
+    bgeu t2, a6, .Lmis_forward_setup
+    li t0, 8
+.Lmis_forward_first:
+    lbu t1, 0(a1)
+    sb t1, 0(a7)
+    addi a1, a1, 1
+    addi a7, a7, 1
+    addi a2, a2, -1
+    addi t0, t0, -1
+    bnez t0, .Lmis_forward_first
+.Lmis_forward_setup:
+    andi t2, a1, -8
+    andi a5, a1, 7
+    slli a3, a5, 3
+    li a4, 64
+    sub a4, a4, a3
+    ld t3, 0(t2)
+    li t0, 136
+    sub t0, t0, a5
+.Lmis_forward_bulk:
+    ld t4, 8(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 0(a7)
+    ld t3, 16(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, 8(a7)
+    ld t4, 24(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 16(a7)
+    ld t3, 32(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, 24(a7)
+    ld t4, 40(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 32(a7)
+    ld t3, 48(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, 40(a7)
+    ld t4, 56(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 48(a7)
+    ld t3, 64(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, 56(a7)
+    ld t4, 72(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 64(a7)
+    ld t3, 80(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, 72(a7)
+    ld t4, 88(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 80(a7)
+    ld t3, 96(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, 88(a7)
+    ld t4, 104(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 96(a7)
+    ld t3, 112(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, 104(a7)
+    ld t4, 120(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 112(a7)
+    ld t3, 128(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, 120(a7)
+    addi t2, t2, 128
+    addi a1, a1, 128
+    addi a7, a7, 128
+    addi a2, a2, -128
+    bgeu a2, t0, .Lmis_forward_bulk
+    li t0, 16
+    sub t0, t0, a5
+    bltu a2, t0, .Lmis_forward_tail
+.Lmis_forward_word:
+    ld t4, 8(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, 0(a7)
+    mv t3, t4
+    addi t2, t2, 8
+    addi a1, a1, 8
+    addi a7, a7, 8
+    addi a2, a2, -8
+    bgeu a2, t0, .Lmis_forward_word
+.Lmis_forward_tail:
+    beqz a2, .Lmis_return
+    lbu t1, 0(a1)
+    sb t1, 0(a7)
+    addi a1, a1, 1
+    addi a7, a7, 1
+    addi a2, a2, -1
+    j .Lmis_forward_tail
+.Lmis_backward:
+    add a1, a1, a2
+    add a7, a7, a2
+    mv a6, a1
+.Lmis_backward_peel:
+    andi t0, a7, 7
+    beqz t0, .Lmis_backward_bound
+    lbu t1, -1(a1)
+    sb t1, -1(a7)
+    addi a1, a1, -1
+    addi a7, a7, -1
+    addi a2, a2, -1
+    j .Lmis_backward_peel
+.Lmis_backward_bound:
+    addi t2, a1, 7
+    andi t2, t2, -8
+    bgeu a6, t2, .Lmis_backward_setup
+    li t0, 8
+.Lmis_backward_first:
+    lbu t1, -1(a1)
+    sb t1, -1(a7)
+    addi a1, a1, -1
+    addi a7, a7, -1
+    addi a2, a2, -1
+    addi t0, t0, -1
+    bnez t0, .Lmis_backward_first
+.Lmis_backward_setup:
+    andi t2, a1, -8
+    andi a5, a1, 7
+    slli a3, a5, 3
+    li a4, 64
+    sub a4, a4, a3
+    ld t3, 0(t2)
+    addi t0, a5, 128
+.Lmis_backward_bulk:
+    ld t4, -8(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -8(a7)
+    ld t3, -16(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, -16(a7)
+    ld t4, -24(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -24(a7)
+    ld t3, -32(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, -32(a7)
+    ld t4, -40(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -40(a7)
+    ld t3, -48(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, -48(a7)
+    ld t4, -56(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -56(a7)
+    ld t3, -64(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, -64(a7)
+    ld t4, -72(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -72(a7)
+    ld t3, -80(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, -80(a7)
+    ld t4, -88(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -88(a7)
+    ld t3, -96(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, -96(a7)
+    ld t4, -104(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -104(a7)
+    ld t3, -112(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, -112(a7)
+    ld t4, -120(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -120(a7)
+    ld t3, -128(t2)
+    srl t5, t3, a3
+    sll t6, t4, a4
+    or t5, t5, t6
+    sd t5, -128(a7)
+    addi t2, t2, -128
+    addi a1, a1, -128
+    addi a7, a7, -128
+    addi a2, a2, -128
+    bgeu a2, t0, .Lmis_backward_bulk
+    addi t0, a5, 8
+    bltu a2, t0, .Lmis_backward_tail
+.Lmis_backward_word:
+    ld t4, -8(t2)
+    srl t5, t4, a3
+    sll t6, t3, a4
+    or t5, t5, t6
+    sd t5, -8(a7)
+    mv t3, t4
+    addi t2, t2, -8
+    addi a1, a1, -8
+    addi a7, a7, -8
+    addi a2, a2, -8
+    bgeu a2, t0, .Lmis_backward_word
+.Lmis_backward_tail:
+    beqz a2, .Lmis_return
+    lbu t1, -1(a1)
+    sb t1, -1(a7)
+    addi a1, a1, -1
+    addi a7, a7, -1
+    addi a2, a2, -1
+    j .Lmis_backward_tail
+.Lmis_return:
+    ret
+.option pop
+.size __jolt_copy_misaligned, .-__jolt_copy_misaligned

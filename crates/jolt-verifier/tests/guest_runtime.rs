@@ -56,10 +56,13 @@ fn check_memory_copy_abi(std: bool) {
         let entry = emulator
             .get_address_of_symbol(&name.to_string())
             .expect("guest links the copy runtime");
-        for len in (0..18).chain([
-            24, 32, 40, 48, 56, 64, 72, 79, 80, 81, 88, 89, 95, 96, 159, 160, 161, 168, 184, 255,
-            256, 257, 511, 512, 513, 1023, 1024, 1025, 4095, 4096, 4097,
-        ]) {
+        for len in (0..18)
+            .chain([
+                24, 32, 40, 48, 56, 64, 72, 79, 80, 81, 88, 89, 95, 96, 159, 160, 161, 168, 184,
+                255, 256, 257, 511, 512, 513, 1023, 1024, 1025, 4095, 4096, 4097,
+            ])
+            .chain(543..673)
+        {
             for src_alignment in 0..8 {
                 for dst_alignment in 0..8 {
                     for delta in [0, 8, 64, 4224] {
