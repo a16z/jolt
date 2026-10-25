@@ -194,9 +194,19 @@ paper delta.
 
 - **O6:** d = 128 first. d = 256 follows if O0 attributes at least 50% of
   verifier time to the residual.
-- **O7:** in scope. Analysis comes first; implement only if it beats or
-  compounds with O6 and the knowledge-soundness and rejection arguments are
-  re-derived in writing.
+- **O7:** analysis is done (`specs/whiteout-o7-sigma-radius.md`).
+  - **Dropped:** the κ₁ lever (worth at most 0.24 bits) and the
+    extraction-radius lever (worth 0.09 bits).
+  - **Queued: P9** (D = 9, α = 2^13) on top of O6. It cuts the residual by
+    another 1.4× at d = 256 and the A_p chunks from 3 to 2, at the price of
+    one rerun per about 595 proofs.
+  - **Before implementing:**
+    - certify P9's ranks with a `sigma_binding_width_table` run, since they
+      are interpolated today;
+    - wait for O0/O6 to show the residual's measured share is worth it.
+  - P9 revisits §5.1's review decision (the reviewer chose D = 10 over
+    D = 9), so its paper delta (D32) records the new evidence: the
+    Σ-binding ranks make D = 9 worth 24–30% of the residual.
 - **O4:** in scope. The ticket writes the argument that Item 3's
   compressed-target check carries over to the cut successor, as a paper
   delta. A question for the paper authors stays open, but it does not block
