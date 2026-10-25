@@ -8,6 +8,8 @@
 
 use std::sync::Arc;
 
+use ark_bn254::{Fq, G1Affine};
+use ark_ff::BigInt;
 use cudarc::driver::CudaSlice;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::JoltField;
@@ -18,11 +20,32 @@ use jolt_witness::RowSource;
 use super::common::context::CudaKernelContext;
 use super::common::device_columns::{park_device_column, whole_domain, DeviceColumn};
 use super::common::devices::CycleWindow;
-use super::common::msm::IncrementKind;
+use super::common::msm::{AffineLimbs, IncrementKind, FQ_LIMBS};
 use super::common::pack::COLD;
 use crate::cuda::witness::session_row_trace_window;
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, ProofSession};
+
+fn fq_from_limbs(limbs: [u64; FQ_LIMBS]) -> Fq {
+    Fq::new_unchecked(BigInt(limbs))
+}
+
+fn fq_limbs(value: Fq) -> [u64; FQ_LIMBS] {
+    value.0 .0
+}
+
+fn affine_limbs(point: G1Affine) -> AffineLimbs {
+    if point.infinity {
+        return AffineLimbs::IDENTITY;
+    }
+    AffineLimbs {
+        x: fq_limbs(point.x),
+        y: fq_limbs(point.y),
+        infinity: false,
+    }
+}
+
+mod partition;
 
 pub(super) const fn increment_kind(kind: ColumnKind) -> Option<IncrementKind> {
     match kind {
@@ -175,6 +198,18 @@ pub(super) fn retain_hot_columns(built: HotColumnBuild) -> WindowHotColumns {
 }
 
 type RetainedHotColumns = Vec<Option<Arc<CudaSlice<u32>>>>;
+
+fn tier1_order(hot: &RetainedHotColumns) -> impl Iterator<Item = usize> + '_ {
+    let one_hot = hot
+        .iter()
+        .enumerate()
+        .filter_map(|(index, column)| column.is_some().then_some(index));
+    let dense = hot
+        .iter()
+        .enumerate()
+        .filter_map(|(index, column)| column.is_none().then_some(index));
+    one_hot.chain(dense)
+}
 
 #[cfg(test)]
 #[expect(
