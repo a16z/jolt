@@ -28,7 +28,7 @@ akita = [
 # points instead of the exact product. Word decoding: the guest decodes
 # fixed-wire field elements by word with the same canonicality checks. Turn
 # all three off with --no-default-features.
-default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode"]
+default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory"]
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
 word-decode = ["jolt-akita?/word-decode"]
