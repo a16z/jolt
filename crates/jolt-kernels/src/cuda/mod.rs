@@ -2,14 +2,15 @@
 //! Also provides instruction-input checking, RAM output and value checking,
 //! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization,
 //! shift checking, register-value evaluation, RAM RAF evaluation, instruction read-RAF,
-//! RAM/register read/write checking, and initial-RAM opening evaluation.
+//! RAM/register read/write checking, witness/advice commitments, and initial-RAM
+//! opening evaluation.
 //!
 //! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
 //! cycle/address slots, RAM/register increment reduction, register-value
 //! reduction, instruction operand reduction, instruction-input and read-RAF checking,
 //! RAM output and value checking, hamming-weight booleanity, Spartan shift
 //! checking, register-value evaluation, RAM RAF evaluation, and RAM/register read/write checking
-//! plus initial-RAM opening evaluation in the optimized registry.
+//! plus witness/advice commitments and initial-RAM opening evaluation in the optimized registry.
 //! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
 //! field-inline retains the optimized implementations.
 //! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
@@ -153,14 +154,13 @@
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
-use crate::{JoltBackend, KernelError, ModeStreamingCommitment};
+use crate::{JoltBackend, KernelError};
 
 mod advice_claim_reduction;
 mod booleanity;
 mod bytecode_claim_reduction;
 #[cfg(not(feature = "field-inline"))]
 mod bytecode_read_raf;
-#[cfg(test)]
 mod commitment;
 mod common;
 mod dory;
@@ -189,6 +189,7 @@ mod spartan_product;
 mod spartan_shift;
 mod witness;
 
+pub use commitment::DeviceTier1Commitment;
 pub use common::context::{
     context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,
     CudaKernelContext, DEVICE_COUNT_VARIABLE,
@@ -196,6 +197,7 @@ pub use common::context::{
 pub use common::device::{as_fr_slice, fr_into, DeviceFrVec, LIMBS};
 pub use common::error::CudaError;
 pub use common::lt_poly::DeviceLtPolynomial;
+pub use common::msm::{AffineLimbs, JacobianLimbs};
 pub use common::xfer_stats;
 pub use dory::CudaDoryScheme;
 pub use instruction_read_raf::address_driver::DeviceAddressPhase;
@@ -229,12 +231,13 @@ where
     /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
     /// reduction and virtualization, and RV64 bytecode read-RAF, Spartan outer,
     /// and product kernels, plus instruction read-RAF and initial-RAM opening
-    /// evaluation, with CUDA implementations.
+    /// evaluation and witness/advice commitments, with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
+    /// The PCS must accept device-produced row commitments.
     pub fn cuda() -> Self
     where
-        PCS: ModeStreamingCommitment,
+        PCS: DeviceTier1Commitment,
     {
         let mut backend = Self::optimized();
         backend.trusted_advice_cycle = Box::new(CudaBackend);
@@ -259,6 +262,7 @@ where
         backend.ram_raf_evaluation = Box::new(CudaBackend);
         backend.ram_read_write = Box::new(CudaBackend);
         backend.registers_read_write = Box::new(CudaBackend);
+        backend.commit = Box::new(CudaBackend);
         backend.ram_initial_openings = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
         backend.ram_ra_virtualization = Box::new(CudaBackend);

@@ -143,6 +143,18 @@ pub(crate) fn session_row_trace_window<F: JoltField>(
     Ok(trace)
 }
 
+pub(crate) fn session_resident_trace(
+    session: &ProofSession,
+    ordinal: usize,
+    source: usize,
+    window: &CycleWindow,
+) -> Option<Arc<DeviceTrace>> {
+    session
+        .state::<ResidentTraces>()
+        .and_then(|traces| traces.get(ordinal, source, window))
+        .map(|resident| Arc::clone(&resident.trace))
+}
+
 pub(crate) fn park_device_trace(
     session: &mut ProofSession,
     ordinal: usize,

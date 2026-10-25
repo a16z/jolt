@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use cudarc::driver::CudaSlice;
-#[cfg(test)]
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::JoltField;
 use jolt_witness::backend::cuda::DeviceTrace;
@@ -37,7 +36,6 @@ pub(crate) const NO_SPAN: usize = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum DeviceColumn {
-    #[cfg(test)]
     CommittedHot(JoltCommittedPolynomial),
     LookupIndexLimbs,
     MappedPcWord,
@@ -156,7 +154,6 @@ impl Allocative for DeviceColumns {
 #[cfg(feature = "allocative")]
 const fn column_key(column: DeviceColumn) -> &'static str {
     match column {
-        #[cfg(test)]
         DeviceColumn::CommittedHot(_) => "CommittedHot",
         DeviceColumn::LookupIndexLimbs => "LookupIndexLimbs",
         DeviceColumn::MappedPcWord => "MappedPcWord",
@@ -238,7 +235,6 @@ where
     Ok(value)
 }
 
-#[cfg(test)]
 pub(crate) const fn whole_domain(cycles: usize) -> CycleWindow {
     CycleWindow {
         start: 0,

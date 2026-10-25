@@ -61,22 +61,30 @@
     clippy::large_const_arrays,
     reason = "BN254 G2 endomorphism decomposition constants uploaded to CUDA"
 )]
+#[cfg(test)]
 mod glv4_table {
     include!("glv4_table.rs");
 }
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::OnceLock;
 
+#[cfg(test)]
 use jolt_field::Fr;
 use jolt_witness::backend::cuda::EXTRA_WORDS;
 
+#[cfg(test)]
 use glv4_table::POWER_OF_2_DECOMPOSITIONS;
 
-use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, CudaView, LaunchConfig, PushKernelArg};
+#[cfg(test)]
+use cudarc::driver::CudaFunction;
+use cudarc::driver::{CudaSlice, CudaStream, CudaView, LaunchConfig, PushKernelArg};
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::DeviceFrVec;
 use super::error::CudaError;
+#[cfg(test)]
 use super::pack::COLD;
 use super::xfer_stats::{self, Phase};
 
@@ -124,6 +132,13 @@ pub struct DeviceSegments {
     counts: CudaSlice<u32>,
     segments: usize,
     widest: usize,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "commitment complements use offsets and indices; segment_sums reads classes in tests"
+        )
+    )]
     classes: DeviceClasses,
 }
 
@@ -217,6 +232,11 @@ pub struct DeviceG1Bases {
 }
 
 impl DeviceG1Bases {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        self.limbs.len() * size_of::<u64>()
+    }
+
     pub const fn count(&self) -> usize {
         self.count
     }
@@ -251,8 +271,10 @@ impl DeviceG1Bases {
     }
 }
 
+#[cfg(test)]
 const BATCH_INVERSE_TARGET_THREADS: usize = 8192;
 
+#[cfg(test)]
 const BATCH_INVERSE_MAX_CHUNK: usize = 128;
 
 const POINT_BLOCK: u32 = 128;
@@ -275,14 +297,17 @@ const MAX_WINDOW_BITS: usize = 16;
 
 const TARGET_REDUCE_BLOCKS: usize = 1024;
 
+#[cfg(test)]
 const G2_POINT_WORDS: usize = 6 * FQ_LIMBS;
 
+#[cfg(test)]
 const G2_POINT_BLOCK: u32 = 64;
 
 const BATCHED_WINDOW_BYTES: usize = 64 << 20;
 
 const MAX_G1_BATCHED_WINDOW_BYTES: usize = 4 << 30;
 
+#[cfg(test)]
 const GLV_CONSTANTS: [u64; 14] = [
     0x163b_4843_cb4b_9a5e,
     0x149d_540f_d5e4_95cc,
@@ -300,10 +325,13 @@ const GLV_CONSTANTS: [u64; 14] = [
     0x6f4d_8248_eeb8_59fd,
 ];
 
+#[cfg(test)]
 const GLV_SCALAR_BITS: usize = 128;
 
+#[cfg(test)]
 const GLV4_SCALAR_BITS: usize = 101;
 
+#[cfg(test)]
 fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
     static TABLE: OnceLock<(Vec<u64>, Vec<u8>)> = OnceLock::new();
     let (magnitudes, signs) = TABLE.get_or_init(|| {
@@ -324,6 +352,7 @@ fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
     (magnitudes, signs)
 }
 
+#[cfg(test)]
 fn glv_frobenius_coefficients() -> &'static [u64] {
     static COEFFICIENTS: OnceLock<Vec<u64>> = OnceLock::new();
     COEFFICIENTS.get_or_init(|| {
@@ -349,16 +378,22 @@ fn glv_frobenius_coefficients() -> &'static [u64] {
     })
 }
 
+#[cfg(test)]
 const SHARED_WINDOW_BITS: usize = 4;
 
+#[cfg(test)]
 const SHARED_WINDOWS: usize = GLV_SCALAR_BITS.div_ceil(SHARED_WINDOW_BITS);
 
+#[cfg(test)]
 const SHARED_WINDOW_BUCKETS: usize = 1 << SHARED_WINDOW_BITS;
 
+#[cfg(test)]
 const SHARED_WINDOW_MIN_ROWS: usize = 128;
 
+#[cfg(test)]
 const SHARED_WINDOW_MIN_TERMS: usize = 8;
 
+#[cfg(test)]
 fn glv_endomorphism_coefficient() -> [u64; FQ_LIMBS] {
     <ark_bn254::g1::Config as ark_ec::scalar_mul::glv::GLVConfig>::ENDO_COEFFS[0]
         .0
@@ -449,6 +484,7 @@ fn flatten_affine(points: &[AffineLimbs]) -> Vec<u64> {
     flat
 }
 
+#[cfg(test)]
 fn flatten_jacobian(points: &[JacobianLimbs]) -> Vec<u64> {
     let mut flat = Vec::with_capacity(points.len() * 3 * FQ_LIMBS);
     for point in points {
@@ -465,7 +501,7 @@ fn take_limbs(chunk: &[u64]) -> [u64; FQ_LIMBS] {
     limbs
 }
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u8]) -> bool {
     use rayon::prelude::*;
 
@@ -482,7 +518,7 @@ fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u
         .reduce(|| true, |a, b| a && b)
 }
 
-#[cfg(not(feature = "parallel"))]
+#[cfg(all(test, not(feature = "parallel")))]
 fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u8]) -> bool {
     let mut fits = true;
     for ((magnitude, sign), &scalar) in magnitudes.iter_mut().zip(signs.iter_mut()).zip(rows) {
@@ -504,6 +540,7 @@ fn unflatten_jacobian(flat: &[u64]) -> Vec<JacobianLimbs> {
         .collect()
 }
 
+#[cfg(test)]
 fn unflatten_affine(flat: &[u64]) -> Vec<AffineLimbs> {
     flat.chunks_exact(AFFINE_LIMBS)
         .map(|point| {
@@ -530,6 +567,7 @@ impl CudaKernelContext {
         })
     }
 
+    #[cfg(test)]
     fn fq_binary(
         &self,
         kernel: &CudaFunction,
@@ -568,6 +606,7 @@ impl CudaKernelContext {
             .collect())
     }
 
+    #[cfg(test)]
     fn g1_binary(
         &self,
         kernel: &CudaFunction,
@@ -604,6 +643,7 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
+    #[cfg(test)]
     pub fn fq_add(
         &self,
         left: &[[u64; FQ_LIMBS]],
@@ -612,6 +652,7 @@ impl CudaKernelContext {
         self.fq_binary(self.msm_fq_add(), left, right)
     }
 
+    #[cfg(test)]
     pub fn fq_sub(
         &self,
         left: &[[u64; FQ_LIMBS]],
@@ -620,6 +661,7 @@ impl CudaKernelContext {
         self.fq_binary(self.msm_fq_sub(), left, right)
     }
 
+    #[cfg(test)]
     pub fn fq_mul(
         &self,
         left: &[[u64; FQ_LIMBS]],
@@ -628,6 +670,7 @@ impl CudaKernelContext {
         self.fq_binary(self.msm_fq_mul(), left, right)
     }
 
+    #[cfg(test)]
     pub fn fq_batch_inverse(
         &self,
         values: &[[u64; FQ_LIMBS]],
@@ -645,6 +688,7 @@ impl CudaKernelContext {
             .collect())
     }
 
+    #[cfg(test)]
     pub(crate) fn launch_batch_inverse(
         &self,
         values: &CudaSlice<u64>,
@@ -677,6 +721,7 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn g1_double(&self, points: &[JacobianLimbs]) -> Result<Vec<JacobianLimbs>, CudaError> {
         if points.is_empty() {
             return Ok(Vec::new());
@@ -697,6 +742,7 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
+    #[cfg(test)]
     pub fn g1_add(
         &self,
         left: &[JacobianLimbs],
@@ -710,6 +756,7 @@ impl CudaKernelContext {
         )
     }
 
+    #[cfg(test)]
     pub fn g1_add_affine(
         &self,
         left: &[JacobianLimbs],
@@ -723,6 +770,7 @@ impl CudaKernelContext {
         )
     }
 
+    #[cfg(test)]
     pub fn g1_batch_add_affine_pairs(
         &self,
         left: &[AffineLimbs],
@@ -796,10 +844,12 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&accumulator)?))
     }
 
+    #[cfg(test)]
     pub fn upload_raw_u64(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
         self.upload_u64_slice(values)
     }
 
+    #[cfg(test)]
     pub fn write_u64_range(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -821,6 +871,7 @@ impl CudaKernelContext {
         })
     }
 
+    #[cfg(test)]
     fn resident_span_end(
         offset: usize,
         count: usize,
@@ -842,6 +893,7 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    #[cfg(test)]
     fn g2_reduce_and_fold(
         &self,
         bucket_points: &CudaSlice<u64>,
@@ -930,6 +982,7 @@ impl CudaKernelContext {
         Ok(accumulator)
     }
 
+    #[cfg(test)]
     pub(crate) fn g2_msm_in_place(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -1024,6 +1077,7 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    #[cfg(test)]
     fn batched_windows_g2(buckets: usize, windows: usize, len: usize) -> bool {
         let segments = windows.saturating_mul(buckets);
         let bucket_bytes = segments.saturating_mul(G2_POINT_WORDS * size_of::<u64>());
@@ -1033,6 +1087,7 @@ impl CudaKernelContext {
         bucket_bytes.saturating_add(index_bytes) <= BATCHED_WINDOW_BYTES
     }
 
+    #[cfg(test)]
     fn glv_decompose_4d(
         &self,
         scalars: &CudaSlice<u64>,
@@ -1072,6 +1127,7 @@ impl CudaKernelContext {
         Ok((out, hosted))
     }
 
+    #[cfg(test)]
     fn g2_frobenius_span(
         &self,
         jacobian: &CudaSlice<u64>,
@@ -1111,6 +1167,7 @@ impl CudaKernelContext {
         Ok(out)
     }
 
+    #[cfg(test)]
     fn glv_decompose_2d(
         &self,
         scalars: &CudaSlice<u64>,
@@ -1147,6 +1204,7 @@ impl CudaKernelContext {
         Ok((out, hosted))
     }
 
+    #[cfg(test)]
     fn g1_endomorphism_span(
         &self,
         jacobian: &CudaSlice<u64>,
@@ -1187,6 +1245,7 @@ impl CudaKernelContext {
         Ok(out)
     }
 
+    #[cfg(test)]
     pub fn normalise_g1_span(
         &self,
         jacobian: &CudaSlice<u64>,
@@ -1246,6 +1305,7 @@ impl CudaKernelContext {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn g1_msm_in_place(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -1298,6 +1358,7 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn msm_rows_shared_scalars(
         &self,
         bases: &[JacobianLimbs],
@@ -1372,6 +1433,7 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
+    #[cfg(test)]
     fn shared_window_bytes(rows: usize, terms: usize) -> usize {
         let point_bytes = 3 * FQ_LIMBS * size_of::<u64>();
         let components = terms.saturating_mul(2);
@@ -1387,6 +1449,7 @@ impl CudaKernelContext {
             )
     }
 
+    #[cfg(test)]
     pub(crate) fn admits_shared_window_schedule(
         &self,
         rows: usize,
@@ -1399,6 +1462,7 @@ impl CudaKernelContext {
         Ok(Self::shared_window_bytes(rows, terms) <= (free / 8).min(MAX_G1_BATCHED_WINDOW_BYTES))
     }
 
+    #[cfg(test)]
     fn msm_rows_shared_windows(
         &self,
         bases: &CudaSlice<u64>,
@@ -1478,6 +1542,7 @@ impl CudaKernelContext {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub fn signed_column(&self, rows: &[i128]) -> Result<SignedColumn, CudaError> {
         tracing::info_span!("cuda_msm_i128_stage", len = rows.len()).in_scope(|| {
             let mut magnitudes = vec![0u64; rows.len()];
@@ -1554,6 +1619,7 @@ impl CudaKernelContext {
             .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&accumulator)?)))
     }
 
+    #[cfg(test)]
     pub fn msm_rows_i128(
         &self,
         bases: &DeviceG1Bases,
@@ -1563,6 +1629,7 @@ impl CudaKernelContext {
         self.msm_rows_signed(bases, &self.signed_column(rows)?, row_len)
     }
 
+    #[cfg(test)]
     pub fn one_hot_chunk_sums(
         &self,
         bases: &DeviceG1Bases,
@@ -1612,6 +1679,7 @@ impl CudaKernelContext {
         self.segment_sums(bases, &plan, SegmentMode::Auto)
     }
 
+    #[cfg(test)]
     pub fn one_hot_rows(
         &self,
         bases: &DeviceG1Bases,
@@ -2349,6 +2417,7 @@ impl CudaKernelContext {
         })
     }
 
+    #[cfg(test)]
     pub fn segment_sums(
         &self,
         bases: &DeviceG1Bases,
@@ -2787,6 +2856,7 @@ impl CudaKernelContext {
 }
 
 impl CudaKernelContext {
+    #[cfg(test)]
     pub(crate) fn zero_extend(
         &self,
         source: &DeviceFrVec,
@@ -2797,6 +2867,7 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    #[cfg(test)]
     pub(crate) fn fold_rows(
         &self,
         table: &DeviceFrVec,
@@ -2820,6 +2891,7 @@ impl CudaKernelContext {
         self.fold_rows_window(table, 0, table.len(), left, sigma)
     }
 
+    #[cfg(test)]
     pub(crate) fn fold_rows_window(
         &self,
         table: &DeviceFrVec,
@@ -2881,6 +2953,7 @@ impl CudaKernelContext {
         output.to_host()
     }
 
+    #[cfg(test)]
     pub(crate) fn one_hot_embed_device(
         &self,
         device_hot: &CudaSlice<u32>,
@@ -2921,6 +2994,7 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    #[cfg(test)]
     pub(crate) fn one_hot_fold_window(
         &self,
         device_hot: &CudaSlice<u32>,

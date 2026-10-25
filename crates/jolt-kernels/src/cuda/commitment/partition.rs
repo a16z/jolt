@@ -5,29 +5,31 @@
 //! through its PCS consumer in their final order. CUDA assigns complete columns
 //! by row count and groups ready columns of equal height for finalization.
 
-#[cfg(not(feature = "zk"))]
 use std::sync::mpsc::{self, Receiver, Sender};
-#[cfg(not(feature = "zk"))]
+use std::sync::Arc;
 use tracing::Span;
 
 use jolt_field::JoltField;
+use jolt_witness::backend::cuda::DeviceTrace;
 
-use super::{tier1_order, ColumnKind, RetainedHotColumns};
-#[cfg(not(feature = "zk"))]
-use super::{DeviceTier1Commitment, FinishedColumn};
-#[cfg(not(feature = "zk"))]
-use crate::cuda::common::context::enter_device;
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::devices::CycleWindow;
-#[cfg(not(feature = "zk"))]
-use crate::cuda::common::devices::{device_selections, fan_out_bound, DeviceTask};
-use crate::cuda::common::msm::{DeviceG1Bases, JacobianLimbs, SignedColumn};
+use super::{
+    dense_columns_from_trace, hot_column_views, hot_columns_from_trace, retain_hot_columns,
+    tier1_order, ColumnKind, DeviceTier1Commitment, FinishedColumn, RetainedHotColumns,
+    WindowHotColumns,
+};
+use crate::cuda::common::context::{context_for, enter_device, CudaKernelContext};
+use crate::cuda::common::devices::{device_selections, fan_out_bound, CycleWindow, DeviceTask};
+use crate::cuda::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs, SignedColumn};
 use crate::KernelError;
 
 pub(super) struct ColumnPlan<'a> {
     pub(super) kinds: &'a [ColumnKind],
     pub(super) one_hot_k: usize,
     pub(super) row_width: usize,
+}
+
+pub(super) struct TraceSource<'a> {
+    pub(super) traces: &'a [Arc<DeviceTrace>],
 }
 
 type ColumnSink<'a, F> = &'a mut dyn FnMut(usize, Vec<JacobianLimbs>) -> Result<(), KernelError<F>>;
@@ -169,7 +171,6 @@ impl PartBoard {
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn column_rows(plan: &ColumnPlan<'_>, blocks: &[usize]) -> Vec<usize> {
     let total: usize = blocks.iter().sum();
     plan.kinds
@@ -184,24 +185,19 @@ fn column_rows(plan: &ColumnPlan<'_>, blocks: &[usize]) -> Vec<usize> {
         .collect()
 }
 
-#[cfg(not(feature = "zk"))]
 pub(super) type PipelineResult<PCS, W> = (Vec<FinishedColumn<PCS>>, Vec<W>);
 
-#[cfg(not(feature = "zk"))]
 pub(super) type Tier1Producer<'a, F, W> = Box<
     dyn FnOnce(&'static CudaKernelContext, usize, &Sender<Tier1Part>) -> Result<W, KernelError<F>>
         + Send
         + 'a,
 >;
 
-#[cfg(not(feature = "zk"))]
 type StitchedColumn = (usize, Vec<JacobianLimbs>);
 
-#[cfg(not(feature = "zk"))]
 type WindowTask<'a, F, PCS, W> =
     DeviceTask<'a, (Vec<(usize, FinishedColumn<PCS>)>, W), KernelError<F>>;
 
-#[cfg(not(feature = "zk"))]
 fn coordinate<F: JoltField>(
     parts: Receiver<Tier1Part>,
     plan: &ColumnPlan<'_>,
@@ -229,7 +225,6 @@ fn coordinate<F: JoltField>(
     Ok(())
 }
 
-#[cfg(not(feature = "zk"))]
 fn tier2_groups(selection: &[usize], counts: &[usize]) -> Vec<(usize, usize)> {
     let mut groups: Vec<(usize, usize)> = Vec::new();
     for &index in selection {
@@ -242,7 +237,6 @@ fn tier2_groups(selection: &[usize], counts: &[usize]) -> Vec<(usize, usize)> {
     groups
 }
 
-#[cfg(not(feature = "zk"))]
 fn consume_tier2<F, PCS>(
     context: &'static CudaKernelContext,
     setup: &PCS::ProverSetup,
@@ -312,7 +306,6 @@ where
     Ok(finished)
 }
 
-#[cfg(not(feature = "zk"))]
 pub(super) fn pipeline_columns<F, PCS, W, C>(
     setup: &PCS::ProverSetup,
     plan: &ColumnPlan<'_>,
@@ -445,6 +438,121 @@ where
         )?;
         Ok((columns, windows))
     })
+}
+
+type WindowState = (Option<Arc<DeviceTrace>>, WindowHotColumns);
+
+type SplitColumns<PCS> = (
+    Vec<FinishedColumn<PCS>>,
+    Vec<Option<Arc<DeviceTrace>>>,
+    Vec<WindowHotColumns>,
+);
+
+fn window_trace<F: JoltField>(
+    context: &CudaKernelContext,
+    plan: &ColumnPlan<'_>,
+    source: &TraceSource<'_>,
+    window: &CycleWindow,
+    ordinal: usize,
+) -> Result<Arc<DeviceTrace>, KernelError<F>> {
+    let _ = (context, plan, window);
+    source
+        .traces
+        .get(ordinal)
+        .cloned()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "commitment partition has no uploaded trace",
+        })
+}
+
+pub(super) fn split_columns<F, PCS>(
+    setup: &PCS::ProverSetup,
+    bases: &DeviceG1Bases,
+    resident: Option<Arc<DeviceTrace>>,
+    plan: &ColumnPlan<'_>,
+    source: &TraceSource<'_>,
+    host_bases: &[AffineLimbs],
+    windows: &[CycleWindow],
+) -> Result<SplitColumns<PCS>, KernelError<F>>
+where
+    F: JoltField,
+    PCS: DeviceTier1Commitment,
+{
+    let blocks: Vec<usize> = windows
+        .iter()
+        .map(|window| window.len / plan.row_width)
+        .collect();
+    let mut producers: Vec<Tier1Producer<'_, F, WindowState>> = Vec::with_capacity(windows.len());
+    for (ordinal, window) in windows.iter().enumerate() {
+        let resident = (ordinal == 0).then(|| resident.clone()).flatten();
+        producers.push(Box::new(move |context, ordinal, sink| {
+            let (trace, parked) = if let Some(trace) = resident {
+                (trace, None)
+            } else {
+                let trace = window_trace::<F>(context, plan, source, window, ordinal)?;
+                (Arc::clone(&trace), Some(trace))
+            };
+            let built = tracing::info_span!(
+                "cuda_commit_park_hot",
+                device = ordinal,
+                cycles = window.len
+            )
+            .in_scope(|| {
+                hot_columns_from_trace::<F>(
+                    &trace,
+                    plan.kinds,
+                    plan.one_hot_k,
+                    &CycleWindow {
+                        start: 0,
+                        len: window.len,
+                    },
+                )
+            })?;
+            let built = retain_hot_columns(built);
+            let hot: RetainedHotColumns = hot_column_views(&built);
+            let dense = tracing::info_span!(
+                "cuda_commit_increments",
+                device = ordinal,
+                cycles = window.len
+            )
+            .in_scope(|| dense_columns_from_trace::<F>(context, &trace, plan.kinds, window.len))?;
+            let uploaded = (ordinal > 0)
+                .then(|| context.upload_g1_bases(host_bases))
+                .transpose()?;
+            window_columns::<F>(
+                context,
+                uploaded.as_ref().unwrap_or(bases),
+                &hot,
+                &dense,
+                plan,
+                &CycleWindow {
+                    start: 0,
+                    len: window.len,
+                },
+                &mut |index, rows| {
+                    sink.send(Tier1Part {
+                        window: ordinal,
+                        index,
+                        rows,
+                    })
+                    .map_err(|_| KernelError::InvariantViolation {
+                        reason: "the commit pipeline closed its stitch channel while tier-1 was \
+                                 still producing rows",
+                    })
+                },
+            )?;
+            Ok((parked, built))
+        }));
+    }
+    let (columns, states) =
+        pipeline_columns::<F, PCS, WindowState, _>(setup, plan, &blocks, &context_for, producers)?;
+    let mut traces = Vec::with_capacity(states.len());
+    let mut hots = Vec::with_capacity(states.len());
+    for (trace, built) in states {
+        traces.push(trace);
+        hots.push(built);
+    }
+    Ok((columns, traces, hots))
 }
 
 #[cfg(test)]

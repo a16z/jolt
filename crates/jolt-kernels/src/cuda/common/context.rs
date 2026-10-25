@@ -181,27 +181,16 @@ pub struct CudaKernelContext {
     msm_affine_denominators: CudaFunction,
     #[cfg(test)]
     msm_affine_combine: CudaFunction,
-    #[cfg(test)]
     msm_from_montgomery: CudaFunction,
-    #[cfg(test)]
     msm_digits: CudaFunction,
-    #[cfg(test)]
     msm_bucket_count: CudaFunction,
-    #[cfg(test)]
     msm_bucket_scatter: CudaFunction,
-    #[cfg(test)]
     msm_window_accumulate: CudaFunction,
-    #[cfg(test)]
     commit_increment_column: CudaFunction,
-    #[cfg(test)]
     msm_one_hot_count: CudaFunction,
-    #[cfg(test)]
     msm_one_hot_count_shared: CudaFunction,
-    #[cfg(test)]
     msm_one_hot_scatter: CudaFunction,
-    #[cfg(test)]
     msm_one_hot_scatter_shared: CudaFunction,
-    #[cfg(test)]
     msm_one_hot_complement: CudaFunction,
     #[cfg(test)]
     msm_glv_decompose_2d: CudaFunction,
@@ -215,13 +204,9 @@ pub struct CudaKernelContext {
     msm_shared_scalar_rows_glv: CudaFunction,
     #[cfg(test)]
     msm_shared_scalar_windows: CudaFunction,
-    #[cfg(test)]
     msm_segment_sum: CudaFunction,
-    #[cfg(test)]
     msm_segment_sum_warp: CudaFunction,
-    #[cfg(test)]
     msm_segment_sum_classed: CudaFunction,
-    #[cfg(test)]
     msm_segment_sum_small: CudaFunction,
     #[cfg(test)]
     msm_g2_segment_sum_small: CudaFunction,
@@ -231,11 +216,8 @@ pub struct CudaKernelContext {
     msm_g2_point_rows_sum: CudaFunction,
     #[cfg(test)]
     msm_g2_window_fold: CudaFunction,
-    #[cfg(test)]
     msm_bucket_reduce_chunked: CudaFunction,
-    #[cfg(test)]
     msm_point_rows_sum: CudaFunction,
-    #[cfg(test)]
     msm_window_fold: CudaFunction,
     #[cfg(test)]
     msm_fold_rows: CudaFunction,
@@ -446,28 +428,17 @@ impl CudaKernelContext {
             msm_affine_denominators: module.load_function("msm_affine_denominators_kernel")?,
             #[cfg(test)]
             msm_affine_combine: module.load_function("msm_affine_combine_kernel")?,
-            #[cfg(test)]
             msm_from_montgomery: module.load_function("msm_from_montgomery_kernel")?,
-            #[cfg(test)]
             msm_digits: module.load_function("msm_digits_kernel")?,
-            #[cfg(test)]
             msm_bucket_count: module.load_function("msm_bucket_count_kernel")?,
-            #[cfg(test)]
             msm_bucket_scatter: module.load_function("msm_bucket_scatter_kernel")?,
-            #[cfg(test)]
             msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
-            #[cfg(test)]
             commit_increment_column: module.load_function("commit_increment_column_kernel")?,
-            #[cfg(test)]
             msm_one_hot_count: module.load_function("msm_one_hot_count_kernel")?,
-            #[cfg(test)]
             msm_one_hot_count_shared: module.load_function("msm_one_hot_count_shared_kernel")?,
-            #[cfg(test)]
             msm_one_hot_scatter: module.load_function("msm_one_hot_scatter_kernel")?,
-            #[cfg(test)]
             msm_one_hot_scatter_shared: module
                 .load_function("msm_one_hot_scatter_shared_kernel")?,
-            #[cfg(test)]
             msm_one_hot_complement: module.load_function("msm_one_hot_complement_kernel")?,
             #[cfg(test)]
             msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
@@ -482,13 +453,9 @@ impl CudaKernelContext {
                 .load_function("msm_shared_scalar_rows_glv_kernel")?,
             #[cfg(test)]
             msm_shared_scalar_windows: module.load_function("msm_shared_scalar_windows_kernel")?,
-            #[cfg(test)]
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
-            #[cfg(test)]
             msm_segment_sum_warp: module.load_function("msm_segment_sum_warp_kernel")?,
-            #[cfg(test)]
             msm_segment_sum_classed: module.load_function("msm_segment_sum_classed_kernel")?,
-            #[cfg(test)]
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
             #[cfg(test)]
             msm_g2_segment_sum_small: module.load_function("msm_g2_segment_sum_small_kernel")?,
@@ -499,11 +466,8 @@ impl CudaKernelContext {
             msm_g2_point_rows_sum: module.load_function("msm_g2_point_rows_sum_kernel")?,
             #[cfg(test)]
             msm_g2_window_fold: module.load_function("msm_g2_window_fold_kernel")?,
-            #[cfg(test)]
             msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
-            #[cfg(test)]
             msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
-            #[cfg(test)]
             msm_window_fold: module.load_function("msm_window_fold_kernel")?,
             #[cfg(test)]
             msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
@@ -645,7 +609,6 @@ impl CudaKernelContext {
         Ok(self.stream.alloc_zeros::<u32>(len)?)
     }
 
-    #[cfg(test)]
     pub(crate) fn alloc_u8(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
         Ok(self.stream.alloc_zeros::<u8>(len)?)
     }
@@ -676,22 +639,18 @@ impl CudaKernelContext {
         Ok(buffer)
     }
 
-    #[cfg(test)]
     pub(crate) fn alloc_u8_unset(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
         self.alloc_unset::<u8>(len)
     }
 
-    #[cfg(test)]
     pub(crate) fn alloc_u64_unset(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
         self.alloc_unset::<u64>(len)
     }
 
-    #[cfg(test)]
     pub(crate) fn alloc_u32_unset(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
         self.alloc_unset::<u32>(len)
     }
 
-    #[cfg(test)]
     pub(crate) fn replicate_u8(
         &self,
         buffer: &CudaSlice<u8>,
@@ -1276,57 +1235,46 @@ impl CudaKernelContext {
         &self.msm_affine_combine
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_from_montgomery(&self) -> &CudaFunction {
         &self.msm_from_montgomery
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_digits(&self) -> &CudaFunction {
         &self.msm_digits
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_bucket_count(&self) -> &CudaFunction {
         &self.msm_bucket_count
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_bucket_scatter(&self) -> &CudaFunction {
         &self.msm_bucket_scatter
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {
         &self.msm_window_accumulate
     }
 
-    #[cfg(test)]
     pub(crate) const fn commit_increment_column(&self) -> &CudaFunction {
         &self.commit_increment_column
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_one_hot_count(&self) -> &CudaFunction {
         &self.msm_one_hot_count
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_one_hot_count_shared(&self) -> &CudaFunction {
         &self.msm_one_hot_count_shared
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_one_hot_scatter(&self) -> &CudaFunction {
         &self.msm_one_hot_scatter
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_one_hot_scatter_shared(&self) -> &CudaFunction {
         &self.msm_one_hot_scatter_shared
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_one_hot_complement(&self) -> &CudaFunction {
         &self.msm_one_hot_complement
     }
@@ -1361,22 +1309,18 @@ impl CudaKernelContext {
         &self.msm_shared_scalar_windows
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_segment_sum(&self) -> &CudaFunction {
         &self.msm_segment_sum
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_segment_sum_warp(&self) -> &CudaFunction {
         &self.msm_segment_sum_warp
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_segment_sum_classed(&self) -> &CudaFunction {
         &self.msm_segment_sum_classed
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_segment_sum_small(&self) -> &CudaFunction {
         &self.msm_segment_sum_small
     }
@@ -1401,17 +1345,14 @@ impl CudaKernelContext {
         &self.msm_g2_window_fold
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_bucket_reduce_chunked(&self) -> &CudaFunction {
         &self.msm_bucket_reduce_chunked
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_point_rows_sum(&self) -> &CudaFunction {
         &self.msm_point_rows_sum
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_window_fold(&self) -> &CudaFunction {
         &self.msm_window_fold
     }

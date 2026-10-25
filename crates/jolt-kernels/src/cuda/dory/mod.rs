@@ -17,11 +17,9 @@ use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 
-#[cfg(all(test, not(feature = "zk")))]
 use crate::cuda::commitment::DeviceTier1Commitment;
 use crate::cuda::common::error::CudaError;
-#[cfg(all(test, not(feature = "zk")))]
-use crate::cuda::common::msm::JacobianLimbs;
+use crate::cuda::common::msm::{AffineLimbs, JacobianLimbs};
 
 /// CPU-backed Dory PCS selected independently of the compute kernel registry.
 /// Its proof and setup types are shared with `DoryScheme`.
@@ -66,8 +64,11 @@ impl CudaDoryScheme {
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
 impl DeviceTier1Commitment for CudaDoryScheme {
+    fn tier1_bases(setup: &Self::ProverSetup, count: usize) -> Result<Vec<AffineLimbs>, CudaError> {
+        DoryScheme::tier1_bases(setup, count)
+    }
+
     fn partial_from_rows(
         setup: &Self::ProverSetup,
         rows: &[JacobianLimbs],

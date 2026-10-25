@@ -7,7 +7,6 @@
 //! partitions. `CycleWindow::residency` adds the next row needed by flag extraction
 //! without counting it in the work partition.
 
-#[cfg(test)]
 use core::cmp::Reverse;
 
 use super::context::{device_count, enter_device};
@@ -62,7 +61,6 @@ pub(crate) fn witness_windows(cycles: usize) -> Vec<CycleWindow> {
     plan_witness_windows(cycles, device_count().max(1))
 }
 
-#[cfg(test)]
 pub(crate) fn plan_committed_windows(
     cycles: usize,
     row_width: usize,
@@ -79,7 +77,6 @@ pub(crate) fn plan_committed_windows(
     whole_domain(cycles)
 }
 
-#[cfg(test)]
 pub(crate) fn committed_windows(cycles: usize, row_width: usize) -> Vec<CycleWindow> {
     plan_committed_windows(cycles, row_width, device_count().max(1))
 }
@@ -110,7 +107,6 @@ pub(crate) fn plan_device_windows(
     windows
 }
 
-#[cfg(test)]
 pub(crate) fn device_selections(row_counts: &[usize], devices: usize) -> Vec<Vec<usize>> {
     let mut order: Vec<usize> = (0..row_counts.len()).collect();
     order.sort_by_key(|&index| (Reverse(row_counts.get(index).copied().unwrap_or(0)), index));
@@ -144,7 +140,6 @@ where
     fan_out_with(tasks, true)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn fan_out_bound<T, E>(tasks: Vec<DeviceTask<'_, T, E>>) -> Result<Vec<T>, E>
 where
     T: Send,
