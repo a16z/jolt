@@ -34,6 +34,8 @@ use crate::one_hot_family::{
 };
 pub use crate::one_hot_family::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 use crate::schedule_registry::GroupedScheduleParams;
+#[cfg(feature = "zk")]
+use crate::whiteout::{WhiteoutPlans, WhiteoutSetup};
 use spongefish::Encoding;
 use spongefish::NargDeserialize;
 use spongefish::VerificationResult;
@@ -396,7 +398,18 @@ pub struct AkitaSetupParams {
     /// Whiteout: the trace group commits hiding and opens masked.
     #[cfg(feature = "zk")]
     #[serde(default)]
-    pub(crate) whiteout: bool,
+    pub(crate) whiteout: Option<WhiteoutSource>,
+}
+
+/// Where a Whiteout setup's plans come from.
+#[cfg(feature = "zk")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum WhiteoutSource {
+    /// Planned at setup.
+    Plan,
+    /// Persisted plans, validated on first use and never replaced by
+    /// planning.
+    Load(WhiteoutPlans),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -424,7 +437,7 @@ impl AkitaSetupParams {
             grouped_schedule: None,
             schedule_artifacts,
             #[cfg(feature = "zk")]
-            whiteout: false,
+            whiteout: None,
         }
     }
 
@@ -449,7 +462,7 @@ impl AkitaSetupParams {
             grouped_schedule: None,
             schedule_artifacts,
             #[cfg(feature = "zk")]
-            whiteout: false,
+            whiteout: None,
         }
     }
 
@@ -475,7 +488,7 @@ impl AkitaSetupParams {
             grouped_schedule,
             schedule_artifacts,
             #[cfg(feature = "zk")]
-            whiteout: false,
+            whiteout: None,
         }
     }
 
@@ -498,7 +511,7 @@ impl AkitaSetupParams {
             grouped_schedule: None,
             schedule_artifacts,
             #[cfg(feature = "zk")]
-            whiteout: false,
+            whiteout: None,
         }
     }
 
@@ -516,7 +529,16 @@ impl AkitaSetupParams {
     /// Whiteout: commits the trace group hiding and opens it masked.
     #[cfg(feature = "zk")]
     pub fn with_whiteout(mut self) -> Self {
-        self.whiteout = true;
+        self.whiteout = Some(WhiteoutSource::Plan);
+        self
+    }
+
+    /// Whiteout, from persisted plans ([`AkitaVerifierSetup::whiteout_plans`])
+    /// instead of planning: the setup validates them on first use and
+    /// refuses them, never replans, if they fail.
+    #[cfg(feature = "zk")]
+    pub fn with_whiteout_plans(mut self, plans: WhiteoutPlans) -> Self {
+        self.whiteout = Some(WhiteoutSource::Load(plans));
         self
     }
 
@@ -629,7 +651,7 @@ pub struct AkitaVerifierSetup {
     /// Whiteout: the masked opening's parameters and its per-shape setups.
     #[cfg(feature = "zk")]
     #[serde(default)]
-    pub(crate) whiteout: Option<crate::whiteout::WhiteoutSetup>,
+    pub(crate) whiteout: Option<WhiteoutSetup>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -709,6 +731,15 @@ impl AkitaVerifierSetup {
 
     pub fn akita_chunk_profile(&self) -> AkitaChunkProfile {
         self.schedule_artifacts.akita_chunk_profile()
+    }
+
+    /// Whiteout: every plan this setup holds or has derived, its response
+    /// schedules included, for a setup built from them
+    /// ([`AkitaSetupParams::with_whiteout_plans`]); `None` for a setup
+    /// without Whiteout or not yet planned.
+    #[cfg(feature = "zk")]
+    pub fn whiteout_plans(&self) -> Option<WhiteoutPlans> {
+        self.whiteout.as_ref().and_then(WhiteoutSetup::export)
     }
 
     /// Primes the lazy verifier cache from freshly built backend keys, so

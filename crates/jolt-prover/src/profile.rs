@@ -634,8 +634,8 @@ struct ProvenRun {
     verifier_parallel: VerificationRun,
     verifier_single_threaded: VerificationRun,
     /// The Akita verifier's first verify against preprocessing after a serde
-    /// round trip, which plans its derived state (Whiteout's catalog and
-    /// response prover) instead of sharing the prover's.
+    /// round trip, sharing no derived state with the prover's; under
+    /// Whiteout it loads the persisted plans instead of planning.
     verifier_transported: Option<VerificationRun>,
     proof_size: usize,
 }
@@ -1052,11 +1052,34 @@ fn prove_workload(
     let verifier_single_threaded = jolt_akita::with_single_threaded_verifier_backend(|| {
         measure_verifier(VerificationMode::SingleThreaded, 1, verify)
     });
-    // A verifier in another process holds transported preprocessing, whose
-    // derived state (Whiteout catalog, response plan) its first verify plans.
-    let encoded =
-        bincode::serde::encode_to_vec(&prover_preprocessing.verifier, bincode::config::standard())
-            .expect("encode verifier preprocessing");
+    // A verifier in another process holds transported preprocessing. Under
+    // Whiteout it is built from the prover's exported plans (the catalog and
+    // the response schedules), which its first verify loads and validates
+    // instead of planning.
+    #[cfg(feature = "zk")]
+    let persisted = prover_preprocessing
+        .verifier
+        .pcs_setup
+        .whiteout_plans()
+        .map(|plans| {
+            crate::akita::preprocessing::preprocess_full_from_plans(
+                &schedule_artifacts,
+                (*program_preprocessing).clone(),
+                &config,
+                false,
+                false,
+                plans,
+            )
+            .expect("Akita preprocessing from persisted Whiteout plans")
+            .verifier
+        });
+    #[cfg(not(feature = "zk"))]
+    let persisted = None;
+    let encoded = bincode::serde::encode_to_vec(
+        persisted.as_ref().unwrap_or(&prover_preprocessing.verifier),
+        bincode::config::standard(),
+    )
+    .expect("encode verifier preprocessing");
     let transported: JoltVerifierPreprocessing<AkitaScheme, AkitaVc> =
         bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
             .expect("decode verifier preprocessing")

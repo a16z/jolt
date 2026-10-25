@@ -36,12 +36,12 @@ jolt-akita::whiteout/mod.rs::WhiteoutRow::count_masked::.count_masked_prefix#1
 jolt-akita::whiteout/mod.rs::WhiteoutRow::prove_masked::prove_masked_prefix::<WhiteoutOneHot,_,_,_>#2
 jolt-akita::whiteout/mod.rs::WhiteoutRow::verify_masked::.absorb_selection#0
 jolt-akita::whiteout/mod.rs::WhiteoutRow::verify_masked::.verify_masked_prefix#1
-jolt-akita::whiteout/mod.rs::WhiteoutTail::commit_pads::commit_lattice_pads#0
+jolt-akita::whiteout/mod.rs::WhiteoutTail::commit_pads::commit_lattice_pads#3
 jolt-akita::whiteout/mod.rs::WhiteoutTail::prove::prove_sigma#0
-jolt-akita::whiteout/mod.rs::WhiteoutTail::receive_pads::receive_lattice_pads#0
+jolt-akita::whiteout/mod.rs::WhiteoutTail::receive_pads::receive_lattice_pads#3
 jolt-akita::whiteout/mod.rs::WhiteoutTail::verify::verify_sigma#0
 jolt-akita::whiteout/opening.rs::AkitaScheme::count_masked::.count_masked#0
-jolt-akita::whiteout/opening.rs::AkitaScheme::receive_pads::WhiteoutTail::receive_pads#0
+jolt-akita::whiteout/opening.rs::AkitaScheme::receive_pads::.receive_pads#0
 jolt-akita::whiteout/opening.rs::AkitaScheme::verify_masked::.verify_masked#0
 jolt-akita::whiteout/opening.rs::AkitaScheme::verify_tail::.verify#0
 jolt-dory::scheme.rs::DoryScheme::open::DoryProverChannel::new#0

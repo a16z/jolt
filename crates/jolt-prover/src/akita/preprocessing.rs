@@ -1,6 +1,8 @@
 use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
+#[cfg(feature = "zk")]
+use jolt_akita::WhiteoutPlans;
 use jolt_akita::{
     AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
     AkitaVerifierSetup, DenseGroupLayout, GroupedScheduleParams,
@@ -61,6 +63,32 @@ pub fn preprocess_full_with_advice(
         trusted_advice,
         &[],
     )?;
+    full_from_params(params, program)
+}
+
+/// Whiteout: [`preprocess_full_with_advice`] on persisted plans
+/// (`AkitaVerifierSetup::whiteout_plans`) instead of planning: the catalog
+/// and response schedules are validated on first use and refused, never
+/// replanned, if they fail or lack a response length.
+#[cfg(feature = "zk")]
+pub fn preprocess_full_from_plans(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
+    program: JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+    plans: WhiteoutPlans,
+) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    validate_trace_order(config)?;
+    let params = grouped_setup_params(
+        schedule_artifacts,
+        &program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        &[],
+    )?
+    .with_whiteout_plans(plans);
     full_from_params(params, program)
 }
 
