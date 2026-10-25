@@ -37,7 +37,7 @@
 //!   once the last owner drops. Queued destruction can extend sharing across
 //!   stages.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
@@ -295,9 +295,7 @@ pub(crate) struct SharedInstructionRows(pub(crate) Arc<ConstantSuffix<Instructio
 /// Weak cache for slice-backed rows; it does not keep a collection alive.
 /// A queued kernel drop can retain the last strong reference across stages.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedInstructionRowsWeak(
-    pub(crate) std::sync::Weak<ConstantSuffix<InstructionCycleRow>>,
-);
+pub(crate) struct SharedInstructionRowsWeak(pub(crate) Weak<ConstantSuffix<InstructionCycleRow>>);
 
 impl InstructionCycleRow {
     /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
@@ -1604,7 +1602,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
 mod tests {
     use crate::optimized::parity::ExceptionalEq;
     use std::num::NonZeroUsize;
-    use std::sync::Arc;
+    use std::sync::{Arc, Weak};
 
     use jolt_claims::protocols::jolt::geometry::instruction::{
         InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
