@@ -224,6 +224,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         // Blocks run in parallel, and a matrix is shared by many blocks:
         // build each distinct matrix's entries over F once, before the tasks
         // that read them.
+        let warm_span = tracing::info_span!("whiteout_nz_field_entries").entered();
         let mut warmed: Vec<&Arc<PreparedMatrix<F, D>>> = Vec::new();
         for block in &self.blocks {
             if !warmed
@@ -234,11 +235,23 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
                 warmed.push(&block.matrix);
             }
         }
+        drop(warm_span);
+        let last = self.blocks.len().saturating_sub(1);
         let blocks: Vec<Vec<CyclotomicRing<F, D>>> = self
             .blocks
             .par_iter()
+            .enumerate()
             .map(
-                |block| -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
+                |(index, block)| -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
+                    // Labels for the verifier profile: the residual inner
+                    // blocks `A_a` carry the gadget, and `SigmaSetup::new`
+                    // stacks the pad commitment's block last.
+                    let _span = match (&block.gadget, index == last) {
+                        (Some(_), _) => tracing::info_span!("whiteout_nz_residual_a"),
+                        (None, false) => tracing::info_span!("whiteout_nz_residual_b"),
+                        (None, true) => tracing::info_span!("whiteout_nz_pad"),
+                    }
+                    .entered();
                     let columns = scales
                         .get(block.input.start / D..block.input.end / D)
                         .ok_or(WhiteoutError::InvalidRelation(

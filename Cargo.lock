@@ -3905,6 +3905,7 @@ dependencies = [
  "syn 3.0.9",
  "thiserror 2.0.20",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -3960,6 +3961,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "thiserror 2.0.20",
+ "tracing",
  "zeroize",
 ]
 

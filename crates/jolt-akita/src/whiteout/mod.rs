@@ -1045,6 +1045,7 @@ impl WhiteoutTail {
     fn pad_commitment<const D: usize>(
         layout: &PadLayout,
     ) -> Result<LatticePadCommitment<F, D>, ZkError> {
+        let _span = tracing::info_span!("whiteout_pad_commitment_setup").entered();
         let placement = PadPlacement::new(layout)?;
         let (rank, randomness_columns) = Self::pad_rank::<D>(&placement)?;
         let stream = public_stream(
@@ -1069,8 +1070,11 @@ impl WhiteoutTail {
         u_a: Option<&[F]>,
         pad_image: BlockTarget<F, D>,
     ) -> Result<SigmaSetup<F, D>, ZkError> {
+        let _span = tracing::info_span!("whiteout_sigma_setup").entered();
         let pads = Self::pad_commitment::<D>(layout)?;
-        let blocks = row.shape.blocks::<D>(row.stream(), u_a_payload, u_a)?;
+        let blocks = tracing::info_span!("whiteout_residual_matrices")
+            .in_scope(|| row.shape.blocks::<D>(row.stream(), u_a_payload, u_a))?;
+        let _v_span = tracing::info_span!("whiteout_v_matrix_setup").entered();
         let v_rank = digit_matrix_rank(SigmaSetup::<F, D>::v_width(&blocks, &pads))?;
         let v_stream = public_stream(
             SigmaSetup::<F, D>::v_stream_len(&blocks, &pads, v_rank),
@@ -1093,6 +1097,7 @@ impl WhiteoutTail {
         row: &WhiteoutRow,
         layout: &PadLayout,
     ) -> Result<Arc<PlannedResponse>, ZkError> {
+        let _span = tracing::info_span!("whiteout_response_lookup").entered();
         let mut vars = self
             .response_vars
             .lock()
@@ -1202,6 +1207,7 @@ impl WhiteoutTail {
         layout: PadLayout,
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
+        let _span = tracing::info_span!("whiteout_receive_pads").entered();
         with_ring_dim!(row.ring_dim(), D, {
             let commitment = Self::pad_commitment::<D>(&layout)?;
             let ([catalog, selected, response], _) = self.pad_statement::<D>(row, &layout)?;
@@ -1278,6 +1284,7 @@ impl WhiteoutTail {
         pads: &CommittedPadsView<LatticePadPayload<F>>,
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<(), ZkError> {
+        let _span = tracing::info_span!("whiteout_verify_tail").entered();
         let layout = pads.layout().clone();
         let claim = prefix.residual_claim();
         with_ring_dim!(row.ring_dim(), D, {
@@ -1291,9 +1298,12 @@ impl WhiteoutTail {
                     image: None,
                 },
             )?;
-            let lifted = sigma.lift(relation, &row.shape.claims(claim.point())?)?;
+            let claims = row.shape.claims(claim.point())?;
+            let lifted =
+                tracing::info_span!("whiteout_lift").in_scope(|| sigma.lift(relation, &claims))?;
             let response = self.response::<D>(row, &layout)?;
-            verify_sigma(&sigma, &lifted, transcript, response.prover.as_ref())
+            tracing::info_span!("whiteout_verify_sigma")
+                .in_scope(|| verify_sigma(&sigma, &lifted, transcript, response.prover.as_ref()))
         })
     }
 }

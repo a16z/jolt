@@ -192,6 +192,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    let _span = tracing::info_span!("whiteout_pad_layout").entered();
     // As the homomorphic build's replay: 1 MiB covers the masked messages
     // of every realistic trace, doubled up to 16 MiB.
     let mut padding = 1usize << 20;
@@ -439,15 +440,19 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
-    let mut stages = whiteout_stages::<F, PCS, VC, H>(
-        preprocessing,
-        public_io,
-        trusted_advice_commitment,
-        transcript,
-        layout,
-    )?;
-    let (prefix, _checkpoint) = whiteout_prefix(&mut stages, transcript)?;
-    let relation = whiteout_relation(&mut stages, &prefix, transcript)?;
+    let mut stages = tracing::info_span!("whiteout_verify_stages").in_scope(|| {
+        whiteout_stages::<F, PCS, VC, H>(
+            preprocessing,
+            public_io,
+            trusted_advice_commitment,
+            transcript,
+            layout,
+        )
+    })?;
+    let (prefix, _checkpoint) = tracing::info_span!("whiteout_verify_prefix")
+        .in_scope(|| whiteout_prefix(&mut stages, transcript))?;
+    let relation = tracing::info_span!("whiteout_verify_relation")
+        .in_scope(|| whiteout_relation(&mut stages, &prefix, transcript))?;
     transcript.site(WHITEOUT_SIGMA);
     PCS::verify_tail(&stages.shape, &prefix, &relation, &stages.pads, transcript)?;
     Ok(())
