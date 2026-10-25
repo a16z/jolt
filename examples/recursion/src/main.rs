@@ -1049,6 +1049,45 @@ fn tamper_l2(
     save_proof_data(guest, &tampered, output);
 }
 
+/// Guest build settings the verifier guest uses by default (feature
+/// `guest-codegen`): a higher LLVM inline threshold and one codegen unit for
+/// the guest's release profile. Measured as the fewest trace rows of the
+/// guest build configurations screened at inner sizes 2^12 and 2^20; the inner
+/// proofs are unchanged. A value the caller already set for either variable
+/// wins, and `RECURSION_GUEST_CODEGEN=off` (or building without the feature)
+/// restores the stock guest build.
+const RECURSION_GUEST_CODEGEN: [(&str, &str); 2] = [
+    (
+        "ZEROOS_GUEST_RUSTFLAGS",
+        "-Cllvm-args=-inline-threshold=1000",
+    ),
+    ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+];
+
+/// Builds the verifier guest, applying the default guest build settings to
+/// this build only (the inner guests keep the stock settings).
+fn build_recursion_guest(program: &mut Program, target_dir: &str) {
+    let enabled = cfg!(feature = "guest-codegen")
+        && !matches!(
+            std::env::var("RECURSION_GUEST_CODEGEN").as_deref(),
+            Ok("off")
+        );
+    let mut applied = Vec::new();
+    if enabled {
+        for (key, value) in RECURSION_GUEST_CODEGEN {
+            if std::env::var_os(key).is_none() {
+                std::env::set_var(key, value);
+                applied.push(key);
+            }
+        }
+    }
+    info!("  recursion guest build settings: {applied:?}");
+    program.build(target_dir);
+    for key in applied {
+        std::env::remove_var(key);
+    }
+}
+
 fn run_recursion_proof(
     guest: GuestProgram,
     run_config: RunConfig,
@@ -1059,7 +1098,7 @@ fn run_recursion_proof(
     let target_dir = "/tmp/jolt-guest-targets";
 
     let mut program = configured_recursion_program(memory_config);
-    program.build(target_dir);
+    build_recursion_guest(&mut program, target_dir);
     match run_config {
         RunConfig::Trace(expected) | RunConfig::TraceToFile(expected) => {
             let io_device = if matches!(run_config, RunConfig::Trace(_)) {

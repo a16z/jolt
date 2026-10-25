@@ -27,8 +27,11 @@ akita = [
 # quotient (protocol identifier v7-l2tq1) and the guest checks it at two
 # points instead of the exact product. Word decoding: the guest decodes
 # fixed-wire field elements by word with the same canonicality checks. Turn
-# all three off with --no-default-features.
-default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory"]
+# all three off with --no-default-features. guest-codegen: the verifier guest
+# is built with -Cllvm-args=-inline-threshold=1000 and one codegen unit (host
+# side only; RECURSION_GUEST_CODEGEN=off restores the stock guest build).
+default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen"]
+guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
 word-decode = ["jolt-akita?/word-decode"]
