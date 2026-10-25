@@ -17,7 +17,11 @@ use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 
+#[cfg(all(test, not(feature = "zk")))]
+use crate::cuda::commitment::DeviceTier1Commitment;
 use crate::cuda::common::error::CudaError;
+#[cfg(all(test, not(feature = "zk")))]
+use crate::cuda::common::msm::JacobianLimbs;
 
 /// CPU-backed Dory PCS selected independently of the compute kernel registry.
 /// Its proof and setup types are shared with `DoryScheme`.
@@ -59,6 +63,16 @@ impl CudaDoryScheme {
                 reason: "CUDA verifier preprocessing could not derive the program digest",
             }
         })
+    }
+}
+
+#[cfg(all(test, not(feature = "zk")))]
+impl DeviceTier1Commitment for CudaDoryScheme {
+    fn partial_from_rows(
+        setup: &Self::ProverSetup,
+        rows: &[JacobianLimbs],
+    ) -> Result<Self::PartialCommitment, CudaError> {
+        DoryScheme::partial_from_rows(setup, rows)
     }
 }
 

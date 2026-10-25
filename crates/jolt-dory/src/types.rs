@@ -149,6 +149,12 @@ pub struct DoryHint {
 }
 
 impl DoryHint {
+    /// Row commitments in the order paired with the setup's G2 bases.
+    #[cfg(feature = "cuda")]
+    pub fn row_commitments(&self) -> &[Bn254G1] {
+        &self.row_commitments
+    }
+
     pub(crate) fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
         Self {
             row_commitments,

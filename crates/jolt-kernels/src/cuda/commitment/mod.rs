@@ -5,14 +5,24 @@
 //! increments from host witness bundles for its streaming commitment calls.
 //! CUDA also extracts one-hot chunk indices in batches and retains them in the
 //! proof-session cache; optimized streams one-hot addresses from host bundles.
+//! Partitioned rows are stitched and grouped for Dory finalization. The default
+//! adapter reconstructs the streaming PCS state and finishes it on the host.
 
 use std::sync::Arc;
 
+#[cfg(not(feature = "zk"))]
+use ark_bn254::G1Projective;
 use ark_bn254::{Fq, G1Affine};
 use ark_ff::BigInt;
 use cudarc::driver::CudaSlice;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+#[cfg(not(feature = "zk"))]
+use jolt_crypto::Bn254G1;
+#[cfg(not(feature = "zk"))]
+use jolt_dory::DoryScheme;
 use jolt_field::JoltField;
+#[cfg(not(feature = "zk"))]
+use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::backend::cuda::{DeviceTrace, HotSource};
 use jolt_witness::RowSource;
@@ -20,11 +30,54 @@ use jolt_witness::RowSource;
 use super::common::context::CudaKernelContext;
 use super::common::device_columns::{park_device_column, whole_domain, DeviceColumn};
 use super::common::devices::CycleWindow;
+#[cfg(not(feature = "zk"))]
+use super::common::error::CudaError;
+#[cfg(not(feature = "zk"))]
+use super::common::msm::JacobianLimbs;
 use super::common::msm::{AffineLimbs, IncrementKind, FQ_LIMBS};
 use super::common::pack::COLD;
+#[cfg(not(feature = "zk"))]
+use crate::commitment::{finish_streamed, ModeStreamingCommitment};
 use crate::cuda::witness::session_row_trace_window;
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, ProofSession};
+
+#[cfg(not(feature = "zk"))]
+pub type FinishedColumn<PCS> = (
+    <PCS as jolt_crypto::Commitment>::Output,
+    <PCS as CommitmentScheme>::OpeningHint,
+);
+
+/// Adapts device-produced G1 row commitments to a streaming PCS.
+///
+/// Bases and returned rows must use the PCS's row order. The default tier-two
+/// path reconstructs a partial commitment and applies mode-specific host
+/// finalization; implementations may batch selected columns instead.
+#[cfg(not(feature = "zk"))]
+pub trait DeviceTier1Commitment: CommitmentScheme + ModeStreamingCommitment {
+    fn partial_from_rows(
+        setup: &Self::ProverSetup,
+        rows: &[JacobianLimbs],
+    ) -> Result<Self::PartialCommitment, CudaError>;
+
+    fn tier2_selected(
+        _context: &CudaKernelContext,
+        setup: &Self::ProverSetup,
+        columns: &[Vec<JacobianLimbs>],
+        selection: &[usize],
+    ) -> Result<Vec<(usize, FinishedColumn<Self>)>, CudaError> {
+        selection
+            .iter()
+            .map(|&index| {
+                let rows = columns.get(index).ok_or(CudaError::InvariantViolation {
+                    reason: "a tier-2 selection named a column outside the batch",
+                })?;
+                let partial = Self::partial_from_rows(setup, rows)?;
+                Ok((index, finish_streamed::<Self>(partial, setup)))
+            })
+            .collect()
+    }
+}
 
 fn fq_from_limbs(limbs: [u64; FQ_LIMBS]) -> Fq {
     Fq::new_unchecked(BigInt(limbs))
@@ -42,6 +95,29 @@ fn affine_limbs(point: G1Affine) -> AffineLimbs {
         x: fq_limbs(point.x),
         y: fq_limbs(point.y),
         infinity: false,
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+fn jolt_g1(point: JacobianLimbs) -> Bn254G1 {
+    Bn254G1::from(G1Projective::new_unchecked(
+        fq_from_limbs(point.x),
+        fq_from_limbs(point.y),
+        fq_from_limbs(point.z),
+    ))
+}
+
+#[cfg(not(feature = "zk"))]
+impl DeviceTier1Commitment for DoryScheme {
+    fn partial_from_rows(
+        setup: &Self::ProverSetup,
+        rows: &[JacobianLimbs],
+    ) -> Result<Self::PartialCommitment, CudaError> {
+        let mut partial = <Self as StreamingCommitment>::begin(setup);
+        partial
+            .row_commitments
+            .extend(rows.iter().copied().map(jolt_g1));
+        Ok(partial)
     }
 }
 

@@ -5,6 +5,9 @@
 //! one window for small or incompatible domains. `CycleWindow::residency` adds
 //! the next row needed by flag extraction without counting it in the work partition.
 
+#[cfg(test)]
+use core::cmp::Reverse;
+
 use super::context::{device_count, enter_device};
 
 pub(crate) type DeviceTask<'a, T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'a>;
@@ -57,12 +60,47 @@ pub(crate) fn witness_windows(cycles: usize) -> Vec<CycleWindow> {
     plan_witness_windows(cycles, device_count().max(1))
 }
 
+#[cfg(test)]
+pub(crate) fn device_selections(row_counts: &[usize], devices: usize) -> Vec<Vec<usize>> {
+    let mut order: Vec<usize> = (0..row_counts.len()).collect();
+    order.sort_by_key(|&index| (Reverse(row_counts.get(index).copied().unwrap_or(0)), index));
+    let mut load = vec![0usize; devices];
+    let mut selections: Vec<Vec<usize>> = (0..devices).map(|_| Vec::new()).collect();
+    for index in order {
+        let rows = row_counts.get(index).copied().unwrap_or(0);
+        let lightest = load
+            .iter()
+            .enumerate()
+            .min_by_key(|&(device, &pending)| (pending, device))
+            .map_or(0, |(device, _)| device);
+        if let Some(pending) = load.get_mut(lightest) {
+            *pending += rows;
+        }
+        if let Some(selection) = selections.get_mut(lightest) {
+            selection.push(index);
+        }
+    }
+    for selection in &mut selections {
+        selection.sort_unstable();
+    }
+    selections
+}
+
 pub(crate) fn fan_out<T, E>(tasks: Vec<DeviceTask<'_, T, E>>) -> Result<Vec<T>, E>
 where
     T: Send,
     E: Send,
 {
     fan_out_with(tasks, true)
+}
+
+#[cfg(all(test, not(feature = "zk")))]
+pub(crate) fn fan_out_bound<T, E>(tasks: Vec<DeviceTask<'_, T, E>>) -> Result<Vec<T>, E>
+where
+    T: Send,
+    E: Send,
+{
+    fan_out_with(tasks, false)
 }
 
 fn fan_out_with<T, E>(tasks: Vec<DeviceTask<'_, T, E>>, bind: bool) -> Result<Vec<T>, E>
@@ -112,7 +150,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_witness_windows, CycleWindow, MIN_WITNESS_WINDOW};
+    use super::{device_selections, plan_witness_windows, CycleWindow, MIN_WITNESS_WINDOW};
 
     const COUNTS: [usize; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 64];
 
@@ -208,6 +246,33 @@ mod tests {
                     windows.len(),
                 );
             }
+        }
+    }
+
+    #[test]
+    fn device_selections_cover_every_column_once_and_balance_rows() {
+        let shape = [1024usize, 1024, 1024, 512, 512, 16];
+        for devices in [1usize, 2, 3, 5, 8] {
+            let selections = device_selections(&shape, devices);
+            let mut seen: Vec<usize> = selections.concat();
+            seen.sort_unstable();
+            assert_eq!(
+                seen,
+                (0..shape.len()).collect::<Vec<_>>(),
+                "every column must land on exactly one device",
+            );
+            let loads: Vec<usize> = selections
+                .iter()
+                .map(|selection| selection.iter().map(|&index| shape[index]).sum())
+                .collect();
+            let spread =
+                loads.iter().max().copied().unwrap_or(0) - loads.iter().min().copied().unwrap_or(0);
+            let widest = shape.iter().max().copied().unwrap_or(0);
+            assert!(
+                spread <= widest,
+                "row load spread {spread} exceeds the widest column {widest} across {devices} \
+                 devices: {loads:?}",
+            );
         }
     }
 }
