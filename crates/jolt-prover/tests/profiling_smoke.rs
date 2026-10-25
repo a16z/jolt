@@ -25,7 +25,9 @@
 use jolt_akita::AkitaChunkProfile;
 use jolt_profiling::summary::ProfileSummary;
 use jolt_profiling::taxonomy;
-use jolt_profiling::taxonomy::{CONFIG_DERIVATION_SPAN, ROOT_SPAN, TAXONOMY_VERSION};
+use jolt_profiling::taxonomy::{
+    ProverMode, CONFIG_DERIVATION_SPAN, ROOT_SPAN, TAXONOMY_VERSION, WHITEOUT_VERIFIER_SPANS,
+};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
 use serde_json::Value;
 
@@ -85,13 +87,13 @@ fn profile_run_emits_conformant_artifacts() {
     // feature swaps the commitment seams for the Akita set. (The advice
     // seams are exempt: fibonacci exercises no advice.)
     let mode = if cfg!(all(feature = "akita", feature = "zk")) {
-        taxonomy::ProverMode::Whiteout
+        ProverMode::Whiteout
     } else if cfg!(feature = "akita") {
-        taxonomy::ProverMode::Akita
+        ProverMode::Akita
     } else if cfg!(feature = "zk") {
-        taxonomy::ProverMode::Zk
+        ProverMode::Zk
     } else {
-        taxonomy::ProverMode::Clear
+        ProverMode::Clear
     };
     let emitted: std::collections::HashSet<&str> = trace
         .iter()
@@ -105,8 +107,8 @@ fn profile_run_emits_conformant_artifacts() {
         .chain(taxonomy::field_inline_spans(mode).iter().copied())
         .collect();
     // The harness verifies inside the trace: Whiteout's verifier seams fire.
-    let verifier = if mode == taxonomy::ProverMode::Whiteout {
-        taxonomy::WHITEOUT_VERIFIER_SPANS.as_slice()
+    let verifier = if mode == ProverMode::Whiteout {
+        WHITEOUT_VERIFIER_SPANS.as_slice()
     } else {
         &[]
     };
