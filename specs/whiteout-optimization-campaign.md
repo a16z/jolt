@@ -220,6 +220,23 @@ paper delta.
   merge, since they touch the same files. Merge bars check new lines against
   the pre-merge dev head.
 
+## Review log
+
+- **O1 (persisted plans).** Two reviews, no soundness blocker. In the fix round:
+  - the masked catalog digest is absorbed at PADS (it was bound only from
+    stage 8, though it fixes D and the commitment profiles);
+  - plans enter only at construction, with no `adopt`;
+  - serialized preprocessing is history-independent;
+  - the style lint is fixed.
+- **O4 (compressed u_a).** Two reviews, no blocker. The binding, the extractor,
+  error terms, hiding and clear-path invariance hold by trace. In the fix
+  round:
+  - a chain-row-isolating tamper;
+  - constant-time `recompose`;
+  - a code-level ν ≤ 27 guard (D27);
+  - dev-protocol masked-prefix coverage;
+  - `BackendCompression` made test-only.
+
 ## Not verified
 
 - **Verifier time split:** unmeasured until O0. Every verifier-side estimate
