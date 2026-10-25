@@ -1,8 +1,10 @@
 //! Akita's final opening combines auxiliary groups and the trace in canonical
 //! order `[UntrustedAdvice?, TrustedAdvice?,
 //! FieldInc (field-inline) OR ProgramBytecode, ProgramImageInit (committed),
-//! OneHotTrace]`. Field-inline and committed-program suffixes are exclusive.
+//! FusedInc, OneHotTrace]`. Field-inline and committed-program suffixes are exclusive.
 
+use jolt_kernels::akita::commitment::FusedIncObject;
+use jolt_verifier::stages::stage8::akita::fused_inc_claim;
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
@@ -57,6 +59,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
     one_hot_trace_hint: PCS::OpeningHint,
+    fused_inc: &FusedIncObject<PCS>,
     untrusted_advice: Option<&AdviceObject<PCS>>,
     trusted_advice: Option<&AdviceObject<PCS>>,
     #[cfg(feature = "field-inline")] field_inc: &FieldIncObject<PCS>,
@@ -102,10 +105,10 @@ where
         .transpose()?;
 
     // Canonical public batch order: advice, (field-inline) the field increment polynomial,
-    // or the direct committed-program objects, then OneHotTrace. The suffixes
+    // or the direct committed-program objects, then FusedInc and OneHotTrace. The suffixes
     // are exclusive: field-inline rejects committed-program preprocessing.
     let mut auxiliary_groups = Vec::with_capacity(
-        2 + usize::from(cfg!(feature = "field-inline"))
+        3 + usize::from(cfg!(feature = "field-inline"))
             + program.map_or(0, |objects| objects.objects().count()),
     );
     for (object, claim) in [
@@ -148,6 +151,11 @@ where
             ));
         }
     }
+
+    auxiliary_groups.push((
+        fused_inc_claim(&fused_inc.commitment, stage6b).map_err(ProverError::Verifier)?,
+        fused_inc.hint.clone(),
+    ));
 
     let joint_opening_proof = tracing::info_span!("akita_main_batched_prove").in_scope(|| {
         PCS::prove_batch(

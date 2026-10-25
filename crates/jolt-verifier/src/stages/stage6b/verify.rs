@@ -203,15 +203,7 @@ where
         claims.program_image_reduction.as_ref(),
     )?;
 
-    #[cfg(not(feature = "akita"))]
     validate_cycle_phase_claim_shape(formula_dimensions, claims, bytecode_reduction_layout)?;
-    #[cfg(feature = "akita")]
-    validate_cycle_phase_claim_shape(
-        formula_dimensions,
-        claims,
-        bytecode_reduction_layout,
-        proof.one_hot_config.committed_chunk_bits(),
-    )?;
 
     let input_values = stage6b_input_values_from_upstream(
         &sumchecks,
@@ -274,7 +266,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
     formula_dimensions: &JoltFormulaDimensions,
     claims: &Stage6bOutputClaims<F>,
     bytecode_reduction_layout: Option<&BytecodeClaimReductionLayout>,
-    #[cfg(feature = "akita")] committed_chunk_bits: usize,
 ) -> Result<(), VerifierError> {
     let bytecode_output_openings =
         bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
@@ -304,25 +295,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         ra_layout.ram(),
         claims.booleanity.ram_ra.len(),
     )?;
-
-    #[cfg(feature = "akita")]
-    {
-        let expected_chunks =
-            jolt_claims::protocols::jolt::lattice::geometry::BalancedIncChunking::new(
-                committed_chunk_bits,
-            )
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::Booleanity,
-                reason: error.to_string(),
-            })?
-            .chunk_count();
-        require_claim_count(
-            JoltRelationId::Booleanity,
-            "balanced increment digit",
-            expected_chunks,
-            claims.booleanity.balanced_inc_digits.len(),
-        )?;
-    }
 
     require_claim_count(
         JoltRelationId::RamRaVirtualization,
@@ -501,11 +473,6 @@ pub fn stage6b_opening_values<F: JoltField>(
         values.push(*opening_claim);
     }
     values.extend(&claims.booleanity.ram_ra);
-    #[cfg(feature = "akita")]
-    {
-        values.extend(&claims.booleanity.balanced_inc_digits);
-        values.push(claims.booleanity.balanced_inc_carry);
-    }
     values.extend(claims.ram_hamming_booleanity.opening_values());
     values.extend(claims.ram_ra_virtualization.opening_values());
     values.extend(claims.instruction_ra_virtualization.opening_values());
@@ -580,7 +547,6 @@ fn append_opening_claims<F, T>(
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    #[cfg(not(feature = "akita"))]
     use super::super::booleanity::BooleanityOutputClaims;
     #[cfg(not(feature = "akita"))]
     use super::super::bytecode_read_raf::BytecodeReadRafOutputClaims;
@@ -618,27 +584,25 @@ mod tests {
             },
         );
         #[cfg(all(feature = "akita", not(feature = "field-inline")))]
-        let last = 11;
+        let last = 9;
         #[cfg(all(feature = "akita", feature = "field-inline"))]
-        let last = 12;
+        let last = 10;
         #[cfg(feature = "akita")]
         let (bytecode_read_raf, booleanity) = (
             LatticeBytecodeReadRafOutputClaims {
                 bytecode_ra: vec![fr(1), fr(2)],
                 fused_inc: fr(3),
             },
-            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
+            BooleanityOutputClaims {
                 instruction_ra: vec![fr(4)],
                 bytecode_ra: vec![fr(5)],
                 ram_ra: vec![fr(6)],
-                balanced_inc_digits: vec![fr(7)],
-                balanced_inc_carry: fr(8),
             },
         );
         #[cfg(not(feature = "akita"))]
         let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7), fr(8));
         #[cfg(feature = "akita")]
-        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(9), fr(10), fr(11));
+        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(7), fr(8), fr(9));
         (
             Stage6bOutputClaims {
                 bytecode_read_raf,
@@ -705,28 +669,11 @@ mod tests {
             bytecode_ra: vec![fr(1); bytecode_ra_len],
             fused_inc: fr(2),
         };
-        #[cfg(not(feature = "akita"))]
         let booleanity = BooleanityOutputClaims {
             instruction_ra: vec![fr(3); ra_layout.instruction()],
             bytecode_ra: vec![fr(4); ra_layout.bytecode()],
             ram_ra: vec![fr(5); ra_layout.ram()],
         };
-        #[cfg(feature = "akita")]
-        let booleanity =
-            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
-                instruction_ra: vec![fr(3); ra_layout.instruction()],
-                bytecode_ra: vec![fr(4); ra_layout.bytecode()],
-                ram_ra: vec![fr(5); ra_layout.ram()],
-                balanced_inc_digits: vec![
-                    fr(6);
-                    jolt_claims::protocols::jolt::lattice::geometry::BalancedIncChunking::new(
-                        TEST_COMMITTED_CHUNK_BITS
-                    )
-                    .unwrap()
-                    .chunk_count()
-                ],
-                balanced_inc_carry: fr(7),
-            };
         Stage6bOutputClaims {
             bytecode_read_raf,
             booleanity,
@@ -771,16 +718,7 @@ mod tests {
         formula_dimensions: &JoltFormulaDimensions,
         claims: &Stage6bOutputClaims<Fr>,
     ) -> Result<(), VerifierError> {
-        #[cfg(not(feature = "akita"))]
-        let result = validate_cycle_phase_claim_shape(formula_dimensions, claims, None);
-        #[cfg(feature = "akita")]
-        let result = validate_cycle_phase_claim_shape(
-            formula_dimensions,
-            claims,
-            None,
-            TEST_COMMITTED_CHUNK_BITS,
-        );
-        result
+        validate_cycle_phase_claim_shape(formula_dimensions, claims, None)
     }
 
     fn tamper_vec(vec: &mut Vec<Fr>, pad: bool) {
@@ -802,8 +740,7 @@ mod tests {
         validate_shape(&formula_dimensions, &claims).expect("shape-matched claims validate");
 
         type Tamper = fn(&mut Stage6bOutputClaims<Fr>, bool);
-        #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
-        let mut tampers: Vec<(&str, Tamper)> = vec![
+        let tampers: Vec<(&str, Tamper)> = vec![
             ("bytecode_read_raf.bytecode_ra", |c, pad| {
                 tamper_vec(&mut c.bytecode_read_raf.bytecode_ra, pad);
             }),
@@ -829,10 +766,6 @@ mod tests {
                 },
             ),
         ];
-        #[cfg(feature = "akita")]
-        tampers.push(("booleanity.balanced_inc_digits", |c, pad| {
-            tamper_vec(&mut c.booleanity.balanced_inc_digits, pad);
-        }));
 
         for (label, tamper) in tampers {
             for pad in [true, false] {

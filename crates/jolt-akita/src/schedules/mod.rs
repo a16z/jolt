@@ -46,7 +46,7 @@ pub mod emit {
     /// Bounded-dense advice and committed-program byte objects.
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 35);
 
-    /// First logical trace exponent using setup offloading.
+    /// First logical trace exponent eligible for setup offloading.
     pub const RECURSIVE_TRACE_LOG_T_CUTOVER: usize = 21;
     pub const K16_COLUMN_VARIABLES: usize = 4;
     pub const K256_COLUMN_VARIABLES: usize = 8;
@@ -85,9 +85,9 @@ pub mod emit {
             fixtures.push(PolynomialGroupLayout::singleton(20));
             if one_hot_k == AKITA_ONE_HOT_K16 {
                 fixtures.extend([22, 31, 32].map(PolynomialGroupLayout::singleton));
-                fixtures.extend((51..=64).map(|width| PolynomialGroupLayout::new(16, width)));
+                fixtures.extend((34..=56).map(|width| PolynomialGroupLayout::new(16, width)));
                 fixtures.extend(
-                    [(25, 51), (26, 51), (25, 64), (34, 51), (34, 64)]
+                    [(25, 34), (26, 34), (25, 56), (34, 34), (34, 56)]
                         .map(|(vars, polys)| PolynomialGroupLayout::new(vars, polys)),
                 );
             }
@@ -107,8 +107,12 @@ pub mod emit {
                     (15, 1),
                     (16, 1),
                     (20, 1),
+                    (20, 20),
                     (20, 29),
                     (25, 1),
+                    (28, 18),
+                    (29, 18),
+                    (34, 18),
                     (28, 27),
                     (29, 27),
                     (34, 27),

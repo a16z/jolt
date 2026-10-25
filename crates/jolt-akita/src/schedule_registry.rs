@@ -229,9 +229,9 @@ fn plan_row<Cfg: CommitmentConfig>(
                 .has_bounded_committed_source()
         })
         .count();
-    if full_width_producers > 1 || (full_width_producers == 1 && producers.len() > 3) {
+    if full_width_producers > 1 || (full_width_producers == 1 && producers.len() > 4) {
         return Err(AkitaError::UnsupportedSchedule(
-            "full-width batches support one field increment and at most two advice groups"
+            "full-width batches support one field increment and at most three bounded groups"
                 .to_owned(),
         ));
     }
@@ -543,7 +543,7 @@ mod tests {
             let base = artifacts
                 .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
                 .unwrap();
-            for (final_num_vars, num_polys) in [(31, 1), (32, 1), (25, 51), (26, 51)] {
+            for (final_num_vars, num_polys) in [(31, 1), (32, 1), (25, 34), (26, 34)] {
                 for untrusted in [21, 22] {
                     for trusted in [21, 22] {
                         let params = GroupedScheduleParams::new(

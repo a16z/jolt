@@ -5,13 +5,9 @@ use crate::field_inline::FieldIncrementColumn;
 use crate::KernelError;
 use jolt_akita::{no_selected_row, TraceOneHotRows};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-use jolt_claims::protocols::jolt::lattice::geometry::BalancedIncChunking;
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::JoltField;
-use jolt_witness::witnesses::{
-    BalancedIncColumn, BytecodePc, FusedInc, LookupIndex, RemappedRamAddress,
-};
+use jolt_witness::witnesses::{BytecodePc, LookupIndex, RemappedRamAddress};
 use jolt_witness::{
     collect_bundles, JoltWitnessPlane, RandomAccessRows, WitnessBundle, WitnessError,
 };
@@ -26,7 +22,6 @@ struct OneHotTraceSourceRow {
     lookup_index: LookupIndex,
     bytecode_pc: BytecodePc,
     ram_address: RemappedRamAddress,
-    fused_inc: FusedInc,
 }
 
 /// The RAM access of [`OneHotTraceSourceRow`] alone: whether the RAM columns
@@ -50,11 +45,9 @@ enum TraceChunkBits {
     Eight,
 }
 
-/// Canonical column order: instruction RA, balanced increment digits and
-/// carry, bytecode RA, then RAM RA.
+/// Canonical column order: instruction RA, bytecode RA, then RAM RA.
 struct OneHotTraceColumns {
     layout: JoltRaPolynomialLayout,
-    increment_digits: usize,
     bits: TraceChunkBits,
 }
 
@@ -64,20 +57,14 @@ impl OneHotTraceColumns {
         layout: JoltRaPolynomialLayout,
         log_k_chunk: usize,
     ) -> Result<Self, KernelError<F>> {
-        let increment_digits = BalancedIncChunking::new(log_k_chunk)
-            .map_err(|_| KernelError::Unsupported {
-                reason: "native one-hot trace chunk width must divide the increment width",
-            })?
-            .chunk_count();
-        let expected = layout
-            .committed_polynomials()
-            .take(layout.instruction())
-            .chain((0..increment_digits).map(JoltCommittedPolynomial::BalancedIncDigit))
-            .chain(std::iter::once(JoltCommittedPolynomial::BalancedIncCarry))
-            .chain(layout.committed_polynomials().skip(layout.instruction()));
-        if !plan.ids().iter().copied().eq(expected) {
+        if !plan
+            .ids()
+            .iter()
+            .copied()
+            .eq(layout.committed_polynomials())
+        {
             return Err(KernelError::InvariantViolation {
-                reason: "OneHotTrace plan disagrees with the canonical RA and increment layout",
+                reason: "OneHotTrace plan disagrees with the canonical RA layout",
             });
         }
         let bits = match log_k_chunk {
@@ -97,15 +84,11 @@ impl OneHotTraceColumns {
                 reason: "OneHotTrace address decomposition exceeds 128 bits",
             });
         }
-        Ok(Self {
-            layout,
-            increment_digits,
-            bits,
-        })
+        Ok(Self { layout, bits })
     }
 
     fn len(&self) -> usize {
-        self.layout.total() + self.increment_digits + 1
+        self.layout.total()
     }
 
     fn fill(&self, row: OneHotTraceSourceRow, selected_rows: &mut [u8]) -> bool {
@@ -121,18 +104,7 @@ impl OneHotTraceColumns {
         selected_rows: &mut [u8],
     ) -> bool {
         let (instruction, rest) = selected_rows.split_at_mut(self.layout.instruction());
-        let (digits, rest) = rest.split_at_mut(self.increment_digits);
-        let (carry, rest) = rest.split_at_mut(1);
         let (bytecode, ram) = rest.split_at_mut(self.layout.bytecode());
-        for (index, digit) in digits.iter_mut().enumerate() {
-            *digit = row
-                .fused_inc
-                .selected_row(BalancedIncColumn::Digit { width: BITS, index })
-                as u8;
-        }
-        carry[0] = row
-            .fused_inc
-            .selected_row(BalancedIncColumn::Carry { width: BITS }) as u8;
         for (mut value, columns) in [
             (row.lookup_index.0, instruction),
             (row.bytecode_pc.0 as u128, bytecode),
@@ -404,10 +376,9 @@ mod tests {
     #[test]
     fn chunk_order_and_ram_presence_match_frozen_encodings() -> Result<(), Box<dyn Error>> {
         let lookup = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210;
-        for (bits, width, instruction, bytecode, ram, ra_expected) in [
+        for (bits, instruction, bytecode, ram, expected) in [
             (
                 TraceChunkBits::Four,
-                4,
                 32,
                 3,
                 4,
@@ -418,7 +389,6 @@ mod tests {
             ),
             (
                 TraceChunkBits::Eight,
-                8,
                 16,
                 2,
                 2,
@@ -428,22 +398,15 @@ mod tests {
                 ],
             ),
         ] {
-            let increment_digits = 64 / width;
             let columns = OneHotTraceColumns {
                 layout: JoltRaPolynomialLayout::new(instruction, bytecode, ram)?,
-                increment_digits,
                 bits,
             };
-            let increments = instruction..instruction + increment_digits + 1;
-            // A zero increment selects the digit-zero row of every digit and the carry.
-            let mut expected = ra_expected.clone();
-            drop(expected.splice(instruction..instruction, vec![0; increments.len()]));
             let mut output = vec![0xff; columns.len()];
             let mut row = OneHotTraceSourceRow {
                 lookup_index: LookupIndex(lookup),
                 bytecode_pc: BytecodePc(0x123),
                 ram_address: RemappedRamAddress(Some(0x4567)),
-                fused_inc: FusedInc(0),
             };
             assert!(columns.fill(row, &mut output));
             assert_eq!(output, expected);
@@ -455,26 +418,6 @@ mod tests {
                     &expected[..expected.len() - ram]
                 );
                 assert_eq!(&output[expected.len() - ram..], vec![0; ram]);
-            }
-            for delta in [1, -1, i128::from(u64::MAX), -i128::from(u64::MAX)] {
-                row.fused_inc = FusedInc(delta);
-                let _ = columns.fill(row, &mut output);
-                let (digits, carry) = output[increments.clone()].split_at(increment_digits);
-                for (index, &digit) in digits.iter().enumerate() {
-                    assert_eq!(
-                        usize::from(digit),
-                        row.fused_inc
-                            .selected_row(BalancedIncColumn::Digit { width, index })
-                    );
-                }
-                assert_eq!(
-                    usize::from(carry[0]),
-                    row.fused_inc
-                        .selected_row(BalancedIncColumn::Carry { width })
-                );
-                let mut ra_output = output.clone();
-                drop(ra_output.drain(increments.clone()));
-                assert_eq!(&ra_output[..instruction], &ra_expected[..instruction]);
             }
         }
         Ok(())
