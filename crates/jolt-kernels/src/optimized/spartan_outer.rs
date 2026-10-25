@@ -74,9 +74,7 @@ use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
-use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, TensorEqTable, UnivariatePoly,
-};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 // The COMPOSED R1CS shapes (feature-aware): identical to the rv64-only constants
 // without field-inline, the field-inline-extended row/column composition under
 // `field-inline` — the same sources the reference kernel folds with.
@@ -104,11 +102,12 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::prefix_product::PrefixColumn;
 #[cfg(feature = "field-inline")]
 use super::support::map_reduce_chunks;
 use super::support::{
-    bind_prefix_pairs, map_indices, pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess,
-    BundleStore, GruenRoundMessage, RoundChallenges,
+    pin_derived_term_if_derived, prefix_cycle_weights, try_par_sum_vecs, BundleAccess, BundleStore,
+    GruenRoundMessage, RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -217,31 +216,6 @@ struct SpartanOuterRow {
 }
 
 impl SpartanOuterRow {
-    fn constant_suffix_start(
-        rows: &BundleAccess<'_, Self>,
-        cycles: usize,
-    ) -> Result<usize, WitnessError> {
-        match rows {
-            BundleAccess::View(view) => {
-                let prefix = view.physical_cycles().min(cycles);
-                // Only the final padding window lacks a next row. Compare it to
-                // the ordinary padding window before treating that suffix as constant.
-                if prefix < cycles && rows.row(prefix)? != rows.row(cycles - 1)? {
-                    Ok(cycles)
-                } else {
-                    Ok(prefix)
-                }
-            }
-            BundleAccess::Retained(rows) => {
-                let last = &rows[cycles - 1];
-                Ok(rows[..cycles]
-                    .iter()
-                    .rposition(|row| row != last)
-                    .map_or(0, |i| i + 1))
-            }
-        }
-    }
-
     fn folded_groups<F: JoltField>(&self, lagrange: &[F]) -> ([F; 2], [F; 2]) {
         let values = self.group_values();
         let (a0, b0) = fold_group(lagrange, &values.a_first, &values.b_first, &[0; DOMAIN]);
@@ -889,7 +863,7 @@ impl OptimizedOuterUniskip {
         }
         let (tau_low, _) = tau.split_at(log_t + 1);
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-        let mut prefix_cycles = SpartanOuterRow::constant_suffix_start(&rows.access(), 1 << log_t)?;
+        let mut prefix_cycles = rows.access().constant_suffix_start(1 << log_t)?;
         #[cfg(feature = "field-inline")]
         if let Some((cycle, _)) = field_rows.last() {
             prefix_cycles = prefix_cycles.max(cycle.saturating_add(1)).min(1 << log_t);
@@ -1088,39 +1062,12 @@ struct DerivedWeights<F> {
     bz_constant: [F; 2],
 }
 
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct OuterColumn<F: JoltField> {
-    values: Vec<F>,
-    // The stream bit is the LSB. Its first bind makes both suffix entries equal.
-    tail: [F; 2],
-}
-
-impl<F: JoltField> OuterColumn<F> {
-    fn pair(&self, row: usize) -> (F, F) {
-        (
-            self.values.get(2 * row).copied().unwrap_or(self.tail[0]),
-            self.values
-                .get(2 * row + 1)
-                .copied()
-                .unwrap_or(self.tail[1]),
-        )
-    }
-
-    fn bind(&mut self, challenge: F) -> bool {
-        let capacity = self.values.capacity();
-        bind_prefix_pairs(&mut self.values, challenge, self.tail[1]);
-        let bound = self.tail[0] + challenge * (self.tail[1] - self.tail[0]);
-        self.tail = [bound; 2];
-        self.values.capacity() < capacity
-    }
-}
-
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
-    az: OuterColumn<F>,
-    bz: OuterColumn<F>,
+    az: PrefixColumn<F>,
+    bz: PrefixColumn<F>,
     prefix_cycles: usize,
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
@@ -1255,11 +1202,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             endpoints.1 + tail_mass * (az_tail[1] - az_tail[0]) * (bz_tail[1] - bz_tail[0]),
         );
         Ok(Self {
-            az: OuterColumn {
+            az: PrefixColumn {
                 values: az,
                 tail: az_tail,
             },
-            bz: OuterColumn {
+            bz: PrefixColumn {
                 values: bz,
                 tail: bz_tail,
             },
@@ -1316,41 +1263,6 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
-    fn product_at_one(&self) -> F {
-        let prefix_pairs = self.az.values.len().div_ceil(2);
-        self.split_eq.par_fold_out_in_prefix(
-            prefix_pairs,
-            F::zero,
-            |sum, row, _, weight| {
-                *sum += weight * self.az.pair(row).1 * self.bz.pair(row).1;
-            },
-            |_, weight, sum| weight * sum,
-            |left, right| left + right,
-        ) + self.split_eq.suffix_weight(prefix_pairs) * self.az.tail[1] * self.bz.tail[1]
-    }
-
-    fn product_endpoints(&self) -> (F, F) {
-        let prefix_pairs = self.az.values.len().div_ceil(2);
-        let [zero, infinity] = self.split_eq.par_fold_out_in_prefix(
-            prefix_pairs,
-            || [F::zero(); 2],
-            |sum, row, _, weight| {
-                let (a0, a1) = self.az.pair(row);
-                let (b0, b1) = self.bz.pair(row);
-                sum[0] += weight * a0 * b0;
-                sum[1] += weight * (a1 - a0) * (b1 - b0);
-            },
-            |_, weight, sum| [weight * sum[0], weight * sum[1]],
-            |a, b| [a[0] + b[0], a[1] + b[1]],
-        );
-        let mass = self.split_eq.suffix_weight(prefix_pairs);
-        (
-            zero + mass * self.az.tail[0] * self.bz.tail[0],
-            infinity
-                + mass * (self.az.tail[1] - self.az.tail[0]) * (self.bz.tail[1] - self.bz.tail[0]),
-        )
-    }
-
     fn cycle_weights(&self) -> Vec<F> {
         let reversed: Vec<F> = self.challenges.as_slice()[1..]
             .iter()
@@ -1358,16 +1270,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .copied()
             .collect();
         let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
-        let prefix = self.prefix_cycles.min((1usize << reversed.len()) - 1);
-        let eq = TensorEqTable::new(&reversed);
-        let tail_mass = EqPolynomial::suffix_sum(&reversed, prefix);
-        map_indices(prefix + 1, |row| {
-            if row == prefix {
-                tail_mass
-            } else {
-                eq.evaluate_index(row)
-            }
-        })
+        prefix_cycle_weights(&reversed, self.prefix_cycles)
     }
 
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
@@ -1566,11 +1469,11 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
         }
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
-            None => self.product_endpoints(),
+            None => self.az.product_endpoints(&self.bz, &self.split_eq),
         };
         self.split_eq
             .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.product_at_one()
+                self.az.product_at_one(&self.bz, &self.split_eq)
             })
     }
 

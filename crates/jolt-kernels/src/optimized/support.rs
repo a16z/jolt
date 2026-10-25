@@ -2,7 +2,8 @@ use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, TensorEqTable,
+    UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
@@ -586,14 +587,6 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
         round: usize,
         q_at_zero: impl FnOnce() -> F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
-
-    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F;
-
-    /// `(q(0), q(∞))` of the two-table product summand
-    /// `Σ_y E(y) · a(y) · b(y)` over the remaining low-to-high `(lo, hi)`
-    /// pairs — the endpoints `gruen_poly_deg_3` completes into the cubic
-    /// round message with the running claim.
-    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F);
 }
 
 impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
@@ -668,39 +661,6 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
                 expected: previous_claim,
                 actual,
             })
-    }
-
-    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F {
-        self.par_fold_out_in(
-            F::zero,
-            |sum, row, _, weight| {
-                *sum += weight * a.evals()[2 * row + 1] * b.evals()[2 * row + 1];
-            },
-            |_, weight, sum| weight * sum,
-            |left, right| left + right,
-        )
-    }
-
-    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {
-        let a = a.evals();
-        let b = b.evals();
-        debug_assert_eq!(
-            self.e_out_current_len() * self.e_in_current_len() * 2,
-            a.len()
-        );
-        debug_assert_eq!(a.len(), b.len());
-        let [zero, infinity] = self.par_fold_out_in(
-            || [F::zero(); 2],
-            |accumulator, row, _x_in, e| {
-                let (a_low, a_high) = (a[2 * row], a[2 * row + 1]);
-                let (b_low, b_high) = (b[2 * row], b[2 * row + 1]);
-                accumulator[0] += e * (a_low * b_low);
-                accumulator[1] += e * ((a_high - a_low) * (b_high - b_low));
-            },
-            |_x_out, e_out, accumulator| [e_out * accumulator[0], e_out * accumulator[1]],
-            |left, right| [left[0] + right[0], left[1] + right[1]],
-        );
-        (zero, infinity)
     }
 }
 
@@ -1063,6 +1023,43 @@ impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
             Self::Retained(rows) => Ok(rows[t]),
         }
     }
+}
+
+impl<B: WitnessBundle + Copy + PartialEq> BundleAccess<'_, B> {
+    pub(crate) fn constant_suffix_start(&self, cycles: usize) -> Result<usize, WitnessError> {
+        match self {
+            Self::View(view) => {
+                let prefix = view.physical_cycles().min(cycles);
+                // Only the final padding window lacks a next row. Compare it to
+                // the ordinary padding window before treating that suffix as constant.
+                if prefix < cycles && self.row(prefix)? != self.row(cycles - 1)? {
+                    Ok(cycles)
+                } else {
+                    Ok(prefix)
+                }
+            }
+            Self::Retained(rows) => {
+                let last = &rows[cycles - 1];
+                Ok(rows[..cycles]
+                    .iter()
+                    .rposition(|row| row != last)
+                    .map_or(0, |i| i + 1))
+            }
+        }
+    }
+}
+
+pub(crate) fn prefix_cycle_weights<F: JoltField>(point: &[F], prefix_cycles: usize) -> Vec<F> {
+    let prefix = prefix_cycles.min((1usize << point.len()) - 1);
+    let eq = TensorEqTable::new(point);
+    let tail_mass = EqPolynomial::suffix_sum(point, prefix);
+    map_indices(prefix + 1, |row| {
+        if row == prefix {
+            tail_mass
+        } else {
+            eq.evaluate_index(row)
+        }
+    })
 }
 
 #[inline(always)]
