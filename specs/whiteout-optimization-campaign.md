@@ -212,6 +212,14 @@ paper delta.
   delta. A question for the paper authors stays open, but it does not block
   the work.
 
+## Debt queued behind the campaign
+
+- **S1. Style debt.** `scripts/check_style_invariants.py --base main` reports 78
+  `nominal-imports` violations accumulated on the Whiteout line. CI runs this
+  check, so it blocks upstreaming. It is mechanical; run it after O0, O1 and O4
+  merge, since they touch the same files. Merge bars check new lines against
+  the pre-merge dev head.
+
 ## Not verified
 
 - **Verifier time split:** unmeasured until O0. Every verifier-side estimate
