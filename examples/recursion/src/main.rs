@@ -1059,7 +1059,7 @@ fn tamper_l2(
 const RECURSION_GUEST_CODEGEN: [(&str, &str); 2] = [
     (
         "ZEROOS_GUEST_RUSTFLAGS",
-        "-Cllvm-args=-inline-threshold=1000",
+        "-Cllvm-args=-inline-threshold=1750",
     ),
     ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
 ];
