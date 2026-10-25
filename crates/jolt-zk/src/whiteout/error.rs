@@ -73,6 +73,11 @@ pub enum WhiteoutError {
     /// certified box leaves the binding radius.
     #[error("Σ responses need {digits} digits, above the binding regime's")]
     BindingDigitsExceeded { digits: usize },
+    /// `e` needs `num_vars` variables, above the
+    /// [`super::MAX_RESPONSE_NUM_VARS`] the response proof's soundness
+    /// ledger is priced for.
+    #[error("the response vector needs {num_vars} variables, above the priced bound")]
+    ResponseTooLarge { num_vars: u32 },
     /// A lattice primitive rejected its arguments.
     #[error(transparent)]
     Crypto(#[from] CryptoError),

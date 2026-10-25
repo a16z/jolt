@@ -36,6 +36,14 @@ pub const RESPONSE_LOG_BASIS: u32 = 4;
 /// responses need more, so every certified box is inside the one
 /// [`binding_collision_radius`] was computed for.
 pub const BINDING_RESPONSE_DIGITS: usize = 10;
+/// The largest `ν = ⌈log₂|e|⌉` the response proof's soundness ledger is
+/// priced for (`specs/whiteout-paper-deltas.md` D27: its `ν/q`, `ν/q` and
+/// `3ν/q` rows total about `2^−119.7` at 27). [`SigmaSetup::response_layout`]
+/// refuses a longer `e`, so both roles fail closed instead of running past
+/// that budget.
+///
+/// [`SigmaSetup::response_layout`]: super::SigmaSetup::response_layout
+pub const MAX_RESPONSE_NUM_VARS: u32 = 27;
 /// The acceptance box keeps `p_𝓑 ≥ 1 − 2^{−20}`, far below the rejection
 /// rate set by `M`.
 const BOX_FAILURE_INVERSE: u64 = 1 << 20;

@@ -628,14 +628,12 @@ fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
     assert!(failures.is_empty(), "accepted tampers: {failures:#?}");
 }
 
-/// A47: the cut level sends u_a compressed, one 8-coefficient payload per
-/// chunk of Akita's split chain (muldiv's u_a is 19 × `R_64`, 1,216
-/// coefficients: chunks of 512, 512 and 192), and a flipped byte in any
-/// chunk rejects.
+/// A47: the cut sends u_a compressed, one 8-coefficient payload per chunk
+/// of Akita's split chain: muldiv's u_a is 19 × `R_64`, 1,216 coefficients,
+/// so three chunk payloads (byte tampers are the census sweep's).
 #[test]
-fn whiteout_compressed_residual_commitment_chunks_reject_tampers() {
-    const CHUNK_BYTES: usize = 8 * FIELD_BYTES;
-    let (case, trace) = honest();
+fn whiteout_compressed_residual_commitment_is_three_chunk_payloads() {
+    let (_, trace) = honest();
     let cut = classify(&trace)
         .into_iter()
         .find(|item| {
@@ -647,23 +645,11 @@ fn whiteout_compressed_residual_commitment_chunks_reject_tampers() {
                 )
         })
         .expect("the cut level's successor payload");
-    let range = trace.events[cut.index]
-        .narg
-        .clone()
-        .expect("a message has a range");
     assert_eq!(
-        range.len(),
-        3 * CHUNK_BYTES,
-        "cm(u_a) is three chunk payloads"
+        cut.bytes,
+        3 * 8 * FIELD_BYTES,
+        "the cut sends three chunk payloads"
     );
-    for chunk in range.step_by(CHUNK_BYTES) {
-        let mut tampered = case.proof().clone();
-        tampered.narg[chunk + CHUNK_BYTES / 2] ^= 1;
-        assert!(
-            case.verify_proof(&tampered).is_err(),
-            "a flipped byte in the chunk at {chunk} is accepted"
-        );
-    }
 }
 
 /// N4: one byte of an Akita masked-level message, and one in each part of

@@ -31,7 +31,7 @@ use super::params::EPSILON_BITS;
 use super::placement::{PadPlace, PadPlacement, OPERAND_LEVELS, PAD_LEVELS};
 use super::response::{ResponseProver, ResponseRows, ResponseStatement, ResponseWitness};
 use super::segments::SegmentRole;
-use super::sigma::{take_rejected, SelfChecks};
+use super::sigma::{response_num_vars, take_rejected, SelfChecks};
 use super::test_support::{
     prove_instance as prove, verify_instance, CheckingResponseProver, SendingResponseProver, LABEL,
     PROTOCOL,
@@ -1000,4 +1000,15 @@ fn plane_layout_readers_and_transpose_follow_its_index() {
             power *= F::from_u64(16);
         }
     }
+}
+
+/// D27's ledger is priced at ν ≤ 27: a response vector of `2^27` digits is
+/// admitted, one digit more is refused.
+#[test]
+fn response_vectors_above_the_priced_variable_count_are_refused() {
+    assert_eq!(response_num_vars(1 << 27), Ok(27));
+    assert_eq!(
+        response_num_vars((1 << 27) + 1),
+        Err(WhiteoutError::ResponseTooLarge { num_vars: 28 })
+    );
 }
