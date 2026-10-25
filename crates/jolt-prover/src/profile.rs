@@ -633,6 +633,10 @@ struct ProvenRun {
     setup_duration: Duration,
     verifier_parallel: VerificationRun,
     verifier_single_threaded: VerificationRun,
+    /// The Akita verifier's first verify against preprocessing after a serde
+    /// round trip, which plans its derived state (Whiteout's catalog and
+    /// response prover) instead of sharing the prover's.
+    verifier_transported: Option<VerificationRun>,
     proof_size: usize,
 }
 
@@ -645,6 +649,8 @@ struct VerificationRun {
 enum VerificationMode {
     Parallel,
     SingleThreaded,
+    #[cfg(feature = "akita")]
+    Transported,
 }
 
 impl VerificationRun {
@@ -662,6 +668,10 @@ fn measure_verifier(
         VerificationMode::Parallel => tracing::info_span!("profile_verifier_parallel", threads),
         VerificationMode::SingleThreaded => {
             tracing::info_span!("profile_verifier_single_threaded", threads)
+        }
+        #[cfg(feature = "akita")]
+        VerificationMode::Transported => {
+            tracing::info_span!("profile_verifier_transported", threads)
         }
     };
     let _guard = span.enter();
@@ -767,6 +777,13 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         run.verifier_parallel.threads,
         run.verifier_single_threaded.seconds() * 1e3,
     );
+    if let Some(transported) = &run.verifier_transported {
+        println!(
+            "modular {bench_name} (2^{scale}, {backend_label}): Verifier {:.3}ms on transported preprocessing, first use ({} threads)",
+            transported.seconds() * 1e3,
+            transported.threads,
+        );
+    }
     let peak = PeakMemory::sample();
     for (label, bytes) in [
         ("Peak RSS", peak.rss_bytes),
@@ -919,6 +936,7 @@ fn prove_workload(
         setup_duration,
         verifier_parallel,
         verifier_single_threaded,
+        verifier_transported: None,
         proof_size,
     }
 }
@@ -1034,12 +1052,33 @@ fn prove_workload(
     let verifier_single_threaded = jolt_akita::with_single_threaded_verifier_backend(|| {
         measure_verifier(VerificationMode::SingleThreaded, 1, verify)
     });
+    // A verifier in another process holds transported preprocessing, whose
+    // derived state (Whiteout catalog, response plan) its first verify plans.
+    let encoded =
+        bincode::serde::encode_to_vec(&prover_preprocessing.verifier, bincode::config::standard())
+            .expect("encode verifier preprocessing");
+    let transported: JoltVerifierPreprocessing<AkitaScheme, AkitaVc> =
+        bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+            .expect("decode verifier preprocessing")
+            .0;
+    let verifier_transported = jolt_akita::with_host_parallel_verifier_backend(|| {
+        measure_verifier(VerificationMode::Transported, parallel_threads, || {
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+                &transported,
+                &public_io,
+                &proof,
+                None,
+            )
+            .expect("modular Akita proof verifies on transported preprocessing");
+        })
+    });
 
     ProvenRun {
         duration,
         setup_duration,
         verifier_parallel,
         verifier_single_threaded,
+        verifier_transported: Some(verifier_transported),
         proof_size,
     }
 }
