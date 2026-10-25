@@ -29,6 +29,7 @@ mod whiteout {
     use common::jolt_device::JoltDevice;
     use jolt_akita::{
         AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme, HidingRandomness,
+        WhiteoutPlans,
     };
     use jolt_prover::akita;
     use jolt_prover::akita::preprocessing::{
@@ -177,9 +178,10 @@ mod whiteout {
         )
     }
 
-    /// The verifier preprocessing after a serde round trip: its Whiteout
-    /// catalog is derived state (`serde(skip)`), so the copy plans its own
-    /// instead of sharing the prover's.
+    /// The verifier preprocessing after a serde round trip: the copy shares
+    /// no derived state with the prover's. It loads the persisted catalog
+    /// plan; a setup persisted without response plans plans its response
+    /// schedule on first use.
     fn transported(preprocessing: &AkitaVerifierPreprocessing) -> AkitaVerifierPreprocessing {
         let encoded = bincode::serde::encode_to_vec(preprocessing, bincode::config::standard())
             .expect("encode verifier preprocessing");
@@ -213,6 +215,7 @@ mod whiteout {
     fn whiteout_muldiv_verifies_and_rejects_tampering() {
         let (proved, proof) = honest(Setup::Muldiv);
         verify(&proved, &proof).expect("an honest Whiteout proof verifies");
+        assert_verifies_transported(&proved, &proof);
 
         let len = proof.narg.len();
         for position in [len / 4, len / 2, 3 * len / 4, len - 1] {
@@ -235,6 +238,86 @@ mod whiteout {
         let (again, second) = honest(Setup::Muldiv);
         verify(&again, &second).expect("a second Whiteout proof verifies");
         assert_ne!(proof.narg, second.narg);
+    }
+
+    fn encode(preprocessing: &AkitaVerifierPreprocessing) -> Vec<u8> {
+        bincode::serde::encode_to_vec(preprocessing, bincode::config::standard())
+            .expect("encode verifier preprocessing")
+    }
+
+    /// Serialized preprocessing is a function of its setup, not of the
+    /// proofs made on it: a proved setup, an independent preprocessing run
+    /// and a decode and re-encode give the same bytes, with or without
+    /// exported plans. A prover and a verifier built from exported plans load
+    /// them: a proof on them verifies against the transported preprocessing,
+    /// and plans of another format are refused when the prover first uses
+    /// them, never replanned.
+    #[test]
+    fn whiteout_plans_persist_and_are_consumed() {
+        let (proved, _) = honest(Setup::Muldiv);
+        let run = prepare(Setup::Muldiv);
+        let config = config(&run);
+        let bytes = encode(&proved.preprocessing.verifier);
+        assert_eq!(
+            encode(&preprocess(Setup::Muldiv, &run, &config).verifier),
+            bytes
+        );
+        assert_eq!(encode(&transported(&proved.preprocessing.verifier)), bytes);
+
+        let plans = proved
+            .preprocessing
+            .verifier
+            .pcs_setup
+            .whiteout_plans()
+            .expect("the proved setup's plans");
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let from_plans = |plans: WhiteoutPlans| {
+            preprocessing::preprocess_full_from_plans(
+                &artifacts,
+                run.preprocessing.clone(),
+                &config,
+                false,
+                false,
+                plans,
+            )
+            .expect("preprocessing from plans")
+        };
+        let loaded = from_plans(plans.clone());
+        let persisted = transported(&loaded.verifier);
+        assert_eq!(encode(&persisted), encode(&loaded.verifier));
+        assert_ne!(encode(&persisted), bytes);
+
+        // `WhiteoutPlans`' wire form opens with its 4-byte tag, then its
+        // version as a one-byte varint.
+        let mut wire = bincode::serde::encode_to_vec(&plans, bincode::config::standard())
+            .expect("encode plans");
+        assert_eq!(wire[4], 1);
+        wire[4] = 2;
+        let (versioned, _): (WhiteoutPlans, _) =
+            bincode::serde::decode_from_slice(&wire, bincode::config::standard())
+                .expect("decode plans");
+        let refused = prove_with(prepare(Setup::Muldiv), &config, from_plans(versioned), None);
+        // The trace commitment, Stage 0, is the first use; the commitment
+        // path carries the refusal as an `OpeningsError` message.
+        let error = refused
+            .proof
+            .expect_err("plans of another format must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("version 2 are not this build's format"),
+            "{error}"
+        );
+
+        let reproved = prove_with(prepare(Setup::Muldiv), &config, loaded, None);
+        let proof = reproved.proof.expect("Whiteout proof on persisted plans");
+        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, JoltSponge>(
+            &persisted,
+            &reproved.public_io,
+            &proof,
+            None,
+        )
+        .expect("a proof on persisted plans verifies against the transported preprocessing");
     }
 
     /// Flipped bits across the argument string, truncation and an appended

@@ -62,6 +62,8 @@ pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 #[cfg(feature = "zk-prover")]
 pub use whiteout::WhiteoutResidual;
+#[cfg(feature = "zk")]
+pub use whiteout::{WhiteoutPlanError, WhiteoutPlans};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.

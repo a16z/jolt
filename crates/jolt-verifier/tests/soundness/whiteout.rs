@@ -21,7 +21,7 @@ use jolt_akita::AkitaScheme;
 use jolt_algebra::CanonicalBytes;
 use jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_transcript::{SiteId, TranscriptEvent, TranscriptOp, VerifierTranscript};
-use jolt_verifier::sites::{STAGE8, WHITEOUT, WHITEOUT_SIGMA};
+use jolt_verifier::sites::{PADS, STAGE8, WHITEOUT, WHITEOUT_SIGMA};
 use jolt_verifier::stages::stage8::akita::WhiteoutObject;
 use jolt_verifier::whiteout::{pad_layout, whiteout_stages};
 use jolt_verifier::{
@@ -124,6 +124,9 @@ fn class(at: Position, site: Site, kind: Kind) -> Option<Class> {
         // advice, a committed program) absorbed as public.
         (R::Commitments, Site::Jolt(_), K::Clear | K::Public) => Some(C::Commitment),
         (R::Pads, Site::Jolt(_), K::Clear) => Some(C::Pads),
+        // The plans' digests, absorbed before the pads (`PADS_DIGESTS` pins
+        // their count and size).
+        (R::Pads, Site::Jolt(site), K::Public) if site == PADS => Some(C::Statement),
         (
             R::Stage1
             | R::Stage2
@@ -235,6 +238,10 @@ fn classify(trace: &Trace) -> Vec<Classified> {
 /// The catalog digest and the selected row's digest, 32 bytes each.
 const STAGE8_DIGESTS: [usize; 2] = [32, 32];
 
+/// The pads' own absorbs: the masked catalog's digest, the selected row's
+/// digest and the response schedule's catalog digest.
+const PADS_DIGESTS: [usize; 3] = [32, 32, 32];
+
 /// The absorbs a proof's statement fixes outside the message stream.
 struct Expected {
     /// Stage 8's own absorbs: each packed precommitted object's reduction
@@ -297,6 +304,17 @@ fn census(trace: &Trace, expected: &Expected) -> Result<BTreeMap<Class, usize>, 
         failures.push(format!(
             "Stage 8's own absorbs are {absorbed:?}, not {:?}",
             expected.stage8
+        ));
+    }
+    let pads: Vec<usize> = trace
+        .events
+        .iter()
+        .filter(|event| event.site == PADS && event.op == TranscriptOp::Public)
+        .map(|event| event.len)
+        .collect();
+    if pads != PADS_DIGESTS {
+        failures.push(format!(
+            "the pads' public absorbs are {pads:?}, not {PADS_DIGESTS:?}"
         ));
     }
     let classified = classify(trace);

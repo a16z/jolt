@@ -55,7 +55,8 @@ Record it, but don't optimize it here.
   thread as with 16, so its new work runs serially.
 - **First-use cost.** It comes from planning, not setup expansion. The
   response plan (`find_schedule`) takes 10.8–11.3 s and the catalog plan
-  (`find_zk_schedule`) 1.3–2.2 s. Both are derived state skipped by serde.
+  (`find_zk_schedule`) 1.3–2.2 s. At V6 both were derived state skipped
+  by serde; O1 persists them (paper delta D32).
 
 ## Tickets
 
@@ -87,6 +88,27 @@ in.
   - Test: tampered plan bytes are rejected, and a round-trip verify gives
     the same result.
   - jolt, plus Akita for plan serde.
+  - **Outcome (`wo/o1-plans`, paper delta D32).** jolt only; Akita's
+    trusted-artifact decoder already audits and admits rows. A fresh setup
+    plans its catalog at construction and persists it; exported plans
+    (`AkitaVerifierSetup::whiteout_plans`, response schedules included)
+    enter a new prover or verifier setup only at construction
+    (`preprocess_full_from_plans`), and a setup holding a response set
+    refuses a length it lacks. The pads absorb the masked catalog's, the
+    selected row's and the response schedule's digests. One profile run
+    each on the rebased head (after O4), release, `--backend optimized`;
+    the 1-minute load average was 30–36, so absolute times are inflated:
+
+    | | muldiv (2^12) | fib (2^20) |
+    |---|---|---|
+    | planning in the same run (`whiteout_plan_catalog` at setup + `whiteout_plan_response`) | 1.91 + 11.5 s | 2.29 + 12.0 s |
+    | loading and validating (`whiteout_load_catalog` + `whiteout_load_response`) | 0.010 + 0.001 s | 0.018 + 0.002 s |
+    | verify, in process (parallel) | 0.160 s | 0.282 s |
+    | verify, first use on transported preprocessing | 0.207 s (V6: 12.3 s) | 0.343 s (V6: 13.7 s) |
+
+    The transported verifier is built from the prover's exported plans
+    (`preprocess_full_from_plans`), so it plans nothing. Its excess over
+    the in-process verify (47 ms and 61 ms) is not attributed here.
 - **O2. Faster planning.** Expected: response plan 11–16 s down to about
   1 s.
   - Profile `find_schedule` on the response statement: candidate count and

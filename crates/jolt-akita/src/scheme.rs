@@ -33,6 +33,8 @@ use crate::configs::AkitaChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
 use crate::trace_onehot::{TraceOneHotColumn, TraceOneHotRows};
+#[cfg(feature = "zk")]
+use crate::whiteout::WhiteoutSetup;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
@@ -853,7 +855,23 @@ impl CommitmentScheme for AkitaScheme {
             #[cfg(feature = "zk")]
             whiteout: params
                 .whiteout
-                .then(|| crate::whiteout::WhiteoutSetup::new(params.grouped_schedule.clone())),
+                .clone()
+                .map(|source| {
+                    WhiteoutSetup::new(
+                        params.grouped_schedule.clone(),
+                        source,
+                        crate::whiteout::opens_whiteout(
+                            params.one_hot_k,
+                            params.akita_chunk_profile,
+                        )
+                        .then_some((
+                            params.max_num_vars,
+                            params.max_num_polys_per_commitment_group,
+                        )),
+                    )
+                })
+                .transpose()
+                .map_err(invalid_setup)?,
         };
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
             if params.flavor == AkitaSetupFlavor::OneHot {

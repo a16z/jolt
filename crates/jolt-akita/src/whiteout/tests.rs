@@ -34,14 +34,39 @@ struct Fixture {
     evaluations: Vec<F>,
 }
 
+/// Muldiv's masked opening shape: the trace group alone.
+fn opening() -> MaskedOpeningShape {
+    MaskedOpeningShape {
+        precommitted: Vec::new(),
+        num_vars: NUM_VARS,
+        num_polys: NUM_POLYS,
+    }
+}
+
+/// A fresh setup of the trace group alone, which plans its catalog.
+fn fresh() -> WhiteoutSetup {
+    WhiteoutSetup::new(None, WhiteoutSource::Plan, Some((NUM_VARS, NUM_POLYS))).unwrap()
+}
+
+impl Fixture {
+    /// The same commitment and claims under another setup's `shape`.
+    fn with_shape(&self, shape: Arc<WhiteoutShape>) -> Self {
+        Self {
+            shape,
+            commitment: self.commitment.clone(),
+            handle: self.handle.clone(),
+            point: self.point.clone(),
+            evaluations: self.evaluations.clone(),
+        }
+    }
+}
+
 fn fixture() -> Fixture {
-    let shape = WhiteoutSetup::new(None)
-        .shape(&MaskedOpeningShape {
-            precommitted: Vec::new(),
-            num_vars: NUM_VARS,
-            num_polys: NUM_POLYS,
-        })
-        .unwrap();
+    fixture_on(&fresh())
+}
+
+fn fixture_on(setup: &WhiteoutSetup) -> Fixture {
+    let shape = setup.shape(&opening()).unwrap();
     let row = shape.row();
     let rows = 1usize << (NUM_VARS - AKITA_ONE_HOT_K16.ilog2() as usize);
     let polynomials = (0..NUM_POLYS)
@@ -132,8 +157,11 @@ fn replay(
     CommittedPadsView<LatticePadPayload<F>>,
     ResidualRelation<F>,
 ) {
-    let mut pads =
-        WhiteoutTail::receive_pads(fixture.shape.row(), layout.clone(), transcript).unwrap();
+    let mut pads = fixture
+        .shape
+        .tail()
+        .receive_pads(fixture.shape.row(), layout.clone(), transcript)
+        .unwrap();
     let mut claims = vec![F::default(); NUM_POLYS];
     let slots = pads
         .channel(transcript)
@@ -302,4 +330,216 @@ fn whiteout_pad_rank_steps_at_the_sigma_binding_brackets() {
             width
         );
     }
+}
+
+/// A setup of the trace group alone that loads `plans`, as a setup decoded
+/// in another process does.
+fn loading(plans: WhiteoutPlans) -> WhiteoutSetup {
+    WhiteoutSetup::from(WhiteoutSetupWire {
+        grouped: None,
+        plans: Some(plans),
+    })
+}
+
+/// The [`WhiteoutPlanError`] `error` carries, if any.
+fn plan_error(error: &ZkError) -> Option<&WhiteoutPlanError> {
+    let ZkError::Whiteout(source) = error else {
+        return None;
+    };
+    source.downcast_ref()
+}
+
+/// The error a setup loading `plans` refuses `opening` with.
+fn refusal(plans: WhiteoutPlans, opening: &MaskedOpeningShape) -> ZkError {
+    loading(plans).shape(opening).err().unwrap()
+}
+
+/// The byte range and value of the first integer field `name` at or after
+/// `from` in `text`.
+fn integer_field(text: &str, from: usize, name: &str) -> (usize, usize, usize) {
+    let key = format!("\"{name}\":");
+    let start = from + text[from..].find(&key).unwrap() + key.len();
+    let end = start + text[start..].find(|c: char| !c.is_ascii_digit()).unwrap();
+    (start, end, text[start..end].parse().unwrap())
+}
+
+/// `plans`' trace catalog with the residual commitment's `A_a` (the inner
+/// matrix of the cut successor's one group) one rank lower and `B_a`'s
+/// width narrowed to match, so the row stays geometrically consistent and
+/// only the rank is short; edited in place in Akita's canonical bytes.
+fn lower_residual_rank(plans: &WhiteoutPlans) -> Vec<u8> {
+    let text = std::str::from_utf8(&plans.catalog.trace).unwrap();
+    let folds = text.find("\"recursive_folds\":").unwrap();
+    let cut = ZK_CUT_LEVEL as usize;
+    let (mut depth, mut element) = (0usize, 0usize);
+    let mut successor = None;
+    for (offset, byte) in text[folds..].bytes().enumerate() {
+        match byte {
+            b'[' | b'{' => {
+                depth += 1;
+                if depth == 2 && element == cut {
+                    successor = Some(folds + offset);
+                    break;
+                }
+            }
+            b']' | b'}' => depth -= 1,
+            b',' if depth == 1 => element += 1,
+            _ => {}
+        }
+    }
+    let successor = successor.unwrap();
+    let (rank_start, rank_end, rank) = integer_field(text, successor, "output_rank");
+    let outer = successor + text[successor..].find("\"outer\":").unwrap();
+    let (width_start, width_end, width) = integer_field(text, outer, "input_width");
+    let (_, _, randomness) = integer_field(text, successor, "randomness_columns");
+    let lowered_width = width - (width - randomness) / rank;
+    assert!(rank_end < width_start);
+    format!(
+        "{}{}{}{}{}",
+        &text[..rank_start],
+        rank - 1,
+        &text[rank_end..width_start],
+        lowered_width,
+        &text[width_end..]
+    )
+    .into_bytes()
+}
+
+/// A fresh setup persists its catalog's plan; a setup decoded from it
+/// loads exactly that catalog and re-serializes to the same bytes, as does
+/// an independent fresh setup. Every tampered or foreign plan is refused
+/// with its [`WhiteoutPlanError`] rather than replanned.
+#[test]
+fn whiteout_persisted_catalog_is_validated_on_load() {
+    let encode = |setup: &WhiteoutSetup| {
+        bincode::serde::encode_to_vec(setup, bincode::config::standard()).unwrap()
+    };
+    let planned = fresh();
+    let digest = planned
+        .catalog(NUM_VARS, NUM_POLYS)
+        .unwrap()
+        .scheme
+        .schedules()
+        .catalog_digest();
+    let plans = planned.plans().unwrap();
+    assert_eq!(plans.responses, None);
+    let bytes = encode(&planned);
+    let (decoded, _): (WhiteoutSetup, _) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+    assert_eq!(
+        decoded
+            .catalog(NUM_VARS, NUM_POLYS)
+            .unwrap()
+            .scheme
+            .schedules()
+            .catalog_digest(),
+        digest
+    );
+    assert_eq!(encode(&decoded), bytes);
+    assert_eq!(encode(&fresh()), bytes);
+
+    // A residual `A_a` one rank below its Σ-binding rank, in an otherwise
+    // consistent row, is refused by Akita's admission.
+    let mut lowered = plans.clone();
+    lowered.catalog.trace = lower_residual_rank(&plans);
+    let error = refusal(lowered, &opening());
+    assert!(matches!(
+        plan_error(&error),
+        Some(WhiteoutPlanError::Inadmissible(_))
+    ));
+    assert!(
+        error.to_string().contains("below its Σ-binding rank"),
+        "{error}"
+    );
+
+    // Another statement: the plan of a narrower trace group, relabelled or
+    // not, has no row for a wider one; a trace catalog in a precommitted
+    // group's place.
+    let wider = MaskedOpeningShape {
+        num_polys: NUM_POLYS + 1,
+        ..opening()
+    };
+    let mut relabelled = plans.clone();
+    relabelled.catalog.num_polys += 1;
+    for foreign in [relabelled, plans.clone()] {
+        assert!(matches!(
+            plan_error(&refusal(foreign, &wider)),
+            Some(WhiteoutPlanError::Statement(_))
+        ));
+    }
+    let mut swapped = plans.clone();
+    swapped
+        .catalog
+        .precommitted
+        .push(plans.catalog.trace.clone());
+    assert!(matches!(
+        plan_error(&refusal(swapped, &opening())),
+        Some(WhiteoutPlanError::Statement(_))
+    ));
+
+    let mut versioned = plans;
+    versioned.version += 1;
+    assert!(matches!(
+        plan_error(&refusal(versioned, &opening())),
+        Some(WhiteoutPlanError::Format { .. })
+    ));
+}
+
+/// The error the pads of `fixture`'s proof are refused with.
+fn pads_refusal(fixture: &Fixture, proof: &[u8]) -> ZkError {
+    let mut transcript = new_verifier_transcript(SESSION, proof);
+    fixture
+        .shape
+        .tail()
+        .receive_pads(fixture.shape.row(), layout(fixture), &mut transcript)
+        .err()
+        .unwrap()
+}
+
+/// A proof verifies against a setup decoded with the prover's exported
+/// plans, whose response set is then exhaustive: a length it lacks is
+/// refused, not planned, and a response plan that is not a response
+/// schedule is refused, both at the pads.
+#[test]
+fn whiteout_persisted_response_plan_verifies_and_is_validated() {
+    let setup = fresh();
+    let fixture = fixture_on(&setup);
+    let proof = prove(&fixture, 7);
+    verify(&fixture, &proof).unwrap();
+
+    let plans = setup.export().unwrap();
+    assert_eq!(plans.responses.as_ref().map(BTreeMap::len), Some(1));
+    let bytes =
+        bincode::serde::encode_to_vec(loading(plans.clone()), bincode::config::standard()).unwrap();
+    let (decoded, _): (WhiteoutSetup, _) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+    verify(
+        &fixture.with_shape(decoded.shape(&opening()).unwrap()),
+        &proof,
+    )
+    .unwrap();
+
+    let mut missing = plans.clone();
+    missing.responses = Some(BTreeMap::new());
+    let error = pads_refusal(
+        &fixture.with_shape(loading(missing).shape(&opening()).unwrap()),
+        &proof,
+    );
+    assert!(matches!(
+        plan_error(&error),
+        Some(WhiteoutPlanError::Statement(_))
+    ));
+
+    let mut swapped = plans.clone();
+    for response in swapped.responses.iter_mut().flat_map(BTreeMap::values_mut) {
+        response.clone_from(&plans.catalog.trace);
+    }
+    let error = pads_refusal(
+        &fixture.with_shape(loading(swapped).shape(&opening()).unwrap()),
+        &proof,
+    );
+    assert!(matches!(
+        plan_error(&error),
+        Some(WhiteoutPlanError::Inadmissible(_))
+    ));
 }

@@ -146,6 +146,10 @@ differ: the model is at T = 2^24 and the measurements at T = 2^12–2^20.
    This adds to W6f (N5): plan the catalog on first use, and build the prover
    setup twice. Shipping the planned rows and the response schedule as
    artifacts, or serializing them with the preprocessing, removes this cost.
+
+   *Resolved by O1* (paper delta D32): the verifier setup persists both
+   plans and a fresh verifier loads and validates them instead of planning;
+   measurements are in `specs/whiteout-optimization-campaign.md` (O1).
 3. **RSS grows by 9–13×:** 0.32 → 2.86 GiB (muldiv) and 0.60 → 7.94 GiB
    (fib 2^20). The `footprint_gib` counter in the existing `trace.json`
    attributes the growth as follows (fib 2^20; muldiv in parentheses):

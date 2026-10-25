@@ -15,6 +15,12 @@ pub(crate) fn whiteout(setup: &AkitaVerifierSetup) -> Result<&WhiteoutSetup, ZkE
     })
 }
 
+/// Whether a setup of one-hot `one_hot_k` and `chunk_profile` has a masked
+/// opening: one single-chunk K=16 trace group.
+pub(crate) fn opens_whiteout(one_hot_k: usize, chunk_profile: AkitaChunkProfile) -> bool {
+    one_hot_k == AKITA_ONE_HOT_K16 && chunk_profile == AkitaChunkProfile::Single
+}
+
 /// The masked opening of `groups`: a K=16 one-hot trace group on a
 /// single-chunk setup, the setup's own trace shape, beside precommitted
 /// groups the setup admits. Both roles pass the statement's shape.
@@ -22,9 +28,7 @@ pub(crate) fn opening_shape(
     setup: &AkitaVerifierSetup,
     groups: &MaskedOpeningShape,
 ) -> Result<Arc<WhiteoutShape>, ZkError> {
-    if setup.one_hot_k != AKITA_ONE_HOT_K16
-        || setup.akita_chunk_profile() != AkitaChunkProfile::Single
-    {
+    if !opens_whiteout(setup.one_hot_k, setup.akita_chunk_profile()) {
         return Err(AkitaError::UnsupportedSchedule(
             "Whiteout opens one single-chunk K=16 trace group".into(),
         )
@@ -103,7 +107,7 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         layout: PadLayout,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
-        WhiteoutTail::receive_pads(&shape.row, layout, transcript)
+        shape.tail.receive_pads(&shape.row, layout, transcript)
     }
 
     fn verify_masked<H: Sponge, P>(
