@@ -719,9 +719,11 @@ impl TraceOneHotCommitment for AkitaScheme {
             point: crate::adapters::reverse_point(&trace.point),
             evaluations: trace.evaluations,
         });
-        let (opening, auxiliary) = opening
-            .row()
-            .prove_masked(groups, forms, pads, transcript)?;
+        let compression = opening.tail().compression(opening.row(), pads.layout())?;
+        let (opening, auxiliary) =
+            opening
+                .row()
+                .prove_masked(groups, forms, pads, transcript, compression.as_ref())?;
         Ok((crate::whiteout::WhiteoutResidual { opening }, auxiliary))
     }
 

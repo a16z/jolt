@@ -441,8 +441,8 @@ pub struct MaskedProver<'a, F, O, H: Sponge> {
 /// ones (Akita's grinding nonces and fold-response counters,
 /// `specs/whiteout-akita.md` §4.5). A nonce is found from public transcript
 /// state alone, so it takes no pad. The only other unmasked messages are
-/// [`Channel::exchange_public`]'s (Akita's D images and u_a, hidden by their
-/// own randomness, `specs/whiteout-akita.md` §4.2).
+/// [`Channel::exchange_public`]'s (Akita's D images and `cm(u_a)`, hidden by
+/// their images' own randomness, `specs/whiteout-akita.md` §4.2, A47).
 impl<F, O, H: Sponge> MaskedProver<'_, F, O, H> {
     /// [`ProverTranscript::grind`].
     ///

@@ -14,6 +14,7 @@ use akita_params::transcript_site::{
     SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
     SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_SUMCHECK,
 };
+use akita_params::zk::ZK_CUT_LEVEL;
 use akita_params::{GrindingSite, ProtocolSiteId};
 use jolt_akita::AkitaField;
 use jolt_akita::AkitaScheme;
@@ -625,6 +626,30 @@ fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
         }
     }
     assert!(failures.is_empty(), "accepted tampers: {failures:#?}");
+}
+
+/// A47: the cut sends u_a compressed, one 8-coefficient payload per chunk
+/// of Akita's split chain: muldiv's u_a is 19 × `R_64`, 1,216 coefficients,
+/// so three chunk payloads (byte tampers are the census sweep's).
+#[test]
+fn whiteout_compressed_residual_commitment_is_three_chunk_payloads() {
+    let (_, trace) = honest();
+    let cut = classify(&trace)
+        .into_iter()
+        .find(|item| {
+            item.region == Region::Stage8
+                && matches!(
+                    Site::of(trace.events[item.index].site),
+                    Site::Akita(site)
+                        if site.family == SITE_FAMILY_NEXT_WITNESS && site.level == ZK_CUT_LEVEL
+                )
+        })
+        .expect("the cut level's successor payload");
+    assert_eq!(
+        cut.bytes,
+        3 * 8 * FIELD_BYTES,
+        "the cut sends three chunk payloads"
+    );
 }
 
 /// N4: one byte of an Akita masked-level message, and one in each part of

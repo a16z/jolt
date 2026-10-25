@@ -41,7 +41,7 @@ use super::linear::{BlockTarget, GadgetTerm, LRow, LinearBlock, ResidualBlock, R
 use super::pad_commitment::LatticePadCommitment;
 #[cfg(feature = "whiteout-prover")]
 use super::pad_commitment::LatticePadOpening;
-use super::params::{SigmaParams, RESPONSE_LOG_BASIS};
+use super::params::{SigmaParams, MAX_RESPONSE_NUM_VARS, RESPONSE_LOG_BASIS};
 use super::placement::PadPlacement;
 use super::response::{
     ResponseLayout, ResponseProver, ResponseSegment, ResponseStatement, FIELD_LEVELS,
@@ -362,7 +362,8 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
     ///
     /// # Errors
     ///
-    /// The compression's witness-length errors.
+    /// The compression's witness-length errors, and
+    /// [`WhiteoutError::ResponseTooLarge`] above [`MAX_RESPONSE_NUM_VARS`].
     pub fn response_layout(
         &self,
         compression: &dyn ImageCompression<F>,
@@ -393,8 +394,20 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
                 digits: compression.witness_len(coefficients)?,
             });
         }
-        Ok(ResponseLayout { segments })
+        let layout = ResponseLayout { segments };
+        let _ = response_num_vars(layout.len())?;
+        Ok(layout)
     }
+}
+
+/// `ν = ⌈log₂ len⌉` of a response vector of `len` digits, refused above
+/// [`MAX_RESPONSE_NUM_VARS`] (D27's priced bound).
+pub(crate) fn response_num_vars(len: usize) -> Result<u32, WhiteoutError> {
+    let num_vars = len.next_power_of_two().trailing_zeros();
+    if num_vars > MAX_RESPONSE_NUM_VARS {
+        return Err(WhiteoutError::ResponseTooLarge { num_vars });
+    }
+    Ok(num_vars)
 }
 
 /// The attempt seed: `(σ, n, cm(t_D))` through the attempt fork.

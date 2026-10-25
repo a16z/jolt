@@ -59,7 +59,7 @@ so the authors can fold it into the paper.
 | D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
 | D27 | Soundness ledger of the response proof: ≈ 2^−119.7 in total; the α round alone 126/q ≈ 2^−121 | accepted for now | accepted for now (user, 2026-10-22); revisit with the paper authors |
 | D28 | Public coordinates of w_k: the cut level's setup-prefix response and inner digits, at native-element granularity, with no zero cells | clarification, departure | implemented (Akita W5d) |
-| D29 | u_a enters N as a public (raw) target; the masked prefix sends it raw (19 × `R_64` after W5e) | departure (cost) | implemented (Akita W5d, re-sized W5e) |
+| D29 | u_a enters N as a public (raw) target; the masked prefix sends it raw (19 × `R_64` after W5e) | departure (cost) | retired by O4 (Akita A47): the cut sends `cm(u_a)`, as the paper does |
 | D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
 | D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation; their trust root is the holder of r | departure (stricter than paper), clarification | implemented (W6f, A44) |
 
@@ -1192,6 +1192,12 @@ from an extension field, repeat the α round, or state the headline as
 about 2^−119.7 for this component. The product and fused sumchecks also carry no proof of
 work (Akita spec A34).
 
+**Enforced bound (O4).** The ledger is priced at `ν ≤ 27`;
+`jolt_zk::whiteout::MAX_RESPONSE_NUM_VARS` holds that bound, and
+`SigmaSetup::response_layout`, which both roles build `e`'s layout with,
+refuses a longer `e` (`WhiteoutError::ResponseTooLarge`). The other two
+inputs (`⌈log₂ m⌉ ≤ 27`, `⌈log₂ n_×⌉ ≤ 10`) are not enforced in code.
+
 ## D28. Public coordinates of w_k
 
 **Paper says.** Coordinates of `s` that hold public data may be left to the
@@ -1260,12 +1266,62 @@ the setup grows with them (dense 14:1: 131,072 → 7,045,504 field elements,
 **Security impact.** None: u_a is hidden by `r_a` (Lemma
 `wo:lem:stat-hiding`, Akita §4.8.1), raw or compressed.
 
-**Status.** Implemented. The 19 KB is the cost of keeping the cut
-successor's payload raw at the Σ-bound rank; a compressed cut payload with
-a compressed `N` target would recover the paper's 128 B. Akita §4.1's
+**Status.** Retired by O4 (below). Before O4: the 19 KB was the cost of
+keeping the cut successor's payload raw at the Σ-bound rank. Akita §4.1's
 "3 × `R_256`, 12 KB" design figure is superseded: the planner's dimension
 ceiling keeps the cut successor at `R_64`, where binding at the Σ radius
 needs rank 19.
+
+**O4: u_a compressed (Akita A47).** The departure is withdrawn; the
+implementation now follows Item 3.
+
+- *What is sent.* At the cut level's `NextWitnessPayload` site the masked
+  prefix sends `cm(u_a)` under W5c's split chain (D9): 1,216 coefficients
+  in chunks of 512, 512 and 192, one 8-coefficient payload each, 384 B in
+  place of 19,456 B. The chain is the response proof's (`K₁`, `K₂` from
+  its setup), passed to the prefix as `ImageCompression`
+  (`WhiteoutTail::compression`), so the maps that compress u_a and the
+  rows that check it have one owner. Akita's own payload mode at the
+  after-cut level stays `Raw`; that mode's chain witness would be proved
+  by a successor fold that zero knowledge never runs.
+- *What is checked.* N's outer block has target
+  `BlockTarget::Compressed { payload: cm(u_a), .. }`. jolt-zk handles it
+  as it handles the pad image: `ξ_a` joins `e` after `V` and `θ`, Item 3
+  reads u_a as `G₁ξ₁`, Item 2 gains u_a's six chain rows at `α`, and
+  `I_bin` covers `ξ_a`.
+- *Knowledge soundness.* The paper's argument (Thm `wo:thm:knowledge`),
+  with one step the implementation now exercises: every extracted `e`
+  below one `cm(u_a)` reconstructs the same u_a, by Lemma
+  `wo:lem:compressed-binding` per chunk (D9), unless a chunk map has a
+  norm-one kernel vector; Lemma `wo:lem:weak-unique` then applies to that
+  u_a as before. `R_Σ`, the residual ranks and the Σ box are unchanged:
+  `ξ_a` is in `e`, not in `s`, and the binary constraint certifies it.
+- *Hiding.* Unchanged: `cm(u_a)` and `ξ_a` are functions of u_a, which H8
+  replaces with a uniform image. Before O4 u_a itself was public.
+- *Error.* The chain rows join the α round (`126/q` stays the maximum).
+  The ν-dependent rows (binary constraint, padding term, fused sumcheck:
+  `5ν/q`) move only if `|e|` crosses a power of two. `ξ_a` adds 161,792
+  digits to `e` (67,584 + 67,584 + 26,624 per chunk, from
+  `CompressionShape::witness_len`), and no measured workload crosses: ν
+  stays 24 (muldiv), 25 (fib 2^16) and 26 (fib 2^20), so D27's ledger is
+  unchanged.
+- *Measured* (O4, V6 harness `jolt-prover profile --backend optimized`,
+  features `profiling,akita,zk`, Apple M4 Max under load ~100; two runs
+  each after; "before" is V6's medians and the O1/V6 traces at the same
+  Akita pin; proof = argument string + 10 B):
+
+  | | muldiv (2^12) | fib 2^16 | fib 2^20 |
+  |---|---|---|---|
+  | masked prefix, before → after | 24,591 → 5,519 | 24,818 → 5,746 | 25,275 → 6,203 |
+  | response proof, before → after | 70,381–70,393 → 70,328–70,395 | 70,625–70,671 → 70,691–70,704 | 70,797–70,803 → 70,774–70,811 |
+  | ν (`whiteout_plan_response`) | 24 → 24 | 25 (inferred) → 25 | 26 → 26 |
+  | proof bytes, before → after | 112,931 → 93,792–93,860 | 115,141 → 96,111–96,125 | 117,480 → 98,379–98,415 |
+  | proof Δ over clear Akita | +30,954 → +11,815–11,883 | +31,021 → +11,991–12,005 | +28,795 → +9,694–9,730 |
+
+  The prefix falls by exactly 19,072 B (19,456 − 384) in every run; the
+  response proof's change is within its run-to-run spread. fib 2^16's
+  ν before was not logged in a surviving trace; its response-proof bytes
+  sit between muldiv's (ν = 24) and fib 2^20's (ν = 26) as V6 measured.
 
 ## D30. Two-witness distinguisher
 
