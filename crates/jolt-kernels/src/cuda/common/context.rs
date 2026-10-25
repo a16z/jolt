@@ -219,17 +219,11 @@ pub struct CudaKernelContext {
     msm_bucket_reduce_chunked: CudaFunction,
     msm_point_rows_sum: CudaFunction,
     msm_window_fold: CudaFunction,
-    #[cfg(test)]
     msm_block_embed: CudaFunction,
-    #[cfg(test)]
     msm_scatter_strided: CudaFunction,
-    #[cfg(test)]
     msm_scatter_one_hot: CudaFunction,
-    #[cfg(test)]
     msm_fold_rows: CudaFunction,
-    #[cfg(test)]
     opening_one_hot_embed: CudaFunction,
-    #[cfg(test)]
     opening_one_hot_fold: CudaFunction,
     #[cfg(test)]
     msm_jacobian_z: CudaFunction,
@@ -475,17 +469,11 @@ impl CudaKernelContext {
             msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
             msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
             msm_window_fold: module.load_function("msm_window_fold_kernel")?,
-            #[cfg(test)]
             msm_block_embed: module.load_function("msm_block_embed_kernel")?,
-            #[cfg(test)]
             msm_scatter_strided: module.load_function("msm_scatter_strided_kernel")?,
-            #[cfg(test)]
             msm_scatter_one_hot: module.load_function("msm_scatter_one_hot_kernel")?,
-            #[cfg(test)]
             msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
-            #[cfg(test)]
             opening_one_hot_embed: module.load_function("opening_one_hot_embed_kernel")?,
-            #[cfg(test)]
             opening_one_hot_fold: module.load_function("opening_one_hot_fold_kernel")?,
             #[cfg(test)]
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
@@ -1369,32 +1357,26 @@ impl CudaKernelContext {
         &self.msm_window_fold
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_block_embed(&self) -> &CudaFunction {
         &self.msm_block_embed
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_scatter_strided(&self) -> &CudaFunction {
         &self.msm_scatter_strided
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_scatter_one_hot(&self) -> &CudaFunction {
         &self.msm_scatter_one_hot
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_fold_rows(&self) -> &CudaFunction {
         &self.msm_fold_rows
     }
 
-    #[cfg(test)]
     pub(crate) const fn opening_one_hot_embed(&self) -> &CudaFunction {
         &self.opening_one_hot_embed
     }
 
-    #[cfg(test)]
     pub(crate) const fn opening_one_hot_fold(&self) -> &CudaFunction {
         &self.opening_one_hot_fold
     }

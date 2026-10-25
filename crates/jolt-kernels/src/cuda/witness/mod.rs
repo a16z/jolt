@@ -13,7 +13,7 @@ use allocative::Key;
 #[cfg(feature = "allocative")]
 use allocative::Visitor;
 use jolt_program::preprocess::JoltProgramPreprocessing;
-use jolt_witness::RowSource;
+use jolt_witness::{RowSource, WitnessBundle, WitnessError};
 use std::sync::{Arc, OnceLock};
 
 use jolt_field::JoltField;
@@ -24,6 +24,22 @@ use super::common::context::CudaKernelContext;
 use super::common::device_columns::witness_identity;
 use super::common::devices::CycleWindow;
 use crate::{KernelError, ProofSession};
+
+#[tracing::instrument(
+    skip_all,
+    name = "cuda_collect_rows",
+    fields(bundle = core::any::type_name::<B>(), cycles)
+)]
+pub(crate) fn collect_rows<F, B>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Vec<B>, WitnessError>
+where
+    F: JoltField,
+    B: WitnessBundle + Copy + Send + Sync,
+{
+    crate::optimized::support::collect_rows::<B>(witness, cycles)
+}
 
 pub(crate) struct ResidentTrace {
     source: usize,

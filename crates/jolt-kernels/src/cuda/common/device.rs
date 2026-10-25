@@ -8,6 +8,7 @@
 use ark_bn254::Fr as ArkFr;
 use jolt_field::JoltField;
 use std::any::TypeId;
+use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use ark_ff::BigInt;
@@ -167,6 +168,23 @@ pub fn as_fr_slice<F: JoltField>(values: &[F]) -> Option<&[Fr]> {
     // SAFETY: the TypeId check above proves `F == Fr`, so the two slices have
     // identical layout, length, and validity. The lifetime is preserved.
     Some(unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<Fr>(), values.len()) })
+}
+
+pub fn fr_vec_into<F: JoltField>(values: Vec<Fr>) -> Option<Vec<F>> {
+    if TypeId::of::<F>() != TypeId::of::<Fr>() {
+        return None;
+    }
+    let mut values = ManuallyDrop::new(values);
+    // SAFETY: the TypeId check proves `F == Fr` — identical size and align —
+    // so the allocation is valid to reconstitute as `Vec<F>` with the same
+    // length and capacity. The original vector is not dropped.
+    Some(unsafe {
+        Vec::from_raw_parts(
+            values.as_mut_ptr().cast::<F>(),
+            values.len(),
+            values.capacity(),
+        )
+    })
 }
 
 pub fn fr_into<F: JoltField>(value: Fr) -> Option<F> {

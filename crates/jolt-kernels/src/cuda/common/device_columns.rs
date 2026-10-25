@@ -192,6 +192,22 @@ pub(crate) fn park_device_column<S: ?Sized, T: DeviceBytes>(
     device_columns_for(session, source).put(key, window.len, span, value);
 }
 
+pub(crate) fn peek_device_column<S: ?Sized, T: DeviceBytes>(
+    session: &mut ProofSession,
+    source: &S,
+    ordinal: usize,
+    column: DeviceColumn,
+    window: &CycleWindow,
+    required_span: usize,
+) -> Option<Arc<T>> {
+    let key = ColumnKey {
+        ordinal,
+        column,
+        base: window.start,
+    };
+    device_columns_for(session, source).get::<T>(key, window.len, required_span)
+}
+
 pub(crate) fn device_column<S, T, E>(
     session: &mut ProofSession,
     source: &S,

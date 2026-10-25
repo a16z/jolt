@@ -70,7 +70,6 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::OnceLock;
 
-#[cfg(test)]
 use jolt_field::Fr;
 use jolt_witness::backend::cuda::EXTRA_WORDS;
 
@@ -2856,7 +2855,6 @@ impl CudaKernelContext {
 }
 
 impl CudaKernelContext {
-    #[cfg(test)]
     pub(crate) fn zero_extend(
         &self,
         source: &DeviceFrVec,
@@ -2867,7 +2865,6 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    #[cfg(test)]
     /// Embeds a table in the top-left block of the larger grid matrix.
     ///
     /// For a nonempty source, callers must supply representable dimensions with
@@ -2903,7 +2900,6 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    #[cfg(test)]
     /// Copies a dense column into a zeroed grid at the given stride.
     /// The stride must be nonzero when the source contains multiple elements.
     pub(crate) fn scatter_strided(
@@ -2937,7 +2933,6 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    #[cfg(test)]
     /// Scatters an address-by-cycle table into an address-major commitment grid.
     /// Callers must supply grid strides that give distinct destination indices.
     pub(crate) fn scatter_one_hot(
@@ -2989,7 +2984,6 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    #[cfg(test)]
     pub(crate) fn fold_rows(
         &self,
         table: &DeviceFrVec,
@@ -3013,7 +3007,6 @@ impl CudaKernelContext {
         self.fold_rows_window(table, 0, table.len(), left, sigma)
     }
 
-    #[cfg(test)]
     pub(crate) fn fold_rows_window(
         &self,
         table: &DeviceFrVec,
@@ -3075,7 +3068,6 @@ impl CudaKernelContext {
         output.to_host()
     }
 
-    #[cfg(test)]
     pub(crate) fn one_hot_embed_device(
         &self,
         device_hot: &CudaSlice<u32>,
@@ -3116,7 +3108,6 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    #[cfg(test)]
     pub(crate) fn one_hot_fold_window(
         &self,
         device_hot: &CudaSlice<u32>,
