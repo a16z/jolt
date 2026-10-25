@@ -833,4 +833,34 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn cycle_windows_cover_the_domain_without_overlap() {
+        let windows = crate::cuda::common::devices::committed_windows(CYCLES, ROW_WIDTH);
+        let mut next = 0;
+        for window in &windows {
+            assert_eq!(window.start, next, "windows must be contiguous");
+            assert!(
+                window.len.is_multiple_of(ROW_WIDTH),
+                "a window that splits a row block would mix cycles across row commitments",
+            );
+            next = window.end();
+        }
+        assert_eq!(
+            next, CYCLES,
+            "the windows must cover the whole cycle domain"
+        );
+    }
+
+    #[test]
+    fn unaligned_or_undersized_domains_stay_whole() {
+        let single = |windows: Vec<CycleWindow>| {
+            assert_eq!(windows.len(), 1);
+            assert_eq!(windows[0].start, 0);
+        };
+        let windows = crate::cuda::common::devices::committed_windows;
+        single(windows(CYCLES + 1, ROW_WIDTH));
+        single(windows(ROW_WIDTH, ROW_WIDTH));
+        single(windows(CYCLES, 0));
+    }
 }

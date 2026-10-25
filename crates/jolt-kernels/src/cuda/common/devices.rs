@@ -2,8 +2,10 @@
 //!
 //! Witness windows are equal, power-of-two cycle ranges so low-to-high binding
 //! stays local until only the device-index variables remain. The planner uses
-//! one window for small or incompatible domains. `CycleWindow::residency` adds
-//! the next row needed by flag extraction without counting it in the work partition.
+//! one window for small or incompatible domains. Commitment windows additionally
+//! preserve complete PCS rows; independent row batches can use uneven aligned
+//! partitions. `CycleWindow::residency` adds the next row needed by flag extraction
+//! without counting it in the work partition.
 
 #[cfg(test)]
 use core::cmp::Reverse;
@@ -58,6 +60,54 @@ pub(crate) fn plan_witness_windows(cycles: usize, devices: usize) -> Vec<CycleWi
 
 pub(crate) fn witness_windows(cycles: usize) -> Vec<CycleWindow> {
     plan_witness_windows(cycles, device_count().max(1))
+}
+
+#[cfg(test)]
+pub(crate) fn plan_committed_windows(
+    cycles: usize,
+    row_width: usize,
+    devices: usize,
+) -> Vec<CycleWindow> {
+    let canonical = plan_witness_windows(cycles, devices);
+    if row_width > 0
+        && canonical
+            .iter()
+            .all(|window| window.len.is_multiple_of(row_width))
+    {
+        return canonical;
+    }
+    whole_domain(cycles)
+}
+
+#[cfg(test)]
+pub(crate) fn committed_windows(cycles: usize, row_width: usize) -> Vec<CycleWindow> {
+    plan_committed_windows(cycles, row_width, device_count().max(1))
+}
+
+#[cfg(test)]
+pub(crate) fn plan_device_windows(
+    cycles: usize,
+    alignment: usize,
+    devices: usize,
+) -> Vec<CycleWindow> {
+    if devices < 2 || alignment == 0 || !cycles.is_multiple_of(alignment) {
+        return whole_domain(cycles);
+    }
+    let blocks = cycles / alignment;
+    if blocks < devices {
+        return whole_domain(cycles);
+    }
+    let base = blocks / devices;
+    let remainder = blocks % devices;
+    let mut windows = Vec::with_capacity(devices);
+    let mut start = 0;
+    for device in 0..devices {
+        let blocks = base + usize::from(device < remainder);
+        let len = blocks * alignment;
+        windows.push(CycleWindow { start, len });
+        start += len;
+    }
+    windows
 }
 
 #[cfg(test)]
@@ -150,7 +200,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{device_selections, plan_witness_windows, CycleWindow, MIN_WITNESS_WINDOW};
+    use super::{
+        device_selections, plan_committed_windows, plan_device_windows, plan_witness_windows,
+        CycleWindow, MIN_WITNESS_WINDOW,
+    };
 
     const COUNTS: [usize; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 64];
 
@@ -250,6 +303,28 @@ mod tests {
     }
 
     #[test]
+    fn a_committed_plan_matches_the_witness_plan_whenever_the_rows_divide_it() {
+        for log_t in [13usize, 16, 22] {
+            let cycles = 1usize << log_t;
+            for devices in COUNTS {
+                let witness = plan_witness_windows(cycles, devices);
+                for row_width in [1usize, 8, 64, 1 << 12] {
+                    let committed = plan_committed_windows(cycles, row_width, devices);
+                    covers(&committed, cycles);
+                    let aligned = witness
+                        .iter()
+                        .all(|window| window.len.is_multiple_of(row_width));
+                    assert_eq!(
+                        committed.len(),
+                        if aligned { witness.len() } else { 1 },
+                        "a {row_width}-column row over {devices} device(s) at 2^{log_t} neither                          followed the witness split nor fell back to the whole domain; the commit                          and the stage-8 opening must derive the SAME list from (cycles,                          row_width) or the opening misses every parked column",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn device_selections_cover_every_column_once_and_balance_rows() {
         let shape = [1024usize, 1024, 1024, 512, 512, 16];
         for devices in [1usize, 2, 3, 5, 8] {
@@ -273,6 +348,39 @@ mod tests {
                 "row load spread {spread} exceeds the widest column {widest} across {devices} \
                  devices: {loads:?}",
             );
+        }
+    }
+
+    #[test]
+    fn a_device_plan_splits_aligned_blocks_evenly_across_every_device_count() {
+        for alignment in [1usize, 8, 1 << 10] {
+            for blocks in [1usize, 5, 8, 12, 64] {
+                let cycles = blocks * alignment;
+                for devices in COUNTS {
+                    let windows = plan_device_windows(cycles, alignment, devices);
+                    covers(&windows, cycles);
+                    assert!(windows.len() <= devices.max(1));
+                    let mut counts: Vec<usize> = windows
+                        .iter()
+                        .map(|window| {
+                            assert!(
+                                window.len.is_multiple_of(alignment),
+                                "a window of {} cycles splits an alignment block",
+                                window.len,
+                            );
+                            window.len / alignment
+                        })
+                        .collect();
+                    counts.sort_unstable();
+                    let spread = counts.last().copied().unwrap_or_default()
+                        - counts.first().copied().unwrap_or_default();
+                    assert!(
+                        spread <= 1,
+                        "{blocks} block(s) over {devices} device(s) landed {spread} blocks apart, \
+                         so the resident set is not evenly split",
+                    );
+                }
+            }
         }
     }
 }
