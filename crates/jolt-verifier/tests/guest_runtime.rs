@@ -51,17 +51,18 @@ fn check_memory_copy_abi(std: bool) {
     let return_pc = emulator.get_cpu().read_pc();
     let base = (RAM_START_ADDRESS + program_size + 4095) & !4095;
     let preserved = [2, 3, 4, 8, 9, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
-    let initial: Vec<u8> = (0..2400).map(|i| (i * 197 + i / 7) as u8).collect();
+    let initial: Vec<u8> = (0..8704).map(|i| (i * 197 + i / 7) as u8).collect();
     for name in ["__wrap_memcpy", "__wrap_memmove"] {
         let entry = emulator
             .get_address_of_symbol(&name.to_string())
             .expect("guest links the copy runtime");
-        for len in [
-            0, 1, 7, 8, 16, 24, 32, 40, 48, 56, 64, 72, 79, 80, 81, 88, 184, 1024,
-        ] {
+        for len in (0..18).chain([
+            24, 32, 40, 48, 56, 64, 72, 79, 80, 81, 88, 89, 95, 96, 159, 160, 161, 168, 184, 255,
+            256, 257, 511, 512, 513, 1023, 1024, 1025, 4095, 4096, 4097,
+        ]) {
             for src_alignment in 0..8 {
                 for dst_alignment in 0..8 {
-                    for delta in [0, 8, 64, 1200] {
+                    for delta in [0, 8, 64, 4224] {
                         for reverse in [false, true] {
                             let (src, dst) = (64 + src_alignment, 64 + delta + dst_alignment);
                             let (src, dst) = if reverse { (dst, src) } else { (src, dst) };
@@ -78,7 +79,7 @@ fn check_memory_copy_abi(std: bool) {
                                 cpu.write_register(register, 0x1122_3300 + register as i64);
                             }
                             cpu.write_register(1, return_pc as i64);
-                            cpu.write_register(2, (base + 0x2000) as i64);
+                            cpu.write_register(2, (base + 0x4000) as i64);
                             cpu.write_register(10, (base + dst as u64) as i64);
                             cpu.write_register(11, (base + src as u64) as i64);
                             cpu.write_register(12, len as i64);
