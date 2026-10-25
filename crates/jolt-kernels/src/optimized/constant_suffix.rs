@@ -53,7 +53,10 @@ impl<T> Index<usize> for ConstantSuffix<T> {
 
     #[inline]
     fn index(&self, index: usize) -> &T {
+        if let Some(value) = self.representatives.get(index) {
+            return value;
+        }
         assert!(index < self.len);
-        &self.representatives[index.min(self.prefix_len())]
+        &self.representatives[self.prefix_len()]
     }
 }
