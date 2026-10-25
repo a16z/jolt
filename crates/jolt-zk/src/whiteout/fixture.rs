@@ -266,13 +266,14 @@ impl<const D: usize> Instance<D> {
                 target: u,
             },
         ];
+        let pads = pad_commitment::<D>();
+        let v_matrix = SigmaSetup::v_matrix_of(&blocks, &pads, 1, &stream(1 << 18, 31)).unwrap();
         SigmaSetup::new(
             residual_segments::<D>(self.scale),
             blocks,
-            &pad_commitment::<D>(),
+            &pads,
             t_p,
-            1,
-            &stream(1 << 18, 31),
+            v_matrix,
         )
         .unwrap()
     }

@@ -234,12 +234,13 @@ pub const WHITEOUT_MODE_SPANS: [&str; 10] = [
 /// verifier benchmark (`scripts/whiteout_verify_profile.py`,
 /// `specs/whiteout-o0-profile.md`) buckets the verify time by these labels.
 /// The stages with the pad-layout replay; Akita's masked prefix per level;
-/// the residual relation; and the tail: the Σ setup rebuilt per verify (pad
-/// commitment, residual matrices, `A_D`), the response lookup, the lift, the
-/// Σ check, and the response proof by step, its `A(r)` by item and `N·z` per
-/// block (`whiteout_nz_*`, with a `block` field). `masked_prefix_level`
+/// the residual relation; and the tail: the Σ setup, the response lookup
+/// (the pad layout's public state, built on its first use: the pad
+/// commitment, the residual matrices and `A_D`), the lift, the Σ check, and
+/// the response proof by step, its `A(r)` by item and `N·z` per block
+/// (`whiteout_nz_product`, with a `block` field). `masked_prefix_level`
 /// carries `level`.
-pub const WHITEOUT_VERIFIER_SPANS: [&str; 28] = [
+pub const WHITEOUT_VERIFIER_SPANS: [&str; 27] = [
     "whiteout_verify_stages",
     "whiteout_pad_layout",
     "verify_stages_1_to_7",
@@ -265,7 +266,6 @@ pub const WHITEOUT_VERIFIER_SPANS: [&str; 28] = [
     "whiteout_weight_dual",
     "whiteout_weight_v_image",
     "whiteout_weight_nz",
-    "whiteout_nz_field_entries",
     "whiteout_nz_product",
     "whiteout_weight_lifted_rows",
 ];

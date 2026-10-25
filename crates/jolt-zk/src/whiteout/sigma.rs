@@ -21,6 +21,7 @@
 //! attempt leaves nothing in the transcript.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 #[cfg(feature = "whiteout-prover")]
 use jolt_algebra::CyclotomicRing;
@@ -64,7 +65,7 @@ pub struct SigmaSetup<F: JoltField, const D: usize> {
     l_row: LRow<F, D>,
     /// `A_D`, binding on the radix-16 digits of `V`, over the challenge ring.
     v_level: AjtaiLevel,
-    v_matrix: PreparedMatrix<F, CHALLENGE_RING_DIM>,
+    v_matrix: Arc<PreparedMatrix<F, CHALLENGE_RING_DIM>>,
     /// Native coefficients of the residual segments, which precede the pads.
     #[cfg(feature = "whiteout-prover")]
     residual_len: usize,
@@ -73,16 +74,16 @@ pub struct SigmaSetup<F: JoltField, const D: usize> {
 impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
     /// The setup for a residual opening of `residual` segments (witness,
     /// inner digits, randomness) with opening rows `blocks`, followed by the
-    /// pad segments of `pads` with image `pad_image`, and `A_D` of rank
-    /// `v_rank` cut from `v_stream`. Every segment must have native dimension
-    /// `D`, so that `N` is linear over the challenge ring.
+    /// pad segments of `pads` with image `pad_image`, and `A_D` =
+    /// `v_matrix` ([`Self::v_matrix_of`]), whose width must be these rows'.
+    /// Every segment must have native dimension `D`, so that `N` is linear
+    /// over the challenge ring.
     pub fn new(
         residual: Vec<Segment>,
         blocks: Vec<ResidualBlock<F, D>>,
         pads: &LatticePadCommitment<F, D>,
         pad_image: BlockTarget<F, D>,
-        v_rank: usize,
-        v_stream: &[F],
+        v_matrix: Arc<PreparedMatrix<F, CHALLENGE_RING_DIM>>,
     ) -> Result<Self, WhiteoutError> {
         if residual.iter().any(|segment| {
             matches!(
@@ -168,20 +169,12 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         }
 
         let message_rings = Self::v_message_rings(outputs);
-        let v_level = AjtaiLevel {
-            matrix: MatrixShape {
-                rows: v_rank,
-                width: message_rings * FIELD_LEVELS,
-                ring_dim: CHALLENGE_RING_DIM,
-            },
-            digits: GadgetDigits {
-                log_basis: RESPONSE_LOG_BASIS,
-                levels: FIELD_LEVELS,
-            },
-            message_rings,
-            randomness_columns: 0,
-        };
-        let v_matrix = PreparedMatrix::new(&MatrixView::new(v_level.matrix, v_stream)?)?;
+        let v_level = Self::v_level_of(message_rings, v_matrix.shape().rows);
+        if v_matrix.shape() != v_level.matrix {
+            return Err(WhiteoutError::InvalidRelation(
+                "A_D's shape differs from the one V's rows need",
+            ));
+        }
         Ok(Self {
             params: SigmaParams::derive(&table)?,
             #[cfg(feature = "whiteout-prover")]
@@ -214,20 +207,57 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
             + pads.matrix().shape().rows
     }
 
+    /// `A_D`'s level: `message_rings` challenge rings of `V` in radix-16
+    /// digits, at rank `v_rank`, binding only.
+    fn v_level_of(message_rings: usize, v_rank: usize) -> AjtaiLevel {
+        AjtaiLevel {
+            matrix: MatrixShape {
+                rows: v_rank,
+                width: message_rings * FIELD_LEVELS,
+                ring_dim: CHALLENGE_RING_DIM,
+            },
+            digits: GadgetDigits {
+                log_basis: RESPONSE_LOG_BASIS,
+                levels: FIELD_LEVELS,
+            },
+            message_rings,
+            randomness_columns: 0,
+        }
+    }
+
     /// The width in challenge-ring columns of `A_D` for opening rows
     /// `blocks` and the pad commitment `pads`.
     pub fn v_width(blocks: &[ResidualBlock<F, D>], pads: &LatticePadCommitment<F, D>) -> usize {
         Self::v_message_rings(Self::output_rows(blocks, pads)) * FIELD_LEVELS
     }
 
-    /// The public stream length [`Self::new`] reads for `A_D` of rank
-    /// `v_rank`.
+    /// The public stream length [`Self::v_matrix_of`] reads for `A_D` of
+    /// rank `v_rank`.
     pub fn v_stream_len(
         blocks: &[ResidualBlock<F, D>],
         pads: &LatticePadCommitment<F, D>,
         v_rank: usize,
     ) -> usize {
         v_rank * Self::v_width(blocks, pads) * CHALLENGE_RING_DIM
+    }
+
+    /// `A_D` of rank `v_rank` for opening rows `blocks` and the pad
+    /// commitment `pads`, cut from `v_stream`. A function of their shapes
+    /// alone, so one matrix serves every Σ setup of those shapes.
+    pub fn v_matrix_of(
+        blocks: &[ResidualBlock<F, D>],
+        pads: &LatticePadCommitment<F, D>,
+        v_rank: usize,
+        v_stream: &[F],
+    ) -> Result<Arc<PreparedMatrix<F, CHALLENGE_RING_DIM>>, WhiteoutError> {
+        let level = Self::v_level_of(
+            Self::v_message_rings(Self::output_rows(blocks, pads)),
+            v_rank,
+        );
+        Ok(Arc::new(PreparedMatrix::new(&MatrixView::new(
+            level.matrix,
+            v_stream,
+        )?)?))
     }
 
     /// This setup at another rejection parameter α (tests of the abort rate).
