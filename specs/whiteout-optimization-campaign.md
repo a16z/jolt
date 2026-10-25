@@ -186,16 +186,21 @@ in.
 Measurement claims go through result-validation: interleaved runs, an idle
 machine, and the spread reported.
 
-## Open questions
+## Decisions (owner, 2026-10-25)
 
-- **O6 (owner's call):** this was the pending d = 256/d = 128 decision.
-  Proposed: d = 128 first, then d = 256 gated on O0 attributing at least 50%
-  of verifier time to the residual.
-- **O7:** changes the Σ regime (D or the challenge family). Does the paper
-  want the radius reduced rather than the ring enlarged?
-- **O4:** the compressed cut target adds u_a's compression witness to `e`.
-  Confirm with the paper authors that Item 3's check carries over unchanged
-  for the cut successor.
+The owner delegated the calls to the conductor, on two conditions: every
+security argument must hold, and every change must be documented as a
+paper delta.
+
+- **O6:** d = 128 first. d = 256 follows if O0 attributes at least 50% of
+  verifier time to the residual.
+- **O7:** in scope. Analysis comes first; implement only if it beats or
+  compounds with O6 and the knowledge-soundness and rejection arguments are
+  re-derived in writing.
+- **O4:** in scope. The ticket writes the argument that Item 3's
+  compressed-target check carries over to the cut successor, as a paper
+  delta. A question for the paper authors stays open, but it does not block
+  the work.
 
 ## Not verified
 
