@@ -87,6 +87,7 @@ guest-verifier = [
 ]
 
 malloc-shim = ["jolt-platform/malloc-shim"]
+word-memory = ["jolt-platform/word-memory"]
 transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]

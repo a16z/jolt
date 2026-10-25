@@ -895,6 +895,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     #[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
     program.add_guest_feature("l2-terminal-quotient");
     program.add_guest_feature("fast-alloc");
+    #[cfg(feature = "word-memory")]
+    program.add_guest_feature("word-memory");
     program.add_guest_feature("hash-inlines");
     #[cfg(all(feature = "akita", feature = "l3-compression-weights"))]
     program.add_guest_feature("l3-compression-weights");

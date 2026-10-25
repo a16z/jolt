@@ -8,6 +8,7 @@ name = "recursion"
 path = "src/main.rs"
 
 [features]
+word-memory = []
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Non-default: default workspace builds must not unify field-inline into the
 # verifier stack. The recursion flow needs it.
