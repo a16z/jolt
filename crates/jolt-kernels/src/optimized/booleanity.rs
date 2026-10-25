@@ -1649,9 +1649,12 @@ mod categorical_tests {
     use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa};
     use crate::reference::views::eq_table;
 
-    struct Source(Vec<Vec<Option<usize>>>);
+    struct Source(Vec<Vec<Option<usize>>>, usize);
 
     impl ChunkIndexSource for Source {
+        fn constant_suffix_start(&self) -> usize {
+            self.1
+        }
         fn num_columns(&self) -> usize {
             self.0.len()
         }
@@ -1664,13 +1667,19 @@ mod categorical_tests {
     }
 
     fn check_categorical_cubics<F: JoltField>(gamma: F) {
-        check_categorical_case(gamma, None);
-        for case in ExceptionalEq::ALL {
-            check_categorical_case(gamma, Some(case));
+        for prefix in [0, 1, 7, 9, 17, 31, 32] {
+            check_categorical_case(gamma, None, prefix);
+            for case in ExceptionalEq::ALL {
+                check_categorical_case(gamma, Some(case), prefix);
+            }
         }
     }
 
-    fn check_categorical_case<F: JoltField>(gamma: F, exceptional: Option<ExceptionalEq>) {
+    fn check_categorical_case<F: JoltField>(
+        gamma: F,
+        exceptional: Option<ExceptionalEq>,
+        prefix_len: usize,
+    ) {
         for addresses in [2, 16, 256] {
             for bind in [F::zero(), F::one(), F::from_u64(13)] {
                 // All-cold, alternating hot/cold, and fully hot families.
@@ -1681,7 +1690,9 @@ mod categorical_tests {
                         .map(|family| {
                             (0..32)
                                 .map(|row| {
-                                    if family == 0 || (family == 1 && row % 3 == 0) {
+                                    if row >= prefix_len {
+                                        (family != 0).then_some(family % addresses)
+                                    } else if family == 0 || (family == 1 && row % 3 == 0) {
                                         None
                                     } else {
                                         Some((row * row + 7 * row + family) % addresses)
@@ -1690,6 +1701,7 @@ mod categorical_tests {
                                 .collect()
                         })
                         .collect(),
+                    prefix_len,
                 );
                 let rho: Vec<F> = [F::one(), gamma, gamma * gamma].to_vec();
                 let unscaled: Vec<Vec<F>> = (0..3)
@@ -1759,14 +1771,18 @@ mod categorical_tests {
                         unreachable!()
                     };
                     let products = CategoricalProducts::new(tables, *width, source, &rho);
+                    let prefix_pairs = prefix_len.div_ceil(1 << (round + 1));
+                    let tail_value: F = dense
+                        .iter()
+                        .zip(&rho)
+                        .map(|(column, rho)| {
+                            let value = column[column.len() - 1];
+                            *rho * *rho * value * (value - F::one())
+                        })
+                        .sum();
+                    let tail_mass = suffix[prefix_pairs..].iter().copied().sum::<F>() * tail_value;
                     let polynomial = products
-                        .lookup(
-                            &eq,
-                            round,
-                            direct[0] + direct[1],
-                            dense[0].len() / 2,
-                            F::zero(),
-                        )
+                        .lookup(&eq, round, direct[0] + direct[1], prefix_pairs, tail_mass)
                         .unwrap();
                     for (x, value) in direct.iter().enumerate() {
                         assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
