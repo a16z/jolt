@@ -229,6 +229,47 @@ pub const WHITEOUT_MODE_SPANS: [&str; 10] = [
     "whiteout_prove_response",
 ];
 
+/// Whiteout's verifier seams, outside [`ROOT_SPAN`]: the profile harness
+/// verifies each proof inside the trace (`profile_verifier_*`), and the O0
+/// verifier benchmark (`scripts/whiteout_verify_profile.py`,
+/// `specs/whiteout-o0-profile.md`) buckets the verify time by these labels.
+/// The stages with the pad-layout replay; Akita's masked prefix per level;
+/// the residual relation; and the tail: the Σ setup rebuilt per verify (pad
+/// commitment, residual matrices, `A_D`), the response lookup, the lift, the
+/// Σ check, and the response proof by step, its `A(r)` by item and `N·z` per
+/// block (`whiteout_nz_*`, with a `block` field). `masked_prefix_level`
+/// carries `level`.
+pub const WHITEOUT_VERIFIER_SPANS: [&str; 28] = [
+    "whiteout_verify_stages",
+    "whiteout_pad_layout",
+    "verify_stages_1_to_7",
+    "whiteout_receive_pads",
+    "whiteout_verify_prefix",
+    "AkitaVerifier::verify_masked_prefix",
+    "masked_prefix_level",
+    "whiteout_verify_relation",
+    "whiteout_verify_tail",
+    "whiteout_sigma_setup",
+    "whiteout_pad_commitment_setup",
+    "whiteout_residual_matrices",
+    "whiteout_v_matrix_setup",
+    "whiteout_response_lookup",
+    "whiteout_lift",
+    "whiteout_verify_sigma",
+    "AkitaResponseProver::verify",
+    "response_product_sumcheck",
+    "response_row_batch",
+    "response_digit_range",
+    "response_fused_sumcheck",
+    "response_weight_at",
+    "whiteout_weight_dual",
+    "whiteout_weight_v_image",
+    "whiteout_weight_nz",
+    "whiteout_nz_field_entries",
+    "whiteout_nz_product",
+    "whiteout_weight_lifted_rows",
+];
+
 /// Which compiled prover emitted a trace: the `zk` feature swaps the
 /// [`CLEAR_MODE_SPANS`] seams for their [`ZK_MODE_SPANS`] siblings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

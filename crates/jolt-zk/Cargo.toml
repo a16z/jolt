@@ -12,7 +12,7 @@ workspace = true
 # Whiteout's verifier-side building blocks (the constant-term lift, the
 # Σ-protocol's segment table and parameters). Off by
 # default so the Dory verifier never compiles the lattice ring (I6).
-whiteout = ["jolt-algebra/solinas", "jolt-crypto/lattice"]
+whiteout = ["dep:tracing", "jolt-algebra/solinas", "jolt-crypto/lattice"]
 # Whiteout's prover-only pieces (the zero-constant-term mask sampler, the
 # witness alphabet check, the rejection rule). A verifier that enables only
 # `whiteout` does not compile them; jolt-akita's `zk-prover` and akita-pcs's
@@ -52,6 +52,7 @@ rand_chacha = { workspace = true, optional = true }
 rand_core.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+tracing = { workspace = true, optional = true }
 zeroize.workspace = true
 
 [dev-dependencies]

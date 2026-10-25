@@ -173,7 +173,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                 "row weights differ from the statement's rows",
             ));
         }
-        let dual = self.dual(point)?;
+        let dual = tracing::info_span!("whiteout_weight_dual").in_scope(|| self.dual(point))?;
         let c = self.challenge.to_dense_ct()?;
         let c_ring: ChallengeRing<F> = challenge_ring(&c);
         let n_out = self.setup.linear().num_outputs() * D;
@@ -186,6 +186,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         };
 
         // Item 2: A_D G⁻¹(V) − t_D, with t_D from its compression witness.
+        let v_span = tracing::info_span!("whiteout_weight_v_image").entered();
         let quarters = D / CHALLENGE_RING_DIM;
         let v_cols = self.setup.v_matrix().shape().width;
         let mut a_d = vec![ChallengeRing::<F>::zero(); self.setup.v_matrix().shape().rows];
@@ -237,7 +238,9 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             ))
         };
 
+        drop(v_span);
         // Item 3: N z − f − c t, with the compressed t from their witnesses.
+        let nz_span = tracing::info_span!("whiteout_weight_nz").entered();
         let nz = self
             .setup
             .linear()
@@ -267,6 +270,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             }
         }
         total -= compressed(&weights.v_image)?;
+        drop(nz_span);
 
         // Item 5.
         let tail = |index: usize| -> Result<ChallengeRing<F>, WhiteoutError> {
@@ -279,6 +283,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         total += weights.ct_h * h.constant_term();
 
         // Item 4 at α.
+        let _lifted_span = tracing::info_span!("whiteout_weight_lifted_rows").entered();
         let aggregated = self.relation.aggregate(&self.rho)?;
         let tables = self.relation.claim_tables()?;
         let parts = aggregated.linear_parts(&tables, &dual.z, false)?;

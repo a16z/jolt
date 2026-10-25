@@ -61,6 +61,11 @@ plan, which runs inside it. The response plan runs inside `commit_pads`, so
 The single-threaded verifier takes the same time as the parallel one under
 Whiteout (185 / 205 / 249 ms).
 
+O0 (`specs/whiteout-o0-profile.md`) traced this to the harness: its
+single-threaded mode pinned only Akita backend calls to one thread. With the
+whole verify on one thread, the Whiteout verifier is 2.6–2.9× slower than
+with 16 (measured under load). O0 also splits the verify time by bucket.
+
 ### Argument-string regions
 
 Bytes per region are differences of the `argument string region=… narg_bytes`

@@ -286,6 +286,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    let _span = tracing::info_span!("verify_stages_1_to_7").entered();
     if checked.zk.is_masked() != pads.is_some() {
         return Err(VerifierError::MissingProofPayload {
             field: "pad commitment",
