@@ -192,6 +192,8 @@ pub struct CudaKernelContext {
     #[cfg(test)]
     msm_window_accumulate: CudaFunction,
     #[cfg(test)]
+    commit_increment_column: CudaFunction,
+    #[cfg(test)]
     msm_one_hot_count: CudaFunction,
     #[cfg(test)]
     msm_one_hot_count_shared: CudaFunction,
@@ -455,6 +457,8 @@ impl CudaKernelContext {
             #[cfg(test)]
             msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
             #[cfg(test)]
+            commit_increment_column: module.load_function("commit_increment_column_kernel")?,
+            #[cfg(test)]
             msm_one_hot_count: module.load_function("msm_one_hot_count_kernel")?,
             #[cfg(test)]
             msm_one_hot_count_shared: module.load_function("msm_one_hot_count_shared_kernel")?,
@@ -670,6 +674,11 @@ impl CudaKernelContext {
             }?;
         }
         Ok(buffer)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn alloc_u8_unset(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
+        self.alloc_unset::<u8>(len)
     }
 
     #[cfg(test)]
@@ -1290,6 +1299,11 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {
         &self.msm_window_accumulate
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn commit_increment_column(&self) -> &CudaFunction {
+        &self.commit_increment_column
     }
 
     #[cfg(test)]

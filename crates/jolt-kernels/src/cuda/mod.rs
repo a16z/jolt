@@ -63,6 +63,8 @@
 //! batch within a memory budget and otherwise accumulate sequentially.
 //! Signed row MSMs reuse those buckets with 64-bit magnitudes and separate signs;
 //! host staging rejects inputs outside `[-u64::MAX, u64::MAX]`.
+//! Commitment increments derive those magnitudes and sign bytes directly from
+//! packed trace pre/post values, with absent destinations contributing zero.
 //! One-hot row MSMs count and scatter indices on device, using shared-memory
 //! tallies when they fit. The host scans counts before the segmented G1 sums.
 //! For fully covered chunks, dominant buckets can use the total base sum minus
@@ -158,6 +160,8 @@ mod booleanity;
 mod bytecode_claim_reduction;
 #[cfg(not(feature = "field-inline"))]
 mod bytecode_read_raf;
+#[cfg(test)]
+mod commitment;
 mod common;
 mod dory;
 mod hamming_weight_claim_reduction;

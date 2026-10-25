@@ -68,6 +68,7 @@ mod glv4_table {
 use std::sync::{Arc, OnceLock};
 
 use jolt_field::Fr;
+use jolt_witness::backend::cuda::EXTRA_WORDS;
 
 use glv4_table::POWER_OF_2_DECOMPOSITIONS;
 
@@ -180,6 +181,33 @@ pub struct SignedColumn {
     magnitudes: CudaSlice<u64>,
     signs: CudaSlice<u8>,
     len: usize,
+}
+
+impl SignedColumn {
+    #[cfg(test)]
+    pub(crate) const fn magnitudes(&self) -> &CudaSlice<u64> {
+        &self.magnitudes
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn signs(&self) -> &CudaSlice<u8> {
+        &self.signs
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IncrementKind {
+    Rd,
+    Ram,
+}
+
+impl IncrementKind {
+    const fn code(self) -> u32 {
+        match self {
+            Self::Rd => 0,
+            Self::Ram => 1,
+        }
+    }
 }
 
 pub struct DeviceG1Bases {
@@ -1464,6 +1492,43 @@ impl CudaKernelContext {
                 signs: self.upload_u8_slice(&signs)?,
                 len: rows.len(),
             })
+        })
+    }
+
+    pub fn increment_column(
+        &self,
+        extras: &CudaSlice<u64>,
+        kind: IncrementKind,
+        cycles: usize,
+    ) -> Result<SignedColumn, CudaError> {
+        let words = cycles.saturating_mul(EXTRA_WORDS);
+        if extras.len() < words {
+            return Err(CudaError::LengthMismatch {
+                expected: words,
+                got: extras.len(),
+            });
+        }
+        let count = Self::count_of(cycles)?;
+        let code = kind.code();
+        let mut magnitudes = self.alloc_u64_unset(cycles)?;
+        let mut signs = self.alloc_u8_unset(cycles)?;
+        let mut builder = self.stream().launch_builder(self.commit_increment_column());
+        let _ = builder.arg(extras);
+        let _ = builder.arg(&code);
+        let _ = builder.arg(&mut magnitudes);
+        let _ = builder.arg(&mut signs);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `t < cycles` reads the `EXTRA_WORDS` consecutive words
+        // at `t * EXTRA_WORDS` of `extras`, checked above to hold at least
+        // `cycles * EXTRA_WORDS` u64s, and writes only `magnitudes[t]` and
+        // `signs[t]` of two fresh `cycles`-element allocations distinct from
+        // the input. Threads with `t >= cycles` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(SignedColumn {
+            magnitudes,
+            signs,
+            len: cycles,
         })
     }
 

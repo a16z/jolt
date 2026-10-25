@@ -12,6 +12,7 @@ const KERNEL_FILES: &[&str] = &[
     "sumcheck_common.cu",
     "precommitted_reduction.cu",
     "msm.cu",
+    "commit_increments.cu",
     "pairing.cu",
     "opening.cu",
     "scan.cu",
