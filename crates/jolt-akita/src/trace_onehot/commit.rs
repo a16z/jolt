@@ -52,6 +52,12 @@ pub(super) fn commit_columns<const D: usize>(
         .ring_view::<D>(plan.n_a, active_cols)?;
     let a_rows = a_view.rows().collect::<Vec<_>>();
     let max_per_ring = (D / source.one_hot_k).max(1);
+    let prefix_rows = source.rows.nonzero_prefix_len();
+    let prefix_rings = if source.one_hot_k < D {
+        prefix_rows.div_ceil(D / source.one_hot_k)
+    } else {
+        prefix_rows * (source.one_hot_k / D)
+    };
     drop(_prepare_span);
 
     let coefficients = if segment_rings >= plan.num_positions_per_block {
@@ -81,11 +87,14 @@ pub(super) fn commit_columns<const D: usize>(
             .map(|task| {
                 let trace_block = task / schedule.parts;
                 let part = task % schedule.parts;
-                let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
                 let block_ring_start = trace_block * plan.num_positions_per_block;
                 let (part_start, part_end) = schedule.part_range(part);
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
+                if ring_start >= prefix_rings {
+                    return Ok(None);
+                }
+                let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
                 let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
                     && source.one_hot_k == 256
                     && plan.num_positions_per_block >= source.one_hot_k / D
@@ -233,7 +242,7 @@ pub(super) fn commit_columns<const D: usize>(
                 if budget != 0 {
                     flush_wide(&mut wide, &mut reduced);
                 }
-                Ok::<_, AkitaError>(reduced)
+                Ok::<_, AkitaError>(Some(reduced))
             })
             .collect::<Result<Vec<_>, _>>()?;
         drop(_accumulate_span);
@@ -250,6 +259,9 @@ pub(super) fn commit_columns<const D: usize>(
         let mut coefficients =
             vec![vec![AkitaField::zero(); blocks_per_column * block_width]; num_columns];
         for (task, block_rows) in partials.into_iter().enumerate() {
+            let Some(block_rows) = block_rows else {
+                continue;
+            };
             let trace_block = task / schedule.parts;
             let part = task % schedule.parts;
             for (column, coefficients) in coefficients.iter_mut().enumerate() {
