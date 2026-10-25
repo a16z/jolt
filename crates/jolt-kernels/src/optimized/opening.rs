@@ -166,6 +166,8 @@ pub(crate) struct OpeningColumns {
     lookup_index: Vec<u128>,
     bytecode_pc: Vec<u64>,
     ram_address: Vec<u64>,
+    logical_cycles: usize,
+    tail: Option<CommittedColumnsWitness>,
 }
 
 impl OpeningColumns {
@@ -174,30 +176,36 @@ impl OpeningColumns {
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
-        // Slice-backed sources fill the five columns index-parallel — the
-        // chunked walk serializes on staging buffers and the consume copy.
-        #[cfg(feature = "parallel")]
+        let mut retained = cycles;
+        let mut tail = None;
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                return Self::collect_par(&access, cycles);
+                retained = access.physical_cycles().min(cycles);
+                if retained < cycles {
+                    tail = Some(access.window::<CommittedColumnsWitness>(retained)?);
+                }
+                #[cfg(feature = "parallel")]
+                {
+                    let mut columns = Self::collect_par(&access, retained)?;
+                    columns.logical_cycles = cycles;
+                    columns.tail = tail;
+                    return Ok(columns);
+                }
             }
         }
         let mut consumers = (CollectOpeningColumns {
             columns: Self {
-                rd_inc: Vec::with_capacity(cycles),
-                ram_inc: Vec::with_capacity(cycles),
-                lookup_index: Vec::with_capacity(cycles),
-                bytecode_pc: Vec::with_capacity(cycles),
-                ram_address: Vec::with_capacity(cycles),
+                rd_inc: Vec::with_capacity(retained),
+                ram_inc: Vec::with_capacity(retained),
+                lookup_index: Vec::with_capacity(retained),
+                bytecode_pc: Vec::with_capacity(retained),
+                ram_address: Vec::with_capacity(retained),
+                logical_cycles: cycles,
+                tail,
             },
         },);
-        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+        stream_witnesses(witness, 0..retained, COLLECT_CHUNK, &mut consumers)?;
         let columns = consumers.0.columns;
-        debug_assert_eq!(
-            columns.cycles(),
-            cycles,
-            "opening columns must cover the full padded cycle domain"
-        );
         Ok(columns)
     }
 
@@ -263,15 +271,24 @@ impl OpeningColumns {
             lookup_index,
             bytecode_pc,
             ram_address,
+            logical_cycles: cycles,
+            tail: None,
         })
     }
 
     fn cycles(&self) -> usize {
+        self.logical_cycles
+    }
+
+    fn prefix_len(&self) -> usize {
         self.rd_inc.len()
     }
 
     #[inline]
     fn witness_row(&self, cycle: usize) -> CommittedColumnsWitness {
+        if let Some(tail) = self.tail.filter(|_| cycle >= self.prefix_len()) {
+            return tail;
+        }
         let bytecode_pc = self.bytecode_pc[cycle];
         let ram_address = self.ram_address[cycle];
         CommittedColumnsWitness {
@@ -321,18 +338,21 @@ struct TraceOpeningPoly<F: JoltField> {
 
 impl<F: JoltField> TraceOpeningPoly<F> {
     #[inline]
-    fn entry(&self, cycle: usize) -> Option<(usize, F)> {
-        let row = self.columns.witness_row(cycle);
+    fn column_value(&self, row: &CommittedColumnsWitness) -> Option<(usize, F)> {
         if self.kind.is_one_hot() {
-            let address = self.kind.hot_address(&row)?;
-            Some((self.placement.index(cycle, address), F::one()))
+            self.kind
+                .hot_address(row)
+                .map(|address| (address, F::one()))
         } else {
-            let increment = self.kind.increment(&row);
-            if increment == 0 {
-                return None;
-            }
-            Some((self.placement.index(cycle, 0), F::from_i128(increment)))
+            let increment = self.kind.increment(row);
+            (increment != 0).then(|| (0, F::from_i128(increment)))
         }
+    }
+
+    #[inline]
+    fn entry(&self, cycle: usize) -> Option<(usize, F)> {
+        self.column_value(&self.columns.witness_row(cycle))
+            .map(|(address, value)| (self.placement.index(cycle, address), value))
     }
 }
 
@@ -344,7 +364,7 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
     fn evaluate(&self, point: &[F]) -> F {
         debug_assert_eq!(point.len(), self.placement.total_vars);
         let eq = TensorEqTable::new(point);
-        scatter_sum(self.columns.cycles(), |range| {
+        let explicit = scatter_sum(self.columns.prefix_len(), |range| {
             let mut acc = F::zero();
             for cycle in range {
                 if let Some((index, value)) = self.entry(cycle) {
@@ -352,7 +372,21 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
                 }
             }
             acc
-        })
+        });
+        explicit
+            + self
+                .columns
+                .tail
+                .and_then(|row| self.column_value(&row))
+                .map_or(F::zero(), |(address, value)| {
+                    value
+                        * self.placement.suffix_evaluation(
+                            point,
+                            self.columns.prefix_len(),
+                            self.columns.cycles(),
+                            address,
+                        )
+                })
     }
 
     fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
@@ -370,7 +404,7 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
         );
         let num_cols = 1usize << sigma;
         let mask = num_cols - 1;
-        scatter_fold(self.columns.cycles(), num_cols, |range, acc| {
+        let mut result = scatter_fold(self.columns.prefix_len(), num_cols, |range, acc| {
             for cycle in range {
                 if let Some((index, value)) = self.entry(cycle) {
                     if self.kind.is_one_hot() {
@@ -380,7 +414,18 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
                     }
                 }
             }
-        })
+        });
+        if let Some((address, value)) = self.columns.tail.and_then(|row| self.column_value(&row)) {
+            self.placement.fold_suffix(
+                left,
+                sigma,
+                self.columns.prefix_len()..self.columns.cycles(),
+                address,
+                value,
+                &mut result,
+            );
+        }
+        result
     }
 }
 
@@ -546,11 +591,18 @@ mod tests {
     }
 
     fn assert_parity(order: TracePolynomialOrder, widen: usize) {
+        for prefix in [0, 1, 2, 6, 7, 8, 14, 15] {
+            assert_prefix_parity(order, widen, prefix);
+        }
+    }
+
+    fn assert_prefix_parity(order: TracePolynomialOrder, widen: usize, prefix: usize) {
         let shape = FixtureShape {
             log_t: LOG_T,
             ram_k: RAM_K,
         };
-        with_ram_fixture(shape, fixture_ops(), |witness| {
+        let ops = fixture_ops().into_iter().cycle().take(prefix).collect();
+        with_ram_fixture(shape, ops, |witness| {
             let grid = CommitmentGrid {
                 total_vars: LOG_T + 4 + widen,
                 log_t: LOG_T,
@@ -571,11 +623,6 @@ mod tests {
                 .collect();
             let (ids, reference, optimized) = prepare_both(witness, grid, ids);
             let point = random_scalars(grid.total_vars, 23);
-            let sigmas = [
-                grid.total_vars.div_ceil(2),
-                grid.total_vars.div_ceil(2) + 1,
-                grid.total_vars,
-            ];
             for ((id, reference), optimized) in ids.iter().zip(&reference).zip(&optimized) {
                 assert_eq!(
                     optimized.num_vars(),
@@ -587,7 +634,7 @@ mod tests {
                     reference.to_dense().as_ref(),
                     "{id:?}: dense table diverged"
                 );
-                for sigma in sigmas {
+                for sigma in 0..=grid.total_vars {
                     let left = random_scalars(1 << (grid.total_vars - sigma), 29 + sigma as u64);
                     assert_eq!(
                         optimized.fold_rows(&left, sigma),

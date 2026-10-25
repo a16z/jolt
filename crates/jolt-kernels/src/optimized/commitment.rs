@@ -174,12 +174,6 @@ where
     Ok(package::<F, PCS>(consumers.0.finish(setup), ids))
 }
 
-/// The pipelined commit pass over a slice-backed source: while the column
-/// grid advances over superchunk `k`, workers extract superchunk `k + 1`
-/// into the spare buffer (two reused buffers, swapped per delivery). Per
-/// column the fed windows, their order, and the finish calls are exactly
-/// the chunk walk's — the pipeline only overlaps extraction with group
-/// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
 fn collect_range_into(
     access: &RandomAccessRows,
