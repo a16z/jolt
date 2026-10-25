@@ -86,6 +86,9 @@ const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 const SAFETY_MARGIN: f64 = 0.9;
+/// muldiv's max padded trace length, as its e2e tests and verifier fixtures
+/// preprocess it.
+const MULDIV_SCALE: u32 = 16;
 const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
 const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
 
@@ -95,12 +98,15 @@ fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
 
 /// The compiled protocol's artifact-name suffix: one compiled harness proves
 /// exactly one protocol, and the Akita runs must never collide with the
-/// homomorphic runs' trace names, `latest_` links, or CSV rows (the Dory
-/// names stay unsuffixed — they are the paths existing consumers key on).
+/// homomorphic runs' trace names, `latest_` links, or CSV rows, nor Whiteout
+/// (`akita,zk`) runs the clear Akita ones (the Dory names stay unsuffixed —
+/// they are the paths existing consumers key on).
 #[cfg(not(feature = "akita"))]
 const PROTOCOL_SUFFIX: &str = "";
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 const PROTOCOL_SUFFIX: &str = "_akita";
+#[cfg(all(feature = "akita", feature = "zk"))]
+const PROTOCOL_SUFFIX: &str = "_whiteout";
 
 /// The run identity `modular_{workload}{protocol}_{scale}{backend}` — the
 /// trace-name stem shared by the run directory, the `latest_` link (which
@@ -125,6 +131,9 @@ pub enum Workload {
     Sha3Chain,
     #[value(name = "btreemap")]
     BTreeMap,
+    /// The e2e and verifier-fixture guest (`examples/muldiv`, inputs
+    /// `[9, 5, 3]`). Fixed-size, so it is not in the default sweep list.
+    Muldiv,
     /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
     /// that exercises the field-inline columns and kernels. Fixed-size (its input does
     /// not scale), so it is not in the default sweep list.
@@ -141,6 +150,7 @@ impl Workload {
             Self::Sha2Chain => "sha2-chain",
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
+            Self::Muldiv => "muldiv",
             #[cfg(feature = "field-inline")]
             Self::FieldOps => "field-ops",
         }
@@ -160,6 +170,7 @@ impl Workload {
             Self::Sha2Chain => 22,
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
+            Self::Muldiv => MULDIV_SCALE,
             #[cfg(feature = "field-inline")]
             Self::FieldOps => 16,
         }
@@ -187,6 +198,7 @@ impl Workload {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP))
                     .expect("serialize input")
             }
+            Self::Muldiv => postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize input"),
             #[cfg(feature = "field-inline")]
             Self::FieldOps => eqpoly_inputs(),
         }

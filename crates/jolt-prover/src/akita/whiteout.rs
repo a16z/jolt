@@ -23,7 +23,7 @@ use jolt_verifier::whiteout::{
 use jolt_verifier::{jolt_protocol_id, JOLT_SESSION};
 use rand_core::{CryptoRng, OsRng, RngCore};
 
-use super::spine::prove_stages_1_to_7;
+use super::spine::{mark_region, prove_stages_1_to_7};
 use super::stage0::prove_stage0;
 use super::witness::AdviceObject;
 use crate::boundary::finish_stage;
@@ -69,6 +69,9 @@ where
                 backend.restart();
             }
             Ok(_) | Err(_) => {
+                if result.is_ok() {
+                    tracing::info!(attempt, "Whiteout attempt accepted");
+                }
                 backend.finish();
                 return result;
             }
@@ -102,20 +105,26 @@ where
     let log_t = config.trace_length.ilog2() as usize;
     finish_stage("stage0", log_t, backend.session(), &());
     let mut transcript = stage0.transcript;
-    let layout = pad_layout::<F, PCS, VC, H>(
-        &preprocessing.verifier,
-        public_io,
-        trusted_commitment,
-        transcript.narg(),
-    )?;
+    mark_region("stage0", &transcript);
+    let layout = tracing::info_span!("pad_layout").in_scope(|| {
+        pad_layout::<F, PCS, VC, H>(
+            &preprocessing.verifier,
+            public_io,
+            trusted_commitment,
+            transcript.narg(),
+        )
+    })?;
     transcript.site(PADS);
-    let pads = PCS::whiteout_commit_pads(
-        &preprocessing.pcs_setup,
-        layout.shape(),
-        layout.layout().clone(),
-        &mut transcript,
-        rng,
-    )?;
+    let pads = tracing::info_span!("commit_pads").in_scope(|| {
+        PCS::whiteout_commit_pads(
+            &preprocessing.pcs_setup,
+            layout.shape(),
+            layout.layout().clone(),
+            &mut transcript,
+            rng,
+        )
+    })?;
+    mark_region("pads", &transcript);
     let mut mode = ProofMode::<VC>::masked(pads);
     let (stage4, stage6b, stage7) = prove_stages_1_to_7::<F, PCS, VC, H>(
         backend,
@@ -130,7 +139,7 @@ where
 
     // Stage 8's claims are affine forms of the masked messages, which only
     // the verifier's residual states: replay stages 1–7 to obtain them.
-    let stages = {
+    let stages = tracing::info_span!("replay_stages").in_scope(|| {
         let mut replay =
             VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, transcript.narg());
         whiteout_stages::<F, PCS, VC, H>(
@@ -139,8 +148,8 @@ where
             trusted_commitment,
             &mut replay,
             Some(&layout),
-        )?
-    };
+        )
+    })?;
     transcript.site(STAGE8);
     let leaves = leaf_claims(&stage0.checked.precommitted, &stage4, &stage6b, &stage7)?;
     let mut groups = clear_group_claims(
@@ -161,6 +170,7 @@ where
             reason: "the opening's groups disagree with the verifier's masked claims",
         });
     }
+    mark_region("stage8_reductions", &transcript);
     let trace = groups.pop().ok_or(ProverError::InvariantViolation {
         reason: "a Whiteout opening has a trace group",
     })?;
@@ -206,16 +216,20 @@ where
         .iter()
         .flat_map(|claim| claim.evaluations.iter().cloned())
         .collect::<Vec<_>>();
-    let (residual, mut auxiliary) = PCS::whiteout_prove_masked(
-        &preprocessing.pcs_setup,
-        layout.shape(),
-        precommitted,
-        GroupOpeningClaim::new(trace.commitment, trace.point, trace.values),
-        stage0.hint,
-        &forms,
-        &mut pads,
-        &mut transcript,
-    )?;
+    let (residual, mut auxiliary) =
+        tracing::info_span!("whiteout_prove_masked").in_scope(|| {
+            PCS::whiteout_prove_masked(
+                &preprocessing.pcs_setup,
+                layout.shape(),
+                precommitted,
+                GroupOpeningClaim::new(trace.commitment, trace.point, trace.values),
+                stage0.hint,
+                &forms,
+                &mut pads,
+                &mut transcript,
+            )
+        })?;
+    mark_region("akita_masked_prefix", &transcript);
     #[cfg(feature = "prover-fixtures")]
     if faults::abort(transcript.narg()) {
         return Err(ProverError::Zk(jolt_zk::masking::ZkError::FoldOverflow {
@@ -232,10 +246,11 @@ where
     );
     let _ = pads.send(&auxiliary, &mut transcript)?;
     pads.finish()?;
+    mark_region("auxiliary", &transcript);
 
     // The verifier's own relation over the whole argument string so far; the
     // replay must land on the prover's transcript state.
-    let relation = {
+    let relation = tracing::info_span!("replay_relation").in_scope(|| {
         let mut replay =
             VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, transcript.narg());
         let mut stages = whiteout_stages::<F, PCS, VC, H>(
@@ -257,20 +272,23 @@ where
                 reason: "the verifier replay stopped short of the auxiliary block's end",
             });
         }
-        relation
-    };
+        Ok(relation)
+    })?;
     #[cfg(feature = "prover-fixtures")]
     secrets::record(pads.pads());
     transcript.site(WHITEOUT_SIGMA);
-    PCS::whiteout_prove_tail(
-        &preprocessing.pcs_setup,
-        layout.shape(),
-        &relation,
-        &residual,
-        &pads,
-        &mut transcript,
-        rng,
-    )?;
+    tracing::info_span!("whiteout_prove_tail").in_scope(|| {
+        PCS::whiteout_prove_tail(
+            &preprocessing.pcs_setup,
+            layout.shape(),
+            &relation,
+            &residual,
+            &pads,
+            &mut transcript,
+            rng,
+        )
+    })?;
+    mark_region("sigma_response", &transcript);
     finish_stage("stage8", log_t, backend.session(), &());
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(ZkConfig::Whiteout),

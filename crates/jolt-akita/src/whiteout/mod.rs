@@ -55,7 +55,10 @@ use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 use jolt_zk::masking::CommittedPads;
 use jolt_zk::masking::{AffineRow, CommittedPadsView, PadLayout, ResidualRelation, ZkError};
 #[cfg(feature = "zk-prover")]
-use jolt_zk::whiteout::{commit_lattice_pads, prove_sigma, ImageCompression, WhiteoutPadOpening};
+use jolt_zk::whiteout::{
+    commit_lattice_pads, prove_sigma, ImageCompression, ResponseProver, ResponseStatement,
+    ResponseWitness, WhiteoutPadOpening,
+};
 use jolt_zk::whiteout::{
     receive_lattice_pads, verify_sigma, BlockTarget, DenseSource, LatticePadCommitment,
     LatticePadPayload, MaskedOpeningShape, PadPlacement, PrecommittedShape, SigmaSetup,
@@ -340,14 +343,16 @@ impl WhiteoutCatalog {
                 .iter()
                 .map(|row| row.contract())
                 .collect::<Result<Vec<_>, _>>()?;
-            let planned = akita_planner::find_zk_schedule(
-                &key,
-                WhiteoutOneHot::committed_source_contract()?,
-                &contracts,
-                &policy_of::<WhiteoutOneHot>(chunking),
-                WhiteoutOneHot::ring_challenge_config,
-                ZkOpeningSchedule::new(ZK_CUT_LEVEL)?,
-            )?;
+            let planned = tracing::info_span!("find_zk_schedule").in_scope(|| {
+                akita_planner::find_zk_schedule(
+                    &key,
+                    WhiteoutOneHot::committed_source_contract()?,
+                    &contracts,
+                    &policy_of::<WhiteoutOneHot>(chunking),
+                    WhiteoutOneHot::ring_challenge_config,
+                    ZkOpeningSchedule::new(ZK_CUT_LEVEL)?,
+                )
+            })?;
             let residual = ResidualShape::new(akita_params::zk::AdmittedZkSchedule::new(
                 &planned.schedule,
                 WhiteoutOneHot::committed_source_contract()?,
@@ -405,6 +410,7 @@ impl WhiteoutCatalog {
         if let Some(prover) = self.prover.get() {
             return Ok(prover);
         }
+        let _span = tracing::info_span!("whiteout_catalog_prover_setup").entered();
         let setup = self
             .scheme
             .setup_prover(self.max_num_vars, self.max_batched_polys)?;
@@ -918,16 +924,17 @@ impl WhiteoutTail {
             let lifted = sigma.lift(relation, &row.shape.claims(&residual.point)?)?;
             let s = row.shape.residual(residual)?;
             let response = self.response::<D>(row, &layout)?;
-            prove_sigma(
+            let attempts = prove_sigma(
                 &sigma,
                 &lifted,
                 &s,
                 opening.opening(),
                 transcript,
                 rng,
-                response.as_ref(),
-            )
-            .map(|_attempts| ())
+                &ProfiledResponse(response.as_ref()),
+            )?;
+            tracing::info!(attempts, "Whiteout Σ accepted");
+            Ok(())
         })
     }
 
@@ -1044,6 +1051,7 @@ impl WhiteoutSetup {
             }
             return Ok(planned);
         }
+        let _span = tracing::info_span!("whiteout_plan_catalog").entered();
         let (catalog, residuals) = WhiteoutCatalog::plan(num_vars, num_polys, &self.admitted())?;
         let catalog = Arc::new(catalog);
         let shapes = residuals
@@ -1103,19 +1111,59 @@ impl WhiteoutSetup {
     }
 }
 
+/// The response prover under a `whiteout_prove_response` span that logs the
+/// response proof's bytes, so a profile splits the tail into the Σ-protocol
+/// and the response proof (`jolt:specs/whiteout-v6-costs.md`).
+#[cfg(feature = "zk-prover")]
+struct ProfiledResponse<'a>(&'a AkitaResponseProver<WhiteoutResponse>);
+
+#[cfg(feature = "zk-prover")]
+impl<const D: usize> ResponseProver<F, D> for ProfiledResponse<'_> {
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self.0
+    }
+
+    fn prove_response<H: Sponge>(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        witness: &ResponseWitness,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), ZkError> {
+        let _span = tracing::info_span!("whiteout_prove_response").entered();
+        let before = transcript.narg().len();
+        ResponseProver::<F, D>::prove_response(self.0, statement, witness, transcript)?;
+        tracing::info!(
+            response_bytes = transcript.narg().len().saturating_sub(before),
+            "Whiteout response proof"
+        );
+        Ok(())
+    }
+
+    fn verify_response<H: Sponge>(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<(), ZkError> {
+        ResponseProver::<F, D>::verify_response(self.0, statement, transcript)
+    }
+}
+
 /// The response prover over a catalog holding the response row of `e` with
 /// `num_vars` variables, planned on first use.
 fn plan_response(num_vars: usize) -> Result<AkitaResponseProver<WhiteoutResponse>, ZkError> {
+    let _span = tracing::info_span!("whiteout_plan_response", num_vars).entered();
     let chunking = akita_params::ChunkedWitnessCfg::default_non_chunked();
     let group = PolynomialGroupLayout::singleton(num_vars);
     let key = ScheduleLookupKey::single(group);
-    let planned = akita_planner::find_schedule(
-        &key,
-        WhiteoutResponse::committed_source_contract()?,
-        &[],
-        &policy_of::<WhiteoutResponse>(chunking),
-        WhiteoutResponse::ring_challenge_config,
-    )?;
+    let planned = tracing::info_span!("find_schedule").in_scope(|| {
+        akita_planner::find_schedule(
+            &key,
+            WhiteoutResponse::committed_source_contract()?,
+            &[],
+            &policy_of::<WhiteoutResponse>(chunking),
+            WhiteoutResponse::ring_challenge_config,
+        )
+    })?;
     let profile = CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::try_from_params(group, &planned.schedule.root.params)?,
         precommitteds: Vec::new(),

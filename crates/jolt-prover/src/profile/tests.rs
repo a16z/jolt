@@ -1,4 +1,4 @@
-use super::{BackendKind, OutputFormat, ProfileArgs, Workload};
+use super::{BackendKind, OutputFormat, ProfileArgs, Workload, PROTOCOL_SUFFIX};
 use jolt_akita::AkitaChunkProfile;
 
 #[test]
@@ -7,26 +7,26 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
         (
             AkitaChunkProfile::Single,
             "fibonacci",
-            "fibonacci_akita",
-            "modular_fibonacci_akita_20_optimized",
+            format!("fibonacci{PROTOCOL_SUFFIX}"),
+            format!("modular_fibonacci{PROTOCOL_SUFFIX}_20_optimized"),
         ),
         (
             AkitaChunkProfile::Two,
             "fibonacci_w2r2",
-            "fibonacci_akita_w2r2",
-            "modular_fibonacci_akita_20_optimized_w2r2",
+            format!("fibonacci{PROTOCOL_SUFFIX}_w2r2"),
+            format!("modular_fibonacci{PROTOCOL_SUFFIX}_20_optimized_w2r2"),
         ),
         (
             AkitaChunkProfile::Four,
             "fibonacci_w4r2",
-            "fibonacci_akita_w4r2",
-            "modular_fibonacci_akita_20_optimized_w4r2",
+            format!("fibonacci{PROTOCOL_SUFFIX}_w4r2"),
+            format!("modular_fibonacci{PROTOCOL_SUFFIX}_20_optimized_w4r2"),
         ),
         (
             AkitaChunkProfile::Eight,
             "fibonacci_w8r2",
-            "fibonacci_akita_w8r2",
-            "modular_fibonacci_akita_20_optimized_w8r2",
+            format!("fibonacci{PROTOCOL_SUFFIX}_w8r2"),
+            format!("modular_fibonacci{PROTOCOL_SUFFIX}_20_optimized_w8r2"),
         ),
     ] {
         let args = ProfileArgs {

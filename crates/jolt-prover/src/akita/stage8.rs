@@ -22,6 +22,7 @@ use jolt_verifier::stages::stage8::akita::field_inc_claim;
 use jolt_verifier::stages::stage8::akita::{leaf_claims, object_leaf_claims};
 use jolt_verifier::CheckedInputs;
 
+use super::spine::mark_region;
 use super::trace_group::{batch_failed, trace_group_claim};
 use super::witness::{AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
@@ -133,6 +134,7 @@ where
         }
     }
 
+    mark_region("stage8_reductions", transcript);
     tracing::info_span!("akita_main_batched_prove").in_scope(|| {
         PCS::prove_batch(
             &preprocessing.pcs_setup,
