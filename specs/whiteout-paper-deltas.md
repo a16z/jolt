@@ -1508,7 +1508,14 @@ absorbed value.
   not persist it. `AkitaVerifierSetup::whiteout_plans` exports every plan a
   setup holds or has derived, responses included; a setup constructed from
   such a set treats it as exhaustive and refuses a length it lacks
-  (`Statement`), never planning it.
+  (`Statement`), never planning it. A plain serde round trip of a fresh
+  setup carries the catalog but `responses: None`. The decoded verifier then
+  plans each response on first use, as a fresh setup would. That is
+  soundness-neutral, because the response digest is absorbed at `PADS`
+  before any challenge. It does cost the first verify about 12 s, so
+  distribute verifier preprocessing built from `whiteout_plans()` when
+  first-verify latency matters. The default path's latency is O2's
+  (planner speed).
 - *Checks on load.* A plan is never trusted. Every row goes through
   Akita's trusted-artifact decoder (`TrustedScheduleCatalog::from_artifact_bytes`):
   canonical encoding, policy and family binding, the row audit (SIS table

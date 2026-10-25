@@ -259,6 +259,13 @@ paper delta.
   - dev-protocol masked-prefix coverage;
   - `BackendCompression` made test-only.
 
+- **O1 merged** after a delta re-review that confirmed every fix. Its
+  first-verify target (< 0.5 s) holds when plans are distributed through
+  `whiteout_plans()`; plain serde transport still plans responses (D32),
+  which O2 inherits.
+- **O4 merged.** Combined bars are green; Akita's dump is unchanged apart from
+  the 5 known ZK rows.
+
 ## Not verified
 
 - **Verifier time split:** unmeasured until O0. Every verifier-side estimate
