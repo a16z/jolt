@@ -1192,6 +1192,12 @@ from an extension field, repeat the α round, or state the headline as
 about 2^−119.7 for this component. The product and fused sumchecks also carry no proof of
 work (Akita spec A34).
 
+**Enforced bound (O4).** The ledger is priced at `ν ≤ 27`;
+`jolt_zk::whiteout::MAX_RESPONSE_NUM_VARS` holds that bound, and
+`SigmaSetup::response_layout`, which both roles build `e`'s layout with,
+refuses a longer `e` (`WhiteoutError::ResponseTooLarge`). The other two
+inputs (`⌈log₂ m⌉ ≤ 27`, `⌈log₂ n_×⌉ ≤ 10`) are not enforced in code.
+
 ## D28. Public coordinates of w_k
 
 **Paper says.** Coordinates of `s` that hold public data may be left to the
@@ -1316,7 +1322,6 @@ implementation now follows Item 3.
   response proof's change is within its run-to-run spread. fib 2^16's
   ν before was not logged in a surviving trace; its response-proof bytes
   sit between muldiv's (ν = 24) and fib 2^20's (ν = 26) as V6 measured.
-
 
 ## D30. Two-witness distinguisher
 

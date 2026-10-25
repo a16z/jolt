@@ -844,7 +844,7 @@ W6 implements the revised trait of interfaces §5 once W3's opening type exists:
 |---|---|
 | `PadCommitment` | raw t_p, from `LatticePadCommitment` |
 | `PadOpening` | pads, g and r_p |
-| `ResidualCommitment` | raw u_a, passed to `verify` as an argument |
+| `ResidualCommitment` | `cm(u_a)`, the masked prefix's compressed u_a (Akita A47), held as a compressed target of `N` |
 | `Witness` | W3's residual opening: w_k, t̂_a, r_a, and the evaluation points |
 
 W4 provides the parts:
