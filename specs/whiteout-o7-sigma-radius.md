@@ -502,7 +502,7 @@ Scope: one ticket in each repository, plus a paper delta.
      ranks change.
    - **Checks.** `whiteout_e2e` and `catalog_security --check` must hold
      ≥ 128 bits at every Σ occurrence.
-5. **Paper delta (D32).** It updates D29's 19 × R_64 and §5.1's table, and
+5. **Paper delta (D33).** It updates D29's 19 × R_64 and §5.1's table, and
    records the review decision that P9 revisits.
 6. **Measurement.** Use the O0 benchmark on all three workloads, and record
    the retry rate, which should be 0 in ≈ 15 runs, and Σ time.

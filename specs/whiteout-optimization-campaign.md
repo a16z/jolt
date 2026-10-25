@@ -205,7 +205,7 @@ paper delta.
       are interpolated today;
     - wait for O0/O6 to show the residual's measured share is worth it.
   - P9 revisits §5.1's review decision (the reviewer chose D = 10 over
-    D = 9), so its paper delta (D32) records the new evidence: the
+    D = 9), so its paper delta (D33; D32 is O1's persisted plans) records the new evidence: the
     Σ-binding ranks make D = 9 worth 24–30% of the residual.
 - **O4:** in scope. The ticket writes the argument that Item 3's
   compressed-target check carries over to the cut successor, as a paper
