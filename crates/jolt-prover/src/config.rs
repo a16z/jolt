@@ -185,19 +185,19 @@ pub(crate) fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWrite
     }
 }
 
-/// Akita uses 4-bit committed chunks at every trace length. Other PCS modes
-/// use 4-bit chunks below `log_T = 25` and 8-bit chunks above it. Virtual-RA
-/// chunks remain 16 bits below that threshold and 32 bits at or above it.
+/// Akita uses 4-bit committed and 16-bit virtual chunks at every trace length.
+/// Other PCS modes use that geometry below `log_T = 25`, then 8-bit committed
+/// and 32-bit virtual chunks. Each virtual chunk groups four committed chunks.
 #[expect(non_snake_case)]
 pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
-    if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+    if cfg!(feature = "akita") || log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
         JoltOneHotConfig {
             log_k_chunk: 4,
             lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 8) as u8,
         }
     } else {
         JoltOneHotConfig {
-            log_k_chunk: if cfg!(feature = "akita") { 4 } else { 8 },
+            log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 4) as u8,
         }
     }

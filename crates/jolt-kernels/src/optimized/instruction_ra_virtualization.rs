@@ -217,11 +217,15 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
         let prefix_pairs = folded_ra.prefix_len().div_ceil(2);
-        let tail = folded_ra
+        let constant_groups: Vec<_> = folded_ra
             .tail_values()
             .chunks_exact(n)
             .take(self.active_virtuals)
-            .map(|values| values.iter().copied().product::<F>())
+            .map(|values| (values, values.iter().copied().product::<F>()))
+            .collect();
+        let tail = constant_groups
+            .iter()
+            .map(|(_, product)| *product)
             .sum::<F>();
         let tail_mass = self.gruen.suffix_weight(prefix_pairs) * tail;
 
@@ -249,7 +253,26 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 for lane in &mut scratch.row_lanes {
                     *lane = F::Accumulator::default();
                 }
-                for pairs in scratch.pairs.chunks_exact(n).take(self.active_virtuals) {
+                for (group, pairs) in scratch
+                    .pairs
+                    .chunks_exact(n)
+                    .take(self.active_virtuals)
+                    .enumerate()
+                {
+                    if let Some((values, product)) = constant_groups.get(group) {
+                        if pairs
+                            .iter()
+                            .zip(*values)
+                            .all(|((lo, hi), value)| lo == value && hi == value)
+                        {
+                            // Equal endpoints make this product constant; its
+                            // degree-n coefficient (the last lane) is zero.
+                            for lane in &mut scratch.row_lanes[..n - 1] {
+                                lane.add(*product);
+                            }
+                            continue;
+                        }
+                    }
                     for ((pair, eval), step) in pairs
                         .iter()
                         .zip(scratch.evals.iter_mut())
@@ -549,6 +572,7 @@ mod tests {
                 let lookup_index = match j {
                     0 => 0u128,
                     1 => u128::MAX,
+                    _ if (8..16).contains(&(j % 32)) => u128::from(splitmix(&mut state) & 3),
                     _ => ((splitmix(&mut state) as u128) << 64) | splitmix(&mut state) as u128,
                 };
                 InstructionReadRafWitness {
