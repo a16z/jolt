@@ -11,8 +11,10 @@
 //! metadata and non-trace oracles remain with the host witness. Packing uses
 //! a fixed CUDA ABI rather than Rust enum discriminants or field elements.
 
+use crate::witnesses::WitnessEnv;
 use cudarc::driver::CudaSlice;
 use cudarc::driver::CudaView;
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::CircuitFlags;
 use jolt_riscv::InstructionFlags;
 #[cfg(not(feature = "field-inline"))]
@@ -133,4 +135,11 @@ pub enum HotSource<'a> {
 pub enum DeviceTraceColumn {
     MappedPcWord,
     RemappedRamWord { addresses: usize },
+}
+
+impl WitnessEnv<'_> {
+    /// Program metadata used when uploading streamed trace rows to CUDA.
+    pub fn cuda_preprocessing(&self) -> &JoltProgramPreprocessing {
+        self.preprocessing
+    }
 }

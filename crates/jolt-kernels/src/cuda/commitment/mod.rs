@@ -1,12 +1,28 @@
-//! Signed witness increments for CUDA row commitments.
+//! Packed witness columns for CUDA row commitments.
 //!
 //! CUDA subtracts packed pre/post values on device and keeps each difference
 //! as a `u64` magnitude plus a sign byte. Optimized constructs signed `i128`
 //! increments from host witness bundles for its streaming commitment calls.
+//! CUDA also extracts one-hot chunk indices in batches and retains them in the
+//! proof-session cache; optimized streams one-hot addresses from host bundles.
 
-use super::common::device_columns::whole_domain;
+use std::sync::Arc;
+
+use cudarc::driver::CudaSlice;
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_field::JoltField;
+use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_witness::backend::cuda::{DeviceTrace, HotSource};
+use jolt_witness::RowSource;
+
+use super::common::context::CudaKernelContext;
+use super::common::device_columns::{park_device_column, whole_domain, DeviceColumn};
+use super::common::devices::CycleWindow;
 use super::common::msm::IncrementKind;
+use super::common::pack::COLD;
+use crate::cuda::witness::session_row_trace_window;
 use crate::reference::commitment::{column_kinds, ColumnKind};
+use crate::{KernelError, ProofSession};
 
 pub(super) const fn increment_kind(kind: ColumnKind) -> Option<IncrementKind> {
     match kind {
@@ -16,12 +32,157 @@ pub(super) const fn increment_kind(kind: ColumnKind) -> Option<IncrementKind> {
     }
 }
 
+type HotColumnBuild = Vec<Option<(CudaSlice<u32>, usize)>>;
+
+fn hot_columns_from_trace<F: JoltField>(
+    trace: &DeviceTrace,
+    kinds: &[ColumnKind],
+    one_hot_k: usize,
+    window: &CycleWindow,
+) -> Result<HotColumnBuild, KernelError<F>> {
+    let wanted = |family: fn(&ColumnKind) -> bool| kinds.iter().any(family);
+    let lookup = wanted(|kind| matches!(kind, ColumnKind::InstructionRa(_)))
+        .then(|| trace.lookup_index_limbs())
+        .transpose()?;
+    let pc = wanted(|kind| matches!(kind, ColumnKind::BytecodeRa(_)))
+        .then(|| trace.mapped_pc_words())
+        .transpose()?;
+    let ram = wanted(|kind| matches!(kind, ColumnKind::RamRa(_)))
+        .then(|| trace.remapped_ram_words(COLD as usize))
+        .transpose()?
+        .map(|(column, _)| column);
+
+    let missing = || KernelError::InvariantViolation {
+        reason: "a committed one-hot family has no device source column",
+    };
+    let words = window.start..window.end();
+    let limbs = 2 * window.start..2 * window.end();
+    let mut requests = Vec::with_capacity(kinds.len());
+    for &kind in kinds {
+        let request = match kind {
+            ColumnKind::InstructionRa(selector) => (
+                HotSource::Interleaved(lookup.as_ref().ok_or_else(missing)?.slice(limbs.clone())),
+                selector,
+            ),
+            ColumnKind::BytecodeRa(selector) => (
+                HotSource::Word(pc.as_ref().ok_or_else(missing)?.slice(words.clone())),
+                selector,
+            ),
+            ColumnKind::RamRa(selector) => (
+                HotSource::Word(ram.as_ref().ok_or_else(missing)?.slice(words.clone())),
+                selector,
+            ),
+            ColumnKind::RdInc | ColumnKind::RamInc => continue,
+        };
+        requests.push(request);
+    }
+    let mut chunked = trace
+        .hot_chunk_columns(&requests, one_hot_k, window.len)?
+        .into_iter();
+
+    let mut retained = Vec::with_capacity(kinds.len());
+    for &kind in kinds {
+        if !kind.is_one_hot() {
+            retained.push(None);
+            continue;
+        }
+        let entry = chunked.next().ok_or(KernelError::InvariantViolation {
+            reason: "the device chunk batch is shorter than the one-hot column count",
+        })?;
+        retained.push(Some(entry));
+    }
+    Ok(retained)
+}
+
+fn park_hot_columns(
+    session: &mut ProofSession,
+    source: &dyn RowSource,
+    ordinal: usize,
+    ids: &[JoltCommittedPolynomial],
+    window: &CycleWindow,
+    built: WindowHotColumns,
+) -> RetainedHotColumns {
+    let mut retained = Vec::with_capacity(ids.len());
+    for (&id, entry) in ids.iter().zip(built) {
+        match entry {
+            None => retained.push(None),
+            Some((column, span)) => {
+                park_device_column(
+                    session,
+                    source,
+                    ordinal,
+                    DeviceColumn::CommittedHot(id),
+                    window,
+                    span,
+                    Arc::clone(&column),
+                );
+                retained.push(Some(column));
+            }
+        }
+    }
+    retained
+}
+
+struct HotPlan<'a> {
+    kinds: &'a [ColumnKind],
+    ids: &'a [JoltCommittedPolynomial],
+    one_hot_k: usize,
+    window: &'a CycleWindow,
+}
+
+fn device_hot_columns<F: JoltField>(
+    context: &'static CudaKernelContext,
+    session: &mut ProofSession,
+    source: &dyn RowSource,
+    cycles: usize,
+    plan: &HotPlan<'_>,
+    preprocessing: &JoltProgramPreprocessing,
+) -> Result<(RetainedHotColumns, Arc<DeviceTrace>), KernelError<F>> {
+    let trace = session_row_trace_window::<F>(
+        context,
+        session,
+        source,
+        preprocessing,
+        cycles,
+        &plan.window.residency(cycles),
+    )?;
+    let built = retain_hot_columns(hot_columns_from_trace::<F>(
+        &trace,
+        plan.kinds,
+        plan.one_hot_k,
+        plan.window,
+    )?);
+    Ok((
+        park_hot_columns(
+            session,
+            source,
+            context.ordinal(),
+            plan.ids,
+            plan.window,
+            built,
+        ),
+        trace,
+    ))
+}
+
+pub(super) type WindowHotColumns = Vec<Option<(Arc<CudaSlice<u32>>, usize)>>;
+
+pub(super) fn retain_hot_columns(built: HotColumnBuild) -> WindowHotColumns {
+    built
+        .into_iter()
+        .map(|entry| entry.map(|(column, span)| (Arc::new(column), span)))
+        .collect()
+}
+
+type RetainedHotColumns = Vec<Option<Arc<CudaSlice<u32>>>>;
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use super::{HotPlan, COLD};
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltOneHotConfig, TracePolynomialOrder,
     };
@@ -155,6 +316,88 @@ mod tests {
             assert_eq!(
                 dense_columns, 2,
                 "the fixture must commit both increment columns",
+            );
+        });
+    }
+
+    #[test]
+    fn device_hot_columns_match_the_host_encoder() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let log_t = 8;
+        let cycles = 1usize << log_t;
+        let grid = grid_at(TracePolynomialOrder::CycleMajor, log_t);
+        let one_hot_k = 1usize << grid.log_k_chunk;
+        with_r1cs_witness(log_t, RAM_K, one_hot(), 23, |witness| {
+            let ids = trace_ids(witness);
+            let kinds = super::column_kinds::<Fr>(&ids, grid).expect("column kinds");
+            let plane = witness as &dyn JoltWitnessPlane<Fr>;
+            let rows =
+                crate::optimized::support::collect_rows::<CommittedColumnsWitness>(plane, cycles)
+                    .expect("reference rows");
+
+            let mut session = ProofSession::default();
+            let mut preprocessing = None;
+            plane
+                .visit_chunks(0..1, 1, &mut |_, _, env| {
+                    preprocessing = Some(env.cuda_preprocessing().clone());
+                    Ok(())
+                })
+                .expect("preprocessing");
+            let (hot, _) = super::device_hot_columns::<Fr>(
+                context,
+                &mut session,
+                plane,
+                cycles,
+                &HotPlan {
+                    kinds: &kinds,
+                    ids: &ids,
+                    one_hot_k,
+                    window: &super::whole_domain(cycles),
+                },
+                &preprocessing.expect("witness preprocessing"),
+            )
+            .expect("device hot columns");
+
+            let mut one_hot_columns = 0usize;
+            let mut cold_seen = false;
+            for (index, (column, &kind)) in hot.iter().zip(&kinds).enumerate() {
+                let Some(column) = column else {
+                    assert!(
+                        !kind.is_one_hot(),
+                        "{:?} is one-hot but the device plan has no column",
+                        ids[index],
+                    );
+                    continue;
+                };
+                one_hot_columns += 1;
+                let expected: Vec<u32> = rows
+                    .iter()
+                    .map(|row| kind.hot_address(row).map_or(COLD, |address| address as u32))
+                    .collect();
+                cold_seen |= expected.contains(&COLD);
+                assert!(
+                    expected.iter().any(|&address| address != expected[0]),
+                    "{:?}: every cycle shares one address, so a chunk kernel that ignored the \
+                     shift would pass",
+                    ids[index],
+                );
+                assert_eq!(
+                    context.download_u32(column).expect("download"),
+                    expected,
+                    "{:?}: the device chunk column diverges from the host encoder",
+                    ids[index],
+                );
+            }
+            assert!(
+                one_hot_columns > 2,
+                "only {one_hot_columns} one-hot columns, so the per-family chunk shifts are \
+                 barely exercised",
+            );
+            assert!(
+                cold_seen,
+                "no committed column has a cold cycle, so the COLD sentinel is untested",
             );
         });
     }
