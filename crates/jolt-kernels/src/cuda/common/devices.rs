@@ -81,7 +81,6 @@ pub(crate) fn committed_windows(cycles: usize, row_width: usize) -> Vec<CycleWin
     plan_committed_windows(cycles, row_width, device_count().max(1))
 }
 
-#[cfg(test)]
 pub(crate) fn plan_device_windows(
     cycles: usize,
     alignment: usize,
@@ -105,6 +104,10 @@ pub(crate) fn plan_device_windows(
         start += len;
     }
     windows
+}
+
+pub(crate) fn device_windows(cycles: usize, alignment: usize) -> Vec<CycleWindow> {
+    plan_device_windows(cycles, alignment, device_count().max(1))
 }
 
 pub(crate) fn device_selections(row_counts: &[usize], devices: usize) -> Vec<Vec<usize>> {

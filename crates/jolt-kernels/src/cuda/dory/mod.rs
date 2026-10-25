@@ -1,5 +1,8 @@
 //! Dory PCS entry point sharing the CPU scheme's setup, commitment, proof,
-//! and transcript formats. All operations delegate to `DoryScheme`.
+//! and transcript formats. Hint combinations run row MSMs across CUDA devices;
+//! setup, commitments, openings, and verification delegate to `DoryScheme`.
+
+mod combine;
 
 use jolt_crypto::{Bn254G1, Commitment, VectorCommitment};
 use jolt_dory::{
@@ -21,8 +24,8 @@ use crate::cuda::commitment::DeviceTier1Commitment;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::msm::{AffineLimbs, JacobianLimbs};
 
-/// CPU-backed Dory PCS selected independently of the compute kernel registry.
-/// Its proof and setup types are shared with `DoryScheme`.
+/// Dory PCS with CUDA hint combination, selected independently of the compute
+/// kernel registry. Its proof and setup types are shared with `DoryScheme`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CudaDoryScheme;
 
@@ -135,7 +138,7 @@ impl AdditivelyHomomorphic for CudaDoryScheme {
     }
 
     fn combine_hints(hints: Vec<Self::OpeningHint>, scalars: &[Self::Field]) -> Self::OpeningHint {
-        DoryScheme::combine_hints(hints, scalars)
+        combine::combine_hints(hints, scalars)
     }
 }
 
@@ -284,5 +287,153 @@ impl ZkStreamingCommitment for CudaDoryScheme {
         chunks: &[Self::OneHotChunkCommitment],
     ) -> (Self::Output, Self::OpeningHint) {
         DoryScheme::finish_zk_one_hot_column_major_chunks(setup, one_hot_k, chunks)
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test module: PCS and device operations fail loudly"
+)]
+mod tests {
+    use jolt_crypto::Bn254G1;
+    use jolt_field::{Field, Fr};
+    use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
+    use jolt_poly::Polynomial;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use jolt_dory::{DoryHint, DoryScheme};
+
+    use super::CudaDoryScheme;
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::msm::testing::point;
+
+    const NUM_VARS: usize = 4;
+    const PROVE_WIDE_HINTS: usize = 40;
+    const PROVE_WIDE_ROWS: usize = 8_192;
+    const PROVE_NARROW_HINTS: usize = 2;
+    const PROVE_NARROW_ROWS: usize = 512;
+
+    fn prove_scale_shape() -> Vec<usize> {
+        let mut shape = vec![PROVE_WIDE_ROWS; PROVE_WIDE_HINTS];
+        shape.extend(std::iter::repeat_n(PROVE_NARROW_ROWS, PROVE_NARROW_HINTS));
+        shape
+    }
+
+    fn walked_row_commitments(rows: usize, start: u64) -> Vec<Bn254G1> {
+        let step = point(1);
+        let mut walk = point(start);
+        (0..rows)
+            .map(|_| {
+                walk += step;
+                Bn254G1::from(walk)
+            })
+            .collect()
+    }
+
+    fn shaped_hints(shape: &[usize], seed: u64) -> Vec<DoryHint> {
+        let mut rng = ChaCha20Rng::seed_from_u64(seed);
+        shape
+            .iter()
+            .enumerate()
+            .map(|(index, &rows)| {
+                let start = 1 + index as u64 * (PROVE_WIDE_ROWS as u64 + 1);
+                DoryHint::from_parts(
+                    walked_row_commitments(rows, start),
+                    <Fr as Field>::random(&mut rng),
+                )
+            })
+            .collect()
+    }
+
+    fn assert_hints_match(got: &DoryHint, expected: &DoryHint, label: &str) {
+        assert_eq!(
+            got.row_commitments().len(),
+            expected.row_commitments().len(),
+            "{label}: combined row count diverged",
+        );
+        assert_eq!(
+            got.commit_blind(),
+            expected.commit_blind(),
+            "{label}: combined commit blind diverged",
+        );
+        let divergence = got
+            .row_commitments()
+            .iter()
+            .zip(expected.row_commitments())
+            .position(|(got, expected)| got != expected);
+        assert_eq!(divergence, None, "{label}: combined row diverged");
+    }
+
+    fn hints(rows: &[usize], seed: u64) -> Vec<DoryHint> {
+        let mut rng = ChaCha20Rng::seed_from_u64(seed);
+        let setup = DoryScheme::setup_prover(NUM_VARS);
+        rows.iter()
+            .map(|&count| {
+                let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
+                let (_, hint) = DoryScheme::commit(poly.evaluations(), &setup).unwrap();
+                let (mut rows, blind) = (hint.row_commitments().to_vec(), hint.commit_blind());
+                rows.truncate(count.max(1));
+                DoryHint::from_parts(rows, blind)
+            })
+            .collect()
+    }
+
+    fn scalars(count: usize, seed: u64) -> Vec<Fr> {
+        let mut rng = ChaCha20Rng::seed_from_u64(seed);
+        (0..count)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect()
+    }
+
+    #[test]
+    fn combine_hints_matches_reference_dory() {
+        if shared_context().is_none() {
+            return;
+        }
+        for (index, shape) in [
+            vec![4usize],
+            vec![4, 4],
+            vec![4, 4, 4, 4, 4],
+            vec![1, 4, 2],
+            vec![2, 1],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let source = hints(&shape, 1_000 + index as u64);
+            let weights = scalars(shape.len(), 2_000 + index as u64);
+
+            let expected = DoryScheme::combine_hints(source.clone(), &weights);
+            let got = CudaDoryScheme::combine_hints(source, &weights);
+
+            assert_eq!(
+                got, expected,
+                "combined hint diverged for row shape {shape:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn combine_hints_matches_reference_dory_at_prove_scale() {
+        if shared_context().is_none() {
+            return;
+        }
+        let shape = prove_scale_shape();
+        let source = shaped_hints(&shape, 3_000);
+        let weights = scalars(shape.len(), 4_000);
+
+        let expected = DoryScheme::combine_hints(source.clone(), &weights);
+        let got = super::combine::combine_on_device(&source, &weights)
+            .expect("the device hint combination must not decline at prove scale");
+
+        assert_hints_match(&got, &expected, "prove scale");
+        assert_eq!(
+            got.row_commitments().len(),
+            PROVE_WIDE_ROWS,
+            "the combined hint must be padded out to the widest source hint",
+        );
     }
 }

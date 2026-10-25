@@ -306,7 +306,6 @@ const BATCHED_WINDOW_BYTES: usize = 64 << 20;
 
 const MAX_G1_BATCHED_WINDOW_BYTES: usize = 4 << 30;
 
-#[cfg(test)]
 const GLV_CONSTANTS: [u64; 14] = [
     0x163b_4843_cb4b_9a5e,
     0x149d_540f_d5e4_95cc,
@@ -324,7 +323,6 @@ const GLV_CONSTANTS: [u64; 14] = [
     0x6f4d_8248_eeb8_59fd,
 ];
 
-#[cfg(test)]
 const GLV_SCALAR_BITS: usize = 128;
 
 #[cfg(test)]
@@ -377,22 +375,16 @@ fn glv_frobenius_coefficients() -> &'static [u64] {
     })
 }
 
-#[cfg(test)]
 const SHARED_WINDOW_BITS: usize = 4;
 
-#[cfg(test)]
 const SHARED_WINDOWS: usize = GLV_SCALAR_BITS.div_ceil(SHARED_WINDOW_BITS);
 
-#[cfg(test)]
 const SHARED_WINDOW_BUCKETS: usize = 1 << SHARED_WINDOW_BITS;
 
-#[cfg(test)]
 const SHARED_WINDOW_MIN_ROWS: usize = 128;
 
-#[cfg(test)]
 const SHARED_WINDOW_MIN_TERMS: usize = 8;
 
-#[cfg(test)]
 fn glv_endomorphism_coefficient() -> [u64; FQ_LIMBS] {
     <ark_bn254::g1::Config as ark_ec::scalar_mul::glv::GLVConfig>::ENDO_COEFFS[0]
         .0
@@ -483,7 +475,6 @@ fn flatten_affine(points: &[AffineLimbs]) -> Vec<u64> {
     flat
 }
 
-#[cfg(test)]
 fn flatten_jacobian(points: &[JacobianLimbs]) -> Vec<u64> {
     let mut flat = Vec::with_capacity(points.len() * 3 * FQ_LIMBS);
     for point in points {
@@ -1166,7 +1157,6 @@ impl CudaKernelContext {
         Ok(out)
     }
 
-    #[cfg(test)]
     fn glv_decompose_2d(
         &self,
         scalars: &CudaSlice<u64>,
@@ -1203,7 +1193,6 @@ impl CudaKernelContext {
         Ok((out, hosted))
     }
 
-    #[cfg(test)]
     fn g1_endomorphism_span(
         &self,
         jacobian: &CudaSlice<u64>,
@@ -1357,7 +1346,6 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn msm_rows_shared_scalars(
         &self,
         bases: &[JacobianLimbs],
@@ -1432,7 +1420,6 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
-    #[cfg(test)]
     fn shared_window_bytes(rows: usize, terms: usize) -> usize {
         let point_bytes = 3 * FQ_LIMBS * size_of::<u64>();
         let components = terms.saturating_mul(2);
@@ -1448,7 +1435,6 @@ impl CudaKernelContext {
             )
     }
 
-    #[cfg(test)]
     pub(crate) fn admits_shared_window_schedule(
         &self,
         rows: usize,
@@ -1461,7 +1447,6 @@ impl CudaKernelContext {
         Ok(Self::shared_window_bytes(rows, terms) <= (free / 8).min(MAX_G1_BATCHED_WINDOW_BYTES))
     }
 
-    #[cfg(test)]
     fn msm_rows_shared_windows(
         &self,
         bases: &CudaSlice<u64>,

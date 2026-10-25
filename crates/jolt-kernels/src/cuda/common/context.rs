@@ -192,17 +192,13 @@ pub struct CudaKernelContext {
     msm_one_hot_scatter: CudaFunction,
     msm_one_hot_scatter_shared: CudaFunction,
     msm_one_hot_complement: CudaFunction,
-    #[cfg(test)]
     msm_glv_decompose_2d: CudaFunction,
     #[cfg(test)]
     msm_glv_decompose_4d: CudaFunction,
     #[cfg(test)]
     msm_g2_frobenius: CudaFunction,
-    #[cfg(test)]
     msm_g1_endomorphism: CudaFunction,
-    #[cfg(test)]
     msm_shared_scalar_rows_glv: CudaFunction,
-    #[cfg(test)]
     msm_shared_scalar_windows: CudaFunction,
     msm_segment_sum: CudaFunction,
     msm_segment_sum_warp: CudaFunction,
@@ -440,18 +436,14 @@ impl CudaKernelContext {
             msm_one_hot_scatter_shared: module
                 .load_function("msm_one_hot_scatter_shared_kernel")?,
             msm_one_hot_complement: module.load_function("msm_one_hot_complement_kernel")?,
-            #[cfg(test)]
             msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
             #[cfg(test)]
             msm_glv_decompose_4d: module.load_function("msm_glv_decompose_4d_kernel")?,
             #[cfg(test)]
             msm_g2_frobenius: module.load_function("msm_g2_frobenius_kernel")?,
-            #[cfg(test)]
             msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
-            #[cfg(test)]
             msm_shared_scalar_rows_glv: module
                 .load_function("msm_shared_scalar_rows_glv_kernel")?,
-            #[cfg(test)]
             msm_shared_scalar_windows: module.load_function("msm_shared_scalar_windows_kernel")?,
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             msm_segment_sum_warp: module.load_function("msm_segment_sum_warp_kernel")?,
@@ -705,7 +697,6 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn download_u8(&self, buffer: &CudaSlice<u8>) -> Result<Vec<u8>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
@@ -1279,7 +1270,6 @@ impl CudaKernelContext {
         &self.msm_one_hot_complement
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_glv_decompose_2d(&self) -> &CudaFunction {
         &self.msm_glv_decompose_2d
     }
@@ -1294,17 +1284,14 @@ impl CudaKernelContext {
         &self.msm_g2_frobenius
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g1_endomorphism(&self) -> &CudaFunction {
         &self.msm_g1_endomorphism
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_shared_scalar_rows_glv(&self) -> &CudaFunction {
         &self.msm_shared_scalar_rows_glv
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_shared_scalar_windows(&self) -> &CudaFunction {
         &self.msm_shared_scalar_windows
     }
