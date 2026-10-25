@@ -224,33 +224,31 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         // Blocks run in parallel, and a matrix is shared by many blocks:
         // build each distinct matrix's entries over F once, before the tasks
         // that read them.
-        let warm_span = tracing::info_span!("whiteout_nz_field_entries").entered();
         let mut warmed: Vec<&Arc<PreparedMatrix<F, D>>> = Vec::new();
-        for block in &self.blocks {
+        for (index, block) in self.blocks.iter().enumerate() {
             if !warmed
                 .iter()
                 .any(|matrix| Arc::ptr_eq(matrix, &block.matrix))
             {
+                let _span = tracing::info_span!(
+                    "whiteout_nz_field_entries",
+                    block = self.profile_label(index)
+                )
+                .entered();
                 block.matrix.prepare_field_entries();
                 warmed.push(&block.matrix);
             }
         }
-        drop(warm_span);
-        let last = self.blocks.len().saturating_sub(1);
         let blocks: Vec<Vec<CyclotomicRing<F, D>>> = self
             .blocks
             .par_iter()
             .enumerate()
             .map(
                 |(index, block)| -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
-                    // Labels for the verifier profile: the residual inner
-                    // blocks `A_a` carry the gadget, and `SigmaSetup::new`
-                    // stacks the pad commitment's block last.
-                    let _span = match (&block.gadget, index == last) {
-                        (Some(_), _) => tracing::info_span!("whiteout_nz_residual_a"),
-                        (None, false) => tracing::info_span!("whiteout_nz_residual_b"),
-                        (None, true) => tracing::info_span!("whiteout_nz_pad"),
-                    }
+                    let _span = tracing::info_span!(
+                        "whiteout_nz_product",
+                        block = self.profile_label(index)
+                    )
                     .entered();
                     let columns = scales
                         .get(block.input.start / D..block.input.end / D)
@@ -280,6 +278,18 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
             )
             .collect::<Result<_, _>>()?;
         Ok(blocks.into_iter().flatten().collect())
+    }
+
+    /// The verifier profile's name for block `index`: the residual inner
+    /// blocks `A_a` carry the gadget, and `SigmaSetup::new` stacks the pad
+    /// commitment's block last, after the residual outer block `[B_a|B'_a]`.
+    fn profile_label(&self, index: usize) -> &'static str {
+        match self.blocks.get(index).map(|block| block.gadget.is_some()) {
+            Some(true) => "residual_a",
+            Some(false) if index + 1 == self.blocks.len() => "pad",
+            Some(false) => "residual_b",
+            None => "unknown",
+        }
     }
 
     /// Each block's output count and target, in block order.

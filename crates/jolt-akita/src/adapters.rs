@@ -322,20 +322,23 @@ fn with_profile_backend_pool<R>(selection: ProfileBackendPool, f: impl FnOnce() 
     f()
 }
 
-/// Runs verifier backend calls in `f` on an explicit host-sized pool.
+/// Runs `f` on an explicit host-sized pool, its backend calls included.
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
-pub fn with_host_parallel_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
-    let _ = host_parallel_verifier_pool();
-    with_profile_backend_pool(ProfileBackendPool::HostParallel, f)
+pub fn with_host_parallel_verifier_backend<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    host_parallel_verifier_pool()
+        .install(|| with_profile_backend_pool(ProfileBackendPool::HostParallel, f))
 }
 
-/// Runs verifier backend calls in `f` on exactly one worker.
+/// Runs `f` on exactly one worker, its backend calls included: the Jolt
+/// stages and Whiteout's own parallel loops run on the caller's pool, not
+/// [`with_backend_pool`], so a single-threaded measurement installs the pool
+/// around the whole verify.
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
-pub fn with_single_threaded_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
-    let _ = single_threaded_verifier_pool();
-    with_profile_backend_pool(ProfileBackendPool::SingleThreaded, f)
+pub fn with_single_threaded_verifier_backend<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    single_threaded_verifier_pool()
+        .install(|| with_profile_backend_pool(ProfileBackendPool::SingleThreaded, f))
 }
 
 #[cfg(feature = "profiling")]
