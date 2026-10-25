@@ -104,8 +104,15 @@ fn profile_run_emits_conformant_artifacts() {
         .into_iter()
         .chain(taxonomy::field_inline_spans(mode).iter().copied())
         .collect();
+    // The harness verifies inside the trace: Whiteout's verifier seams fire.
+    let verifier = if mode == taxonomy::ProverMode::Whiteout {
+        taxonomy::WHITEOUT_VERIFIER_SPANS.as_slice()
+    } else {
+        &[]
+    };
     let missing: Vec<&str> = labels
         .into_iter()
+        .chain(verifier.iter().copied())
         .filter(|label| !emitted.contains(label))
         .collect();
     assert!(
