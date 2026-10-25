@@ -160,7 +160,7 @@ fn replay(
     let mut pads = fixture
         .shape
         .tail()
-        .receive_pads(fixture.shape.row(), layout.clone(), transcript)
+        .receive_pads(layout.clone(), transcript)
         .unwrap();
     let mut claims = vec![F::default(); NUM_POLYS];
     let slots = pads
@@ -195,20 +195,11 @@ fn prove(fixture: &Fixture, seed: u64) -> Vec<u8> {
     let mut pads = fixture
         .shape
         .tail()
-        .commit_pads(
-            fixture.shape.row(),
-            layout.clone(),
-            &mut transcript,
-            &mut rng,
-        )
+        .commit_pads(layout.clone(), &mut transcript, &mut rng)
         .unwrap();
     let masked = pads.send(&fixture.evaluations, &mut transcript).unwrap();
     let forms = own_pads(&masked, 0);
-    let compression = fixture
-        .shape
-        .tail()
-        .compression(fixture.shape.row(), &layout)
-        .unwrap();
+    let compression = fixture.shape.tail().compression(&layout).unwrap();
     let (residual, auxiliary) = fixture
         .shape
         .row()
@@ -233,14 +224,7 @@ fn prove(fixture: &Fixture, seed: u64) -> Vec<u8> {
     fixture
         .shape
         .tail()
-        .prove(
-            fixture.shape.row(),
-            &relation,
-            &residual,
-            &pads,
-            &mut transcript,
-            &mut rng,
-        )
+        .prove(&relation, &residual, &pads, &mut transcript, &mut rng)
         .unwrap();
     transcript.finish()
 }
@@ -249,13 +233,10 @@ fn verify(fixture: &Fixture, proof: &[u8]) -> Result<(), ZkError> {
     let layout = layout(fixture);
     let mut transcript = new_verifier_transcript(SESSION, proof);
     let (prefix, pads, relation) = replay(fixture, &layout, &mut transcript);
-    fixture.shape.tail().verify(
-        fixture.shape.row(),
-        &relation,
-        &prefix,
-        &pads,
-        &mut transcript,
-    )?;
+    fixture
+        .shape
+        .tail()
+        .verify(&relation, &prefix, &pads, &mut transcript)?;
     transcript.finish()?;
     Ok(())
 }
@@ -491,7 +472,7 @@ fn pads_refusal(fixture: &Fixture, proof: &[u8]) -> ZkError {
     fixture
         .shape
         .tail()
-        .receive_pads(fixture.shape.row(), layout(fixture), &mut transcript)
+        .receive_pads(layout(fixture), &mut transcript)
         .err()
         .unwrap()
 }

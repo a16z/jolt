@@ -9,8 +9,9 @@ prints the median [min-max] of each verify time and of each span bucket.
 Spans are attributed to the harness's verify-mode spans
 (`profile_verifier_{parallel,single_threaded,transported}`) by time window,
 and keyed by label within their nearest context span on the same thread, so
-the pad-layout replay's stages, the response lookup's Σ setup and the
-response proof's opening stay apart from the live ones.
+the pad-layout replay's stages, the response lookup's builds and the
+response proof's opening stay apart from the live ones. The report reads
+binaries from before and after O3 (`specs/whiteout-o3-verifier.md`).
 """
 
 import argparse
@@ -175,13 +176,26 @@ def buckets(spans, build):
         get(RESPONSE),
     )
     product = lambda block: label_total(spans, f"whiteout_nz_product[{block}]")
+    # Pre-O3 builds only: O3 dropped the CRT-NTT round trip and its span.
     entries = lambda block: label_total(spans, f"whiteout_nz_field_entries[{block}]")
+    # The public state's builds, in any context. Since O3 they run once per
+    # row and pad layout, under the response lookup, and a steady verify
+    # has none; before O3 every verify ran them, some twice.
+    builds = {
+        label: label_total(spans, label)
+        for label in (
+            "whiteout_pad_commitment_setup",
+            "whiteout_residual_matrices",
+            "whiteout_v_matrix_setup",
+            "whiteout_nz_field_entries",
+        )
+    }
     rows = [
         ("total", total),
         ("seed, stages 1–7, stage-8 claims", stages - replay - pads),
         ("  of which stages 1–7 (verify_stages_1_to_7)", get("verify_stages_1_to_7")),
         ("pad-layout replay [recomputed]", replay),
-        ("pad receipt (pad commitment setup) [recomputed]", pads),
+        ("pad receipt (pre-O3: builds the pad commitment)", pads),
         ("masked prefix", get("whiteout_verify_prefix")),
     ]
     rows += [
@@ -192,11 +206,9 @@ def buckets(spans, build):
     rows += [
         ("relation (auxiliary block)", get("whiteout_verify_relation")),
         ("tail", tail),
-        ("  Σ setup [recomputed]", get("whiteout_sigma_setup")),
-        ("    pad commitment", tail and label_total(spans, "whiteout_pad_commitment_setup", "") - pads),
-        ("    residual matrices A_a, [B_a|B'_a] (NTT)", get("whiteout_residual_matrices")),
-        ("    A_D", get("whiteout_v_matrix_setup")),
-        ("  response lookup (rebuilds the Σ setup) [recomputed]", get("whiteout_response_lookup")),
+        ("  Σ setup (pre-O3: builds the matrices)", get("whiteout_sigma_setup")),
+        ("  response lookup (O3: the layout's public state, built on first use)",
+         get("whiteout_response_lookup")),
         ("  lift", get("whiteout_lift")),
         ("  Σ check (verify_sigma minus the response proof)", sigma - response),
         ("  response proof", response),
@@ -208,9 +220,9 @@ def buckets(spans, build):
         ("      eq dual", get(f"{RESPONSE}/whiteout_weight_dual")),
         ("      A_D·V", get(f"{RESPONSE}/whiteout_weight_v_image")),
         ("      N·z", get(f"{RESPONSE}/whiteout_weight_nz")),
-        ("        field entries A_a [recomputed]", entries("residual_a")),
-        ("        field entries [B_a|B'_a] [recomputed]", entries("residual_b")),
-        ("        field entries pad [recomputed]", entries("pad")),
+        ("        field entries A_a (pre-O3)", entries("residual_a")),
+        ("        field entries [B_a|B'_a] (pre-O3)", entries("residual_b")),
+        ("        field entries pad (pre-O3)", entries("pad")),
         ("        product A_a (CPU)", product("residual_a")),
         ("        product [B_a|B'_a] (CPU)", product("residual_b")),
         ("        product pad (CPU)", product("pad")),
@@ -221,10 +233,13 @@ def buckets(spans, build):
         ("= residual all-in: products + field entries + matrix setup (both Σ setups)",
          product("residual_a") + product("residual_b") + entries("residual_a")
          + entries("residual_b") + label_total(spans, "whiteout_residual_matrices")),
-        ("= recomputed per verify (replay, pad setup, both Σ setups, field entries)",
-         replay + pads + get("whiteout_sigma_setup")
-         + get("whiteout_response_lookup/whiteout_sigma_setup")
-         + label_total(spans, "whiteout_nz_field_entries")),
+        ("= public-state builds, any context", sum(builds.values())),
+        ("    pad commitment A_p, L", builds["whiteout_pad_commitment_setup"]),
+        ("    residual matrices A_a, [B_a|B'_a]", builds["whiteout_residual_matrices"]),
+        ("    A_D", builds["whiteout_v_matrix_setup"]),
+        ("    field entries (pre-O3 CRT-NTT inverse)", builds["whiteout_nz_field_entries"]),
+        ("= recomputed in this verify (replay + public-state builds)",
+         replay + sum(builds.values())),
     ]
     return rows
 

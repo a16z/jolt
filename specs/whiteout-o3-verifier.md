@@ -25,13 +25,22 @@ setup as targets.
 
 **Why each key is lossless.**
 
-- *Row.* A `WhiteoutTail` and its `WhiteoutRow` belong to one
-  `WhiteoutShape`. The setup's `PlannedSetup` builds one shape per admitted
-  list of precommitted groups, so the row is fixed per cell.
-  `ResidualShape::blocks` checks in release builds that the matrices it
-  receives have this shape's dimensions. The matrices are cut from an
-  offset-0 prefix of the stream (`MatrixView`), so for the catalog's one
-  stream, shape equality determines them.
+- *Row.* A `WhiteoutTail` owns its `WhiteoutRow`, and its methods read no
+  other row, so the type system pairs each layout cache with one row.
+  The setup's `PlannedSetup` builds one shape per admitted list of
+  precommitted groups. The row's matrix cell is likewise a field of the
+  row.
+  - `ResidualShape::blocks` checks in release builds that the matrices it
+    receives have this shape's dimensions.
+  - Shape equality determines the matrices only because a catalog has one
+    setup stream (`WhiteoutCatalog::stream`, Akita's expanded shared
+    matrix), and every matrix is an offset-0 prefix of it (`MatrixView`).
+    Two shapes with equal dimensions over different streams would pass the
+    check. They cannot meet here: the row and its catalog are fixed
+    together at construction.
+  - `ResidualMatrices` has private fields, so `ResidualShape::matrices` is
+    its only constructor. A caller cannot hand `blocks` matrices cut from
+    anywhere else.
 - *Layout.* The cache compares `PadLayout` with `==` on all of it:
   `num_pads`, the auxiliary range, and every operand pad. The pad
   commitment is `LatticePadCommitment::new(PadPlacement::new(layout), …)`
@@ -47,6 +56,15 @@ setup as targets.
   because `D` is a const parameter chosen at runtime by
   `with_ring_dim!`. A row has one ring dimension, and a mismatched
   downcast is an `AkitaError::Internal`, never a reinterpretation.
+
+**Growth.** Each tail keeps at most `MAX_CACHED_LAYOUTS` = 8 layouts. A
+small bound cannot come from the setup alone: the row fixes the trace and
+precommitted groups, but the layout also counts stages 1–7's masked
+messages. Those depend on dimensions each proof's header carries (trace
+length, RAM size, read-write and one-hot configuration). A verifier fed
+headers that vary would otherwise grow the cache by one pad commitment and
+`A_D` per header. Past the cap, a layout's state is built for its verify
+and dropped. That is correct, only slower.
 
 **Concurrency.** Each state is built outside its lock or cell: the builds
 run on Rayon, and a worker waiting inside `get_or_init` could steal a job
@@ -117,10 +135,16 @@ profiling,akita,zk`. The parsing is `scripts/whiteout_verify_profile.py`'s
 | fib 2^20 | first verify, transported | 1,752.2 [1,212.1–3,240.4] | 748.2 [543.7–862.8] | 2.3× |
 
 **Where a steady verify goes after O3** (1 thread, median share): the
-response proof is 75–85%. Within it, `N·z` is 31–57%, the lifted rows 17–25%,
-and the eq dual 3–4%. The pad-layout replay is 7–9%. The recomputed buckets
-are now zero, except the replay. On a transported first verify, the layout
-state's one-time build (`whiteout_response_lookup`) is 11–24%.
+response proof is 75–85%. Within it, `N·z` is 31–57%, the lifted rows
+17–25%, and the eq dual 3–4%. The pad-layout replay is 7–9%.
+
+The report's "public-state builds, any context" bucket sums
+`whiteout_pad_commitment_setup`, `whiteout_residual_matrices`,
+`whiteout_v_matrix_setup` and the pre-O3 `whiteout_nz_field_entries`,
+wherever they nest. In a steady verify after O3 it is 0.0 ms in every cell,
+so the replay is all that is recomputed. Before O3 it was 49–81%. On a
+transported first verify, the one-time builds are 11–23%. They run under
+`whiteout_response_lookup`, which is 11–24%.
 
 **Thread scaling.** Under this load, 16 threads are no faster than 1. The
 `N·z` products spend 3–6× more CPU with 16 threads than the 1-thread wall

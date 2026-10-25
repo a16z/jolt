@@ -71,7 +71,7 @@ fn decode(
     groups: Vec<MaskedGroupClaim<F, AkitaCommitment>>,
 ) -> Result<DecodedGroups, ZkError> {
     let (precommitted, trace) = split_trace(groups)?;
-    let (precommitted_backend, trace_backend) = shape.row.backend_commitments(
+    let (precommitted_backend, trace_backend) = shape.row().backend_commitments(
         &precommitted
             .iter()
             .map(|group| &group.commitment)
@@ -107,7 +107,7 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         layout: PadLayout,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
-        shape.tail.receive_pads(&shape.row, layout, transcript)
+        shape.tail.receive_pads(layout, transcript)
     }
 
     fn verify_masked<H: Sponge, P>(
@@ -117,7 +117,9 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<MaskedPrefix<F, F>, ZkError> {
         let (groups, forms) = decode(shape, groups)?;
-        Ok(shape.row.verify_masked(&groups, forms, pads, transcript)?)
+        Ok(shape
+            .row()
+            .verify_masked(&groups, forms, pads, transcript)?)
     }
 
     fn count_masked<H: Sponge>(
@@ -127,7 +129,7 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<MaskedPrefix<F, F>, ZkError> {
         let (groups, forms) = decode(shape, groups)?;
-        Ok(shape.row.count_masked(&groups, forms, view, transcript)?)
+        Ok(shape.row().count_masked(&groups, forms, view, transcript)?)
     }
 
     fn prefix_shape(
@@ -152,9 +154,7 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         pads: &CommittedPadsView<LatticePadPayload<F>>,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), ZkError> {
-        shape
-            .tail
-            .verify(&shape.row, relation, prefix, pads, transcript)
+        shape.tail.verify(relation, prefix, pads, transcript)
     }
 }
 

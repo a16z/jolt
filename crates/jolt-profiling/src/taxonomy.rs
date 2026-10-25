@@ -1,5 +1,5 @@
 //! The versioned span taxonomy for the modular prover — **the normative
-//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 6).
+//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 7).
 //!
 //! One instrumentation layer, two renderings: the same `tracing` span stream
 //! becomes both the Perfetto-viewable chrome trace and the machine-queryable
@@ -78,7 +78,7 @@
 //!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
-pub const TAXONOMY_VERSION: u32 = 6;
+pub const TAXONOMY_VERSION: u32 = 7;
 
 /// Proof configuration derived by the SDK and profile harness before entering
 /// [`ROOT_SPAN`]. Callers may supply their own configuration, so this is outside
