@@ -306,18 +306,20 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# LayerZero-Labs/akita branch markos/recursion-integration: akita cf95fd05
-# (the revision Jolt main pins) plus the recursion verifier-guest PRs
-# (LayerZero-Labs/akita#186-#190). Repin to akita main once those merge.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
-akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ee03aa30544caaa3f5f2948b222790b919e9b8e7", default-features = false }
+# Akita markos/recursion-integration (ee03aa30, LayerZero-Labs/akita#186-#190)
+# plus the recursion verifier changes on Acentelles/akita-lz: factored
+# compression weights, the terminal quotient certificate, transposed quotient
+# right sides, the L2 proof bound, batched reduced setup rows and signed sparse
+# accumulation. Repin to LayerZero-Labs/akita once those land there.
+akita-algebra = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
+akita-config = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
+akita-error = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
+akita-pcs = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
+akita-planner = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
+akita-schedules = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
+akita-challenges = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
+akita-types = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
+akita-params = { git = "https://github.com/Acentelles/akita-lz.git", rev = "9db4ee25b89b1b66c42f399af983230333733c8b", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
