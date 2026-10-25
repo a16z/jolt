@@ -62,6 +62,7 @@ so the authors can fold it into the paper.
 | D29 | u_a enters N as a public (raw) target; the masked prefix sends it raw (19 × `R_64` after W5e) | departure (cost) | retired by O4 (Akita A47): the cut sends `cm(u_a)`, as the paper does |
 | D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
 | D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation; their trust root is the holder of r | departure (stricter than paper), clarification | implemented (W6f, A44) |
+| D32 | Persisted plans: the ZK catalog (planned at setup) and exported response schedules enter a setup only at construction, are re-audited and re-admitted on load, and the pads absorb the masked catalog's, selected row's and response schedule's digests | extension (public parameters), transcript change | implemented (O1) |
 
 ## D1. Constant-time Σ attempt
 
@@ -1477,3 +1478,104 @@ carry randomness that the prover keeps and reuses, and that this needs no
 change to the hiding argument; and in §4.1 that a prefix-packed claim's
 reduction binds its forms through the masked messages, not through an
 absorbed value.
+
+## D32. Persisted plans (O1)
+
+**Paper says.** The schedules are public parameters fixed by the setup
+(`03_setting.tex`); the paper does not say how a verifier obtains them.
+
+**Implementation** (jolt `wo/o1-plans`,
+`jolt:crates/jolt-akita/src/whiteout/mod.rs`, `WhiteoutPlans`,
+`WhiteoutSetup`).
+
+- *What is persisted.* A Whiteout setup's serde form is its plans: the
+  masked-opening catalog, each precommitted shape's one-row catalog and,
+  optionally, a set of response schedules keyed by `e`'s variable count.
+  Each is Akita's canonical trusted catalog artifact (`AKSCHD01`, protocol
+  epoch, policy digest), inside a `WOPL` envelope with a version.
+- *When plans enter a setup.* Only at construction. A fresh setup plans
+  its catalog at setup time (`WhiteoutSetup::new`, from
+  `AkitaScheme::setup`); its trace shape is fixed by the setup. A setup
+  built from persisted plans (serde, or `AkitaSetupParams::with_whiteout_plans`
+  / `preprocess_full_from_plans` for a prover) holds them as given. So a
+  setup's serialized form is a function of its construction, never of the
+  proofs made on it: two independent preprocessing runs, and a decode and
+  re-encode, give the same bytes.
+- *Response schedules.* `e`'s length depends on the pad layout, which
+  depends on the proof's header (trace length, RAM size, one-hot
+  configuration), so jolt-akita cannot compute it from the setup alone.
+  A fresh setup therefore plans each response length on first use and does
+  not persist it. `AkitaVerifierSetup::whiteout_plans` exports every plan a
+  setup holds or has derived, responses included; a setup constructed from
+  such a set treats it as exhaustive and refuses a length it lacks
+  (`Statement`), never planning it.
+- *Checks on load.* A plan is never trusted. Every row goes through
+  Akita's trusted-artifact decoder (`TrustedScheduleCatalog::from_artifact_bytes`):
+  canonical encoding, policy and family binding, the row audit (SIS table
+  keys and bounds at the policy's 128-bit tables, digit depths, matrix
+  widths, transition lengths, challenge hooks) and the configuration's
+  admission: `ZkOpeningSchedule::admit` for the masked-opening and
+  precommitted rows, which includes the residual's Σ-binding ranks
+  (`sigma_binding_min_rank`, Akita §5.5.2), and the clear audit for a
+  response row. Then the rows must be this statement's: the catalog's
+  trace shape is the setup's, it holds exactly one row per admitted list
+  of precommitted groups and each resolves by that list's key, each
+  precommitted catalog is one row keyed on its shape, and a response
+  catalog is one row keyed on its length. Failures are
+  `WhiteoutPlanError::{Format, Inadmissible, Statement}`; a refused plan
+  is never replaced by planning. Loading costs under 0.03 s (O1 outcome).
+- *The clear audit suffices for a response row.* What the Σ extractor
+  needs from the response proof is fixed by the configuration, not the
+  row: the digit-range sumcheck runs at `Cfg::decomposition()`'s radix
+  (`range_plan` refuses a statement of another alphabet), and the
+  compression maps are read from a prefix of the response setup's public
+  matrix whose length is fixed by the configuration's modulus profile
+  (`compression::setup_len`, checked by `covers_chains`). The row
+  contributes only its commitment, whose binding is the ordinary SIS
+  binding the audit prices.
+- *What is not re-checked.* The planner's search. A loaded row is
+  admissible but need not be the cheapest the planner would choose.
+  Optimality is not a soundness property.
+- *Binding.* At the `jolt/pads` site, before the pad commitment
+  (`WhiteoutTail::commit_pads` / `receive_pads`), the transcript absorbs
+  the masked catalog's digest, the selected row's digest and the response
+  schedule's catalog digest (3 × 32 B). Every challenge after the pads
+  follows: stages 1–7, the masked levels, the Σ-protocol and the response
+  proof. The masked row fixes D's shape, the pad commitment's shape and
+  the commitments' decoding profiles, and the response setup compresses
+  the pads, so each is bound before anything that depends on it. Stage 8
+  absorbs the catalog and row digests again (`WhiteoutRow::absorb_selection`);
+  that absorb is now redundant and kept, at no proof bytes. Before O1 the
+  response schedule was a function of the statement and was not absorbed,
+  and the masked row was absorbed only at Stage 8, so a party supplying
+  preprocessing could have chosen among admissible plans after the stage
+  1–7 challenges. The plans themselves come from the verifier's setup, not
+  from the proof.
+
+**Why it is sound.** Soundness of the masked opening and of the response
+proof holds for any row that passes the audit and admission: the same
+check every shipped clear catalog passes, and the one the planner's own
+output passed before. The digests bind the rows the verifier checks under
+before any challenge that depends on them.
+
+**Status.** Implemented (O1):
+
+- jolt-akita `whiteout_persisted_catalog_is_validated_on_load`: decoded
+  and fresh setups re-serialize to the same bytes. A residual `A_a` one
+  rank lower, with `B_a`'s width narrowed to keep the row consistent and
+  edited in place in the canonical bytes, is `Inadmissible` with "below
+  its Σ-binding rank". Another trace group, a relabelled catalog and an
+  extra precommitted row are `Statement`; another version is `Format`.
+- `whiteout_persisted_response_plan_verifies_and_is_validated`: a proof
+  verifies on a setup decoded from exported plans; an exhaustive set
+  lacking the length is `Statement`; a catalog in a response plan's place
+  is `Inadmissible`.
+- jolt-prover `whiteout_e2e::whiteout_plans_persist_and_are_consumed`:
+  preprocessing bytes are independent of proving and of a serde round
+  trip; a prover and verifier built from exported plans prove and verify;
+  plans of another version are refused at the prover's first use, the
+  trace commitment.
+
+**For the paper.** State in §3 that the schedules are public parameters
+the verifier validates and the transcript binds before the first
+challenge that depends on them.
