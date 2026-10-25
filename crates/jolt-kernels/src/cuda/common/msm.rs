@@ -2868,6 +2868,128 @@ impl CudaKernelContext {
     }
 
     #[cfg(test)]
+    /// Embeds a table in the top-left block of the larger grid matrix.
+    ///
+    /// For a nonempty source, callers must supply representable dimensions with
+    /// `source.len() == 2^block_vars` and `block_vars <= total_vars`.
+    pub(crate) fn block_embed(
+        &self,
+        source: &DeviceFrVec,
+        block_vars: usize,
+        total_vars: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(1usize << total_vars)?;
+        if source.is_empty() {
+            return Ok(output);
+        }
+        let count = Self::count_of(source.len())?;
+        let sigma_block = Self::count_of(block_vars.div_ceil(2))?;
+        let sigma_main = Self::count_of(total_vars.div_ceil(2))?;
+        let mut builder = self.stream().launch_builder(self.msm_block_embed());
+        let _ = builder.arg(source.limbs());
+        let _ = builder.arg(&sigma_block);
+        let _ = builder.arg(&sigma_main);
+        let _ = builder.arg(&count);
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: thread `i < count` reads only `src[i]` and writes only
+        // `out[(i >> sigma_block) << sigma_main | (i & mask)]`. That map is
+        // injective (the row index and the `sigma_block`-wide column are
+        // disjoint bit fields of the destination), and its image lies inside
+        // `2^total_vars` because `block_vars <= total_vars` implies
+        // `(count >> sigma_block) << sigma_main < 2^total_vars`. `out` is a
+        // fresh zeroed allocation distinct from `src`.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    #[cfg(test)]
+    /// Copies a dense column into a zeroed grid at the given stride.
+    /// The stride must be nonzero when the source contains multiple elements.
+    pub(crate) fn scatter_strided(
+        &self,
+        source: &DeviceFrVec,
+        stride: usize,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        if source.is_empty() {
+            return Ok(output);
+        }
+        if (source.len() - 1) * stride >= len {
+            return Err(CudaError::LengthMismatch {
+                expected: len,
+                got: (source.len() - 1) * stride + 1,
+            });
+        }
+        let count = Self::count_of(source.len())?;
+        let stride_arg = Self::count_of(stride)?;
+        let mut builder = self.stream().launch_builder(self.msm_scatter_strided());
+        let _ = builder.arg(source.limbs());
+        let _ = builder.arg(&stride_arg);
+        let _ = builder.arg(&count);
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: thread `i < count` reads only `src[i]` and writes only
+        // `out[i * stride]`, which is injective in `i` and bounded by the check
+        // above. `out` is a fresh zeroed allocation distinct from `src`.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    #[cfg(test)]
+    /// Scatters an address-by-cycle table into an address-major commitment grid.
+    /// Callers must supply grid strides that give distinct destination indices.
+    pub(crate) fn scatter_one_hot(
+        &self,
+        source: &DeviceFrVec,
+        cycles: usize,
+        cycle_stride: usize,
+        one_hot_stride: usize,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        if source.is_empty() {
+            return Ok(output);
+        }
+        if cycles == 0 || !source.len().is_multiple_of(cycles) {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: source.len(),
+            });
+        }
+        let addresses = source.len() / cycles;
+        let highest = (cycles - 1) * cycle_stride + (addresses - 1) * one_hot_stride;
+        if highest >= len {
+            return Err(CudaError::LengthMismatch {
+                expected: len,
+                got: highest + 1,
+            });
+        }
+        let count = Self::count_of(source.len())?;
+        let cycles_arg = Self::count_of(cycles)?;
+        let cycle_stride_arg = Self::count_of(cycle_stride)?;
+        let one_hot_stride_arg = Self::count_of(one_hot_stride)?;
+        let mut builder = self.stream().launch_builder(self.msm_scatter_one_hot());
+        let _ = builder.arg(source.limbs());
+        let _ = builder.arg(&cycles_arg);
+        let _ = builder.arg(&cycle_stride_arg);
+        let _ = builder.arg(&one_hot_stride_arg);
+        let _ = builder.arg(&count);
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: thread `i < count` reads only `src[i]` and writes
+        // `out[cycle * cycle_stride + address * one_hot_stride]` for the unique
+        // `(address, cycle) = (i / cycles, i % cycles)`. The strides are the
+        // grid's own powers of two with `cycle_stride = 2^k * one_hot_stride`
+        // and `addresses <= 2^log_k_chunk`, so distinct `(address, cycle)`
+        // pairs give distinct destinations; the largest is bounds-checked
+        // above. `out` is a fresh zeroed allocation distinct from `src`.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    #[cfg(test)]
     pub(crate) fn fold_rows(
         &self,
         table: &DeviceFrVec,
@@ -3154,6 +3276,196 @@ pub(crate) mod testing {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    mod opening_layout {
+        use std::collections::BTreeMap;
+
+        use ark_bn254::Fr as ArkFr;
+        use ark_ff::PrimeField;
+        use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+        use jolt_field::{Fr, Ring};
+
+        use super::device;
+        use crate::commitment::CommitmentGrid;
+        use crate::cuda::common::error::CudaError;
+        use crate::cuda::common::testing::advice_plane;
+        use crate::opening::JointOpeningPolynomials;
+        use crate::{ProofSession, ReferenceBackend};
+
+        fn values(len: usize) -> Vec<Fr> {
+            let wide = Fr::from(ArkFr::from_le_bytes_mod_order(&[0xa5; 32]));
+            (0..len)
+                .map(|index| match index {
+                    0 => wide,
+                    1 => Fr::from_u64(0),
+                    2 => Fr::from_u64(1),
+                    3 => -Fr::from_u64(1),
+                    _ => wide * Fr::from_u64(index as u64 + 1),
+                })
+                .collect()
+        }
+
+        fn reference_embedding(
+            table: Vec<Fr>,
+            id: JoltCommittedPolynomial,
+            grid: CommitmentGrid,
+        ) -> Vec<Fr> {
+            let fixture = advice_plane(8, 7);
+            ReferenceBackend
+                .prepare(
+                    &mut ProofSession::default(),
+                    &fixture.plane,
+                    &[id],
+                    Box::new(move || Ok(BTreeMap::from([(id, table)]))),
+                    grid,
+                )
+                .expect("reference opening")[0]
+                .to_dense()
+                .into_owned()
+        }
+
+        #[test]
+        fn block_embed_matches_reference_opening() {
+            let Some(context) = device() else {
+                return;
+            };
+            for (block_vars, total_vars) in [
+                (0, 0),
+                (0, 4),
+                (1, 4),
+                (2, 5),
+                (3, 6),
+                (4, 7),
+                (8, 10),
+                (9, 12),
+                (10, 10),
+            ] {
+                let table = values(1usize << block_vars);
+                let source = context.upload(&table).expect("upload block");
+                let grid = CommitmentGrid {
+                    total_vars,
+                    log_t: 0,
+                    log_k_chunk: 0,
+                    order: TracePolynomialOrder::CycleMajor,
+                };
+                let actual = context
+                    .block_embed(&source, block_vars, total_vars)
+                    .expect("embed block")
+                    .to_host()
+                    .expect("download grid");
+                assert_eq!(
+                    actual,
+                    reference_embedding(
+                        table.clone(),
+                        JoltCommittedPolynomial::TrustedAdvice,
+                        grid
+                    ),
+                    "block_vars={block_vars}, total_vars={total_vars}",
+                );
+                assert_eq!(source.to_host().expect("source unchanged"), table);
+            }
+            let empty = context.upload(&[]).expect("empty source");
+            assert_eq!(
+                context
+                    .block_embed(&empty, 0, 5)
+                    .expect("empty block")
+                    .to_host()
+                    .expect("download grid"),
+                vec![Fr::from_u64(0); 32],
+            );
+        }
+
+        #[test]
+        fn scatter_strided_matches_reference_opening() {
+            let Some(context) = device() else {
+                return;
+            };
+            for (log_t, log_k_chunk, total_vars) in [(0, 0, 0), (3, 2, 5), (4, 2, 8), (9, 1, 10)] {
+                let grid = CommitmentGrid {
+                    total_vars,
+                    log_t,
+                    log_k_chunk,
+                    order: TracePolynomialOrder::AddressMajor,
+                };
+                let cycles = 1usize << log_t;
+                let mut lengths = vec![0, 1, 255, 256, 257, cycles - 1, cycles];
+                lengths.sort_unstable();
+                lengths.dedup();
+                for len in lengths.into_iter().filter(|&len| len <= cycles) {
+                    let table = values(len);
+                    let source = context.upload(&table).expect("upload column");
+                    let actual = context
+                        .scatter_strided(&source, grid.cycle_stride(), 1usize << total_vars)
+                        .expect("scatter column")
+                        .to_host()
+                        .expect("download grid");
+                    assert_eq!(
+                        actual,
+                        reference_embedding(table.clone(), JoltCommittedPolynomial::RdInc, grid),
+                        "log_t={log_t}, total_vars={total_vars}, len={len}",
+                    );
+                    assert_eq!(source.to_host().expect("source unchanged"), table);
+                }
+            }
+            let source = context.upload(&values(3)).expect("upload column");
+            assert!(matches!(
+                context.scatter_strided(&source, 4, 8),
+                Err(CudaError::LengthMismatch {
+                    expected: 8,
+                    got: 9
+                })
+            ));
+        }
+
+        #[test]
+        fn scatter_one_hot_matches_reference_opening() {
+            let Some(context) = device() else {
+                return;
+            };
+            for (log_t, log_k_chunk, total_vars) in [(0, 0, 0), (1, 2, 3), (3, 2, 7), (8, 2, 12)] {
+                let grid = CommitmentGrid {
+                    total_vars,
+                    log_t,
+                    log_k_chunk,
+                    order: TracePolynomialOrder::AddressMajor,
+                };
+                let cycles = 1usize << log_t;
+                let max_k = 1usize << log_k_chunk;
+                let mut widths = vec![0, 1, max_k - 1, max_k];
+                widths.sort_unstable();
+                widths.dedup();
+                for width in widths {
+                    let table = values(width * cycles);
+                    let source = context.upload(&table).expect("upload table");
+                    let actual = context
+                        .scatter_one_hot(
+                            &source,
+                            cycles,
+                            grid.cycle_stride(),
+                            grid.one_hot_stride(),
+                            1usize << total_vars,
+                        )
+                        .expect("scatter one-hot grid")
+                        .to_host()
+                        .expect("download grid");
+                    assert_eq!(
+                        actual,
+                        reference_embedding(table.clone(), JoltCommittedPolynomial::RamRa(0), grid,),
+                        "log_t={log_t}, total_vars={total_vars}, width={width}",
+                    );
+                    assert_eq!(source.to_host().expect("source unchanged"), table);
+                }
+            }
+            let source = context.upload(&values(4)).expect("upload table");
+            for (cycles, len, expected, got) in [(0, 8, 0, 4), (3, 8, 3, 4), (2, 5, 5, 6)] {
+                assert!(matches!(
+                    context.scatter_one_hot(&source, cycles, 4, 1, len),
+                    Err(CudaError::LengthMismatch { expected: e, got: g })
+                        if e == expected && g == got
+                ));
+            }
+        }
+    }
+
     use ark_bn254::{Fq, Fq2, Fr as ArkFr, G1Affine, G1Projective, G2Projective};
     use ark_ec::scalar_mul::glv::GLVConfig;
     use ark_ec::scalar_mul::variable_base::msm_i128;

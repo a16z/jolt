@@ -1398,6 +1398,46 @@ extern "C" __global__ void msm_window_accumulate_kernel(u64 *__restrict__ accumu
     }
 }
 
+extern "C" __global__ void msm_block_embed_kernel(const u64 *__restrict__ src,
+                                                  unsigned int sigma_block,
+                                                  unsigned int sigma_main, unsigned int count,
+                                                  u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    unsigned int row = i >> sigma_block;
+    unsigned int column = i & ((1u << sigma_block) - 1u);
+    u64 value[LIMBS];
+    load4(src + (unsigned long long)i * LIMBS, value);
+    store4(out + (((unsigned long long)row << sigma_main) | column) * LIMBS, value);
+}
+
+extern "C" __global__ void msm_scatter_strided_kernel(const u64 *__restrict__ src,
+                                                      unsigned int stride, unsigned int count,
+                                                      u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 value[LIMBS];
+    load4(src + (unsigned long long)i * LIMBS, value);
+    store4(out + (unsigned long long)i * stride * LIMBS, value);
+}
+
+extern "C" __global__ void msm_scatter_one_hot_kernel(const u64 *__restrict__ src,
+                                                      unsigned int cycles,
+                                                      unsigned int cycle_stride,
+                                                      unsigned int one_hot_stride,
+                                                      unsigned int count, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    unsigned int address = i / cycles;
+    unsigned int cycle = i % cycles;
+    u64 value[LIMBS];
+    load4(src + (unsigned long long)i * LIMBS, value);
+    store4(out + ((unsigned long long)cycle * cycle_stride + (unsigned long long)address *
+                                                                one_hot_stride) *
+                     LIMBS,
+           value);
+}
+
 extern "C" __global__ void msm_fold_rows_kernel(const u64 *__restrict__ table,
                                                 const u64 *__restrict__ left,
                                                 unsigned long long base, unsigned long long len,

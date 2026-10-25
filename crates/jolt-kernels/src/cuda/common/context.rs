@@ -220,6 +220,12 @@ pub struct CudaKernelContext {
     msm_point_rows_sum: CudaFunction,
     msm_window_fold: CudaFunction,
     #[cfg(test)]
+    msm_block_embed: CudaFunction,
+    #[cfg(test)]
+    msm_scatter_strided: CudaFunction,
+    #[cfg(test)]
+    msm_scatter_one_hot: CudaFunction,
+    #[cfg(test)]
     msm_fold_rows: CudaFunction,
     #[cfg(test)]
     opening_one_hot_embed: CudaFunction,
@@ -469,6 +475,12 @@ impl CudaKernelContext {
             msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
             msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
             msm_window_fold: module.load_function("msm_window_fold_kernel")?,
+            #[cfg(test)]
+            msm_block_embed: module.load_function("msm_block_embed_kernel")?,
+            #[cfg(test)]
+            msm_scatter_strided: module.load_function("msm_scatter_strided_kernel")?,
+            #[cfg(test)]
+            msm_scatter_one_hot: module.load_function("msm_scatter_one_hot_kernel")?,
             #[cfg(test)]
             msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
             #[cfg(test)]
@@ -1355,6 +1367,21 @@ impl CudaKernelContext {
 
     pub(crate) const fn msm_window_fold(&self) -> &CudaFunction {
         &self.msm_window_fold
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_block_embed(&self) -> &CudaFunction {
+        &self.msm_block_embed
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_scatter_strided(&self) -> &CudaFunction {
+        &self.msm_scatter_strided
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_scatter_one_hot(&self) -> &CudaFunction {
+        &self.msm_scatter_one_hot
     }
 
     #[cfg(test)]
