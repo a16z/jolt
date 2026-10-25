@@ -11,7 +11,7 @@ jolt-openings::schemes.rs::HomomorphicBatch<PCS>::prove_batch::challenge_powers#
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::prove_batch_zk::challenge_powers#0
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_powers#0
-jolt-prover::akita/whiteout.rs::prove_once::challenge_bytes#7
+jolt-prover::akita/whiteout.rs::prove_once::challenge_bytes#11
 jolt-prover::blindfold.rs::prove_blindfold::challenge_bytes#1
 jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#1
 jolt-spartan-verifier::key.rs::SpartanKey<F>::draw_tau::challenge#0

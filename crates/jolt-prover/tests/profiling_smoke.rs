@@ -42,7 +42,9 @@ fn profile_run_emits_conformant_artifacts() {
 
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");
-    let stem = if cfg!(feature = "akita") {
+    let stem = if cfg!(all(feature = "akita", feature = "zk")) {
+        "modular_fibonacci_whiteout_13"
+    } else if cfg!(feature = "akita") {
         "modular_fibonacci_akita_13"
     } else {
         "modular_fibonacci_13"
@@ -82,7 +84,9 @@ fn profile_run_emits_conformant_artifacts() {
     // stage-8 opening seams for their committed siblings, and the `akita`
     // feature swaps the commitment seams for the Akita set. (The advice
     // seams are exempt: fibonacci exercises no advice.)
-    let mode = if cfg!(feature = "akita") {
+    let mode = if cfg!(all(feature = "akita", feature = "zk")) {
+        taxonomy::ProverMode::Whiteout
+    } else if cfg!(feature = "akita") {
         taxonomy::ProverMode::Akita
     } else if cfg!(feature = "zk") {
         taxonomy::ProverMode::Zk

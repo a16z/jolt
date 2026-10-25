@@ -161,7 +161,7 @@ pub const ADVICE_SEAM_SPANS: [&str; 1] = ["commit_advice"];
 pub fn field_inline_spans(mode: ProverMode) -> &'static [&'static str] {
     match mode {
         ProverMode::Clear | ProverMode::Zk => &["commit_field_inline_witness"],
-        ProverMode::Akita => &["commit_field_inc"],
+        ProverMode::Akita | ProverMode::Whiteout => &["commit_field_inc"],
     }
 }
 
@@ -210,6 +210,25 @@ pub const AKITA_MODE_SPANS: [&str; 4] = [
     "prove_uniskip_clear",
 ];
 
+/// Whiteout-mode (`akita,zk`) seams: the Akita stage-0 commit, the
+/// pad-masked uni-skip, the pad commitment with its `pad_layout` replay, and
+/// the opening that runs under `prove_stage8` — the `replay_stages` claim
+/// replay, Akita's masked prefix, the `replay_relation` residual, and the
+/// Σ-protocol tail with its response proof. The one-time plan spans
+/// (`whiteout_plan_*`, `find_*schedule`) fire only on first use.
+pub const WHITEOUT_MODE_SPANS: [&str; 10] = [
+    "assemble_one_hot_trace",
+    "akita_main_commit_with_precommitted",
+    "prove_uniskip_masked",
+    "pad_layout",
+    "commit_pads",
+    "replay_stages",
+    "whiteout_prove_masked",
+    "replay_relation",
+    "whiteout_prove_tail",
+    "whiteout_prove_response",
+];
+
 /// Which compiled prover emitted a trace: the `zk` feature swaps the
 /// [`CLEAR_MODE_SPANS`] seams for their [`ZK_MODE_SPANS`] siblings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +237,8 @@ pub enum ProverMode {
     Zk,
     /// The Akita (lattice) prover — transparent by construction.
     Akita,
+    /// The Akita prover under `zk`: Whiteout's masked opening.
+    Whiteout,
 }
 
 /// Every current label that fires on all proves of the given mode: the presence
@@ -241,7 +262,7 @@ pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
         // The Akita prover streams no witness commit and runs no
         // homomorphic joint opening; its bundle collection and oracle reads
         // still fire (stage-0 assembly, the naive kernels).
-        ProverMode::Akita => {
+        ProverMode::Akita | ProverMode::Whiteout => {
             labels.extend(UNISKIP_SEAM_SPANS);
             labels.extend(["collect_bundles", "TraceBackend::oracle_table"]);
         }
@@ -250,6 +271,7 @@ pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
         ProverMode::Clear => CLEAR_MODE_SPANS.as_slice(),
         ProverMode::Zk => ZK_MODE_SPANS.as_slice(),
         ProverMode::Akita => AKITA_MODE_SPANS.as_slice(),
+        ProverMode::Whiteout => WHITEOUT_MODE_SPANS.as_slice(),
     });
     labels
 }

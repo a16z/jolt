@@ -137,6 +137,9 @@ where
     )?;
     let mut pads = mode.into_pads();
 
+    // Whiteout's opening replaces the clear stage 8; it keeps the stage's
+    // span so the per-stage profile rollup stays aligned.
+    let stage8 = tracing::info_span!("prove_stage8").entered();
     // Stage 8's claims are affine forms of the masked messages, which only
     // the verifier's residual states: replay stages 1–7 to obtain them.
     let stages = tracing::info_span!("replay_stages").in_scope(|| {
@@ -289,6 +292,7 @@ where
         )
     })?;
     mark_region("sigma_response", &transcript);
+    drop(stage8);
     finish_stage("stage8", log_t, backend.session(), &());
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(ZkConfig::Whiteout),
