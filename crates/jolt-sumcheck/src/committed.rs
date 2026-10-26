@@ -39,6 +39,14 @@ impl<C: Encoding> RoundMessage for CommittedRound<C> {
     }
 }
 
+/// Vector commitments to a committed sumcheck's hidden output claims.
+///
+/// # Security
+/// The [`Encoding`] absorbs the commitments with no count, so it binds them
+/// only when their number is already fixed. A caller that absorbs claims read
+/// from a proof must first check `commitments.len()` against the count its
+/// protocol fixes from bound data, as the Jolt verifier does with
+/// `hidden.div_ceil(capacity)`, or absorb that count as a `u64` word itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedOutputClaims<C> {
     pub commitments: Vec<C>,

@@ -27,6 +27,10 @@ pub const fn word_padding(len: usize) -> usize {
 /// A tag names a protocol and its version and opens that protocol's part of
 /// the transcript. It has a fixed width, so it carries no length. Tags are
 /// constants: a name longer than 32 bytes fails const evaluation.
+///
+/// The zero padding makes names that differ only in trailing NUL bytes, such
+/// as `b"x"` and `b"x\0"`, the same tag. Pass a fixed constant name with no
+/// NUL bytes; never build a tag from runtime or prover-supplied data.
 #[must_use]
 pub const fn protocol_tag(name: &[u8]) -> [u8; TAG_BYTES] {
     assert!(name.len() <= TAG_BYTES, "protocol tag exceeds 32 bytes");

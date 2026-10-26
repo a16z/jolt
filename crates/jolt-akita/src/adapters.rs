@@ -703,6 +703,10 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
 /// Binds the batch statement (commitment group, point, per-claim data) into
 /// the transcript. The verifier builds `statement` and fixes the point's
 /// length, so neither carries a count word.
+///
+/// # Security
+/// The caller must check `point.len()` and `statement.len()` against the
+/// lengths fixed by bound data before calling, since neither is absorbed.
 pub(crate) fn append_batch_statement<T: Transcript>(
     transcript: &mut T,
     statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],

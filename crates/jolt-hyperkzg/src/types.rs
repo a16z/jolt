@@ -61,6 +61,12 @@ impl HyperKZGVerifierSetup {
         Ok(len)
     }
 
+    /// Absorbs the setup, the commitment, the point and the evaluation.
+    ///
+    /// # Security
+    /// The point is absorbed with no count, so the caller must validate
+    /// `point.len()` first, as the scheme's entry points do with
+    /// [`Self::check_arity`].
     pub(crate) fn append_statement(
         &self,
         commitment: &Bn254G1,
