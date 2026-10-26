@@ -1077,7 +1077,7 @@ impl<const P: u128> Field for Fp128<P> {
     fn dot_product(a: &[Self], b: &[Self]) -> Self {
         <Self as MulBaseUnreduced<Self>>::dot_base(a, b)
     }
-
+    #[cfg(feature = "terminal-contraction")] crate::terminal_contraction::fp128_methods!();
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     #[inline]
     fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self

@@ -9,6 +9,8 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+terminal-contraction = ["akita-pcs/terminal-contraction", "jolt-field/terminal-contraction"]
+segment-setup = ["akita-pcs/segment-setup"]
 default = ["parallel"]
 # Akita's rayon-backed kernels and backend thread pool. A single-core zkVM
 # guest builds without it; Jolt's own prover kernels in this crate still link

@@ -98,7 +98,7 @@ mod emit {
             }
         };
     }
-
+    #[cfg(feature = "terminal-contraction")] include!("field_inline/terminal_emit.rs");
     /// Accumulate one word into a destination previously cleared by `clear`.
     #[inline(always)]
     pub fn load_accumulate(dst: u32, offset: usize, base: *const u64) {
@@ -315,7 +315,7 @@ mod emit {
 
 mod guest {
     use super::*;
-
+    #[cfg(feature = "terminal-contraction")] include!("field_inline/terminal_guest.rs");
     static READY: AtomicBool = AtomicBool::new(false);
 
     /// Prove that the unit computes modulo `modulus`. Accumulating the
@@ -656,3 +656,6 @@ pub use guest::{
 // reloads its row base pointer from memory; locals stay in registers across
 // the asm. The statement sits on the macro's arm line and this note sits at the
 // end of the file, so the feature-off build keeps every source line number.
+
+#[cfg(feature = "terminal-contraction")]
+pub use guest::signed_i16_dot;

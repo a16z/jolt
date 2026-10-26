@@ -921,6 +921,10 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("word-decode");
     #[cfg(feature = "ont-static-base")]
     program.add_guest_feature("ont-static-base");
+    #[cfg(feature = "segment-setup")]
+    program.add_guest_feature("segment-setup");
+    #[cfg(feature = "terminal-contraction")]
+    program.add_guest_feature("terminal-contraction");
     #[cfg(feature = "tensor-no-carry")]
     program.add_guest_feature("tensor-no-carry");
     #[cfg(feature = "rowptr-registers")]

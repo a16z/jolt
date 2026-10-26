@@ -197,7 +197,7 @@ pub trait Field: Ring {
             .zip(b)
             .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
     }
-
+    #[cfg(feature = "terminal-contraction")] crate::terminal_contraction::field_methods!();
     /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
     /// otherwise. Fields with a batched guest path (a register-resident sum
     /// read out once) override this.
@@ -624,4 +624,17 @@ impl<
             + MaybeAllocative,
     > JoltField for T
 {
+}
+
+#[cfg(feature = "terminal-contraction")]
+pub(crate) fn signed_i16_dot_fold<F: Field>(
+    weights: &[F],
+    coefficients: impl IntoIterator<Item = i16>,
+) -> F {
+    weights
+        .iter()
+        .zip(coefficients)
+        .fold(F::zero(), |sum, (&weight, value)| {
+            sum + weight * F::from_i64(i64::from(value))
+        })
 }

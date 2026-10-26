@@ -28,6 +28,7 @@ rayon = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [features]
+terminal-contraction = []
 default = ["bn254"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []

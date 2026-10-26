@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+terminal-contraction = ["jolt-akita?/terminal-contraction", "jolt-field/terminal-contraction"]
+segment-setup = ["jolt-akita?/segment-setup"]
 ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
 word-memory = ["jolt_sdk/word-memory"]

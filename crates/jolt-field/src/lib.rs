@@ -181,3 +181,6 @@ pub enum FieldError {
     #[error("invalid size: expected {expected}, actual {actual}")]
     InvalidSize { expected: usize, actual: usize },
 }
+
+#[cfg(feature = "terminal-contraction")]
+mod terminal_contraction;

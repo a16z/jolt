@@ -8,6 +8,8 @@ name = "recursion"
 path = "src/main.rs"
 
 [features]
+terminal-contraction = ["jolt-akita?/terminal-contraction"]
+segment-setup = ["jolt-akita?/segment-setup"]
 word-memory = []
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Non-default: default workspace builds must not unify field-inline into the
