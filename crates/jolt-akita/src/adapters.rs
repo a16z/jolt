@@ -11,6 +11,7 @@ use std::{
 use std::{cell::Cell, num::NonZeroUsize};
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_error::AkitaError;
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaDeserialize, AkitaProverSetup as BackendProverSetup,
@@ -388,18 +389,34 @@ impl AkitaProverSetup {
         self.verifier.one_hot_k
     }
 
-    /// Releases transformed setup slots after the trace commitment. Later
-    /// opening work rebuilds the slots on first use.
+    /// Release idle transformed setup slots if their combined storage exceeds
+    /// the setup's residency budget. Smaller setups retain transforms for opening
+    /// and subsequent proofs.
     pub fn release_post_commit_ntt_residency(&self) -> Result<(), OpeningsError> {
-        for backend in [
-            self.cpu_backend.as_deref(),
-            self.one_hot_cpu_backend.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .chain(self.full_width.values().map(|setup| &setup.backend))
-        {
-            let _ = backend.trim_caches().map_err(invalid_setup)?;
+        self.trim_ntt_caches().map_err(invalid_setup)
+    }
+
+    pub(crate) fn trim_ntt_caches(&self) -> Result<(), AkitaError> {
+        const RESIDENT_NTT_BYTES: usize = 256 * 1024 * 1024;
+        let backends = || {
+            [
+                self.cpu_backend.as_deref(),
+                self.one_hot_cpu_backend.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .chain(self.full_width.values().map(|setup| &setup.backend))
+        };
+        let mut bytes = 0usize;
+        for backend in backends() {
+            for entry in backend.shared_ntt_cache_metrics()? {
+                bytes = bytes.saturating_add(entry.cache_bytes);
+            }
+        }
+        if bytes > RESIDENT_NTT_BYTES {
+            for backend in backends() {
+                let _ = backend.trim_caches()?;
+            }
         }
         Ok(())
     }

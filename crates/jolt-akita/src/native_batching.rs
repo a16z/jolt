@@ -214,7 +214,7 @@ fn prove_one_hot_opening(
             session,
             BasisMode::Lagrange,
         ))?;
-        let _ = backend.trim_caches()?;
+        setup.trim_ntt_caches()?;
         Ok::<_, AkitaError>(proof)
     })
     .map_err(prove_failed)
@@ -652,7 +652,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                         &session,
                         BasisMode::Lagrange,
                     )?;
-                    let _ = backend.trim_caches()?;
+                    setup.trim_ntt_caches()?;
                     Ok::<_, AkitaError>(proof)
                 })
                 .map_err(prove_failed)?;
