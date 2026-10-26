@@ -4,11 +4,13 @@
 //! remains on the CPU. Standalone commitments, openings, setup, verification,
 //! and ZK commitment finalization delegate to `DoryScheme`.
 
-#[cfg(not(feature = "zk"))]
+#[cfg(any(test, not(feature = "zk")))]
 mod arena;
 mod combine;
 #[cfg(not(feature = "zk"))]
 mod curve;
+#[cfg(test)]
+mod handle;
 #[cfg(not(feature = "zk"))]
 mod tier2;
 
