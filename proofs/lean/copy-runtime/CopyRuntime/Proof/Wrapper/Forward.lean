@@ -277,6 +277,28 @@ theorem fwd_words (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec
     · simp [writeReg_apply]
     · omega
 
+/-- `x + c` with a literal `c ≥ 2^63` (a negative immediate such as the `-80` of
+`addi a2, a2, -80`) as `x - (2^64 - c)`. Pass it to `rv_step` (its side
+conditions close by `decide`). Without it, `simp` turns `(x + c).toNat` into
+`(x.toNat + c) % 2^64` with the rfl-lemma `BitVec.toNat_add`, which records no
+proof, and the kernel rechecks that step by unfolding `Nat.add x.toNat c` in
+unary: a "deep recursion" error after about 80 s. In `x - c'`, `BitVec.toNat_sub`
+puts the literal first (`2^64 - c' + x.toNat`), which the kernel handles. -/
+theorem add_ofNat_eq_sub_of_ge (x : BitVec 64) (c : Nat) (h : 2 ^ 63 ≤ c) (h' : c < 2 ^ 64) :
+    x + BitVec.ofNat 64 c = x - BitVec.ofNat 64 (2 ^ 64 - c) := by
+  rw [BitVec.sub_eq_add_neg]
+  congr 1
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_neg, BitVec.toNat_ofNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt h',
+    Nat.mod_eq_of_lt (by omega : 2 ^ 64 - c < 2 ^ 64), Nat.mod_eq_of_lt (by omega)]
+  omega
+
+theorem toNat_sub_ofNat_of_le {x : BitVec 64} {c : Nat} (hc : c ≤ x.toNat) :
+    (x - BitVec.ofNat 64 c).toNat = x.toNat - c := by
+  have := x.isLt
+  rw [BitVec.toNat_sub_of_le (by rw [BitVec.le_def, BitVec.toNat_ofNat]; omega),
+    BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+
 set_option maxHeartbeats 8000000 in
 /-- The 80-byte block loop at `0x208`/`0x210`: ten loads, then ten stores. -/
 theorem fwd_blocks (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec 64) (m₀ : Mem)
@@ -285,7 +307,66 @@ theorem fwd_blocks (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVe
     (hal : (src.toNat + j) % 8 = 0) :
     Exits cfg (region B) (Returned ⟨B + 0xac#64, regs₀, m₀⟩ R dst src n)
       ⟨B + 0x208#64, regs, mem⟩ := by
-  sorry
+  have ctx := env.ctx
+  have hB := ctx.base_even
+  have hsw' := env.args.src_no_wrap
+  have hsw : src.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt hsw'
+  have hdw : dst.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt env.args.dst_no_wrap
+  have hle := env.le
+  have hds := env.same
+  have hl := env.sb.load; have hst := env.sb.store
+  have ha1 := hF.a1; have ha7 := hF.a7; have hjn := hF.le
+  rv_step ctx.code [ha1, ha7]                                -- 0x208 li t0, 80
+  rv_step ctx.code [ha1, ha7]                                -- 0x20c bltu a2, t0
+  · exact fwd_words env regs₀ m₀ he j _ mem
+      ⟨by simp [writeReg_apply, ha1], by simp [writeReg_apply, ha7], hjn, hF.copied,
+        by fwd_preserved hF.preserved⟩
+      (by simp [writeReg_apply, ha2]) hal
+  · rename_i hge
+    refine Exits.loop
+      (I := fun k s => s.pc = B + 0x210#64 ∧ FwdAt regs₀ m₀ dst src n (j + 80 * k) s.regs s.mem ∧
+        (s.regs 12).toNat = n.toNat - (j + 80 * k) ∧ 80 ≤ n.toNat - (j + 80 * k) ∧
+        s.regs 5 = 80#64)
+      (n.toNat / 80) (fun k s h => by have := h.2.2.2.1; omega) ?_ 0 _
+      ⟨rfl, ?_, ?_, ?_, ?_⟩
+    · intro k s ⟨hpc, hF', ha2', h80, h5⟩ hcont
+      obtain ⟨pc, regs', mem'⟩ := s
+      simp only at hpc hF' ha2' h80 h5
+      subst hpc
+      have ha1' := hF'.a1; have ha7' := hF'.a7; have hcop' := hF'.copied
+      have hal' : (src.toNat + (j + 80 * k)) % 8 = 0 := by omega
+      have hsub : (regs' 12 - 80#64).toNat = n.toNat - (j + 80 * k + 80) := by
+        rw [toNat_sub_ofNat_of_le (by omega), ha2']; omega
+      iterate 23 rv_step ctx.code [ha1', ha7', h5, hl, hst, add_ofNat_eq_sub_of_ge]
+      rv_step ctx.code [ha1', ha7', h5]                      -- 0x266 bgeu a2, t0
+      · rename_i hc
+        rw [hsub] at hc
+        refine hcont _ ⟨rfl, ?_, ?_, ?_, ?_⟩
+        · refine FwdAt.of_eq (a := j + 80 * k + 80) (b := j + 80 * k + 80) ?_ ?_ ?_
+            (by omega) (by omega) (by omega) ?_
+          · simp [writeReg_apply]
+          · simp [writeReg_apply]
+          · copied_fwd
+          · fwd_preserved hF'.preserved
+        · simp only [writeReg_apply]; simp only [rv_exec, hsub]; omega
+        · omega
+        · simp [writeReg_apply, h5]
+      · rename_i hc
+        refine fwd_words env regs₀ m₀ he (j + 80 * k + 80) _ _ ?_ ?_ (by omega)
+        · refine FwdAt.of_eq (a := j + 80 * k + 80) (b := j + 80 * k + 80) ?_ ?_ ?_
+            rfl rfl (by omega) ?_
+          · simp [writeReg_apply]
+          · simp [writeReg_apply]
+          · copied_fwd
+          · fwd_preserved hF'.preserved
+        · simp only [writeReg_apply]; simp only [rv_exec, hsub]
+    · refine FwdAt.of_eq (a := j) (b := j) ?_ ?_ hF.copied rfl rfl hjn ?_
+      · simp [writeReg_apply, ha1]
+      · simp [writeReg_apply, ha7]
+      · fwd_preserved hF.preserved
+    · simp [writeReg_apply, ha2]
+    · omega
+    · simp [writeReg_apply]
 
 theorem ofInt_natCast_64 (k : Nat) : BitVec.ofInt 64 (k : Int) = BitVec.ofNat 64 k := by
   apply BitVec.eq_of_toNat_eq

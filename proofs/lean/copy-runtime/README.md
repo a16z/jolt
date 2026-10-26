@@ -22,8 +22,8 @@ splits into path lemmas under `CopyRuntime/Proof/`.
 | mismatched offsets, `n ≥ 544`: jump to `__jolt_copy_misaligned` | `Wrapper.leaf_path` | proved |
 | dispatch from the entry point to all of the above, and to `.Lgeneral` | `Wrapper.dispatch`, `Wrapper.general_entry` | proved |
 | `.Lgeneral` with `dst = src` | `Wrapper.general_path` | proved |
-| `.Lgeneral` forward copy (`src > dst`): byte tail, word loop, and a generic `ld`/`sd` pair run | `Wrapper.fwd_tail`, `fwd_words`, `fwd_pairs` | proved |
-| `.Lgeneral` forward copy: alignment prologue, 80-byte block loop, and 256-byte loop | `Wrapper.fwd_prologue`, `fwd_blocks`, `fwd_large` | `sorry` (draft proofs in `drafts/ForwardLoops.lean`) |
+| `.Lgeneral` forward copy (`src > dst`): byte tail, word loop, a generic `ld`/`sd` pair run, and the 80-byte block loop | `Wrapper.fwd_tail`, `fwd_words`, `fwd_pairs`, `fwd_blocks` | proved |
+| `.Lgeneral` forward copy: alignment prologue and 256-byte loop | `Wrapper.fwd_prologue`, `fwd_large` | `sorry` (draft proofs in `drafts/ForwardLoops.lean`) |
 | `.Lgeneral` backward copy (`src < dst`) | `Wrapper.backward_path` | `sorry` |
 | `__jolt_copy_misaligned` | `Leaf.leaf_path` | `sorry` (the word-combining identity `Leaf.combine_byte` is proved) |
 
@@ -254,6 +254,16 @@ Keep these in mind when writing new automation.
 * `split`, and unification against an `if` whose condition contains a large
   literal such as `addi a2, a2, -80`, unfold `Nat.ble` in unary and hit the
   recursion limit. `rv_split` builds the `ite_goal` term directly.
+* `simp` with the rfl-lemma `BitVec.toNat_add` (directly, or through
+  `rv_arith_simp` and `rv_disch`) on `x + c` with a symbolic `x` and a big
+  literal `c`, which is how a negative immediate appears (`addi a2, a2, -80`
+  gives `x + 0xffffffffffffffb0#64`), records no proof for that step. The
+  kernel then rechecks it by unfolding `Nat.add x.toNat c` in unary, and fails
+  with "deep recursion" after about 80 s. This only bites once a proof term
+  reaches the kernel, so `omega` pruning that fails is harmless. Pass
+  `Wrapper.add_ofNat_eq_sub_of_ge` to `rv_step` to keep such values as
+  `x - c'` with a small `c'`. `BitVec.toNat_sub` puts the literal first, which
+  the kernel handles, and `Wrapper.toNat_sub_ofNat_of_le` gives the `Nat` value.
 * `assumption` or `exact` at default transparency against a `Copied` goal over
   a store chain unfolds `Copied` and every `storeLE`. Use `with_reducible`.
 * Never compare two concrete states with `rfl` (for example
