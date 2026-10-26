@@ -49,6 +49,8 @@ mod types;
 #[cfg(not(target_arch = "wasm32"))]
 mod urs_lock;
 
+#[cfg(feature = "cuda")]
+pub use routines::{JoltG1Routines, JoltG2Routines};
 pub use scheme::DoryScheme;
 pub use types::{
     DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,

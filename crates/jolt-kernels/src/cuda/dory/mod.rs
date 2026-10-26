@@ -11,6 +11,8 @@ mod combine;
 mod curve;
 #[cfg(test)]
 mod handle;
+#[cfg(test)]
+mod routines;
 #[cfg(not(feature = "zk"))]
 mod tier2;
 

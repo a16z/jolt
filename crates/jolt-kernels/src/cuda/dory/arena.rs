@@ -16,11 +16,20 @@ use ark_ff::BigInt;
 use cudarc::driver::CudaSlice;
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
+#[cfg(test)]
+use std::ops::Range;
+
+#[cfg(test)]
+use jolt_field::Fr;
 
 #[cfg(test)]
 use crate::cuda::common::context::{context_for, device_count, CudaKernelContext};
 #[cfg(test)]
+use crate::cuda::common::devices::{fan_out, DeviceTask};
+#[cfg(test)]
 use crate::cuda::common::error::CudaError;
+#[cfg(test)]
+use crate::cuda::common::msm::ResidentAxpy;
 use crate::cuda::common::msm::FQ_LIMBS;
 
 #[cfg(test)]
@@ -255,8 +264,187 @@ fn read_from(
 }
 
 #[cfg(test)]
+pub(super) fn axpy(family: Family, span: ResidentAxpy, scalar: Fr) -> Result<(), CudaError> {
+    with_arena(family, |arena| {
+        if span.out_offset < arena.frozen {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident axpy targeted the frozen setup prefix",
+            });
+        }
+        for (ordinal, buffer) in arena.buffers.iter_mut().enumerate() {
+            let context = device(ordinal)?;
+            match family {
+                Family::G1 => context.g1_axpy_in_place(buffer, span, scalar)?,
+                Family::G2 => context.g2_axpy_in_place(buffer, span, scalar)?,
+            }
+        }
+        Ok(())
+    })
+    .ok_or_else(closed)?
+}
+
+#[cfg(test)]
+pub(super) fn g1_msm(
+    base_offset: usize,
+    out_offset: usize,
+    count: usize,
+    scalars: &[Fr],
+) -> Result<(), CudaError> {
+    msm(Family::G1, base_offset, out_offset, count, scalars)
+}
+
+#[cfg(test)]
+pub(super) fn g2_msm(
+    base_offset: usize,
+    out_offset: usize,
+    count: usize,
+    scalars: &[Fr],
+) -> Result<(), CudaError> {
+    msm(Family::G2, base_offset, out_offset, count, scalars)
+}
+
+#[cfg(test)]
+const MSM_SPLIT_LEN: usize = 1 << 13;
+
+#[cfg(test)]
+fn base_chunks(count: usize, devices: usize, floor: usize) -> Vec<Range<usize>> {
+    let devices = if devices < 2 || count < floor {
+        1
+    } else {
+        devices.min(count.max(1))
+    };
+    let base = count / devices;
+    let remainder = count % devices;
+    let mut chunks = Vec::with_capacity(devices);
+    let mut start = 0;
+    for device in 0..devices {
+        let len = base + usize::from(device < remainder);
+        chunks.push(start..start + len);
+        start += len;
+    }
+    chunks
+}
+
+/// Each device reduces its own contiguous slice of the bases into ITS OWN copy
+/// of `out_offset`, so the mirrors diverge for the duration of the fan-out;
+/// `reduce` sums the partials and re-broadcasts the total before returning.
+#[cfg(test)]
+fn msm(
+    family: Family,
+    base_offset: usize,
+    out_offset: usize,
+    count: usize,
+    scalars: &[Fr],
+) -> Result<(), CudaError> {
+    let split = with_arena(family, |arena| -> Result<bool, CudaError> {
+        if out_offset < arena.frozen {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident MSM targeted the frozen setup prefix",
+            });
+        }
+        let chunks = base_chunks(count, arena.buffers.len(), MSM_SPLIT_LEN);
+        let split = chunks.len() > 1;
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = chunks
+            .into_iter()
+            .zip(arena.buffers.iter_mut())
+            .enumerate()
+            .map(|(ordinal, (bases, buffer))| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let weights =
+                        scalars
+                            .get(bases.clone())
+                            .ok_or(CudaError::InvariantViolation {
+                                reason: "an MSM base chunk fell outside the scalar list",
+                            })?;
+                    let context = device(ordinal)?;
+                    let start = base_offset + bases.start;
+                    match family {
+                        Family::G1 => {
+                            context.g1_msm_in_place(buffer, start, out_offset, bases.len(), weights)
+                        }
+                        Family::G2 => {
+                            context.g2_msm_in_place(buffer, start, out_offset, bases.len(), weights)
+                        }
+                    }
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        Ok(split)
+    })
+    .ok_or_else(closed)??;
+    if split {
+        reduce(family, out_offset)
+    } else {
+        broadcast(family, out_offset, 1)
+    }
+}
+
+#[cfg(test)]
+fn reduce(family: Family, out_offset: usize) -> Result<(), CudaError> {
+    let mut partials = Vec::with_capacity(mirrors(family));
+    for ordinal in 0..mirrors(family) {
+        partials.push(read_from(family, ordinal, out_offset, 1)?);
+    }
+    let total = match family {
+        Family::G1 => g1_limbs(
+            &partials
+                .iter()
+                .map(|limbs| g1_point(limbs))
+                .fold(G1Projective::default(), |sum, point| sum + point),
+        )
+        .to_vec(),
+        Family::G2 => g2_limbs(
+            &partials
+                .iter()
+                .map(|limbs| g2_point(limbs))
+                .fold(G2Projective::default(), |sum, point| sum + point),
+        )
+        .to_vec(),
+    };
+    write(family, out_offset, &total)
+}
+
+#[cfg(test)]
+fn broadcast(family: Family, offset: usize, count: usize) -> Result<(), CudaError> {
+    if mirrors(family) < 2 {
+        return Ok(());
+    }
+    let limbs = read_from(family, 0, offset, count)?;
+    with_arena(family, |arena| {
+        let start = offset * arena.words;
+        for (ordinal, buffer) in arena.buffers.iter_mut().enumerate().skip(1) {
+            device(ordinal)?.write_u64_range(buffer, start, &limbs)?;
+        }
+        Ok(())
+    })
+    .ok_or_else(closed)?
+}
+
+#[cfg(test)]
 pub(super) fn mirrors(family: Family) -> usize {
     with_arena(family, |arena| arena.buffers.len()).unwrap_or(0)
+}
+
+#[cfg(test)]
+pub(super) fn g2_fixed_base(
+    base_offset: usize,
+    out_offset: usize,
+    scalars: &[Fr],
+) -> Result<(), CudaError> {
+    with_arena(Family::G2, |arena| {
+        if out_offset < arena.frozen {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident fixed-base scaling targeted the frozen setup prefix",
+            });
+        }
+        for (ordinal, buffer) in arena.buffers.iter_mut().enumerate() {
+            device(ordinal)?.g2_fixed_base_in_place(buffer, base_offset, out_offset, scalars)?;
+        }
+        Ok(())
+    })
+    .ok_or_else(closed)?
 }
 
 #[cfg(test)]
@@ -319,7 +507,17 @@ pub(super) fn g2_point(limbs: &[u64]) -> G2Projective {
     reason = "test module: device storage failures fail loudly"
 )]
 mod tests {
+    use ark_bn254::{Fr, G1Affine, G1Projective, G2Affine, G2Projective};
     use ark_ec::PrimeGroup;
+    use ark_ff::UniformRand;
+    use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};
+    use dory::primitives::arithmetic::DoryRoutines;
+    use jolt_dory::{JoltG1Routines, JoltG2Routines};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use super::super::handle::{span, span_g2, store_all, store_all_g2};
+    use super::super::routines::{CudaG1Routines, CudaG2Routines};
 
     use super::*;
     use crate::cuda::common::context::shared_context;
@@ -416,5 +614,203 @@ mod tests {
                 Err(CudaError::InvariantViolation { .. })
             ));
         }
+    }
+
+    fn agree(family: Family, offset: usize, count: usize, what: &str) {
+        let expected = read_from(family, 0, offset, count).expect("device 0 arena read");
+        for ordinal in 1..mirrors(family) {
+            assert_eq!(
+                read_from(family, ordinal, offset, count).expect("mirror arena read"),
+                expected,
+                "{what}: device {ordinal}'s arena diverged from device 0",
+            );
+        }
+    }
+
+    fn scalars(count: usize, seed: u64) -> Vec<ArkFr> {
+        let mut rng = ChaCha20Rng::seed_from_u64(seed);
+        (0..count).map(|_| ArkFr(Fr::rand(&mut rng))).collect()
+    }
+
+    #[test]
+    fn base_chunks_decline_below_the_floor_and_partition_evenly_above_it() {
+        for count in [0usize, 1, 7, MSM_SPLIT_LEN - 1] {
+            for devices in [1usize, 2, 4] {
+                assert_eq!(
+                    base_chunks(count, devices, MSM_SPLIT_LEN),
+                    vec![0..count],
+                    "{count} base(s) over {devices} device(s) split below the floor",
+                );
+            }
+        }
+        for count in [MSM_SPLIT_LEN, MSM_SPLIT_LEN + 1, 3 * MSM_SPLIT_LEN + 5] {
+            for devices in [1usize, 2, 3, 4, 8] {
+                let chunks = base_chunks(count, devices, MSM_SPLIT_LEN);
+                assert_eq!(
+                    chunks.len(),
+                    devices,
+                    "{count} bases over {devices} device(s) produced {} chunk(s)",
+                    chunks.len(),
+                );
+                let mut next = 0;
+                for chunk in &chunks {
+                    assert_eq!(chunk.start, next, "a gap at base {next}");
+                    next = chunk.end;
+                }
+                assert_eq!(next, count, "the chunks do not cover the base list");
+                let widths: Vec<usize> = chunks.iter().map(Range::len).collect();
+                let spread = widths.iter().max().copied().unwrap_or(0)
+                    - widths.iter().min().copied().unwrap_or(0);
+                assert!(
+                    spread <= 1,
+                    "uneven base split across {devices}: {widths:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_split_g1_msm_matches_reference_dory() {
+        if shared_context().is_none() {
+            return;
+        }
+        let len = MSM_SPLIT_LEN + 3;
+        let Ok(guard) = open(len + 64, 64) else {
+            return;
+        };
+        let mut rng = ChaCha20Rng::seed_from_u64(2_711);
+        let bases: Vec<_> = (0..len)
+            .map(|index| {
+                if index % 37 == 0 {
+                    G1Projective::default()
+                } else {
+                    G1Projective::rand(&mut rng)
+                }
+            })
+            .collect();
+        let weights = scalars(len, 2_713);
+        let expected = JoltG1Routines::msm(
+            &bases.iter().copied().map(ArkG1).collect::<Vec<_>>(),
+            &weights,
+        );
+
+        let resident = store_all(&bases);
+        let got = CudaG1Routines::msm(&resident, &weights).load();
+        assert!(!poisoned(), "the split G1 MSM poisoned the arena");
+        agree(
+            Family::G1,
+            span(&[CudaG1Routines::msm(&resident, &weights)]).expect("a G1 MSM output slot"),
+            1,
+            "after a split G1 MSM",
+        );
+        drop(guard);
+
+        assert_eq!(
+            G1Affine::from(got),
+            G1Affine::from(expected.0),
+            "a {len}-base split G1 MSM diverged from reference Dory",
+        );
+    }
+
+    #[test]
+    fn a_split_g2_msm_matches_reference_dory() {
+        if shared_context().is_none() {
+            return;
+        }
+        let len = MSM_SPLIT_LEN + 3;
+        let Ok(guard) = open(64, len + 64) else {
+            return;
+        };
+        let mut rng = ChaCha20Rng::seed_from_u64(2_719);
+        let bases: Vec<_> = (0..len)
+            .map(|index| {
+                if index % 37 == 0 {
+                    G2Projective::default()
+                } else {
+                    G2Projective::rand(&mut rng)
+                }
+            })
+            .collect();
+        let weights = scalars(len, 2_723);
+        let expected = JoltG2Routines::msm(
+            &bases.iter().copied().map(ArkG2).collect::<Vec<_>>(),
+            &weights,
+        );
+
+        let resident = store_all_g2(&bases);
+        let got = CudaG2Routines::msm(&resident, &weights).load();
+        assert!(!poisoned(), "the split G2 MSM poisoned the arena");
+        agree(
+            Family::G2,
+            span_g2(&[CudaG2Routines::msm(&resident, &weights)]).expect("a G2 MSM output slot"),
+            1,
+            "after a split G2 MSM",
+        );
+        drop(guard);
+
+        assert_eq!(
+            G2Affine::from(got),
+            G2Affine::from(expected.0),
+            "a {len}-base split G2 MSM diverged from reference Dory",
+        );
+    }
+
+    #[test]
+    fn every_device_mirror_holds_the_same_arena_bytes() {
+        if shared_context().is_none() {
+            return;
+        }
+        let len = 128usize;
+        let Ok(guard) = open(8 * len, 8 * len) else {
+            return;
+        };
+        assert_eq!(
+            mirrors(Family::G1),
+            device_count(),
+            "the G1 arena did not mirror onto every device in the pool",
+        );
+
+        let mut rng = ChaCha20Rng::seed_from_u64(97);
+        let g1: Vec<_> = (0..len).map(|_| G1Projective::rand(&mut rng)).collect();
+        let g2: Vec<_> = (0..len).map(|_| G2Projective::rand(&mut rng)).collect();
+
+        let bases = store_all(&g1);
+        let mut vs = store_all(&g1);
+        let bases_g2 = store_all_g2(&g2);
+        let mut vs_g2 = store_all_g2(&g2);
+        let base_offset = span(&bases).expect("a contiguous G1 base span");
+        let vs_offset = span(&vs).expect("a contiguous G1 vs span");
+        let g2_base_offset = span_g2(&bases_g2).expect("a contiguous G2 base span");
+        let g2_vs_offset = span_g2(&vs_g2).expect("a contiguous G2 vs span");
+        agree(Family::G1, base_offset, len, "after a G1 store");
+        agree(Family::G2, g2_base_offset, len, "after a G2 store");
+
+        let weights = scalars(len, 101);
+        CudaG1Routines::fixed_scalar_mul_bases_then_add(&bases, &mut vs, &weights[0]);
+        agree(Family::G1, vs_offset, len, "after a G1 axpy");
+        CudaG2Routines::fixed_scalar_mul_bases_then_add(&bases_g2, &mut vs_g2, &weights[1]);
+        agree(Family::G2, g2_vs_offset, len, "after a G2 axpy");
+
+        let fixed = CudaG2Routines::fixed_base_vector_scalar_mul(&bases_g2[0], &weights[..8]);
+        let fixed_offset = span_g2(&fixed).expect("a contiguous G2 fixed-base span");
+        agree(Family::G2, fixed_offset, 8, "after a G2 fixed-base scaling");
+
+        let product = CudaG1Routines::msm(&bases, &weights);
+        agree(
+            Family::G1,
+            span(&[product]).expect("a G1 MSM output slot"),
+            1,
+            "after a G1 MSM",
+        );
+        let product_g2 = CudaG2Routines::msm(&bases_g2, &weights);
+        agree(
+            Family::G2,
+            span_g2(&[product_g2]).expect("a G2 MSM output slot"),
+            1,
+            "after a G2 MSM",
+        );
+
+        assert!(!poisoned(), "the mirrored arena poisoned");
+        drop(guard);
     }
 }
