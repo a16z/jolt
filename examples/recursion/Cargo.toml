@@ -33,16 +33,19 @@ akita = [
 # -Cllvm-args=-enable-tail-merge=false, -Cllvm-args=-split-spill-mode=size,
 # -Cllvm-args=-riscv-disable-cost-per-use=true and one codegen unit (host side only;
 # RECURSION_GUEST_CODEGEN=off restores the stock guest build).
-default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen"]
+# tensor-no-carry: the verifier guest (and the host's Akita) separate dense
+# residual equality weights into a high-part sum and a no-carry low span; same
+# field values. Default on; effective only with `akita`.
+default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry"]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
 word-decode = ["jolt-akita?/word-decode"]
+tensor-no-carry = ["jolt-akita?/tensor-no-carry"]
 
 # Each remaining arm is selected independently and forwarded to the guest.
 word-transcript = ["akita", "jolt-akita/word-transcript"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
-tensor-no-carry = ["akita", "jolt-akita/tensor-no-carry"]
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
