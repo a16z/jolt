@@ -265,10 +265,33 @@ paper delta.
   which O2 inherits.
 - **O4 merged.** Combined bars are green; Akita's dump is unchanged apart from
   the 5 known ZK rows.
+- **O0 merged** (LOADED pass only; `specs/whiteout-o0-profile.md`). About 85%
+  of a one-thread steady verify was public state rebuilt per verify; the
+  residual `N·z` products alone were 4–8%. Decision: O3 before O6; O6 d = 256
+  and P9 wait for a post-O3 idle rerun.
+- **O3 (verifier caches).** One review, no blocker: every cache is a
+  deterministic function of public inputs keyed on the full input, nothing
+  proof-derived is cached, failed builds are not stored, and the transcript
+  did not move. Fix round: taxonomy v7 (a label was removed), profile script
+  buckets, the tail owns its row, the layout cache is capped at 8, note
+  clauses. Merged; LOADED steady verify 3.5–4.0× (16 threads) and 7–13×
+  (1 thread) faster.
+- **Intermittent failure after the O3 merge.**
+  `whiteout_tamper_per_census_class_with_precommitted_groups` failed once in
+  the merge bar; the bar dropped its message. A dedicated investigation found
+  no reproduction in about 70 runs and 10,700 single-bit tampers (every
+  message of three fresh proofs included), no unabsorbed or non-canonical
+  byte, and no way for an O3 cache to skip a per-verify check. Root cause
+  unknown; the bar now keeps each lane's full log so a recurrence names the
+  accepted tamper or the panic site.
+- **O2 (parallel planner).** One review, no planner blocker: memo values are
+  functions of their key, errors are never memoized, and the original
+  traversal makes every decision. Fix round pending: `ResponsePlans::get`
+  must not hold its lock while the now-parallel planner runs.
 
 ## Not verified
 
-- **Verifier time split:** unmeasured until O0. Every verifier-side estimate
-  above is Akita's harness or §5.5.2's scaling estimate, not a Jolt
-  measurement.
-- **O4's ν growth and O2's planning speedup:** estimates.
+- **Verifier time split:** O0's split is LOADED; no idle-machine
+  measurement exists yet.
+- **The intermittent tamper-test failure above:** unexplained.
+- **O4's ν growth:** an estimate.
