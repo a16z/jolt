@@ -427,6 +427,7 @@ dependencies = [
  "getrandom",
  "jolt-field",
  "light-poseidon",
+ "shake",
  "spongefish",
 ]
 
@@ -665,8 +666,6 @@ dependencies = [
  "digest 0.11.3",
  "getrandom",
  "keccak",
- "shake",
- "turboshake",
  "zeroize",
 ]
 
@@ -730,17 +729,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "turboshake"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
-dependencies = [
- "digest 0.11.3",
- "keccak",
- "sponge-cursor",
 ]
 
 [[package]]

@@ -5,11 +5,9 @@
 use jolt_field::{CanonicalBytes, F8};
 use jolt_transcript::{
     prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge, Probe,
-    ProverTranscript, VerifierTranscript, MAX_POW_BITS,
+    ProverState, ProverTranscript, VerifierTranscript, MAX_POW_BITS,
 };
-use spongefish::{
-    instantiations::Keccak, DuplexSpongeInit, DuplexSpongeInterface, ProverState, VerifierState,
-};
+use spongefish::{instantiations::Keccak, DuplexSpongeInit, DuplexSpongeInterface, VerifierState};
 
 const SESSION: &[u8] = b"jolt/pow/v1";
 const INSTANCE: [u8; 32] = [0x24; 32];

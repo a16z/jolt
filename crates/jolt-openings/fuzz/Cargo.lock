@@ -626,6 +626,7 @@ dependencies = [
  "getrandom 0.4.3",
  "jolt-field",
  "light-poseidon",
+ "shake",
  "spongefish",
 ]
 
@@ -902,8 +903,6 @@ dependencies = [
  "digest 0.11.3",
  "getrandom 0.4.3",
  "keccak",
- "shake",
- "turboshake",
  "zeroize",
 ]
 
@@ -1004,17 +1003,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "turboshake"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
-dependencies = [
- "digest 0.11.3",
- "keccak",
- "sponge-cursor",
 ]
 
 [[package]]

@@ -46,6 +46,8 @@ mod pow;
 mod prover;
 #[cfg(feature = "spongefish")]
 mod setup;
+#[cfg(feature = "spongefish")]
+mod shake128;
 #[cfg(feature = "test-utils")]
 mod unpriced;
 #[cfg(feature = "spongefish")]
@@ -73,6 +75,8 @@ pub use pow::ProofOfWorkError;
 pub use pow::{MessageSearch, Probe};
 #[cfg(feature = "spongefish")]
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
+#[cfg(feature = "spongefish")]
+pub use shake128::{ProverState, Shake128, Shake128Hasher};
 #[cfg(feature = "test-utils")]
 pub use unpriced::UnpricedTranscript;
 

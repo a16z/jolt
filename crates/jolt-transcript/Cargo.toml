@@ -20,8 +20,8 @@ default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 spongefish = [
   "dep:spongefish",
   "dep:getrandom_v04",
+  "dep:shake",
   "spongefish/getrandom",
-  "spongefish/turboshake128",
 ]
 digest = ["dep:digest"]
 # The prover's proof-of-work nonce search. It copies the sponge state, which
@@ -43,6 +43,7 @@ ark-bn254 = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
 spongefish = { workspace = true, optional = true }
+shake = { workspace = true, optional = true }
 blake2 = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
