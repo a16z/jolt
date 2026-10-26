@@ -286,8 +286,14 @@ paper delta.
   accepted tamper or the panic site.
 - **O2 (parallel planner).** One review, no planner blocker: memo values are
   functions of their key, errors are never memoized, and the original
-  traversal makes every decision. Fix round pending: `ResponsePlans::get`
-  must not hold its lock while the now-parallel planner runs.
+  traversal makes every decision. Fix round: `ResponsePlans::get` plans
+  outside its lock (a held lock across the now-parallel planner could
+  deadlock concurrent verifies), claim bookkeeping gated to `parallel`, and
+  the note records the extra states early completion explores and the stack
+  headroom. Merged; bars green, dump identity exactly the 5 known rows.
+  LOADED: response planning 3.5–7× faster; the ~1 s target is not met.
+- **M1 (prover memory)** opened: peak RSS 0.60 → 7.94 GiB at fib 2^20, the
+  response proof dominant.
 
 ## Not verified
 
