@@ -24,7 +24,9 @@ splits into path lemmas under `CopyRuntime/Proof/`.
 | `.Lgeneral` with `dst = src` | `Wrapper.general_path` | proved |
 | `.Lgeneral` forward copy (`src > dst`): alignment prologue, 256-byte loop, 80-byte block loop, word loop, and byte tail | `Wrapper.forward_path` (from `fwd_prologue`, `fwd_large`, `fwd_pairs`, `fwd_blocks`, `fwd_words`, `fwd_tail`) | proved |
 | `.Lgeneral` backward copy (`src < dst`): alignment prologue, 256-byte loop (a generic `ld`/`sd` pair run), 80-byte block loop, word loop, and byte tail | `Wrapper.backward_path` (`bwd_prologue`, `bwd_large`, `bwd_pairs`, `bwd_blocks`, `bwd_words`, `bwd_tail`) | proved |
-| `__jolt_copy_misaligned` | `Leaf.leaf_path` | `sorry` (the word-combining identity `Leaf.combine_byte` is proved) |
+| `__jolt_copy_misaligned`, forward (`dst < src`): peel, bound check, 128-byte and word combining loops, byte tail | `Leaf.fwd_path` (`Leaf/Forward.lean`) | proved |
+| `__jolt_copy_misaligned`, backward (`src < dst`) | `Leaf.bwd_path` (`Leaf/Backward.lean`) | proved |
+| `__jolt_copy_misaligned`, from its entry point | `Leaf.leaf_path` | proved, so `Theorems.jolt_copy_misaligned_correct` has no `sorry` |
 
 The main theorems compose these lemmas without further gaps, so they hold
 exactly when the remaining `sorry` lemmas are proved. `lake build` runs
@@ -131,7 +133,7 @@ The following must be right for the theorems to mean what they say.
    `__real_memmove` this is their libc or `compiler_builtins` contract, given
    the unchanged arguments of outcome (c). Theorems about one section alone
    assume the leaf meets `jolt_copy_misaligned_correct`. The linked theorems
-   prove that instead, but only once `Leaf.leaf_path` is proved.
+   prove that instead, from `Leaf.leaf_path`.
 
 Fetching from the immutable extracted image rather than from `State.mem` is
 faithful because stores never reach code. The hypothesis `CodeRangeOk` states
@@ -176,12 +178,33 @@ extracted bytes (`tools/Simulate.lean`).
   shifted out, but the sandbox faults on the read. An example is `n = 600`,
   `dst = 2^64 - 600`, `src = dst - 1`.
 
+Two further properties of the leaf matter for its proof but are not bugs.
+
+* **The leaf assumes `n ≥ 143`.** After the alignment prologue it enters its
+  128-byte loop without a length check, and the first iteration loads source
+  words up to offset `J + 136 - a`, where `J ≤ 15` bytes are already copied
+  and `a ∈ 1..7` is the source word offset. Both wrappers jump to the leaf
+  only for `n ≥ 544`, and `jolt_copy_misaligned_correct` assumes that bound.
+  Run alone, the leaf copies correctly for every mismatched alignment at
+  `n = 143`. At `n = 142` it faults for 14 of the 112 alignment and
+  direction combinations, on the last load of the first iteration (offset
+  `0x188` forward, `0x376` backward), for example `dst = 0x100000`,
+  `src = 0x100041`.
+* **The first aligned source word is partly stale.** The setup loads `t3`
+  from the aligned word just below the source cursor (forward) or at it
+  (backward). If the distance `|src - dst|` is smaller than the offset `a`,
+  some bytes of that word already hold copied data rather than the original
+  source. The combining `srl` (forward) or `sll` (backward) discards exactly
+  those bytes, so the result is correct. The proof therefore tracks `t3` only
+  up to the shift: `t3 >>> 8a` (forward) or `t3 <<< (64 - 8a)` (backward)
+  equals the shifted snapshot word.
+
 A differential run of the model over 3,480 ordinary inputs found no mismatch
 against `memmoveResult`, and no fault or register-preservation violation.
 The inputs were lengths 0..1030 around every threshold, source alignments
 0, 1, 3, 4, and 7, destination alignments 0, 2, 5, and 6, and distances 8,
 64, and 4224, in both directions. They exercise every path, including the
-backward loops and the leaf, which are not yet proved. This is evidence, not
+backward loops, which are not yet proved. This is evidence, not
 proof. To rerun it, use `lake env lean tools/Simulate.lean`, which takes a
 few minutes.
 
@@ -234,8 +257,18 @@ to the table proofs, which run 29 symbolic paths.
 * `Leaf.combine_byte` is the word-combining identity the misaligned leaf
   needs: `(w₀ >>> 8a) ||| (w₁ <<< (64 - 8a))` has bytes `a..7` of `w₀`
   followed by bytes `0..a-1` of `w₁`, for `a ∈ 1..7`. It fails for `a = 0`,
-  because `sll` by 64 is a shift by 0. The leaf proof must use the fact that
-  on that path the source word offset is nonzero.
+  because `sll` by 64 is a shift by 0. The setup lemmas (`fwd_setup`,
+  `bwd_setup`) derive `a ≠ 0` from the mismatched offsets once `a7` is
+  aligned. `Leaf.storeLE_combine` turns the store of a combined word into the
+  store of the eight-byte load in between, so the ordinary `Copied`
+  lemmas apply.
+* The leaf's combine-and-store step (`ld; srl; sll; or; sd`) is one lemma per
+  direction (`Leaf.fwd_comb`, `Leaf.bwd_comb`, in `Leaf/Comb.lean`). Its
+  immediates and the code offset are parameters, and the two addresses are
+  hypotheses of the form `regs 7 + ilo = src + ofNat x`, so `rv_simp` never
+  sees an immediate. It hands a fresh abstract state to a continuation, with
+  a frame hypothesis. `Leaf.fwd_run` and `bwd_run` chain sixteen of these
+  steps by induction on pairs, for the 128-byte loops.
 
 ### Performance pitfalls already fixed in the tactics
 

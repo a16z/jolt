@@ -11,6 +11,11 @@ import CopyRuntime.Proof.Wrapper.Exits
 import CopyRuntime.Proof.Wrapper.Tables
 import CopyRuntime.Proof.Wrapper.General
 import CopyRuntime.Proof.Wrapper.Main
+import CopyRuntime.Proof.Leaf.Basic
+import CopyRuntime.Proof.Leaf.Common
+import CopyRuntime.Proof.Leaf.Comb
+import CopyRuntime.Proof.Leaf.Forward
+import CopyRuntime.Proof.Leaf.Backward
 import CopyRuntime.Proof.Leaf
 import CopyRuntime.Theorems
 import CopyRuntime.Audit
