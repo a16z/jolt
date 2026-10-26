@@ -72,11 +72,15 @@ theorem toNat_add_lit_mod_two {B : BitVec 64} (hB : B.toNat % 2 = 0) (k : Nat) :
 that the simp set produces); that is a no-op on even addresses. -/
 @[rv_exec] theorem and_not_one_of_even {t : BitVec 64} (ht : t.toNat % 2 = 0) :
     t &&& 0xfffffffffffffffe#64 = t := by
-  have h : t &&& 1#64 = 0#64 := by
-    apply BitVec.eq_of_toNat_eq
-    rw [BitVec.toNat_and]
-    simp [Nat.and_one_is_mod, ht]
-  bv_decide
+  have hlit : (0xfffffffffffffffe#64 : BitVec 64) = ~~~1#64 := by decide
+  have h0 : t.getLsbD 0 = false := by
+    simp [BitVec.getLsbD, Nat.testBit, ht]
+  rw [hlit]
+  ext i hi
+  simp only [BitVec.getElem_and, BitVec.getElem_not, BitVec.getElem_one]
+  rcases i with _ | i
+  · simp [← BitVec.getLsbD_eq_getElem, h0]
+  · simp
 
 @[rv_exec] theorem add_lit_and_not_one {B : BitVec 64} (hB : B.toNat % 2 = 0) {k : Nat}
     (hk : k % 2 = 0) :

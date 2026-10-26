@@ -1,6 +1,5 @@
 import CopyRuntime.Proof.Arith
 import CopyRuntime.Spec
-import Std.Tactic.BVDecide
 
 /-!
 # Little-endian memory lemmas and the `Copied` invariant
@@ -18,12 +17,17 @@ namespace CopyRuntime
 
 private theorem byte0_of_or (b : BitVec 8) (L : BitVec 64) :
     ((b.setWidth 64 ||| (L <<< 8)) >>> 0).setWidth 8 = b := by
-  bv_decide
+  ext j hj
+  simp
 
 private theorem byte_succ_of_or (i : Nat) (hi : i < 7) (b : BitVec 8) (L : BitVec 64) :
     ((b.setWidth 64 ||| (L <<< 8)) >>> (8 * (i + 1))).setWidth 8 = (L >>> (8 * i)).setWidth 8 := by
-  rcases i with _ | _ | _ | _ | _ | _ | _ | i
-  all_goals first | omega | bv_decide
+  ext j hj
+  have h1 : 8 * (i + 1) + j < 64 := by omega
+  have h2 : ¬ 8 * (i + 1) + j < 8 := by omega
+  have h3 : 8 * (i + 1) + j - 8 = 8 * i + j := by omega
+  simp [h1, h2, h3, BitVec.getLsbD_of_ge b _ (show 8 ≤ 8 * (i + 1) + j by omega)]
+  rw [BitVec.getLsbD_eq_getElem (by omega)]
 
 /-- Byte `i` of a `k`-byte little-endian load is the byte at `a + i`. -/
 theorem loadLE_byte (m : Mem) : ∀ (k : Nat) (a : BitVec 64) (i : Nat), k ≤ 8 → i < k →

@@ -9,3 +9,8 @@ import CopyRuntime.Proof.Memory
 import CopyRuntime.Proof.Wrapper.Facts
 import CopyRuntime.Proof.Wrapper.Exits
 import CopyRuntime.Proof.Wrapper.Tables
+import CopyRuntime.Proof.Wrapper.General
+import CopyRuntime.Proof.Wrapper.Main
+import CopyRuntime.Proof.Leaf
+import CopyRuntime.Theorems
+import CopyRuntime.Audit
