@@ -52,6 +52,8 @@ mod urs_lock;
 #[cfg(feature = "cuda")]
 pub use routines::{JoltG1Routines, JoltG2Routines};
 pub use scheme::DoryScheme;
+#[cfg(feature = "cuda")]
+pub use transcript::JoltToDoryTranscript;
 pub use types::{
     DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
 };
