@@ -131,19 +131,14 @@ impl JacobianLimbs {
     }
 }
 
+/// Device indices and reduction classes built by [`CudaKernelContext::upload_segments`].
+/// Reuse with the originating context and base-table indexing.
 pub struct DeviceSegments {
     indices: CudaSlice<u32>,
     offsets: CudaSlice<u32>,
     counts: CudaSlice<u32>,
     segments: usize,
     widest: usize,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "commitment complements use offsets and indices; segment_sums reads classes in tests"
-        )
-    )]
     classes: DeviceClasses,
 }
 
@@ -480,6 +475,7 @@ struct SegmentPlan<'a> {
     classes: Option<&'a DeviceClasses>,
 }
 
+/// Select the G1 segment-reduction kernel; `Auto` uses the segment geometry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SegmentMode {
     Auto,
@@ -2631,7 +2627,8 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
+    /// Sum each uploaded segment and return one Jacobian point per segment.
+    /// The plan must come from `upload_segments` with these bases and context.
     pub fn segment_sums(
         &self,
         bases: &DeviceG1Bases,

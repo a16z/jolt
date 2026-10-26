@@ -23,16 +23,19 @@ use super::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
 use super::error::CudaError;
 use crate::{KernelError, ProofSession};
 
+/// Unreduced `u64` accumulator slots per output field element.
 pub const LANES: usize = 8;
 
 pub const PACKED_BITS: usize = 32;
 
+/// Default shared-memory budget in bytes for one-hot cycle folds.
 pub const SHARED_BUDGET: usize = 32 * 1024;
 
 pub const CYCLES_PER_THREAD: usize = 32;
 
 pub const POLYS_PER_BLOCK: usize = 8;
 
+/// Launch and shared-memory limits for one-hot cycle folds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldTuning {
     pub polys_per_block: usize,
@@ -50,6 +53,7 @@ impl Default for FoldTuning {
     }
 }
 
+/// Resident lookup indices, bytecode PCs and RAM addresses for cycle folds.
 pub struct DeviceOneHotColumns {
     lookup: Arc<CudaSlice<u64>>,
     pc: Arc<CudaSlice<u32>>,
@@ -214,7 +218,10 @@ impl OneHotShards {
 }
 
 impl DeviceOneHotColumns {
-    #[cfg(test)]
+    /// Upload columns for the lookup, bytecode and RAM polynomial counts in
+    /// `families`, in that order. Lookup entries are low/high `u64` pairs;
+    /// bytecode PCs and RAM addresses are `u32` words. Subsequent folds must
+    /// use this context.
     pub fn new(
         context: &CudaKernelContext,
         lookup: &[u64],
