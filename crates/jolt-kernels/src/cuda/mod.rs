@@ -21,11 +21,13 @@
 //! implementations. [`CudaDoryScheme`] selects CUDA PCS operations separately
 //! from the relation registry; using `DoryScheme` retains its CPU opening path.
 
+use crate::KernelError;
+use crate::ProofSession;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::{JoltBackend, KernelError, ProofSession};
+use crate::JoltBackend;
 
 mod advice_claim_reduction;
 mod booleanity;
@@ -107,36 +109,6 @@ where
         PCS: DeviceTier1Commitment,
     {
         let mut backend = Self::optimized();
-        backend.trusted_advice_cycle = Box::new(CudaBackend);
-        backend.untrusted_advice_cycle = Box::new(CudaBackend);
-        backend.bytecode_reduction_cycle = Box::new(CudaBackend);
-        backend.program_image_reduction_cycle = Box::new(CudaBackend);
-        backend.trusted_advice_address = Box::new(CudaBackend);
-        backend.untrusted_advice_address = Box::new(CudaBackend);
-        backend.bytecode_reduction_address = Box::new(CudaBackend);
-        backend.program_image_reduction_address = Box::new(CudaBackend);
-        backend.booleanity_address = Box::new(CudaBackend);
-        backend.booleanity_cycle = Box::new(CudaBackend);
-        backend.ram_hamming_booleanity = Box::new(CudaBackend);
-        backend.hamming_weight_claim_reduction = Box::new(CudaBackend);
-        backend.inc_claim_reduction = Box::new(CudaBackend);
-        backend.registers_claim_reduction = Box::new(CudaBackend);
-        backend.instruction_claim_reduction = Box::new(CudaBackend);
-        backend.instruction_input = Box::new(CudaBackend);
-        backend.instruction_ra_virtualization = Box::new(CudaBackend);
-        backend.instruction_read_raf = Box::new(CudaBackend);
-        backend.ram_output_check = Box::new(CudaBackend);
-        backend.ram_raf_evaluation = Box::new(CudaBackend);
-        backend.ram_read_write = Box::new(CudaBackend);
-        backend.registers_read_write = Box::new(CudaBackend);
-        backend.commit = Box::new(CudaBackend);
-        backend.joint_opening = Box::new(CudaBackend);
-        backend.ram_initial_openings = Box::new(CudaBackend);
-        backend.ram_ra_claim_reduction = Box::new(CudaBackend);
-        backend.ram_ra_virtualization = Box::new(CudaBackend);
-        backend.ram_val_check = Box::new(CudaBackend);
-        backend.registers_val_evaluation = Box::new(CudaBackend);
-        backend.spartan_shift = Box::new(CudaBackend);
         #[cfg(not(feature = "field-inline"))]
         {
             backend.bytecode_read_raf_address = Box::new(CudaBackend);
@@ -146,6 +118,36 @@ where
             backend.spartan_product_uniskip = Box::new(CudaBackend);
             backend.spartan_product_remainder = Box::new(CudaBackend);
         }
+        backend.booleanity_address = Box::new(CudaBackend);
+        backend.booleanity_cycle = Box::new(CudaBackend);
+        backend.instruction_ra_virtualization = Box::new(CudaBackend);
+        backend.instruction_read_raf = Box::new(CudaBackend);
+        backend.registers_val_evaluation = Box::new(CudaBackend);
+        backend.hamming_weight_claim_reduction = Box::new(CudaBackend);
+        backend.inc_claim_reduction = Box::new(CudaBackend);
+        backend.instruction_claim_reduction = Box::new(CudaBackend);
+        backend.instruction_input = Box::new(CudaBackend);
+        backend.registers_claim_reduction = Box::new(CudaBackend);
+        backend.ram_hamming_booleanity = Box::new(CudaBackend);
+        backend.ram_output_check = Box::new(CudaBackend);
+        backend.ram_raf_evaluation = Box::new(CudaBackend);
+        backend.ram_ra_claim_reduction = Box::new(CudaBackend);
+        backend.ram_ra_virtualization = Box::new(CudaBackend);
+        backend.ram_val_check = Box::new(CudaBackend);
+        backend.registers_read_write = Box::new(CudaBackend);
+        backend.ram_read_write = Box::new(CudaBackend);
+        backend.spartan_shift = Box::new(CudaBackend);
+        backend.trusted_advice_cycle = Box::new(CudaBackend);
+        backend.untrusted_advice_cycle = Box::new(CudaBackend);
+        backend.bytecode_reduction_cycle = Box::new(CudaBackend);
+        backend.program_image_reduction_cycle = Box::new(CudaBackend);
+        backend.trusted_advice_address = Box::new(CudaBackend);
+        backend.untrusted_advice_address = Box::new(CudaBackend);
+        backend.bytecode_reduction_address = Box::new(CudaBackend);
+        backend.program_image_reduction_address = Box::new(CudaBackend);
+        backend.commit = Box::new(CudaBackend);
+        backend.ram_initial_openings = Box::new(CudaBackend);
+        backend.joint_opening = Box::new(CudaBackend);
         backend
     }
 }

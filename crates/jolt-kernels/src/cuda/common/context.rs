@@ -1,18 +1,18 @@
+use super::half_fold::FoldColumn;
+use cudarc::driver::DeviceRepr;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use cudarc::driver::DevicePtr;
 use cudarc::driver::{
-    CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
+    CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, DevicePtr, DevicePtrMut,
+    LaunchConfig, PushKernelArg,
 };
-use cudarc::driver::{DevicePtrMut, DeviceRepr};
 use cudarc::nvrtc::Ptx;
 use jolt_field::Fr;
 
 use super::device::{fill_staging, DeviceFrVec, LIMBS};
 use super::error::CudaError;
-use super::half_fold::FoldColumn;
 use super::xfer_stats::{self, Phase};
 
 const POISON_BYTE: u8 = 0xA5;
@@ -47,31 +47,15 @@ pub struct CudaKernelContext {
     pub(super) lt_double: CudaFunction,
     pub(super) scan_u32_block: CudaFunction,
     pub(super) scan_u32_add_offsets: CudaFunction,
-    lt_reconstruct: CudaFunction,
-    pcr_round: CudaFunction,
-    pcr_lane_eq: CudaFunction,
-    pcr_shift_eq: CudaFunction,
-    pcr_place_row: CudaFunction,
     dense_product_round: CudaFunction,
     lane_sum_total: CudaFunction,
-    sop_round: CudaFunction,
-    sopg_round: CudaFunction,
-    ii_flag_words: CudaFunction,
-    ss_packed_columns: CudaFunction,
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
+    lt_reconstruct: CudaFunction,
     ram_ra_gather_h: CudaFunction,
     ram_ra_fold_suffix: CudaFunction,
     ram_ra_fold_prefix: CudaFunction,
     ram_ra_phase1_round: CudaFunction,
-    irv_eq_double: CudaFunction,
-    irv_tables_split: CudaFunction,
-    irv_gather: CudaFunction,
-    irv_message_sparse: CudaFunction,
-    irv_message_dense: CudaFunction,
-    rrv_gather: CudaFunction,
-    rrv_message_sparse: CudaFunction,
-    rrv_message_dense: CudaFunction,
     #[cfg(test)]
     sfx_eval_batch: CudaFunction,
     pfx_mle_round: CudaFunction,
@@ -84,15 +68,17 @@ pub struct CudaKernelContext {
     ap_scale_shift: CudaFunction,
     ap_condense: CudaFunction,
     ap_raf_prefix: CudaFunction,
+    ap_bind_lanes: CudaFunction,
     ap_round_message_hinted: CudaFunction,
     ap_combined_val: CudaFunction,
     ap_ra: CudaFunction,
     ap_flag_keys: CudaFunction,
     ap_flag_sums: CudaFunction,
     ap_raf_flag_sum: CudaFunction,
+    #[cfg(test)]
+    unr_mul_scatter: CudaFunction,
+    unr_reduce: CudaFunction,
     unr_fold_chunks: CudaFunction,
-    cr_quotient: CudaFunction,
-    ap_bind_lanes: CudaFunction,
     rwm_segment_flags: CudaFunction,
     rwm_segment_bounds: CudaFunction,
     rwm_count: CudaFunction,
@@ -101,6 +87,7 @@ pub struct CudaKernelContext {
     rwm_square_lut: CudaFunction,
     rwm_deref_coeffs: CudaFunction,
     rwm_permute_words: CudaFunction,
+    rs2_claim: CudaFunction,
     amm_segment_flags: CudaFunction,
     amm_segment_bounds: CudaFunction,
     amm_count: CudaFunction,
@@ -112,11 +99,17 @@ pub struct CudaKernelContext {
     fr_delta_u64: CudaFunction,
     rrw_flags: CudaFunction,
     rrw_scatter: CudaFunction,
-    rs2_claim: CudaFunction,
-    reg_scatter: CudaFunction,
     reg_count: CudaFunction,
-    bap_bind_squared: CudaFunction,
-    bap_message: CudaFunction,
+    reg_scatter: CudaFunction,
+    cr_quotient: CudaFunction,
+    irv_eq_double: CudaFunction,
+    irv_tables_split: CudaFunction,
+    irv_gather: CudaFunction,
+    irv_message_sparse: CudaFunction,
+    irv_message_dense: CudaFunction,
+    rrv_gather: CudaFunction,
+    rrv_message_sparse: CudaFunction,
+    rrv_message_dense: CudaFunction,
     brc_tables_init: CudaFunction,
     brc_gather: CudaFunction,
     brc_message_sparse: CudaFunction,
@@ -138,32 +131,10 @@ pub struct CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     so_factors: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
-    so_claims: CudaFunction,
-    #[cfg(not(feature = "field-inline"))]
-    brap_one_hot: CudaFunction,
-    #[cfg(not(feature = "field-inline"))]
-    brap_term: CudaFunction,
-    #[cfg(not(feature = "field-inline"))]
-    brap_message: CudaFunction,
-    #[cfg(not(feature = "field-inline"))]
-    sp_gather: CudaFunction,
-    #[cfg(not(feature = "field-inline"))]
-    sp_matrix: CudaFunction,
-    #[cfg(not(feature = "field-inline"))]
-    sp_factors: CudaFunction,
-    #[cfg(not(feature = "field-inline"))]
-    sp_claims: CudaFunction,
-    #[cfg(not(feature = "field-inline"))]
     gruen_pair_message: CudaFunction,
-    roc_message: CudaFunction,
-    #[cfg(test)]
-    unr_mul_scatter: CudaFunction,
-    unr_reduce: CudaFunction,
-    ohf_fold: CudaFunction,
-    ohf_reduce: CudaFunction,
-    ohf_affine: CudaFunction,
-    hwr_weights: CudaFunction,
-    hwr_message: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    so_claims: CudaFunction,
+    sop_round: CudaFunction,
     #[cfg(test)]
     msm_fq_add: CudaFunction,
     #[cfg(test)]
@@ -185,37 +156,30 @@ pub struct CudaKernelContext {
     msm_digits: CudaFunction,
     msm_bucket_count: CudaFunction,
     msm_bucket_scatter: CudaFunction,
-    msm_window_accumulate: CudaFunction,
     commit_increment_column: CudaFunction,
     msm_one_hot_count: CudaFunction,
     msm_one_hot_count_shared: CudaFunction,
     msm_one_hot_scatter: CudaFunction,
     msm_one_hot_scatter_shared: CudaFunction,
     msm_one_hot_complement: CudaFunction,
-    msm_glv_decompose_2d: CudaFunction,
-    msm_glv_decompose_4d: CudaFunction,
-    msm_g2_frobenius: CudaFunction,
-    msm_g2_axpy_glv: CudaFunction,
-    msm_g1_endomorphism: CudaFunction,
-    msm_shared_scalar_rows_glv: CudaFunction,
-    msm_shared_scalar_windows: CudaFunction,
     msm_segment_sum: CudaFunction,
     msm_segment_sum_warp: CudaFunction,
     msm_segment_sum_classed: CudaFunction,
     msm_segment_sum_small: CudaFunction,
+    msm_bucket_reduce_chunked: CudaFunction,
+    msm_point_rows_sum: CudaFunction,
+    msm_window_fold: CudaFunction,
     msm_g2_segment_sum_small: CudaFunction,
     msm_g2_bucket_reduce_chunked: CudaFunction,
     msm_g2_point_rows_sum: CudaFunction,
     msm_g2_window_fold: CudaFunction,
-    msm_bucket_reduce_chunked: CudaFunction,
-    msm_point_rows_sum: CudaFunction,
-    msm_window_fold: CudaFunction,
-    msm_block_embed: CudaFunction,
-    msm_scatter_strided: CudaFunction,
-    msm_scatter_one_hot: CudaFunction,
-    msm_fold_rows: CudaFunction,
-    opening_one_hot_embed: CudaFunction,
-    opening_one_hot_fold: CudaFunction,
+    msm_glv_decompose_4d: CudaFunction,
+    msm_g2_frobenius: CudaFunction,
+    msm_g2_axpy_glv: CudaFunction,
+    msm_shared_scalar_rows_glv: CudaFunction,
+    msm_shared_scalar_windows: CudaFunction,
+    msm_glv_decompose_2d: CudaFunction,
+    msm_g1_endomorphism: CudaFunction,
     msm_jacobian_z: CudaFunction,
     msm_jacobian_to_affine: CudaFunction,
     msm_g1_axpy: CudaFunction,
@@ -247,9 +211,45 @@ pub struct CudaKernelContext {
     pub(super) g2_add_step_probe: CudaFunction,
     #[cfg(test)]
     pub(super) g2_mul_by_char_probe: CudaFunction,
+    msm_window_accumulate: CudaFunction,
+    msm_block_embed: CudaFunction,
+    msm_scatter_strided: CudaFunction,
+    msm_scatter_one_hot: CudaFunction,
+    msm_fold_rows: CudaFunction,
+    opening_one_hot_embed: CudaFunction,
+    opening_one_hot_fold: CudaFunction,
+    pcr_round: CudaFunction,
+    pcr_lane_eq: CudaFunction,
+    pcr_shift_eq: CudaFunction,
+    pcr_place_row: CudaFunction,
     hf_half_fold: CudaFunction,
     hf_row_fold: CudaFunction,
     hf_bind_low_to_high: CudaFunction,
+    sopg_round: CudaFunction,
+    ii_flag_words: CudaFunction,
+    ss_packed_columns: CudaFunction,
+    bap_bind_squared: CudaFunction,
+    bap_message: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    brap_one_hot: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    brap_term: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    brap_message: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    sp_gather: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    sp_matrix: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    sp_factors: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
+    sp_claims: CudaFunction,
+    ohf_fold: CudaFunction,
+    ohf_reduce: CudaFunction,
+    ohf_affine: CudaFunction,
+    hwr_weights: CudaFunction,
+    hwr_message: CudaFunction,
+    roc_message: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -280,31 +280,15 @@ impl CudaKernelContext {
             lt_double: module.load_function("lt_double_kernel")?,
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
-            lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
-            pcr_round: module.load_function("pcr_round_kernel")?,
-            pcr_lane_eq: module.load_function("pcr_lane_eq_kernel")?,
-            pcr_shift_eq: module.load_function("pcr_shift_eq_kernel")?,
-            pcr_place_row: module.load_function("pcr_place_row_kernel")?,
             dense_product_round: module.load_function("dense_product_round_kernel")?,
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
-            sop_round: module.load_function("sop_round_kernel")?,
-            sopg_round: module.load_function("sopg_round_kernel")?,
-            ii_flag_words: module.load_function("ii_flag_words_kernel")?,
-            ss_packed_columns: module.load_function("ss_packed_columns_kernel")?,
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
+            lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
             ram_ra_gather_h: module.load_function("ram_ra_gather_h_kernel")?,
             ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
             ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
-            irv_eq_double: module.load_function("irv_eq_double_kernel")?,
-            irv_tables_split: module.load_function("irv_tables_split_kernel")?,
-            irv_gather: module.load_function("irv_gather_kernel")?,
-            irv_message_sparse: module.load_function("irv_message_sparse_kernel")?,
-            irv_message_dense: module.load_function("irv_message_dense_kernel")?,
-            rrv_gather: module.load_function("rrv_gather_kernel")?,
-            rrv_message_sparse: module.load_function("rrv_message_sparse_kernel")?,
-            rrv_message_dense: module.load_function("rrv_message_dense_kernel")?,
             #[cfg(test)]
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
             pfx_mle_round: module.load_function("pfx_mle_round_kernel")?,
@@ -317,15 +301,17 @@ impl CudaKernelContext {
             ap_scale_shift: module.load_function("ap_scale_shift_kernel")?,
             ap_condense: module.load_function("ap_condense_kernel")?,
             ap_raf_prefix: module.load_function("ap_raf_prefix_kernel")?,
+            ap_bind_lanes: module.load_function("ap_bind_lanes_kernel")?,
             ap_round_message_hinted: module.load_function("ap_round_message_hinted_kernel")?,
             ap_combined_val: module.load_function("ap_combined_val_kernel")?,
             ap_ra: module.load_function("ap_ra_kernel")?,
             ap_flag_keys: module.load_function("ap_flag_keys_kernel")?,
             ap_flag_sums: module.load_function("ap_flag_sums_kernel")?,
             ap_raf_flag_sum: module.load_function("ap_raf_flag_sum_kernel")?,
+            #[cfg(test)]
+            unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
+            unr_reduce: module.load_function("unr_reduce_kernel")?,
             unr_fold_chunks: module.load_function("unr_fold_chunks_kernel")?,
-            cr_quotient: module.load_function("cr_quotient_kernel")?,
-            ap_bind_lanes: module.load_function("ap_bind_lanes_kernel")?,
             rwm_segment_flags: module.load_function("rwm_segment_flags_kernel")?,
             rwm_segment_bounds: module.load_function("rwm_segment_bounds_kernel")?,
             rwm_count: module.load_function("rwm_count_kernel")?,
@@ -334,6 +320,7 @@ impl CudaKernelContext {
             rwm_square_lut: module.load_function("rwm_square_lut_kernel")?,
             rwm_deref_coeffs: module.load_function("rwm_deref_coeffs_kernel")?,
             rwm_permute_words: module.load_function("rwm_permute_words_kernel")?,
+            rs2_claim: module.load_function("rs2_claim_kernel")?,
             amm_segment_flags: module.load_function("amm_segment_flags_kernel")?,
             amm_segment_bounds: module.load_function("amm_segment_bounds_kernel")?,
             amm_count: module.load_function("amm_count_kernel")?,
@@ -345,11 +332,17 @@ impl CudaKernelContext {
             fr_delta_u64: module.load_function("fr_delta_u64_kernel")?,
             rrw_flags: module.load_function("rrw_flags_kernel")?,
             rrw_scatter: module.load_function("rrw_scatter_kernel")?,
-            rs2_claim: module.load_function("rs2_claim_kernel")?,
-            reg_scatter: module.load_function("reg_scatter_kernel")?,
             reg_count: module.load_function("reg_count_kernel")?,
-            bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
-            bap_message: module.load_function("bap_message_kernel")?,
+            reg_scatter: module.load_function("reg_scatter_kernel")?,
+            cr_quotient: module.load_function("cr_quotient_kernel")?,
+            irv_eq_double: module.load_function("irv_eq_double_kernel")?,
+            irv_tables_split: module.load_function("irv_tables_split_kernel")?,
+            irv_gather: module.load_function("irv_gather_kernel")?,
+            irv_message_sparse: module.load_function("irv_message_sparse_kernel")?,
+            irv_message_dense: module.load_function("irv_message_dense_kernel")?,
+            rrv_gather: module.load_function("rrv_gather_kernel")?,
+            rrv_message_sparse: module.load_function("rrv_message_sparse_kernel")?,
+            rrv_message_dense: module.load_function("rrv_message_dense_kernel")?,
             brc_tables_init: module.load_function("brc_tables_init_kernel")?,
             brc_gather: module.load_function("brc_gather_kernel")?,
             brc_message_sparse: module.load_function("brc_message_sparse_kernel")?,
@@ -371,32 +364,10 @@ impl CudaKernelContext {
             #[cfg(not(feature = "field-inline"))]
             so_factors: module.load_function("so_factors_kernel")?,
             #[cfg(not(feature = "field-inline"))]
-            so_claims: module.load_function("so_claims_kernel")?,
-            #[cfg(not(feature = "field-inline"))]
-            brap_one_hot: module.load_function("brap_one_hot_kernel")?,
-            #[cfg(not(feature = "field-inline"))]
-            brap_term: module.load_function("brap_term_kernel")?,
-            #[cfg(not(feature = "field-inline"))]
-            brap_message: module.load_function("brap_message_kernel")?,
-            #[cfg(not(feature = "field-inline"))]
-            sp_gather: module.load_function("sp_gather_kernel")?,
-            #[cfg(not(feature = "field-inline"))]
-            sp_matrix: module.load_function("sp_matrix_kernel")?,
-            #[cfg(not(feature = "field-inline"))]
-            sp_factors: module.load_function("sp_factors_kernel")?,
-            #[cfg(not(feature = "field-inline"))]
-            sp_claims: module.load_function("sp_claims_kernel")?,
-            #[cfg(not(feature = "field-inline"))]
             gruen_pair_message: module.load_function("gruen_pair_message_kernel")?,
-            roc_message: module.load_function("roc_message_kernel")?,
-            #[cfg(test)]
-            unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
-            unr_reduce: module.load_function("unr_reduce_kernel")?,
-            ohf_fold: module.load_function("ohf_fold_kernel")?,
-            ohf_reduce: module.load_function("ohf_reduce_kernel")?,
-            ohf_affine: module.load_function("ohf_affine_kernel")?,
-            hwr_weights: module.load_function("hwr_weights_kernel")?,
-            hwr_message: module.load_function("hwr_message_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            so_claims: module.load_function("so_claims_kernel")?,
+            sop_round: module.load_function("sop_round_kernel")?,
             #[cfg(test)]
             msm_fq_add: module.load_function("msm_fq_add_kernel")?,
             #[cfg(test)]
@@ -418,7 +389,6 @@ impl CudaKernelContext {
             msm_digits: module.load_function("msm_digits_kernel")?,
             msm_bucket_count: module.load_function("msm_bucket_count_kernel")?,
             msm_bucket_scatter: module.load_function("msm_bucket_scatter_kernel")?,
-            msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
             commit_increment_column: module.load_function("commit_increment_column_kernel")?,
             msm_one_hot_count: module.load_function("msm_one_hot_count_kernel")?,
             msm_one_hot_count_shared: module.load_function("msm_one_hot_count_shared_kernel")?,
@@ -426,32 +396,26 @@ impl CudaKernelContext {
             msm_one_hot_scatter_shared: module
                 .load_function("msm_one_hot_scatter_shared_kernel")?,
             msm_one_hot_complement: module.load_function("msm_one_hot_complement_kernel")?,
-            msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
-            msm_glv_decompose_4d: module.load_function("msm_glv_decompose_4d_kernel")?,
-            msm_g2_frobenius: module.load_function("msm_g2_frobenius_kernel")?,
-            msm_g2_axpy_glv: module.load_function("msm_g2_axpy_glv_kernel")?,
-            msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
-            msm_shared_scalar_rows_glv: module
-                .load_function("msm_shared_scalar_rows_glv_kernel")?,
-            msm_shared_scalar_windows: module.load_function("msm_shared_scalar_windows_kernel")?,
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             msm_segment_sum_warp: module.load_function("msm_segment_sum_warp_kernel")?,
             msm_segment_sum_classed: module.load_function("msm_segment_sum_classed_kernel")?,
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
+            msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
+            msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
+            msm_window_fold: module.load_function("msm_window_fold_kernel")?,
             msm_g2_segment_sum_small: module.load_function("msm_g2_segment_sum_small_kernel")?,
             msm_g2_bucket_reduce_chunked: module
                 .load_function("msm_g2_bucket_reduce_chunked_kernel")?,
             msm_g2_point_rows_sum: module.load_function("msm_g2_point_rows_sum_kernel")?,
             msm_g2_window_fold: module.load_function("msm_g2_window_fold_kernel")?,
-            msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
-            msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
-            msm_window_fold: module.load_function("msm_window_fold_kernel")?,
-            msm_block_embed: module.load_function("msm_block_embed_kernel")?,
-            msm_scatter_strided: module.load_function("msm_scatter_strided_kernel")?,
-            msm_scatter_one_hot: module.load_function("msm_scatter_one_hot_kernel")?,
-            msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
-            opening_one_hot_embed: module.load_function("opening_one_hot_embed_kernel")?,
-            opening_one_hot_fold: module.load_function("opening_one_hot_fold_kernel")?,
+            msm_glv_decompose_4d: module.load_function("msm_glv_decompose_4d_kernel")?,
+            msm_g2_frobenius: module.load_function("msm_g2_frobenius_kernel")?,
+            msm_g2_axpy_glv: module.load_function("msm_g2_axpy_glv_kernel")?,
+            msm_shared_scalar_rows_glv: module
+                .load_function("msm_shared_scalar_rows_glv_kernel")?,
+            msm_shared_scalar_windows: module.load_function("msm_shared_scalar_windows_kernel")?,
+            msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
+            msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
             msm_g1_axpy: module.load_function("msm_g1_axpy_kernel")?,
@@ -483,9 +447,45 @@ impl CudaKernelContext {
             g2_add_step_probe: module.load_function("g2_add_step_probe")?,
             #[cfg(test)]
             g2_mul_by_char_probe: module.load_function("g2_mul_by_char_probe")?,
+            msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
+            msm_block_embed: module.load_function("msm_block_embed_kernel")?,
+            msm_scatter_strided: module.load_function("msm_scatter_strided_kernel")?,
+            msm_scatter_one_hot: module.load_function("msm_scatter_one_hot_kernel")?,
+            msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
+            opening_one_hot_embed: module.load_function("opening_one_hot_embed_kernel")?,
+            opening_one_hot_fold: module.load_function("opening_one_hot_fold_kernel")?,
+            pcr_round: module.load_function("pcr_round_kernel")?,
+            pcr_lane_eq: module.load_function("pcr_lane_eq_kernel")?,
+            pcr_shift_eq: module.load_function("pcr_shift_eq_kernel")?,
+            pcr_place_row: module.load_function("pcr_place_row_kernel")?,
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
             hf_bind_low_to_high: module.load_function("hf_bind_low_to_high_kernel")?,
+            sopg_round: module.load_function("sopg_round_kernel")?,
+            ii_flag_words: module.load_function("ii_flag_words_kernel")?,
+            ss_packed_columns: module.load_function("ss_packed_columns_kernel")?,
+            bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
+            bap_message: module.load_function("bap_message_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brap_one_hot: module.load_function("brap_one_hot_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brap_term: module.load_function("brap_term_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brap_message: module.load_function("brap_message_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            sp_gather: module.load_function("sp_gather_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            sp_matrix: module.load_function("sp_matrix_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            sp_factors: module.load_function("sp_factors_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            sp_claims: module.load_function("sp_claims_kernel")?,
+            ohf_fold: module.load_function("ohf_fold_kernel")?,
+            ohf_reduce: module.load_function("ohf_reduce_kernel")?,
+            ohf_affine: module.load_function("ohf_affine_kernel")?,
+            hwr_weights: module.load_function("hwr_weights_kernel")?,
+            hwr_message: module.load_function("hwr_message_kernel")?,
+            roc_message: module.load_function("roc_message_kernel")?,
         })
     }
 
@@ -505,53 +505,6 @@ impl CudaKernelContext {
             buffer,
             values.len(),
         ))
-    }
-
-    pub(crate) fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
-        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
-            Ok(self.stream.clone_htod(values)?)
-        })
-    }
-
-    pub(crate) fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
-        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
-            Ok(self.stream.clone_htod(values)?)
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn upload_u16_slice(&self, values: &[u16]) -> Result<CudaSlice<u16>, CudaError> {
-        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
-            Ok(self.stream.clone_htod(values)?)
-        })
-    }
-
-    pub(crate) fn download_u16(&self, buffer: &CudaSlice<u16>) -> Result<Vec<u16>, CudaError> {
-        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u16>(), || {
-            Ok(self.stream.clone_dtoh(buffer)?)
-        })
-    }
-
-    pub(crate) fn alloc_u16_unset(&self, len: usize) -> Result<CudaSlice<u16>, CudaError> {
-        self.alloc_unset::<u16>(len)
-    }
-
-    pub(crate) fn download_u32_range(
-        &self,
-        buffer: &CudaSlice<u32>,
-        start: usize,
-        end: usize,
-    ) -> Result<Vec<u32>, CudaError> {
-        let view = buffer.slice(start..end);
-        xfer_stats::timed(Phase::D2h, (end - start) * size_of::<u32>(), || {
-            Ok(self.stream.clone_dtoh(&view)?)
-        })
-    }
-
-    pub(crate) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
-        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
-            Ok(self.stream.clone_htod(values)?)
-        })
     }
 
     pub(crate) fn upload_limbs(&self, limbs: &[u64]) -> Result<DeviceFrVec, CudaError> {
@@ -575,130 +528,6 @@ impl CudaKernelContext {
     pub fn alloc(&self, len: usize) -> Result<DeviceFrVec, CudaError> {
         let buffer = self.stream.alloc_zeros::<u64>(len * LIMBS)?;
         Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, len))
-    }
-
-    pub(crate) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
-        Ok(self.stream.alloc_zeros::<u32>(len)?)
-    }
-
-    pub(crate) fn alloc_u8(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
-        Ok(self.stream.alloc_zeros::<u8>(len)?)
-    }
-
-    fn alloc_unset<T: DeviceRepr>(&self, len: usize) -> Result<CudaSlice<T>, CudaError> {
-        // SAFETY: `alloc` leaves the elements unset, which every caller of this
-        // helper is required to tolerate: each writes all of `len` before any
-        // read, or reads only positions it wrote. Nothing here observes the
-        // contents. `JOLT_CUDA_POISON` turns that requirement into a test by
-        // filling the block with a non-zero pattern instead, so a stale read
-        // cannot pass as a zero.
-        let mut buffer = unsafe { self.stream.alloc::<T>(len) }?;
-        if let Some(byte) = poison_byte() {
-            let bytes = len * size_of::<T>();
-            let (pointer, _record) = buffer.device_ptr_mut(&self.stream);
-            // SAFETY: `pointer` is the freshly allocated block above and `bytes`
-            // is exactly its length, so the fill stays inside it; the memset is
-            // ordered on the same stream as every later use.
-            unsafe {
-                cudarc::driver::result::memset_d8_async(
-                    pointer,
-                    byte,
-                    bytes,
-                    self.stream.cu_stream(),
-                )
-            }?;
-        }
-        Ok(buffer)
-    }
-
-    pub(crate) fn alloc_u8_unset(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
-        self.alloc_unset::<u8>(len)
-    }
-
-    pub(crate) fn alloc_u64_unset(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
-        self.alloc_unset::<u64>(len)
-    }
-
-    pub(crate) fn alloc_u32_unset(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
-        self.alloc_unset::<u32>(len)
-    }
-
-    pub(crate) fn replicate_u8(
-        &self,
-        buffer: &CudaSlice<u8>,
-        copies: usize,
-    ) -> Result<CudaSlice<u8>, CudaError> {
-        let len = buffer.len();
-        let mut out = self.alloc_u8(len * copies)?;
-        xfer_stats::timed(Phase::D2d, len * copies, || -> Result<(), CudaError> {
-            for copy in 0..copies {
-                let source = buffer.slice(..);
-                let mut target = out.slice_mut(copy * len..(copy + 1) * len);
-                self.stream.memcpy_dtod(&source, &mut target)?;
-            }
-            Ok(())
-        })?;
-        Ok(out)
-    }
-
-    pub(crate) fn copy_into(
-        &self,
-        destination: &mut DeviceFrVec,
-        offset: usize,
-        source: &DeviceFrVec,
-    ) -> Result<(), CudaError> {
-        if offset + source.len() > destination.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: destination.len(),
-                got: offset + source.len(),
-            });
-        }
-        if source.is_empty() {
-            return Ok(());
-        }
-        let limbs = source.len() * LIMBS;
-        let start = offset * LIMBS;
-        xfer_stats::timed(Phase::D2d, limbs * size_of::<u64>(), || {
-            let source = source.limbs().slice(0..limbs);
-            let mut target = destination.limbs_mut().slice_mut(start..start + limbs);
-            self.stream.memcpy_dtod(&source, &mut target)?;
-            self.stream.synchronize()?;
-            Ok::<_, CudaError>(())
-        })
-    }
-
-    pub(crate) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
-        Ok(self.stream.alloc_zeros::<u64>(len)?)
-    }
-
-    pub(crate) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
-        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
-            Ok(self.stream.clone_dtoh(buffer)?)
-        })
-    }
-
-    pub(crate) fn download_u8(&self, buffer: &CudaSlice<u8>) -> Result<Vec<u8>, CudaError> {
-        xfer_stats::timed(Phase::D2h, buffer.len(), || {
-            Ok(self.stream.clone_dtoh(buffer)?)
-        })
-    }
-
-    pub(crate) fn clone_u32(&self, buffer: &CudaSlice<u32>) -> Result<CudaSlice<u32>, CudaError> {
-        xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u32>(), || {
-            Ok(self.stream.clone_dtod(buffer)?)
-        })
-    }
-
-    pub(crate) fn clone_u64(&self, buffer: &CudaSlice<u64>) -> Result<CudaSlice<u64>, CudaError> {
-        xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u64>(), || {
-            Ok(self.stream.clone_dtod(buffer)?)
-        })
-    }
-
-    pub(crate) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
-        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u32>(), || {
-            Ok(self.stream.clone_dtoh(buffer)?)
-        })
     }
 
     pub(crate) const fn stream(&self) -> &Arc<CudaStream> {
@@ -738,36 +567,139 @@ impl CudaKernelContext {
         })
     }
 
-    pub(crate) const fn lt_reconstruct(&self) -> &CudaFunction {
-        &self.lt_reconstruct
+    pub(crate) fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
     }
 
-    pub(crate) const fn hf_half_fold(&self) -> &CudaFunction {
-        &self.hf_half_fold
+    pub(crate) fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
     }
 
-    pub(crate) const fn hf_row_fold(&self) -> &CudaFunction {
-        &self.hf_row_fold
+    #[cfg(test)]
+    pub(crate) fn upload_u16_slice(&self, values: &[u16]) -> Result<CudaSlice<u16>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
     }
 
-    pub(crate) const fn hf_bind_low_to_high(&self) -> &CudaFunction {
-        &self.hf_bind_low_to_high
+    pub(crate) fn download_u16(&self, buffer: &CudaSlice<u16>) -> Result<Vec<u16>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u16>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
     }
 
-    pub(crate) const fn pcr_round(&self) -> &CudaFunction {
-        &self.pcr_round
+    pub(crate) fn alloc_u16_unset(&self, len: usize) -> Result<CudaSlice<u16>, CudaError> {
+        self.alloc_unset::<u16>(len)
     }
 
-    pub(crate) const fn pcr_lane_eq(&self) -> &CudaFunction {
-        &self.pcr_lane_eq
+    pub(crate) fn download_u8(&self, buffer: &CudaSlice<u8>) -> Result<Vec<u8>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
     }
 
-    pub(crate) const fn pcr_shift_eq(&self) -> &CudaFunction {
-        &self.pcr_shift_eq
+    pub(crate) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
     }
 
-    pub(crate) const fn pcr_place_row(&self) -> &CudaFunction {
-        &self.pcr_place_row
+    pub(crate) fn download_u32_range(
+        &self,
+        buffer: &CudaSlice<u32>,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<u32>, CudaError> {
+        let view = buffer.slice(start..end);
+        xfer_stats::timed(Phase::D2h, (end - start) * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtoh(&view)?)
+        })
+    }
+
+    pub(crate) fn clone_u32(&self, buffer: &CudaSlice<u32>) -> Result<CudaSlice<u32>, CudaError> {
+        xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtod(buffer)?)
+        })
+    }
+
+    pub(crate) fn clone_u64(&self, buffer: &CudaSlice<u64>) -> Result<CudaSlice<u64>, CudaError> {
+        xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u64>(), || {
+            Ok(self.stream.clone_dtod(buffer)?)
+        })
+    }
+
+    pub(crate) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
+    }
+
+    pub(crate) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u32>(len)?)
+    }
+
+    pub(crate) fn alloc_u8(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u8>(len)?)
+    }
+
+    fn alloc_unset<T: DeviceRepr>(&self, len: usize) -> Result<CudaSlice<T>, CudaError> {
+        // SAFETY: `alloc` leaves the elements unset, which every caller of this
+        // helper is required to tolerate: each writes all of `len` before any
+        // read, or reads only positions it wrote. Nothing here observes the
+        // contents. `JOLT_CUDA_POISON` turns that requirement into a test by
+        // filling the block with a non-zero pattern instead, so a stale read
+        // cannot pass as a zero.
+        let mut buffer = unsafe { self.stream.alloc::<T>(len) }?;
+        if let Some(byte) = poison_byte() {
+            let bytes = len * size_of::<T>();
+            let (pointer, _record) = buffer.device_ptr_mut(&self.stream);
+            // SAFETY: `pointer` is the freshly allocated block above and `bytes`
+            // is exactly its length, so the fill stays inside it; the memset is
+            // ordered on the same stream as every later use.
+            unsafe {
+                cudarc::driver::result::memset_d8_async(
+                    pointer,
+                    byte,
+                    bytes,
+                    self.stream.cu_stream(),
+                )
+            }?;
+        }
+        Ok(buffer)
+    }
+
+    pub(crate) fn alloc_u32_unset(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
+        self.alloc_unset::<u32>(len)
+    }
+
+    pub(crate) fn alloc_u8_unset(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
+        self.alloc_unset::<u8>(len)
+    }
+
+    pub(crate) fn alloc_u64_unset(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
+        self.alloc_unset::<u64>(len)
+    }
+
+    pub(crate) fn replicate_u8(
+        &self,
+        buffer: &CudaSlice<u8>,
+        copies: usize,
+    ) -> Result<CudaSlice<u8>, CudaError> {
+        let len = buffer.len();
+        let mut out = self.alloc_u8(len * copies)?;
+        xfer_stats::timed(Phase::D2d, len * copies, || -> Result<(), CudaError> {
+            for copy in 0..copies {
+                let source = buffer.slice(..);
+                let mut target = out.slice_mut(copy * len..(copy + 1) * len);
+                self.stream.memcpy_dtod(&source, &mut target)?;
+            }
+            Ok(())
+        })?;
+        Ok(out)
     }
 
     pub(crate) const fn dense_product_round(&self) -> &CudaFunction {
@@ -778,68 +710,36 @@ impl CudaKernelContext {
         &self.lane_sum_total
     }
 
-    pub(crate) const fn sop_round(&self) -> &CudaFunction {
-        &self.sop_round
+    pub(crate) const fn irv_eq_double(&self) -> &CudaFunction {
+        &self.irv_eq_double
     }
 
-    pub(crate) const fn sopg_round(&self) -> &CudaFunction {
-        &self.sopg_round
+    pub(crate) const fn irv_tables_split(&self) -> &CudaFunction {
+        &self.irv_tables_split
     }
 
-    pub(crate) const fn ii_flag_words(&self) -> &CudaFunction {
-        &self.ii_flag_words
+    pub(crate) const fn irv_gather(&self) -> &CudaFunction {
+        &self.irv_gather
     }
 
-    pub(crate) const fn ss_packed_columns(&self) -> &CudaFunction {
-        &self.ss_packed_columns
+    pub(crate) const fn irv_message_sparse(&self) -> &CudaFunction {
+        &self.irv_message_sparse
     }
 
-    #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn brap_one_hot(&self) -> &CudaFunction {
-        &self.brap_one_hot
+    pub(crate) const fn irv_message_dense(&self) -> &CudaFunction {
+        &self.irv_message_dense
     }
 
-    #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn brap_term(&self) -> &CudaFunction {
-        &self.brap_term
+    pub(crate) const fn rrv_gather(&self) -> &CudaFunction {
+        &self.rrv_gather
     }
 
-    #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn brap_message(&self) -> &CudaFunction {
-        &self.brap_message
+    pub(crate) const fn rrv_message_sparse(&self) -> &CudaFunction {
+        &self.rrv_message_sparse
     }
 
-    #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn sp_gather(&self) -> &CudaFunction {
-        &self.sp_gather
-    }
-
-    #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn sp_matrix(&self) -> &CudaFunction {
-        &self.sp_matrix
-    }
-
-    #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn sp_factors(&self) -> &CudaFunction {
-        &self.sp_factors
-    }
-
-    #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn sp_claims(&self) -> &CudaFunction {
-        &self.sp_claims
-    }
-
-    #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn gruen_pair_message(&self) -> &CudaFunction {
-        &self.gruen_pair_message
-    }
-
-    pub(crate) const fn bap_bind_squared(&self) -> &CudaFunction {
-        &self.bap_bind_squared
-    }
-
-    pub(crate) const fn bap_message(&self) -> &CudaFunction {
-        &self.bap_message
+    pub(crate) const fn rrv_message_dense(&self) -> &CudaFunction {
+        &self.rrv_message_dense
     }
 
     pub(crate) const fn brc_tables_init(&self) -> &CudaFunction {
@@ -852,10 +752,6 @@ impl CudaKernelContext {
 
     pub(crate) const fn brc_message_sparse(&self) -> &CudaFunction {
         &self.brc_message_sparse
-    }
-
-    pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {
-        &self.brc_message_dense
     }
 
     #[cfg(not(feature = "field-inline"))]
@@ -899,246 +795,13 @@ impl CudaKernelContext {
     }
 
     #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn gruen_pair_message(&self) -> &CudaFunction {
+        &self.gruen_pair_message
+    }
+
+    #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn so_claims(&self) -> &CudaFunction {
         &self.so_claims
-    }
-
-    pub(crate) const fn roc_message(&self) -> &CudaFunction {
-        &self.roc_message
-    }
-
-    pub(crate) const fn ra_split_tables(&self) -> &CudaFunction {
-        &self.ra_split_tables
-    }
-
-    pub(crate) const fn ra_gather(&self) -> &CudaFunction {
-        &self.ra_gather
-    }
-
-    pub(crate) const fn ram_ra_gather_h(&self) -> &CudaFunction {
-        &self.ram_ra_gather_h
-    }
-
-    pub(crate) const fn ram_ra_fold_suffix(&self) -> &CudaFunction {
-        &self.ram_ra_fold_suffix
-    }
-
-    pub(crate) const fn ram_ra_fold_prefix(&self) -> &CudaFunction {
-        &self.ram_ra_fold_prefix
-    }
-
-    pub(crate) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
-        &self.ram_ra_phase1_round
-    }
-
-    pub(crate) const fn irv_eq_double(&self) -> &CudaFunction {
-        &self.irv_eq_double
-    }
-
-    pub(crate) const fn irv_tables_split(&self) -> &CudaFunction {
-        &self.irv_tables_split
-    }
-
-    pub(crate) const fn irv_gather(&self) -> &CudaFunction {
-        &self.irv_gather
-    }
-
-    pub(crate) const fn irv_message_sparse(&self) -> &CudaFunction {
-        &self.irv_message_sparse
-    }
-
-    pub(crate) const fn irv_message_dense(&self) -> &CudaFunction {
-        &self.irv_message_dense
-    }
-
-    pub(crate) const fn rrv_gather(&self) -> &CudaFunction {
-        &self.rrv_gather
-    }
-
-    pub(crate) const fn rrv_message_sparse(&self) -> &CudaFunction {
-        &self.rrv_message_sparse
-    }
-
-    pub(crate) const fn rrv_message_dense(&self) -> &CudaFunction {
-        &self.rrv_message_dense
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn sfx_eval_batch(&self) -> &CudaFunction {
-        &self.sfx_eval_batch
-    }
-
-    pub(crate) const fn pfx_mle_round(&self) -> &CudaFunction {
-        &self.pfx_mle_round
-    }
-
-    pub(crate) const fn ap_raf_keys(&self) -> &CudaFunction {
-        &self.ap_raf_keys
-    }
-
-    pub(crate) const fn ap_table_keys(&self) -> &CudaFunction {
-        &self.ap_table_keys
-    }
-
-    pub(crate) const fn ap_histogram(&self) -> &CudaFunction {
-        &self.ap_histogram
-    }
-
-    pub(crate) const fn ap_scatter(&self) -> &CudaFunction {
-        &self.ap_scatter
-    }
-
-    pub(crate) const fn ap_raf_reduce_chunked(&self) -> &CudaFunction {
-        &self.ap_raf_reduce_chunked
-    }
-
-    pub(crate) const fn ap_suffix_reduce(&self) -> &CudaFunction {
-        &self.ap_suffix_reduce
-    }
-
-    pub(crate) const fn ap_scale_shift(&self) -> &CudaFunction {
-        &self.ap_scale_shift
-    }
-
-    pub(crate) const fn ap_condense(&self) -> &CudaFunction {
-        &self.ap_condense
-    }
-
-    pub(crate) const fn ap_raf_prefix(&self) -> &CudaFunction {
-        &self.ap_raf_prefix
-    }
-
-    pub(crate) const fn ap_round_message_hinted(&self) -> &CudaFunction {
-        &self.ap_round_message_hinted
-    }
-
-    pub(crate) const fn ap_combined_val(&self) -> &CudaFunction {
-        &self.ap_combined_val
-    }
-
-    pub(crate) const fn ap_ra(&self) -> &CudaFunction {
-        &self.ap_ra
-    }
-
-    pub(crate) const fn ap_flag_keys(&self) -> &CudaFunction {
-        &self.ap_flag_keys
-    }
-
-    pub(crate) const fn ap_flag_sums(&self) -> &CudaFunction {
-        &self.ap_flag_sums
-    }
-
-    pub(crate) const fn ap_raf_flag_sum(&self) -> &CudaFunction {
-        &self.ap_raf_flag_sum
-    }
-
-    pub(crate) const fn unr_fold_chunks(&self) -> &CudaFunction {
-        &self.unr_fold_chunks
-    }
-
-    pub(crate) const fn cr_quotient(&self) -> &CudaFunction {
-        &self.cr_quotient
-    }
-
-    pub(crate) const fn ap_bind_lanes(&self) -> &CudaFunction {
-        &self.ap_bind_lanes
-    }
-
-    pub(crate) const fn rwm_segment_flags(&self) -> &CudaFunction {
-        &self.rwm_segment_flags
-    }
-
-    pub(crate) const fn rwm_segment_bounds(&self) -> &CudaFunction {
-        &self.rwm_segment_bounds
-    }
-
-    pub(crate) const fn rwm_count(&self) -> &CudaFunction {
-        &self.rwm_count
-    }
-
-    pub(crate) const fn rwm_merge(&self) -> &CudaFunction {
-        &self.rwm_merge
-    }
-
-    pub(crate) const fn rwm_message(&self) -> &CudaFunction {
-        &self.rwm_message
-    }
-
-    pub(crate) const fn rwm_square_lut(&self) -> &CudaFunction {
-        &self.rwm_square_lut
-    }
-
-    pub(crate) const fn rwm_deref_coeffs(&self) -> &CudaFunction {
-        &self.rwm_deref_coeffs
-    }
-
-    pub(crate) const fn rwm_permute_words(&self) -> &CudaFunction {
-        &self.rwm_permute_words
-    }
-
-    pub(crate) const fn amm_segment_flags(&self) -> &CudaFunction {
-        &self.amm_segment_flags
-    }
-
-    pub(crate) const fn amm_segment_bounds(&self) -> &CudaFunction {
-        &self.amm_segment_bounds
-    }
-
-    pub(crate) const fn amm_count(&self) -> &CudaFunction {
-        &self.amm_count
-    }
-
-    pub(crate) const fn amm_merge(&self) -> &CudaFunction {
-        &self.amm_merge
-    }
-
-    pub(crate) const fn amm_message(&self) -> &CudaFunction {
-        &self.amm_message
-    }
-
-    pub(crate) const fn amm_materialize(&self) -> &CudaFunction {
-        &self.amm_materialize
-    }
-
-    pub(crate) const fn amm_initial_values(&self) -> &CudaFunction {
-        &self.amm_initial_values
-    }
-
-    pub(crate) const fn fr_delta_u64(&self) -> &CudaFunction {
-        &self.fr_delta_u64
-    }
-
-    pub(crate) const fn rrw_flags(&self) -> &CudaFunction {
-        &self.rrw_flags
-    }
-
-    pub(crate) const fn rrw_scatter(&self) -> &CudaFunction {
-        &self.rrw_scatter
-    }
-
-    pub(crate) const fn reg_count(&self) -> &CudaFunction {
-        &self.reg_count
-    }
-
-    pub(crate) const fn reg_scatter(&self) -> &CudaFunction {
-        &self.reg_scatter
-    }
-
-    pub(crate) const fn rs2_claim(&self) -> &CudaFunction {
-        &self.rs2_claim
-    }
-
-    pub(crate) const fn amm_lift(&self) -> &CudaFunction {
-        &self.amm_lift
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn unr_mul_scatter(&self) -> &CudaFunction {
-        &self.unr_mul_scatter
-    }
-
-    pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
-        &self.unr_reduce
     }
 
     pub(crate) const fn ohf_fold(&self) -> &CudaFunction {
@@ -1159,6 +822,49 @@ impl CudaKernelContext {
 
     pub(crate) const fn hwr_message(&self) -> &CudaFunction {
         &self.hwr_message
+    }
+
+    pub(crate) const fn roc_message(&self) -> &CudaFunction {
+        &self.roc_message
+    }
+
+    pub(crate) const fn sopg_round(&self) -> &CudaFunction {
+        &self.sopg_round
+    }
+
+    pub(crate) const fn ii_flag_words(&self) -> &CudaFunction {
+        &self.ii_flag_words
+    }
+
+    pub(crate) const fn ss_packed_columns(&self) -> &CudaFunction {
+        &self.ss_packed_columns
+    }
+
+    pub(crate) const fn bap_bind_squared(&self) -> &CudaFunction {
+        &self.bap_bind_squared
+    }
+
+    pub(crate) const fn bap_message(&self) -> &CudaFunction {
+        &self.bap_message
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brap_one_hot(&self) -> &CudaFunction {
+        &self.brap_one_hot
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brap_term(&self) -> &CudaFunction {
+        &self.brap_term
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brap_message(&self) -> &CudaFunction {
+        &self.brap_message
+    }
+
+    pub(crate) const fn sop_round(&self) -> &CudaFunction {
+        &self.sop_round
     }
 
     #[cfg(test)]
@@ -1221,10 +927,6 @@ impl CudaKernelContext {
         &self.msm_bucket_scatter
     }
 
-    pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {
-        &self.msm_window_accumulate
-    }
-
     pub(crate) const fn commit_increment_column(&self) -> &CudaFunction {
         &self.commit_increment_column
     }
@@ -1249,34 +951,6 @@ impl CudaKernelContext {
         &self.msm_one_hot_complement
     }
 
-    pub(crate) const fn msm_glv_decompose_2d(&self) -> &CudaFunction {
-        &self.msm_glv_decompose_2d
-    }
-
-    pub(crate) const fn msm_glv_decompose_4d(&self) -> &CudaFunction {
-        &self.msm_glv_decompose_4d
-    }
-
-    pub(crate) const fn msm_g2_frobenius(&self) -> &CudaFunction {
-        &self.msm_g2_frobenius
-    }
-
-    pub(crate) const fn msm_g2_axpy_glv(&self) -> &CudaFunction {
-        &self.msm_g2_axpy_glv
-    }
-
-    pub(crate) const fn msm_g1_endomorphism(&self) -> &CudaFunction {
-        &self.msm_g1_endomorphism
-    }
-
-    pub(crate) const fn msm_shared_scalar_rows_glv(&self) -> &CudaFunction {
-        &self.msm_shared_scalar_rows_glv
-    }
-
-    pub(crate) const fn msm_shared_scalar_windows(&self) -> &CudaFunction {
-        &self.msm_shared_scalar_windows
-    }
-
     pub(crate) const fn msm_segment_sum(&self) -> &CudaFunction {
         &self.msm_segment_sum
     }
@@ -1291,6 +965,18 @@ impl CudaKernelContext {
 
     pub(crate) const fn msm_segment_sum_small(&self) -> &CudaFunction {
         &self.msm_segment_sum_small
+    }
+
+    pub(crate) const fn msm_bucket_reduce_chunked(&self) -> &CudaFunction {
+        &self.msm_bucket_reduce_chunked
+    }
+
+    pub(crate) const fn msm_point_rows_sum(&self) -> &CudaFunction {
+        &self.msm_point_rows_sum
+    }
+
+    pub(crate) const fn msm_window_fold(&self) -> &CudaFunction {
+        &self.msm_window_fold
     }
 
     pub(crate) const fn msm_g2_segment_sum_small(&self) -> &CudaFunction {
@@ -1309,40 +995,32 @@ impl CudaKernelContext {
         &self.msm_g2_window_fold
     }
 
-    pub(crate) const fn msm_bucket_reduce_chunked(&self) -> &CudaFunction {
-        &self.msm_bucket_reduce_chunked
+    pub(crate) const fn msm_glv_decompose_4d(&self) -> &CudaFunction {
+        &self.msm_glv_decompose_4d
     }
 
-    pub(crate) const fn msm_point_rows_sum(&self) -> &CudaFunction {
-        &self.msm_point_rows_sum
+    pub(crate) const fn msm_g2_frobenius(&self) -> &CudaFunction {
+        &self.msm_g2_frobenius
     }
 
-    pub(crate) const fn msm_window_fold(&self) -> &CudaFunction {
-        &self.msm_window_fold
+    pub(crate) const fn msm_g2_axpy_glv(&self) -> &CudaFunction {
+        &self.msm_g2_axpy_glv
     }
 
-    pub(crate) const fn msm_block_embed(&self) -> &CudaFunction {
-        &self.msm_block_embed
+    pub(crate) const fn msm_shared_scalar_rows_glv(&self) -> &CudaFunction {
+        &self.msm_shared_scalar_rows_glv
     }
 
-    pub(crate) const fn msm_scatter_strided(&self) -> &CudaFunction {
-        &self.msm_scatter_strided
+    pub(crate) const fn msm_shared_scalar_windows(&self) -> &CudaFunction {
+        &self.msm_shared_scalar_windows
     }
 
-    pub(crate) const fn msm_scatter_one_hot(&self) -> &CudaFunction {
-        &self.msm_scatter_one_hot
+    pub(crate) const fn msm_glv_decompose_2d(&self) -> &CudaFunction {
+        &self.msm_glv_decompose_2d
     }
 
-    pub(crate) const fn msm_fold_rows(&self) -> &CudaFunction {
-        &self.msm_fold_rows
-    }
-
-    pub(crate) const fn opening_one_hot_embed(&self) -> &CudaFunction {
-        &self.opening_one_hot_embed
-    }
-
-    pub(crate) const fn opening_one_hot_fold(&self) -> &CudaFunction {
-        &self.opening_one_hot_fold
+    pub(crate) const fn msm_g1_endomorphism(&self) -> &CudaFunction {
+        &self.msm_g1_endomorphism
     }
 
     pub(crate) const fn msm_jacobian_z(&self) -> &CudaFunction {
@@ -1379,6 +1057,328 @@ impl CudaKernelContext {
 
     pub(crate) const fn pairing_fq12_product(&self) -> &CudaFunction {
         &self.pairing_fq12_product
+    }
+
+    pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {
+        &self.msm_window_accumulate
+    }
+
+    pub(crate) const fn msm_block_embed(&self) -> &CudaFunction {
+        &self.msm_block_embed
+    }
+
+    pub(crate) const fn msm_scatter_strided(&self) -> &CudaFunction {
+        &self.msm_scatter_strided
+    }
+
+    pub(crate) const fn msm_scatter_one_hot(&self) -> &CudaFunction {
+        &self.msm_scatter_one_hot
+    }
+
+    pub(crate) const fn msm_fold_rows(&self) -> &CudaFunction {
+        &self.msm_fold_rows
+    }
+
+    pub(crate) const fn opening_one_hot_embed(&self) -> &CudaFunction {
+        &self.opening_one_hot_embed
+    }
+
+    pub(crate) const fn opening_one_hot_fold(&self) -> &CudaFunction {
+        &self.opening_one_hot_fold
+    }
+
+    pub(crate) const fn pcr_round(&self) -> &CudaFunction {
+        &self.pcr_round
+    }
+
+    pub(crate) const fn pcr_lane_eq(&self) -> &CudaFunction {
+        &self.pcr_lane_eq
+    }
+
+    pub(crate) const fn pcr_shift_eq(&self) -> &CudaFunction {
+        &self.pcr_shift_eq
+    }
+
+    pub(crate) const fn pcr_place_row(&self) -> &CudaFunction {
+        &self.pcr_place_row
+    }
+
+    pub(crate) const fn hf_half_fold(&self) -> &CudaFunction {
+        &self.hf_half_fold
+    }
+
+    pub(crate) const fn hf_row_fold(&self) -> &CudaFunction {
+        &self.hf_row_fold
+    }
+
+    pub(crate) const fn hf_bind_low_to_high(&self) -> &CudaFunction {
+        &self.hf_bind_low_to_high
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn sp_gather(&self) -> &CudaFunction {
+        &self.sp_gather
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn sp_matrix(&self) -> &CudaFunction {
+        &self.sp_matrix
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn sp_factors(&self) -> &CudaFunction {
+        &self.sp_factors
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn sp_claims(&self) -> &CudaFunction {
+        &self.sp_claims
+    }
+
+    pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {
+        &self.brc_message_dense
+    }
+
+    pub(crate) const fn ra_split_tables(&self) -> &CudaFunction {
+        &self.ra_split_tables
+    }
+
+    pub(crate) const fn ra_gather(&self) -> &CudaFunction {
+        &self.ra_gather
+    }
+
+    pub(crate) const fn lt_reconstruct(&self) -> &CudaFunction {
+        &self.lt_reconstruct
+    }
+
+    pub(crate) const fn ram_ra_gather_h(&self) -> &CudaFunction {
+        &self.ram_ra_gather_h
+    }
+
+    pub(crate) const fn ram_ra_fold_suffix(&self) -> &CudaFunction {
+        &self.ram_ra_fold_suffix
+    }
+
+    pub(crate) const fn ram_ra_fold_prefix(&self) -> &CudaFunction {
+        &self.ram_ra_fold_prefix
+    }
+
+    pub(crate) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
+        &self.ram_ra_phase1_round
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn sfx_eval_batch(&self) -> &CudaFunction {
+        &self.sfx_eval_batch
+    }
+
+    pub(crate) const fn pfx_mle_round(&self) -> &CudaFunction {
+        &self.pfx_mle_round
+    }
+
+    pub(crate) const fn ap_raf_keys(&self) -> &CudaFunction {
+        &self.ap_raf_keys
+    }
+
+    pub(crate) const fn ap_table_keys(&self) -> &CudaFunction {
+        &self.ap_table_keys
+    }
+
+    pub(crate) const fn ap_histogram(&self) -> &CudaFunction {
+        &self.ap_histogram
+    }
+
+    pub(crate) const fn ap_scatter(&self) -> &CudaFunction {
+        &self.ap_scatter
+    }
+
+    pub(crate) const fn ap_raf_reduce_chunked(&self) -> &CudaFunction {
+        &self.ap_raf_reduce_chunked
+    }
+
+    pub(crate) const fn ap_suffix_reduce(&self) -> &CudaFunction {
+        &self.ap_suffix_reduce
+    }
+
+    pub(crate) const fn ap_scale_shift(&self) -> &CudaFunction {
+        &self.ap_scale_shift
+    }
+
+    pub(crate) const fn ap_condense(&self) -> &CudaFunction {
+        &self.ap_condense
+    }
+
+    pub(crate) const fn ap_raf_prefix(&self) -> &CudaFunction {
+        &self.ap_raf_prefix
+    }
+
+    pub(crate) const fn ap_bind_lanes(&self) -> &CudaFunction {
+        &self.ap_bind_lanes
+    }
+
+    pub(crate) const fn ap_round_message_hinted(&self) -> &CudaFunction {
+        &self.ap_round_message_hinted
+    }
+
+    pub(crate) const fn ap_combined_val(&self) -> &CudaFunction {
+        &self.ap_combined_val
+    }
+
+    pub(crate) const fn ap_ra(&self) -> &CudaFunction {
+        &self.ap_ra
+    }
+
+    pub(crate) const fn ap_flag_keys(&self) -> &CudaFunction {
+        &self.ap_flag_keys
+    }
+
+    pub(crate) const fn ap_flag_sums(&self) -> &CudaFunction {
+        &self.ap_flag_sums
+    }
+
+    pub(crate) const fn ap_raf_flag_sum(&self) -> &CudaFunction {
+        &self.ap_raf_flag_sum
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn unr_mul_scatter(&self) -> &CudaFunction {
+        &self.unr_mul_scatter
+    }
+
+    pub(crate) const fn cr_quotient(&self) -> &CudaFunction {
+        &self.cr_quotient
+    }
+
+    pub(crate) const fn rwm_segment_flags(&self) -> &CudaFunction {
+        &self.rwm_segment_flags
+    }
+
+    pub(crate) const fn rwm_segment_bounds(&self) -> &CudaFunction {
+        &self.rwm_segment_bounds
+    }
+
+    pub(crate) const fn rwm_count(&self) -> &CudaFunction {
+        &self.rwm_count
+    }
+
+    pub(crate) const fn rwm_merge(&self) -> &CudaFunction {
+        &self.rwm_merge
+    }
+
+    pub(crate) const fn rwm_square_lut(&self) -> &CudaFunction {
+        &self.rwm_square_lut
+    }
+
+    pub(crate) const fn rwm_permute_words(&self) -> &CudaFunction {
+        &self.rwm_permute_words
+    }
+
+    pub(crate) const fn rwm_deref_coeffs(&self) -> &CudaFunction {
+        &self.rwm_deref_coeffs
+    }
+
+    pub(crate) const fn rwm_message(&self) -> &CudaFunction {
+        &self.rwm_message
+    }
+
+    pub(crate) const fn rs2_claim(&self) -> &CudaFunction {
+        &self.rs2_claim
+    }
+
+    pub(crate) const fn amm_segment_flags(&self) -> &CudaFunction {
+        &self.amm_segment_flags
+    }
+
+    pub(crate) const fn amm_segment_bounds(&self) -> &CudaFunction {
+        &self.amm_segment_bounds
+    }
+
+    pub(crate) const fn amm_count(&self) -> &CudaFunction {
+        &self.amm_count
+    }
+
+    pub(crate) const fn amm_merge(&self) -> &CudaFunction {
+        &self.amm_merge
+    }
+
+    pub(crate) const fn amm_message(&self) -> &CudaFunction {
+        &self.amm_message
+    }
+
+    pub(crate) const fn amm_initial_values(&self) -> &CudaFunction {
+        &self.amm_initial_values
+    }
+
+    pub(crate) const fn amm_materialize(&self) -> &CudaFunction {
+        &self.amm_materialize
+    }
+
+    pub(crate) const fn amm_lift(&self) -> &CudaFunction {
+        &self.amm_lift
+    }
+
+    pub(crate) const fn fr_delta_u64(&self) -> &CudaFunction {
+        &self.fr_delta_u64
+    }
+
+    pub(crate) const fn rrw_flags(&self) -> &CudaFunction {
+        &self.rrw_flags
+    }
+
+    pub(crate) const fn rrw_scatter(&self) -> &CudaFunction {
+        &self.rrw_scatter
+    }
+
+    pub(crate) const fn reg_count(&self) -> &CudaFunction {
+        &self.reg_count
+    }
+
+    pub(crate) const fn reg_scatter(&self) -> &CudaFunction {
+        &self.reg_scatter
+    }
+
+    pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
+        &self.unr_reduce
+    }
+
+    pub(crate) const fn unr_fold_chunks(&self) -> &CudaFunction {
+        &self.unr_fold_chunks
+    }
+
+    pub(crate) fn copy_into(
+        &self,
+        destination: &mut DeviceFrVec,
+        offset: usize,
+        source: &DeviceFrVec,
+    ) -> Result<(), CudaError> {
+        if offset + source.len() > destination.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: destination.len(),
+                got: offset + source.len(),
+            });
+        }
+        if source.is_empty() {
+            return Ok(());
+        }
+        let limbs = source.len() * LIMBS;
+        let start = offset * LIMBS;
+        xfer_stats::timed(Phase::D2d, limbs * size_of::<u64>(), || {
+            let source = source.limbs().slice(0..limbs);
+            let mut target = destination.limbs_mut().slice_mut(start..start + limbs);
+            self.stream.memcpy_dtod(&source, &mut target)?;
+            self.stream.synchronize()?;
+            Ok::<_, CudaError>(())
+        })
+    }
+
+    pub(crate) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u64>(len)?)
+    }
+
+    pub(crate) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
     }
 
     pub(crate) fn device_columns(
