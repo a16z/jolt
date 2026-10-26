@@ -217,10 +217,9 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
             .min(rows_per_ring);
         let populated_indices = &mut selected_rows[..populated_rows * num_columns];
         let populated_masks = &mut committed_zero_masks[..populated_rows];
-        source.rows.fill_rows(row_start, populated_indices);
         source
             .rows
-            .fill_committed_digit_zero_masks(row_start, populated_masks);
+            .fill_rows_with_masks(row_start, populated_indices, populated_masks);
         for &hot in populated_indices.iter() {
             if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
                 return Err(AkitaError::InvalidInput(format!(

@@ -47,6 +47,14 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
         }
     }
 
+    /// Fills row-major selectors and their committed-zero masks together.
+    /// `masks` contains one entry per row in `selected_rows`; both buffers
+    /// are overwritten. Sources can share extraction work between the outputs.
+    fn fill_rows_with_masks(&self, row_start: usize, selected_rows: &mut [u8], masks: &mut [u64]) {
+        self.fill_rows(row_start, selected_rows);
+        self.fill_committed_digit_zero_masks(row_start, masks);
+    }
+
     /// Fills the masks for consecutive rows, overwriting the entire buffer.
     fn fill_committed_digit_zero_masks(&self, row_start: usize, masks: &mut [u64]) {
         for (row_offset, mask) in masks.iter_mut().enumerate() {

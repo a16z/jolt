@@ -69,6 +69,28 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     /// `j`; `None` when the cycle is cold for that column.
     fn index(&self, i: usize, j: usize) -> Option<usize>;
 
+    fn gather_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        width: usize,
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) where
+        Self: Sized,
+    {
+        for (i, (column, table)) in out.iter_mut().zip(tables).enumerate() {
+            let stride = table.len() / width;
+            let mut sum = F::Accumulator::default();
+            for branch in 0..width {
+                if let Some(index) = self.index(i, row * width + branch) {
+                    sum.add(table[branch * stride + index]);
+                }
+            }
+            column[output_row] = sum.reduce();
+        }
+    }
+
     fn gather_pairs<F: JoltField>(
         &self,
         tables: &[Vec<F>],
@@ -297,16 +319,10 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     let dense = if prefix_len < source.cycles() {
                         let branches = width * 2;
                         let new_len = prefix_len.div_ceil(branches);
-                        let materialize_poly = |i| {
-                            let eval = |j| gather_poly(&tables, factors, branches, &source, i, j);
-                            #[cfg(feature = "parallel")]
-                            let values = (0..new_len).into_par_iter().map(eval).collect();
-                            #[cfg(not(feature = "parallel"))]
-                            let values = (0..new_len).map(eval).collect();
-                            values
-                        };
                         Self::Prefix {
-                            values: (0..tail.len()).map(materialize_poly).collect(),
+                            values: materialize_values(
+                                &tables, factors, &source, branches, new_len,
+                            ),
                             tail,
                         }
                     } else {
@@ -319,12 +335,25 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 }
             }
             Self::Dense(mut polys) => {
+                #[cfg(feature = "parallel")]
+                polys.par_iter_mut().for_each(|poly| {
+                    poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+                });
+                #[cfg(not(feature = "parallel"))]
                 for poly in &mut polys {
                     poly.bind_with_order(challenge, BindingOrder::LowToHigh);
                 }
                 Self::Dense(polys)
             }
             Self::Prefix { mut values, tail } => {
+                #[cfg(feature = "parallel")]
+                values
+                    .par_iter_mut()
+                    .zip(&tail)
+                    .for_each(|(values, &tail)| {
+                        bind_prefix_pairs(values, challenge, tail);
+                    });
+                #[cfg(not(feature = "parallel"))]
                 for (values, &tail) in values.iter_mut().zip(&tail) {
                     bind_prefix_pairs(values, challenge, tail);
                 }
@@ -452,24 +481,78 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
     branches: usize,
 ) -> Vec<Polynomial<F>> {
     debug_assert!(source.cycles() >= branches);
-    let new_len = source.cycles() / branches;
-    let materialize_poly = |i: usize| -> Polynomial<F> {
-        let eval = |j: usize| gather_poly(tables, factors, branches, source, i, j);
+    materialize_values(
+        tables,
+        factors,
+        source,
+        branches,
+        source.cycles() / branches,
+    )
+    .into_iter()
+    .map(Polynomial::new)
+    .collect()
+}
+
+fn materialize_values<F: JoltField, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    factors: usize,
+    source: &S,
+    branches: usize,
+    len: usize,
+) -> Vec<Vec<F>> {
+    fn fill<F: JoltField, S: ChunkIndexSource>(
+        mut columns: Vec<&mut [F]>,
+        start: usize,
+        tables: &[Vec<F>],
+        factors: usize,
+        source: &S,
+        branches: usize,
+    ) {
+        let Some(first) = columns.first() else {
+            return;
+        };
+        let len = first.len();
         #[cfg(feature = "parallel")]
-        let evals: Vec<F> = (0..new_len).into_par_iter().map(eval).collect();
-        #[cfg(not(feature = "parallel"))]
-        let evals: Vec<F> = (0..new_len).map(eval).collect();
-        Polynomial::new(evals)
-    };
-    let polys = tables.len() / factors;
-    #[cfg(feature = "parallel")]
-    {
-        (0..polys).into_par_iter().map(materialize_poly).collect()
+        if len > 1024 {
+            let mid = len / 2;
+            let (left, right): (Vec<_>, Vec<_>) = columns
+                .into_iter()
+                .map(|column| column.split_at_mut(mid))
+                .unzip();
+            let _ = rayon::join(
+                || fill(left, start, tables, factors, source, branches),
+                || fill(right, start + mid, tables, factors, source, branches),
+            );
+            return;
+        }
+        for row in 0..len {
+            if factors == 1 {
+                source.gather_values(tables, branches, start + row, &mut columns, row);
+            } else {
+                for (i, column) in columns.iter_mut().enumerate() {
+                    column[row] = gather_poly(tables, factors, branches, source, i, start + row);
+                }
+            }
+        }
     }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..polys).map(materialize_poly).collect()
+
+    let table_bytes = tables.iter().map(Vec::len).sum::<usize>() * std::mem::size_of::<F>();
+    if table_bytes > 1 << 20 {
+        return (0..tables.len() / factors)
+            .map(|i| {
+                let eval = |j| gather_poly(tables, factors, branches, source, i, j);
+                #[cfg(feature = "parallel")]
+                let values = (0..len).into_par_iter().map(eval).collect();
+                #[cfg(not(feature = "parallel"))]
+                let values = (0..len).map(eval).collect();
+                values
+            })
+            .collect();
     }
+    let mut values = vec![vec![F::zero(); len]; tables.len() / factors];
+    let columns = values.iter_mut().map(Vec::as_mut_slice).collect();
+    fill(columns, 0, tables, factors, source, branches);
+    values
 }
 
 #[cfg(test)]
@@ -480,6 +563,7 @@ mod prefix_tests {
     use jolt_field::{Fr, JoltField};
 
     struct Source {
+        cycles: usize,
         prefix: usize,
     }
     impl ChunkIndexSource for Source {
@@ -487,14 +571,18 @@ mod prefix_tests {
             2
         }
         fn cycles(&self) -> usize {
-            128
+            self.cycles
         }
         fn constant_suffix_start(&self) -> usize {
             self.prefix
         }
         fn index(&self, i: usize, j: usize) -> Option<usize> {
             if j < self.prefix {
-                Some((j * 7 + i) % 16)
+                if i == 1 && j.is_multiple_of(11) {
+                    return None;
+                }
+                let mixed = (j as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                Some((((mixed ^ (mixed >> 27)).wrapping_add(i as u64)) & 15) as usize)
             } else if i == 0 {
                 Some(0)
             } else {
@@ -503,8 +591,11 @@ mod prefix_tests {
         }
     }
     fn check<F: JoltField>() {
-        for prefix in [0, 1, 2, 15, 16, 17, 63, 64, 65, 111, 127, 128] {
-            let source = Source { prefix };
+        let small = [0, 1, 2, 15, 16, 17, 63, 64, 65, 111, 127, 128]
+            .into_iter()
+            .map(|prefix| (128usize, prefix));
+        for (cycles, prefix) in small.chain([(32768, 32761), (32768, 32768)]) {
+            let source = Source { cycles, prefix };
             let tables: Vec<Vec<F>> = (0..2)
                 .map(|i| {
                     (0..16)
@@ -514,23 +605,24 @@ mod prefix_tests {
                 .collect();
             let mut dense: Vec<Vec<F>> = (0..2)
                 .map(|i| {
-                    (0..128)
+                    (0..cycles)
                         .map(|j| source.index(i, j).map_or(F::zero(), |k| tables[i][k]))
                         .collect()
                 })
                 .collect();
             let mut lazy = LazyFoldedRa::new(tables, source);
-            for round in 0..=7 {
+            let rounds = cycles.ilog2() as usize;
+            for round in 0..=rounds {
                 assert_eq!(lazy.prefix_len(), prefix.div_ceil(1 << round));
                 for (i, values) in dense.iter().enumerate() {
                     for (j, value) in values.iter().enumerate() {
                         assert_eq!(lazy.value(i, j), *value);
                     }
                 }
-                if round == 7 {
+                if round == rounds {
                     break;
                 }
-                let challenge = F::from_u64([0, 1, 13, 29, 41, 53, 67][round]);
+                let challenge = F::from_u64([0, 1, 13, 29, 41, 53, 67][round % 7]);
                 for values in &mut dense {
                     *values = values
                         .chunks_exact(2)
