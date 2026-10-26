@@ -5,11 +5,9 @@
 ignore = [
   # crypto-bigint < 0.7.6 branches on secret values in arithmetic meant to be
   # constant-time. 0.5.5 comes from the RustCrypto 0.13 curve stack
-  # (elliptic-curve 0.13 requires crypto-bigint 0.5), reached two ways:
-  # k256 0.13 via alloy in examples/sig-recovery, which only recovers signers
-  # from public signatures (its host signs with the `secp256k1` crate), and
-  # p256 0.13, a jolt-inlines-p256 dev-dependency whose tests sign with random
-  # throwaway keys. Remove once alloy releases on k256 0.14 and that
-  # dev-dependency moves to p256 0.14.
+  # (elliptic-curve 0.13 requires crypto-bigint 0.5) through k256 0.13 via
+  # alloy, used only by examples/sig-recovery, which only recovers signers from
+  # public signatures (its host signs with the `secp256k1` crate). Remove once
+  # alloy releases on k256 0.14.
   "RUSTSEC-2026-0387",
 ]
