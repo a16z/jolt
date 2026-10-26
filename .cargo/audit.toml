@@ -12,24 +12,4 @@ ignore = [
   # throwaway keys. Remove once alloy releases on k256 0.14 and that
   # dev-dependency moves to p256 0.14.
   "RUSTSEC-2026-0387",
-  # zstd 0.13.3 and zstd-safe 7.2.4 (fixed in zstd >= 0.14.3) are in Cargo.lock
-  # but never compiled. The `serde` features of reth-primitives-traits and
-  # reth-ethereum-primitives (examples/sig-recovery) carry the weak edge
-  # `reth-codecs?/serde`, which locks reth-codecs -> reth-zstd-compressors ->
-  # zstd although no build enables reth-codecs. Keep these only while
-  # `cargo tree --workspace --all-features --target all -e all -i zstd` prints
-  # nothing. Remove once reth-zstd-compressors releases on zstd >= 0.14.3.
-  "RUSTSEC-2026-0391",
-  "RUSTSEC-2026-0395",
-  "RUSTSEC-2026-0396",
-  "RUSTSEC-2026-0397",
-  "RUSTSEC-2026-0398",
-  "RUSTSEC-2026-0399",
-  "RUSTSEC-2026-0400",
-  "RUSTSEC-2026-0401",
-  "RUSTSEC-2026-0402",
-  "RUSTSEC-2026-0403",
-  "RUSTSEC-2026-0404",
-  "RUSTSEC-2026-0405",
-  "RUSTSEC-2026-0406",
 ]
