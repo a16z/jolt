@@ -7,44 +7,31 @@
 //! Callers must keep handles within the owning arena's lifetime and thread;
 //! the offset representation does not enforce that contract.
 
-#[cfg(test)]
 use ark_bn254::{Fq, G1Projective};
 use ark_bn254::{Fq2, G2Projective};
-#[cfg(test)]
 use ark_ff::BigInt;
-#[cfg(test)]
 use cudarc::driver::CudaSlice;
-#[cfg(test)]
 use std::cell::{Cell, RefCell};
-#[cfg(test)]
 use std::ops::Range;
 
-#[cfg(test)]
 use jolt_field::Fr;
 
-#[cfg(test)]
 use crate::cuda::common::context::{context_for, device_count, CudaKernelContext};
-#[cfg(test)]
 use crate::cuda::common::devices::{fan_out, DeviceTask};
-#[cfg(test)]
 use crate::cuda::common::error::CudaError;
-#[cfg(test)]
 use crate::cuda::common::msm::ResidentAxpy;
 use crate::cuda::common::msm::FQ_LIMBS;
 
-#[cfg(test)]
 pub(super) const G1_WORDS: usize = 3 * FQ_LIMBS;
 
 pub(super) const G2_WORDS: usize = 6 * FQ_LIMBS;
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Family {
     G1,
     G2,
 }
 
-#[cfg(test)]
 impl Family {
     const fn words(self) -> usize {
         match self {
@@ -54,7 +41,6 @@ impl Family {
     }
 }
 
-#[cfg(test)]
 struct Arena {
     buffers: Vec<CudaSlice<u64>>,
     words: usize,
@@ -64,7 +50,6 @@ struct Arena {
     frozen_host: Vec<u64>,
 }
 
-#[cfg(test)]
 impl Arena {
     fn new(family: Family, capacity: usize) -> Result<Self, CudaError> {
         let words = family.words();
@@ -111,14 +96,12 @@ impl Arena {
     }
 }
 
-#[cfg(test)]
 thread_local! {
     static G1_ARENA: RefCell<Option<Arena>> = const { RefCell::new(None) };
     static G2_ARENA: RefCell<Option<Arena>> = const { RefCell::new(None) };
     static POISONED: Cell<bool> = const { Cell::new(false) };
 }
 
-#[cfg(test)]
 pub(super) fn poison(reason: &'static str) {
     tracing::error!(
         reason,
@@ -127,12 +110,10 @@ pub(super) fn poison(reason: &'static str) {
     POISONED.set(true);
 }
 
-#[cfg(test)]
 pub(super) fn poisoned() -> bool {
     POISONED.get()
 }
 
-#[cfg(test)]
 fn with_arena<R>(family: Family, act: impl FnOnce(&mut Arena) -> R) -> Option<R> {
     match family {
         Family::G1 => G1_ARENA.with_borrow_mut(|slot| slot.as_mut().map(act)),
@@ -140,24 +121,20 @@ fn with_arena<R>(family: Family, act: impl FnOnce(&mut Arena) -> R) -> Option<R>
     }
 }
 
-#[cfg(test)]
 const fn closed() -> CudaError {
     CudaError::InvariantViolation {
         reason: "the Dory arena is not open",
     }
 }
 
-#[cfg(test)]
 fn device(ordinal: usize) -> Result<&'static CudaKernelContext, CudaError> {
     context_for(ordinal).ok_or(CudaError::NotImplemented {
         kernel: "no CUDA device is present for the Dory arenas",
     })
 }
 
-#[cfg(test)]
 pub(super) struct ArenaGuard;
 
-#[cfg(test)]
 impl Drop for ArenaGuard {
     fn drop(&mut self) {
         G1_ARENA.with_borrow_mut(|slot| *slot = None);
@@ -165,7 +142,6 @@ impl Drop for ArenaGuard {
     }
 }
 
-#[cfg(test)]
 pub(super) fn open(g1_capacity: usize, g2_capacity: usize) -> Result<ArenaGuard, CudaError> {
     let g1 = Arena::new(Family::G1, g1_capacity)?;
     let g2 = Arena::new(Family::G2, g2_capacity)?;
@@ -175,7 +151,6 @@ pub(super) fn open(g1_capacity: usize, g2_capacity: usize) -> Result<ArenaGuard,
     Ok(ArenaGuard)
 }
 
-#[cfg(test)]
 pub(super) fn reserve(family: Family, count: usize) -> Result<usize, CudaError> {
     with_arena(family, |arena| {
         if arena.used + count > arena.capacity {
@@ -191,7 +166,6 @@ pub(super) fn reserve(family: Family, count: usize) -> Result<usize, CudaError> 
     .ok_or_else(closed)?
 }
 
-#[cfg(test)]
 pub(super) fn freeze(family: Family, count: usize, limbs: &[u64]) -> Result<(), CudaError> {
     with_arena(family, |arena| {
         if count * arena.words != limbs.len() {
@@ -207,7 +181,6 @@ pub(super) fn freeze(family: Family, count: usize, limbs: &[u64]) -> Result<(), 
     .ok_or_else(closed)?
 }
 
-#[cfg(test)]
 pub(super) fn write(family: Family, offset: usize, limbs: &[u64]) -> Result<(), CudaError> {
     with_arena(family, |arena| {
         if offset < arena.frozen {
@@ -233,12 +206,10 @@ pub(super) fn write(family: Family, offset: usize, limbs: &[u64]) -> Result<(), 
     .ok_or_else(closed)?
 }
 
-#[cfg(test)]
 pub(super) fn read(family: Family, offset: usize, count: usize) -> Result<Vec<u64>, CudaError> {
     read_from(family, 0, offset, count)
 }
 
-#[cfg(test)]
 fn read_from(
     family: Family,
     ordinal: usize,
@@ -269,7 +240,6 @@ fn read_from(
     .ok_or_else(closed)?
 }
 
-#[cfg(test)]
 pub(super) fn axpy(family: Family, span: ResidentAxpy, scalar: Fr) -> Result<(), CudaError> {
     with_arena(family, |arena| {
         if span.out_offset < arena.frozen {
@@ -289,7 +259,6 @@ pub(super) fn axpy(family: Family, span: ResidentAxpy, scalar: Fr) -> Result<(),
     .ok_or_else(closed)?
 }
 
-#[cfg(test)]
 pub(super) fn g1_msm(
     base_offset: usize,
     out_offset: usize,
@@ -299,7 +268,6 @@ pub(super) fn g1_msm(
     msm(Family::G1, base_offset, out_offset, count, scalars)
 }
 
-#[cfg(test)]
 pub(super) fn g2_msm(
     base_offset: usize,
     out_offset: usize,
@@ -309,10 +277,8 @@ pub(super) fn g2_msm(
     msm(Family::G2, base_offset, out_offset, count, scalars)
 }
 
-#[cfg(test)]
 const MSM_SPLIT_LEN: usize = 1 << 13;
 
-#[cfg(test)]
 fn base_chunks(count: usize, devices: usize, floor: usize) -> Vec<Range<usize>> {
     let devices = if devices < 2 || count < floor {
         1
@@ -334,7 +300,6 @@ fn base_chunks(count: usize, devices: usize, floor: usize) -> Vec<Range<usize>> 
 /// Each device reduces its own contiguous slice of the bases into ITS OWN copy
 /// of `out_offset`, so the mirrors diverge for the duration of the fan-out;
 /// `reduce` sums the partials and re-broadcasts the total before returning.
-#[cfg(test)]
 fn msm(
     family: Family,
     base_offset: usize,
@@ -387,7 +352,6 @@ fn msm(
     }
 }
 
-#[cfg(test)]
 fn reduce(family: Family, out_offset: usize) -> Result<(), CudaError> {
     let mut partials = Vec::with_capacity(mirrors(family));
     for ordinal in 0..mirrors(family) {
@@ -412,7 +376,6 @@ fn reduce(family: Family, out_offset: usize) -> Result<(), CudaError> {
     write(family, out_offset, &total)
 }
 
-#[cfg(test)]
 fn broadcast(family: Family, offset: usize, count: usize) -> Result<(), CudaError> {
     if mirrors(family) < 2 {
         return Ok(());
@@ -428,15 +391,12 @@ fn broadcast(family: Family, offset: usize, count: usize) -> Result<(), CudaErro
     .ok_or_else(closed)?
 }
 
-#[cfg(test)]
 pub(super) fn mirrors(family: Family) -> usize {
     with_arena(family, |arena| arena.buffers.len()).unwrap_or(0)
 }
 
-#[cfg(test)]
 const MILLER_SPLIT_PAIRS: usize = 1 << 13;
 
-#[cfg(test)]
 fn lane_chunks(lanes: usize, devices: usize) -> Vec<Range<usize>> {
     let devices = devices.clamp(1, lanes.max(1));
     let base = lanes / devices;
@@ -451,7 +411,6 @@ fn lane_chunks(lanes: usize, devices: usize) -> Vec<Range<usize>> {
     chunks
 }
 
-#[cfg(test)]
 pub(super) fn multi_miller_batch(
     segments: &[(usize, usize)],
     count: usize,
@@ -464,7 +423,6 @@ pub(super) fn multi_miller_batch(
     })
 }
 
-#[cfg(test)]
 fn miller_batch(
     g1: &Arena,
     g2: &Arena,
@@ -497,7 +455,6 @@ fn miller_batch(
     Ok(fan_out(tasks)?.concat())
 }
 
-#[cfg(test)]
 pub(super) fn g2_fixed_base(
     base_offset: usize,
     out_offset: usize,
@@ -517,14 +474,12 @@ pub(super) fn g2_fixed_base(
     .ok_or_else(closed)?
 }
 
-#[cfg(test)]
 fn fq(limbs: &[u64]) -> Fq {
     let mut value = [0u64; FQ_LIMBS];
     value.copy_from_slice(&limbs[..FQ_LIMBS]);
     Fq::new_unchecked(BigInt(value))
 }
 
-#[cfg(test)]
 fn fq2(limbs: &[u64]) -> Fq2 {
     Fq2::new(fq(&limbs[..FQ_LIMBS]), fq(&limbs[FQ_LIMBS..2 * FQ_LIMBS]))
 }
@@ -534,7 +489,6 @@ fn push_fq2(out: &mut [u64], value: &Fq2) {
     out[FQ_LIMBS..].copy_from_slice(&value.c1.0 .0);
 }
 
-#[cfg(test)]
 pub(super) fn g1_limbs(point: &G1Projective) -> [u64; G1_WORDS] {
     let mut out = [0u64; G1_WORDS];
     out[..FQ_LIMBS].copy_from_slice(&point.x.0 .0);
@@ -543,7 +497,6 @@ pub(super) fn g1_limbs(point: &G1Projective) -> [u64; G1_WORDS] {
     out
 }
 
-#[cfg(test)]
 pub(super) fn g1_point(limbs: &[u64]) -> G1Projective {
     G1Projective::new_unchecked(
         fq(&limbs[..FQ_LIMBS]),
@@ -561,7 +514,6 @@ pub(super) fn g2_limbs(point: &G2Projective) -> [u64; G2_WORDS] {
     out
 }
 
-#[cfg(test)]
 pub(super) fn g2_point(limbs: &[u64]) -> G2Projective {
     let width = 2 * FQ_LIMBS;
     G2Projective::new_unchecked(

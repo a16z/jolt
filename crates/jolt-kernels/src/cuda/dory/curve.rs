@@ -8,41 +8,27 @@
 
 use ark_bn254::{Fq, Fq12, Fq2, Fq6};
 use ark_ff::BigInt;
-#[cfg(test)]
 use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2, ArkGT, BN254};
-#[cfg(test)]
 use dory::messages::{FirstReduceMessage, ScalarProductMessage, SecondReduceMessage, VMVMessage};
-#[cfg(test)]
 use dory::primitives::arithmetic::{Group, PairingCurve};
-#[cfg(test)]
 use dory::primitives::transcript::Transcript as DoryTranscript;
-#[cfg(test)]
 use dory::primitives::DorySerialize;
-#[cfg(test)]
 use dory::proof::DoryProof;
-#[cfg(test)]
 use jolt_dory::JoltToDoryTranscript;
-#[cfg(test)]
 use jolt_field::Fr;
-#[cfg(test)]
 use jolt_transcript::Transcript;
 
-#[cfg(test)]
 use super::gt::DeviceGT;
-#[cfg(test)]
 use super::handle::{load_all, load_all_g2, span, span_g2, DeviceG1, DeviceG2};
 use crate::cuda::common::msm::FQ_LIMBS;
 
-#[cfg(test)]
 #[derive(Clone)]
 pub(super) struct CudaBN254;
 
-#[cfg(test)]
 fn ark(points: &[DeviceG1]) -> Vec<ArkG1> {
     load_all(points).into_iter().map(ArkG1).collect()
 }
 
-#[cfg(test)]
 fn ark_g2(points: &[DeviceG2]) -> Vec<ArkG2> {
     load_all_g2(points).into_iter().map(ArkG2).collect()
 }
@@ -66,7 +52,6 @@ pub(super) fn fq12(words: &[u64]) -> Fq12 {
     Fq12::new(fq6(&words[..6 * FQ_LIMBS]), fq6(&words[6 * FQ_LIMBS..]))
 }
 
-#[cfg(test)]
 #[tracing::instrument(skip_all, name = "cuda_multi_pair", fields(pairs = ps.len()))]
 fn deferred_multi_pair(ps: &[DeviceG1], qs: &[DeviceG2]) -> Option<DeviceGT> {
     if ps.len() != qs.len() || ps.is_empty() {
@@ -78,7 +63,6 @@ fn deferred_multi_pair(ps: &[DeviceG1], qs: &[DeviceG2]) -> Option<DeviceGT> {
     Some(DeviceGT::enqueue(g1_offset, g2_offset, ps.len()))
 }
 
-#[cfg(test)]
 impl PairingCurve for CudaBN254 {
     type G1 = DeviceG1;
     type G2 = DeviceG2;
@@ -104,12 +88,10 @@ impl PairingCurve for CudaBN254 {
     }
 }
 
-#[cfg(test)]
 pub(super) struct CudaDoryTranscript<'a, T: Transcript<Challenge = Fr>> {
     inner: JoltToDoryTranscript<'a, T>,
 }
 
-#[cfg(test)]
 impl<'a, T: Transcript<Challenge = Fr>> CudaDoryTranscript<'a, T> {
     pub(super) fn new(transcript: &'a mut T) -> Self {
         Self {
@@ -118,7 +100,6 @@ impl<'a, T: Transcript<Challenge = Fr>> CudaDoryTranscript<'a, T> {
     }
 }
 
-#[cfg(test)]
 impl<T: Transcript<Challenge = Fr>> DoryTranscript for CudaDoryTranscript<'_, T> {
     type Curve = CudaBN254;
 
@@ -147,12 +128,9 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for CudaDoryTranscript<'_, T>
     }
 }
 
-#[cfg(test)]
 type ResidentProof = DoryProof<DeviceG1, DeviceG2, DeviceGT>;
-#[cfg(test)]
 type HostProof = DoryProof<ArkG1, ArkG2, ArkGT>;
 
-#[cfg(test)]
 pub(super) fn rebind_proof(proof: ResidentProof) -> Result<HostProof, &'static str> {
     if proof.sigma1_proof.is_some()
         || proof.sigma2_proof.is_some()

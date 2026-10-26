@@ -1,28 +1,38 @@
-//! Dory PCS entry point sharing the CPU scheme's setup, commitment, proof,
-//! and transcript formats. Hint combinations and the partitioned transparent
-//! witness path's tier-two Miller loops run on CUDA. Final exponentiation
-//! remains on the CPU. Standalone commitments, openings, setup, verification,
-//! and ZK commitment finalization delegate to `DoryScheme`.
+//! CUDA arithmetic for the Dory PCS.
+//!
+//! `CudaDoryScheme` uses the same setup, commitment, proof, and transcript
+//! formats as `DoryScheme`. Clear openings run the shared Dory prover with G1
+//! and G2 arena handles: vector group operations and batched Miller loops use
+//! CUDA, while field-vector folds, final exponentiation, and transcript work
+//! remain on the CPU. A supplied hint reuses row commitments; without one,
+//! the host Dory adapter computes them.
+//!
+//! Witness commitment kernels access GPU tier one and clear batched tier two
+//! through `DeviceTier1Commitment`. Standalone `commit`, ordinary streaming
+//! methods, setup, verification, and ZK operations delegate to `DoryScheme`.
+//! The `jolt-dory` CUDA feature exposes the shared hint and adapter boundary;
+//! the device implementation lives here with the CUDA kernels.
 
-#[cfg(any(test, not(feature = "zk")))]
 mod arena;
 mod combine;
-#[cfg(any(test, not(feature = "zk")))]
 mod curve;
-#[cfg(test)]
 mod gt;
-#[cfg(test)]
 mod handle;
-#[cfg(test)]
 mod routines;
 #[cfg(not(feature = "zk"))]
 mod tier2;
 
+#[cfg(not(feature = "zk"))]
+use crate::cuda::commitment::FinishedColumn;
+#[cfg(not(feature = "zk"))]
+use crate::cuda::common::context::CudaKernelContext;
+use ark_bn254::Fr as Bn254Fr;
+use dory::backends::arkworks::ArkFr;
+use dory::mode::Transparent;
+use dory::setup::ProverSetup;
+use handle::DeviceG1;
+use handle::DeviceG2;
 use jolt_crypto::{Bn254G1, Commitment, VectorCommitment};
-use jolt_dory::{
-    DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryScheme,
-    DoryVerifierSetup,
-};
 use jolt_field::Fr;
 #[cfg(not(feature = "zk"))]
 use jolt_field::Ring;
@@ -35,21 +45,41 @@ use jolt_transcript::Transcript;
 use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
-
 #[cfg(all(feature = "parallel", not(feature = "zk")))]
 use rayon::prelude::*;
 
 use crate::cuda::commitment::DeviceTier1Commitment;
-#[cfg(not(feature = "zk"))]
-use crate::cuda::commitment::FinishedColumn;
-#[cfg(not(feature = "zk"))]
-use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::msm::{AffineLimbs, JacobianLimbs};
 
-/// Dory PCS with CUDA hint combination and transparent witness tier two.
-/// Selection is independent of the compute kernel registry; proof and setup
-/// types are shared with `DoryScheme`.
+use jolt_dory::{
+    compute_row_commitments, DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof,
+    DoryProverSetup, DoryScheme, DorySourceAdapter, DoryVerifierSetup,
+};
+
+use self::curve::{CudaBN254, CudaDoryTranscript};
+use self::routines::{CudaG1Routines, CudaG2Routines};
+
+const ARENA_SLACK: usize = 4_096;
+
+fn resident_prover_setup(setup: &DoryProverSetup, bases: usize) -> ProverSetup<CudaBN254> {
+    let width = bases.min(setup.0.g1_vec.len());
+    let g1: Vec<_> = setup.0.g1_vec[..width].iter().map(|base| base.0).collect();
+    let rows = bases.min(setup.0.g2_vec.len());
+    let g2: Vec<_> = setup.0.g2_vec[..rows].iter().map(|base| base.0).collect();
+    ProverSetup {
+        g1_vec: handle::store_frozen(&g1),
+        g2_vec: handle::store_frozen_g2(&g2),
+        h1: DeviceG1::store(&setup.0.h1.0),
+        h2: DeviceG2::store(&setup.0.h2.0),
+        ht: setup.0.ht.into(),
+    }
+}
+
+/// Dory PCS with CUDA clear openings and witness-commitment integration.
+///
+/// Selecting this PCS is independent of selecting `CudaBackend` for sumcheck
+/// kernels. Its proof and setup types are shared with the CPU PCS.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CudaDoryScheme;
 
@@ -183,15 +213,79 @@ impl CommitmentScheme for CudaDoryScheme {
         DoryScheme::commit(poly, setup)
     }
 
+    #[tracing::instrument(skip_all, name = "CudaDoryScheme::open")]
     fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         point: &[Self::Field],
-        eval: Self::Field,
+        _eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
-        DoryScheme::open(poly, point, eval, setup, hint, transcript)
+        let num_vars = point.len();
+        let sigma = num_vars.div_ceil(2);
+        let nu = num_vars - sigma;
+        let adapter = DorySourceAdapter::new(poly);
+
+        let (row_commitments, commit_blind) = match hint {
+            Some(hint) => {
+                let (rows, blind) = hint.into_parts();
+                (
+                    rows.into_iter()
+                        .map(|point| point.into_inner())
+                        .collect::<Vec<_>>(),
+                    ArkFr(blind.into()),
+                )
+            }
+            None => (
+                compute_row_commitments(poly, setup)?
+                    .into_iter()
+                    .map(|point| point.0)
+                    .collect(),
+                ArkFr(Bn254Fr::from(0u64)),
+            ),
+        };
+
+        let bases = 1usize << sigma;
+        let capacity = 4 * bases.max(row_commitments.len()) + ARENA_SLACK;
+        let _arena = arena::open(capacity, capacity).map_err(|error| {
+            OpeningsError::ProveFailed(format!("the Dory arena did not open: {error:?}"))
+        })?;
+        gt::reset();
+        let resident_setup = resident_prover_setup(setup, bases);
+        let resident_rows = handle::store_all(&row_commitments);
+
+        let ark_point: Vec<ArkFr> = point
+            .iter()
+            .rev()
+            .map(|coordinate| ArkFr((*coordinate).into()))
+            .collect();
+        let mut dory_transcript = CudaDoryTranscript::new(transcript);
+
+        let (proof, _blind) =
+            dory::prove::<ArkFr, CudaBN254, CudaG1Routines, CudaG2Routines, _, _, Transparent>(
+                &adapter,
+                &ark_point,
+                resident_rows,
+                commit_blind,
+                nu,
+                sigma,
+                &resident_setup,
+                &mut dory_transcript,
+            )
+            .map_err(|error| {
+                OpeningsError::ProveFailed(format!("dory::prove failed: {error:?}"))
+            })?;
+
+        if arena::poisoned() {
+            return Err(OpeningsError::ProveFailed(
+                "the Dory arena was poisoned during the opening".to_owned(),
+            ));
+        }
+
+        let rebound = curve::rebind_proof(proof)
+            .map_err(|reason| OpeningsError::ProveFailed(reason.to_owned()))?;
+        Ok(DoryProof(rebound))
     }
 
     fn verify(
@@ -372,19 +466,21 @@ impl ZkStreamingCommitment for CudaDoryScheme {
 )]
 mod tests {
     use jolt_crypto::Bn254G1;
-    use jolt_field::{Field, Fr};
+    use jolt_field::{Field, Fr, Ring};
     use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
     use jolt_poly::Polynomial;
+    use jolt_transcript::{Blake2bTranscript, Transcript};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    use jolt_dory::{DoryHint, DoryScheme};
+    use jolt_dory::{DoryHint, DoryProof, DoryProverSetup, DoryScheme};
 
     use super::CudaDoryScheme;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::msm::testing::point;
 
     const NUM_VARS: usize = 4;
+    const PROVE_SCALE_VARS: usize = 20;
     const PROVE_WIDE_HINTS: usize = 40;
     const PROVE_WIDE_ROWS: usize = 8_192;
     const PROVE_NARROW_HINTS: usize = 2;
@@ -441,6 +537,35 @@ mod tests {
         assert_eq!(divergence, None, "{label}: combined row diverged");
     }
 
+    fn open_pair(
+        poly: &Polynomial<Fr>,
+        point: &[Fr],
+        eval: Fr,
+        setup: &DoryProverSetup,
+        hint: DoryHint,
+    ) -> (DoryProof, DoryProof) {
+        let mut transcript = Blake2bTranscript::new(b"dory");
+        let got = CudaDoryScheme::open(
+            poly,
+            point,
+            eval,
+            setup,
+            Some(hint.clone()),
+            &mut transcript,
+        )
+        .expect("cuda open");
+
+        let mut oracle_transcript = Blake2bTranscript::new(b"dory");
+        let expected =
+            DoryScheme::open(poly, point, eval, setup, Some(hint), &mut oracle_transcript)
+                .expect("dory open");
+        (got, expected)
+    }
+
+    fn opening_rows(num_vars: usize) -> usize {
+        1usize << (num_vars - num_vars.div_ceil(2))
+    }
+
     fn hints(rows: &[usize], seed: u64) -> Vec<DoryHint> {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
         let setup = DoryScheme::setup_prover(NUM_VARS);
@@ -448,7 +573,7 @@ mod tests {
             .map(|&count| {
                 let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
                 let (_, hint) = DoryScheme::commit(poly.evaluations(), &setup).unwrap();
-                let (mut rows, blind) = (hint.row_commitments().to_vec(), hint.commit_blind());
+                let (mut rows, blind) = hint.into_parts();
                 rows.truncate(count.max(1));
                 DoryHint::from_parts(rows, blind)
             })
@@ -508,6 +633,148 @@ mod tests {
             got.row_commitments().len(),
             PROVE_WIDE_ROWS,
             "the combined hint must be padded out to the widest source hint",
+        );
+    }
+
+    #[test]
+    fn reference_verifier_accepts_proof() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7);
+        let prover_setup = CudaDoryScheme::setup_prover(NUM_VARS);
+        let verifier_setup = CudaDoryScheme::setup_verifier(NUM_VARS);
+
+        let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
+        let point: Vec<Fr> = (0..NUM_VARS)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment, hint) =
+            CudaDoryScheme::commit(poly.evaluations(), &prover_setup).expect("cuda commit");
+        let (expected_commitment, expected_hint) =
+            DoryScheme::commit(poly.evaluations(), &prover_setup).expect("dory commit");
+        assert_eq!(commitment, expected_commitment);
+        assert_eq!(hint, expected_hint);
+        assert_eq!(hint.row_commitments().len(), opening_rows(NUM_VARS));
+
+        let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+        assert_eq!(proof, expected, "the proof diverged from DoryScheme's");
+
+        let mut verify_transcript = Blake2bTranscript::new(b"dory");
+        DoryScheme::verify(
+            &commitment,
+            &point,
+            eval,
+            &proof,
+            &verifier_setup,
+            &mut verify_transcript,
+        )
+        .expect("the DoryScheme verifier must accept a CudaDoryScheme proof");
+    }
+
+    #[test]
+    fn open_matches_reference_dory_across_variable_parities() {
+        if shared_context().is_none() {
+            return;
+        }
+        for num_vars in [3usize, 4, 5, 6, 7] {
+            let mut rng = ChaCha20Rng::seed_from_u64(13 + num_vars as u64);
+            let prover_setup = CudaDoryScheme::setup_prover(num_vars);
+            let verifier_setup = CudaDoryScheme::setup_verifier(num_vars);
+
+            let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|_| <Fr as Field>::random(&mut rng))
+                .collect();
+            let eval = poly.evaluate(&point);
+
+            let (commitment, hint) =
+                CudaDoryScheme::commit(poly.evaluations(), &prover_setup).expect("cuda commit");
+            let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+            assert_eq!(
+                proof, expected,
+                "the proof diverged at {num_vars} variables"
+            );
+
+            let mut verify_transcript = Blake2bTranscript::new(b"dory");
+            let accepted = DoryScheme::verify(
+                &commitment,
+                &point,
+                eval,
+                &proof,
+                &verifier_setup,
+                &mut verify_transcript,
+            );
+            assert!(
+                accepted.is_ok(),
+                "the verifier rejected a {num_vars}-variable CudaDoryScheme proof: {accepted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_matches_reference_dory_when_the_setup_outsizes_the_polynomial() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(11);
+        let prover_setup = CudaDoryScheme::setup_prover(PROVE_SCALE_VARS);
+        let verifier_setup = CudaDoryScheme::setup_verifier(PROVE_SCALE_VARS);
+
+        let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
+        let point: Vec<Fr> = (0..NUM_VARS)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment, hint) =
+            CudaDoryScheme::commit(poly.evaluations(), &prover_setup).expect("cuda commit");
+        let (expected_commitment, _) =
+            DoryScheme::commit(poly.evaluations(), &prover_setup).expect("dory commit");
+        assert_eq!(commitment, expected_commitment, "the commitment diverged");
+
+        let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+        assert_eq!(proof, expected, "the proof diverged from DoryScheme's");
+
+        let mut verify_transcript = Blake2bTranscript::new(b"dory");
+        DoryScheme::verify(
+            &commitment,
+            &point,
+            eval,
+            &proof,
+            &verifier_setup,
+            &mut verify_transcript,
+        )
+        .expect("the DoryScheme verifier must accept a CudaDoryScheme proof");
+    }
+
+    #[test]
+    fn open_matches_reference_dory_at_prove_scale() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(11);
+        let prover_setup = CudaDoryScheme::setup_prover(PROVE_SCALE_VARS);
+
+        let poly = Polynomial::<Fr>::random(PROVE_SCALE_VARS, &mut rng);
+        let point: Vec<Fr> = (0..PROVE_SCALE_VARS)
+            .map(|_| <Fr as Field>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+
+        let rows = opening_rows(PROVE_SCALE_VARS);
+        let hint = shaped_hints(&[rows], 12)
+            .pop()
+            .expect("one shaped hint was requested");
+        let (hint_rows, _) = hint.into_parts();
+        let hint = DoryHint::from_parts(hint_rows, Fr::from_u64(0));
+
+        let (got, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+        assert_eq!(
+            got, expected,
+            "the proof diverged from DoryScheme's over {rows} rows at {PROVE_SCALE_VARS} variables",
         );
     }
 }

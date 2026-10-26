@@ -169,7 +169,6 @@ pub struct CudaKernelContext {
     msm_fq_sub: CudaFunction,
     #[cfg(test)]
     msm_fq_mul: CudaFunction,
-    #[cfg(test)]
     msm_fq_batch_inverse: CudaFunction,
     #[cfg(test)]
     msm_g1_double: CudaFunction,
@@ -193,11 +192,8 @@ pub struct CudaKernelContext {
     msm_one_hot_scatter_shared: CudaFunction,
     msm_one_hot_complement: CudaFunction,
     msm_glv_decompose_2d: CudaFunction,
-    #[cfg(test)]
     msm_glv_decompose_4d: CudaFunction,
-    #[cfg(test)]
     msm_g2_frobenius: CudaFunction,
-    #[cfg(test)]
     msm_g2_axpy_glv: CudaFunction,
     msm_g1_endomorphism: CudaFunction,
     msm_shared_scalar_rows_glv: CudaFunction,
@@ -206,13 +202,9 @@ pub struct CudaKernelContext {
     msm_segment_sum_warp: CudaFunction,
     msm_segment_sum_classed: CudaFunction,
     msm_segment_sum_small: CudaFunction,
-    #[cfg(test)]
     msm_g2_segment_sum_small: CudaFunction,
-    #[cfg(test)]
     msm_g2_bucket_reduce_chunked: CudaFunction,
-    #[cfg(test)]
     msm_g2_point_rows_sum: CudaFunction,
-    #[cfg(test)]
     msm_g2_window_fold: CudaFunction,
     msm_bucket_reduce_chunked: CudaFunction,
     msm_point_rows_sum: CudaFunction,
@@ -223,23 +215,14 @@ pub struct CudaKernelContext {
     msm_fold_rows: CudaFunction,
     opening_one_hot_embed: CudaFunction,
     opening_one_hot_fold: CudaFunction,
-    #[cfg(test)]
     msm_jacobian_z: CudaFunction,
-    #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
-    #[cfg(test)]
     msm_g1_axpy: CudaFunction,
-    #[cfg(test)]
     msm_g2_fixed_base: CudaFunction,
-    #[cfg(any(test, not(feature = "zk")))]
     pairing_miller: CudaFunction,
-    #[cfg(any(test, not(feature = "zk")))]
     pairing_miller_warp: CudaFunction,
-    #[cfg(any(test, not(feature = "zk")))]
     pairing_prepare_g2: CudaFunction,
-    #[cfg(any(test, not(feature = "zk")))]
     pairing_miller_prepared: CudaFunction,
-    #[cfg(any(test, not(feature = "zk")))]
     pairing_fq12_product: CudaFunction,
     #[cfg(test)]
     pub(super) fq6_mul_probe: CudaFunction,
@@ -418,7 +401,6 @@ impl CudaKernelContext {
             msm_fq_sub: module.load_function("msm_fq_sub_kernel")?,
             #[cfg(test)]
             msm_fq_mul: module.load_function("msm_fq_mul_kernel")?,
-            #[cfg(test)]
             msm_fq_batch_inverse: module.load_function("msm_fq_batch_inverse_kernel")?,
             #[cfg(test)]
             msm_g1_double: module.load_function("msm_g1_double_kernel")?,
@@ -443,11 +425,8 @@ impl CudaKernelContext {
                 .load_function("msm_one_hot_scatter_shared_kernel")?,
             msm_one_hot_complement: module.load_function("msm_one_hot_complement_kernel")?,
             msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
-            #[cfg(test)]
             msm_glv_decompose_4d: module.load_function("msm_glv_decompose_4d_kernel")?,
-            #[cfg(test)]
             msm_g2_frobenius: module.load_function("msm_g2_frobenius_kernel")?,
-            #[cfg(test)]
             msm_g2_axpy_glv: module.load_function("msm_g2_axpy_glv_kernel")?,
             msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
             msm_shared_scalar_rows_glv: module
@@ -457,14 +436,10 @@ impl CudaKernelContext {
             msm_segment_sum_warp: module.load_function("msm_segment_sum_warp_kernel")?,
             msm_segment_sum_classed: module.load_function("msm_segment_sum_classed_kernel")?,
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
-            #[cfg(test)]
             msm_g2_segment_sum_small: module.load_function("msm_g2_segment_sum_small_kernel")?,
-            #[cfg(test)]
             msm_g2_bucket_reduce_chunked: module
                 .load_function("msm_g2_bucket_reduce_chunked_kernel")?,
-            #[cfg(test)]
             msm_g2_point_rows_sum: module.load_function("msm_g2_point_rows_sum_kernel")?,
-            #[cfg(test)]
             msm_g2_window_fold: module.load_function("msm_g2_window_fold_kernel")?,
             msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
             msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
@@ -475,23 +450,14 @@ impl CudaKernelContext {
             msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
             opening_one_hot_embed: module.load_function("opening_one_hot_embed_kernel")?,
             opening_one_hot_fold: module.load_function("opening_one_hot_fold_kernel")?,
-            #[cfg(test)]
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
-            #[cfg(test)]
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
-            #[cfg(test)]
             msm_g1_axpy: module.load_function("msm_g1_axpy_kernel")?,
-            #[cfg(test)]
             msm_g2_fixed_base: module.load_function("msm_g2_fixed_base_kernel")?,
-            #[cfg(any(test, not(feature = "zk")))]
             pairing_miller: module.load_function("pairing_miller_kernel")?,
-            #[cfg(any(test, not(feature = "zk")))]
             pairing_miller_warp: module.load_function("pairing_miller_warp_kernel")?,
-            #[cfg(any(test, not(feature = "zk")))]
             pairing_prepare_g2: module.load_function("pairing_prepare_g2_kernel")?,
-            #[cfg(any(test, not(feature = "zk")))]
             pairing_miller_prepared: module.load_function("pairing_miller_prepared_kernel")?,
-            #[cfg(any(test, not(feature = "zk")))]
             pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
             #[cfg(test)]
             fq6_mul_probe: module.load_function("fq6_mul_probe")?,
@@ -1208,7 +1174,6 @@ impl CudaKernelContext {
         &self.msm_fq_mul
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_fq_batch_inverse(&self) -> &CudaFunction {
         &self.msm_fq_batch_inverse
     }
@@ -1286,17 +1251,14 @@ impl CudaKernelContext {
         &self.msm_glv_decompose_2d
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_glv_decompose_4d(&self) -> &CudaFunction {
         &self.msm_glv_decompose_4d
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g2_frobenius(&self) -> &CudaFunction {
         &self.msm_g2_frobenius
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g2_axpy_glv(&self) -> &CudaFunction {
         &self.msm_g2_axpy_glv
     }
@@ -1329,22 +1291,18 @@ impl CudaKernelContext {
         &self.msm_segment_sum_small
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g2_segment_sum_small(&self) -> &CudaFunction {
         &self.msm_g2_segment_sum_small
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g2_bucket_reduce_chunked(&self) -> &CudaFunction {
         &self.msm_g2_bucket_reduce_chunked
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g2_point_rows_sum(&self) -> &CudaFunction {
         &self.msm_g2_point_rows_sum
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g2_window_fold(&self) -> &CudaFunction {
         &self.msm_g2_window_fold
     }
@@ -1385,47 +1343,38 @@ impl CudaKernelContext {
         &self.opening_one_hot_fold
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_jacobian_z(&self) -> &CudaFunction {
         &self.msm_jacobian_z
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_jacobian_to_affine(&self) -> &CudaFunction {
         &self.msm_jacobian_to_affine
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g1_axpy(&self) -> &CudaFunction {
         &self.msm_g1_axpy
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g2_fixed_base(&self) -> &CudaFunction {
         &self.msm_g2_fixed_base
     }
 
-    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_miller(&self) -> &CudaFunction {
         &self.pairing_miller
     }
 
-    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_miller_warp(&self) -> &CudaFunction {
         &self.pairing_miller_warp
     }
 
-    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_prepare_g2(&self) -> &CudaFunction {
         &self.pairing_prepare_g2
     }
 
-    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_miller_prepared(&self) -> &CudaFunction {
         &self.pairing_miller_prepared
     }
 
-    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_fq12_product(&self) -> &CudaFunction {
         &self.pairing_fq12_product
     }

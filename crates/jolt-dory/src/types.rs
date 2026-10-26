@@ -169,6 +169,12 @@ impl DoryHint {
         self.commit_blind
     }
 
+    /// Transfer the ordered rows and blind to the CUDA opening adapter.
+    #[cfg(feature = "cuda")]
+    pub fn into_parts(self) -> (Vec<Bn254G1>, Fr) {
+        (self.row_commitments, self.commit_blind)
+    }
+
     pub(crate) fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
         Self {
             row_commitments,

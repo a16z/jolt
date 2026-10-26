@@ -68,27 +68,21 @@
     clippy::large_const_arrays,
     reason = "BN254 G2 endomorphism decomposition constants uploaded to CUDA"
 )]
-#[cfg(test)]
 mod glv4_table {
     include!("glv4_table.rs");
 }
 
-#[cfg(test)]
 use ark_bn254::Fr as ArkFr;
-#[cfg(test)]
 use ark_ff::{BigInt, BigInteger, PrimeField};
 
 use std::sync::Arc;
-#[cfg(test)]
 use std::sync::OnceLock;
 
 use jolt_field::Fr;
 use jolt_witness::backend::cuda::EXTRA_WORDS;
 
-#[cfg(test)]
 use glv4_table::POWER_OF_2_DECOMPOSITIONS;
 
-#[cfg(test)]
 use cudarc::driver::CudaFunction;
 use cudarc::driver::{CudaSlice, CudaStream, CudaView, LaunchConfig, PushKernelArg};
 
@@ -236,7 +230,6 @@ impl IncrementKind {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub struct ResidentAxpy {
     pub a_offset: usize,
@@ -291,10 +284,8 @@ impl DeviceG1Bases {
     }
 }
 
-#[cfg(test)]
 const BATCH_INVERSE_TARGET_THREADS: usize = 8192;
 
-#[cfg(test)]
 const BATCH_INVERSE_MAX_CHUNK: usize = 128;
 
 const POINT_BLOCK: u32 = 128;
@@ -317,10 +308,8 @@ const MAX_WINDOW_BITS: usize = 16;
 
 const TARGET_REDUCE_BLOCKS: usize = 1024;
 
-#[cfg(test)]
 const G2_POINT_WORDS: usize = 6 * FQ_LIMBS;
 
-#[cfg(test)]
 const G2_POINT_BLOCK: u32 = 64;
 
 const BATCHED_WINDOW_BYTES: usize = 64 << 20;
@@ -346,10 +335,8 @@ const GLV_CONSTANTS: [u64; 14] = [
 
 const GLV_SCALAR_BITS: usize = 128;
 
-#[cfg(test)]
 const GLV4_SCALAR_BITS: usize = 101;
 
-#[cfg(test)]
 fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
     static TABLE: OnceLock<(Vec<u64>, Vec<u8>)> = OnceLock::new();
     let (magnitudes, signs) = TABLE.get_or_init(|| {
@@ -370,7 +357,6 @@ fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
     (magnitudes, signs)
 }
 
-#[cfg(test)]
 fn glv_4d_scalar(scalar: Fr) -> Result<([u64; 16], u32, usize), CudaError> {
     let ark = ArkFr::from(scalar);
     let bits = PrimeField::into_bigint(ark);
@@ -408,7 +394,6 @@ fn glv_4d_scalar(scalar: Fr) -> Result<([u64; 16], u32, usize), CudaError> {
     Ok((limbs, signs, max_bits))
 }
 
-#[cfg(test)]
 fn glv_frobenius_coefficients() -> &'static [u64] {
     static COEFFICIENTS: OnceLock<Vec<u64>> = OnceLock::new();
     COEFFICIENTS.get_or_init(|| {
@@ -737,7 +722,6 @@ impl CudaKernelContext {
             .collect())
     }
 
-    #[cfg(test)]
     pub(crate) fn launch_batch_inverse(
         &self,
         values: &CudaSlice<u64>,
@@ -893,12 +877,10 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&accumulator)?))
     }
 
-    #[cfg(any(test, not(feature = "zk")))]
     pub fn upload_raw_u64(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
         self.upload_u64_slice(values)
     }
 
-    #[cfg(test)]
     pub fn write_u64_range(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -920,7 +902,6 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
     pub fn read_u64_range(
         &self,
         buffer: &CudaSlice<u64>,
@@ -942,7 +923,6 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
     fn resident_span_end(
         offset: usize,
         count: usize,
@@ -964,7 +944,6 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    #[cfg(test)]
     fn axpy_in_place(
         &self,
         kernel: &CudaFunction,
@@ -1026,7 +1005,6 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn g1_axpy_in_place(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -1036,7 +1014,6 @@ impl CudaKernelContext {
         self.axpy_in_place(self.msm_g1_axpy(), 3 * FQ_LIMBS, buffer, span, scalar)
     }
 
-    #[cfg(test)]
     pub fn g2_axpy_in_place(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -1098,7 +1075,6 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn g2_fixed_base_in_place(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -1144,7 +1120,6 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    #[cfg(test)]
     fn g2_reduce_and_fold(
         &self,
         bucket_points: &CudaSlice<u64>,
@@ -1233,7 +1208,6 @@ impl CudaKernelContext {
         Ok(accumulator)
     }
 
-    #[cfg(test)]
     pub(crate) fn g2_msm_in_place(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -1328,7 +1302,6 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    #[cfg(test)]
     fn batched_windows_g2(buckets: usize, windows: usize, len: usize) -> bool {
         let segments = windows.saturating_mul(buckets);
         let bucket_bytes = segments.saturating_mul(G2_POINT_WORDS * size_of::<u64>());
@@ -1338,7 +1311,6 @@ impl CudaKernelContext {
         bucket_bytes.saturating_add(index_bytes) <= BATCHED_WINDOW_BYTES
     }
 
-    #[cfg(test)]
     fn glv_decompose_4d(
         &self,
         scalars: &CudaSlice<u64>,
@@ -1378,7 +1350,6 @@ impl CudaKernelContext {
         Ok((out, hosted))
     }
 
-    #[cfg(test)]
     fn g2_frobenius_span(
         &self,
         jacobian: &CudaSlice<u64>,
@@ -1494,7 +1465,6 @@ impl CudaKernelContext {
         Ok(out)
     }
 
-    #[cfg(test)]
     pub fn normalise_g1_span(
         &self,
         jacobian: &CudaSlice<u64>,
@@ -1554,7 +1524,6 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn g1_msm_in_place(
         &self,
         buffer: &mut CudaSlice<u64>,
