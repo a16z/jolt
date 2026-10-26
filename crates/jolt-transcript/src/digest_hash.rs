@@ -8,6 +8,11 @@
 //! exactly one. [`PROTOCOL_ID`](crate::PROTOCOL_ID) names the selection, so a
 //! proof made under one never verifies under the other.
 
+#[cfg(feature = "keccak256-digests")]
+use sha3::Keccak256;
+#[cfg(not(feature = "keccak256-digests"))]
+use sha3::Sha3_256;
+
 /// The hashes a build can select for its digests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DigestHash {
@@ -26,10 +31,10 @@ pub const DIGEST_HASH: DigestHash = DigestHash::Keccak256;
 
 /// The hasher for [`DIGEST_HASH`].
 #[cfg(not(feature = "keccak256-digests"))]
-pub type DigestHasher = sha3::Sha3_256;
+pub type DigestHasher = Sha3_256;
 /// The hasher for [`DIGEST_HASH`].
 #[cfg(feature = "keccak256-digests")]
-pub type DigestHasher = sha3::Keccak256;
+pub type DigestHasher = Keccak256;
 
 #[cfg(test)]
 mod tests {
