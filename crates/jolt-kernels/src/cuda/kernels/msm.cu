@@ -1,3 +1,4 @@
+#define POINT_BLOCK 128
 #define MSM_COLD 0xFFFFFFFFu
 
 __device__ __constant__ u64 FQ_MODULUS[4] = {

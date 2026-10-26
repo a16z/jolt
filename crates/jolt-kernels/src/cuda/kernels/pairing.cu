@@ -65,6 +65,15 @@ __device__ __forceinline__ void fq6_copy(const u64 *a, u64 *out) {
     for (int i = 0; i < FQ6_LIMBS; i++) out[i] = a[i];
 }
 
+__device__ __forceinline__ void fq6_set_zero(u64 *out) {
+    for (int i = 0; i < FQ6_LIMBS; i++) out[i] = 0;
+}
+
+__device__ __forceinline__ void fq6_set_one(u64 *out) {
+    fq6_set_zero(out);
+    fq2_set_one(out);
+}
+
 __device__ __forceinline__ void fq6_add(const u64 *a, const u64 *b, u64 *out) {
     for (int i = 0; i < 3; i++) {
         fq2_add(a + i * FQ2_LIMBS, b + i * FQ2_LIMBS, out + i * FQ2_LIMBS);
@@ -440,6 +449,7 @@ extern "C" __global__ void pairing_miller_kernel(const u64 *__restrict__ g1,
         out[idx * FQ12_LIMBS + i] = f[i];
     }
 }
+
 
 __device__ __forceinline__ void miller_store_coeff(u64 *lines, const u64 *coeff,
                                                    unsigned int step, unsigned int pair,

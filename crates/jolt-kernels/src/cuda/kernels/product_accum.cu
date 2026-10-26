@@ -6,6 +6,18 @@ __device__ __forceinline__ void pa_add_piece(u64 *folded, unsigned int slot,
     folded[2 * slot + 1] += (piece >> 32);
 }
 
+__device__ __forceinline__ void pa_fold_mul(const u64 *a, const u64 *b, u64 *folded) {
+    for (int i = 0; i < 2 * PA_SLOTS; i++) folded[i] = 0;
+    for (int i = 0; i < LIMBS; i++) {
+        for (int j = 0; j < LIMBS; j++) {
+            u128 p = (u128)a[i] * (u128)b[j];
+            pa_add_piece(folded, (unsigned int)(i + j), (unsigned long long)p);
+            pa_add_piece(folded, (unsigned int)(i + j + 1),
+                         (unsigned long long)(p >> 64));
+        }
+    }
+}
+
 __device__ __forceinline__ void pa_fold_mul_accum(const u64 *a, const u64 *b, u64 *folded) {
     for (int i = 0; i < LIMBS; i++) {
         for (int j = 0; j < LIMBS; j++) {
