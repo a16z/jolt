@@ -197,6 +197,8 @@ pub struct CudaKernelContext {
     msm_glv_decompose_4d: CudaFunction,
     #[cfg(test)]
     msm_g2_frobenius: CudaFunction,
+    #[cfg(test)]
+    msm_g2_axpy_glv: CudaFunction,
     msm_g1_endomorphism: CudaFunction,
     msm_shared_scalar_rows_glv: CudaFunction,
     msm_shared_scalar_windows: CudaFunction,
@@ -225,6 +227,10 @@ pub struct CudaKernelContext {
     msm_jacobian_z: CudaFunction,
     #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
+    #[cfg(test)]
+    msm_g1_axpy: CudaFunction,
+    #[cfg(test)]
+    msm_g2_fixed_base: CudaFunction,
     #[cfg(any(test, not(feature = "zk")))]
     pairing_miller: CudaFunction,
     #[cfg(any(test, not(feature = "zk")))]
@@ -441,6 +447,8 @@ impl CudaKernelContext {
             msm_glv_decompose_4d: module.load_function("msm_glv_decompose_4d_kernel")?,
             #[cfg(test)]
             msm_g2_frobenius: module.load_function("msm_g2_frobenius_kernel")?,
+            #[cfg(test)]
+            msm_g2_axpy_glv: module.load_function("msm_g2_axpy_glv_kernel")?,
             msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
             msm_shared_scalar_rows_glv: module
                 .load_function("msm_shared_scalar_rows_glv_kernel")?,
@@ -471,6 +479,10 @@ impl CudaKernelContext {
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             #[cfg(test)]
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
+            #[cfg(test)]
+            msm_g1_axpy: module.load_function("msm_g1_axpy_kernel")?,
+            #[cfg(test)]
+            msm_g2_fixed_base: module.load_function("msm_g2_fixed_base_kernel")?,
             #[cfg(any(test, not(feature = "zk")))]
             pairing_miller: module.load_function("pairing_miller_kernel")?,
             #[cfg(any(test, not(feature = "zk")))]
@@ -1284,6 +1296,11 @@ impl CudaKernelContext {
         &self.msm_g2_frobenius
     }
 
+    #[cfg(test)]
+    pub(crate) const fn msm_g2_axpy_glv(&self) -> &CudaFunction {
+        &self.msm_g2_axpy_glv
+    }
+
     pub(crate) const fn msm_g1_endomorphism(&self) -> &CudaFunction {
         &self.msm_g1_endomorphism
     }
@@ -1376,6 +1393,16 @@ impl CudaKernelContext {
     #[cfg(test)]
     pub(crate) const fn msm_jacobian_to_affine(&self) -> &CudaFunction {
         &self.msm_jacobian_to_affine
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_g1_axpy(&self) -> &CudaFunction {
+        &self.msm_g1_axpy
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn msm_g2_fixed_base(&self) -> &CudaFunction {
+        &self.msm_g2_fixed_base
     }
 
     #[cfg(any(test, not(feature = "zk")))]

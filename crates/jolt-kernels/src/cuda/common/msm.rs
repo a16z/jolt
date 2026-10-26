@@ -35,6 +35,13 @@
 //! selected span without downloading its coordinates.
 //! Resident G1 MSMs expand and normalize a device point span, then run GLV
 //! Pippenger and copy the result into the requested slot on the same device.
+//! Resident pointwise updates compute `scalar * a + b` within one device buffer.
+//! G1 multiply-add and G2 fixed-base scaling use full-width scalar loops where
+//! optimized uses GLV; G2 multiply-add uses a four-dimensional Frobenius split.
+//! Multiply-add outputs may coincide exactly with an input span or be disjoint
+//! from both. Fixed-base outputs must avoid the base; the wrappers check these
+//! bounds and aliasing conditions before launch.
+//!
 //! Two-dimensional GLV decomposition produces signed scalar magnitudes on device.
 //! G1 endomorphism spans retain the original Jacobian points followed by their
 //! mapped points, matching the two component arrays.
@@ -65,6 +72,11 @@
 mod glv4_table {
     include!("glv4_table.rs");
 }
+
+#[cfg(test)]
+use ark_bn254::Fr as ArkFr;
+#[cfg(test)]
+use ark_ff::{BigInt, BigInteger, PrimeField};
 
 use std::sync::Arc;
 #[cfg(test)]
@@ -224,6 +236,15 @@ impl IncrementKind {
     }
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub struct ResidentAxpy {
+    pub a_offset: usize,
+    pub b_offset: usize,
+    pub out_offset: usize,
+    pub count: usize,
+}
+
 pub struct DeviceG1Bases {
     stream: Arc<CudaStream>,
     limbs: CudaSlice<u64>,
@@ -347,6 +368,44 @@ fn glv_4d_table() -> (&'static [u64], &'static [u8]) {
         (magnitudes, signs)
     });
     (magnitudes, signs)
+}
+
+#[cfg(test)]
+fn glv_4d_scalar(scalar: Fr) -> Result<([u64; 16], u32, usize), CudaError> {
+    let ark = ArkFr::from(scalar);
+    let bits = PrimeField::into_bigint(ark);
+    let mut sums = [0i128; 4];
+    for (bit, &(k0, k1, k2, k3, n0, n1, n2, n3)) in POWER_OF_2_DECOMPOSITIONS.iter().enumerate() {
+        if BigInteger::get_bit(&bits, bit) {
+            for ((sum, magnitude), negative) in
+                sums.iter_mut().zip([k0, k1, k2, k3]).zip([n0, n1, n2, n3])
+            {
+                *sum += if negative {
+                    -(magnitude as i128)
+                } else {
+                    magnitude as i128
+                };
+            }
+        }
+    }
+    let coefficients = sums.map(|sum| BigInt::<4>::from(sum.unsigned_abs()));
+    let positive = sums.map(|sum| sum >= 0);
+    let mut limbs = [0u64; 16];
+    let mut signs = 0u32;
+    let mut max_bits = 0usize;
+    for (index, component) in coefficients.iter().enumerate() {
+        let slot = limbs
+            .get_mut(index * FQ_LIMBS..(index + 1) * FQ_LIMBS)
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a 4D GLV component landed outside the coefficient buffer",
+            })?;
+        slot.copy_from_slice(&component.0);
+        max_bits = max_bits.max(BigInteger::num_bits(component) as usize);
+        if !positive.get(index).copied().unwrap_or(true) {
+            signs |= 1u32 << index;
+        }
+    }
+    Ok((limbs, signs, max_bits))
 }
 
 #[cfg(test)]
@@ -862,6 +921,28 @@ impl CudaKernelContext {
     }
 
     #[cfg(test)]
+    pub fn read_u64_range(
+        &self,
+        buffer: &CudaSlice<u64>,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<u64>, CudaError> {
+        if end > buffer.len() || start > end {
+            return Err(CudaError::LengthMismatch {
+                expected: buffer.len(),
+                got: end,
+            });
+        }
+        if start == end {
+            return Ok(Vec::new());
+        }
+        let source = buffer.slice(start..end);
+        xfer_stats::timed(Phase::D2h, (end - start) * size_of::<u64>(), || {
+            Ok::<_, CudaError>(self.stream().clone_dtoh(&source)?)
+        })
+    }
+
+    #[cfg(test)]
     fn resident_span_end(
         offset: usize,
         count: usize,
@@ -880,6 +961,186 @@ impl CudaKernelContext {
                 got: end,
             });
         }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn axpy_in_place(
+        &self,
+        kernel: &CudaFunction,
+        words: usize,
+        buffer: &mut CudaSlice<u64>,
+        span: ResidentAxpy,
+        scalar: Fr,
+    ) -> Result<(), CudaError> {
+        let ResidentAxpy {
+            a_offset,
+            b_offset,
+            out_offset,
+            count,
+        } = span;
+        if count == 0 {
+            return Ok(());
+        }
+        for offset in [a_offset, b_offset, out_offset] {
+            Self::resident_span_end(offset, count, words, buffer)?;
+        }
+        let coincides_or_avoids = |left: usize, right: usize| {
+            left == right || left + count <= right || right + count <= left
+        };
+        if !coincides_or_avoids(out_offset, a_offset) || !coincides_or_avoids(out_offset, b_offset)
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident axpy output must coincide with an operand or avoid both",
+            });
+        }
+
+        let device_scalar = self.canonical_scalars(&self.upload(&[scalar])?)?;
+        let a = Self::count_of(a_offset)?;
+        let b = Self::count_of(b_offset)?;
+        let out = Self::count_of(out_offset)?;
+        let points = Self::count_of(count)?;
+        let bits = Self::count_of(FR_SCALAR_BITS)?;
+
+        let mut builder = self.stream().launch_builder(kernel);
+        let _ = builder.arg(buffer);
+        let _ = builder.arg(&device_scalar);
+        let _ = builder.arg(&a);
+        let _ = builder.arg(&b);
+        let _ = builder.arg(&out);
+        let _ = builder.arg(&points);
+        let _ = builder.arg(&bits);
+        // SAFETY: thread `i < points` reads the `words` limbs at points
+        // `a_offset + i` and `b_offset + i` of `buffer` and writes the same span
+        // at point `out_offset + i`; all three spans are checked above to end
+        // inside `buffer`. The three views alias one allocation, so `buf` is
+        // passed once and un-`__restrict__`ed: the write span either coincides
+        // exactly with an operand — in which case thread `i` has already loaded
+        // both operand points into registers before it stores — or is disjoint
+        // from both, which the alias check enforces. Either way no thread reads
+        // a point another thread writes. The scalar is the single canonical
+        // value and bit indices stay below `FR_SCALAR_BITS = 254`, so
+        // `bit >> 6 <= 3` is inside its `FQ_LIMBS` limbs. Threads with
+        // `i >= points` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(points)) }?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn g1_axpy_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        span: ResidentAxpy,
+        scalar: Fr,
+    ) -> Result<(), CudaError> {
+        self.axpy_in_place(self.msm_g1_axpy(), 3 * FQ_LIMBS, buffer, span, scalar)
+    }
+
+    #[cfg(test)]
+    pub fn g2_axpy_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        span: ResidentAxpy,
+        scalar: Fr,
+    ) -> Result<(), CudaError> {
+        let ResidentAxpy {
+            a_offset,
+            b_offset,
+            out_offset,
+            count,
+        } = span;
+        if count == 0 {
+            return Ok(());
+        }
+        let words = 6 * FQ_LIMBS;
+        for offset in [a_offset, b_offset, out_offset] {
+            Self::resident_span_end(offset, count, words, buffer)?;
+        }
+        let coincides_or_avoids = |left: usize, right: usize| {
+            left == right || left + count <= right || right + count <= left
+        };
+        if !coincides_or_avoids(out_offset, a_offset) || !coincides_or_avoids(out_offset, b_offset)
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident axpy output must coincide with an operand or avoid both",
+            });
+        }
+
+        let (limbs, signs, max_bits) = glv_4d_scalar(scalar)?;
+        let coeffs = self.upload_u64_slice(&limbs)?;
+        let frobenius = self.upload_u64_slice(glv_frobenius_coefficients())?;
+        let a = Self::count_of(a_offset)?;
+        let b = Self::count_of(b_offset)?;
+        let out = Self::count_of(out_offset)?;
+        let points = Self::count_of(count)?;
+        let bits = Self::count_of(max_bits)?;
+
+        let mut builder = self.stream().launch_builder(self.msm_g2_axpy_glv());
+        let _ = builder.arg(buffer);
+        let _ = builder.arg(&coeffs);
+        let _ = builder.arg(&frobenius);
+        let _ = builder.arg(&signs);
+        let _ = builder.arg(&bits);
+        let _ = builder.arg(&a);
+        let _ = builder.arg(&b);
+        let _ = builder.arg(&out);
+        let _ = builder.arg(&points);
+        // SAFETY: thread `i < points` reads the 24 limbs at points `a_offset + i`
+        // and `b_offset + i` of `buffer` and writes the 24 limbs at
+        // `out_offset + i`; all three spans are bounds-checked above, and the
+        // output either coincides with an operand elementwise or is disjoint from
+        // both, so no thread writes a slot another thread reads. It also reads the
+        // 16 coefficient limbs and 48 Frobenius limbs, whose lengths are fixed by
+        // `glv_4d_scalar` and `glv_frobenius_coefficients`. `max_bits` bounds the
+        // ladder to bits present in the coefficients, all four of which hold four
+        // limbs. Threads with `i >= points` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(points)) }?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn g2_fixed_base_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        base_offset: usize,
+        out_offset: usize,
+        scalars: &[Fr],
+    ) -> Result<(), CudaError> {
+        let count = scalars.len();
+        if count == 0 {
+            return Ok(());
+        }
+        let words = 6 * FQ_LIMBS;
+        Self::resident_span_end(base_offset, 1, words, buffer)?;
+        Self::resident_span_end(out_offset, count, words, buffer)?;
+        if base_offset >= out_offset && base_offset < out_offset + count {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident fixed-base scaling must not write over its base",
+            });
+        }
+
+        let device_scalars = self.canonical_scalars(&self.upload(scalars)?)?;
+        let base = Self::count_of(base_offset)?;
+        let out = Self::count_of(out_offset)?;
+        let points = Self::count_of(count)?;
+        let bits = Self::count_of(FR_SCALAR_BITS)?;
+
+        let mut builder = self.stream().launch_builder(self.msm_g2_fixed_base());
+        let _ = builder.arg(buffer);
+        let _ = builder.arg(&device_scalars);
+        let _ = builder.arg(&base);
+        let _ = builder.arg(&out);
+        let _ = builder.arg(&points);
+        let _ = builder.arg(&bits);
+        // SAFETY: thread `i < points` reads the `6 * FQ_LIMBS` limbs of the
+        // single base point at `base_offset` and the `FQ_LIMBS` limbs of
+        // `scalars[i]`, both checked above to lie inside their buffers, and
+        // writes only point `out_offset + i`, whose span is checked and proven
+        // disjoint from the base. `buf` is passed once, un-`__restrict__`ed,
+        // because base and output live in one allocation. Bit indices stay
+        // below `FR_SCALAR_BITS = 254`, so `bit >> 6 <= 3` is inside a scalar.
+        // Threads with `i >= points` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(points)) }?;
         Ok(())
     }
 
@@ -3252,6 +3513,275 @@ pub(crate) mod testing {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    mod resident_vector {
+        use ark_bn254::{Fr as ArkFr, G2Projective};
+        use ark_ec::AdditiveGroup;
+        use ark_ff::{Field, PrimeField};
+        use cudarc::driver::CudaSlice;
+        use jolt_field::Fr;
+
+        use super::{
+            device, flat_g2, flat_jacobian, g2_from_limbs, g2_span, jacobian_span, projectives,
+            unflatten_jacobian,
+        };
+        use crate::cuda::common::context::CudaKernelContext;
+        use crate::cuda::common::error::CudaError;
+        use crate::cuda::common::msm::{ResidentAxpy, FQ_LIMBS};
+
+        fn weights() -> [Fr; 4] {
+            [
+                ArkFr::ZERO,
+                ArkFr::ONE,
+                -ArkFr::ONE,
+                ArkFr::from_le_bytes_mod_order(&[0xa5; 32]),
+            ]
+            .map(Fr::from)
+        }
+
+        fn layouts(count: usize) -> [ResidentAxpy; 5] {
+            [
+                (2, count + 5, 2 * count + 8),
+                (2, count + 5, 2),
+                (2, count + 5, count + 5),
+                (2, 2, 2),
+                (2, 3, 2 * count + 8),
+            ]
+            .map(|(a_offset, b_offset, out_offset)| ResidentAxpy {
+                a_offset,
+                b_offset,
+                out_offset,
+                count,
+            })
+        }
+
+        #[test]
+        fn g1_axpy_matches_arkworks_with_aliases() {
+            let Some(context) = device() else { return };
+            for count in [1, 256, 257] {
+                let points = jacobian_span(3 * count + 11, 0);
+                let flat = flat_jacobian(&points);
+                for scalar in weights() {
+                    for span in layouts(count) {
+                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G1");
+                        context
+                            .g1_axpy_in_place(&mut buffer, span, scalar)
+                            .expect("G1 multiply-add");
+                        let raw = context
+                            .read_u64_range(&buffer, 0, buffer.len())
+                            .expect("read G1");
+                        let start = span.out_offset * 3 * FQ_LIMBS;
+                        let end = start + count * 3 * FQ_LIMBS;
+                        assert_eq!(raw[..start], flat[..start]);
+                        assert_eq!(raw[end..], flat[end..]);
+                        let got = projectives(&unflatten_jacobian(&raw[start..end]));
+                        let expected: Vec<_> = (0..count)
+                            .map(|i| {
+                                points[span.a_offset + i] * ArkFr::from(scalar)
+                                    + points[span.b_offset + i]
+                            })
+                            .collect();
+                        assert_eq!(got, expected, "{span:?}, scalar {scalar:?}");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn g2_axpy_matches_arkworks_with_aliases() {
+            let Some(context) = device() else { return };
+            for count in [1, 256, 257] {
+                let points = g2_span(3 * count + 11, 0);
+                let flat = flat_g2(&points);
+                for scalar in weights() {
+                    for span in layouts(count) {
+                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
+                        context
+                            .g2_axpy_in_place(&mut buffer, span, scalar)
+                            .expect("G2 multiply-add");
+                        let raw = context
+                            .read_u64_range(&buffer, 0, buffer.len())
+                            .expect("read G2");
+                        let start = span.out_offset * 6 * FQ_LIMBS;
+                        let end = start + count * 6 * FQ_LIMBS;
+                        assert_eq!(raw[..start], flat[..start]);
+                        assert_eq!(raw[end..], flat[end..]);
+                        let got: Vec<_> = raw[start..end]
+                            .chunks_exact(6 * FQ_LIMBS)
+                            .map(g2_from_limbs)
+                            .collect();
+                        let expected: Vec<_> = (0..count)
+                            .map(|i| {
+                                points[span.a_offset + i] * ArkFr::from(scalar)
+                                    + points[span.b_offset + i]
+                            })
+                            .collect();
+                        assert_eq!(got, expected, "{span:?}, scalar {scalar:?}");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn g2_fixed_base_matches_arkworks() {
+            let Some(context) = device() else { return };
+            for count in [1, 256, 257] {
+                for base in [g2_span(1, 7)[0], G2Projective::ZERO] {
+                    for (base_offset, out_offset) in [(2, 5), (count + 5, 2)] {
+                        let mut points = g2_span(count + 9, 11);
+                        points[base_offset] = base;
+                        let flat = flat_g2(&points);
+                        let scalars: Vec<_> =
+                            weights().into_iter().cycle().skip(3).take(count).collect();
+                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
+                        context
+                            .g2_fixed_base_in_place(&mut buffer, base_offset, out_offset, &scalars)
+                            .expect("G2 fixed-base scaling");
+                        let raw = context
+                            .read_u64_range(&buffer, 0, buffer.len())
+                            .expect("read G2");
+                        let start = out_offset * 6 * FQ_LIMBS;
+                        let end = start + count * 6 * FQ_LIMBS;
+                        assert_eq!(raw[..start], flat[..start]);
+                        assert_eq!(raw[end..], flat[end..]);
+                        let got: Vec<_> = raw[start..end]
+                            .chunks_exact(6 * FQ_LIMBS)
+                            .map(g2_from_limbs)
+                            .collect();
+                        let expected: Vec<_> = scalars
+                            .iter()
+                            .map(|&scalar| base * ArkFr::from(scalar))
+                            .collect();
+                        assert_eq!(got, expected, "count {count}, base offset {base_offset}");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn axpy_rejects_partial_aliases_and_invalid_spans() {
+            type Axpy = fn(
+                &CudaKernelContext,
+                &mut CudaSlice<u64>,
+                ResidentAxpy,
+                Fr,
+            ) -> Result<(), CudaError>;
+            let Some(context) = device() else { return };
+            for (words, apply) in [
+                (3 * FQ_LIMBS, CudaKernelContext::g1_axpy_in_place as Axpy),
+                (6 * FQ_LIMBS, CudaKernelContext::g2_axpy_in_place as Axpy),
+            ] {
+                let flat = vec![0u64; 8 * words];
+                let mut buffer = context.upload_raw_u64(&flat).expect("upload points");
+                for (a_offset, b_offset, out_offset, count) in [
+                    (0, 4, 1, 2),
+                    (0, 4, 5, 2),
+                    (usize::MAX, 0, 4, 2),
+                    (0, 0, 0, usize::MAX),
+                ] {
+                    assert!(matches!(
+                        apply(
+                            context,
+                            &mut buffer,
+                            ResidentAxpy {
+                                a_offset,
+                                b_offset,
+                                out_offset,
+                                count
+                            },
+                            weights()[3],
+                        ),
+                        Err(CudaError::InvariantViolation { .. })
+                    ));
+                }
+                for (a_offset, b_offset, out_offset) in [(7, 0, 4), (0, 7, 4), (0, 4, 7)] {
+                    assert!(matches!(
+                        apply(
+                            context,
+                            &mut buffer,
+                            ResidentAxpy {
+                                a_offset,
+                                b_offset,
+                                out_offset,
+                                count: 2
+                            },
+                            weights()[3],
+                        ),
+                        Err(CudaError::LengthMismatch { .. })
+                    ));
+                }
+                apply(
+                    context,
+                    &mut buffer,
+                    ResidentAxpy {
+                        a_offset: usize::MAX,
+                        b_offset: usize::MAX,
+                        out_offset: usize::MAX,
+                        count: 0,
+                    },
+                    weights()[3],
+                )
+                .expect("empty multiply-add");
+                assert_eq!(
+                    context
+                        .read_u64_range(&buffer, 0, buffer.len())
+                        .expect("read points"),
+                    flat
+                );
+            }
+        }
+
+        #[test]
+        fn fixed_base_rejects_overwriting_its_base_and_invalid_spans() {
+            let Some(context) = device() else { return };
+            let flat = flat_g2(&g2_span(8, 1));
+            let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
+            for (base, out) in [(3, 3), (3, 2), (usize::MAX, 0), (0, usize::MAX)] {
+                assert!(matches!(
+                    context.g2_fixed_base_in_place(&mut buffer, base, out, &weights()),
+                    Err(CudaError::InvariantViolation { .. })
+                ));
+            }
+            for (base, out) in [(8, 0), (0, 7)] {
+                assert!(matches!(
+                    context.g2_fixed_base_in_place(&mut buffer, base, out, &weights()),
+                    Err(CudaError::LengthMismatch { .. })
+                ));
+            }
+            context
+                .g2_fixed_base_in_place(&mut buffer, usize::MAX, usize::MAX, &[])
+                .expect("empty fixed-base scaling");
+            assert_eq!(
+                context
+                    .read_u64_range(&buffer, 0, buffer.len())
+                    .expect("read G2"),
+                flat
+            );
+        }
+
+        #[test]
+        fn resident_readback_checks_ranges() {
+            let Some(context) = device() else { return };
+            let words: Vec<u64> = (0..17).collect();
+            let buffer = context.upload_raw_u64(&words).expect("upload words");
+            assert_eq!(
+                context
+                    .read_u64_range(&buffer, 3, 16)
+                    .expect("partial read"),
+                words[3..16]
+            );
+            assert!(context
+                .read_u64_range(&buffer, 17, 17)
+                .expect("empty read")
+                .is_empty());
+            for (start, end) in [(4, 3), (0, 18), (usize::MAX, usize::MAX)] {
+                assert!(matches!(
+                    context.read_u64_range(&buffer, start, end),
+                    Err(CudaError::LengthMismatch { .. })
+                ));
+            }
+        }
+    }
+
     mod opening_layout {
         use std::collections::BTreeMap;
 

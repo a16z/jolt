@@ -365,6 +365,25 @@ __device__ __noinline__ void jac2_add(const u64 *p, const u64 *q, u64 *out) {
     fq2_copy(z3, out + 2 * FQ2_LIMBS);
 }
 
+__device__ __noinline__ void jac2_scale(const u64 *point, const u64 *scalar,
+                                        unsigned int scalar_bits, u64 *out) {
+    u64 acc[G2_LIMBS], tmp[G2_LIMBS];
+    jac2_set_zero(acc);
+    if (jac2_is_zero(point)) {
+        jac2_copy(acc, out);
+        return;
+    }
+    for (int bit = (int)scalar_bits - 1; bit >= 0; bit--) {
+        jac2_double(acc, tmp);
+        if (((scalar[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
+            jac2_add(tmp, point, acc);
+        } else {
+            jac2_copy(tmp, acc);
+        }
+    }
+    jac2_copy(acc, out);
+}
+
 __device__ __forceinline__ void g2_psi_power(const u64 *base, const u64 *coefficients,
                                             unsigned int power, u64 *out) {
     u64 scaled[2 * LIMBS], negated[LIMBS];
@@ -391,6 +410,59 @@ __device__ __forceinline__ void g2_negate_y(u64 *point) {
     fq_copy(negated, point + 2 * LIMBS);
     fq_neg(point + 3 * LIMBS, negated);
     fq_copy(negated, point + 3 * LIMBS);
+}
+
+extern "C" __global__ void msm_g2_axpy_glv_kernel(
+    u64 *buf, const u64 *__restrict__ coeffs, const u64 *__restrict__ frobenius,
+    unsigned int signs, unsigned int max_bits, unsigned int a_offset, unsigned int b_offset,
+    unsigned int out_offset, unsigned int count) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    const u64 *a = buf + ((unsigned long long)a_offset + i) * G2_LIMBS;
+    const u64 *b = buf + ((unsigned long long)b_offset + i) * G2_LIMBS;
+    u64 *out = buf + ((unsigned long long)out_offset + i) * G2_LIMBS;
+
+    u64 bases[4][G2_LIMBS];
+    jac2_copy(a, bases[0]);
+    for (unsigned int power = 1; power < 4; power++) {
+        g2_psi_power(bases[0], frobenius, power, bases[power]);
+    }
+    for (unsigned int j = 0; j < 4; j++) {
+        if (((signs >> j) & 1u) != 0u) g2_negate_y(bases[j]);
+    }
+
+    u64 acc[G2_LIMBS], tmp[G2_LIMBS];
+    jac2_set_zero(acc);
+    for (int bit = (int)max_bits - 1; bit >= 0; bit--) {
+        jac2_double(acc, tmp);
+        jac2_copy(tmp, acc);
+        for (unsigned int j = 0; j < 4; j++) {
+            const u64 *coeff = coeffs + (unsigned long long)j * LIMBS;
+            if (((coeff[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
+                jac2_add(acc, bases[j], tmp);
+                jac2_copy(tmp, acc);
+            }
+        }
+    }
+    jac2_add(acc, b, tmp);
+    jac2_copy(tmp, out);
+}
+
+extern "C" __global__ void msm_g2_fixed_base_kernel(u64 *buf,
+                                                   const u64 *__restrict__ scalars,
+                                                   unsigned int base_offset,
+                                                   unsigned int out_offset, unsigned int count,
+                                                   unsigned int scalar_bits) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    const u64 *base = buf + (unsigned long long)base_offset * G2_LIMBS;
+    u64 *out = buf + ((unsigned long long)out_offset + i) * G2_LIMBS;
+
+    u64 scaled[G2_LIMBS];
+    jac2_scale(base, scalars + (unsigned long long)i * LIMBS, scalar_bits, scaled);
+    jac2_copy(scaled, out);
 }
 
 extern "C" __global__ void msm_fq_add_kernel(const u64 *__restrict__ left,
@@ -1716,5 +1788,40 @@ extern "C" __global__ void msm_shared_scalar_rows_glv_kernel(
         for (int limb = 0; limb < 3; limb++) {
             store4(out + ((unsigned long long)row * 3 + limb) * LIMBS, scratch + limb * LIMBS);
         }
+    }
+}
+
+extern "C" __global__ void msm_g1_axpy_kernel(u64 *buf, const u64 *__restrict__ scalar,
+                                              unsigned int a_offset, unsigned int b_offset,
+                                              unsigned int out_offset, unsigned int count,
+                                              unsigned int scalar_bits) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    const u64 *a = buf + ((unsigned long long)a_offset + i) * 3 * LIMBS;
+    const u64 *b = buf + ((unsigned long long)b_offset + i) * 3 * LIMBS;
+    u64 *out = buf + ((unsigned long long)out_offset + i) * 3 * LIMBS;
+
+    u64 term[3 * LIMBS], acc[3 * LIMBS], tmp[3 * LIMBS];
+    for (int limb = 0; limb < 3; limb++) {
+        load4(a + limb * LIMBS, term + limb * LIMBS);
+    }
+    jac_set_zero(acc);
+    if (!jac_is_zero(term)) {
+        for (int bit = (int)scalar_bits - 1; bit >= 0; bit--) {
+            jac_double(acc, tmp);
+            if (((scalar[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
+                jac_add(tmp, term, acc);
+            } else {
+                jac_copy(tmp, acc);
+            }
+        }
+    }
+    for (int limb = 0; limb < 3; limb++) {
+        load4(b + limb * LIMBS, term + limb * LIMBS);
+    }
+    jac_add(acc, term, tmp);
+    for (int limb = 0; limb < 3; limb++) {
+        store4(out + limb * LIMBS, tmp + limb * LIMBS);
     }
 }
