@@ -1080,8 +1080,51 @@ const RECURSION_GUEST_CODEGEN: [(&str, &str); 2] = [
     ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
 ];
 
+/// Content key of the verifier-guest build for the optional ELF cache
+/// (`RECURSION_GUEST_ELF_CACHE=<dir>`): the workspace tree and its uncommitted
+/// diff, every file under `examples/recursion` (the generated guest sources
+/// included), the Cargo git checkouts, the toolchain (`rustc -Vv`, `cargo -V`,
+/// the jolt CLI binary), this host binary (its features and build code), the
+/// guest build environment (RUSTFLAGS, the guest-codegen variables) and the
+/// target directory. `None` when any part cannot be read; the build then runs
+/// as usual. Tooling only: a hit reuses an ELF built from the same inputs.
+fn guest_elf_cache_key(target_dir: &str) -> Option<String> {
+    const SCRIPT: &str = r#"set -e
+cd "$1"
+{
+echo guest-elf-cache-v1
+git rev-parse 'HEAD^{tree}'
+git diff HEAD --binary | sha256sum
+find examples/recursion -type f ! -path '*/target*' -print0 | sort -z | xargs -0 sha256sum
+find "${CARGO_HOME:-$HOME/.cargo}/git/checkouts" -type f \( -name '*.rs' -o -name '*.toml' -o -name '*.json' \) -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
+rustc -Vv
+cargo -V
+sha256sum "$(command -v "${JOLT_PATH:-jolt}")"
+sha256sum "$2"
+env | grep -E '^(ZEROOS_GUEST_RUSTFLAGS|CARGO_PROFILE_|RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_|RECURSION_GUEST_CODEGEN|JOLT_FUNC_NAME)=' | sort || true
+echo "$3"
+} | sha256sum | cut -c1-64
+"#;
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let exe = std::env::current_exe().ok()?;
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(SCRIPT)
+        .arg("sh")
+        .arg(&repo)
+        .arg(&exe)
+        .arg(target_dir)
+        .output()
+        .ok()?;
+    let key = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (output.status.success() && key.len() == 64).then_some(key)
+}
+
 /// Builds the verifier guest, applying the default guest build settings to
-/// this build only (the inner guests keep the stock settings).
+/// this build only (the inner guests keep the stock settings). With
+/// `RECURSION_GUEST_ELF_CACHE=<dir>` set, an ELF already built for the same
+/// content key is reused instead of running the guest build, and a fresh build
+/// is stored under its key; unset, the build runs as before.
 fn build_recursion_guest(program: &mut Program, target_dir: &str) {
     let enabled = cfg!(feature = "guest-codegen")
         && !matches!(
@@ -1098,7 +1141,38 @@ fn build_recursion_guest(program: &mut Program, target_dir: &str) {
         }
     }
     info!("  recursion guest build settings: {applied:?}");
-    program.build(target_dir);
+    let cache = std::env::var_os("RECURSION_GUEST_ELF_CACHE").map(PathBuf::from);
+    let key = cache.as_ref().and_then(|_| guest_elf_cache_key(target_dir));
+    let cached = match (&cache, &key) {
+        (Some(dir), Some(key)) => Some(dir.join(format!("{key}.elf"))),
+        _ => None,
+    };
+    if cache.is_some() && key.is_none() {
+        info!("  guest ELF cache: no key (inputs unreadable); building");
+    }
+    let hit = cached.as_ref().filter(|path| path.is_file()).cloned();
+    match hit {
+        Some(path) => {
+            info!("  guest ELF cache hit {}", path.display());
+            program.elf = Some(path);
+        }
+        None => {
+            program.build(target_dir);
+            if let (Some(path), Some(built)) = (cached, program.elf.clone()) {
+                let tmp = path.with_extension("elf.tmp");
+                let stored = path
+                    .parent()
+                    .map(std::fs::create_dir_all)
+                    .transpose()
+                    .and_then(|_| std::fs::copy(&built, &tmp))
+                    .and_then(|_| std::fs::rename(&tmp, &path));
+                match stored {
+                    Ok(()) => info!("  guest ELF cache store {}", path.display()),
+                    Err(error) => info!("  guest ELF cache store failed: {error}"),
+                }
+            }
+        }
+    }
     for key in applied {
         std::env::remove_var(key);
     }
