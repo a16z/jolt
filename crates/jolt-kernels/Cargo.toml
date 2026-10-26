@@ -100,10 +100,15 @@ bincode.workspace = true
 jolt-host.workspace = true
 jolt-prover.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
+serde_json = { workspace = true, features = ["std"] }
 proptest.workspace = true
 rand.workspace = true
-serde_json = { workspace = true, features = ["std"] }
+strum.workspace = true
+rayon.workspace = true
 tracer = { workspace = true, features = ["test-utils", "std"] }
+ark-bn254.workspace = true
+ark-ec.workspace = true
+ark-ff.workspace = true
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true

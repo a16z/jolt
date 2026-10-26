@@ -4,14 +4,11 @@
     reason = "test scaffolding: device operations and fixture errors fail loudly"
 )]
 
-use std::ops::Range;
-use std::sync::Arc;
-
 use common::jolt_device::{MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
+use jolt_claims::protocols::jolt::PrecommittedClaimReduction;
 use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
-    PrecommittedClaimReduction,
 };
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, Ring};
@@ -28,13 +25,17 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_witness::__private::TraceRow;
-use jolt_witness::witnesses::{Extract, RamInc, RdInc, ToField, WitnessEnv};
+use jolt_witness::witnesses::RamInc;
+use jolt_witness::witnesses::RdInc;
+use jolt_witness::witnesses::{Extract, ToField, WitnessEnv};
 use jolt_witness::{
     ChunkVisitor, FixedBackend, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
     JoltWitnessPlane, PolynomialEncoding, ProgramSource, RowSource, Shape, TraceBackend,
     WitnessError,
 };
 use proptest::prelude::*;
+use std::ops::Range;
+use std::sync::Arc;
 use tracer::instruction::lw::LW;
 use tracer::instruction::sw::SW;
 use tracer::instruction::Cycle;
@@ -49,6 +50,207 @@ pub fn fr(seed: u64) -> Fr {
 
 pub fn arb_point(len: usize) -> impl Strategy<Value = Vec<Fr>> {
     proptest::collection::vec(any::<u64>().prop_map(fr), len)
+}
+
+pub struct FixedPlane {
+    columns: FixedBackend<Fr>,
+    program: JoltProgramPreprocessing,
+    label: &'static str,
+    log_t: Option<usize>,
+}
+
+impl FixedPlane {
+    pub fn with_log_t(
+        columns: FixedBackend<Fr>,
+        label: &'static str,
+        log_t: Option<usize>,
+    ) -> Self {
+        Self::with_program(
+            columns,
+            label,
+            log_t,
+            JoltProgramPreprocessing {
+                bytecode: BytecodePreprocessing::preprocess(
+                    vec![JoltInstructionRow {
+                        instruction_kind: JoltInstructionKind::ADD,
+                        address: 0x8000_0000,
+                        ..Default::default()
+                    }],
+                    0x8000_0000,
+                    RV64IMAC_JOLT,
+                )
+                .expect("bytecode fixture"),
+                ram: RAMPreprocessing::default(),
+                memory_layout: MemoryLayout::default(),
+                max_padded_trace_length: 1,
+            },
+        )
+    }
+
+    pub fn with_program(
+        columns: FixedBackend<Fr>,
+        label: &'static str,
+        log_t: Option<usize>,
+        program: JoltProgramPreprocessing,
+    ) -> Self {
+        Self {
+            columns,
+            program,
+            label,
+            log_t,
+        }
+    }
+}
+
+impl JoltWitnessOracle<Fr> for FixedPlane {
+    fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
+        self.columns.shape(id)
+    }
+
+    fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<Fr>, WitnessError> {
+        self.columns.oracle_table(id)
+    }
+
+    fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+        self.columns.committed_order()
+    }
+}
+
+impl RowSource for FixedPlane {
+    fn visit_chunks(
+        &self,
+        _range: Range<usize>,
+        _chunk_size: usize,
+        _visitor: &mut ChunkVisitor<'_>,
+    ) -> Result<(), WitnessError> {
+        Err(WitnessError::InvalidWitnessData {
+            label: self.label,
+            reason: "this relation's fixture serves oracle columns only, not trace rows".to_owned(),
+        })
+    }
+}
+
+impl ProgramSource for FixedPlane {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
+        &self.program
+    }
+}
+
+impl FixedPlane {
+    pub(crate) fn hot_indices(
+        &self,
+        id: JoltPolynomialId,
+    ) -> Result<Vec<Option<usize>>, WitnessError> {
+        let (log_k, cycles) = self.one_hot_dimensions(id)?;
+        let grid = JoltWitnessOracle::<Fr>::oracle_table(self, id)?;
+        let mut indices = vec![None; cycles];
+        for address in 0..(1usize << log_k) {
+            for cycle in 0..cycles {
+                if grid[address * cycles + cycle] != Fr::from_u64(0) {
+                    if indices[cycle].is_some() {
+                        return Err(WitnessError::InvalidWitnessData {
+                            label: "cuda test plane",
+                            reason: format!("cycle {cycle} of {id:?} has two hot addresses"),
+                        });
+                    }
+                    indices[cycle] = Some(address);
+                }
+            }
+        }
+        Ok(indices)
+    }
+}
+
+impl FixedPlane {
+    fn one_hot_dimensions(&self, id: JoltPolynomialId) -> Result<(usize, usize), WitnessError> {
+        let log_rows = self.columns.shape(id)?.log_rows;
+        let log_t = self.log_t.ok_or(WitnessError::InvalidWitnessData {
+            label: "cuda test plane",
+            reason: "fixture declared no cycle count for its one-hot columns".to_owned(),
+        })?;
+        let log_k = log_rows
+            .checked_sub(log_t)
+            .ok_or(WitnessError::InvalidWitnessData {
+                label: "cuda test plane",
+                reason: format!("{id:?} has fewer rows than the declared cycle count"),
+            })?;
+        Ok((log_k, 1usize << log_t))
+    }
+}
+
+pub struct RowPlane {
+    inner: FixedPlane,
+    rows: Vec<TraceRow>,
+}
+
+impl RowPlane {
+    pub fn new(
+        columns: FixedBackend<Fr>,
+        label: &'static str,
+        log_t: usize,
+        rows: Vec<TraceRow>,
+    ) -> Self {
+        Self {
+            inner: FixedPlane::with_log_t(columns, label, Some(log_t)),
+            rows,
+        }
+    }
+}
+
+impl JoltWitnessOracle<Fr> for RowPlane {
+    fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
+        self.inner.shape(id)
+    }
+
+    fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<Fr>, WitnessError> {
+        JoltWitnessOracle::<Fr>::oracle_table(&self.inner, id)
+    }
+
+    fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+        self.inner.committed_order()
+    }
+}
+
+impl ProgramSource for RowPlane {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
+        self.inner.program_preprocessing()
+    }
+}
+
+impl RowPlane {
+    pub(crate) fn hot_indices(
+        &self,
+        id: JoltPolynomialId,
+    ) -> Result<Vec<Option<usize>>, WitnessError> {
+        self.inner.hot_indices(id)
+    }
+}
+
+impl RowSource for RowPlane {
+    fn visit_chunks(
+        &self,
+        range: Range<usize>,
+        chunk_size: usize,
+        visitor: &mut ChunkVisitor<'_>,
+    ) -> Result<(), WitnessError> {
+        if range.end > self.rows.len() {
+            return Err(WitnessError::InvalidWitnessData {
+                label: "cuda row plane",
+                reason: format!(
+                    "requested cycles {range:?} exceed the {} fixture rows",
+                    self.rows.len()
+                ),
+            });
+        }
+        let env = WitnessEnv::new(self.inner.program_preprocessing());
+        let mut start = range.start;
+        while start < range.end {
+            let end = (start + chunk_size).min(range.end);
+            visitor(&self.rows[start..end], self.rows.get(end), &env)?;
+            start = end;
+        }
+        Ok(())
+    }
 }
 
 pub fn ram_read_cycle(address: u64, value: u64) -> Cycle {
@@ -92,6 +294,8 @@ pub struct RamCell {
 }
 
 pub fn ram_matrix_cells(log_t: usize, ram_k: usize) -> Vec<RamCell> {
+    use jolt_riscv::RamAccess;
+
     let layout = MemoryLayout::default();
     let cells: Vec<RamCell> = ram_trace(log_t, ram_k)
         .iter()
@@ -558,6 +762,28 @@ fn r1cs_bytecode() -> Vec<JoltInstructionRow> {
         .collect()
 }
 
+fn r1cs_fixture_operands(kind: JoltInstructionKind, slot: usize) -> NormalizedOperands {
+    let magnitude = 13 + 5 * slot as i128;
+    let imm = if slot.is_multiple_of(2) {
+        -magnitude
+    } else {
+        magnitude
+    };
+    let (rd, rs1, rs2) = match kind {
+        JoltInstructionKind::SD => (None, Some(2), Some(3)),
+        JoltInstructionKind::BEQ => (None, Some(2), Some(3)),
+        JoltInstructionKind::VirtualAssertEQ => (None, Some(2), Some(3)),
+        JoltInstructionKind::LD => (Some(1), Some(2), None),
+        JoltInstructionKind::ADDI
+        | JoltInstructionKind::VirtualMULI
+        | JoltInstructionKind::VirtualMovsign => (Some(1), Some(2), None),
+        JoltInstructionKind::LUI | JoltInstructionKind::JAL => (Some(1), None, None),
+        _ if kind == JoltInstruction::VirtualAdvice(VirtualAdvice(())) => (Some(1), None, None),
+        _ => (Some(1), Some(2), Some(3)),
+    };
+    NormalizedOperands { rd, rs1, rs2, imm }
+}
+
 const fn r1cs_fixture_sequence(slot: usize) -> Option<u16> {
     let kinds = 14;
     if slot + 4 < kinds {
@@ -667,207 +893,6 @@ pub fn with_r1cs_witness<R>(
         JoltVmWitnessInputs::new(&program, &preprocessing, trace),
     );
     body(&backend)
-}
-
-pub struct FixedPlane {
-    columns: FixedBackend<Fr>,
-    program: JoltProgramPreprocessing,
-    label: &'static str,
-    log_t: Option<usize>,
-}
-
-impl FixedPlane {
-    pub fn with_log_t(
-        columns: FixedBackend<Fr>,
-        label: &'static str,
-        log_t: Option<usize>,
-    ) -> Self {
-        Self::with_program(
-            columns,
-            label,
-            log_t,
-            JoltProgramPreprocessing {
-                bytecode: BytecodePreprocessing::preprocess(
-                    vec![JoltInstructionRow {
-                        instruction_kind: JoltInstructionKind::ADD,
-                        address: 0x8000_0000,
-                        ..Default::default()
-                    }],
-                    0x8000_0000,
-                    RV64IMAC_JOLT,
-                )
-                .expect("bytecode fixture"),
-                ram: RAMPreprocessing::default(),
-                memory_layout: MemoryLayout::default(),
-                max_padded_trace_length: 1,
-            },
-        )
-    }
-
-    pub fn with_program(
-        columns: FixedBackend<Fr>,
-        label: &'static str,
-        log_t: Option<usize>,
-        program: JoltProgramPreprocessing,
-    ) -> Self {
-        Self {
-            columns,
-            program,
-            label,
-            log_t,
-        }
-    }
-}
-
-impl JoltWitnessOracle<Fr> for FixedPlane {
-    fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
-        self.columns.shape(id)
-    }
-
-    fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<Fr>, WitnessError> {
-        self.columns.oracle_table(id)
-    }
-
-    fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
-        self.columns.committed_order()
-    }
-}
-
-impl RowSource for FixedPlane {
-    fn visit_chunks(
-        &self,
-        _range: Range<usize>,
-        _chunk_size: usize,
-        _visitor: &mut ChunkVisitor<'_>,
-    ) -> Result<(), WitnessError> {
-        Err(WitnessError::InvalidWitnessData {
-            label: self.label,
-            reason: "this relation's fixture serves oracle columns only, not trace rows".to_owned(),
-        })
-    }
-}
-
-impl ProgramSource for FixedPlane {
-    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
-        &self.program
-    }
-}
-
-impl FixedPlane {
-    pub(crate) fn hot_indices(
-        &self,
-        id: JoltPolynomialId,
-    ) -> Result<Vec<Option<usize>>, WitnessError> {
-        let (log_k, cycles) = self.one_hot_dimensions(id)?;
-        let grid = JoltWitnessOracle::<Fr>::oracle_table(self, id)?;
-        let mut indices = vec![None; cycles];
-        for address in 0..(1usize << log_k) {
-            for cycle in 0..cycles {
-                if grid[address * cycles + cycle] != Fr::from_u64(0) {
-                    if indices[cycle].is_some() {
-                        return Err(WitnessError::InvalidWitnessData {
-                            label: "cuda test plane",
-                            reason: format!("cycle {cycle} of {id:?} has two hot addresses"),
-                        });
-                    }
-                    indices[cycle] = Some(address);
-                }
-            }
-        }
-        Ok(indices)
-    }
-}
-
-impl FixedPlane {
-    fn one_hot_dimensions(&self, id: JoltPolynomialId) -> Result<(usize, usize), WitnessError> {
-        let log_rows = self.columns.shape(id)?.log_rows;
-        let log_t = self.log_t.ok_or(WitnessError::InvalidWitnessData {
-            label: "cuda test plane",
-            reason: "fixture declared no cycle count for its one-hot columns".to_owned(),
-        })?;
-        let log_k = log_rows
-            .checked_sub(log_t)
-            .ok_or(WitnessError::InvalidWitnessData {
-                label: "cuda test plane",
-                reason: format!("{id:?} has fewer rows than the declared cycle count"),
-            })?;
-        Ok((log_k, 1usize << log_t))
-    }
-}
-
-pub struct RowPlane {
-    inner: FixedPlane,
-    rows: Vec<TraceRow>,
-}
-
-impl RowPlane {
-    pub fn new(
-        columns: FixedBackend<Fr>,
-        label: &'static str,
-        log_t: usize,
-        rows: Vec<TraceRow>,
-    ) -> Self {
-        Self {
-            inner: FixedPlane::with_log_t(columns, label, Some(log_t)),
-            rows,
-        }
-    }
-}
-
-impl JoltWitnessOracle<Fr> for RowPlane {
-    fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
-        self.inner.shape(id)
-    }
-
-    fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<Fr>, WitnessError> {
-        JoltWitnessOracle::<Fr>::oracle_table(&self.inner, id)
-    }
-
-    fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
-        self.inner.committed_order()
-    }
-}
-
-impl ProgramSource for RowPlane {
-    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
-        self.inner.program_preprocessing()
-    }
-}
-
-impl RowPlane {
-    pub(crate) fn hot_indices(
-        &self,
-        id: JoltPolynomialId,
-    ) -> Result<Vec<Option<usize>>, WitnessError> {
-        self.inner.hot_indices(id)
-    }
-}
-
-impl RowSource for RowPlane {
-    fn visit_chunks(
-        &self,
-        range: Range<usize>,
-        chunk_size: usize,
-        visitor: &mut ChunkVisitor<'_>,
-    ) -> Result<(), WitnessError> {
-        if range.end > self.rows.len() {
-            return Err(WitnessError::InvalidWitnessData {
-                label: "cuda row plane",
-                reason: format!(
-                    "requested cycles {range:?} exceed the {} fixture rows",
-                    self.rows.len()
-                ),
-            });
-        }
-        let env = WitnessEnv::new(self.inner.program_preprocessing());
-        let mut start = range.start;
-        while start < range.end {
-            let end = (start + chunk_size).min(range.end);
-            visitor(&self.rows[start..end], self.rows.get(end), &env)?;
-            start = end;
-        }
-        Ok(())
-    }
 }
 
 pub const RAM_ROW_PATTERN: usize = 5;
@@ -1167,57 +1192,6 @@ pub fn advice_plane(advice_bytes: usize, seed: u64) -> AdviceFixture {
     }
 }
 
-pub fn precommitted_synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
-    (0..len)
-        .map(|index| {
-            fr(seed
-                ^ 0x2545_F491_4F6C_DD1D_u64
-                    .wrapping_mul(index as u64 + 1)
-                    .wrapping_add(3))
-        })
-        .collect()
-}
-
-pub fn precommitted_round_challenges(rounds: usize, seed: u64) -> Vec<Fr> {
-    (0..rounds)
-        .map(|round| {
-            fr(seed
-                ^ 0x27D4_EB2F_1656_67C5_u64
-                    .wrapping_mul(round as u64 + 1)
-                    .wrapping_add(11))
-        })
-        .collect()
-}
-
-pub fn precommitted_cycle_variables(reduction: &PrecommittedClaimReduction, seed: u64) -> Vec<Fr> {
-    let challenges = precommitted_round_challenges(reduction.cycle_phase_total_rounds(), seed);
-    reduction
-        .cycle_phase_variable_challenges(&challenges)
-        .expect("cycle-phase variable challenges")
-}
-
-fn r1cs_fixture_operands(kind: JoltInstructionKind, slot: usize) -> NormalizedOperands {
-    let magnitude = 13 + 5 * slot as i128;
-    let imm = if slot.is_multiple_of(2) {
-        -magnitude
-    } else {
-        magnitude
-    };
-    let (rd, rs1, rs2) = match kind {
-        JoltInstructionKind::SD => (None, Some(2), Some(3)),
-        JoltInstructionKind::BEQ => (None, Some(2), Some(3)),
-        JoltInstructionKind::VirtualAssertEQ => (None, Some(2), Some(3)),
-        JoltInstructionKind::LD => (Some(1), Some(2), None),
-        JoltInstructionKind::ADDI
-        | JoltInstructionKind::VirtualMULI
-        | JoltInstructionKind::VirtualMovsign => (Some(1), Some(2), None),
-        JoltInstructionKind::LUI | JoltInstructionKind::JAL => (Some(1), None, None),
-        _ if kind == JoltInstruction::VirtualAdvice(VirtualAdvice(())) => (Some(1), None, None),
-        _ => (Some(1), Some(2), Some(3)),
-    };
-    NormalizedOperands { rd, rs1, rs2, imm }
-}
-
 fn committed_bytecode(rows: usize) -> Vec<JoltInstructionRow> {
     let kinds = [
         JoltInstructionKind::XOR,
@@ -1292,4 +1266,33 @@ pub fn committed_program_plane(
         bytecode_len,
         image_words: words,
     }
+}
+
+pub fn precommitted_synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
+    (0..len)
+        .map(|index| {
+            fr(seed
+                ^ 0x2545_F491_4F6C_DD1D_u64
+                    .wrapping_mul(index as u64 + 1)
+                    .wrapping_add(3))
+        })
+        .collect()
+}
+
+pub fn precommitted_round_challenges(rounds: usize, seed: u64) -> Vec<Fr> {
+    (0..rounds)
+        .map(|round| {
+            fr(seed
+                ^ 0x27D4_EB2F_1656_67C5_u64
+                    .wrapping_mul(round as u64 + 1)
+                    .wrapping_add(11))
+        })
+        .collect()
+}
+
+pub fn precommitted_cycle_variables(reduction: &PrecommittedClaimReduction, seed: u64) -> Vec<Fr> {
+    let challenges = precommitted_round_challenges(reduction.cycle_phase_total_rounds(), seed);
+    reduction
+        .cycle_phase_variable_challenges(&challenges)
+        .expect("cycle-phase variable challenges")
 }
