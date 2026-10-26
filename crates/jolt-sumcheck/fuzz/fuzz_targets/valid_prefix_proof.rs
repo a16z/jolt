@@ -28,7 +28,7 @@ use jolt_sumcheck::{
     round_pow_bits, BooleanHypercube, RoundMessage, SumcheckClaim, SumcheckVerifier,
 };
 use jolt_transcript::{
-    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript, Transcript,
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript,
 };
 use libfuzzer_sys::fuzz_target;
 
