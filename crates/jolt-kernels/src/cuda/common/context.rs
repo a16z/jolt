@@ -181,27 +181,16 @@ pub struct CudaKernelContext {
     pairing_prepare_g2: CudaFunction,
     pairing_miller_prepared: CudaFunction,
     pairing_fq12_product: CudaFunction,
-    #[cfg(test)]
     pub(super) fq6_mul_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) fq6_mul_by_01_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) fq6_mul_by_fq2_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) fq6_mul_by_nonresidue_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) fq12_mul_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) fq12_sqr_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) fq12_mul_by_034_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) ell_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) g2_double_step_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) g2_add_step_probe: CudaFunction,
-    #[cfg(test)]
     pub(super) g2_mul_by_char_probe: CudaFunction,
     msm_window_accumulate: CudaFunction,
     msm_block_embed: CudaFunction,
@@ -409,27 +398,16 @@ impl CudaKernelContext {
             pairing_prepare_g2: module.load_function("pairing_prepare_g2_kernel")?,
             pairing_miller_prepared: module.load_function("pairing_miller_prepared_kernel")?,
             pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
-            #[cfg(test)]
             fq6_mul_probe: module.load_function("fq6_mul_probe")?,
-            #[cfg(test)]
             fq6_mul_by_01_probe: module.load_function("fq6_mul_by_01_probe")?,
-            #[cfg(test)]
             fq6_mul_by_fq2_probe: module.load_function("fq6_mul_by_fq2_probe")?,
-            #[cfg(test)]
             fq6_mul_by_nonresidue_probe: module.load_function("fq6_mul_by_nonresidue_probe")?,
-            #[cfg(test)]
             fq12_mul_probe: module.load_function("fq12_mul_probe")?,
-            #[cfg(test)]
             fq12_sqr_probe: module.load_function("fq12_sqr_probe")?,
-            #[cfg(test)]
             fq12_mul_by_034_probe: module.load_function("fq12_mul_by_034_probe")?,
-            #[cfg(test)]
             ell_probe: module.load_function("ell_probe")?,
-            #[cfg(test)]
             g2_double_step_probe: module.load_function("g2_double_step_probe")?,
-            #[cfg(test)]
             g2_add_step_probe: module.load_function("g2_add_step_probe")?,
-            #[cfg(test)]
             g2_mul_by_char_probe: module.load_function("g2_mul_by_char_probe")?,
             msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
             msm_block_embed: module.load_function("msm_block_embed_kernel")?,

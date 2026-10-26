@@ -14,10 +14,8 @@ pub const FQ12_LIMBS: usize = 12 * FQ_LIMBS;
 
 pub const FQ2_LIMBS: usize = 2 * FQ_LIMBS;
 
-#[cfg(test)]
 pub const FQ6_LIMBS: usize = 6 * FQ_LIMBS;
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TowerProbe {
     Fq6Mul,
@@ -30,7 +28,6 @@ pub enum TowerProbe {
     Ell,
 }
 
-#[cfg(test)]
 impl TowerProbe {
     const fn widths(self) -> (usize, usize) {
         match self {
@@ -46,7 +43,6 @@ impl TowerProbe {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum G2StepProbe {
     DoubleStep,
@@ -54,7 +50,6 @@ pub enum G2StepProbe {
     MulByChar,
 }
 
-#[cfg(test)]
 impl G2StepProbe {
     const fn widths(self) -> (usize, usize) {
         match self {
@@ -170,7 +165,6 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
     pub fn tower_probe(&self, op: TowerProbe, input: &[u64]) -> Result<Vec<u64>, CudaError> {
         let (in_width, out_width) = op.widths();
         if in_width == 0 || !input.len().is_multiple_of(in_width) {
@@ -210,7 +204,6 @@ impl CudaKernelContext {
         self.download_u64(&device_out)
     }
 
-    #[cfg(test)]
     pub fn g2_step_probe(&self, op: G2StepProbe, input: &[u64]) -> Result<Vec<u64>, CudaError> {
         let (in_width, out_width) = op.widths();
         if in_width == 0 || !input.len().is_multiple_of(in_width) {
@@ -687,81 +680,6 @@ mod tests {
         cases
     }
 
-    fn fq2_words(value: &Fq2) -> Vec<u64> {
-        let mut out = Vec::with_capacity(FQ2_LIMBS);
-        out.extend_from_slice(&value.c0.0 .0);
-        out.extend_from_slice(&value.c1.0 .0);
-        out
-    }
-
-    fn fq6_words(value: &Fq6) -> Vec<u64> {
-        let mut out = Vec::with_capacity(FQ6_LIMBS);
-        for part in [&value.c0, &value.c1, &value.c2] {
-            out.extend_from_slice(&fq2_words(part));
-        }
-        out
-    }
-
-    fn fq12_words(value: &Fq12) -> Vec<u64> {
-        let mut out = Vec::with_capacity(FQ12_LIMBS);
-        out.extend_from_slice(&fq6_words(&value.c0));
-        out.extend_from_slice(&fq6_words(&value.c1));
-        out
-    }
-
-    fn fq6_of(words: &[u64]) -> Fq6 {
-        Fq6::new(
-            fq2(&words[..FQ2_LIMBS]),
-            fq2(&words[FQ2_LIMBS..2 * FQ2_LIMBS]),
-            fq2(&words[2 * FQ2_LIMBS..]),
-        )
-    }
-
-    fn tower_fq2_samples(rng: &mut ChaCha20Rng) -> Vec<Fq2> {
-        let mut samples = vec![
-            Fq2::ZERO,
-            Fq2::ONE,
-            -Fq2::ONE,
-            Fq2::new(Fq::ZERO, Fq::ONE),
-            Fq2::new(-Fq::ONE, Fq::ZERO),
-            Fq2::new(-Fq::ONE, -Fq::ONE),
-        ];
-        samples.extend((0..6).map(|_| Fq2::rand(rng)));
-        samples
-    }
-
-    fn tower_fq6_samples(rng: &mut ChaCha20Rng) -> Vec<Fq6> {
-        let parts = tower_fq2_samples(rng);
-        (0..parts.len())
-            .map(|index| {
-                Fq6::new(
-                    parts[index],
-                    parts[(index + 1) % parts.len()],
-                    parts[(index + 2) % parts.len()],
-                )
-            })
-            .collect()
-    }
-
-    fn tower_fq12_samples(rng: &mut ChaCha20Rng) -> Vec<Fq12> {
-        let parts = tower_fq6_samples(rng);
-        (0..parts.len())
-            .map(|index| Fq12::new(parts[index], parts[(index + 1) % parts.len()]))
-            .collect()
-    }
-
-    fn probe_fq6(op: TowerProbe, input: &[u64]) -> Vec<Fq6> {
-        let context = shared_context().expect("a CUDA device");
-        let got = context.tower_probe(op, input).expect("a tower probe");
-        got.chunks_exact(FQ6_LIMBS).map(fq6_of).collect()
-    }
-
-    fn probe_fq12(op: TowerProbe, input: &[u64]) -> Vec<Fq12> {
-        let context = shared_context().expect("a CUDA device");
-        let got = context.tower_probe(op, input).expect("a tower probe");
-        got.chunks_exact(FQ12_LIMBS).map(fq12).collect()
-    }
-
     #[test]
     fn fq12_product_segments_match_arkworks_across_reduction_levels() {
         let Some(context) = shared_context() else {
@@ -1039,6 +957,81 @@ mod tests {
                 expected
             );
         }
+    }
+
+    fn fq2_words(value: &Fq2) -> Vec<u64> {
+        let mut out = Vec::with_capacity(FQ2_LIMBS);
+        out.extend_from_slice(&value.c0.0 .0);
+        out.extend_from_slice(&value.c1.0 .0);
+        out
+    }
+
+    fn fq6_words(value: &Fq6) -> Vec<u64> {
+        let mut out = Vec::with_capacity(FQ6_LIMBS);
+        for part in [&value.c0, &value.c1, &value.c2] {
+            out.extend_from_slice(&fq2_words(part));
+        }
+        out
+    }
+
+    fn fq12_words(value: &Fq12) -> Vec<u64> {
+        let mut out = Vec::with_capacity(FQ12_LIMBS);
+        out.extend_from_slice(&fq6_words(&value.c0));
+        out.extend_from_slice(&fq6_words(&value.c1));
+        out
+    }
+
+    fn fq6_of(words: &[u64]) -> Fq6 {
+        Fq6::new(
+            fq2(&words[..FQ2_LIMBS]),
+            fq2(&words[FQ2_LIMBS..2 * FQ2_LIMBS]),
+            fq2(&words[2 * FQ2_LIMBS..]),
+        )
+    }
+
+    fn tower_fq2_samples(rng: &mut ChaCha20Rng) -> Vec<Fq2> {
+        let mut samples = vec![
+            Fq2::ZERO,
+            Fq2::ONE,
+            -Fq2::ONE,
+            Fq2::new(Fq::ZERO, Fq::ONE),
+            Fq2::new(-Fq::ONE, Fq::ZERO),
+            Fq2::new(-Fq::ONE, -Fq::ONE),
+        ];
+        samples.extend((0..6).map(|_| Fq2::rand(rng)));
+        samples
+    }
+
+    fn tower_fq6_samples(rng: &mut ChaCha20Rng) -> Vec<Fq6> {
+        let parts = tower_fq2_samples(rng);
+        (0..parts.len())
+            .map(|index| {
+                Fq6::new(
+                    parts[index],
+                    parts[(index + 1) % parts.len()],
+                    parts[(index + 2) % parts.len()],
+                )
+            })
+            .collect()
+    }
+
+    fn tower_fq12_samples(rng: &mut ChaCha20Rng) -> Vec<Fq12> {
+        let parts = tower_fq6_samples(rng);
+        (0..parts.len())
+            .map(|index| Fq12::new(parts[index], parts[(index + 1) % parts.len()]))
+            .collect()
+    }
+
+    fn probe_fq6(op: TowerProbe, input: &[u64]) -> Vec<Fq6> {
+        let context = shared_context().expect("a CUDA device");
+        let got = context.tower_probe(op, input).expect("a tower probe");
+        got.chunks_exact(FQ6_LIMBS).map(fq6_of).collect()
+    }
+
+    fn probe_fq12(op: TowerProbe, input: &[u64]) -> Vec<Fq12> {
+        let context = shared_context().expect("a CUDA device");
+        let got = context.tower_probe(op, input).expect("a tower probe");
+        got.chunks_exact(FQ12_LIMBS).map(fq12).collect()
     }
 
     #[test]
