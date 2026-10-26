@@ -154,8 +154,9 @@
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+use jolt_witness::JoltWitnessPlane;
 
-use crate::{JoltBackend, KernelError};
+use crate::{JoltBackend, KernelError, ProofSession};
 
 mod advice_claim_reduction;
 mod booleanity;
@@ -283,6 +284,36 @@ where
         }
         backend
     }
+}
+
+/// Preload packed trace windows and their atom columns into a proof session.
+///
+/// Unlike optimized's host-row access, CUDA uploads each device's window,
+/// including any successor row needed at its boundary. All uploads and
+/// extraction kernels finish before this returns successfully. Subsequent
+/// CUDA relations reuse the residency with the same session and witness.
+///
+/// The caller must supply a representable `1usize << log_t` cycle count
+/// covered by the witness.
+pub fn warm_shared_witness<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+) -> Result<(), KernelError<F>> {
+    let cycles = 1usize << log_t;
+    let _ = require_context::<F>()?;
+    for (ordinal, window) in self::common::devices::witness_windows(cycles)
+        .iter()
+        .enumerate()
+    {
+        let _device = enter_device(ordinal);
+        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "a witness warm-up window names an absent device",
+        })?;
+        let _ = self::witness::session_window_residency(device, session, witness, cycles, window)?;
+        device.stream().synchronize().map_err(CudaError::from)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

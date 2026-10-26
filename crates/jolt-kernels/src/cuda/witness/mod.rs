@@ -245,3 +245,180 @@ pub(crate) fn session_atom_columns_window<F: JoltField>(
     let _ = resident.atoms.set(Arc::clone(&columns));
     Ok(columns)
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test module: device operations and fixture errors fail loudly"
+)]
+mod tests {
+    use std::sync::Arc;
+
+    use jolt_claims::protocols::jolt::JoltOneHotConfig;
+    use jolt_field::Fr;
+    use jolt_witness::backend::cuda::FLAG_BIT_NEXT_IS_NOOP;
+    use jolt_witness::witnesses::{NextIsNoop, RamInc, RdInc};
+    use jolt_witness::{FixedBackend, WitnessBundle, WitnessError};
+
+    use super::{session_window_residency, witness_identity, ResidentTraces};
+    use crate::cuda::common::context::current_device;
+    use crate::cuda::common::devices::witness_windows;
+    use crate::cuda::common::testing::{with_r1cs_witness, FixedPlane};
+    use crate::cuda::{
+        context_for, device_count, enter_device, shared_context, warm_shared_witness,
+    };
+    use crate::optimized::support::collect_rows;
+    use crate::{KernelError, ProofSession};
+
+    const ONE_HOT: JoltOneHotConfig = JoltOneHotConfig {
+        log_k_chunk: 8,
+        lookups_ra_virtual_log_k_chunk: 32,
+    };
+    const RAM_K: usize = 1 << 10;
+
+    #[derive(Clone, Copy, WitnessBundle)]
+    struct WarmupRow {
+        rd_inc: RdInc,
+        ram_inc: RamInc,
+        next_is_noop: NextIsNoop,
+    }
+
+    #[test]
+    fn warmup_populates_and_reuses_windows_matching_host_rows() {
+        if shared_context().is_none() {
+            return;
+        }
+        let selected = device_count() - 1;
+        let _device = enter_device(selected);
+        for log_t in [0, 6, 13] {
+            let cycles = 1usize << log_t;
+            let windows = witness_windows(cycles);
+            with_r1cs_witness(log_t, RAM_K, ONE_HOT, 23, |witness| {
+                let rows = collect_rows::<WarmupRow>(witness, cycles).expect("host rows");
+                let source = witness_identity(witness);
+                let mut session = ProofSession::default();
+                warm_shared_witness::<Fr>(&mut session, witness, log_t).expect("warm-up");
+                assert_eq!(current_device(), selected);
+                let residents = session.state::<ResidentTraces>().expect("trace cache");
+                assert_eq!(residents.devices.len(), windows.len());
+                let mut allocations = Vec::new();
+                for (ordinal, window) in windows.iter().enumerate() {
+                    let context = context_for(ordinal).expect("window device");
+                    let resident_window = window.residency(cycles);
+                    assert_eq!(residents.devices[ordinal].len(), 1);
+                    let resident = residents
+                        .get(ordinal, source, &resident_window)
+                        .expect("warmed window");
+                    assert_eq!(resident.trace.cycles(), resident_window.len);
+                    let atoms = resident.atoms.get().expect("eager atom extraction");
+                    let host = &rows[resident_window.start..resident_window.end()];
+                    assert_eq!(
+                        context.download_u64(&atoms.rd_inc).expect("rd increments"),
+                        host.iter()
+                            .flat_map(|row| [row.rd_inc.0 as u64, (row.rd_inc.0 >> 64) as u64])
+                            .collect::<Vec<_>>(),
+                    );
+                    assert_eq!(
+                        context
+                            .download_u64(&atoms.ram_inc)
+                            .expect("RAM increments"),
+                        host.iter()
+                            .flat_map(|row| [row.ram_inc.0 as u64, (row.ram_inc.0 >> 64) as u64])
+                            .collect::<Vec<_>>(),
+                    );
+                    let flags = context.download_u32(&atoms.flags).expect("flags");
+                    assert_eq!(flags.len(), resident_window.len);
+                    for (flag, row) in flags[..window.len].iter().zip(host) {
+                        assert_eq!(flag & (1 << FLAG_BIT_NEXT_IS_NOOP) != 0, row.next_is_noop.0,);
+                    }
+                    allocations.push((Arc::clone(&resident.trace), Arc::clone(atoms)));
+                }
+                warm_shared_witness::<Fr>(&mut session, witness, log_t).expect("repeat warm-up");
+                assert_eq!(current_device(), selected);
+                for (ordinal, (window, (trace, atoms))) in
+                    windows.iter().zip(allocations).enumerate()
+                {
+                    let context = context_for(ordinal).expect("window device");
+                    let (served_trace, served_atoms) = session_window_residency::<Fr>(
+                        context,
+                        &mut session,
+                        witness,
+                        cycles,
+                        window,
+                    )
+                    .expect("relation residency");
+                    assert!(Arc::ptr_eq(&trace, &served_trace));
+                    assert!(Arc::ptr_eq(&atoms, &served_atoms));
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn warmup_is_scoped_to_the_session_and_witness() {
+        if shared_context().is_none() {
+            return;
+        }
+        let log_t = 6;
+        let cycles = 1usize << log_t;
+        let window = &witness_windows(cycles)[0];
+        let context = context_for(0).expect("first device");
+        with_r1cs_witness(log_t, RAM_K, ONE_HOT, 23, |first| {
+            let mut session = ProofSession::default();
+            warm_shared_witness::<Fr>(&mut session, first, log_t).expect("first warm-up");
+            let (first_trace, first_atoms) =
+                session_window_residency::<Fr>(context, &mut session, first, cycles, window)
+                    .expect("first residency");
+
+            let mut other_session = ProofSession::default();
+            warm_shared_witness::<Fr>(&mut other_session, first, log_t)
+                .expect("other session warm-up");
+            let (other_trace, other_atoms) =
+                session_window_residency::<Fr>(context, &mut other_session, first, cycles, window)
+                    .expect("other session residency");
+            assert!(!Arc::ptr_eq(&first_trace, &other_trace));
+            assert!(!Arc::ptr_eq(&first_atoms, &other_atoms));
+
+            with_r1cs_witness(log_t, RAM_K, ONE_HOT, 47, |second| {
+                warm_shared_witness::<Fr>(&mut session, second, log_t)
+                    .expect("second witness warm-up");
+                let residents = session.state::<ResidentTraces>().expect("trace cache");
+                assert!(residents.get(0, witness_identity(first), window).is_none());
+                assert_eq!(residents.devices[0].len(), 1);
+                let resident = residents
+                    .get(0, witness_identity(second), window)
+                    .expect("second witness residency");
+                assert!(!Arc::ptr_eq(&first_trace, &resident.trace));
+                assert!(!Arc::ptr_eq(
+                    &first_atoms,
+                    resident.atoms.get().expect("second witness atoms"),
+                ));
+            });
+        });
+    }
+
+    #[test]
+    fn warmup_propagates_row_errors_and_restores_the_selected_device() {
+        if shared_context().is_none() {
+            return;
+        }
+        let selected = device_count() - 1;
+        let _device = enter_device(selected);
+        let witness = FixedPlane::with_log_t(FixedBackend::default(), "warm-up row error", Some(6));
+        let mut session = ProofSession::default();
+        assert!(matches!(
+            warm_shared_witness::<Fr>(&mut session, &witness, 6),
+            Err(KernelError::Witness(WitnessError::InvalidWitnessData {
+                label: "warm-up row error",
+                ..
+            })),
+        ));
+        assert_eq!(current_device(), selected);
+        assert!(session.state::<ResidentTraces>().is_none());
+        with_r1cs_witness(6, RAM_K, ONE_HOT, 23, |witness| {
+            warm_shared_witness::<Fr>(&mut session, witness, 6).expect("retry with rows");
+            assert_eq!(current_device(), selected);
+            assert!(session.state::<ResidentTraces>().is_some());
+        });
+    }
+}
