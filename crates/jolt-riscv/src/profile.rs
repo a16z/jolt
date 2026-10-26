@@ -297,6 +297,77 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::NormalizedOperands;
 
+    const RV64I: JoltInstructionProfile = JoltInstructionProfile {
+        source_extensions: &[SourceExtension::Rv64I],
+        inline_extensions: &[],
+    };
+
+    #[test]
+    fn rv64i_source_legality_matches_base_isa() {
+        let base = [
+            SourceInstructionKind::LUI,
+            SourceInstructionKind::AUIPC,
+            SourceInstructionKind::JAL,
+            SourceInstructionKind::JALR,
+            SourceInstructionKind::BEQ,
+            SourceInstructionKind::BNE,
+            SourceInstructionKind::BLT,
+            SourceInstructionKind::BGE,
+            SourceInstructionKind::BLTU,
+            SourceInstructionKind::BGEU,
+            SourceInstructionKind::LB,
+            SourceInstructionKind::LH,
+            SourceInstructionKind::LW,
+            SourceInstructionKind::LBU,
+            SourceInstructionKind::LHU,
+            SourceInstructionKind::SB,
+            SourceInstructionKind::SH,
+            SourceInstructionKind::SW,
+            SourceInstructionKind::ADDI,
+            SourceInstructionKind::SLTI,
+            SourceInstructionKind::SLTIU,
+            SourceInstructionKind::XORI,
+            SourceInstructionKind::ORI,
+            SourceInstructionKind::ANDI,
+            SourceInstructionKind::SLLI,
+            SourceInstructionKind::SRLI,
+            SourceInstructionKind::SRAI,
+            SourceInstructionKind::ADD,
+            SourceInstructionKind::SUB,
+            SourceInstructionKind::SLL,
+            SourceInstructionKind::SLT,
+            SourceInstructionKind::SLTU,
+            SourceInstructionKind::XOR,
+            SourceInstructionKind::SRL,
+            SourceInstructionKind::SRA,
+            SourceInstructionKind::OR,
+            SourceInstructionKind::AND,
+            SourceInstructionKind::FENCE,
+            SourceInstructionKind::ECALL,
+            SourceInstructionKind::EBREAK,
+            SourceInstructionKind::LWU,
+            SourceInstructionKind::LD,
+            SourceInstructionKind::SD,
+            SourceInstructionKind::ADDIW,
+            SourceInstructionKind::SLLIW,
+            SourceInstructionKind::SRLIW,
+            SourceInstructionKind::SRAIW,
+            SourceInstructionKind::ADDW,
+            SourceInstructionKind::SUBW,
+            SourceInstructionKind::SLLW,
+            SourceInstructionKind::SRLW,
+            SourceInstructionKind::SRAW,
+        ];
+        assert_eq!(base.len(), 52);
+        for kind in SourceInstructionKind::ALL {
+            assert_eq!(
+                RV64I.supports_source(*kind),
+                base.contains(kind) || source_extension(*kind).is_none(),
+                "{kind:?}"
+            );
+        }
+    }
+
     #[test]
     fn default_profile_matches_current_source_shape() {
         assert!(RV64IMAC_JOLT.supports_source(SourceInstructionKind::ADD));

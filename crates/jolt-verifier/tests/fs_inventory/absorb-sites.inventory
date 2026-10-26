@@ -153,6 +153,7 @@ jolt-transcript::legacy.rs::append_length_prefixed::append#2::transcript.append(
 jolt-transcript::poseidon.rs::PoseidonSponge::absorb::absorb_fr_pair#0::self.absorb_fr_pair(len_fr,Fr::zero())
 jolt-transcript::poseidon.rs::PoseidonSponge::absorb::absorb_fr_pair#1::self.absorb_fr_pair(a,b)
 jolt-transcript::poseidon.rs::PoseidonSponge::init::absorb#0::sponge.absorb(session_id)
+jolt-transcript::pow.rs::MessageSearch<H>::probe::absorb#0::sponge.absorb(core::slice::from_ref(byte))
 jolt-verifier::stages/stage4/ram_val_check.rs::RamValCheck<F>::draw_challenges::append_ram_val_check_gamma_domain_separator#0::append_ram_val_check_gamma_domain_separator(transcript)
 jolt-verifier::stages/stage4/ram_val_check.rs::append_ram_val_check_gamma_domain_separator::append#0::transcript.append(&LabelWithCount(b"ram_val_check_gamma",0))
 jolt-verifier::stages/stage4/ram_val_check.rs::append_ram_val_check_gamma_domain_separator::append_bytes#1::transcript.append_bytes(&[])
