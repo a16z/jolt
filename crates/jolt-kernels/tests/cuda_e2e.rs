@@ -14,6 +14,7 @@
 )]
 mod support;
 
+use cudarc::driver::CudaContext;
 use dory::stages::stage0::TrustedAdviceCommitment;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::{Bn254G1, Pedersen};
@@ -25,7 +26,7 @@ use jolt_field::Ring;
 use jolt_inlines_keccak256 as _;
 #[cfg(not(feature = "field-inline"))]
 use jolt_inlines_sha2 as _;
-use jolt_kernels::cuda::CudaDoryScheme;
+use jolt_kernels::cuda::{device_available, device_count, CudaDoryScheme, DEVICE_COUNT_VARIABLE};
 use jolt_kernels::JoltBackend;
 use jolt_prover::{
     dory, CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
@@ -35,6 +36,8 @@ use jolt_transcript::LegacyBlake2bTranscript;
 #[cfg(feature = "zk")]
 use jolt_verifier::proof::JoltProofClaims;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+#[cfg(not(feature = "field-inline"))]
+use serde::Serialize;
 use support::GuestCase;
 
 fn prove_guest(
@@ -44,6 +47,22 @@ fn prove_guest(
     committed: bool,
     order: TracePolynomialOrder,
 ) {
+    if CudaContext::new(0).is_err() {
+        return;
+    }
+    assert!(
+        device_available(),
+        "CUDA kernels must load when a device is present"
+    );
+    if let Ok(requested) = std::env::var(DEVICE_COUNT_VARIABLE) {
+        assert_eq!(
+            device_count(),
+            requested
+                .parse::<usize>()
+                .expect("requested CUDA device count"),
+            "every requested CUDA device must be usable",
+        );
+    }
     let prepared = support::prepare(&case);
     let mut config = ProverConfig::derive_from_dimensions::<Fr>(
         prepared.trace.dimensions,
@@ -194,6 +213,38 @@ fn run_with_order(
     prove_guest(&JoltBackend::cuda(), case, address_first, committed, order);
 }
 
+#[cfg(not(feature = "zk"))]
+#[test]
+fn reused_registry_isolates_witness_sessions() {
+    let backend = JoltBackend::cuda();
+    prove_guest(
+        &backend,
+        muldiv_case(),
+        false,
+        false,
+        TracePolynomialOrder::CycleMajor,
+    );
+    let different_input = GuestCase {
+        inputs: postcard::to_stdvec(&[18u32, 2, 3]).expect("inputs"),
+        expected_output: Some(postcard::to_stdvec(&12u32).expect("output")),
+        ..GuestCase::new("muldiv-guest")
+    };
+    prove_guest(
+        &backend,
+        different_input,
+        true,
+        false,
+        TracePolynomialOrder::CycleMajor,
+    );
+    prove_guest(
+        &backend,
+        muldiv_case(),
+        false,
+        false,
+        TracePolynomialOrder::CycleMajor,
+    );
+}
+
 #[test]
 fn muldiv_cycle_first() {
     run(muldiv_case(), false, false);
@@ -258,6 +309,156 @@ fn untrusted_advice_only() {
         GuestCase {
             untrusted_advice: postcard::to_stdvec(&5u64).expect("untrusted advice"),
             ..muldiv_case()
+        },
+        false,
+        false,
+    );
+}
+
+#[cfg(not(feature = "field-inline"))]
+fn encode<T: Serialize>(value: &T) -> Vec<u8> {
+    postcard::to_stdvec(value).expect("encode guest input/output")
+}
+
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn fibonacci() {
+    run(
+        GuestCase {
+            inputs: encode(&100u32),
+            expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
+            ..GuestCase::new("fibonacci-guest")
+        },
+        true,
+        false,
+    );
+}
+
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn memory_ops() {
+    run(
+        GuestCase {
+            expected_output: Some(encode(&(0x12i32, 0u32, 0x3456i32, 0u32))),
+            ..GuestCase::new("memory-ops-guest")
+        },
+        false,
+        false,
+    );
+}
+
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn sha2() {
+    use sha2::{Digest, Sha256};
+    let message: Vec<u8> = (0..127u8).collect();
+    let digest: [u8; 32] = Sha256::digest(&message).into();
+    run(
+        GuestCase {
+            inputs: encode(&message),
+            expected_output: Some(encode(&digest)),
+            ..GuestCase::new("sha2-guest")
+        },
+        true,
+        false,
+    );
+}
+
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn sha3() {
+    use sha3::{Digest, Keccak256};
+    let message: Vec<u8> = (0..300).map(|i| i as u8).collect();
+    let digest: [u8; 32] = Keccak256::digest(&message).into();
+    run(
+        GuestCase {
+            func: Some("sha3"),
+            inputs: encode(&message),
+            expected_output: Some(encode(&digest)),
+            ..GuestCase::new("sha3-guest")
+        },
+        false,
+        false,
+    );
+}
+
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn sha3_aligned() {
+    use sha3::{Digest, Keccak256};
+    let mut blocks = [[0u64; 17]; 2];
+    for (i, lane) in blocks.iter_mut().flatten().enumerate() {
+        *lane = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    let bytes: Vec<_> = blocks
+        .iter()
+        .flatten()
+        .flat_map(|lane| lane.to_le_bytes())
+        .collect();
+    let digest: [u8; 32] = Keccak256::digest(&bytes).into();
+    run(
+        GuestCase {
+            func: Some("sha3_aligned"),
+            inputs: encode(&blocks),
+            expected_output: Some(encode(&digest)),
+            ..GuestCase::new("sha3-guest")
+        },
+        true,
+        false,
+    );
+}
+
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn btreemap() {
+    run(
+        GuestCase {
+            stack_size: Some(10_000),
+            inputs: encode(&50u32),
+            expected_output: Some(encode(&935u128)),
+            ..GuestCase::new("btreemap-guest")
+        },
+        true,
+        false,
+    );
+}
+
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn stdlib() {
+    run(
+        GuestCase {
+            func: Some("string_concat"),
+            std: true,
+            stack_size: Some(1 << 20),
+            inputs: encode(&16i32),
+            expected_output: Some(encode(&(0..16).map(|i| i.to_string()).collect::<String>())),
+            ..GuestCase::new("stdlib-guest")
+        },
+        false,
+        false,
+    );
+}
+
+#[cfg(feature = "field-inline")]
+#[test]
+fn field_ops() {
+    run(support::field_inline::field_ops(), true, false);
+}
+
+#[cfg(feature = "field-inline")]
+#[test]
+fn field_limbs() {
+    use jolt_field::Ring;
+    use jolt_host::field_inline::canonical_limbs;
+    let p_minus_one =
+        canonical_limbs::<Fr, 6>(Fr::from_u64(0) - Fr::from_u64(1)).expect("six limbs");
+    run(
+        GuestCase {
+            inputs: postcard::to_stdvec(&(Some(p_minus_one), Some(6u8))).expect("limbs input"),
+            expected_output: Some(postcard::to_stdvec(&p_minus_one).expect("limbs output")),
+            field_inline_active: true,
+            ..GuestCase::new("field-limbs-guest")
         },
         false,
         false,
