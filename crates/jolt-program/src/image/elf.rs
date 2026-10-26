@@ -157,9 +157,9 @@ fn decode_text_section(
 )]
 mod tests {
     use super::{decode_elf, merge_ranges};
-    use crate::ProgramError;
+    use crate::{ProgramError, RV64I};
     use common::constants::RAM_START_ADDRESS;
-    use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT};
+    use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT, RV64IM_JOLT};
 
     const SHSTRTAB: &[u8] = b"\0.text\0.data\0.shstrtab\0";
     const TEXT_NAME: u32 = 1;
@@ -472,5 +472,47 @@ mod tests {
         assert!(image.instructions.is_empty());
         assert!(image.memory_init.is_empty());
         assert_eq!(image.program_end, RAM_START_ADDRESS);
+    }
+
+    #[test]
+    fn decode_elf_rejects_compressed_instructions_without_rv64c() {
+        let c_addi_x1_1 = 0x0085u16;
+        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &c_addi_x1_1.to_le_bytes())]);
+        for profile in [RV64I, RV64IM_JOLT] {
+            assert!(matches!(
+                decode_elf(&elf, profile),
+                Err(ProgramError::IllegalCompressedInstruction { address }) if address == RAM_START_ADDRESS
+            ));
+        }
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("compressed profile accepts c.addi");
+        assert_eq!(image.instructions.len(), 1);
+        let instruction = &image.instructions[0];
+        assert_eq!(instruction.kind(), SourceInstructionKind::ADDI);
+        assert_eq!(instruction.row().address, RAM_START_ADDRESS as usize);
+        assert!(instruction.row().is_compressed);
+        assert_eq!(instruction.row().operands.rd, Some(1));
+        assert_eq!(instruction.row().operands.rs1, Some(1));
+        assert_eq!(instruction.row().operands.imm, 1);
+    }
+
+    #[test]
+    fn decode_elf_checks_alignment_only_without_rv64c() {
+        let nop = 0x0000_0013u32;
+        let address = RAM_START_ADDRESS + 2;
+        let elf = build_elf64(&[text_section(address, &nop.to_le_bytes())]);
+        for profile in [RV64I, RV64IM_JOLT] {
+            assert!(matches!(
+                decode_elf(&elf, profile),
+                Err(ProgramError::MalformedImage(
+                    "instruction address is not 4-byte aligned"
+                ))
+            ));
+        }
+        let image =
+            decode_elf(&elf, RV64IMAC_JOLT).expect("compressed profile permits 2-byte alignment");
+        assert_eq!(image.instructions.len(), 1);
+        assert_eq!(image.instructions[0].kind(), SourceInstructionKind::ADDI);
+        assert_eq!(image.instructions[0].row().address, address as usize);
+        assert!(!image.instructions[0].row().is_compressed);
     }
 }
