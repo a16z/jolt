@@ -30,7 +30,8 @@ akita = [
 # all three off with --no-default-features. guest-codegen: the verifier guest
 # is built with -Cllvm-args=-inline-threshold=1750, -Cllvm-args=-enable-gvn-hoist,
 # -Cllvm-args=-enable-dfa-jump-thread, -Cllvm-args=-enable-ext-tsp-block-placement,
-# -Cllvm-args=-enable-tail-merge=false and one codegen unit (host side only;
+# -Cllvm-args=-enable-tail-merge=false, -Cllvm-args=-split-spill-mode=size
+# and one codegen unit (host side only;
 # RECURSION_GUEST_CODEGEN=off restores the stock guest build).
 default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen"]
 guest-codegen = []
