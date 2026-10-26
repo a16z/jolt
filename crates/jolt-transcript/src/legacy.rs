@@ -249,6 +249,27 @@ pub trait Transcript: Clone + Default + Sync + Send + 'static {
 
 /// A copy of a transcript, for the nonce search of [`Transcript::grind`]:
 /// a candidate is absorbed exactly as [`Transcript::check_grind`] absorbs it.
+/// Squeezes [`challenge_width`](CanonicalEncoding::challenge_width) bytes for
+/// the `draw`-th challenge since the last absorb and decodes them. The bytes
+/// live on the stack: the widest challenge is 68 bytes, a 254-bit field after
+/// 2^64 draws.
+#[cfg(any(feature = "spongefish", feature = "digest"))]
+pub(crate) fn squeeze_challenge<F: CanonicalEncoding>(
+    draw: u64,
+    squeeze: impl FnOnce(&mut [u8]),
+) -> F {
+    let width = F::challenge_width(draw);
+    let mut stack = [0u8; 128];
+    if let Some(buf) = stack.get_mut(..width) {
+        squeeze(buf);
+        F::from_challenge_bytes(buf)
+    } else {
+        let mut buf = vec![0u8; width];
+        squeeze(&mut buf);
+        F::from_challenge_bytes(&buf)
+    }
+}
+
 struct TranscriptProbe<'a, T>(&'a T);
 
 impl<T: Transcript> Probe for TranscriptProbe<'_, T> {
@@ -453,9 +474,9 @@ where
         // the split-trait surface this facade goes away and the
         // inconsistency with it.
         self.draws = self.draws.saturating_add(1);
-        let mut buf = vec![0u8; F::challenge_width(self.draws)];
-        let _ = self.sponge.squeeze(&mut buf);
-        F::from_challenge_bytes(&buf)
+        squeeze_challenge(self.draws, |buf| {
+            let _ = self.sponge.squeeze(buf);
+        })
     }
 
     fn challenge_bytes(&mut self, out: &mut [u8]) {

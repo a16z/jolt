@@ -173,9 +173,7 @@ where
 
     fn challenge(&mut self) -> F {
         self.draws = self.draws.saturating_add(1);
-        let mut buf = vec![0u8; F::challenge_width(self.draws)];
-        self.squeeze(&mut buf);
-        F::from_challenge_bytes(&buf)
+        crate::legacy::squeeze_challenge(self.draws, |buf| self.squeeze(buf))
     }
 
     fn challenge_bytes(&mut self, out: &mut [u8]) {
