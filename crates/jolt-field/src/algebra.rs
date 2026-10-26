@@ -20,6 +20,7 @@ use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::signed::S256;
+use crate::Ext2Config;
 
 pub trait AdditiveGroup:
     Sized
@@ -217,13 +218,13 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
     /// fusing product sums before reduction override it (`Fp64` sums raw
     /// products in `u128` and reduces once per coordinate).
     #[inline(always)]
-    fn ext2_mul<C: crate::Ext2Config<Self>>(a: [Self; 2], b: [Self; 2]) -> [Self; 2] {
+    fn ext2_mul<C: Ext2Config<Self>>(a: [Self; 2], b: [Self; 2]) -> [Self; 2] {
         crate::schedules::ext2_mul_coeffs::<Self, C>(a, b)
     }
 
     /// Quadratic extension squaring kernel in `Self[u]/(u² − NR)`.
     #[inline(always)]
-    fn ext2_square<C: crate::Ext2Config<Self>>(a: [Self; 2]) -> [Self; 2] {
+    fn ext2_square<C: Ext2Config<Self>>(a: [Self; 2]) -> [Self; 2] {
         crate::schedules::ext2_square_coeffs::<Self, C>(a)
     }
 

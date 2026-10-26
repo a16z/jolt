@@ -8,7 +8,7 @@
 #[cfg(feature = "solinas")]
 mod harness {
     use criterion::Criterion;
-    use jolt_field::{Ext2, Field, NegOneNr, Packed, Prime64Offset59, Ring, WithPacking};
+    use jolt_field::{Ext2, Field, FpExt2, NegOneNr, Packed, Prime64Offset59, Ring, WithPacking};
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::hint::black_box;
@@ -20,7 +20,7 @@ mod harness {
     type F64 = Prime64Offset59;
     type E64 = Ext2<F64>;
     type PE64 = <E64 as WithPacking>::Packing;
-    type E64NegOne = jolt_field::FpExt2<F64, NegOneNr>;
+    type E64NegOne = FpExt2<F64, NegOneNr>;
 
     pub(crate) fn bench(c: &mut Criterion) {
         let mut rng = ChaCha20Rng::seed_from_u64(0xA427_0063);
