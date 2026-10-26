@@ -42,6 +42,7 @@ word-decode = ["jolt-akita?/word-decode"]
 # Each remaining arm is selected independently and forwarded to the guest.
 word-transcript = ["akita", "jolt-akita/word-transcript"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
+tensor-no-carry = ["akita", "jolt-akita/tensor-no-carry"]
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }

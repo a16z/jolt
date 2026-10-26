@@ -34,6 +34,7 @@ l3-compression-weights = ["akita-types/l3-compression-weights"]
 word-transcript = ["jolt-transcript/word-transcript"]
 word-decode = ["jolt-field/word-decode"]
 ont-static-base = ["akita-challenges/ont-static-base"]
+tensor-no-carry = ["akita-algebra/tensor-no-carry"]
 
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
