@@ -28,8 +28,9 @@ akita = [
 # points instead of the exact product. Word decoding: the guest decodes
 # fixed-wire field elements by word with the same canonicality checks. Turn
 # all three off with --no-default-features. guest-codegen: the verifier guest
-# is built with -Cllvm-args=-inline-threshold=1750 and one codegen unit (host
-# side only; RECURSION_GUEST_CODEGEN=off restores the stock guest build).
+# is built with -Cllvm-args=-inline-threshold=1750, -Cllvm-args=-enable-gvn-hoist,
+# -Cllvm-args=-enable-dfa-jump-thread and one codegen unit (host side only;
+# RECURSION_GUEST_CODEGEN=off restores the stock guest build).
 default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen"]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
