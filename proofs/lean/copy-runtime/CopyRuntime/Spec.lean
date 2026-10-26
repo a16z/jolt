@@ -10,14 +10,10 @@ Everything here is a plain definition used by the theorem statements in
 
 namespace CopyRuntime
 
-/-! ## Linking and placement -/
-
 /-- `sec` is loaded at `base`, and every fetch inside its address range is
 served from it (no other loaded section overlaps it). -/
 def Config.Loaded (cfg : Config) (base : BitVec 64) (sec : Section) : Prop :=
   ∀ pc, inSection base sec pc → cfg.sectionAt pc = some ⟨base, sec⟩
-
-/-! ## Memory ranges and the copy result -/
 
 /-- `a ∈ [base, base + len)`, as natural numbers. -/
 def InRange (base len a : BitVec 64) : Prop :=
@@ -37,8 +33,6 @@ as memmove requires); all other bytes are unchanged. -/
 def memmoveResult (m : Mem) (dst src n : BitVec 64) : Mem :=
   fun a => if InRange dst n a then m (src + (a - dst)) else m a
 
-/-! ## Registers -/
-
 /-- Registers the copy routines may change: `t0`–`t2` (`x5`–`x7`), `a1`–`a7`
 (`x11`–`x17`) and `t3`–`t6` (`x28`–`x31`). All others, including `ra`, `sp`,
 `gp`, `tp`, `s0`–`s11` and `a0`, must be preserved. -/
@@ -49,8 +43,6 @@ def Mismatched (dst src : BitVec 64) : Prop := (dst - src).toNat % 8 ≠ 0
 
 instance (dst src : BitVec 64) : Decidable (Mismatched dst src) :=
   inferInstanceAs (Decidable (¬ _))
-
-/-! ## Outcomes -/
 
 /-- Outcome (a): the routine returned to `R` having performed
 `memmove(dst, src, n)`. Compared with the entry state `s0`, only the registers
@@ -84,8 +76,6 @@ def wrapperPost (s0 : State) (L F R dst src n : BitVec 64) : State → Prop :=
   if Mismatched dst src ∧ 544 ≤ n.toNat then AtLeaf s0 L
   else if Mismatched dst src ∧ 12 ≤ n.toNat then AtFallback s0 F
   else Returned s0 R dst src n
-
-/-! ## Entry conditions -/
 
 /-- The calling convention at entry: `pc` is the entry point, `a0 = dst`,
 `a1 = src`, `a2 = n`, `ra = R`. -/

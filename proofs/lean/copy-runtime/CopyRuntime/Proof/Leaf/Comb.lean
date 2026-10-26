@@ -12,10 +12,13 @@ symbolic state. The immediates and the code offset are parameters; the code
 hypothesis is discharged against the LLVM listing when a lemma is used.
 
 * Forward (`fwd_comb`): `rN` is the higher word. Only bytes `a .. 7` of `rO`
-  matter (`srl` by `8a` drops the rest), and only those are known to equal the
-  snapshot: the copy may already have overwritten its low bytes.
-* Backward (`bwd_comb`): `rN` is the lower word, and only bytes `0 .. a-1` of
-  `rO` matter (`sll` by `64 - 8a` drops the rest).
+  matter (`srl` by `8a` drops the rest).
+* Backward (`bwd_comb`): `rN` is the lower word. Only bytes `0 .. a-1` of `rO`
+  matter (`sll` by `64 - 8a` drops the rest).
+
+The hypothesis about `rO` constrains only those bytes, because nothing more
+holds for the first carried word `t3`: if `|src - dst|` is less than `a`, the
+copy has already overwritten some of its other bytes.
 -/
 
 namespace CopyRuntime.Leaf

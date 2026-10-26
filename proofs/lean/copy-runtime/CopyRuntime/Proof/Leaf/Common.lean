@@ -2,19 +2,11 @@ import CopyRuntime.Proof.Region
 import CopyRuntime.Proof.Returned
 
 /-!
-# Shared facts for the misaligned leaf `__jolt_copy_misaligned`
+# Shared facts for the misaligned leaf
 
-The leaf peels bytes until `a7` (the destination cursor) is 8-byte aligned,
-copies eight more bytes if the first aligned source word would leave
-`[src, src + n)`, then combines pairs of aligned source words with
-`srl`/`sll`/`or` into aligned destination words (a 128-byte loop and a word
-loop), and finishes with a byte tail.
-
-Storing the combination of two loaded words stores the load of the eight bytes
-in between (`storeLE_combine`). A shifted word depends only on the bytes that
-the shift keeps (`loadLE_shr_congr`, `loadLE_shl_congr`), and the carried word
-`t3` is known only up to those bytes: if `|src - dst|` is less than the source
-word offset, the first aligned source word already holds copied bytes.
+Storing the combination of two consecutive loaded words stores the load of the
+eight bytes in between (`storeLE_combine`), and a shifted word depends only on
+the bytes that the shift keeps (`loadLE_shr_congr`, `loadLE_shl_congr`).
 -/
 
 namespace CopyRuntime.Leaf

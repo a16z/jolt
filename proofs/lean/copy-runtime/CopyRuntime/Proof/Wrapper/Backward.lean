@@ -160,7 +160,6 @@ theorem bwd_words (env : BwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec
       intro h8
       apply hne
       rw [Nat.mod_eq_of_lt h8]
-    -- Loop invariant after `k` words.
     obtain ⟨q, hqdef⟩ : ∃ q, q = h / 8 := ⟨_, rfl⟩
     refine Exits.loop
       (I := fun k s => s.pc = B + 0x496#64 ∧ BwdAt regs₀ m₀ dst src n (h - 8 * k) s.regs s.mem ∧
@@ -392,6 +391,7 @@ theorem bwd_large (env : BwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec
         intro r hr'
         rw [hr r (fun h => by subst h; exact hr' (by decide))]
         exact hA'.preserved r hr'
+      -- `omega` must not see `256 * (k + 1)` (README, "Performance pitfalls").
       rw [Nat.mul_add_one, ← Nat.sub_sub] at hcont
       show Exits _ _ _ ⟨B + 0x410#64, regs'', mem''⟩
       iterate 3 rv_step ctx.code [ha1'', ha7'', h5'', ha2'', BitVec.ofNat_add_ofNat,

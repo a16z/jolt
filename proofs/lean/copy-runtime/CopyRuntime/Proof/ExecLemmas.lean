@@ -42,8 +42,8 @@ attribute [rv_exec_proc] reduceIte reduceDIte reduceCtorEq Fin.reduceEq Fin.redu
 @[rv_exec] theorem writeReg_apply (r : Reg → BitVec 64) (rd i : Reg) (v : BitVec 64) :
     writeReg r rd v i = if i = rd then v else r i := rfl
 
-/-- Collapse two adjacent writes to the same register. (Sorting writes by
-register number inside `simp` was tried and is far too slow.) -/
+/-- Only adjacent writes to the same register are collapsed: sorting the writes
+by register number inside `simp` is far too slow. -/
 @[rv_exec] theorem writeReg_writeReg_same (f : Reg → BitVec 64) (r : Reg) (a b : BitVec 64) :
     writeReg (writeReg f r a) r b = writeReg f r b := by
   funext i; simp only [writeReg]; split <;> rfl
@@ -53,7 +53,6 @@ theorem toNat_add_lit_mod_two {B : BitVec 64} (hB : B.toNat % 2 = 0) (k : Nat) :
   rw [BitVec.toNat_add, BitVec.toNat_ofNat]
   omega
 
-/-- Jumps to `B + k` with `B` even and `k` even are aligned. -/
 @[rv_exec] theorem jumpTo_add_lit {B : BitVec 64} (hB : B.toNat % 2 = 0) {k : Nat} (hk : k % 2 = 0)
     (s : State) : jumpTo s (B + BitVec.ofNat 64 k) = some { s with pc := B + BitVec.ofNat 64 k } := by
   unfold jumpTo

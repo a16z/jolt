@@ -1,9 +1,5 @@
 import CopyRuntime.Proof.Exits
 
-/-!
-# Single-step lemmas for symbolic execution
--/
-
 namespace CopyRuntime
 
 /-- What remains to be shown after executing one instruction. -/
@@ -32,7 +28,6 @@ theorem ite_goal {c : Prop} {h : Decidable c} {p q : Prop} (h₁ : c → p) (h�
   | isTrue hc => exact h₁ hc
   | isFalse hc => exact h₂ hc
 
-/-- One step through an instruction of the listing. -/
 theorem Exits.step_fetch {cfg : Config} {region : BitVec 64 → Prop} {post : State → Prop}
     {s : State} {i : Instr} {len : Nat}
     (hfetch : cfg.fetch s.pc = some (i, len)) (hreg : region s.pc)

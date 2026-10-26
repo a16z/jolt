@@ -10,9 +10,8 @@ point `J` bytes into the ranges, `a2 = n - J`), and shows that the run ends in
 
 Forward copying is safe for overlap because the destination lies below the
 source: a store at destination offset `i` hits source offset `i - (src - dst)`,
-below every offset that a later load reads in full. The one exception is the
-first aligned word `t3`, whose low `a` bytes may already be overwritten; the
-`srl` by `8a` discards exactly those (`fwd_comb`).
+below the source bytes that later loads use. Only the carried word `t3` may
+already hold copied bytes, and the combining shift discards them (`fwd_comb`).
 -/
 
 namespace CopyRuntime.Leaf

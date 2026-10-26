@@ -8,10 +8,6 @@ Reached when `(dst - src) % 8 = 0` and `n ≥ 8` (aligned with `n > 88`, or
 unaligned with equal offsets). `beq a0, a1` returns at once for `dst = src`;
 `bltu a1, a0` selects the backward copy for `src < dst` and the forward copy
 otherwise.
-
-The forward and backward copies are separate segment lemmas (`forward_path`
-at `0xac` and `backward_path` at `0x2c0`) so that they can be proved
-independently.
 -/
 
 namespace CopyRuntime.Wrapper

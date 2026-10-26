@@ -5,17 +5,17 @@ import CopyRuntime.Proof.Memory
 /-!
 # `rv_step`: symbolic execution of one listed instruction
 
-`rv_step hc` expects a goal `Exits cfg region post ⟨pc, regs, mem⟩` with
+`rv_fetch hc` expects a goal `Exits cfg region post ⟨pc, regs, mem⟩` with
 `pc = base + c` (or `pc = base`) and `hc : CodeAt cfg base listing sites`. It
 looks `c` up in `listing` (an LLVM listing constant, see `DecoderCheck`),
 applies `CodeAt.step`, proves listing membership by kernel evaluation
 (`decide +kernel`), proves the region side condition with `rv_region`, and
 leaves the goal `Exits.after cfg region post (execute cfg ⟨pc, regs, mem⟩ i len)`.
-The tactic computes nothing that the kernel does not re-check: the lookup only
-chooses which instruction to claim.
+It computes nothing that the kernel does not re-check: the lookup only chooses
+which instruction to claim.
 
-`rv_step hc [lemmas]` additionally runs `simp only [rv_exec, lemmas]` on that
-goal, which evaluates the instruction.
+`rv_step hc [lemmas]` is `rv_fetch hc`, then `rv_simp [lemmas]` to evaluate the
+instruction, then `rv_branch` to split on an undecided branch condition.
 -/
 
 namespace CopyRuntime.Tactic
@@ -39,7 +39,6 @@ partial def listElems (e : Expr) : MetaM (Array Expr) := do
       | _ => throwError "rv_step: unexpected listing shape {e}"
   go e #[]
 
-/-- Find the `(instruction, length)` listed at offset `k`. -/
 def lookupListing (listing : Expr) (k : Nat) : MetaM (Expr × Expr) := do
   for entry in ← listElems listing do
     let_expr Prod.mk _ _ off rest := entry.consumeMData | continue
@@ -66,7 +65,6 @@ def offsetFrom (pc base : Expr) : MetaM Nat := do
 `macro_rules | `(tactic| rv_region) => ...` for new region predicates. -/
 syntax "rv_region" : tactic
 
-/-- Apply `CodeAt.step` at the current pc; returns the remaining goal. -/
 def stepCore (hc : Expr) : TacticM Unit := withMainContext do
   let goal ← getMainGoal
   let tgt ← instantiateMVars (← goal.getType)
@@ -82,7 +80,6 @@ def stepCore (hc : Expr) : TacticM Unit := withMainContext do
     #[some cfg, some base, some listing, some sites, some hc, some region, some post, some s,
       some (mkNatLit k), some instr, some len]
   let newGoals ← goal.apply thm
-  -- goals: hk, hpc, hreg, h
   let [hk, hpc, hreg, h] := newGoals |
     throwError "rv_step: unexpected goals after applying CodeAt.step"
   let run (g : MVarId) (tac : TSyntax `tactic) : TacticM Unit := do

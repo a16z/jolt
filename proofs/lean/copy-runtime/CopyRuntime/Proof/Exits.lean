@@ -3,13 +3,10 @@ import CopyRuntime.DecoderCheck
 import CopyRuntime.Proof.Arith
 
 /-!
-# Generic facts about `Exits`, and the `CodeAt` interface used by the stepping
-tactic.
+# Generic facts about `Exits`, and the `CodeAt` interface of the stepping tactic
 -/
 
 namespace CopyRuntime
-
-/-! ## Determinism and composition -/
 
 /-- Runs are deterministic: two `Exits` facts about the same start state
 describe the same exit state. -/
@@ -50,7 +47,6 @@ theorem Exits.widen {cfg : Config} {r₁ r : BitVec 64 → Prop} {Q : State → 
     (hout : ∀ t, Q t → ¬ r t.pc) : Exits cfg r Q s :=
   h.bind hsub fun t hq => .exit (hout t hq) hq
 
-/-- Change the region to an equivalent one. -/
 theorem Exits.congr_region {cfg : Config} {r₁ r₂ : BitVec 64 → Prop} {Q : State → Prop}
     {s : State} (h : Exits cfg r₁ Q s) (heq : ∀ x, r₁ x ↔ r₂ x) : Exits cfg r₂ Q s := by
   induction h with
@@ -133,8 +129,6 @@ theorem sweep_spec {bytes : List UInt8} {tbl : List (Nat × Instr × Nat)}
   obtain ⟨_, hd, hb, hev⟩ := sweep_go_spec _ 0 bytes tbl h k i len hmem
   simp only [Nat.sub_zero, Nat.zero_add] at hd hb hev
   exact ⟨hd, hb, hev⟩
-
-/-! ## Code facts used by the stepping tactic -/
 
 /-- The code at `base`: every instruction of `listing` (an LLVM listing whose
 agreement with the decoder is proved in `DecoderCheck`) is what `cfg.fetch`

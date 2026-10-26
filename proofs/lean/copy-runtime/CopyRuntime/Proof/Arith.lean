@@ -59,8 +59,6 @@ theorem sub_ofNat_sub_ofNat (x : BitVec 64) (a b : Nat) :
     x - BitVec.ofNat 64 a - BitVec.ofNat 64 b = x - BitVec.ofNat 64 (a + b) := by
   rw [BitVec.sub_sub, BitVec.ofNat_add]
 
-/-- The literals are spelled out so that the side conditions close by `decide`
-and the instantiated offset reduces by `Nat.reduceSub`. -/
 theorem ofNat_add_neg_lit {a b : Nat} (hb : 9223372036854775808 ≤ b)
     (hb' : b < 18446744073709551616) (hab : 18446744073709551616 - b ≤ a) :
     BitVec.ofNat 64 (a + b) = BitVec.ofNat 64 (a - (18446744073709551616 - b)) := by

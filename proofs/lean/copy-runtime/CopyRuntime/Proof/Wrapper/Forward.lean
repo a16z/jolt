@@ -139,7 +139,6 @@ theorem fwd_words (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec
       apply BitVec.eq_of_toNat_eq
       simp only [BitVec.toNat_add, BitVec.toNat_ofNat]
       omega
-    -- Loop invariant after `k` words.
     obtain ⟨q, hqdef⟩ : ∃ q, q = T.toNat / 8 := ⟨_, rfl⟩
     refine Exits.loop
       (I := fun k s => s.pc = B + 0x276#64 ∧ FwdAt regs₀ m₀ dst src n (j + 8 * k) s.regs s.mem ∧
@@ -358,9 +357,8 @@ theorem fwd_large (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec
       obtain ⟨pc, regs', mem'⟩ := s
       simp only at hpc hF' ha2' h256 h5
       subst hpc
-      -- Name the offset. `omega` must never see `256 * (k + 1)`, nor two
-      -- spellings of one offset (`j + 256 * k + 256` and `j + (256 * k + 256)`):
-      -- it compares them by unfolding `+ 256` in unary and hits the recursion limit.
+      -- `omega` must not see `256 * (k + 1)` or two spellings of one offset
+      -- (README, "Performance pitfalls").
       generalize hi : j + 256 * k = i at hF' ha2' h256
       have ha1' := hF'.a1; have ha7' := hF'.a7; have hcop' := hF'.copied
       have hin := hF'.le

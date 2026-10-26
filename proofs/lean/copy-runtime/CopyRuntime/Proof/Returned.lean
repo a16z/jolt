@@ -1,9 +1,5 @@
 import CopyRuntime.Proof.ExecLemmas
 
-/-!
-# Entry registers and the `Returned` outcome
--/
-
 namespace CopyRuntime
 
 structure EntryRegs (regs : Reg → BitVec 64) (dst src n R : BitVec 64) : Prop where

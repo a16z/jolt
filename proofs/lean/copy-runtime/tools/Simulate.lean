@@ -5,10 +5,10 @@ import CopyRuntime.Spec
 
 Runs the extracted `__wrap_memmove` (linked with `__jolt_copy_misaligned`)
 under `CopyRuntime.step` on concrete inputs and compares the result with the
-specification. This is a sanity check of the model and of the paths whose
-proofs are unfinished. It proves nothing.
+specification. It cross-checks the model and the extracted bytes; it proves
+nothing.
 
-    lake env lean tools/Simulate.lean     # takes a few minutes
+    lake build && lake env lean tools/Simulate.lean     # about 30 seconds
 -/
 
 open CopyRuntime

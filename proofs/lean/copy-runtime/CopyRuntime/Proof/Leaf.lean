@@ -13,15 +13,11 @@ Each direction peels bytes until `a7` (the destination cursor) is 8-byte
 aligned, copies eight more bytes if the first aligned source word would leave
 `[src, src + n)`, then combines pairs of aligned source words with
 `srl`/`sll`/`or` into aligned destination words (a 128-byte loop and a word
-loop), and finishes with a byte tail. The code facts, the region, and the
-word-combining identity `combine_byte` are in `Leaf/Common.lean`; the
-combine-and-store step (`fwd_comb`, `bwd_comb`) is in `Leaf/Comb.lean`.
+loop), and finishes with a byte tail.
 -/
 
 namespace CopyRuntime.Leaf
 
-/-- Correctness of the leaf, from its entry point: it performs the memmove and
-returns. -/
 theorem leaf_path {cfg : Config} {L : BitVec 64} (ctx : Ctx cfg L) (regs : Reg → BitVec 64)
     (mem : Mem) {dst src n R : BitVec 64} (he : EntryRegs regs dst src n R)
     (hsb : Sandbox cfg dst src n) (hargs : ArgsOk dst src n R) (hRout : ¬ region L R)

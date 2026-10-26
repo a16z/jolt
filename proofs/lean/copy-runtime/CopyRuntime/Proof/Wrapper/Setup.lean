@@ -25,7 +25,6 @@ theorem isWrapper_memmove : IsWrapper Generated.wrapMemmove "__real_memmove" :=
 
 theorem size_eq : Generated.wrapMemcpy.bytes.length = 1412 := by decide +kernel
 
-/-- The wrapper region. -/
 abbrev region (B : BitVec 64) : BitVec 64 → Prop := codeRegion B 1412
 
 /-- Everything the wrapper path proofs need about the loaded, linked code. -/

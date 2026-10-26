@@ -1,9 +1,5 @@
 import CopyRuntime.Proof.Tactic
 
-/-!
-# Code regions with a literal size, and the `rv_region` side-condition tactic
--/
-
 namespace CopyRuntime
 
 /-- The modular address range `[base, base + size)`. -/

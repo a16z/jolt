@@ -25,29 +25,33 @@ elab "#assert_axioms " id:ident " [" ax:ident,* "]" : command => do
 
 namespace CopyRuntime
 
--- Decoder cross-check against LLVM (kernel evaluation only).
 #assert_axioms DecoderCheck.wrapMemcpy_agrees_with_llvm [propext, Classical.choice, Quot.sound]
 #assert_axioms DecoderCheck.wrapMemmove_agrees_with_llvm [propext, Classical.choice, Quot.sound]
 #assert_axioms DecoderCheck.joltCopyMisaligned_agrees_with_llvm
   [propext, Classical.choice, Quot.sound]
 
--- Completely proved wrapper paths.
 #assert_axioms Wrapper.zero_path [propext, Classical.choice, Quot.sound]
 #assert_axioms Wrapper.fallback_path [propext, Classical.choice, Quot.sound]
 #assert_axioms Wrapper.leaf_path [propext, Classical.choice, Quot.sound]
 #assert_axioms Wrapper.aligned_small_path [propext, Classical.choice, Quot.sound]
 #assert_axioms Wrapper.small_bytes_path [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.fwd_tail [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.fwd_words [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.forward_path [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.fwd_prologue [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.fwd_large [propext, Classical.choice, Quot.sound]
 #assert_axioms Wrapper.fwd_pairs [propext, Classical.choice, Quot.sound]
 #assert_axioms Wrapper.fwd_blocks [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.fwd_large [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.fwd_prologue [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.forward_path [propext, Classical.choice, Quot.sound]
-#assert_axioms Leaf.combine_byte [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.fwd_words [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.fwd_tail [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.backward_path [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_prologue [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_large [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_pairs [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_blocks [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_words [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_tail [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.dispatch [propext, Classical.choice, Quot.sound]
 
--- The misaligned leaf: both directions, their combine-and-store steps and
--- 128-byte loop bodies, and the whole leaf.
+#assert_axioms Leaf.combine_byte [propext, Classical.choice, Quot.sound]
 #assert_axioms Leaf.storeLE_combine [propext, Classical.choice, Quot.sound]
 #assert_axioms Leaf.fwd_comb [propext, Classical.choice, Quot.sound]
 #assert_axioms Leaf.bwd_comb [propext, Classical.choice, Quot.sound]
@@ -56,20 +60,10 @@ namespace CopyRuntime
 #assert_axioms Leaf.fwd_path [propext, Classical.choice, Quot.sound]
 #assert_axioms Leaf.bwd_path [propext, Classical.choice, Quot.sound]
 #assert_axioms Leaf.leaf_path [propext, Classical.choice, Quot.sound]
+
 #assert_axioms Theorems.entry_symbols [propext, Classical.choice, Quot.sound]
 #assert_axioms Theorems.wrappers_same_code [propext, Classical.choice, Quot.sound]
 #assert_axioms Theorems.exit_state_unique [propext, Classical.choice, Quot.sound]
-
--- Backward general path (`src < dst`).
-#assert_axioms Wrapper.backward_path [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.bwd_prologue [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.bwd_large [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.bwd_pairs [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.bwd_blocks [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.bwd_words [propext, Classical.choice, Quot.sound]
-#assert_axioms Wrapper.bwd_tail [propext, Classical.choice, Quot.sound]
-
--- Main theorems: fully proved.
 #assert_axioms Theorems.wrap_memcpy_correct [propext, Classical.choice, Quot.sound]
 #assert_axioms Theorems.wrap_memmove_correct [propext, Classical.choice, Quot.sound]
 #assert_axioms Theorems.jolt_copy_misaligned_correct [propext, Classical.choice, Quot.sound]

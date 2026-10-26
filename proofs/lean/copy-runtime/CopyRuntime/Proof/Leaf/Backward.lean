@@ -7,9 +7,8 @@ The mirror image of `Leaf/Forward.lean`. `BAt r` describes a state with `r`
 bytes left: `a1 = src + r`, `a7 = dst + r`, `a2 = r`, and the top part
 `[r, n)` of the destination already holds the snapshot copy. Loads read only
 source offsets below `r`, which no store has reached because the destination
-lies above the source (`Copied.loadLE_bwd`), except the first aligned word
-`t3`, whose high bytes may be overwritten; the `sll` by `64 - 8a` discards
-exactly those (`bwd_comb`).
+lies above the source (`Copied.loadLE_bwd`). Only the carried word `t3` may
+already hold copied bytes, and the combining shift discards them (`bwd_comb`).
 
 The bound check `addi t2, a1, 7; andi t2, t2, -8` does not wrap because
 `a7 = dst + r` is 8-byte aligned and `dst + n < 2^64`, so
@@ -342,9 +341,9 @@ theorem bwd_bulk (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
     rw [hfr 12 (by decide) (by decide) (by decide) (by decide), hF'.a2]
   have h5'' : regs'' 5 = BitVec.ofNat 64 (a + 128) := by
     rw [hfr 5 (by decide) (by decide) (by decide) (by decide), h5']
-  rv_step ctx.code [h7, Arith.ofNat_add_neg_lit]          -- 0x38a addi t2, -128
-  rv_step ctx.code [h11, Arith.ofNat_add_neg_lit]         -- 0x38e addi a1, -128
-  rv_step ctx.code [h17, Arith.ofNat_add_neg_lit]         -- 0x392 addi a7, -128
+  rv_step ctx.code [h7, Arith.ofNat_add_neg_lit]          -- 0x38a addi t2, t2, -128
+  rv_step ctx.code [h11, Arith.ofNat_add_neg_lit]         -- 0x38e addi a1, a1, -128
+  rv_step ctx.code [h17, Arith.ofNat_add_neg_lit]         -- 0x392 addi a7, a7, -128
   rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]         -- 0x396 addi a2, a2, -128
   have hF'' : BAt regs₀ m₀ dst src n (r₀ - 128 * k - 128)
       (writeReg (writeReg (writeReg (writeReg regs'' 7
@@ -461,8 +460,8 @@ theorem bwd_first (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
   have ha1 := hF'.a1; have ha7 := hF'.a7; have ha2 := hF'.a2
   rv_step ctx.code [ha1, hl, Arith.ofNat_add_neg_lit]     -- 0x21c lbu t1, -1(a1)
   rv_step ctx.code [ha7, hs, Arith.ofNat_add_neg_lit]     -- 0x220 sb t1, -1(a7)
-  rv_step ctx.code [ha1, Arith.ofNat_add_neg_lit]         -- 0x224 addi a1, -1
-  rv_step ctx.code [ha7, Arith.ofNat_add_neg_lit]         -- 0x226 addi a7, -1
+  rv_step ctx.code [ha1, Arith.ofNat_add_neg_lit]         -- 0x224 addi a1, a1, -1
+  rv_step ctx.code [ha7, Arith.ofNat_add_neg_lit]         -- 0x226 addi a7, a7, -1
   rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]         -- 0x228 addi a2, a2, -1
   rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]         -- 0x22a addi t0, t0, -1
   have h5'' : (regs' 5 - 1#64).toNat = 7 - k := by
@@ -563,8 +562,8 @@ theorem bwd_peel (env : Env cfg L dst src n R) (hlt : src.toNat < dst.toNat)
     rv_arith_simp at hc
     rv_step ctx.code [ha1, hl, Arith.ofNat_add_neg_lit]   -- 0x1fe lbu t1, -1(a1)
     rv_step ctx.code [ha7, hs, Arith.ofNat_add_neg_lit]   -- 0x202 sb t1, -1(a7)
-    rv_step ctx.code [ha1, Arith.ofNat_add_neg_lit]       -- 0x206 addi a1, -1
-    rv_step ctx.code [ha7, Arith.ofNat_add_neg_lit]       -- 0x208 addi a7, -1
+    rv_step ctx.code [ha1, Arith.ofNat_add_neg_lit]       -- 0x206 addi a1, a1, -1
+    rv_step ctx.code [ha7, Arith.ofNat_add_neg_lit]       -- 0x208 addi a7, a7, -1
     rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]       -- 0x20a addi a2, a2, -1
     rv_step ctx.code                                      -- 0x20c j 0x1f6
     refine hcont _ ⟨rfl, by omega, ?_, by simp [writeReg_apply, h16']⟩

@@ -1,9 +1,5 @@
 import CopyRuntime.Proof.Wrapper.Setup
 
-/-!
-# Bit-level facts behind the wrapper's dispatch tests
--/
-
 namespace CopyRuntime.Wrapper
 
 theorem or_and_seven (a b : BitVec 64) :
@@ -40,14 +36,12 @@ theorem mismatched_iff (dst src : BitVec 64) :
   have := dst.isLt; have := src.isLt
   omega
 
-/-- The all-aligned test passes exactly when all three values are multiples of 8. -/
 theorem or_and_seven_eq_zero_iff (dst src n : BitVec 64) :
     (dst ||| src ||| n) &&& 7#64 = 0#64 ↔
       dst.toNat % 8 = 0 ∧ src.toNat % 8 = 0 ∧ n.toNat % 8 = 0 := by
   rw [or_and_seven, or_and_seven, or_eq_zero, or_eq_zero, Arith.and_seven_eq_zero_iff,
     Arith.and_seven_eq_zero_iff, Arith.and_seven_eq_zero_iff, and_assoc]
 
-/-- Mismatched offsets fail the all-aligned test. -/
 theorem or_and_seven_ne_zero_of_mismatched {dst src : BitVec 64} (h : Mismatched dst src)
     (n : BitVec 64) : (dst ||| src ||| n) &&& 7#64 ≠ 0#64 := by
   rw [ne_eq, or_and_seven_eq_zero_iff]
@@ -57,7 +51,6 @@ theorem or_and_seven_ne_zero_of_mismatched {dst src : BitVec 64} (h : Mismatched
   have := dst.isLt; have := src.isLt
   omega
 
-/-- Lengths with a nonzero low three bits fail the all-aligned test. -/
 theorem or_and_seven_ne_zero_of_len {n : BitVec 64} (h : n.toNat % 8 ≠ 0) (dst src : BitVec 64) :
     (dst ||| src ||| n) &&& 7#64 ≠ 0#64 := by
   rw [ne_eq, or_and_seven_eq_zero_iff]
