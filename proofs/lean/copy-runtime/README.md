@@ -22,8 +22,8 @@ splits into path lemmas under `CopyRuntime/Proof/`.
 | mismatched offsets, `n ≥ 544`: jump to `__jolt_copy_misaligned` | `Wrapper.leaf_path` | proved |
 | dispatch from the entry point to all of the above, and to `.Lgeneral` | `Wrapper.dispatch`, `Wrapper.general_entry` | proved |
 | `.Lgeneral` with `dst = src` | `Wrapper.general_path` | proved |
-| `.Lgeneral` forward copy (`src > dst`): byte tail, word loop, a generic `ld`/`sd` pair run, and the 80-byte block loop | `Wrapper.fwd_tail`, `fwd_words`, `fwd_pairs`, `fwd_blocks` | proved |
-| `.Lgeneral` forward copy: alignment prologue and 256-byte loop | `Wrapper.fwd_prologue`, `fwd_large` | `sorry` (draft proofs in `drafts/ForwardLoops.lean`) |
+| `.Lgeneral` forward copy (`src > dst`): byte tail, word loop, a generic `ld`/`sd` pair run, the 80-byte block loop, and the 256-byte loop | `Wrapper.fwd_tail`, `fwd_words`, `fwd_pairs`, `fwd_blocks`, `fwd_large` | proved |
+| `.Lgeneral` forward copy: alignment prologue | `Wrapper.fwd_prologue` | `sorry` (draft proof in `drafts/ForwardLoops.lean`) |
 | `.Lgeneral` backward copy (`src < dst`) | `Wrapper.backward_path` | `sorry` |
 | `__jolt_copy_misaligned` | `Leaf.leaf_path` | `sorry` (the word-combining identity `Leaf.combine_byte` is proved) |
 
@@ -225,9 +225,9 @@ to the table proofs, which run 29 symbolic paths.
 * Loops use `Exits.loop`, a loop-invariant rule in continuation-passing form.
   To prove one iteration, symbolically execute from an abstract state that
   satisfies the invariant, and at the back edge call the continuation.
-  `Wrapper.fwd_words` is a worked example. `drafts/ForwardLoops.lean` holds
-  unfinished proofs of the block loop, the 256-byte loop, and the prologue,
-  with notes on where they stalled.
+  `Wrapper.fwd_words`, `fwd_blocks`, and `fwd_large` are worked examples.
+  `drafts/ForwardLoops.lean` holds the unfinished proof of the prologue,
+  with notes on where it stalled.
 * Repetitive straight-line code gets a generic lemma proved once by induction,
   so that the symbolic memory term never grows. `Wrapper.fwd_pairs` covers a
   run of `ld t1, 8i(a1); sd t1, 8i(a7)` pairs, as in the 256-byte forward
@@ -264,6 +264,13 @@ Keep these in mind when writing new automation.
   `Wrapper.add_ofNat_eq_sub_of_ge` to `rv_step` to keep such values as
   `x - c'` with a small `c'`. `BitVec.toNat_sub` puts the literal first, which
   the kernel handles, and `Wrapper.toNat_sub_ofNat_of_le` gives the `Nat` value.
+* `omega` decides whether two atoms are equal with `isDefEq`, and the
+  elaborator settles `j + (256 * k + 256) =?= j + 256 * k + 256` by peeling
+  the `+ 256` one successor at a time. Literals of about 256 and up then hit
+  the maximum recursion depth. `c * (k + 1)` with such a `c` anywhere in
+  `omega`'s context fails in the same way. In loop bodies, name the offset
+  (`generalize hi : j + 256 * k = i at …`), and rewrite `I (k + 1)` goals with
+  `Nat.mul_add` by `rw`, not `omega` (see `Wrapper.fwd_large`).
 * `assumption` or `exact` at default transparency against a `Copied` goal over
   a store chain unfolds `Copied` and every `storeLE`. Use `with_reducible`.
 * Never compare two concrete states with `rfl` (for example

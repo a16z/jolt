@@ -1,8 +1,8 @@
 /-
 DRAFT -- NOT BUILT, DOES NOT YET CHECK.
 
-Unfinished proof scripts for `Wrapper.fwd_large` and `Wrapper.fwd_prologue`
-(stated with `sorry` in `CopyRuntime/Proof/Wrapper/Forward.lean`). They are kept as a starting point
+Unfinished proof script for `Wrapper.fwd_prologue` (stated with `sorry` in
+`CopyRuntime/Proof/Wrapper/Forward.lean`). It is kept as a starting point
 for finishing the forward path. Paste a proof back over the `sorry` and
 compile with `lake env lean` to continue.
 
@@ -10,106 +10,11 @@ Status when this was set aside:
 * The kernel "deep recursion" error came from `simp` rewriting
   `(x + c).toNat` with a big literal `c` (a negative immediate); see
   `Wrapper.add_ofNat_eq_sub_of_ge`, which fixed `fwd_blocks`.
-* `fwd_large`: uses `fwd_pairs` for the 32 `ld`/`sd` pairs, which is proved
-  and fast. It had an elaborator max-recursion error near the instantiation
-  of `fwd_pairs` (probably defeq of `B + ofNat (0xf8 + 8 * 0)` with
-  `B + 0xf8#64` or a similar literal), plus the same kernel issue.
+* The elaborator max-recursion error in `fwd_large` came from `omega`, not
+  from `fwd_pairs`; see the comment in `Wrapper.fwd_large`.
 * `fwd_prologue`: case split on `src % 8`, then `rv_steps_to … 0xf0`. Not
   yet checked end to end.
 -/
-
-set_option maxHeartbeats 16000000 in
-/-- The 256-byte loop at `0xf0`/`0xf8`: thirty-two `ld`/`sd` pairs. -/
-theorem fwd_large (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec 64) (m₀ : Mem)
-    (he : EntryRegs regs₀ dst src n R) (j : Nat) (regs : Reg → BitVec 64) (mem : Mem)
-    (hF : FwdAt regs₀ m₀ dst src n j regs mem) (ha2 : (regs 12).toNat = n.toNat - j)
-    (hal : (src.toNat + j) % 8 = 0) :
-    Exits cfg (region B) (Returned ⟨B + 0xac#64, regs₀, m₀⟩ R dst src n)
-      ⟨B + 0xf0#64, regs, mem⟩ := by
-  have ctx := env.ctx
-  have hB := ctx.base_even
-  have hsw' := env.args.src_no_wrap
-  have hsw : src.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt hsw'
-  have hdw : dst.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt env.args.dst_no_wrap
-  have hle := env.le
-  have hds := env.same
-  have hl := env.sb.load; have hst := env.sb.store
-  have ha1 := hF.a1; have ha7 := hF.a7; have hjn := hF.le
-  rv_step ctx.code [ha1, ha7]                                -- 0x0f0 li t0, 256
-  rv_step ctx.code [ha1, ha7]                                -- 0x0f4 bltu a2, t0
-  · exact fwd_blocks env regs₀ m₀ he j _ mem
-      ⟨by simp [writeReg_apply, ha1], by simp [writeReg_apply, ha7], hjn, hF.copied,
-        by fwd_preserved hF.preserved⟩
-      (by simp [writeReg_apply, ha2]) hal
-  · rename_i hge
-    refine Exits.loop
-      (I := fun k s => s.pc = B + 0xf8#64 ∧ FwdAt regs₀ m₀ dst src n (j + 256 * k) s.regs s.mem ∧
-        (s.regs 12).toNat = n.toNat - (j + 256 * k) ∧ 256 ≤ n.toNat - (j + 256 * k) ∧
-        s.regs 5 = 256#64)
-      (n.toNat / 256) (fun k s h => by have := h.2.2.2.1; omega) ?_ 0 _
-      ⟨rfl, ?_, ?_, ?_, ?_⟩
-    · intro k s ⟨hpc, hF', ha2', h256, h5⟩ hcont
-      obtain ⟨pc, regs', mem'⟩ := s
-      simp only at hpc hF' ha2' h256 h5
-      subst hpc
-      have ha1' := hF'.a1; have ha7' := hF'.a7; have hcop' := hF'.copied
-      have hal' : (src.toNat + (j + 256 * k)) % 8 = 0 := by omega
-      refine fwd_pairs env m₀ 0xf8 32 (j + 256 * k) (by decide +kernel) (by decide) (by omega)
-        hal' regs' ha1' ha7' ?_ 0 (Nat.zero_le _) regs' mem' (fun _ _ => rfl) hcop'
-      intro regs'' mem'' hr hc
-      have ha1'' : regs'' 11 = src + BitVec.ofNat 64 (j + 256 * k) := by
-        rw [hr 11 (by decide), ha1']
-      have ha7'' : regs'' 17 = dst + BitVec.ofNat 64 (j + 256 * k) := by
-        rw [hr 17 (by decide), ha7']
-      have ha2'' : regs'' 12 = regs' 12 := hr 12 (by decide)
-      have h5'' : regs'' 5 = 256#64 := by rw [hr 5 (by decide), h5]
-      show Exits _ _ _ ⟨B + 0x1f8#64, regs'', mem''⟩
-      rv_step ctx.code [ha1'', ha7'', h5'']                  -- 0x1f8 addi a1, a1, 256
-      rv_step ctx.code [ha1'', ha7'', h5'']                  -- 0x1fc addi a7, a7, 256
-      rv_step ctx.code [ha1'', ha7'', h5'']                  -- 0x200 addi a2, a2, -256
-      rv_step ctx.code [ha1'', ha7'', h5'', ha2'']           -- 0x204 bgeu a2, t0
-      · refine hcont _ ⟨rfl, ?_, ?_, ?_, ?_⟩
-        · refine FwdAt.of_eq (a := j + 256 * k + 256) (b := j + 256 * k + 256) ?_ ?_
-            (Copied.congr_hi hc (by omega)) (by omega) (by omega) (by omega) ?_
-          · simp [writeReg_apply]
-          · simp [writeReg_apply]
-          · intro r hr'
-            have hr'' := hr'
-            simp only [clobbered, List.mem_cons, List.not_mem_nil, or_false, not_or] at hr''
-            simp only [writeReg_apply, hr'', ite_false]
-            rw [hr r (fun h => by subst h; exact hr' (by decide))]
-            exact hF'.preserved r hr'
-        · rename_i hc'
-          simp only [rv_exec]
-          simp only [BitVec.toNat_add, BitVec.toNat_ofNat] at hc' ⊢
-          omega
-        · rename_i hc'
-          simp only [BitVec.toNat_add, BitVec.toNat_ofNat] at hc'
-          omega
-        · simp [writeReg_apply, h5'']
-      · rename_i hc'
-        refine fwd_blocks env regs₀ m₀ he (j + 256 * k + 256) _ _ ?_ ?_ (by omega)
-        · refine FwdAt.of_eq (a := j + 256 * k + 256) (b := j + 256 * k + 256) ?_ ?_
-            (Copied.congr_hi hc (by omega)) rfl rfl (by omega) ?_
-          · simp [writeReg_apply]
-          · simp [writeReg_apply]
-          · intro r hr'
-            have hr'' := hr'
-            simp only [clobbered, List.mem_cons, List.not_mem_nil, or_false, not_or] at hr''
-            simp only [writeReg_apply, hr'', ite_false]
-            rw [hr r (fun h => by subst h; exact hr' (by decide))]
-            exact hF'.preserved r hr'
-        · simp only [rv_exec]
-          simp only [BitVec.toNat_add, BitVec.toNat_ofNat]
-          omega
-    · refine FwdAt.of_eq (a := j) (b := j) ?_ ?_ hF.copied rfl rfl hjn ?_
-      · simp [writeReg_apply, ha1]
-      · simp [writeReg_apply, ha7]
-      · fwd_preserved hF.preserved
-    · simp [writeReg_apply, ha2]
-    · omega
-    · simp [writeReg_apply]
-
 
 set_option maxHeartbeats 16000000 in
 /-- The forward copy from `0xac`: `mv a7, a0`, then up to three byte/half/word

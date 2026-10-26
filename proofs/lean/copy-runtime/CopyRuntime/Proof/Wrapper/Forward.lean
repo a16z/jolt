@@ -431,7 +431,15 @@ theorem fwd_pairs (env : FwdEnv cfg B L F dst src n R) (m₀ : Mem) {post : Stat
       exact hregs r hr
     · exact Copied.fwd_self_to hcop hle (by decide) (by omega) (by omega) (by omega)
 
-set_option maxHeartbeats 16000000 in
+/-- The thirty-two `ld t1, 8i(a1); sd t1, 8i(a7)` pairs of the 256-byte loop. -/
+theorem fwd_large_code : ∀ i < 32,
+    (0xf8 + 8 * i, Instr.load .double 6 11 (imm ((8 * i : Nat) : Int)), 4) ∈
+      Generated.Disasm.wrapMemcpy ∧
+    (0xf8 + 8 * i + 4, Instr.store .double 6 17 (imm ((8 * i : Nat) : Int)), 4) ∈
+      Generated.Disasm.wrapMemcpy := by
+  decide +kernel
+
+set_option maxHeartbeats 4000000 in
 /-- The 256-byte loop at `0xf0`/`0xf8`: thirty-two `ld`/`sd` pairs. -/
 theorem fwd_large (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec 64) (m₀ : Mem)
     (he : EntryRegs regs₀ dst src n R) (j : Nat) (regs : Reg → BitVec 64) (mem : Mem)
@@ -439,7 +447,84 @@ theorem fwd_large (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec
     (hal : (src.toNat + j) % 8 = 0) :
     Exits cfg (region B) (Returned ⟨B + 0xac#64, regs₀, m₀⟩ R dst src n)
       ⟨B + 0xf0#64, regs, mem⟩ := by
-  sorry
+  have ctx := env.ctx
+  have hB := ctx.base_even
+  have hsw' := env.args.src_no_wrap
+  have hsw : src.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt hsw'
+  have hdw : dst.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt env.args.dst_no_wrap
+  have hle := env.le
+  have hds := env.same
+  have hl := env.sb.load; have hst := env.sb.store
+  have ha1 := hF.a1; have ha7 := hF.a7; have hjn := hF.le
+  rv_step ctx.code [ha1, ha7]                                -- 0x0f0 li t0, 256
+  rv_step ctx.code [ha1, ha7]                                -- 0x0f4 bltu a2, t0
+  · exact fwd_blocks env regs₀ m₀ he j _ mem
+      ⟨by simp [writeReg_apply, ha1], by simp [writeReg_apply, ha7], hjn, hF.copied,
+        by fwd_preserved hF.preserved⟩
+      (by simp [writeReg_apply, ha2]) hal
+  · rename_i hge
+    refine Exits.loop
+      (I := fun k s => s.pc = B + 0xf8#64 ∧ FwdAt regs₀ m₀ dst src n (j + 256 * k) s.regs s.mem ∧
+        (s.regs 12).toNat = n.toNat - (j + 256 * k) ∧ 256 ≤ n.toNat - (j + 256 * k) ∧
+        s.regs 5 = 256#64)
+      (n.toNat / 256) (fun k s h => by have := h.2.2.2.1; omega) ?_ 0 _
+      ⟨rfl, ?_, ?_, ?_, ?_⟩
+    · intro k s ⟨hpc, hF', ha2', h256, h5⟩ hcont
+      obtain ⟨pc, regs', mem'⟩ := s
+      simp only at hpc hF' ha2' h256 h5
+      subst hpc
+      -- Name the offset. `omega` must never see `256 * (k + 1)`, nor two
+      -- spellings of one offset (`j + 256 * k + 256` and `j + (256 * k + 256)`):
+      -- it compares them by unfolding `+ 256` in unary and hits the recursion limit.
+      generalize hi : j + 256 * k = i at hF' ha2' h256
+      have ha1' := hF'.a1; have ha7' := hF'.a7; have hcop' := hF'.copied
+      have hin := hF'.le
+      have hal' : (src.toNat + i) % 8 = 0 := by
+        have := hF'.a1; omega
+      have hsub : (regs' 12 - 256#64).toNat = n.toNat - (i + 256) := by
+        rw [toNat_sub_ofNat_of_le (by omega), ha2']; omega
+      have hpairs := fwd_pairs env m₀ (post := Returned ⟨B + 0xac#64, regs₀, m₀⟩ R dst src n)
+        0xf8 32 i fwd_large_code (by decide) (by omega) hal' regs' ha1' ha7'
+      refine hpairs ?_ 0 (Nat.zero_le _) regs' mem' (fun _ _ => rfl) hcop'
+      intro regs'' mem'' hr hc
+      have ha1'' : regs'' 11 = src + BitVec.ofNat 64 i := by rw [hr 11 (by decide), ha1']
+      have ha7'' : regs'' 17 = dst + BitVec.ofNat 64 i := by rw [hr 17 (by decide), ha7']
+      have ha2'' : regs'' 12 = regs' 12 := hr 12 (by decide)
+      have h5'' : regs'' 5 = 256#64 := by rw [hr 5 (by decide), h5]
+      have hpres : ∀ r, r ∉ clobbered → regs'' r = regs₀ r := by
+        intro r hr'
+        rw [hr r (fun h => by subst h; exact hr' (by decide))]
+        exact hF'.preserved r hr'
+      have hc256 : Copied mem'' m₀ dst src 0 (i + 256) := Copied.congr_hi hc (by omega)
+      show Exits _ _ _ ⟨B + 0x1f8#64, regs'', mem''⟩
+      rv_step ctx.code [ha1'', ha7'', h5'']                  -- 0x1f8 addi a1, a1, 256
+      rv_step ctx.code [ha1'', ha7'', h5'']                  -- 0x1fc addi a7, a7, 256
+      rv_step ctx.code [ha2'', add_ofNat_eq_sub_of_ge]       -- 0x200 addi a2, a2, -256
+      rv_step ctx.code [h5'']                                -- 0x204 bgeu a2, t0
+      · rename_i hc'
+        rw [hsub] at hc'
+        refine hcont _ ⟨rfl, ?_, ?_, ?_, by simp [writeReg_apply, h5'']⟩ <;>
+          rw [show j + 256 * (k + 1) = i + 256 by rw [Nat.mul_add, Nat.mul_one, ← Nat.add_assoc, hi]]
+        · refine FwdAt.of_eq (a := i + 256) (b := i + 256) ?_ ?_ hc256 rfl rfl (by omega) ?_
+          · simp [writeReg_apply]
+          · simp [writeReg_apply]
+          · fwd_preserved hpres
+        · simp only [writeReg_apply]; simp only [rv_exec, hsub]
+        · exact hc'
+      · rename_i hc'
+        refine fwd_blocks env regs₀ m₀ he (i + 256) _ _ ?_ ?_ (by omega)
+        · refine FwdAt.of_eq (a := i + 256) (b := i + 256) ?_ ?_ hc256 rfl rfl (by omega) ?_
+          · simp [writeReg_apply]
+          · simp [writeReg_apply]
+          · fwd_preserved hpres
+        · simp only [writeReg_apply]; simp only [rv_exec, hsub]
+    · refine FwdAt.of_eq (a := j) (b := j) ?_ ?_ hF.copied rfl rfl hjn ?_
+      · simp [writeReg_apply, ha1]
+      · simp [writeReg_apply, ha7]
+      · fwd_preserved hF.preserved
+    · simp [writeReg_apply, ha2]
+    · omega
+    · simp [writeReg_apply]
 
 set_option maxHeartbeats 16000000 in
 /-- The forward copy from `0xac`: `mv a7, a0`, then up to three byte/half/word
