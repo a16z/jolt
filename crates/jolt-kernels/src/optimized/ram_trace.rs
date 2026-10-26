@@ -17,6 +17,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::BundleAccess;
 use crate::{KernelError, ProofSession};
 
 const SPLIT_CHUNK: usize = 1 << 16;
@@ -27,13 +28,13 @@ const PAR_CHUNK: usize = 1 << 14;
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamValueBundle {
     pre_value: RamReadValue,
     post_value: RamWriteValue,
 }
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamAddressBundle {
     address: RemappedRamAddress,
 }
@@ -156,19 +157,16 @@ fn collect_split_columns<F: JoltField, B, T, const N: usize>(
     split: impl Fn(&B) -> Result<[T; N], KernelError<F>> + Send + Sync,
 ) -> Result<[Vec<T>; N], KernelError<F>>
 where
-    B: WitnessBundle + Copy + Send + Sync,
+    B: WitnessBundle + Copy + PartialEq + Send + Sync,
     T: Copy + PartialEq + Send + Sync,
 {
-    // Both callers use current-row columns. A matching padding representative
-    // therefore establishes the whole implicit suffix, even without Rayon.
     let mut retained = cycles;
     if let Some(access) = witness.random_access() {
-        let prefix = access.physical_cycles().min(cycles);
-        if cycles <= access.cycles()
-            && prefix < cycles
-            && split(&access.window::<B>(prefix)?)? == padding
-        {
-            retained = prefix + 1;
+        if cycles <= access.cycles() {
+            let prefix = BundleAccess::<B>::View(&access).constant_suffix_start(cycles)?;
+            if prefix < cycles && split(&access.window::<B>(prefix)?)? == padding {
+                retained = prefix + 1;
+            }
         }
         #[cfg(feature = "parallel")]
         if cycles <= access.cycles() {

@@ -50,6 +50,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::BundleAccess;
 use crate::commitment::CommitmentGrid;
 use crate::commitment::CommittedColumnsWitness;
 use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
@@ -180,7 +181,8 @@ impl OpeningColumns {
         let mut tail = None;
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                retained = access.physical_cycles().min(cycles);
+                retained = BundleAccess::<CommittedColumnsWitness>::View(&access)
+                    .constant_suffix_start(cycles)?;
                 if retained < cycles {
                     tail = Some(access.window::<CommittedColumnsWitness>(retained)?);
                 }

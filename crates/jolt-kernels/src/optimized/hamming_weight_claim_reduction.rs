@@ -46,8 +46,8 @@ use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
 use super::support::{
-    bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
-    RoundProgress,
+    bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, prefix_cycle_weights,
+    round_poly_from_skipped_evals, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -188,7 +188,7 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         let cycles = 1usize << r_cycle.len();
 
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        let eq_cycle = InstructionCycleRow::suffix_weighted_eq(&rows, r_cycle);
+        let eq_cycle = prefix_cycle_weights(r_cycle, rows.prefix_len());
         let selectors = FamilySelectors::new(
             (layout.instruction(), layout.bytecode(), layout.ram()),
             dimensions.log_k_chunk,

@@ -512,23 +512,13 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Sum of the remaining-variable equality weights on `start..domain_len`.
     /// The current variable's linear factor and bound scalar are applied by
     /// the Gruen reconstruction, not included in this weight.
+    /// Only defined for low-to-high binding, where group and polynomial order agree.
     pub fn suffix_weight(&self, start: usize) -> F {
-        match self.binding_order {
-            BindingOrder::LowToHigh => {
-                EqPolynomial::suffix_sum(&self.point[..self.current_index.saturating_sub(1)], start)
-            }
-            BindingOrder::HighToLow => {
-                // group_index orders outer bits before the surviving inner bits.
-                let point = &self.point[(self.current_index + 1).min(self.point.len())..];
-                let split = self.e_in_current_len().ilog2() as usize;
-                let reordered: Vec<F> = point[split..]
-                    .iter()
-                    .chain(&point[..split])
-                    .copied()
-                    .collect();
-                EqPolynomial::suffix_sum(&reordered, start)
-            }
-        }
+        assert!(
+            matches!(self.binding_order, BindingOrder::LowToHigh),
+            "split-eq suffix weights are only defined for low-to-high"
+        );
+        EqPolynomial::suffix_sum(&self.point[..self.current_index.saturating_sub(1)], start)
     }
 
     #[inline]
@@ -555,8 +545,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         )
     }
 
-    /// Fold only the first `len` remaining-variable rows. A caller with a
-    /// constant suffix can add its contribution using [`Self::suffix_weight`].
+    /// Fold the first `len` remaining-variable rows in group order. `len` counts
+    /// polynomial rows only for [`BindingOrder::LowToHigh`]; in that order a caller
+    /// can add a constant suffix's contribution using [`Self::suffix_weight`].
     pub fn par_fold_out_in_prefix<
         OuterAcc: Send,
         InnerAcc: Send,
@@ -666,25 +657,11 @@ mod tests {
     }
 
     #[test]
-    fn high_to_low_suffix_respects_tensor_group_order() {
-        for bits in 1..9 {
-            let point = random_point(bits, 581);
-            let mut split = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::HighToLow);
-            for round in 0..bits {
-                let weights: Vec<_> = split
-                    .e_out_current()
-                    .iter()
-                    .flat_map(|out| split.e_in_current().iter().map(move |inner| *out * *inner))
-                    .collect();
-                for start in 0..=weights.len() {
-                    assert_eq!(
-                        split.suffix_weight(start),
-                        weights[start..].iter().copied().sum::<Fr>()
-                    );
-                }
-                split.bind(Fr::from_u64(17 + round as u64));
-            }
-        }
+    #[should_panic(expected = "split-eq suffix weights are only defined for low-to-high")]
+    fn suffix_weight_rejects_high_to_low_binding() {
+        let split =
+            GruenSplitEqPolynomial::<Fr>::new(&random_point(4, 581), BindingOrder::HighToLow);
+        let _ = split.suffix_weight(1);
     }
 
     #[test]

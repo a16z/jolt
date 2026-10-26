@@ -144,15 +144,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }
         }
         let tail = rows.access().row((1 << log_t) - 1)?;
-        let prefix_len = match &rows {
-            // This bundle uses only the current row, so the final logical row
-            // has the same values as every other implicit padding row.
-            BundleStore::Owned(rows) => rows.physical_cycles().min(1 << log_t),
-            BundleStore::Retained(rows) => rows
-                .iter()
-                .rposition(|row| *row != tail)
-                .map_or(0, |i| i + 1),
-        };
+        let prefix_len = rows.access().constant_suffix_start(1 << log_t)?;
         Ok(Self {
             prefix_len,
             tail: tail.field_values(),

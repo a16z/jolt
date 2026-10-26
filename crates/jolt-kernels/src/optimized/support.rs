@@ -1081,6 +1081,54 @@ pub(crate) fn bound_pair<F: JoltField>(raw: impl Fn(usize) -> F, r1: F, y: usize
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test fixture and extraction assertions")]
+mod bundle_access_tests {
+    use jolt_claims::protocols::jolt::JoltPolynomialId;
+    use jolt_witness::__private::TraceRow;
+    use jolt_witness::testing::with_sample_backend;
+    use jolt_witness::witnesses::WitnessEnv;
+
+    use super::{BundleAccess, RowSource, WitnessBundle, WitnessError};
+    use crate::optimized::instruction_input::InstructionInputRow;
+
+    #[derive(Clone, Copy, PartialEq)]
+    struct SuccessorPresent(bool);
+
+    impl WitnessBundle for SuccessorPresent {
+        fn from_row(
+            _row: &TraceRow,
+            next: Option<&TraceRow>,
+            _env: &WitnessEnv<'_>,
+        ) -> Result<Self, WitnessError> {
+            Ok(Self(next.is_some()))
+        }
+
+        fn annotated_ids() -> Vec<JoltPolynomialId> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn padding_suffix_keeps_terminal_lookahead_difference() {
+        with_sample_backend(|witness| {
+            let rows = witness.random_access().unwrap();
+            assert_eq!(
+                BundleAccess::<InstructionInputRow>::View(&rows)
+                    .constant_suffix_start(4)
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                BundleAccess::<SuccessorPresent>::View(&rows)
+                    .constant_suffix_start(4)
+                    .unwrap(),
+                4
+            );
+        });
+    }
+}
+
+#[cfg(test)]
 mod product_grid_tests {
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;

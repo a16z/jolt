@@ -65,8 +65,8 @@ use rayon::prelude::*;
 use super::constant_suffix::ConstantSuffix;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
-    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
-    product_grid_scratch_len, scan_chunk_size, GruenRoundMessage, RoundProgress,
+    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks, prefix_cycle_weights,
+    product_grid_scratch_len, scan_chunk_size, BundleAccess, GruenRoundMessage, RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -115,23 +115,6 @@ const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
 const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
 
 impl InstructionCycleRow {
-    /// Equality weights for the explicit prefix and one representative suffix row.
-    pub(crate) fn suffix_weighted_eq<F: JoltField>(
-        rows: &ConstantSuffix<Self>,
-        point: &[F],
-    ) -> Vec<F> {
-        let suffix_start = rows.prefix_len();
-        let eq = TensorEqTable::new(point);
-        let suffix_weight = EqPolynomial::suffix_sum(point, suffix_start);
-        map_indices(suffix_start + 1, |index| {
-            if index == suffix_start {
-                suffix_weight
-            } else {
-                eq.evaluate_index(index)
-            }
-        })
-    }
-
     pub(crate) fn new(
         lookup_index: u128,
         table_index: Option<usize>,
@@ -217,7 +200,7 @@ const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 40);
 #[cfg(not(feature = "akita"))]
 const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 32);
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct WideInstructionRow {
     lookup_index: LookupIndex,
     table_index: TableIndex,
@@ -257,9 +240,10 @@ impl InstructionCycleRow {
     ) -> Result<ConstantSuffix<Self>, KernelError<F>> {
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                // Every WideInstructionRow column depends only on the current row;
-                // one physical padding row represents all remaining no-ops.
-                let retained = access.physical_cycles().saturating_add(1).min(cycles);
+                let retained = BundleAccess::<WideInstructionRow>::View(&access)
+                    .constant_suffix_start(cycles)?
+                    .saturating_add(1)
+                    .min(cycles);
                 let rows = collect_par_map(&access, retained, |row: WideInstructionRow| {
                     Self::new(
                         row.lookup_index.0,
@@ -953,7 +937,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
-        let u_evals = InstructionCycleRow::suffix_weighted_eq(&rows, r_reduction);
+        let u_evals = prefix_cycle_weights(r_reduction, rows.prefix_len());
         let scan_rows = &rows.representatives()[..u_evals.len()];
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
         let present_tables = map_reduce_chunks(

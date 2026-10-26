@@ -33,6 +33,8 @@ use jolt_witness::{RandomAccessRows, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "parallel")]
+use super::support::BundleAccess;
 #[cfg(feature = "field-inline")]
 use crate::commitment::FieldInlineWitnessCommitment;
 use crate::commitment::{
@@ -217,9 +219,9 @@ where
     let kinds = column_kinds(ids, grid)?;
     let mut state = BatchedColumns::<F, PCS>::begin(&kinds, row_width, grid, setup);
 
-    let candidate = access.physical_cycles().min(cycles).div_ceil(row_width) * row_width;
-    // This bundle uses only current-row columns, so every implicit padding
-    // row is identical. Keep a mixed final window on the ordinary path.
+    let prefix =
+        BundleAccess::<CommittedColumnsWitness>::View(access).constant_suffix_start(cycles)?;
+    let candidate = prefix.div_ceil(row_width) * row_width;
     let padding = if candidate < cycles {
         let row: CommittedColumnsWitness = access.window(candidate)?;
         (row.rd_inc.0 == 0 && row.ram_inc.0 == 0).then_some(row)

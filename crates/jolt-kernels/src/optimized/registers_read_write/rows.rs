@@ -14,6 +14,7 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use super::sparse::SeedEntry;
+use crate::optimized::support::BundleAccess;
 use crate::KernelError;
 
 /// Operand indices and raw values for one cycle.
@@ -135,12 +136,14 @@ impl CollectRegisterEntries {
         }
         let mut retained = cycles;
         if let Some(access) = witness.random_access() {
-            let prefix = access.physical_cycles().min(cycles);
-            if cycles <= access.cycles()
-                && prefix < cycles
-                && access.window::<RegisterCycleRow>(prefix)? == RegisterCycleRow::default()
-            {
-                retained = prefix;
+            if cycles <= access.cycles() {
+                let prefix = BundleAccess::<RegisterCycleRow>::View(&access)
+                    .constant_suffix_start(cycles)?;
+                if prefix < cycles
+                    && access.window::<RegisterCycleRow>(prefix)? == RegisterCycleRow::default()
+                {
+                    retained = prefix;
+                }
             }
             #[cfg(feature = "parallel")]
             if cycles <= access.cycles() {
