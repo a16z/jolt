@@ -803,10 +803,14 @@ mod prover {
             transcript.send_all(&accepted.t_d.payload);
             transcript.send_bytes(&accepted.nonce);
             let witness = prover.witness(&accepted)?;
+            // The attempt's buffers are wiped and freed before the response
+            // proof, the prover's largest step.
+            let compression = prover.compression;
+            drop(prover);
             let statement = ResponseStatement {
                 setup,
                 relation,
-                compression: prover.compression,
+                compression,
                 challenge: accepted.challenge,
                 rho,
                 v_payload: accepted.t_d.payload,

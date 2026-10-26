@@ -556,8 +556,15 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
     /// `weights`: returns `a`, one coefficient per digit of `e` in layout
     /// order, and `b = Σ_l w_l · row_l(0)`. `a` is the transpose of the rows'
     /// maps applied to `weights`, so the response matrix `H` is never built
-    /// (Whiteout §4.3, "Evaluating the public weights").
-    pub fn weigh(&self, weights: &ResponseRows<F>, alpha: F) -> Result<(Vec<F>, F), WhiteoutError> {
+    /// (Whiteout §4.3, "Evaluating the public weights"). `a`'s buffer has
+    /// room for at least `capacity` entries, so a caller that pads it does
+    /// not reallocate it.
+    pub fn weigh(
+        &self,
+        weights: &ResponseRows<F>,
+        alpha: F,
+        capacity: usize,
+    ) -> Result<(Vec<F>, F), WhiteoutError> {
         if weights.shape() != self.row_shape() {
             return Err(WhiteoutError::InvalidRelation(
                 "row weights differ from the statement's rows",
@@ -661,7 +668,8 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         )?;
 
         // Back through the digit reconstruction to e.
-        let mut a = vec![F::zero(); layout.len()];
+        let mut a = Vec::with_capacity(capacity.max(layout.len()));
+        a.resize(layout.len(), F::zero());
         let mut z_rest = z.as_slice();
         let mut offset = 0;
         for segment in &layout.segments {
