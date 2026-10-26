@@ -22,6 +22,35 @@ extern "C" __global__ void pcr_round_kernel(const u64 *__restrict__ packed, unsi
     lane_block_reduce(scratch, 2, acc, partials);
 }
 
+extern "C" __global__ void pcr_scatter_kernel(const unsigned int *__restrict__ indices,
+                                              const u64 *__restrict__ values, unsigned int count,
+                                              unsigned int table_len, unsigned int row,
+                                              u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 value[LIMBS];
+    load4(values + (unsigned long long)i * LIMBS, value);
+    store4(out + ((unsigned long long)row * table_len + indices[i]) * LIMBS, value);
+}
+
+extern "C" __global__ void pcr_value_fold_kernel(const u64 *__restrict__ chunks,
+                                                 const u64 *__restrict__ weights,
+                                                 unsigned int chunk_count, unsigned int table_len,
+                                                 u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= table_len) return;
+    u64 acc[LIMBS] = {0, 0, 0, 0};
+    for (unsigned int c = 0; c < chunk_count; c++) {
+        u64 coeff[LIMBS], weight[LIMBS], term[LIMBS], sum[LIMBS];
+        load4(chunks + ((unsigned long long)c * table_len + i) * LIMBS, coeff);
+        load4(weights + (unsigned long long)c * LIMBS, weight);
+        fr_mul(coeff, weight, term);
+        fr_add(acc, term, sum);
+        for (int l = 0; l < LIMBS; l++) acc[l] = sum[l];
+    }
+    store4(out + (unsigned long long)i * LIMBS, acc);
+}
+
 extern "C" __global__ void pcr_lane_eq_kernel(const u64 *__restrict__ lane_weights,
                                               const u64 *__restrict__ eq_cycle,
                                               unsigned int chunk_cycle_len,
