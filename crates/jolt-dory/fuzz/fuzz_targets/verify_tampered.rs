@@ -16,7 +16,7 @@ use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field, Fr};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
