@@ -46,11 +46,13 @@ mod prover;
 #[cfg(feature = "test-utils")]
 mod scripted;
 mod setup;
+mod shake128;
 mod transcript;
 mod verifier;
 
 pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
 pub use codec::{protocol_tag, word_padding, BytesMsg, NargMessage, TAG_BYTES, WORD_BYTES};
+pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};
 pub use grind_bits::{
     challenge_bits_for_loss, grind_bits_for_loss, ChallengeSetSize, GrindBitsError, MAX_POW_BITS,
     SECURITY_BITS,
@@ -62,9 +64,9 @@ pub use pow::{MessageSearch, Probe};
 pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
-pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
-pub use spongefish::{Encoding, ProverState, VerificationError, VerifierState};
+pub use shake128::{ProverState, Shake128, Shake128Hasher};
+pub use spongefish::{Encoding, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};
 pub use verifier::{VerifierInit, VerifierTranscript};
 

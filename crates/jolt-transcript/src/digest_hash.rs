@@ -37,21 +37,21 @@ mod tests {
 
     use super::*;
 
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-    }
-
     /// FIPS 202 and Keccak team known answers for the empty input.
     #[test]
     fn digest_hasher_is_the_selected_hash() {
-        let expected = match DIGEST_HASH {
-            DigestHash::Sha3_256 => {
-                "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"
-            }
-            DigestHash::Keccak256 => {
-                "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
-            }
+        let expected: [u8; 32] = match DIGEST_HASH {
+            DigestHash::Sha3_256 => [
+                0xa7, 0xff, 0xc6, 0xf8, 0xbf, 0x1e, 0xd7, 0x66, 0x51, 0xc1, 0x47, 0x56, 0xa0, 0x61,
+                0xd6, 0x62, 0xf5, 0x80, 0xff, 0x4d, 0xe4, 0x3b, 0x49, 0xfa, 0x82, 0xd8, 0x0a, 0x4b,
+                0x80, 0xf8, 0x43, 0x4a,
+            ],
+            DigestHash::Keccak256 => [
+                0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7,
+                0x03, 0xc0, 0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04,
+                0x5d, 0x85, 0xa4, 0x70,
+            ],
         };
-        assert_eq!(hex(&DigestHasher::digest(b"")), expected);
+        assert_eq!(DigestHasher::digest(b"")[..], expected);
     }
 }

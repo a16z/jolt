@@ -1144,7 +1144,6 @@ dependencies = [
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-claims-derive",
  "jolt-field",
@@ -1153,9 +1152,11 @@ dependencies = [
  "jolt-poly",
  "jolt-r1cs",
  "jolt-riscv",
+ "jolt-transcript",
  "jolt-utils",
  "rayon",
  "serde",
+ "sha3",
  "thiserror 2.0.18",
 ]
 
@@ -1563,6 +1564,8 @@ dependencies = [
  "jolt-field",
  "light-poseidon",
  "rayon",
+ "sha3",
+ "shake",
  "spongefish",
 ]
 
@@ -1580,7 +1583,6 @@ version = "0.1.0"
 dependencies = [
  "ark-serialize",
  "bincode 2.0.1",
- "blake2 0.11.0-rc.6",
  "common",
  "jolt-blindfold",
  "jolt-claims",
@@ -1597,6 +1599,7 @@ dependencies = [
  "jolt-verifier-derive",
  "num-traits",
  "serde",
+ "sha3",
  "thiserror 2.0.18",
 ]
 
@@ -2335,6 +2338,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha3"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc9bad02c26382724b2d2692c6f179285e4b54eeecd7968f52a50059c3c11759"
+dependencies = [
+ "digest 0.11.2",
+ "keccak",
+ "sponge-cursor",
+]
+
+[[package]]
 name = "shake"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2396,8 +2410,6 @@ dependencies = [
  "digest 0.11.2",
  "getrandom 0.4.2",
  "keccak",
- "shake",
- "turboshake",
  "zeroize",
 ]
 
@@ -2743,17 +2755,6 @@ checksum = "4e8ed0ecb931cdff13c6a13f45ccd615156e2779d9ffb0395864e05505e6e86d"
 dependencies = [
  "cc",
  "tree-sitter",
-]
-
-[[package]]
-name = "turboshake"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
-dependencies = [
- "digest 0.11.2",
- "keccak",
- "sponge-cursor",
 ]
 
 [[package]]

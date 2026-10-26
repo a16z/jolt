@@ -40,7 +40,8 @@ test-utils = []
 ark-bn254 = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
-spongefish = { workspace = true, features = ["getrandom", "turboshake128"] }
+spongefish = { workspace = true, features = ["getrandom"] }
+shake.workspace = true
 blake2 = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false, features = [
   "spongefish",

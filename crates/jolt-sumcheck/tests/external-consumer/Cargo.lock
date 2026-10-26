@@ -40,6 +40,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "const-oid"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
 name = "cpufeatures"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -64,6 +70,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer",
+ "const-oid",
  "crypto-common",
 ]
 
@@ -148,6 +155,8 @@ version = "0.1.0"
 dependencies = [
  "getrandom",
  "jolt-field",
+ "sha3",
+ "shake",
  "spongefish",
 ]
 
@@ -272,6 +281,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha3"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc9bad02c26382724b2d2692c6f179285e4b54eeecd7968f52a50059c3c11759"
+dependencies = [
+ "digest",
+ "keccak",
+ "sponge-cursor",
+]
+
+[[package]]
 name = "shake"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -303,8 +323,6 @@ dependencies = [
  "digest",
  "getrandom",
  "keccak",
- "shake",
- "turboshake",
  "zeroize",
 ]
 
@@ -377,17 +395,6 @@ name = "tracing-core"
 version = "0.1.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
-
-[[package]]
-name = "turboshake"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
-dependencies = [
- "digest",
- "keccak",
- "sponge-cursor",
-]
 
 [[package]]
 name = "typenum"

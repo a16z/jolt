@@ -1,14 +1,14 @@
 //! Native spongefish transcript initialization.
 //!
-//! The session identifier is derived from [`PROTOCOL_ID`]. Each transcript
-//! absorbs one instance: the caller's 32-byte session tag, then the encoding
-//! of the public statement as a [`BytesMsg`].
+//! The session identifier is derived from [`PROTOCOL_ID`] with SHAKE128. Each
+//! transcript absorbs one instance: the caller's 32-byte session tag, then the
+//! encoding of the public statement as a [`BytesMsg`].
 
-use spongefish::instantiations::TurboShake128;
-use spongefish::{DuplexSpongeInit, Encoding, ProverState, SessionId, VerifierState};
+use spongefish::{DuplexSpongeInit, Encoding, SessionId, VerifierState};
 
 use crate::codec::{protocol_tag, BytesMsg, TAG_BYTES};
 use crate::digest_hash::{DigestHash, DIGEST_HASH};
+use crate::shake128::{ProverState, Shake128};
 
 /// Crate-wide protocol tag, `a16z/jolt-transcript/v2/sha3` zero-padded to 32
 /// bytes (`a16z/jolt-transcript/v2/keccak` under `keccak256-digests`).
@@ -30,6 +30,8 @@ use crate::digest_hash::{DigestHash, DIGEST_HASH};
 ///   candidates hold an even number of them; `F8` messages pad their squeeze
 ///   to a word. Short scalars squeeze `ceil(b / 8)` bytes rounded up to a
 ///   word and keep their low `b` bits.
+/// - **The session identifier.** SHAKE128 (FIPS 202) derives it from this
+///   tag.
 /// - **The proof-of-work layout.** The nonce is canonical LEB128 in the NARG
 ///   string and one `u64` LE word in the sponge; the check is eight squeezed
 ///   bytes whose little-endian `u64` has its low `bits` bits zero.
@@ -123,11 +125,11 @@ where
 }
 
 /// Derive the spongefish session identifier from [`PROTOCOL_ID`] using
-/// TurboSHAKE128. Callers with custom instance encodings can pass this
-/// identifier directly to spongefish's prover and verifier constructors.
+/// SHAKE128. Callers with custom instance encodings can pass this identifier
+/// directly to spongefish's prover and verifier constructors.
 #[must_use]
 pub fn session_id() -> SessionId {
-    spongefish::derive_session_id::<TurboShake128>(&PROTOCOL_ID)
+    spongefish::derive_session_id::<Shake128>(&PROTOCOL_ID)
 }
 
 #[cfg(test)]
@@ -140,13 +142,27 @@ mod tests {
             DigestHash::Sha3_256 => b"a16z/jolt-transcript/v2/sha3",
             DigestHash::Keccak256 => b"a16z/jolt-transcript/v2/keccak",
         };
-        assert_eq!(&PROTOCOL_ID[..name.len()], name);
-        assert!(PROTOCOL_ID[name.len()..].iter().all(|&byte| byte == 0));
-        assert_ne!(
-            PROTOCOL_ID[..],
-            protocol_tag(b"a16z/jolt-transcript/v1")[..],
-            "the v2 tag differs from v1"
-        );
+        assert_eq!(PROTOCOL_ID, protocol_tag(name));
+    }
+
+    /// Known answer: the first 32 bytes of SHAKE128 over
+    /// `irtf-cfrg-fiat-shamir/session-id`, zeros to 168 bytes, then
+    /// [`PROTOCOL_ID`].
+    #[test]
+    fn session_id_is_shake128_of_the_protocol_id() {
+        let expected: [u8; 32] = match DIGEST_HASH {
+            DigestHash::Sha3_256 => [
+                0xe4, 0xf7, 0xc5, 0x85, 0x2b, 0xca, 0x4d, 0x0a, 0x50, 0x8f, 0xe2, 0x19, 0xaf, 0x73,
+                0x80, 0x3a, 0x6b, 0xae, 0xce, 0xc2, 0x10, 0x56, 0xd5, 0xc0, 0x8f, 0x72, 0xf1, 0x6c,
+                0x05, 0x0f, 0x87, 0x92,
+            ],
+            DigestHash::Keccak256 => [
+                0x2b, 0x99, 0xbf, 0x2a, 0xa3, 0x90, 0x9c, 0x03, 0x1c, 0xbf, 0xa1, 0x76, 0x93, 0x49,
+                0x13, 0x00, 0x0f, 0x67, 0x3e, 0xc9, 0x75, 0x26, 0x9d, 0x9a, 0xfe, 0xd7, 0x67, 0x26,
+                0x69, 0x1d, 0x0f, 0xd6,
+            ],
+        };
+        assert_eq!(session_id().as_bytes(), &expected);
     }
 
     #[test]

@@ -798,6 +798,11 @@ jobs:
       - name: Test jolt-transcript with all features
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-transcript --all-features --cargo-quiet
+      # --all-features selects Keccak-256 digests (`keccak256-digests`), which
+      # skips the known answers pinned for the default SHA3-256 digests.
+      - name: Test jolt-transcript with every sponge and SHA3-256 digests
+        if: matrix.shard == 1
+        run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,parallel,transcript-blake2b,transcript-poseidon,test-utils --cargo-quiet
       - name: Test jolt-transcript with sequential grinding
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,prover-grinding --cargo-quiet

@@ -29,6 +29,10 @@ fn short_scalar_refuses_a_field_without_room() {
     assert!(verifier.check_eof().is_err());
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[test]
 fn test_keccak_known_vector() {
     let mut transcript = transcript(b"Jolt");
@@ -38,7 +42,7 @@ fn test_keccak_known_vector() {
     // `u64` public message and one 56-byte challenge squeeze reduced mod r.
     assert_eq!(
         format!("{challenge:?}"),
-        "12245913755514758687269313047689373645644388575530658576000096080939340770669"
+        "20976167774209758444602434529208306535997730698984815987397147984409024377219"
     );
 }
 

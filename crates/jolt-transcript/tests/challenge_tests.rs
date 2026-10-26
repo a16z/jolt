@@ -371,6 +371,10 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
     assert_eq!(hex_bytes(&tail), continuation);
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[cfg(feature = "solinas")]
 #[test]
 fn solinas_known_answers() {
@@ -379,17 +383,21 @@ fn solinas_known_answers() {
     // squeeze starts at byte 48 instead of 44.
     known_answer::<Prime128OffsetA7F7>(
         1,
-        "1e57b09684e11f500a05f588dad60ac8",
-        "6d7c6ca6d68bce3f8d97b4582a5be33b",
+        "e1fd4d691fdfd5431ee0b45796a1b3ad",
+        "663164ebd1ed79c41375a2c02aae4edf",
     );
-    known_answer::<Prime64Offset59>(1, "1e57b09684e11f50", "1db5dc0c61e90bf76d7c6ca6d68bce3f");
+    known_answer::<Prime64Offset59>(1, "e1fd4d691fdfd543", "1469a531ac276dd1663164ebd1ed79c4");
     known_answer::<FpExt4<Prime32Offset99>>(
         1,
-        "1e57b09684e11f500a05f588dad60ac8",
-        "fb4a608db31e3e02936b3cc471ec33d2",
+        "e1fd4d691fdfd5431ee0b45796a1b3ad",
+        "b5121e2e2bfabaae6f0832afec310e0b",
     );
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[cfg(feature = "bn254")]
 #[test]
 fn bn254_known_answer() {
@@ -397,21 +405,29 @@ fn bn254_known_answer() {
     // at byte 56.
     known_answer::<Fr>(
         1,
-        "52b8a60a4b653bb3ba95cacacee64a8d9121db7702dd86a7f3ecb89bafa77022",
-        "936b3cc471ec33d25092ac38b856a148",
+        "19726053acccc3deea86bae864e97dfddb01905d53d6899046819f89f9527906",
+        "6f0832afec310e0b705df269fea7021a",
     );
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[cfg(feature = "binary")]
 #[test]
 fn binary_known_answer() {
     known_answer::<F128>(
         1,
-        "1e57b09684e11f500a05f588dad60ac8",
-        "57405ac0d5a82f1e1db5dc0c61e90bf7",
+        "e1fd4d691fdfd5431ee0b45796a1b3ad",
+        "7c6c0cc83ae5c82f1469a531ac276dd1",
     );
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[cfg(feature = "binary")]
 #[test]
 fn keccak_rate_boundary_known_answers() {
@@ -423,24 +439,24 @@ fn keccak_rate_boundary_known_answers() {
     known_answer::<F8>(
         136,
         concat!(
-            "1e57b09684e11f500a05f588dad60ac857405ac0d5a82f1e1db5dc0c61e90bf7",
-            "6d7c6ca6d68bce3f8d97b4582a5be33bfb4a608db31e3e02936b3cc471ec33d2",
-            "5092ac38b856a148b756e9be0ae925667b346470f6d40169bd25bd3d22827a14",
-            "66a2d3d9156a32ea0cc25d69816024cb95e93cafa9551a765fc73ed2e6d17b3a",
-            "6a64a84b5ebfae67",
+            "e1fd4d691fdfd5431ee0b45796a1b3ad7c6c0cc83ae5c82f1469a531ac276dd1",
+            "663164ebd1ed79c41375a2c02aae4edfb5121e2e2bfabaae6f0832afec310e0b",
+            "705df269fea7021a301b510ce1f141c953d3aed27fb138fea5eae4780cf8ee65",
+            "dd5f1e33442d2393b7b1fd435f8945c5f1358f60155dd4e348924d872ea1e160",
+            "a3f8ed296bcd9bce",
         ),
-        "f511c063868baf3cc2b46113194844a8",
+        "3dd469cc1281b9292e8e4b027efe5163",
     );
     known_answer::<F8>(
         137,
         concat!(
-            "1e57b09684e11f500a05f588dad60ac857405ac0d5a82f1e1db5dc0c61e90bf7",
-            "6d7c6ca6d68bce3f8d97b4582a5be33bfb4a608db31e3e02936b3cc471ec33d2",
-            "5092ac38b856a148b756e9be0ae925667b346470f6d40169bd25bd3d22827a14",
-            "66a2d3d9156a32ea0cc25d69816024cb95e93cafa9551a765fc73ed2e6d17b3a",
-            "6a64a84b5ebfae67f5",
+            "e1fd4d691fdfd5431ee0b45796a1b3ad7c6c0cc83ae5c82f1469a531ac276dd1",
+            "663164ebd1ed79c41375a2c02aae4edfb5121e2e2bfabaae6f0832afec310e0b",
+            "705df269fea7021a301b510ce1f141c953d3aed27fb138fea5eae4780cf8ee65",
+            "dd5f1e33442d2393b7b1fd435f8945c5f1358f60155dd4e348924d872ea1e160",
+            "a3f8ed296bcd9bce3d",
         ),
-        "c2b46113194844a89e30b78d844247eb",
+        "2e8e4b027efe5163565eeaaa98babf82",
     );
 }
 

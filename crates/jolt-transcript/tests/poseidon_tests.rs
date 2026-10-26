@@ -45,6 +45,10 @@ fn test_poseidon_prover_and_verifier_agree() {
     );
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[test]
 fn test_poseidon_known_vector() {
     let got = squeeze_after(|t| t.append(&12345u64));
@@ -52,7 +56,7 @@ fn test_poseidon_known_vector() {
     // `u64` public message and a 32-byte squeeze.
     assert_eq!(
         hex(&got),
-        "870f3388a966379c132812c7bf864170d1cde3657dbc9bcbd8d431c785961516",
+        "f156ab8ed8a565f069d4798debca31d19d3deed946d89ce9642a9b81c764112f",
         "Poseidon known-vector regression"
     );
 }
