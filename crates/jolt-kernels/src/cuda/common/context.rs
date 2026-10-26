@@ -225,15 +225,15 @@ pub struct CudaKernelContext {
     msm_jacobian_z: CudaFunction,
     #[cfg(test)]
     msm_jacobian_to_affine: CudaFunction,
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pairing_miller: CudaFunction,
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pairing_miller_warp: CudaFunction,
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pairing_prepare_g2: CudaFunction,
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pairing_miller_prepared: CudaFunction,
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pairing_fq12_product: CudaFunction,
     #[cfg(test)]
     pub(super) fq6_mul_probe: CudaFunction,
@@ -471,15 +471,15 @@ impl CudaKernelContext {
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             #[cfg(test)]
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
-            #[cfg(test)]
+            #[cfg(any(test, not(feature = "zk")))]
             pairing_miller: module.load_function("pairing_miller_kernel")?,
-            #[cfg(test)]
+            #[cfg(any(test, not(feature = "zk")))]
             pairing_miller_warp: module.load_function("pairing_miller_warp_kernel")?,
-            #[cfg(test)]
+            #[cfg(any(test, not(feature = "zk")))]
             pairing_prepare_g2: module.load_function("pairing_prepare_g2_kernel")?,
-            #[cfg(test)]
+            #[cfg(any(test, not(feature = "zk")))]
             pairing_miller_prepared: module.load_function("pairing_miller_prepared_kernel")?,
-            #[cfg(test)]
+            #[cfg(any(test, not(feature = "zk")))]
             pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
             #[cfg(test)]
             fq6_mul_probe: module.load_function("fq6_mul_probe")?,
@@ -1378,27 +1378,27 @@ impl CudaKernelContext {
         &self.msm_jacobian_to_affine
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_miller(&self) -> &CudaFunction {
         &self.pairing_miller
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_miller_warp(&self) -> &CudaFunction {
         &self.pairing_miller_warp
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_prepare_g2(&self) -> &CudaFunction {
         &self.pairing_prepare_g2
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_miller_prepared(&self) -> &CudaFunction {
         &self.pairing_miller_prepared
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pub(crate) const fn pairing_fq12_product(&self) -> &CudaFunction {
         &self.pairing_fq12_product
     }

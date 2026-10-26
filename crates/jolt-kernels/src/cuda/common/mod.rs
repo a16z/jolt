@@ -14,7 +14,7 @@ pub(crate) mod one_hot_fold;
 #[cfg(test)]
 pub(crate) mod one_hot_witness;
 pub(crate) mod pack;
-#[cfg(test)]
+#[cfg(any(test, not(feature = "zk")))]
 pub(crate) mod pairing;
 pub(crate) mod precommitted_reduction;
 pub(crate) mod prefix_suffix;

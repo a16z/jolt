@@ -1,8 +1,16 @@
 //! Dory PCS entry point sharing the CPU scheme's setup, commitment, proof,
-//! and transcript formats. Hint combinations run row MSMs across CUDA devices;
-//! setup, commitments, openings, and verification delegate to `DoryScheme`.
+//! and transcript formats. Hint combinations and the partitioned transparent
+//! witness path's tier-two Miller loops run on CUDA. Final exponentiation
+//! remains on the CPU. Standalone commitments, openings, setup, verification,
+//! and ZK commitment finalization delegate to `DoryScheme`.
 
+#[cfg(not(feature = "zk"))]
+mod arena;
 mod combine;
+#[cfg(not(feature = "zk"))]
+mod curve;
+#[cfg(not(feature = "zk"))]
+mod tier2;
 
 use jolt_crypto::{Bn254G1, Commitment, VectorCommitment};
 use jolt_dory::{
@@ -10,6 +18,8 @@ use jolt_dory::{
     DoryVerifierSetup,
 };
 use jolt_field::Fr;
+#[cfg(not(feature = "zk"))]
+use jolt_field::Ring;
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, OpeningsError, StreamingCommitment, ZkOpeningScheme,
     ZkStreamingCommitment,
@@ -20,12 +30,20 @@ use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 
+#[cfg(all(feature = "parallel", not(feature = "zk")))]
+use rayon::prelude::*;
+
 use crate::cuda::commitment::DeviceTier1Commitment;
+#[cfg(not(feature = "zk"))]
+use crate::cuda::commitment::FinishedColumn;
+#[cfg(not(feature = "zk"))]
+use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::msm::{AffineLimbs, JacobianLimbs};
 
-/// Dory PCS with CUDA hint combination, selected independently of the compute
-/// kernel registry. Its proof and setup types are shared with `DoryScheme`.
+/// Dory PCS with CUDA hint combination and transparent witness tier two.
+/// Selection is independent of the compute kernel registry; proof and setup
+/// types are shared with `DoryScheme`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CudaDoryScheme;
 
@@ -68,6 +86,56 @@ impl CudaDoryScheme {
 }
 
 impl DeviceTier1Commitment for CudaDoryScheme {
+    const BATCHES_TIER2: bool = !cfg!(feature = "zk");
+
+    #[cfg(not(feature = "zk"))]
+    fn tier2_selected(
+        context: &CudaKernelContext,
+        setup: &Self::ProverSetup,
+        columns: &[Vec<JacobianLimbs>],
+        selection: &[usize],
+    ) -> Result<Vec<(usize, FinishedColumn<Self>)>, CudaError> {
+        let commitments = tier2::tier2_selected(context, setup, columns, selection)?;
+        let blind = <Fr as Ring>::from_u64(0);
+        let hints =
+            tracing::info_span!("cuda_commit_hints", columns = selection.len()).in_scope(|| {
+                #[cfg(feature = "parallel")]
+                let hints = commitments
+                    .par_iter()
+                    .map(|&(index, _)| {
+                        let rows = columns.get(index).ok_or(CudaError::InvariantViolation {
+                            reason: "a tier-2 selection named a column outside the batch",
+                        })?;
+                        DoryScheme::partial_from_rows(setup, rows)
+                    })
+                    .collect::<Result<Vec<_>, _>>();
+                #[cfg(not(feature = "parallel"))]
+                let hints = commitments
+                    .iter()
+                    .map(|&(index, _)| {
+                        let rows = columns.get(index).ok_or(CudaError::InvariantViolation {
+                            reason: "a tier-2 selection named a column outside the batch",
+                        })?;
+                        DoryScheme::partial_from_rows(setup, rows)
+                    })
+                    .collect::<Result<Vec<_>, _>>();
+                hints
+            })?;
+        commitments
+            .into_iter()
+            .zip(hints)
+            .map(|((index, commitment), partial)| {
+                Ok((
+                    index,
+                    (
+                        commitment,
+                        DoryHint::from_parts(partial.row_commitments, blind),
+                    ),
+                ))
+            })
+            .collect()
+    }
+
     fn tier1_bases(setup: &Self::ProverSetup, count: usize) -> Result<Vec<AffineLimbs>, CudaError> {
         DoryScheme::tier1_bases(setup, count)
     }

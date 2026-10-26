@@ -6,8 +6,8 @@
 //! with later sumcheck and opening kernels.
 //!
 //! `DeviceTier1Commitment` separates these row computations from PCS
-//! finalization. `DoryScheme` and `CudaDoryScheme` pipeline GPU rows
-//! into CPU tier-two commitments.
+//! finalization. `DoryScheme` pipelines GPU rows into CPU tier-two commitments;
+//! clear `CudaDoryScheme` batches tier-two Miller loops on the devices.
 //! Address-major and wider grids materialize the canonical dense layout on
 //! the host before GPU row MSMs, whereas optimized delegates those layouts
 //! to reference. For cycle-major grids wider than the trace, CUDA retains the

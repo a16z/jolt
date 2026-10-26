@@ -834,7 +834,7 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&accumulator)?))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, not(feature = "zk")))]
     pub fn upload_raw_u64(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
         self.upload_u64_slice(values)
     }

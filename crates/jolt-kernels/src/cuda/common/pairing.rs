@@ -14,8 +14,10 @@ pub const FQ12_LIMBS: usize = 12 * FQ_LIMBS;
 
 pub const FQ2_LIMBS: usize = 2 * FQ_LIMBS;
 
+#[cfg(test)]
 pub const FQ6_LIMBS: usize = 6 * FQ_LIMBS;
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TowerProbe {
     Fq6Mul,
@@ -28,6 +30,7 @@ pub enum TowerProbe {
     Ell,
 }
 
+#[cfg(test)]
 impl TowerProbe {
     const fn widths(self) -> (usize, usize) {
         match self {
@@ -43,6 +46,7 @@ impl TowerProbe {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum G2StepProbe {
     DoubleStep,
@@ -50,6 +54,7 @@ pub enum G2StepProbe {
     MulByChar,
 }
 
+#[cfg(test)]
 impl G2StepProbe {
     const fn widths(self) -> (usize, usize) {
         match self {
@@ -165,6 +170,7 @@ impl CudaKernelContext {
         })
     }
 
+    #[cfg(test)]
     pub fn tower_probe(&self, op: TowerProbe, input: &[u64]) -> Result<Vec<u64>, CudaError> {
         let (in_width, out_width) = op.widths();
         if in_width == 0 || !input.len().is_multiple_of(in_width) {
@@ -204,6 +210,7 @@ impl CudaKernelContext {
         self.download_u64(&device_out)
     }
 
+    #[cfg(test)]
     pub fn g2_step_probe(&self, op: G2StepProbe, input: &[u64]) -> Result<Vec<u64>, CudaError> {
         let (in_width, out_width) = op.widths();
         if in_width == 0 || !input.len().is_multiple_of(in_width) {
