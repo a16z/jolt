@@ -25,11 +25,11 @@
 
 use std::sync::{Mutex, PoisonError};
 
-use arbitrary::{Arbitrary, Unstructured};
+use arbitrary::{Arbitrary, Result as ArbitraryResult, Unstructured};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::MemoryConfig;
 use jolt_host::Program;
-use object::{Object, ObjectSymbol};
+use object::{File as ObjectFile, Object, ObjectSymbol};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracer::emulator::cpu::{get_register_name, Cpu};
@@ -199,7 +199,7 @@ impl GuestCopyRuntimeInput {
 }
 
 impl<'a> Arbitrary<'a> for GuestCopyRuntimeInput {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+    fn arbitrary(u: &mut Unstructured<'a>) -> ArbitraryResult<Self> {
         let routine = if u.arbitrary::<u8>()? & 1 == 0 {
             CopyRoutine::Memcpy
         } else {
@@ -486,7 +486,7 @@ impl RuntimeGuest {
         let program = host.jolt_program().expect("guest builds");
         let elf = host.get_elf_contents().expect("built guest ELF");
 
-        let object = object::File::parse(elf.as_slice()).expect("guest ELF parses");
+        let object = ObjectFile::parse(elf.as_slice()).expect("guest ELF parses");
         let symbol = |name: &str| {
             let mut matches = object
                 .symbols()
