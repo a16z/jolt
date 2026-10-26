@@ -279,6 +279,11 @@ jobs:
           tool: nextest
       - name: Run jolt-prover tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
+      # Replays the guest_copy_runtime fuzz seeds through the std and no_std
+      # guests this lane builds and requires every instruction of
+      # jolt-platform/src/memory.S to execute.
+      - name: Run guest copy-runtime invariant
+        run: cargo nextest run --cargo-profile ci -p jolt-eval -E 'test(/guest_copy_runtime/)' --cargo-quiet
 
   trace-equivalence:
     runs-on: ubuntu-latest

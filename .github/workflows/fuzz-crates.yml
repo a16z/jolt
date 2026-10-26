@@ -7,6 +7,8 @@ on:
       - "common/**"
       - "crates/**"
       - "jolt-eval/**"
+      - "jolt-platform/**"
+      - "src/**"
       - "tracer/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -19,6 +21,8 @@ on:
       - "common/**"
       - "crates/**"
       - "jolt-eval/**"
+      - "jolt-platform/**"
+      - "src/**"
       - "tracer/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -131,9 +135,31 @@ jobs:
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: cargo-fuzz@0.13.2
+      - name: Cache ZeroOS musl toolchain
+        if: matrix.workspace == 'jolt-eval'
+        id: cache-zeroos-musl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: matrix.workspace == 'jolt-eval' && steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      # setup-rust-toolchain pins this checkout to the fuzz nightly with a
+      # directory override, which outranks rust-toolchain.toml. Guests must
+      # build with the pinned toolchain (the nightly's std guest fails bytecode
+      # decoding), so drop the override; scripts/fuzz.py still runs cargo-fuzz
+      # with an explicit +nightly. The std guest's build-std needs rust-src.
       - name: Install guest builder
         if: matrix.workspace == 'jolt-eval'
-        run: cargo install --path . --locked
+        run: |
+          rustup override unset
+          rustup toolchain install
+          rustup component add rust-src
+          cargo install --path . --locked
       - name: Cache fuzz builds
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
