@@ -36,6 +36,12 @@ pool, then runs the unchanged ordered traversal, which now finds them in
 the memo. The memo, the setup-prefix cache and the diagnostics are shared
 across threads (mutex and atomics).
 
+On the jolt side, `ResponsePlans::get` now plans outside its `derived`
+lock and keeps the first row inserted. Holding the lock across a planning
+call that runs on Rayon could deadlock: a worker waiting in a nested join
+may steal another verify's job that waits on the same lock. The masked
+catalog and residual matrices were already built outside their cells.
+
 Nothing is pruned that was not pruned before. No search order, bound or
 tie-break changed.
 
@@ -56,9 +62,34 @@ tie-break changed.
   traversal (root, setup-prefixed states) is completed in pool-width waves,
   each against the frontier the earlier waves built, so pruned candidates
   mostly cost nothing; this affects only work, not results.
-- **Errors.** A successor that fails while being completed early is
-  dropped; the traversal reaches it (or not) exactly as before and reports
-  the same error.
+- **Extra states.** Early completion decides prunes at the start of a
+  wave; the traversal's frontier only grows inside the wave, so it may
+  prune a candidate whose successors were already completed. Early
+  completion therefore explores states the sequential order never visits:
+  the pool completes 1.33–1.50× the sequential state count (43,544 vs
+  32,717 at ν = 24, 68,328 vs 45,499 at ν = 25, 48,393 vs 34,063 at
+  ν = 26), counting those and states two threads both computed.
+- **Errors.** An `Err` from a state completed early is dropped; the
+  traversal reaches that state (or not) exactly as before, so the errors
+  a search reports are unchanged.
+- **Panics are not.** A panic in an extra state propagates out of the
+  rayon join, so a search that succeeds sequentially would now panic.
+  Quick audit (clippy `unwrap_used`, `expect_used`, `panic`,
+  `indexing_slicing` on the `akita-planner` lib): every site on the
+  candidate-generation and pricing path is invariant-guarded, and the same
+  code already runs for every state the sequential search visits. In
+  `akita-planner` they are: the diagnostics' fixed arrays indexed by
+  exhaustive enum maps; the precommitted equivalence-class indices
+  (`planner.rs:89–91,262,279`, `candidates.rs:129,271`), built from the
+  same key and reached only at the root, which early completion never
+  runs; the response model's bucket indices (`response_model.rs:155,157`,
+  bounded by its loop); `expect` on a scheduled setup prefix's slot id
+  (`setup_prefix.rs:213`); and `expect` on validated costs
+  (`schedule_params.rs:403,407`). The layout builders in `akita-params`
+  and `akita-schedules` that generation calls also index (tail, relation
+  rows, opening layout, grinding order). I did not audit those for
+  reachability from states the sequential order prunes. None has fired
+  in the tests, the catalog regeneration or the profiles.
 
 Ground truth (independent of this change, not a reimplementation):
 
@@ -100,8 +131,8 @@ CPU cycles from `time -l`):
   14.3 s.
 - One thread costs 1–6% more cycles than before (locks, the edge
   decisions made twice).
-- The pool does about 1.8× the work: 33–50% of states are completed twice
-  when two threads reach them together.
+- The pool does about 1.8× the work: 1.33–1.50× the states (pruned-order
+  states plus states two threads completed together), and lock contention.
 - Idle projection, not measured: 52–79 G cycles is 13–20 s at 4 GHz on
   one core. Spread over 16 cores, 93–143 G cycles is 1.5–2.2 s. So about
   1.5–2 s per response plan idle, not the 1 s target.
@@ -122,3 +153,9 @@ CPU cycles from `time -l`):
   remaining duplicate work but can deadlock under rayon's work stealing
   (a waiting thread may hold a lower-level claim in a stolen frame). A
   bounded `yield_now` wait overflowed worker stacks in a probe. Not taken.
+- **Stack depth has no hard bound.** A worker waiting in a nested join
+  steals unrelated jobs onto its stack, so nesting depth is bounded only
+  in practice. Measured (review, debug build): 256 KiB worker stacks
+  overflow both the response search and the catalog search, 384 KiB pass
+  both; release passed at 256 KiB. Rayon's 2 MiB default leaves at least
+  5× headroom.
