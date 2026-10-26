@@ -95,6 +95,9 @@ CPU cycles from `time -l`):
 | 25 | 78.5 G | 80.6 G | 142.9 G (19.5 s) | 45,499 / 68,328 |
 | 26 | 55.4 G | 58.9 G | 102.3 G (14.2 s) | 34,063 / 48,393 |
 
+- Wall at lower load (19–34; base, pool, pool, base): ν = 24 16.9 / 2.9 /
+  2.7 / 11.8 s, ν = 25 24.7 / 4.9 / 4.7 / 18.2 s, ν = 26 12.7 / 3.3 / 3.2 /
+  14.3 s.
 - One thread costs 1–6% more cycles than before (locks, the edge
   decisions made twice).
 - The pool does about 1.8× the work: 33–50% of states are completed twice
