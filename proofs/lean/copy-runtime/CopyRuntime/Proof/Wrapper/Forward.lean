@@ -337,6 +337,7 @@ theorem fwd_blocks (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVe
       have hal' : (src.toNat + (j + 80 * k)) % 8 = 0 := by omega
       have hsub : (regs' 12 - 80#64).toNat = n.toNat - (j + 80 * k + 80) := by
         rw [toNat_sub_ofNat_of_le (by omega), ha2']; omega
+      -- 0x210 .. 0x262: ten loads, ten stores, `addi a1/a7/a2`
       iterate 23 rv_step ctx.code [ha1', ha7', h5, hl, hst, add_ofNat_eq_sub_of_ge]
       rv_step ctx.code [ha1', ha7', h5]                      -- 0x266 bgeu a2, t0
       · rename_i hc
@@ -526,13 +527,44 @@ theorem fwd_large (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec
     · omega
     · simp [writeReg_apply]
 
-set_option maxHeartbeats 16000000 in
+/-- Merges the `addi a2, a2, -c` steps of the alignment prologue (after
+`add_ofNat_eq_sub_of_ge`). -/
+theorem sub_ofNat_sub_ofNat (x : BitVec 64) (a b : Nat) :
+    x - BitVec.ofNat 64 a - BitVec.ofNat 64 b = x - BitVec.ofNat 64 (a + b) := by
+  rw [BitVec.sub_sub, BitVec.ofNat_add]
+
+set_option maxHeartbeats 8000000 in
 /-- The forward copy from `0xac`: `mv a7, a0`, then up to three byte/half/word
 steps that make `a1` (and with it `a7`) 8-byte aligned, then the loops. -/
 theorem fwd_prologue (env : FwdEnv cfg B L F dst src n R) (regs₀ : Reg → BitVec 64) (m₀ : Mem)
     (he : EntryRegs regs₀ dst src n R) (hn8 : 8 ≤ n.toNat) :
     Exits cfg (region B) (Returned ⟨B + 0xac#64, regs₀, m₀⟩ R dst src n)
       ⟨B + 0xac#64, regs₀, m₀⟩ := by
-  sorry
+  have ctx := env.ctx
+  have hB := ctx.base_even
+  have hsw' := env.args.src_no_wrap
+  have hsw : src.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt hsw'
+  have hdw : dst.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt env.args.dst_no_wrap
+  have hle := env.le
+  have hds := env.same
+  have hl := env.sb.load; have hst := env.sb.store
+  have ha0 := he.a0; have ha1 := he.a1; have ha2 := he.a2
+  have hcop : Copied m₀ m₀ dst src 0 0 := Copied.empty _ _ _ _
+  have hcases : src.toNat % 8 = 0 ∨ src.toNat % 8 = 1 ∨ src.toNat % 8 = 2 ∨
+      src.toNat % 8 = 3 ∨ src.toNat % 8 = 4 ∨ src.toNat % 8 = 5 ∨ src.toNat % 8 = 6 ∨
+      src.toNat % 8 = 7 := by omega
+  rcases hcases with hc | hc | hc | hc | hc | hc | hc | hc <;>
+  · rv_steps_to ctx.code 0xf0 [ha0, ha1, ha2, hl, hst, BitVec.zero_add, add_ofNat_eq_sub_of_ge,
+      sub_ofNat_sub_ofNat]
+    refine fwd_large env regs₀ m₀ he ((8 - src.toNat % 8) % 8) _ _ ⟨?_, ?_, by omega, ?_, ?_⟩
+      ?_ (by omega)
+    · simp only [rv_exec, ha1, hc]
+    · simp only [rv_exec, hc]
+    · copied_fwd
+    · intro r hr
+      simp only [clobbered, List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+      simp only [writeReg_apply, hr, ite_false]
+    · simp only [rv_exec, ha2, hc]
+      first | rfl | rw [toNat_sub_ofNat_of_le (by omega)]
 
 end CopyRuntime.Wrapper
