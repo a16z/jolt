@@ -3,8 +3,8 @@
 #
 #   ./check.sh            regenerate the extracted data, fail if it differs from
 #                         the committed files, build everything (including the
-#                         axiom audit in CopyRuntime/Audit.lean), and list the
-#                         remaining `sorry`s
+#                         axiom audit in CopyRuntime/Audit.lean), and fail on
+#                         any `sorry`
 #   ./check.sh --no-regen skip the regeneration step (no Rust toolchain needed)
 #
 # Uses the same environment overrides as regenerate.sh (RUSTC, LLVM_OBJDUMP)
@@ -35,5 +35,9 @@ fi
 echo "[2/3] Building the proofs and the axiom audit"
 (cd "$HERE" && "$LAKE" build)
 
-echo "[3/3] Remaining sorry (each is a theorem whose proof is not finished)"
-grep -rn --include='*.lean' -w 'sorry' "$HERE/CopyRuntime" || echo "none"
+echo "[3/3] Rejecting sorry"
+if grep -rn --include='*.lean' -w 'sorry' "$HERE/CopyRuntime"; then
+  echo "unfinished proofs (sorry) found" >&2
+  exit 1
+fi
+echo "none"

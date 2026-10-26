@@ -1,6 +1,6 @@
 # Lean proofs for the RV64 copy runtime
 
-This project states, and partly proves, the correctness of the machine code
+This project states and proves the correctness of the machine code
 that `jolt-platform/src/memory.S` assembles to: the wrappers `__wrap_memcpy`
 and `__wrap_memmove` and their shared leaf `__jolt_copy_misaligned`. It uses
 Lean 4 (`leanprover/lean4:v4.34.0`, see `lean-toolchain`) with core and `Std`
@@ -28,12 +28,11 @@ splits into path lemmas under `CopyRuntime/Proof/`.
 | `__jolt_copy_misaligned`, backward (`src < dst`) | `Leaf.bwd_path` (`Leaf/Backward.lean`) | proved |
 | `__jolt_copy_misaligned`, from its entry point | `Leaf.leaf_path` | proved, so `Theorems.jolt_copy_misaligned_correct` has no `sorry` |
 
-The main theorems compose these lemmas without further gaps, so they hold
-exactly when the remaining `sorry` lemmas are proved. `lake build` runs
-`CopyRuntime/Audit.lean`, which fails the build if any listed theorem depends
-on an axiom beyond `propext`, `Classical.choice`, and `Quot.sound`. Only the
-main theorems are listed with `sorryAx` allowed. List the remaining gaps with
-`grep -rn -w sorry CopyRuntime`.
+The main theorems compose these lemmas without further gaps. `lake build` runs
+`CopyRuntime/Audit.lean`, which fails the build if any listed theorem, including
+every main theorem, depends on an axiom beyond `propext`, `Classical.choice`,
+and `Quot.sound` (so on `sorryAx`, `native_decide`, or `bv_decide`), and
+`check.sh` fails if any `sorry` appears in the project.
 
 ## What the theorems say
 
@@ -203,9 +202,8 @@ A differential run of the model over 3,480 ordinary inputs found no mismatch
 against `memmoveResult`, and no fault or register-preservation violation.
 The inputs were lengths 0..1030 around every threshold, source alignments
 0, 1, 3, 4, and 7, destination alignments 0, 2, 5, and 6, and distances 8,
-64, and 4224, in both directions. They exercise every path, including the
-backward loops, which are not yet proved. This is evidence, not
-proof. To rerun it, use `lake env lean tools/Simulate.lean`, which takes a
+64, and 4224, in both directions. They exercise every path. It predates the
+proofs and was a cross-check of the model, not part of the argument. To rerun it, use `lake env lean tools/Simulate.lean`, which takes a
 few minutes.
 
 ## Building
@@ -218,15 +216,16 @@ elsewhere first, for example
 cd proofs/lean/copy-runtime
 lake build          # proofs, decoder cross-check, and axiom audit
 ./regenerate.sh     # reassemble memory.S and rewrite CopyRuntime/Generated
-./check.sh          # CI: regenerate, require no diff, build, list sorry
+./check.sh          # CI: regenerate, require no diff, build, reject sorry
 ```
 
 `regenerate.sh` needs the Rust toolchain pinned by `rust-toolchain.toml` with
 the `riscv64imac-unknown-none-elf` target and `llvm-objdump`. It uses
 `llvm-objdump` from the `llvm-tools` component when that is installed. Set
-`RUSTC` and `LLVM_OBJDUMP` to override. A clean `lake build` takes about
-5 minutes on an otherwise idle Apple M-series machine. Most of the time goes
-to the table proofs, which run 29 symbolic paths.
+`RUSTC` and `LLVM_OBJDUMP` to override. A clean `./check.sh` takes about
+80 seconds on an Apple M-series machine. Most of the time goes to the table
+proofs, which run 29 symbolic paths. CI runs `./check.sh` whenever memory.S or
+this project changes (`.github/workflows/copy-runtime-formal-verification.yml`).
 
 ## Extending the proofs
 

@@ -10,9 +10,6 @@ import CopyRuntime.Theorems
 `sorryAx`, `Lean.ofReduceBool` (`native_decide`) and the auxiliary axioms that
 `bv_decide` creates for its natively checked certificates (none of which this
 project may use).
-
-Theorems that still depend on unfinished path lemmas are listed with
-`sorryAx` allowed; remove it from the list when the path is proved.
 -/
 
 open Lean Elab Command
