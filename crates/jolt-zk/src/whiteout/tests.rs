@@ -513,18 +513,20 @@ fn setups_reject_mixed_ring_dimensions() {
     segments[1].native_dim = 128;
     segments[1].len = 8;
     let (a, _) = residual_matrices::<64>(1);
+    let blocks = vec![ResidualBlock {
+        matrix: a,
+        input: 0..2,
+        gadget: None,
+        target: BlockTarget::Public(vec![CyclotomicRing::zero()]),
+    }];
+    let pads = pad_commitment::<64>();
+    let v_matrix = SigmaSetup::v_matrix_of(&blocks, &pads, 1, &stream(1 << 18, 31)).unwrap();
     let result = SigmaSetup::new(
         segments,
-        vec![ResidualBlock {
-            matrix: a,
-            input: 0..2,
-            gadget: None,
-            target: BlockTarget::Public(vec![CyclotomicRing::zero()]),
-        }],
-        &pad_commitment::<64>(),
+        blocks,
+        &pads,
         BlockTarget::Public(vec![CyclotomicRing::zero(); PAD_RANK]),
-        1,
-        &stream(1 << 18, 31),
+        v_matrix,
     );
     assert!(matches!(result, Err(WhiteoutError::InvalidRelation(_))));
 }

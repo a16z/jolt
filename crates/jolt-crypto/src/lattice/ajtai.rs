@@ -1,7 +1,8 @@
 //! The Ajtai map `y = M · x` over `Z_q[X]/(X^D + 1)`, and its commitment
 //! form `M · (G⁻¹(x) ‖ r)`.
 //!
-//! The matrix is public and is prepared once in CRT+NTT form. Each input
+//! The matrix is public. It is kept over `F`, and transformed once into
+//! CRT+NTT form on its first constant-time product. Each input
 //! column is lifted into Montgomery residues by one branch-free product per
 //! residue, transformed, and accumulated pointwise into every output row; each
 //! row is reconstructed exactly over `Z` and reduced into `F` with a
@@ -11,7 +12,6 @@
 //! admits no NTT over `F_q` for `X^256 + 1`, which is why the arithmetic runs
 //! over CRT primes.
 
-use std::marker::PhantomData;
 use std::sync::OnceLock;
 
 use jolt_algebra::parallel::*;
@@ -116,17 +116,20 @@ impl AjtaiLevel {
     }
 }
 
-/// A public matrix in CRT+NTT form, ready to apply.
+/// A public matrix, ready to apply.
+///
+/// It holds its entries over `F`, copied from the stream, which is all
+/// [`Self::combine_columns`] reads: a verifier never transforms. The
+/// CRT+NTT form the constant-time products read ([`Self::apply_centered`],
+/// [`Self::apply_transposed`]) is built from them on the first such product
+/// and kept.
 pub struct PreparedMatrix<F: Field, const D: usize> {
     shape: MatrixShape,
-    /// Row-major entries.
-    entries: Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>>,
-    /// The same entries over `F`, for products with public field scalars;
-    /// built from `entries` on the first [`Self::combine_columns`], which
-    /// only a verifier calls, so a prover holds no second copy.
-    coefficients: OnceLock<Vec<CyclotomicRing<F, D>>>,
+    /// Row-major entries over `F`.
+    coefficients: Vec<CyclotomicRing<F, D>>,
+    /// The same entries in CRT+NTT form, row-major.
+    entries: OnceLock<Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>>>,
     params: CrtNttParamSet<i32, CRT_PRIMES, D>,
-    field: PhantomData<F>,
 }
 
 impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
@@ -143,23 +146,18 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
         // The CRT residues read each coefficient as a u128.
         field_bits::<F>().map(|_| ())?;
-        let params = CrtNttParamSet::new(q128_primes());
-        let entries = cfg_into_iter!(0..shape.rows * shape.width)
+        let coefficients = cfg_into_iter!(0..shape.rows * shape.width)
             .map(|index| {
-                Ok(CyclotomicCrtNtt::from_ring(
-                    &CyclotomicRing::<F, D>::from_slice(
-                        view.entry(index / shape.width, index % shape.width)?,
-                    ),
-                    &params,
+                Ok(CyclotomicRing::<F, D>::from_slice(
+                    view.entry(index / shape.width, index % shape.width)?,
                 ))
             })
             .collect::<Result<Vec<_>, CryptoError>>()?;
         Ok(Self {
             shape,
-            entries,
-            coefficients: OnceLock::new(),
-            params,
-            field: PhantomData,
+            coefficients,
+            entries: OnceLock::new(),
+            params: CrtNttParamSet::new(q128_primes()),
         })
     }
 
@@ -178,7 +176,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 actual: scales.len(),
             });
         }
-        let coefficients = self.field_entries();
+        let coefficients = &self.coefficients;
         // Parallel over column chunks as well as rows: matrices are a few
         // rows by thousands of columns.
         const COLUMN_CHUNK: usize = 256;
@@ -209,31 +207,22 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
             .collect())
     }
 
-    /// Builds the entries over `F` that [`Self::combine_columns`] reads, if
-    /// they are not built yet. Call it once before combining one matrix from
-    /// several parallel tasks: concurrent first callers would each build a
-    /// copy.
-    pub fn prepare_field_entries(&self) {
-        let _entries = self.field_entries();
-    }
-
-    /// The entries over `F`, built on first use and kept, so a verifier that
-    /// keeps its setup pays for them once, not per proof.
+    /// The CRT+NTT entries, built on the first constant-time product and
+    /// kept. The transform reads only the public matrix.
     ///
     /// WARNING: the build runs in parallel outside the cell's lock. Inside
     /// `get_or_init` it would deadlock: callers run on Rayon workers, and a
     /// worker that steals another caller's job while it waits on the build
     /// blocks on the cell it is initializing. Concurrent first callers may
-    /// each build the entries (one is kept), so a caller sharing one matrix
-    /// across parallel tasks warms it first ([`Self::prepare_field_entries`]).
-    fn field_entries(&self) -> &[CyclotomicRing<F, D>] {
-        if let Some(entries) = self.coefficients.get() {
+    /// each build the entries (one is kept).
+    fn ntt_entries(&self) -> &[CyclotomicCrtNtt<i32, CRT_PRIMES, D>] {
+        if let Some(entries) = self.entries.get() {
             return entries;
         }
-        let entries = cfg_iter!(self.entries)
-            .map(|entry| entry.to_ring(&self.params))
+        let entries = cfg_iter!(self.coefficients)
+            .map(|entry| CyclotomicCrtNtt::from_ring(entry, &self.params))
             .collect();
-        self.coefficients.get_or_init(|| entries)
+        self.entries.get_or_init(|| entries)
     }
 
     /// `M · x` for centered integer columns `x`, laid out column by column
@@ -337,8 +326,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 ))
             })?
             .min(COLUMN_CHUNK);
+        let entries = self.ntt_entries();
         let partials = cfg_into_iter!(0..self.shape.width.div_ceil(chunk))
-            .map(|index| self.apply_columns(input, index * chunk, chunk))
+            .map(|index| self.apply_columns(entries, input, index * chunk, chunk))
             .collect::<Result<Vec<_>, CryptoError>>()?;
         let mut output = vec![CyclotomicRing::zero(); self.shape.rows];
         for partial in partials {
@@ -402,12 +392,12 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                     ntt
                 })
                 .collect();
+            let entries = self.ntt_entries();
             let columns: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..self.shape.width)
                 .map(|col| {
                     let mut accumulator = CyclotomicCrtNtt::zero();
                     for (row, weight) in rows.iter().enumerate() {
-                        let entry = self
-                            .entries
+                        let entry = entries
                             .get(row * self.shape.width + col)
                             .ok_or_else(|| CryptoError::Internal("matrix entry missing".into()))?;
                         accumulator.add_assign_pointwise_mul(entry, weight, &self.params);
@@ -424,9 +414,10 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
     }
 
     /// The exact contribution of columns `start..start + len` (clamped to the
-    /// width) to every output row.
+    /// width) to every output row, over the CRT+NTT `entries`.
     fn apply_columns(
         &self,
+        entries: &[CyclotomicCrtNtt<i32, CRT_PRIMES, D>],
         input: &[i64],
         start: usize,
         len: usize,
@@ -445,10 +436,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 *dst = value as i32;
             }
             column.assign_centered_i32_ct(&lifted, &self.params);
-            for (accumulator, row) in accumulators
-                .iter_mut()
-                .zip(self.entries.chunks_exact(width))
-            {
+            for (accumulator, row) in accumulators.iter_mut().zip(entries.chunks_exact(width)) {
                 let entry = row
                     .get(start + offset)
                     .ok_or_else(|| CryptoError::Internal("matrix row is too short".into()))?;

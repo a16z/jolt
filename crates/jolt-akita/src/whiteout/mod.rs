@@ -16,6 +16,7 @@
 //! - `A_p` is priced at the Σ collision radius ([`sigma_matrix_rank`]),
 //!   `A_D` at its digits' difference bound ([`digit_matrix_rank`]).
 
+use std::any::Any;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -38,7 +39,8 @@ use akita_params::{
 #[cfg(feature = "zk-prover")]
 use akita_pcs::zk::{prove_masked_prefix, ResidualOpening};
 use akita_pcs::zk::{
-    AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualShape, ZkCommitmentConfig,
+    AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualMatrices, ResidualShape,
+    ZkCommitmentConfig,
 };
 #[cfg(feature = "zk-prover")]
 use akita_pcs::SelectedProverOpeningData;
@@ -50,8 +52,9 @@ use akita_schedules::digit_commitment_min_rank;
 use akita_types::{
     Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
-use jolt_crypto::lattice::CHALLENGE_RING_DIM;
-use jolt_crypto::lattice::{derive_public_matrix_prefix, PublicMatrixSeed};
+use jolt_crypto::lattice::{
+    derive_public_matrix_prefix, PreparedMatrix, PublicMatrixSeed, CHALLENGE_RING_DIM,
+};
 #[cfg(feature = "zk-prover")]
 use jolt_transcript::ProverTranscript;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
@@ -745,12 +748,16 @@ fn residuals(
         .collect()
 }
 
-/// One masked opening shape's row: its catalog, the row's lookup key and the
-/// residual shape at its cut.
+/// One masked opening shape's row: its catalog, the row's lookup key, the
+/// residual shape at its cut and, once built, its opening matrices.
 pub struct WhiteoutRow {
     catalog: Arc<WhiteoutCatalog>,
     key: ScheduleLookupKey,
     shape: ResidualShape,
+    /// `ResidualMatrices<D>` at the row's ring dimension: a function of the
+    /// row and the catalog's setup stream, so cut once
+    /// ([`Self::residual_matrices`]).
+    matrices: OnceLock<Arc<dyn Any + Send + Sync>>,
 }
 
 impl WhiteoutRow {
@@ -956,10 +963,29 @@ impl WhiteoutRow {
         .map_err(|error| AkitaError::InvalidSetup(error.to_string()))
     }
 
-    /// Akita's setup stream, from which the residual blocks are cut.
-    fn stream(&self) -> &[F] {
-        self.catalog.stream()
+    /// The residual's opening matrices, cut from Akita's setup stream on
+    /// first use and kept: they depend on the row and the setup alone.
+    fn residual_matrices<const D: usize>(&self) -> Result<Arc<ResidualMatrices<D>>, ZkError> {
+        let matrices = if let Some(matrices) = self.matrices.get() {
+            Arc::clone(matrices)
+        } else {
+            // Built outside the cell: the build runs on Rayon, and a worker
+            // waiting inside `get_or_init` could steal a job that waits on it.
+            let built: Arc<dyn Any + Send + Sync> = Arc::new(
+                tracing::info_span!("whiteout_residual_matrices")
+                    .in_scope(|| self.shape.matrices::<D>(self.catalog.stream()))?,
+            );
+            Arc::clone(self.matrices.get_or_init(|| built))
+        };
+        downcast(matrices)
     }
+}
+
+/// `state` as the `T` its cache holds at this ring dimension.
+fn downcast<T: Any + Send + Sync>(state: Arc<dyn Any + Send + Sync>) -> Result<Arc<T>, ZkError> {
+    state.downcast::<T>().map_err(|_| {
+        AkitaError::Internal("a Whiteout cache holds another ring dimension's state".into()).into()
+    })
 }
 
 /// The verifier's statement for `groups` at their points (Akita's
@@ -992,21 +1018,113 @@ pub struct ProverGroup {
     pub evaluations: Vec<F>,
 }
 
-/// The Σ-protocol's commitments for one pad layout: `A_p` and `A_D` with
-/// their streams, the residual shape, and the response proof.
+/// The Σ-protocol's commitments for one masked opening shape: its row and,
+/// per pad layout, `A_p`, `A_D` and the response proof ([`LayoutState`]).
+/// The tail owns its row, so a layout's state is always that row's.
 pub struct WhiteoutTail {
+    row: WhiteoutRow,
     responses: Arc<ResponsePlans>,
-    /// `e`'s variable count by pad layout, so a layout's Σ setup is built
-    /// once for it.
-    response_vars: Mutex<Vec<(PadLayout, usize)>>,
+    /// Each pad layout's `LayoutState<D>` at the row's ring dimension, keyed
+    /// by the whole layout, at most [`MAX_CACHED_LAYOUTS`] of them.
+    layouts: Mutex<Vec<(PadLayout, Arc<dyn Any + Send + Sync>)>>,
+}
+
+/// The most pad layouts a tail keeps state for. The row fixes the trace
+/// group and the precommitted groups, but the layout also counts the masked
+/// messages of stages 1–7, which depend on dimensions each proof's header
+/// carries (trace length, RAM size, read-write and one-hot configuration),
+/// so a verifier can see as many layouts as headers it is sent. Past the cap a layout's state is built for its
+/// verify and dropped: correct, only slower.
+const MAX_CACHED_LAYOUTS: usize = 8;
+
+/// The public state one pad layout fixes under a row: the pad commitment
+/// `A_p` (with `L`), `A_D`, and the response prover of `e`'s length. Each is
+/// a deterministic function of the row, the layout and the setup's plans,
+/// never of a proof (`specs/whiteout-o3-verifier.md`).
+struct LayoutState<const D: usize> {
+    pads: LatticePadCommitment<F, D>,
+    v_matrix: Arc<PreparedMatrix<F, CHALLENGE_RING_DIM>>,
+    response: Arc<PlannedResponse>,
 }
 
 impl WhiteoutTail {
-    fn new(responses: Arc<ResponsePlans>) -> Self {
+    fn new(row: WhiteoutRow, responses: Arc<ResponsePlans>) -> Self {
         Self {
+            row,
             responses,
-            response_vars: Mutex::default(),
+            layouts: Mutex::default(),
         }
+    }
+
+    /// `layout`'s public state under the tail's row, built on first use and
+    /// kept, for at most [`MAX_CACHED_LAYOUTS`] layouts.
+    fn layout_state<const D: usize>(
+        &self,
+        layout: &PadLayout,
+    ) -> Result<Arc<LayoutState<D>>, ZkError> {
+        let _span = tracing::info_span!("whiteout_response_lookup").entered();
+        let find = |layouts: &[(PadLayout, Arc<dyn Any + Send + Sync>)]| {
+            layouts
+                .iter()
+                .find(|(seen, _)| seen == layout)
+                .map(|(_, state)| Arc::clone(state))
+        };
+        let cached = find(&self.layouts.lock().unwrap_or_else(PoisonError::into_inner));
+        let state = if let Some(state) = cached {
+            state
+        } else {
+            // Built outside the lock, as `WhiteoutRow::residual_matrices`.
+            let built: Arc<dyn Any + Send + Sync> = Arc::new(self.build_layout_state::<D>(layout)?);
+            let mut layouts = self.layouts.lock().unwrap_or_else(PoisonError::into_inner);
+            find(&layouts).unwrap_or_else(|| {
+                if layouts.len() < MAX_CACHED_LAYOUTS {
+                    layouts.push((layout.clone(), Arc::clone(&built)));
+                }
+                built
+            })
+        };
+        downcast(state)
+    }
+
+    fn build_layout_state<const D: usize>(
+        &self,
+        layout: &PadLayout,
+    ) -> Result<LayoutState<D>, ZkError> {
+        let pads = Self::pad_commitment::<D>(layout)?;
+        let blocks = self
+            .row
+            .shape
+            .blocks::<D>(&*self.row.residual_matrices::<D>()?, &[], None)?;
+        let v_matrix = {
+            let _span = tracing::info_span!("whiteout_v_matrix_setup").entered();
+            let v_rank = digit_matrix_rank(SigmaSetup::<F, D>::v_width(&blocks, &pads))?;
+            let v_stream = public_stream(
+                SigmaSetup::<F, D>::v_stream_len(&blocks, &pads, v_rank),
+                V_STREAM_SEED,
+            )?;
+            SigmaSetup::<F, D>::v_matrix_of(&blocks, &pads, v_rank, &v_stream)?
+        };
+        // e's layout is a function of the public Σ setup, whose compressed
+        // targets it reads only by length: the setup over empty payloads
+        // sizes it.
+        let sigma = SigmaSetup::new(
+            self.row.shape.segments(),
+            blocks,
+            &pads,
+            BlockTarget::Compressed {
+                payload: Vec::new(),
+                image: None,
+            },
+            Arc::clone(&v_matrix),
+        )?;
+        let num_vars = AkitaResponseProver::<WhiteoutResponse>::num_vars(
+            &sigma.response_layout(&CompressionShape::<WhiteoutResponse>::default())?,
+        )?;
+        Ok(LayoutState {
+            pads,
+            v_matrix,
+            response: self.responses.get(num_vars)?,
+        })
     }
 
     /// Prices `A_p` and its hiding randomness together: the randomness width
@@ -1060,69 +1178,28 @@ impl WhiteoutTail {
         )?)
     }
 
-    /// The Σ setup over `row`'s residual with commitment `cm(u_a)` =
-    /// `u_a_payload` (and u_a, on the prover's side), the pad commitment of
-    /// `layout` with image `pad_image`.
+    /// The Σ setup over the row's residual with commitment `cm(u_a)` =
+    /// `u_a_payload` (and u_a, on the prover's side), and `state`'s pad
+    /// commitment with image `pad_image`.
     fn sigma<const D: usize>(
-        row: &WhiteoutRow,
-        layout: &PadLayout,
+        &self,
+        state: &LayoutState<D>,
         u_a_payload: &[F],
         u_a: Option<&[F]>,
         pad_image: BlockTarget<F, D>,
     ) -> Result<SigmaSetup<F, D>, ZkError> {
         let _span = tracing::info_span!("whiteout_sigma_setup").entered();
-        let pads = Self::pad_commitment::<D>(layout)?;
-        let blocks = tracing::info_span!("whiteout_residual_matrices")
-            .in_scope(|| row.shape.blocks::<D>(row.stream(), u_a_payload, u_a))?;
-        let _v_span = tracing::info_span!("whiteout_v_matrix_setup").entered();
-        let v_rank = digit_matrix_rank(SigmaSetup::<F, D>::v_width(&blocks, &pads))?;
-        let v_stream = public_stream(
-            SigmaSetup::<F, D>::v_stream_len(&blocks, &pads, v_rank),
-            V_STREAM_SEED,
-        )?;
+        let blocks =
+            self.row
+                .shape
+                .blocks::<D>(&*self.row.residual_matrices::<D>()?, u_a_payload, u_a)?;
         Ok(SigmaSetup::new(
-            row.shape.segments(),
+            self.row.shape.segments(),
             blocks,
-            &pads,
+            &state.pads,
             pad_image,
-            v_rank,
-            &v_stream,
+            Arc::clone(&state.v_matrix),
         )?)
-    }
-
-    /// The response prover for `e`'s length under `row` and `layout`,
-    /// loaded from the setup's persisted plan or planned, on first use.
-    fn response<const D: usize>(
-        &self,
-        row: &WhiteoutRow,
-        layout: &PadLayout,
-    ) -> Result<Arc<PlannedResponse>, ZkError> {
-        let _span = tracing::info_span!("whiteout_response_lookup").entered();
-        let mut vars = self
-            .response_vars
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let num_vars = if let Some((_, num_vars)) = vars.iter().find(|(seen, _)| seen == layout) {
-            *num_vars
-        } else {
-            let sigma = Self::sigma::<D>(
-                row,
-                layout,
-                &[],
-                None,
-                BlockTarget::Compressed {
-                    payload: Vec::new(),
-                    image: None,
-                },
-            )?;
-            let num_vars = AkitaResponseProver::<WhiteoutResponse>::num_vars(
-                &sigma.response_layout(&CompressionShape::<WhiteoutResponse>::default())?,
-            )?;
-            vars.push((layout.clone(), num_vars));
-            num_vars
-        };
-        drop(vars);
-        self.responses.get(num_vars)
     }
 
     /// The public parameters the pads bind before any pad is committed: the
@@ -1132,20 +1209,19 @@ impl WhiteoutTail {
     /// schedule's catalog digest, under whose setup the pads are compressed.
     fn pad_statement<const D: usize>(
         &self,
-        row: &WhiteoutRow,
         layout: &PadLayout,
-    ) -> Result<([[u8; 32]; 3], Arc<PlannedResponse>), ZkError> {
-        let response = self.response::<D>(row, layout)?;
+    ) -> Result<([[u8; 32]; 3], Arc<LayoutState<D>>), ZkError> {
+        let state = self.layout_state::<D>(layout)?;
         let digests = [
-            row.catalog.scheme.schedules().catalog_digest(),
-            *row.selection()?.row_digest.as_bytes(),
-            response.digest,
+            self.row.catalog.scheme.schedules().catalog_digest(),
+            *self.row.selection()?.row_digest.as_bytes(),
+            state.response.digest,
         ];
-        Ok((digests, response))
+        Ok((digests, state))
     }
 
     #[cfg(feature = "zk-prover")]
-    /// The response prover for `row` and `layout`, as the image compression
+    /// The response prover for the row and `layout`, as the image compression
     /// the masked prefix sends u_a under: the chain the response proof
     /// checks (Akita A47).
     ///
@@ -1154,11 +1230,10 @@ impl WhiteoutTail {
     /// As [`Self::commit_pads`].
     pub fn compression(
         &self,
-        row: &WhiteoutRow,
         layout: &PadLayout,
     ) -> Result<Arc<AkitaResponseProver<WhiteoutResponse>>, ZkError> {
-        with_ring_dim!(row.ring_dim(), D, {
-            Ok(Arc::clone(&self.response::<D>(row, layout)?.prover))
+        with_ring_dim!(self.row.ring_dim(), D, {
+            Ok(Arc::clone(&self.layout_state::<D>(layout)?.response.prover))
         })
     }
 
@@ -1171,21 +1246,18 @@ impl WhiteoutTail {
     /// [`ZkError`] if the layout does not fit or a rank is not priced.
     pub fn commit_pads<S: Sponge, R: RngCore + CryptoRng>(
         &self,
-        row: &WhiteoutRow,
         layout: PadLayout,
         transcript: &mut ProverTranscript<S>,
         rng: &mut R,
     ) -> Result<CommittedPads<F, WhiteoutPadOpening<F>>, ZkError> {
-        with_ring_dim!(row.ring_dim(), D, {
-            let commitment = Self::pad_commitment::<D>(&layout)?;
-            let ([catalog, selected, response_digest], response) =
-                self.pad_statement::<D>(row, &layout)?;
+        with_ring_dim!(self.row.ring_dim(), D, {
+            let ([catalog, selected, response_digest], state) = self.pad_statement::<D>(&layout)?;
             transcript.public(&catalog);
             transcript.public(&selected);
             transcript.public(&response_digest);
             commit_lattice_pads(
-                &commitment,
-                response.prover.as_ref() as &dyn ImageCompression<F>,
+                &state.pads,
+                state.response.prover.as_ref() as &dyn ImageCompression<F>,
                 layout,
                 transcript,
                 rng,
@@ -1203,19 +1275,17 @@ impl WhiteoutTail {
     /// As [`Self::commit_pads`], or a truncated payload.
     pub fn receive_pads<S: Sponge>(
         &self,
-        row: &WhiteoutRow,
         layout: PadLayout,
         transcript: &mut VerifierTranscript<'_, S>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
         let _span = tracing::info_span!("whiteout_receive_pads").entered();
-        with_ring_dim!(row.ring_dim(), D, {
-            let commitment = Self::pad_commitment::<D>(&layout)?;
-            let ([catalog, selected, response], _) = self.pad_statement::<D>(row, &layout)?;
+        with_ring_dim!(self.row.ring_dim(), D, {
+            let ([catalog, selected, response], state) = self.pad_statement::<D>(&layout)?;
             transcript.public(&catalog);
             transcript.public(&selected);
             transcript.public(&response);
             receive_lattice_pads(
-                &commitment,
+                &state.pads,
                 &CompressionShape::<WhiteoutResponse>::default(),
                 layout,
                 transcript,
@@ -1233,7 +1303,6 @@ impl WhiteoutTail {
     /// exhausted (the caller reruns).
     pub fn prove<S: Sponge, R: RngCore + CryptoRng + Send>(
         &self,
-        row: &WhiteoutRow,
         relation: &ResidualRelation<F>,
         residual: &ResidualOpening<F, F>,
         pads: &CommittedPads<F, WhiteoutPadOpening<F>>,
@@ -1241,11 +1310,11 @@ impl WhiteoutTail {
         rng: &mut R,
     ) -> Result<(), ZkError> {
         let layout = pads.layout().clone();
-        with_ring_dim!(row.ring_dim(), D, {
+        with_ring_dim!(self.row.ring_dim(), D, {
             let opening = pads.opening();
-            let sigma = Self::sigma::<D>(
-                row,
-                &layout,
+            let state = self.layout_state::<D>(&layout)?;
+            let sigma = self.sigma::<D>(
+                &state,
                 &residual.residual_payload,
                 Some(&residual.residual_commitment),
                 BlockTarget::Compressed {
@@ -1253,9 +1322,8 @@ impl WhiteoutTail {
                     image: Some(opening.image::<D>()?),
                 },
             )?;
-            let lifted = sigma.lift(relation, &row.shape.claims(&residual.point)?)?;
-            let s = row.shape.residual(residual)?;
-            let response = self.response::<D>(row, &layout)?;
+            let lifted = sigma.lift(relation, &self.row.shape.claims(&residual.point)?)?;
+            let s = self.row.shape.residual(residual)?;
             let attempts = prove_sigma(
                 &sigma,
                 &lifted,
@@ -1263,7 +1331,7 @@ impl WhiteoutTail {
                 opening.opening(),
                 transcript,
                 rng,
-                &ProfiledResponse(response.prover.as_ref()),
+                &ProfiledResponse(state.response.prover.as_ref()),
             )?;
             tracing::info!(attempts, "Whiteout Σ accepted");
             Ok(())
@@ -1278,7 +1346,6 @@ impl WhiteoutTail {
     /// [`ZkError`] if either rejects.
     pub fn verify<S: Sponge>(
         &self,
-        row: &WhiteoutRow,
         relation: &ResidualRelation<F>,
         prefix: &MaskedPrefix<F, F>,
         pads: &CommittedPadsView<LatticePadPayload<F>>,
@@ -1287,10 +1354,10 @@ impl WhiteoutTail {
         let _span = tracing::info_span!("whiteout_verify_tail").entered();
         let layout = pads.layout().clone();
         let claim = prefix.residual_claim();
-        with_ring_dim!(row.ring_dim(), D, {
-            let sigma = Self::sigma::<D>(
-                row,
-                &layout,
+        with_ring_dim!(self.row.ring_dim(), D, {
+            let state = self.layout_state::<D>(&layout)?;
+            let sigma = self.sigma::<D>(
+                &state,
                 claim.commitment(),
                 None,
                 BlockTarget::Compressed {
@@ -1298,25 +1365,25 @@ impl WhiteoutTail {
                     image: None,
                 },
             )?;
-            let claims = row.shape.claims(claim.point())?;
+            let claims = self.row.shape.claims(claim.point())?;
             let lifted =
                 tracing::info_span!("whiteout_lift").in_scope(|| sigma.lift(relation, &claims))?;
-            let response = self.response::<D>(row, &layout)?;
-            tracing::info_span!("whiteout_verify_sigma")
-                .in_scope(|| verify_sigma(&sigma, &lifted, transcript, response.prover.as_ref()))
+            tracing::info_span!("whiteout_verify_sigma").in_scope(|| {
+                verify_sigma(&sigma, &lifted, transcript, state.response.prover.as_ref())
+            })
         })
     }
 }
 
-/// One masked opening shape: its row and the Σ-protocol's commitments.
+/// One masked opening shape: its row and the Σ-protocol's commitments,
+/// which own the row.
 pub struct WhiteoutShape {
-    row: WhiteoutRow,
     tail: WhiteoutTail,
 }
 
 impl WhiteoutShape {
     pub fn row(&self) -> &WhiteoutRow {
-        &self.row
+        &self.tail.row
     }
 
     pub fn tail(&self) -> &WhiteoutTail {
@@ -1398,12 +1465,12 @@ impl PlannedSetup {
                     catalog: Arc::clone(&catalog),
                     key,
                     shape,
+                    matrices: OnceLock::new(),
                 };
                 (
                     precommitted,
                     Arc::new(WhiteoutShape {
-                        row,
-                        tail: WhiteoutTail::new(Arc::clone(&responses)),
+                        tail: WhiteoutTail::new(row, Arc::clone(&responses)),
                     }),
                 )
             })

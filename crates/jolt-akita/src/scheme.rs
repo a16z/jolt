@@ -666,9 +666,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         rng: &mut R,
     ) -> Result<WhiteoutPads<AkitaField>, jolt_zk::masking::ZkError> {
         let shape = crate::whiteout::opening_shape(&setup.verifier, shape)?;
-        shape
-            .tail()
-            .commit_pads(shape.row(), layout, transcript, rng)
+        shape.tail().commit_pads(layout, transcript, rng)
     }
 
     #[cfg(feature = "zk-prover")]
@@ -721,7 +719,7 @@ impl TraceOneHotCommitment for AkitaScheme {
             point: crate::adapters::reverse_point(&trace.point),
             evaluations: trace.evaluations,
         });
-        let compression = opening.tail().compression(opening.row(), pads.layout())?;
+        let compression = opening.tail().compression(pads.layout())?;
         let (opening, auxiliary) =
             opening
                 .row()
@@ -740,14 +738,9 @@ impl TraceOneHotCommitment for AkitaScheme {
         rng: &mut R,
     ) -> Result<(), jolt_zk::masking::ZkError> {
         let shape = crate::whiteout::opening_shape(&setup.verifier, shape)?;
-        shape.tail().prove(
-            shape.row(),
-            relation,
-            &residual.opening,
-            pads,
-            transcript,
-            rng,
-        )
+        shape
+            .tail()
+            .prove(relation, &residual.opening, pads, transcript, rng)
     }
 }
 
