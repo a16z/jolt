@@ -26,6 +26,7 @@ The motivation is twofold:
 | `split_eq_bind_low_high` | Test, Fuzz, RedTeam | `GruenSplitEqPolynomial::bind` (LowToHigh) matches `DensePolynomial::bound_poly_var_bot` |
 | `split_eq_bind_high_low` | Test, Fuzz | `GruenSplitEqPolynomial::bind` (HighToLow) matches `DensePolynomial::bound_poly_var_top` |
 | `soundness` | RedTeam | For any deterministic guest program + input, only one (output, panic) pair is accepted by the verifier |
+| `guest_copy_runtime` | Test, Fuzz, RedTeam | `jolt-platform/src/memory.S` `memcpy`/`memmove`, run on the tracer in normally built `no_std` and `std` guests, match snapshot `memmove` semantics and the call ABI, keep every load/store in range and aligned, and follow the documented dispatch |
 
 ## Built-in objectives
 

@@ -3448,6 +3448,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "libc",
+ "object 0.40.0",
  "postcard",
  "rand 0.8.7",
  "rust-code-analysis",

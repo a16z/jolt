@@ -23,6 +23,7 @@ jolt-transcript = { workspace = true, features = [
 spongefish = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
+object = { workspace = true }
 
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }

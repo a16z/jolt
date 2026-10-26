@@ -17,9 +17,12 @@ rationale lives in [`specs/production-fuzz-infra.md`](specs/production-fuzz-infr
 cargo install cargo-fuzz --version 0.13.2 --locked
 ```
 
-The `jolt-eval/tracer_backend_equivalence` target builds guest programs during
-setup. Install the current checkout's CLI with `cargo install --path . --locked`
-before replaying or fuzzing that workspace.
+The `jolt-eval/tracer_backend_equivalence` and `jolt-eval/guest_copy_runtime`
+targets build guest programs during setup. Install the current checkout's CLI
+with `cargo install --path . --locked` before replaying or fuzzing that
+workspace. `guest_copy_runtime` also builds a `std` guest with the toolchain
+`rust-toolchain.toml` pins, which needs that toolchain's `rust-src` and the
+ZeroOS musl toolchain (downloaded on first use).
 
 The runner refuses to fuzz with a mismatched `cargo-fuzz` version, an unpinned
 toolchain, or a missing lockfile, so drift fails loudly instead of producing
@@ -112,6 +115,11 @@ cargo nextest run -p jolt-verifier --features prover-fixtures \
 JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES=1 \
 cargo nextest run -p jolt-verifier --features prover-fixtures,zk \
     --test generate_fuzz_fixture --run-ignored ignored-only --cargo-quiet
+# jolt-eval/guest_copy_runtime seeds (one per memory.S dispatch path and
+# computed-jump entry; the regular test suite replays them and requires every
+# runtime instruction to execute):
+cargo nextest run -p jolt-eval --run-ignored ignored-only \
+    -E 'test(write_seed_files)' --cargo-quiet
 # crypto/PCS real serialized seeds:
 cargo nextest run --manifest-path crates/jolt-crypto/fuzz/Cargo.toml \
     --run-ignored ignored-only --cargo-quiet

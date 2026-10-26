@@ -1,4 +1,5 @@
 pub mod field_mul_scalar;
+pub mod guest_copy_runtime;
 #[cfg(test)]
 mod macro_tests;
 pub mod soundness;
@@ -16,6 +17,8 @@ use rand::RngCore;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+
+use guest_copy_runtime::GuestCopyRuntimeInvariant;
 
 #[derive(Debug, EnumSetType)]
 pub enum SynthesisTarget {
@@ -141,6 +144,7 @@ pub enum JoltInvariants {
         source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
     ),
     TracerBackendEquivalence(tracer_backend_equivalence::TracerBackendEquivalenceInvariant),
+    GuestCopyRuntime(GuestCopyRuntimeInvariant),
 }
 
 macro_rules! dispatch {
@@ -155,6 +159,7 @@ macro_rules! dispatch {
             JoltInvariants::TranscriptConsistencyPoseidon($inv) => $body,
             JoltInvariants::SourceToJoltExpansionEquivalence($inv) => $body,
             JoltInvariants::TracerBackendEquivalence($inv) => $body,
+            JoltInvariants::GuestCopyRuntime($inv) => $body,
         }
     };
 }
@@ -181,6 +186,7 @@ impl JoltInvariants {
             Self::TracerBackendEquivalence(
                 tracer_backend_equivalence::TracerBackendEquivalenceInvariant,
             ),
+            Self::GuestCopyRuntime(GuestCopyRuntimeInvariant),
         ]
     }
 

@@ -1235,6 +1235,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "libc",
+ "object",
  "postcard",
  "rand",
  "rust-code-analysis",
