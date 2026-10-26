@@ -200,6 +200,27 @@ fn transcript_surface_matches() {
     assert_eq!(two::Fr::from_u128(u128::MAX).to_u64_checked(), None);
 }
 
+/// `from_bytes_le_reduced` at every length through two chunks and beyond,
+/// on random bytes and on all-ones bytes (the largest value of each length).
+fn check_wide_reduction<F: CanonicalEncoding>(p: &BigUint, rng: &mut ChaCha20Rng) {
+    for len in 0..=100 {
+        let random: Vec<u8> = (0..len).map(|_| rng.gen()).collect();
+        for bytes in [random, vec![u8::MAX; len]] {
+            assert_val(
+                &F::from_bytes_le_reduced(&bytes),
+                &(BigUint::from_bytes_le(&bytes) % p),
+            );
+        }
+    }
+}
+
+#[test]
+fn wide_reduction_matches_at_every_length() {
+    let mut rng = rng();
+    check_wide_reduction::<two::Fr>(&p_fr(), &mut rng);
+    check_wide_reduction::<two::Fq>(&p_fq(), &mut rng);
+}
+
 #[test]
 fn wide_accumulator_matches() {
     let p = p_fr();
