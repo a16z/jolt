@@ -7,7 +7,7 @@ The mirror image of `Leaf/Forward.lean`. `BAt r` describes a state with `r`
 bytes left: `a1 = src + r`, `a7 = dst + r`, `a2 = r`, and the top part
 `[r, n)` of the destination already holds the snapshot copy. Loads read only
 source offsets below `r`, which no store has reached because the destination
-lies above the source (`copied_loadLE_bwd`), except the first aligned word
+lies above the source (`Copied.loadLE_bwd`), except the first aligned word
 `t3`, whose high bytes may be overwritten; the `sll` by `64 - 8a` discards
 exactly those (`bwd_comb`).
 
@@ -49,11 +49,10 @@ structure BComb (m₀ : Mem) (src : BitVec 64) (a r : Nat) (regs : Reg → BitVe
 
 variable {cfg : Config} {L dst src n R : BitVec 64}
 
-set_option maxHeartbeats 4000000 in
 /-- The byte tail at `0x3c8`: copy the remaining `r` bytes downwards, then
 return. -/
 theorem bwd_tail (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
-    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : Wrapper.EntryRegs regs₀ dst src n R) (r₀ : Nat)
+    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : EntryRegs regs₀ dst src n R) (r₀ : Nat)
     (regs : Reg → BitVec 64) (mem : Mem) (hF : BAt regs₀ m₀ dst src n r₀ regs mem) :
     Exits cfg (region L) (Returned ⟨L, regs₀, m₀⟩ R dst src n) ⟨L + 0x3c8#64, regs, mem⟩ := by
   have ctx := env.ctx
@@ -78,32 +77,33 @@ theorem bwd_tail (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
     rv_arith_simp at hz
     rv_step ctx.code [hra]                                -- 0x3da ret
     exact .exit env.rout
-      (env.post_ret he (copied_congr_lo hF'.copied (by omega)) hF'.preserved)
+      (Returned.of_copied he env.args.dst_no_wrap (hF'.copied.congr_lo (by omega))
+        hF'.preserved)
   · rename_i hz
     rv_arith_simp at hz
-    rv_step ctx.code [ha1, hl, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]  -- 0x3ca lbu t1, -1(a1)
-    rv_step ctx.code [ha7, hs, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]  -- 0x3ce sb t1, -1(a7)
-    rv_step ctx.code [ha1, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]      -- 0x3d2 addi a1, a1, -1
-    rv_step ctx.code [ha7, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]      -- 0x3d4 addi a7, a7, -1
-    rv_step ctx.code [leaf_add_big]                       -- 0x3d6 addi a2, a2, -1
-    rv_step ctx.code [leaf_add_big]                       -- 0x3d8 j 0x3c8
+    rv_step ctx.code [ha1, hl, Arith.ofNat_add_neg_lit]   -- 0x3ca lbu t1, -1(a1)
+    rv_step ctx.code [ha7, hs, Arith.ofNat_add_neg_lit]   -- 0x3ce sb t1, -1(a7)
+    rv_step ctx.code [ha1, Arith.ofNat_add_neg_lit]       -- 0x3d2 addi a1, a1, -1
+    rv_step ctx.code [ha7, Arith.ofNat_add_neg_lit]       -- 0x3d4 addi a7, a7, -1
+    rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]       -- 0x3d6 addi a2, a2, -1
+    rv_step ctx.code                                      -- 0x3d8 j 0x3c8
     refine hcont _ ⟨rfl, by omega, ?_⟩
     refine BAt.of_eq (a := r₀ - k - 1) (b := r₀ - k - 1) ?_ ?_ ?_
-      (copied_bwd_byte hF'.copied (by omega) hsd hrn hdw') (by omega) (by omega)
+      (Copied.store_bwd_self (hF'.copied.congr_lo (by omega)) hsd (by decide) hdw' (by omega)
+        (by omega)) (by omega) (by omega)
       (by omega) ?_
     · simp [writeReg_apply]
     · simp [writeReg_apply]
     · simp only [writeReg_apply, Fin.reduceEq, ite_false, ite_true]
-      rw [leaf_toNat_sub (by omega)]
+      rw [Arith.toNat_sub_ofNat_of_le (by omega)]
       omega
-    · leaf_preserved hF'.preserved
+    · rv_preserved hF'.preserved
 
-set_option maxHeartbeats 4000000 in
 /-- After the 128-byte loop, at `0x39e`: `t0 = a + 8`; the word loop at `0x3a6`
 combines one word per iteration while `a2 ≥ a + 8` (so that the next aligned
 source word lies inside the source), then the byte tail. -/
 theorem bwd_words (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
-    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : Wrapper.EntryRegs regs₀ dst src n R)
+    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : EntryRegs regs₀ dst src n R)
     (a r₀ : Nat) (ha : 1 ≤ a ∧ a ≤ 7) (har : a ≤ r₀) (hsal : (src.toNat + r₀) % 8 = a)
     (hdal : (dst.toNat + r₀) % 8 = 0) (regs : Reg → BitVec 64) (mem : Mem)
     (hF : BAt regs₀ m₀ dst src n r₀ regs mem) (hC : BComb m₀ src a r₀ regs) :
@@ -119,7 +119,7 @@ theorem bwd_words (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
   · -- Fewer than `a + 8` bytes left: the byte tail.
     exact bwd_tail env hsd regs₀ m₀ he r₀ _ mem
       ⟨by simp [writeReg_apply, hF.a1], by simp [writeReg_apply, hF.a7],
-        by simp [writeReg_apply, ha2], hrn, hF.copied, by leaf_preserved hF.preserved⟩
+        by simp [writeReg_apply, ha2], hrn, hF.copied, by rv_preserved hF.preserved⟩
   rename_i hge
   rv_arith_simp at hge
   refine Exits.loop
@@ -150,10 +150,10 @@ theorem bwd_words (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
     have h5' : regs'' 5 = BitVec.ofNat 64 (a + 8) := by
       rw [hfr 5 (by decide) (by decide) (by decide), h5]
     rv_step ctx.code [h29, BitVec.zero_add]               -- 0x3ba mv t3, t4
-    rv_step ctx.code [h7, leaf_add_big, leaf_ofNat_sub, ofNat_add_m8]   -- 0x3bc addi t2, t2, -8
-    rv_step ctx.code [h11, leaf_add_big, leaf_ofNat_sub, ofNat_add_m8]  -- 0x3be addi a1, a1, -8
-    rv_step ctx.code [h17, leaf_add_big, leaf_ofNat_sub, ofNat_add_m8]  -- 0x3c0 addi a7, a7, -8
-    rv_step ctx.code [leaf_add_big]                       -- 0x3c2 addi a2, a2, -8
+    rv_step ctx.code [h7, Arith.ofNat_add_neg_lit]        -- 0x3bc addi t2, t2, -8
+    rv_step ctx.code [h11, Arith.ofNat_add_neg_lit]       -- 0x3be addi a1, a1, -8
+    rv_step ctx.code [h17, Arith.ofNat_add_neg_lit]       -- 0x3c0 addi a7, a7, -8
+    rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]       -- 0x3c2 addi a2, a2, -8
     have hF'' : BAt regs₀ m₀ dst src n (r₀ - 8 * k - 8)
         (writeReg (writeReg (writeReg (writeReg (writeReg regs'' 28
           (loadLE m₀ (src + BitVec.ofNat 64 (r₀ - 8 * k - 8 - a)) 8)) 7
@@ -162,9 +162,9 @@ theorem bwd_words (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
           (dst + BitVec.ofNat 64 (r₀ - 8 * k - 8))) 12 (regs'' 12 - 8#64)) mem'' := by
       refine ⟨by simp [writeReg_apply], by simp [writeReg_apply], ?_, by omega, hcop, ?_⟩
       · simp only [writeReg_apply, Fin.reduceEq, ite_false, ite_true]
-        rw [leaf_toNat_sub (by omega)]
+        rw [Arith.toNat_sub_ofNat_of_le (by omega)]
         omega
-      · leaf_preserved (pres_frame3 (by decide) (by decide) (by decide) hfr hF'.preserved)
+      · rv_preserved (pres_frame3 (by decide) (by decide) (by decide) hfr hF'.preserved)
     have hC'' : BComb m₀ src a (r₀ - 8 * k - 8)
         (writeReg (writeReg (writeReg (writeReg (writeReg regs'' 28
           (loadLE m₀ (src + BitVec.ofNat 64 (r₀ - 8 * k - 8 - a)) 8)) 7
@@ -173,7 +173,7 @@ theorem bwd_words (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
           (dst + BitVec.ofNat 64 (r₀ - 8 * k - 8))) 12 (regs'' 12 - 8#64)) := by
       refine ⟨?_, ?_, ?_, ?_, ?_⟩
       · simp only [writeReg_apply, Fin.reduceEq, ite_false, ite_true]
-        exact add_ofNat_congr (by omega)
+        exact Arith.add_ofNat_congr (by omega)
       · simp only [writeReg_apply, Fin.reduceEq, ite_false]
         rw [hfr 13 (by decide) (by decide) (by decide)]; exact hC'.a3
       · simp only [writeReg_apply, Fin.reduceEq, ite_false]
@@ -184,7 +184,7 @@ theorem bwd_words (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
     rv_step ctx.code [h5']                                -- 0x3c4 bgeu a2, t0
     · -- Another word.
       rename_i hc
-      rw [leaf_toNat_sub (by omega)] at hc
+      rw [Arith.toNat_sub_ofNat_of_le (by omega)] at hc
       simp only [BitVec.toNat_ofNat] at hc
       refine hcont _ ⟨rfl, by omega, ?_, ?_, ?_, ?_⟩
       · rw [show r₀ - 8 * (k + 1) = r₀ - 8 * k - 8 by omega]; exact hF''
@@ -195,14 +195,14 @@ theorem bwd_words (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
       exact bwd_tail env hsd regs₀ m₀ he _ _ _ hF''
   · exact BAt.of_eq (a := r₀) (b := r₀) (by simp [writeReg_apply, hF.a1])
       (by simp [writeReg_apply, hF.a7]) (by simp [writeReg_apply, ha2]) (by simpa using hF.copied)
-      (by simp) (by simp) (by simp; omega) (by leaf_preserved hF.preserved)
+      (by simp) (by simp) (by simp; omega) (by rv_preserved hF.preserved)
   · exact ⟨by simp [writeReg_apply, hC.t2], by simp [writeReg_apply, hC.a3],
       by simp [writeReg_apply, hC.a4], by simp [writeReg_apply, hC.a5],
       by simp [writeReg_apply, hC.t3]⟩
   · simp [writeReg_apply]
   · omega
 
-set_option synthInstance.maxSize 1024 in
+set_option synthInstance.maxSize 512 in
 /-- The code of the backward 128-byte loop body: eight pairs of combine-and-store
 steps, alternating `t4`/`t3`. Checked against the LLVM listing. -/
 theorem bwd_bulk_code : ∀ i, i < 8 →
@@ -226,7 +226,6 @@ theorem bwd_bulk_code : ∀ i, i < 8 →
         Generated.Disasm.joltCopyMisaligned) := by
   decide +kernel
 
-set_option maxHeartbeats 4000000 in
 /-- The straight-line body of the backward 128-byte loop, from pair `i` on:
 with `r` bytes left at the start of the iteration, pair `i` combines the words
 at source offsets `r - 16i - a`, `r - 16i - 8 - a` and `r - 16i - 16 - a` into
@@ -263,7 +262,7 @@ theorem bwd_run (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat) (m
     obtain rfl : i = 8 := by omega
     rw [show (0x24a + 40 * 8 : Nat) = 0x38a from rfl]
     exact hcont regs mem hfr (by rw [h28, show r - 16 * 8 - a = r - 128 - a by omega])
-      (copied_congr_lo hcop (by omega))
+      (hcop.congr_lo (by omega))
   | succ d ih =>
     intro i hd hi regs mem hfr h28 hcop
     obtain ⟨hA, hB⟩ := bwd_bulk_code i (by omega)
@@ -296,17 +295,16 @@ theorem bwd_run (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat) (m
     · rw [h17']; exact addr_bwd _ _ _ _ (by omega)
     intro regs'' mem'' hfr'' h28'' hcop''
     rw [show 0x24a + 40 * i + 20 + 20 = 0x24a + 40 * (i + 1) by omega]
-    refine ih (i + 1) (by omega) (by omega) regs'' mem'' ?_ ?_ (copied_congr_lo hcop'' (by omega))
+    refine ih (i + 1) (by omega) (by omega) regs'' mem'' ?_ ?_ (hcop''.congr_lo (by omega))
     · intro r h1 h2 h3 h4
       rw [hfr'' r h1 h3 h4, hfr' r h2 h3 h4, hfr r h1 h2 h3 h4]
     · rw [h28'', show r - 16 * i - 8 - 8 - a = r - 16 * (i + 1) - a by omega]
 
-set_option maxHeartbeats 4000000 in
 /-- The backward 128-byte loop at `0x24a`: sixteen combined words per iteration
 (`bwd_run`), repeated while `a2 ≥ a + 128` (the lowest word an iteration loads
 starts at source offset `r - a - 128`). -/
 theorem bwd_bulk (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
-    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : Wrapper.EntryRegs regs₀ dst src n R)
+    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : EntryRegs regs₀ dst src n R)
     (a r₀ : Nat) (ha : 1 ≤ a ∧ a ≤ 7) (hsal : (src.toNat + r₀) % 8 = a)
     (hdal : (dst.toNat + r₀) % 8 = 0) (regs : Reg → BitVec 64) (mem : Mem)
     (hF : BAt regs₀ m₀ dst src n r₀ regs mem) (hC : BComb m₀ src a r₀ regs)
@@ -344,10 +342,10 @@ theorem bwd_bulk (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
     rw [hfr 12 (by decide) (by decide) (by decide) (by decide), hF'.a2]
   have h5'' : regs'' 5 = BitVec.ofNat 64 (a + 128) := by
     rw [hfr 5 (by decide) (by decide) (by decide) (by decide), h5']
-  rv_step ctx.code [h7, leaf_add_big, leaf_ofNat_sub, ofNat_add_m128]   -- 0x38a addi t2, -128
-  rv_step ctx.code [h11, leaf_add_big, leaf_ofNat_sub, ofNat_add_m128]  -- 0x38e addi a1, -128
-  rv_step ctx.code [h17, leaf_add_big, leaf_ofNat_sub, ofNat_add_m128]  -- 0x392 addi a7, -128
-  rv_step ctx.code [leaf_add_big]                         -- 0x396 addi a2, a2, -128
+  rv_step ctx.code [h7, Arith.ofNat_add_neg_lit]          -- 0x38a addi t2, -128
+  rv_step ctx.code [h11, Arith.ofNat_add_neg_lit]         -- 0x38e addi a1, -128
+  rv_step ctx.code [h17, Arith.ofNat_add_neg_lit]         -- 0x392 addi a7, -128
+  rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]         -- 0x396 addi a2, a2, -128
   have hF'' : BAt regs₀ m₀ dst src n (r₀ - 128 * k - 128)
       (writeReg (writeReg (writeReg (writeReg regs'' 7
         (src + BitVec.ofNat 64 (r₀ - 128 * k - a - 128))) 11
@@ -355,9 +353,9 @@ theorem bwd_bulk (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
         (dst + BitVec.ofNat 64 (r₀ - 128 * k - 128))) 12 (regs'' 12 - 128#64)) mem'' := by
     refine ⟨by simp [writeReg_apply], by simp [writeReg_apply], ?_, by omega, hcop, ?_⟩
     · simp only [writeReg_apply, Fin.reduceEq, ite_false, ite_true]
-      rw [leaf_toNat_sub (by omega)]
+      rw [Arith.toNat_sub_ofNat_of_le (by omega)]
       omega
-    · leaf_preserved
+    · rv_preserved
         (pres_frame4 (by decide) (by decide) (by decide) (by decide) hfr hF'.preserved)
   have hC'' : BComb m₀ src a (r₀ - 128 * k - 128)
       (writeReg (writeReg (writeReg (writeReg regs'' 7
@@ -366,7 +364,7 @@ theorem bwd_bulk (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
         (dst + BitVec.ofNat 64 (r₀ - 128 * k - 128))) 12 (regs'' 12 - 128#64)) := by
     refine ⟨?_, ?_, ?_, ?_, ?_⟩
     · simp only [writeReg_apply, Fin.reduceEq, ite_false, ite_true]
-      exact add_ofNat_congr (by omega)
+      exact Arith.add_ofNat_congr (by omega)
     · simp only [writeReg_apply, Fin.reduceEq, ite_false]
       rw [hfr 13 (by decide) (by decide) (by decide) (by decide)]; exact hC'.a3
     · simp only [writeReg_apply, Fin.reduceEq, ite_false]
@@ -378,7 +376,7 @@ theorem bwd_bulk (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
   rv_step ctx.code [h5'']                                 -- 0x39a bgeu a2, t0
   · -- Another 128 bytes.
     rename_i hc
-    rw [leaf_toNat_sub (by omega)] at hc
+    rw [Arith.toNat_sub_ofNat_of_le (by omega)] at hc
     simp only [BitVec.toNat_ofNat] at hc
     refine hcont _ ⟨rfl, by omega, ?_, ?_, ?_, ?_⟩
     · rw [show r₀ - 128 * (k + 1) = r₀ - 128 * k - 128 by omega]; exact hF''
@@ -389,11 +387,10 @@ theorem bwd_bulk (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
     exact bwd_words env hsd regs₀ m₀ he a (r₀ - 128 * k - 128) ha (by omega) (by omega)
       (by omega) _ _ hF'' hC''
 
-set_option maxHeartbeats 4000000 in
 /-- The setup at `0x230`, with `a7 = dst + r` aligned and at least `8 - a`
 bytes copied (so the aligned word at `src + r - a` lies inside the source). -/
 theorem bwd_setup (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
-    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : Wrapper.EntryRegs regs₀ dst src n R)
+    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : EntryRegs regs₀ dst src n R)
     (r : Nat) (hr : n.toNat ≤ r + 15) (hdal : (dst.toNat + r) % 8 = 0)
     (hroom : 8 - (src.toNat + r) % 8 ≤ n.toNat - r) (regs : Reg → BitVec 64) (mem : Mem)
     (hF : BAt regs₀ m₀ dst src n r regs mem) :
@@ -417,13 +414,13 @@ theorem bwd_setup (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
   rv_step ctx.code [ha1, hA]                              -- 0x234 andi a5, a1, 7
   rv_step ctx.code [hA3]                                  -- 0x238 slli a3, a5, 3
   rv_step ctx.code                                        -- 0x23c li a4, 64
-  rv_step ctx.code [leaf_ofNat_sub]                       -- 0x240 sub a4, a4, a3
+  rv_step ctx.code [Arith.ofNat_sub_ofNat_of_le]          -- 0x240 sub a4, a4, a3
   rv_step ctx.code [hl]                                   -- 0x242 ld t3, 0(t2)
   rv_step ctx.code [ha128]                                -- 0x246 addi t0, a5, 128
   refine bwd_bulk env hsd regs₀ m₀ he a r ha (by omega) hdal _ mem ?_ ?_ ?_ (by omega)
   · exact BAt.of_eq (a := r) (b := r) (by simp [writeReg_apply, ha1])
       (by simp [writeReg_apply, hF.a7]) (by simp [writeReg_apply, hF.a2]) hF.copied rfl rfl
-      hrn (by leaf_preserved hF.preserved)
+      hrn (by rv_preserved hF.preserved)
   · refine ⟨by simp [writeReg_apply], ?_, ?_, by simp [writeReg_apply], ?_⟩
     · simp only [writeReg_apply, Fin.reduceEq, ite_false, ite_true]
       exact toNat_ofNat_mod64 (by omega)
@@ -433,14 +430,13 @@ theorem bwd_setup (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
       apply loadLE_shl_congr (by omega)
       intro i hi
       rw [Arith.add_lit_lit]
-      exact copied_read_bwd hF.copied hsd (by omega) hrn hdw'
+      exact hF.copied.read_bwd hsd (by omega) hdw'
   · simp [writeReg_apply]
 
-set_option maxHeartbeats 4000000 in
 /-- `.Lmis_backward_first` at `0x21c`: the aligned source word at or above
 `src + r` would end past `src + n`, so copy eight more bytes downwards. -/
 theorem bwd_first (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
-    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : Wrapper.EntryRegs regs₀ dst src n R)
+    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : EntryRegs regs₀ dst src n R)
     (r₀ : Nat) (hr : n.toNat ≤ r₀ + 7) (hdal : (dst.toNat + r₀) % 8 = 0)
     (regs : Reg → BitVec 64) (mem : Mem) (hF : BAt regs₀ m₀ dst src n r₀ regs mem)
     (h5 : (regs 5).toNat = 8) :
@@ -463,13 +459,14 @@ theorem bwd_first (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
   simp only at hpc hF' h5'
   subst hpc
   have ha1 := hF'.a1; have ha7 := hF'.a7; have ha2 := hF'.a2
-  rv_step ctx.code [ha1, hl, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]  -- 0x21c lbu t1, -1(a1)
-  rv_step ctx.code [ha7, hs, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]  -- 0x220 sb t1, -1(a7)
-  rv_step ctx.code [ha1, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]      -- 0x224 addi a1, -1
-  rv_step ctx.code [ha7, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]      -- 0x226 addi a7, -1
-  rv_step ctx.code [leaf_add_big]                         -- 0x228 addi a2, a2, -1
-  rv_step ctx.code [leaf_add_big]                         -- 0x22a addi t0, t0, -1
-  have h5'' : (regs' 5 - 1#64).toNat = 7 - k := by rw [leaf_toNat_sub (by omega)]; omega
+  rv_step ctx.code [ha1, hl, Arith.ofNat_add_neg_lit]     -- 0x21c lbu t1, -1(a1)
+  rv_step ctx.code [ha7, hs, Arith.ofNat_add_neg_lit]     -- 0x220 sb t1, -1(a7)
+  rv_step ctx.code [ha1, Arith.ofNat_add_neg_lit]         -- 0x224 addi a1, -1
+  rv_step ctx.code [ha7, Arith.ofNat_add_neg_lit]         -- 0x226 addi a7, -1
+  rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]         -- 0x228 addi a2, a2, -1
+  rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]         -- 0x22a addi t0, t0, -1
+  have h5'' : (regs' 5 - 1#64).toNat = 7 - k := by
+    rw [Arith.toNat_sub_ofNat_of_le (by omega)]; omega
   have hF'' : BAt regs₀ m₀ dst src n (r₀ - k - 1)
       (writeReg (writeReg (writeReg (writeReg (writeReg regs' 6
         (loadLE mem' (src + BitVec.ofNat 64 (r₀ - k - 1)) 1)) 11
@@ -478,10 +475,11 @@ theorem bwd_first (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
       (storeLE mem' (dst + BitVec.ofNat 64 (r₀ - k - 1))
         (loadLE mem' (src + BitVec.ofNat 64 (r₀ - k - 1)) 1) 1) := by
     refine ⟨by simp [writeReg_apply], by simp [writeReg_apply], ?_, by omega,
-      copied_bwd_byte hF'.copied (by omega) hsd (by omega) hdw',
-      by leaf_preserved hF'.preserved⟩
+      Copied.store_bwd_self (hF'.copied.congr_lo (by omega)) hsd (by decide) hdw' (by omega)
+        (by omega),
+      by rv_preserved hF'.preserved⟩
     simp only [writeReg_apply, Fin.reduceEq, ite_false, ite_true]
-    rw [leaf_toNat_sub (by omega)]
+    rw [Arith.toNat_sub_ofNat_of_le (by omega)]
     omega
   rv_step ctx.code                                        -- 0x22c bnez t0
   · -- More bytes.
@@ -494,12 +492,11 @@ theorem bwd_first (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat)
     rw [bv_eq_zero_iff h5''] at hc
     exact bwd_setup env hsd regs₀ m₀ he (r₀ - k - 1) (by omega) (by omega) (by omega) _ _ hF''
 
-set_option maxHeartbeats 4000000 in
 /-- `.Lmis_backward_bound` at `0x20e`, with `a7 = dst + r` aligned: if the
 aligned source word at or above `src + r` would end past `src + n`, copy eight
 more bytes first. -/
 theorem bwd_bound (env : Env cfg L dst src n R) (hlt : src.toNat < dst.toNat)
-    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : Wrapper.EntryRegs regs₀ dst src n R)
+    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : EntryRegs regs₀ dst src n R)
     (r : Nat) (hr : n.toNat ≤ r + 7) (hdal : (dst.toNat + r) % 8 = 0)
     (regs : Reg → BitVec 64) (mem : Mem) (hF : BAt regs₀ m₀ dst src n r regs mem)
     (h16 : regs 16 = src + BitVec.ofNat 64 n.toNat) :
@@ -512,25 +509,24 @@ theorem bwd_bound (env : Env cfg L dst src n R) (hlt : src.toNat < dst.toNat)
   have ha1 := hF.a1; have hrn := hF.le
   rv_step ctx.code [ha1]                                  -- 0x20e addi t2, a1, 7
   rv_step ctx.code                                        -- 0x212 andi t2, t2, -8
-  rv_step ctx.code [h16, toNat_and_neg8']                 -- 0x216 bgeu a6, t2
+  rv_step ctx.code [h16, Arith.toNat_and_neg8]            -- 0x216 bgeu a6, t2
   · rename_i hc
     rv_arith_simp at hc
     refine bwd_setup env (Nat.le_of_lt hlt) regs₀ m₀ he r (by omega) hdal (by omega) _ mem ?_
     exact BAt.of_eq (a := r) (b := r) (by simp [writeReg_apply, ha1])
       (by simp [writeReg_apply, hF.a7]) (by simp [writeReg_apply, hF.a2]) hF.copied rfl rfl
-      hrn (by leaf_preserved hF.preserved)
+      hrn (by rv_preserved hF.preserved)
   · rv_step ctx.code                                      -- 0x21a li t0, 8
     refine bwd_first env (Nat.le_of_lt hlt) regs₀ m₀ he r hr hdal _ mem ?_
       (by simp [writeReg_apply])
     exact BAt.of_eq (a := r) (b := r) (by simp [writeReg_apply, ha1])
       (by simp [writeReg_apply, hF.a7]) (by simp [writeReg_apply, hF.a2]) hF.copied rfl rfl
-      hrn (by leaf_preserved hF.preserved)
+      hrn (by rv_preserved hF.preserved)
 
-set_option maxHeartbeats 4000000 in
 /-- `.Lmis_backward_peel` at `0x1f6`: copy single bytes downwards until `a7` is
 8-byte aligned. -/
 theorem bwd_peel (env : Env cfg L dst src n R) (hlt : src.toNat < dst.toNat)
-    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : Wrapper.EntryRegs regs₀ dst src n R)
+    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : EntryRegs regs₀ dst src n R)
     (regs : Reg → BitVec 64) (mem : Mem) (hF : BAt regs₀ m₀ dst src n n.toNat regs mem)
     (h16 : regs 16 = src + BitVec.ofNat 64 n.toNat) :
     Exits cfg (region L) (Returned ⟨L, regs₀, m₀⟩ R dst src n) ⟨L + 0x1f6#64, regs, mem⟩ := by
@@ -554,7 +550,7 @@ theorem bwd_peel (env : Env cfg L dst src n R) (hlt : src.toNat < dst.toNat)
   subst hpc
   have ha1 := hF'.a1; have ha7 := hF'.a7; have ha2 := hF'.a2; have hrn := hF'.le
   rv_step ctx.code [ha7]                                  -- 0x1f6 andi t0, a7, 7
-  rv_step ctx.code [leaf_and_seven_eq_zero_iff]           -- 0x1fa beqz t0
+  rv_step ctx.code [Arith.and_seven_eq_zero_iff]          -- 0x1fa beqz t0
   · -- Aligned.
     rename_i hc
     rv_arith_simp at hc
@@ -562,31 +558,31 @@ theorem bwd_peel (env : Env cfg L dst src n R) (hlt : src.toNat < dst.toNat)
       (by simp [writeReg_apply, h16'])
     exact BAt.of_eq (a := n.toNat - k) (b := n.toNat - k) (by simp [writeReg_apply, ha1])
       (by simp [writeReg_apply, ha7]) (by simp [writeReg_apply, ha2]) hF'.copied rfl rfl
-      hrn (by leaf_preserved hF'.preserved)
+      hrn (by rv_preserved hF'.preserved)
   · rename_i hc
     rv_arith_simp at hc
-    rv_step ctx.code [ha1, hl, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]  -- 0x1fe lbu t1, -1(a1)
-    rv_step ctx.code [ha7, hs, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]  -- 0x202 sb t1, -1(a7)
-    rv_step ctx.code [ha1, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]      -- 0x206 addi a1, -1
-    rv_step ctx.code [ha7, leaf_add_big, leaf_ofNat_sub, ofNat_add_m1]      -- 0x208 addi a7, -1
-    rv_step ctx.code [leaf_add_big]                       -- 0x20a addi a2, a2, -1
-    rv_step ctx.code [leaf_add_big]                       -- 0x20c j 0x1f6
+    rv_step ctx.code [ha1, hl, Arith.ofNat_add_neg_lit]   -- 0x1fe lbu t1, -1(a1)
+    rv_step ctx.code [ha7, hs, Arith.ofNat_add_neg_lit]   -- 0x202 sb t1, -1(a7)
+    rv_step ctx.code [ha1, Arith.ofNat_add_neg_lit]       -- 0x206 addi a1, -1
+    rv_step ctx.code [ha7, Arith.ofNat_add_neg_lit]       -- 0x208 addi a7, -1
+    rv_step ctx.code [Arith.add_ofNat_eq_sub_of_ge]       -- 0x20a addi a2, a2, -1
+    rv_step ctx.code                                      -- 0x20c j 0x1f6
     refine hcont _ ⟨rfl, by omega, ?_, by simp [writeReg_apply, h16']⟩
     refine BAt.of_eq (a := n.toNat - k - 1) (b := n.toNat - k - 1) ?_ ?_ ?_
-      (copied_bwd_byte hF'.copied (by omega) hsd hrn hdw') (by omega) (by omega)
+      (Copied.store_bwd_self (hF'.copied.congr_lo (by omega)) hsd (by decide) hdw' (by omega)
+        (by omega)) (by omega) (by omega)
       (by omega) ?_
     · simp [writeReg_apply]
     · simp [writeReg_apply]
     · simp only [writeReg_apply, Fin.reduceEq, ite_false, ite_true]
-      rw [leaf_toNat_sub (by omega)]
+      rw [Arith.toNat_sub_ofNat_of_le (by omega)]
       omega
-    · leaf_preserved hF'.preserved
+    · rv_preserved hF'.preserved
 
-set_option maxHeartbeats 4000000 in
 /-- The backward copy from `0x1f0` (`add a1, a1, a2`), reached for `src < dst`
 with `a7 = dst`. -/
 theorem bwd_path (env : Env cfg L dst src n R) (hlt : src.toNat < dst.toNat)
-    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : Wrapper.EntryRegs regs₀ dst src n R)
+    (regs₀ : Reg → BitVec 64) (m₀ : Mem) (he : EntryRegs regs₀ dst src n R)
     (regs : Reg → BitVec 64) (h11 : regs 11 = src) (h17 : regs 17 = dst) (h12 : regs 12 = n)
     (hpres : ∀ r, r ∉ clobbered → regs r = regs₀ r) :
     Exits cfg (region L) (Returned ⟨L, regs₀, m₀⟩ R dst src n) ⟨L + 0x1f0#64, regs, m₀⟩ := by
@@ -602,6 +598,6 @@ theorem bwd_path (env : Env cfg L dst src n R) (hlt : src.toNat < dst.toNat)
   refine bwd_peel env hlt regs₀ m₀ he _ m₀ ?_ (by simp [writeReg_apply])
   exact ⟨by simp [writeReg_apply], by simp [writeReg_apply],
     by simp [writeReg_apply, h12], Nat.le_refl _, Copied.empty _ _ _ _,
-    by leaf_preserved hpres⟩
+    by rv_preserved hpres⟩
 
 end CopyRuntime.Leaf

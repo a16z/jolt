@@ -29,7 +29,7 @@ macro "copied_down" : tactic => `(tactic| (
 
 variable {cfg : Config} {B L F : BitVec 64}
 
-set_option maxHeartbeats 20000000 in
+set_option maxHeartbeats 1800000 in
 theorem aligned_small_path (ctx : Ctx cfg B L F) (regs : Reg → BitVec 64) (mem : Mem)
     {dst src n R : BitVec 64} (he : EntryRegs regs dst src n R) (hsb : Sandbox cfg dst src n)
     (hargs : ArgsOk dst src n R) (hRout : ¬ region B R)
@@ -53,7 +53,7 @@ theorem aligned_small_path (ctx : Ctx cfg B L F) (regs : Reg → BitVec 64) (mem
     · exact Copied.memmove (by simp only [BitVec.reduceToNat]; copied_down) hdw
     · rv_preserved
 
-set_option maxHeartbeats 20000000 in
+set_option maxHeartbeats 2700000 in
 /-- `.Lsmall_bytes`, reached for `1 ≤ n ≤ 7`, or for mismatched offsets and
 `8 ≤ n ≤ 11`. For `n = 1` it copies one byte directly; otherwise it jumps into
 the `lbu` table and then into the `sb` table. -/

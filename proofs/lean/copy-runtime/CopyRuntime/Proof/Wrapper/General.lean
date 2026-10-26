@@ -25,19 +25,6 @@ theorem memmoveResult_self (m : Mem) (d n : BitVec 64) : memmoveResult m d d n =
   · congr 1; bv_omega
   · rfl
 
-/-- A `Returned` fact relative to an intermediate state transfers to the entry
-state when the two agree on memory and on every preserved register. -/
-theorem _root_.CopyRuntime.Returned.of_agree {s₀ s₁ t : State} {R dst src n : BitVec 64}
-    (h : Returned s₁ R dst src n t) (hmem : s₁.mem = s₀.mem)
-    (hregs : ∀ r, r ∉ clobbered → s₁.reg r = s₀.reg r) : Returned s₀ R dst src n t :=
-  ⟨h.pc, h.a0, by rw [h.mem, hmem], fun r hr => (h.preserved r hr).trans (hregs r hr)⟩
-
-/-- `Returned` does not depend on the `pc` of the reference state. -/
-theorem _root_.CopyRuntime.Returned.change_pc {p₀ p₁ : BitVec 64} {r : Reg → BitVec 64} {m : Mem} {t : State}
-    {R dst src n : BitVec 64} (h : Returned ⟨p₁, r, m⟩ R dst src n t) :
-    Returned ⟨p₀, r, m⟩ R dst src n t :=
-  ⟨h.pc, h.a0, h.mem, h.preserved⟩
-
 /-- Forward copy (`src > dst`), from `mv a7, a0` at `0xac`: byte/half/word
 steps to align `a1`, the 256-byte loop, the 80-byte block loop, the word loop
 and the 4/2/1-byte tail (`Forward.lean`). Every load reads a source byte that

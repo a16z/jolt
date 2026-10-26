@@ -1,4 +1,5 @@
 import CopyRuntime.Proof.Wrapper.General
+import CopyRuntime.Proof.Wrapper.Tables
 
 /-!
 # Wrapper dispatch: every argument combination reaches one of the path lemmas

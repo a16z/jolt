@@ -1,30 +1,15 @@
+import CopyRuntime.Proof.Returned
 import CopyRuntime.Proof.Wrapper.Facts
 
 /-!
-# Wrapper paths that leave without copying through the table or loop code
+# Wrapper paths that leave without copying
 
 * `n = 0`: return immediately;
 * mismatched offsets and `12 ≤ n < 544`: tail call to the fallback;
 * mismatched offsets and `n ≥ 544`: jump to the misaligned leaf.
-
-Each proof symbolically executes the dispatch code from the entry point.
 -/
 
 namespace CopyRuntime.Wrapper
-
-/-- Close `∀ r, r ∉ clobbered → s.reg r = s₀.reg r` for a state whose register
-file is a chain of writes to clobbered registers. -/
-macro "rv_preserved" : tactic => `(tactic| (
-  intro r hr
-  simp only [clobbered, List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
-  simp only [State.reg_mk, writeReg_apply, hr, ite_false]))
-
-/-- Register facts at the wrapper entry. -/
-structure EntryRegs (regs : Reg → BitVec 64) (dst src n R : BitVec 64) : Prop where
-  a0 : regs 10 = dst
-  a1 : regs 11 = src
-  a2 : regs 12 = n
-  ra : regs 1 = R
 
 variable {cfg : Config} {B L F : BitVec 64}
 

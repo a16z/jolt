@@ -22,7 +22,6 @@ namespace CopyRuntime.Leaf
 
 variable {cfg : Config} {L dst src n R : BitVec 64}
 
-set_option maxHeartbeats 4000000 in
 theorem fwd_comb (env : Env cfg L dst src n R) (hle : dst.toNat ≤ src.toNat) (m₀ : Mem)
     {post : State → Prop} (a : Nat) (ha : 1 ≤ a ∧ a ≤ 7) (o : Nat) (rO rN : Reg)
     (hr : (rO = 28 ∧ rN = 29) ∨ (rO = 29 ∧ rN = 28)) (ilo ist : BitVec 64)
@@ -55,9 +54,9 @@ theorem fwd_comb (env : Env cfg L dst src n R) (hle : dst.toNat ≤ src.toNat) (
       loadLE m₀ (src + BitVec.ofNat 64 (J + 8 - a)) 8 :=
     hcop.loadLE_fwd hle (by omega) (by omega)
   have hb : src + BitVec.ofNat 64 (J + 8 - a) = src + BitVec.ofNat 64 (J - a) + 8#64 := by
-    rw [Arith.add_lit_lit]; exact add_ofNat_congr (by omega)
+    rw [Arith.add_lit_lit]; exact Arith.add_ofNat_congr (by omega)
   have hc : src + BitVec.ofNat 64 J = src + BitVec.ofNat 64 (J - a) + BitVec.ofNat 64 a := by
-    rw [Arith.add_lit_lit]; exact add_ofNat_congr (by omega)
+    rw [Arith.add_lit_lit]; exact Arith.add_ofNat_congr (by omega)
   rcases hr with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
   · refine ctx.code.step o ⟨hcode.1, by simp⟩ rfl (codeRegion_lit (by omega) (by decide)) ?_
     rv_simp [hld, hl, hconv]
@@ -79,7 +78,6 @@ theorem fwd_comb (env : Env cfg L dst src n R) (hle : dst.toNat ≤ src.toNat) (
       simp [writeReg_apply, h1, h2, h3]
     · simp [writeReg_apply]
 
-set_option maxHeartbeats 4000000 in
 theorem bwd_comb (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat) (m₀ : Mem)
     {post : State → Prop} (a : Nat) (ha : 1 ≤ a ∧ a ≤ 7) (o : Nat) (rO rN : Reg)
     (hr : (rO = 28 ∧ rN = 29) ∨ (rO = 29 ∧ rN = 28)) (ilo ist : BitVec 64)
@@ -111,13 +109,13 @@ theorem bwd_comb (env : Env cfg L dst src n R) (hsd : src.toNat ≤ dst.toNat) (
   have hl := env.sb.load; have hs := env.sb.store
   have hconv : loadLE mem (src + BitVec.ofNat 64 (r - 8 - a)) 8 =
       loadLE m₀ (src + BitVec.ofNat 64 (r - 8 - a)) 8 :=
-    copied_loadLE_bwd hcop hsd (by omega) hrn hdw'
+    hcop.loadLE_bwd hsd (by omega) hdw'
   have hb : src + BitVec.ofNat 64 (r - a) = src + BitVec.ofNat 64 (r - 8 - a) + 8#64 := by
-    rw [Arith.add_lit_lit]; exact add_ofNat_congr (by omega)
+    rw [Arith.add_lit_lit]; exact Arith.add_ofNat_congr (by omega)
   have hc : src + BitVec.ofNat 64 (r - 8) =
       src + BitVec.ofNat 64 (r - 8 - a) + BitVec.ofNat 64 a := by
-    rw [Arith.add_lit_lit]; exact add_ofNat_congr (by omega)
-  have hcop' : Copied mem m₀ dst src (r - 8 + 8) n.toNat := copied_congr_lo hcop (by omega)
+    rw [Arith.add_lit_lit]; exact Arith.add_ofNat_congr (by omega)
+  have hcop' : Copied mem m₀ dst src (r - 8 + 8) n.toNat := hcop.congr_lo (by omega)
   rcases hr with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
   · refine ctx.code.step o ⟨hcode.1, by simp⟩ rfl (codeRegion_lit (by omega) (by decide)) ?_
     rv_simp [hld, hl, hconv]

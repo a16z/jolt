@@ -290,9 +290,9 @@ Keep these in mind when writing new automation.
   kernel then rechecks it by unfolding `Nat.add x.toNat c` in unary, and fails
   with "deep recursion" after about 80 s. This only bites once a proof term
   reaches the kernel, so `omega` pruning that fails is harmless. Pass
-  `Wrapper.add_ofNat_eq_sub_of_ge` to `rv_step` to keep such values as
+  `Arith.add_ofNat_eq_sub_of_ge` to `rv_step` to keep such values as
   `x - c'` with a small `c'`. `BitVec.toNat_sub` puts the literal first, which
-  the kernel handles, and `Wrapper.toNat_sub_ofNat_of_le` gives the `Nat` value.
+  the kernel handles, and `Arith.toNat_sub_ofNat_of_le` gives the `Nat` value.
 * `omega` decides whether two atoms are equal with `isDefEq`, and the
   elaborator settles `j + (256 * k + 256) =?= j + 256 * k + 256` by peeling
   the `+ 256` one successor at a time. Literals of about 256 and up then hit

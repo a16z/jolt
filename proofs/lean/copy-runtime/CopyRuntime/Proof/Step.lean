@@ -16,9 +16,6 @@ def Exits.after (cfg : Config) (region : BitVec 64 → Prop) (post : State → P
     {post : State → Prop} {s : State} :
     Exits.after cfg region post (some s) = Exits cfg region post s := rfl
 
-@[simp] theorem Exits.after_none {cfg : Config} {region : BitVec 64 → Prop}
-    {post : State → Prop} : Exits.after cfg region post none = False := rfl
-
 theorem Exits.after_ite {cfg : Config} {region : BitVec 64 → Prop} {post : State → Prop}
     {c : Prop} [Decidable c] {a b : Option State} :
     Exits.after cfg region post (if c then a else b) =

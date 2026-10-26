@@ -187,4 +187,38 @@ macro_rules
                rv_simp [$ls,*]
                try rv_branch))
 
+/-- `rv_guard_not_at hc off` fails iff the goal's pc is `base + off`, where
+`hc : CodeAt cfg base listing sites`. -/
+elab "rv_guard_not_at " hc:term:max off:num : tactic => withMainContext do
+  let hcTy ← whnfR (← instantiateMVars (← inferType (← elabTerm hc none)))
+  let_expr CodeAt _ base _ _ := hcTy | throwError "rv_guard_not_at: {hc} is not a `CodeAt` fact"
+  let_expr Exits _ _ _ s := ← instantiateMVars (← getMainTarget) | return
+  let_expr State.mk pc _ _ := s.consumeMData | return
+  if (← observing? (offsetFrom pc base)) == some off.getNat then
+    throwError "rv_guard_not_at: pc is at offset {off.getNat}"
+
+/-- Step until the pc reaches `base + off`, on every branch. -/
+syntax "rv_steps_to " term:max num (" [" term,* "]")? : tactic
+macro_rules
+  | `(tactic| rv_steps_to $hc $off) => `(tactic| rv_steps_to $hc $off [])
+  | `(tactic| rv_steps_to $hc $off [$ls,*]) =>
+    `(tactic| repeat (rv_guard_not_at $hc $off; rv_step $hc [$ls,*]))
+
+/-- Close `∀ r, r ∉ clobbered → regs r = regs₀ r` (or the same with
+`State.reg`) for a register file that is a chain of writes to clobbered
+registers on top of `regs₀`, or, given `rv_preserved hpres`, on top of a
+register file for which `hpres` proves the same. -/
+syntax "rv_preserved" (ppSpace colGt term:max)? : tactic
+macro_rules
+  | `(tactic| rv_preserved) => `(tactic| (
+    intro r hr
+    simp only [clobbered, List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+    simp only [State.reg_mk, writeReg_apply, hr, ite_false]))
+  | `(tactic| rv_preserved $hpres) => `(tactic| (
+    intro r hr
+    have hr' := hr
+    simp only [clobbered, List.mem_cons, List.not_mem_nil, or_false, not_or] at hr'
+    simp only [writeReg_apply, hr', ite_false]
+    exact $hpres r hr))
+
 end CopyRuntime.Tactic

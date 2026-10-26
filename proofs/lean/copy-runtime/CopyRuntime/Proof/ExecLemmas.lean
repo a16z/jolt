@@ -13,7 +13,7 @@ Addresses are kept in the form `x + c` with a literal `c`.
 namespace CopyRuntime
 
 attribute [rv_exec] execute BranchCond.eval AluImmOp.eval AluOp.eval Width.bytes imm
-  Exits.after_some Exits.after_none Exits.after_ite
+  Exits.after_some Exits.after_ite
   Arith.add_lit_lit Arith.add_lit_sub_lit Arith.add_sub_cancel_left Arith.add_sub_add_left
   BitVec.add_zero
   ite_true ite_false eq_self_iff_true decide_true decide_false Bool.true_and Bool.and_true
@@ -48,11 +48,6 @@ register number inside `simp` was tried and is far too slow.) -/
     writeReg (writeReg f r a) r b = writeReg f r b := by
   funext i; simp only [writeReg]; split <;> rfl
 
-theorem writeReg_writeReg_swap (f : Reg → BitVec 64) {q r : Reg} (h : q < r)
-    (a b : BitVec 64) : writeReg (writeReg f r a) q b = writeReg (writeReg f q b) r a := by
-  funext i; simp only [writeReg]
-  split <;> split <;> first | rfl | (subst_vars; exact absurd h (Fin.lt_irrefl _))
-
 theorem toNat_add_lit_mod_two {B : BitVec 64} (hB : B.toNat % 2 = 0) (k : Nat) :
     (B + BitVec.ofNat 64 k).toNat % 2 = k % 2 := by
   rw [BitVec.toNat_add, BitVec.toNat_ofNat]
@@ -86,5 +81,38 @@ that the simp set produces); that is a no-op on even addresses. -/
     (hk : k % 2 = 0) :
     (B + BitVec.ofNat 64 k) &&& 0xfffffffffffffffe#64 = B + BitVec.ofNat 64 k :=
   and_not_one_of_even (by rw [toNat_add_lit_mod_two hB]; exact hk)
+
+/-- Single-bit tests as `Nat` facts, so that `omega` decides the branches of
+the alignment prologues. -/
+theorem and_pow_two_eq_zero_iff (x : BitVec 64) (k : Nat) (hk : k < 64) :
+    x &&& BitVec.ofNat 64 (2 ^ k) = 0#64 ↔ x.toNat / 2 ^ k % 2 = 0 := by
+  have hbit : x.getLsbD k = decide (x.toNat / 2 ^ k % 2 = 1) := by
+    rw [BitVec.getLsbD, Nat.testBit_eq_decide_div_mod_eq]
+  have h01 := Nat.mod_two_eq_zero_or_one (x.toNat / 2 ^ k)
+  constructor
+  · intro h
+    have := congrArg (fun y => y.getLsbD k) h
+    simp only [BitVec.getLsbD_and, BitVec.getLsbD_ofNat, Nat.testBit_two_pow_self, hk,
+      decide_true, Bool.true_and, Bool.and_true, hbit] at this
+    simp at this
+    omega
+  · intro h
+    apply BitVec.eq_of_getLsbD_eq
+    intro i hi
+    simp only [BitVec.getLsbD_and, BitVec.getLsbD_ofNat, Nat.testBit_two_pow]
+    by_cases hik : k = i
+    · subst hik; simp [hbit, h]
+    · simp [hik]
+
+@[rv_exec] theorem and_one_eq_zero_iff (x : BitVec 64) : x &&& 1#64 = 0#64 ↔ x.toNat % 2 = 0 := by
+  simpa using and_pow_two_eq_zero_iff x 0 (by decide)
+
+@[rv_exec] theorem and_two_eq_zero_iff (x : BitVec 64) :
+    x &&& 2#64 = 0#64 ↔ x.toNat / 2 % 2 = 0 := by
+  simpa using and_pow_two_eq_zero_iff x 1 (by decide)
+
+@[rv_exec] theorem and_four_eq_zero_iff (x : BitVec 64) :
+    x &&& 4#64 = 0#64 ↔ x.toNat / 4 % 2 = 0 := by
+  simpa using and_pow_two_eq_zero_iff x 2 (by decide)
 
 end CopyRuntime

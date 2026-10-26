@@ -118,7 +118,8 @@ theorem Ctx.of {cfg : Config} {B L F : BitVec 64} {W : Section} {fallback : Stri
     have hdec : Decode.decodeAt W.bytes 0x578 = some (.jal 0 (imm 0), 4) := by
       rw [hW.bytes]; decide +kernel
     rw [linkedInstr_jal (ls := ⟨B, W⟩)
-      (r := { offset := 0x578, kind := .jal, symbol := "__jolt_copy_misaligned", addend := 0 }) hdec (by rw [hW.relocs]; simp [Reloc.covers]) rfl rfl
+      (r := { offset := 0x578, kind := .jal, symbol := "__jolt_copy_misaligned", addend := 0 })
+      hdec (by rw [hW.relocs]; simp [Reloc.covers]) rfl rfl
       (by simpa [relocValue, hleaf] using hrel1)]
     simp [relocValue, hleaf]
   · rw [show (0x57c#64 : BitVec 64) = BitVec.ofNat 64 0x57c from rfl,
@@ -126,7 +127,8 @@ theorem Ctx.of {cfg : Config} {B L F : BitVec 64} {W : Section} {fallback : Stri
     have hdec : Decode.decodeAt W.bytes 0x57c = some (.auipc 6 (imm 0), 4) := by
       rw [hW.bytes]; decide +kernel
     rw [linkedInstr_auipc (ls := ⟨B, W⟩)
-      (r := { offset := 0x57c, kind := .callPlt, symbol := fallback, addend := 0 }) hdec (by rw [hW.relocs]; simp [Reloc.covers]) rfl rfl
+      (r := { offset := 0x57c, kind := .callPlt, symbol := fallback, addend := 0 })
+      hdec (by rw [hW.relocs]; simp [Reloc.covers]) rfl rfl
       (by simpa [relocValue, hfb] using hrel2)]
     simp [relocValue, hfb]
   · rw [show (0x580#64 : BitVec 64) = BitVec.ofNat 64 0x580 from rfl,
@@ -134,7 +136,8 @@ theorem Ctx.of {cfg : Config} {B L F : BitVec 64} {W : Section} {fallback : Stri
     have hdec : Decode.decodeAt W.bytes 0x580 = some (.jalr 0 6 (imm 0), 4) := by
       rw [hW.bytes]; decide +kernel
     rw [linkedInstr_jalr (ls := ⟨B, W⟩)
-      (r := { offset := 0x57c, kind := .callPlt, symbol := fallback, addend := 0 }) hdec (by rw [hW.relocs]; simp [Reloc.covers]) rfl rfl
+      (r := { offset := 0x57c, kind := .callPlt, symbol := fallback, addend := 0 })
+      hdec (by rw [hW.relocs]; simp [Reloc.covers]) rfl rfl
       (by simpa [relocValue, hfb] using hrel2)]
     simp [relocValue, hfb]
 

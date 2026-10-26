@@ -6,16 +6,6 @@ import CopyRuntime.Proof.Wrapper.Setup
 
 namespace CopyRuntime.Wrapper
 
-theorem toNat_and_seven (x : BitVec 64) : (x &&& 7#64).toNat = x.toNat % 8 := by
-  rw [BitVec.toNat_and]
-  exact Nat.and_two_pow_sub_one_eq_mod _ 3
-
-theorem and_seven_eq_zero_iff (x : BitVec 64) : x &&& 7#64 = 0#64 ↔ x.toNat % 8 = 0 := by
-  rw [← toNat_and_seven]
-  constructor
-  · intro h; rw [h]; rfl
-  · intro h; exact BitVec.eq_of_toNat_eq h
-
 theorem or_and_seven (a b : BitVec 64) :
     (a ||| b) &&& 7#64 = (a &&& 7#64) ||| (b &&& 7#64) := by
   ext i hi; simp; cases a[i] <;> cases b[i] <;> simp
@@ -40,8 +30,8 @@ theorem mismatched_iff (dst src : BitVec 64) :
     Mismatched dst src ↔ (dst ^^^ src) &&& 7#64 ≠ 0#64 := by
   rw [xor_and_seven, ne_eq, xor_eq_zero]
   unfold Mismatched
-  have hd := toNat_and_seven dst
-  have hs := toNat_and_seven src
+  have hd := Arith.toNat_and_seven dst
+  have hs := Arith.toNat_and_seven src
   have : dst &&& 7#64 = src &&& 7#64 ↔ dst.toNat % 8 = src.toNat % 8 := by
     constructor
     · intro h; rw [← hd, ← hs, h]
@@ -54,8 +44,8 @@ theorem mismatched_iff (dst src : BitVec 64) :
 theorem or_and_seven_eq_zero_iff (dst src n : BitVec 64) :
     (dst ||| src ||| n) &&& 7#64 = 0#64 ↔
       dst.toNat % 8 = 0 ∧ src.toNat % 8 = 0 ∧ n.toNat % 8 = 0 := by
-  rw [or_and_seven, or_and_seven, or_eq_zero, or_eq_zero, and_seven_eq_zero_iff,
-    and_seven_eq_zero_iff, and_seven_eq_zero_iff, and_assoc]
+  rw [or_and_seven, or_and_seven, or_eq_zero, or_eq_zero, Arith.and_seven_eq_zero_iff,
+    Arith.and_seven_eq_zero_iff, Arith.and_seven_eq_zero_iff, and_assoc]
 
 /-- Mismatched offsets fail the all-aligned test. -/
 theorem or_and_seven_ne_zero_of_mismatched {dst src : BitVec 64} (h : Mismatched dst src)

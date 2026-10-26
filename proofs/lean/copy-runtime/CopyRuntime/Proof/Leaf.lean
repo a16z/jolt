@@ -14,7 +14,7 @@ aligned, copies eight more bytes if the first aligned source word would leave
 `[src, src + n)`, then combines pairs of aligned source words with
 `srl`/`sll`/`or` into aligned destination words (a 128-byte loop and a word
 loop), and finishes with a byte tail. The code facts, the region, and the
-word-combining identity `combine_byte` are in `Leaf/Basic.lean`; the
+word-combining identity `combine_byte` are in `Leaf/Common.lean`; the
 combine-and-store step (`fwd_comb`, `bwd_comb`) is in `Leaf/Comb.lean`.
 -/
 
@@ -23,7 +23,7 @@ namespace CopyRuntime.Leaf
 /-- Correctness of the leaf, from its entry point: it performs the memmove and
 returns. -/
 theorem leaf_path {cfg : Config} {L : BitVec 64} (ctx : Ctx cfg L) (regs : Reg → BitVec 64)
-    (mem : Mem) {dst src n R : BitVec 64} (he : Wrapper.EntryRegs regs dst src n R)
+    (mem : Mem) {dst src n R : BitVec 64} (he : EntryRegs regs dst src n R)
     (hsb : Sandbox cfg dst src n) (hargs : ArgsOk dst src n R) (hRout : ¬ region L R)
     (hmis : Mismatched dst src) (h544 : 544 ≤ n.toNat) :
     Exits cfg (region L) (Returned ⟨L, regs, mem⟩ R dst src n) ⟨L, regs, mem⟩ := by
@@ -40,17 +40,13 @@ theorem leaf_path {cfg : Config} {L : BitVec 64} (ctx : Ctx cfg L) (regs : Reg �
   · rename_i hlt
     exact bwd_path env hlt regs mem he _ (by simp [writeReg_apply, ha1])
       (by simp [writeReg_apply]) (by simp [writeReg_apply, he.a2])
-      (fun r hr => by
-        simp only [clobbered, List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
-        simp [writeReg_apply, hr])
+      (by rv_preserved)
   · rename_i hge
     have hlt : dst.toNat < src.toNat := by
       have : dst.toNat ≠ src.toNat := fun h => hmis' (by rw [h])
       omega
     exact fwd_path env hlt regs mem he _ (by simp [writeReg_apply, ha1])
       (by simp [writeReg_apply]) (by simp [writeReg_apply, he.a2])
-      (fun r hr => by
-        simp only [clobbered, List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
-        simp [writeReg_apply, hr])
+      (by rv_preserved)
 
 end CopyRuntime.Leaf

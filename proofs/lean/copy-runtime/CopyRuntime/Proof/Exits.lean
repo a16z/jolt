@@ -57,7 +57,25 @@ theorem Exits.congr_region {cfg : Config} {r₁ r₂ : BitVec 64 → Prop} {Q : 
   | exit hout hq => exact .exit (fun h => hout ((heq _).2 h)) hq
   | step hin hstep _ ih => exact .step ((heq _).1 hin) hstep ih
 
-/-! ## Linear sweep facts -/
+/-- Loop-invariant rule in continuation-passing form. `I k s` describes the loop
+head after `k` iterations. `hbody` proves that a run from a state satisfying
+`I k` exits with `post`, given that every state satisfying `I (k + 1)` does.
+The bound `K` on the iteration count makes the rule sound. -/
+theorem Exits.loop {cfg : Config} {region : BitVec 64 → Prop} {post : State → Prop}
+    (I : Nat → State → Prop) (K : Nat) (hbound : ∀ k s, I k s → k ≤ K)
+    (hbody : ∀ k s, I k s → (∀ t, I (k + 1) t → Exits cfg region post t) →
+      Exits cfg region post s) :
+    ∀ k s, I k s → Exits cfg region post s := by
+  suffices h : ∀ m k s, K - k ≤ m → I k s → Exits cfg region post s from
+    fun k s => h (K - k) k s (Nat.le_refl _)
+  intro m
+  induction m with
+  | zero =>
+    intro k s hm hI
+    exact hbody k s hI fun t ht => absurd (hbound _ _ ht) (by omega)
+  | succ m ih =>
+    intro k s hm hI
+    exact hbody k s hI fun t ht => ih (k + 1) t (by omega) ht
 
 theorem decodeBytes_len {bs : List UInt8} {i : Instr} {len : Nat}
     (h : Decode.decodeBytes bs = some (i, len)) :
