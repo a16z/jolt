@@ -38,7 +38,7 @@ fn test_keccak_known_vector() {
     // `u64` public message and one 52-byte challenge squeeze reduced mod r.
     assert_eq!(
         format!("{challenge:?}"),
-        "1766718655065384849885355460798243624214294877158123096419747417635580052889"
+        "15267672073076548814906763326342034093605471642902738116944754766916291074944"
     );
 }
 

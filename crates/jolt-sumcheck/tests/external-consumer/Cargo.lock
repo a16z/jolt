@@ -148,6 +148,7 @@ version = "0.1.0"
 dependencies = [
  "getrandom",
  "jolt-field",
+ "shake",
  "spongefish",
 ]
 
@@ -303,8 +304,6 @@ dependencies = [
  "digest",
  "getrandom",
  "keccak",
- "shake",
- "turboshake",
  "zeroize",
 ]
 
@@ -377,17 +376,6 @@ name = "tracing-core"
 version = "0.1.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
-
-[[package]]
-name = "turboshake"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
-dependencies = [
- "digest",
- "keccak",
- "sponge-cursor",
-]
 
 [[package]]
 name = "typenum"

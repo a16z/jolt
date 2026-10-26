@@ -83,7 +83,7 @@ pub trait ProverInit: ProverTranscript + Sized {
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self;
 }
 
-impl<H> ProverInit for ProverState<H>
+impl<H> ProverInit for crate::ProverState<H>
 where
     H: DuplexSpongeInit<U = u8> + Sync,
 {

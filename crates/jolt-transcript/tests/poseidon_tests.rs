@@ -52,7 +52,7 @@ fn test_poseidon_known_vector() {
     // `u64` public message and a 32-byte squeeze.
     assert_eq!(
         hex(&got),
-        "788647c07eed8851fb17d6eeb2682d72ccca468c7ebd9f49a071712305eb8817",
+        "1673ac4556a9f072d14cfdba664805c4411fdb989271d8d49c00cc6b62fd8319",
         "Poseidon known-vector regression"
     );
 }

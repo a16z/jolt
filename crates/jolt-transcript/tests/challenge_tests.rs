@@ -347,14 +347,14 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
 fn solinas_known_answers() {
     known_answer::<Prime128OffsetA7F7>(
         1,
-        "054c2dd95aac3fe41030fd854e23bb1c",
-        "f94c4bb61fd8fb32d1caa4e81a9d2411",
+        "5959c3d06da4cac12e213b0a40561729",
+        "b472a6adf15848ee75dcb33ad957fedc",
     );
-    known_answer::<Prime64Offset59>(1, "054c2dd95aac3fe4", "66d94962948e5d1bf94c4bb61fd8fb32");
+    known_answer::<Prime64Offset59>(1, "5959c3d06da4cac1", "726b39e9293a7f34b472a6adf15848ee");
     known_answer::<FpExt4<Prime32Offset99>>(
         1,
-        "054c2dd95aac3fe41030fd854e23bb1c",
-        "1a9d24117be65f8a42263c77b5726f3a",
+        "5959c3d06da4cac12e213b0a40561729",
+        "d957fedc2beeeca9ff3845fe8d185610",
     );
 }
 
@@ -363,8 +363,8 @@ fn solinas_known_answers() {
 fn bn254_known_answer() {
     known_answer::<Fr>(
         1,
-        "7102fb019592516789657a0711ec2e8e295f8e3aff0c618914af0a9dca4da608",
-        "42263c77b5726f3a3984d3c5788dd66a",
+        "3424a763bfe2f28b25691136e72b25e7f1f5709c830315c19b75ba7f79502801",
+        "ff3845fe8d185610fd0f6f5f3a1716dd",
     );
 }
 
@@ -373,8 +373,8 @@ fn bn254_known_answer() {
 fn binary_known_answer() {
     known_answer::<F128>(
         1,
-        "054c2dd95aac3fe41030fd854e23bb1c",
-        "6f7ccba5b9646bd566d94962948e5d1b",
+        "5959c3d06da4cac12e213b0a40561729",
+        "b8bad568fce27c3e726b39e9293a7f34",
     );
 }
 
@@ -386,23 +386,23 @@ fn keccak_rate_boundary_known_answers() {
     known_answer::<F8>(
         136,
         concat!(
-            "054c2dd95aac3fe41030fd854e23bb1c6f7ccba5b9646bd566d94962948e5d1b",
-            "f94c4bb61fd8fb32d1caa4e81a9d24117be65f8a42263c77b5726f3a3984d3c5",
-            "788dd66a184950ffa84ae77ce7a81690fe05c2cb5b858f72244dd62aa3a09b38",
-            "bf264e5d9dff511d05316450c2f222c41bd9e3a7450eb7f77027d30891c2c44d",
-            "e39e7b3ab5d41e40",
+            "5959c3d06da4cac12e213b0a40561729b8bad568fce27c3e726b39e9293a7f34",
+            "b472a6adf15848ee75dcb33ad957fedc2beeeca9ff3845fe8d185610fd0f6f5f",
+            "3a1716dd7e109dad1802541146f6a50e9c8dfc03e58418c8de63358dc966a759",
+            "f7d8f868432c2dad6e68d122bc05941e9d6e77fa626293b78ae6a7b24170ef3e",
+            "e2201b11556985d5",
         ),
-        "60ef1af29559e3b43b9fdaed924be4d0",
+        "f7f146013fd5b9a1c32789797f229446",
     );
     known_answer::<F8>(
         137,
         concat!(
-            "054c2dd95aac3fe41030fd854e23bb1c6f7ccba5b9646bd566d94962948e5d1b",
-            "f94c4bb61fd8fb32d1caa4e81a9d24117be65f8a42263c77b5726f3a3984d3c5",
-            "788dd66a184950ffa84ae77ce7a81690fe05c2cb5b858f72244dd62aa3a09b38",
-            "bf264e5d9dff511d05316450c2f222c41bd9e3a7450eb7f77027d30891c2c44d",
-            "e39e7b3ab5d41e4060",
+            "5959c3d06da4cac12e213b0a40561729b8bad568fce27c3e726b39e9293a7f34",
+            "b472a6adf15848ee75dcb33ad957fedc2beeeca9ff3845fe8d185610fd0f6f5f",
+            "3a1716dd7e109dad1802541146f6a50e9c8dfc03e58418c8de63358dc966a759",
+            "f7d8f868432c2dad6e68d122bc05941e9d6e77fa626293b78ae6a7b24170ef3e",
+            "e2201b11556985d5f7",
         ),
-        "ef1af29559e3b43b9fdaed924be4d02b",
+        "f146013fd5b9a1c32789797f229446a8",
     );
 }
