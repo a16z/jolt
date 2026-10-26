@@ -102,12 +102,21 @@ structure Sandbox (cfg : Config) (dst src n : BitVec 64) : Prop where
   load : cfg.canLoad = rangePerm src n
   store : cfg.canStore = rangePerm dst n
 
-/-- Conditions on the arguments shared by every entry point. -/
+/-- Conditions on the arguments shared by every entry point.
+
+The range conditions are C's rule that the address one past the end of an
+object is representable: neither range may reach the top of the address
+space. They are strict because the code needs them to be. If `src + n = 2^64`,
+the forward word loop's end pointer `a1 + (a2 & ~7)` wraps to 0 and up to 8
+bytes are left uncopied (for example `src = 2^64 - 96`, `dst = src - 8`,
+`n = 96`). If `dst + n = 2^64`, the leaf's backward bound check `addi t2, a1, 7`
+can wrap, and its first aligned `ld` then reads up to 7 bytes past the end of
+the source (for example `n = 600`, `dst = 2^64 - 600`, `src = dst - 1`). -/
 structure ArgsOk (dst src n R : BitVec 64) : Prop where
-  /-- `[src, src + n)` does not wrap around the address space. -/
-  src_no_wrap : src.toNat + n.toNat ≤ 2 ^ 64
-  /-- `[dst, dst + n)` does not wrap around the address space. -/
-  dst_no_wrap : dst.toNat + n.toNat ≤ 2 ^ 64
+  /-- `[src, src + n]` lies inside the address space. -/
+  src_no_wrap : src.toNat + n.toNat < 2 ^ 64
+  /-- `[dst, dst + n]` lies inside the address space. -/
+  dst_no_wrap : dst.toNat + n.toNat < 2 ^ 64
   /-- Return addresses are instruction addresses (IALIGN = 16). -/
   ret_even : R.toNat % 2 = 0
 

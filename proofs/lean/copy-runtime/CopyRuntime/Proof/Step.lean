@@ -25,6 +25,16 @@ theorem Exits.after_ite {cfg : Config} {region : BitVec 64 → Prop} {post : Sta
       if c then Exits.after cfg region post a else Exits.after cfg region post b := by
   split <;> rfl
 
+/-- Case split on an `if` goal by unification only (no rewriting of the goal,
+which can be large during symbolic execution). The `Decidable` instance is an
+ordinary implicit argument, taken from the goal: synthesizing it and comparing
+with the goal's instance can unfold `Nat.ble` on huge literals. -/
+theorem ite_goal {c : Prop} {h : Decidable c} {p q : Prop} (h₁ : c → p) (h₂ : ¬c → q) :
+    if c then p else q := by
+  cases h with
+  | isTrue hc => exact h₁ hc
+  | isFalse hc => exact h₂ hc
+
 /-- One step through an instruction of the listing. -/
 theorem Exits.step_fetch {cfg : Config} {region : BitVec 64 → Prop} {post : State → Prop}
     {s : State} {i : Instr} {len : Nat}

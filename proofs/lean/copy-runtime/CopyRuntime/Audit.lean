@@ -40,13 +40,17 @@ namespace CopyRuntime
 #assert_axioms Wrapper.leaf_path [propext, Classical.choice, Quot.sound]
 #assert_axioms Wrapper.aligned_small_path [propext, Classical.choice, Quot.sound]
 #assert_axioms Wrapper.small_bytes_path [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.fwd_tail [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.fwd_words [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.fwd_pairs [propext, Classical.choice, Quot.sound]
 #assert_axioms Leaf.combine_byte [propext, Classical.choice, Quot.sound]
 #assert_axioms Theorems.entry_symbols [propext, Classical.choice, Quot.sound]
 #assert_axioms Theorems.wrappers_same_code [propext, Classical.choice, Quot.sound]
 #assert_axioms Theorems.exit_state_unique [propext, Classical.choice, Quot.sound]
 
--- Main theorems: still depend on `Wrapper.forward_path`, `Wrapper.backward_path`
--- and `Leaf.leaf_path`, which are `sorry`.
+-- Main theorems: still depend on `Wrapper.fwd_blocks`, `Wrapper.fwd_large`,
+-- `Wrapper.fwd_prologue` (forward path), `Wrapper.backward_path` and
+-- `Leaf.leaf_path`, which are `sorry`.
 #assert_axioms Theorems.wrap_memcpy_correct [propext, Classical.choice, Quot.sound, sorryAx]
 #assert_axioms Theorems.wrap_memmove_correct [propext, Classical.choice, Quot.sound, sorryAx]
 #assert_axioms Theorems.jolt_copy_misaligned_correct

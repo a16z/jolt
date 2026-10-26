@@ -1,4 +1,4 @@
-import CopyRuntime.Proof.Wrapper.Tables
+import CopyRuntime.Proof.Wrapper.Forward
 
 /-!
 # The general (equal-offset) path, `.Lgeneral` at offset `0xa4`
@@ -39,15 +39,20 @@ theorem _root_.CopyRuntime.Returned.change_pc {p₀ p₁ : BitVec 64} {r : Reg �
 
 /-- Forward copy (`src > dst`), from `mv a7, a0` at `0xac`: byte/half/word
 steps to align `a1`, the 256-byte loop, the 80-byte block loop, the word loop
-and the 4/2/1-byte tail. Every load reads a source byte that no earlier store
-has overwritten, because the destination lies below the source. -/
+and the 4/2/1-byte tail (`Forward.lean`). Every load reads a source byte that
+no earlier store has overwritten, because the destination lies below the
+source. -/
 theorem forward_path (ctx : Ctx cfg B L F) (regs : Reg → BitVec 64) (mem : Mem)
     {dst src n R : BitVec 64} (he : EntryRegs regs dst src n R) (hsb : Sandbox cfg dst src n)
     (hargs : ArgsOk dst src n R) (hRout : ¬ region B R)
     (hsame : (dst - src).toNat % 8 = 0) (hlt : dst.toNat < src.toNat) (hn8 : 8 ≤ n.toNat) :
     Exits cfg (region B) (Returned ⟨B + 0xac#64, regs, mem⟩ R dst src n)
       ⟨B + 0xac#64, regs, mem⟩ := by
-  sorry
+  have hds : dst.toNat % 8 = src.toNat % 8 := by
+    rw [BitVec.toNat_sub] at hsame
+    have := dst.isLt; have := src.isLt
+    omega
+  exact fwd_prologue ⟨ctx, hsb, hargs, hRout, Nat.le_of_lt hlt, hds⟩ regs mem he hn8
 
 /-- Backward copy (`src < dst`), from `add a1, a1, a2` at `0x2c0`: the mirror
 image of `forward_path`, copying from the high end down. -/

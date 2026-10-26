@@ -38,8 +38,8 @@ theorem aligned_small_path (ctx : Ctx cfg B L F) (regs : Reg → BitVec 64) (mem
     Exits cfg (region B) (Returned ⟨B, regs, mem⟩ R dst src n) ⟨B, regs, mem⟩ := by
   have hB := ctx.base_even
   have hR := hargs.ret_even
-  have hsw := hargs.src_no_wrap
-  have hdw := hargs.dst_no_wrap
+  have hsw : src.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt hargs.src_no_wrap
+  have hdw : dst.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt hargs.dst_no_wrap
   have ha0 := he.a0; have ha1 := he.a1; have ha2 := he.a2; have hra := he.ra
   have hal := (or_and_seven_eq_zero_iff dst src n).2 ⟨hd, hs, hn⟩
   have hl := hsb.load; have hst := hsb.store
@@ -64,8 +64,8 @@ theorem small_bytes_path (ctx : Ctx cfg B L F) (regs : Reg → BitVec 64) (mem :
     Exits cfg (region B) (Returned ⟨B, regs, mem⟩ R dst src n) ⟨B, regs, mem⟩ := by
   have hB := ctx.base_even
   have hR := hargs.ret_even
-  have hsw := hargs.src_no_wrap
-  have hdw := hargs.dst_no_wrap
+  have hsw : src.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt hargs.src_no_wrap
+  have hdw : dst.toNat + n.toNat ≤ 2 ^ 64 := Nat.le_of_lt hargs.dst_no_wrap
   have ha0 := he.a0; have ha1 := he.a1; have ha2 := he.a2; have hra := he.ra
   have hl := hsb.load; have hst := hsb.store
   have hun : (dst ||| src ||| n) &&& 7#64 ≠ 0#64 := by

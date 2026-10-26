@@ -93,7 +93,7 @@ def stepCore (hc : Expr) : TacticM Unit := withMainContext do
   run hreg (← `(tactic| rv_region))
   replaceMainGoal [h]
 
-elab "rv_fetch " hc:term : tactic => do
+elab "rv_fetch " hc:term : tactic => withMainContext do
   let hc ← elabTerm hc none
   stepCore hc
 
@@ -146,10 +146,28 @@ syntax (name := rvSimp) "rv_simp" (" [" term,* "]")? : tactic
   finally
     set (← ref.get)
 
+/-- `rv_split` turns a goal `if c then p else q` into two goals, with an
+(inaccessible) hypothesis `c`, resp. `¬c`. It builds the `ite_goal` term
+directly: elaborating it against the goal makes Lean's unifier unfold
+`Nat.ble` in unary when `c` contains a large literal (such as the immediate
+of `addi a2, a2, -80`), and `split` rewrites the whole goal. -/
+elab "rv_split" : tactic => withMainContext do
+  let goal ← getMainGoal
+  let tgt ← instantiateMVars (← goal.getType)
+  let_expr ite _ c h p q := tgt | throwError "rv_split: goal is not an `if`"
+  let m₁ ← mkFreshExprSyntheticOpaqueMVar (← mkArrow c p)
+  let m₂ ← mkFreshExprSyntheticOpaqueMVar (← mkArrow (mkNot c) q)
+  goal.assign (mkAppN (mkConst ``ite_goal) #[c, h, p, q, m₁, m₂])
+  let (_, g₁) ← m₁.mvarId!.intro1
+  let (_, g₂) ← m₂.mvarId!.intro1
+  replaceMainGoal [g₁, g₂]
+
 /-- After evaluating a branch, split on its condition and drop the branches
-that `omega` refutes from the hypotheses. -/
+that `omega` refutes (from the branch condition and the Nat facts in context).
+Only the branch hypothesis is normalized: rewriting every hypothesis into
+mod-2^64 arithmetic can make `omega` blow up on large contexts. -/
 macro "rv_branch" : tactic =>
-  `(tactic| split <;> try (exfalso; (try rv_arith_simp at *); omega))
+  `(tactic| (rv_split <;> try (exfalso; rename_i hbr; (try rv_arith_simp at hbr); omega)))
 
 /-- One symbolic step: fetch, evaluate with `rv_exec` (plus extra lemmas), and
 split on an undecided branch condition. -/
