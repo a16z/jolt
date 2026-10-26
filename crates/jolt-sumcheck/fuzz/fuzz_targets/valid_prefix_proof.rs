@@ -24,7 +24,9 @@
 
 use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckClaim, SumcheckVerifier};
+use jolt_sumcheck::{
+    round_pow_bits, BooleanHypercube, RoundMessage, SumcheckClaim, SumcheckVerifier,
+};
 use jolt_transcript::{
     prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript, Transcript,
 };
@@ -87,9 +89,7 @@ fuzz_target!(|data: &[u8]| {
 
             // Mirror the verifier's transcript / proof-of-work / challenge /
             // evaluate sequence.
-            for c in poly.coefficients() {
-                prover_state.append(c);
-            }
+            poly.append_to_transcript(&mut prover_state);
             pow_nonces.extend(
                 prover_state
                     .public_grind(bits)
