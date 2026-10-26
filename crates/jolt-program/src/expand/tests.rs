@@ -5,10 +5,11 @@
 #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
 use super::*;
+use crate::RV64I;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{
-    JoltInstruction, JoltInstructionKind as Kind, SourceInlineKey, SourceInstructionRow, RV64I,
+    JoltInstruction, JoltInstructionKind as Kind, SourceInlineKey, SourceInstructionRow,
     RV64IMAC_JOLT,
 };
 #[cfg(feature = "serialization")]

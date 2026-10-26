@@ -52,12 +52,6 @@ pub struct JoltInstructionProfile {
     pub inline_extensions: &'static [InlineExtension],
 }
 
-/// RV64I base instructions, with no compressed, custom, or inline extensions.
-pub const RV64I: JoltInstructionProfile = JoltInstructionProfile {
-    source_extensions: &[SourceExtension::Rv64I],
-    inline_extensions: &[],
-};
-
 pub const RV64IM_JOLT: JoltInstructionProfile = JoltInstructionProfile {
     source_extensions: &[
         SourceExtension::Rv64I,
@@ -303,6 +297,11 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::NormalizedOperands;
 
+    const RV64I: JoltInstructionProfile = JoltInstructionProfile {
+        source_extensions: &[SourceExtension::Rv64I],
+        inline_extensions: &[],
+    };
+
     #[test]
     fn rv64i_source_legality_matches_base_isa() {
         let base = [
@@ -367,18 +366,6 @@ mod tests {
                 "{kind:?}"
             );
         }
-    }
-
-    #[test]
-    fn rv64i_fingerprint_is_distinct_from_other_exported_profiles() {
-        for profile in [RV64IM_JOLT, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES] {
-            assert_ne!(RV64I.fingerprint(), profile.fingerprint());
-        }
-        #[cfg(feature = "field-inline")]
-        assert_ne!(
-            RV64I.fingerprint(),
-            RV64IMAC_JOLT_FIELD_INLINE.fingerprint()
-        );
     }
 
     #[test]

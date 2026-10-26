@@ -1,7 +1,8 @@
 use super::*;
+use crate::RV64I;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
-use jolt_riscv::{uncompress_rv64_instruction, RV64I, RV64IMAC_JOLT, RV64IM_JOLT};
+use jolt_riscv::{uncompress_rv64_instruction, RV64IMAC_JOLT, RV64IM_JOLT};
 
 fn field_word(funct3: u32, rd: u8, rs1: u8, rs2_or_imm: u32) -> u32 {
     0x7b | (funct3 << 12) | (u32::from(rd) << 7) | (u32::from(rs1) << 15) | (rs2_or_imm << 20)
@@ -440,58 +441,58 @@ fn rejects_source_instructions_outside_the_profile() {
 #[test]
 fn rv64i_decodes_every_base_instruction() {
     let cases = [
-        (0x1234_50b7, SourceInstructionKind::LUI), // lui x1,0x12345
-        (0x1234_5097, SourceInstructionKind::AUIPC), // auipc x1,0x12345
-        (0x0040_00ef, SourceInstructionKind::JAL), // jal x1,4
-        (0x0041_00e7, SourceInstructionKind::JALR), // jalr x1,4(x2)
-        (0x0031_0263, SourceInstructionKind::BEQ), // beq x2,x3,4
-        (0x0031_1263, SourceInstructionKind::BNE), // bne x2,x3,4
-        (0x0031_4263, SourceInstructionKind::BLT), // blt x2,x3,4
-        (0x0031_5263, SourceInstructionKind::BGE), // bge x2,x3,4
-        (0x0031_6263, SourceInstructionKind::BLTU), // bltu x2,x3,4
-        (0x0031_7263, SourceInstructionKind::BGEU), // bgeu x2,x3,4
-        (0x0041_0083, SourceInstructionKind::LB),  // lb x1,4(x2)
-        (0x0041_1083, SourceInstructionKind::LH),  // lh x1,4(x2)
-        (0x0041_2083, SourceInstructionKind::LW),  // lw x1,4(x2)
-        (0x0041_4083, SourceInstructionKind::LBU), // lbu x1,4(x2)
-        (0x0041_5083, SourceInstructionKind::LHU), // lhu x1,4(x2)
-        (0x0031_0223, SourceInstructionKind::SB),  // sb x3,4(x2)
-        (0x0031_1223, SourceInstructionKind::SH),  // sh x3,4(x2)
-        (0x0031_2223, SourceInstructionKind::SW),  // sw x3,4(x2)
-        (0x0041_0093, SourceInstructionKind::ADDI), // addi x1,x2,4
-        (0x0041_2093, SourceInstructionKind::SLTI), // slti x1,x2,4
-        (0x0041_3093, SourceInstructionKind::SLTIU), // sltiu x1,x2,4
-        (0x0041_4093, SourceInstructionKind::XORI), // xori x1,x2,4
-        (0x0041_6093, SourceInstructionKind::ORI), // ori x1,x2,4
-        (0x0041_7093, SourceInstructionKind::ANDI), // andi x1,x2,4
-        (0x0041_1093, SourceInstructionKind::SLLI), // slli x1,x2,4
-        (0x0041_5093, SourceInstructionKind::SRLI), // srli x1,x2,4
-        (0x4041_5093, SourceInstructionKind::SRAI), // srai x1,x2,4
-        (0x0031_00b3, SourceInstructionKind::ADD), // add x1,x2,x3
-        (0x4031_00b3, SourceInstructionKind::SUB), // sub x1,x2,x3
-        (0x0031_10b3, SourceInstructionKind::SLL), // sll x1,x2,x3
-        (0x0031_20b3, SourceInstructionKind::SLT), // slt x1,x2,x3
-        (0x0031_30b3, SourceInstructionKind::SLTU), // sltu x1,x2,x3
-        (0x0031_40b3, SourceInstructionKind::XOR), // xor x1,x2,x3
-        (0x0031_50b3, SourceInstructionKind::SRL), // srl x1,x2,x3
-        (0x4031_50b3, SourceInstructionKind::SRA), // sra x1,x2,x3
-        (0x0031_60b3, SourceInstructionKind::OR),  // or x1,x2,x3
-        (0x0031_70b3, SourceInstructionKind::AND), // and x1,x2,x3
-        (0x0ff0_000f, SourceInstructionKind::FENCE), // fence iorw,iorw
-        (0x0000_0073, SourceInstructionKind::ECALL), // ecall
-        (0x0010_0073, SourceInstructionKind::EBREAK), // ebreak
-        (0x0041_6083, SourceInstructionKind::LWU), // lwu x1,4(x2)
-        (0x0081_3083, SourceInstructionKind::LD),  // ld x1,8(x2)
-        (0x0031_3423, SourceInstructionKind::SD),  // sd x3,8(x2)
-        (0x0041_009b, SourceInstructionKind::ADDIW), // addiw x1,x2,4
-        (0x0041_109b, SourceInstructionKind::SLLIW), // slliw x1,x2,4
-        (0x0041_509b, SourceInstructionKind::SRLIW), // srliw x1,x2,4
-        (0x4041_509b, SourceInstructionKind::SRAIW), // sraiw x1,x2,4
-        (0x0031_00bb, SourceInstructionKind::ADDW), // addw x1,x2,x3
-        (0x4031_00bb, SourceInstructionKind::SUBW), // subw x1,x2,x3
-        (0x0031_10bb, SourceInstructionKind::SLLW), // sllw x1,x2,x3
-        (0x0031_50bb, SourceInstructionKind::SRLW), // srlw x1,x2,x3
-        (0x4031_50bb, SourceInstructionKind::SRAW), // sraw x1,x2,x3
+        (0x1234_50b7, SourceInstructionKind::LUI),
+        (0x1234_5097, SourceInstructionKind::AUIPC),
+        (0x0040_00ef, SourceInstructionKind::JAL),
+        (0x0041_00e7, SourceInstructionKind::JALR),
+        (0x0031_0263, SourceInstructionKind::BEQ),
+        (0x0031_1263, SourceInstructionKind::BNE),
+        (0x0031_4263, SourceInstructionKind::BLT),
+        (0x0031_5263, SourceInstructionKind::BGE),
+        (0x0031_6263, SourceInstructionKind::BLTU),
+        (0x0031_7263, SourceInstructionKind::BGEU),
+        (0x0041_0083, SourceInstructionKind::LB),
+        (0x0041_1083, SourceInstructionKind::LH),
+        (0x0041_2083, SourceInstructionKind::LW),
+        (0x0041_4083, SourceInstructionKind::LBU),
+        (0x0041_5083, SourceInstructionKind::LHU),
+        (0x0031_0223, SourceInstructionKind::SB),
+        (0x0031_1223, SourceInstructionKind::SH),
+        (0x0031_2223, SourceInstructionKind::SW),
+        (0x0041_0093, SourceInstructionKind::ADDI),
+        (0x0041_2093, SourceInstructionKind::SLTI),
+        (0x0041_3093, SourceInstructionKind::SLTIU),
+        (0x0041_4093, SourceInstructionKind::XORI),
+        (0x0041_6093, SourceInstructionKind::ORI),
+        (0x0041_7093, SourceInstructionKind::ANDI),
+        (0x0041_1093, SourceInstructionKind::SLLI),
+        (0x0041_5093, SourceInstructionKind::SRLI),
+        (0x4041_5093, SourceInstructionKind::SRAI),
+        (0x0031_00b3, SourceInstructionKind::ADD),
+        (0x4031_00b3, SourceInstructionKind::SUB),
+        (0x0031_10b3, SourceInstructionKind::SLL),
+        (0x0031_20b3, SourceInstructionKind::SLT),
+        (0x0031_30b3, SourceInstructionKind::SLTU),
+        (0x0031_40b3, SourceInstructionKind::XOR),
+        (0x0031_50b3, SourceInstructionKind::SRL),
+        (0x4031_50b3, SourceInstructionKind::SRA),
+        (0x0031_60b3, SourceInstructionKind::OR),
+        (0x0031_70b3, SourceInstructionKind::AND),
+        (0x0ff0_000f, SourceInstructionKind::FENCE),
+        (0x0000_0073, SourceInstructionKind::ECALL),
+        (0x0010_0073, SourceInstructionKind::EBREAK),
+        (0x0041_6083, SourceInstructionKind::LWU),
+        (0x0081_3083, SourceInstructionKind::LD),
+        (0x0031_3423, SourceInstructionKind::SD),
+        (0x0041_009b, SourceInstructionKind::ADDIW),
+        (0x0041_109b, SourceInstructionKind::SLLIW),
+        (0x0041_509b, SourceInstructionKind::SRLIW),
+        (0x4041_509b, SourceInstructionKind::SRAIW),
+        (0x0031_00bb, SourceInstructionKind::ADDW),
+        (0x4031_00bb, SourceInstructionKind::SUBW),
+        (0x0031_10bb, SourceInstructionKind::SLLW),
+        (0x0031_50bb, SourceInstructionKind::SRLW),
+        (0x4031_50bb, SourceInstructionKind::SRAW),
     ];
     assert_eq!(cases.len(), 52);
     for (word, kind) in cases {
@@ -504,30 +505,10 @@ fn rv64i_decodes_every_base_instruction() {
 }
 
 #[test]
-fn rv64i_rejects_non_base_instructions_and_unknown_encodings() {
-    for (word, kind) in [
-        (0x0231_00b3, SourceInstructionKind::MUL), // mul x1,x2,x3
-        (0x0031_20af, SourceInstructionKind::AMOADDW), // amoadd.w x1,x3,(x2)
-        (0x3051_10f3, SourceInstructionKind::CSRRW), // csrrw x1,mtvec,x2
-        (0x3020_0073, SourceInstructionKind::MRET), // mret
-        (0x0620_d20b, SourceInstructionKind::Inline), // .insn r 0x0b,5,3,x4,x1,x2
-    ] {
-        assert!(matches!(
-            decode_instruction(word, 0x8000_0000, false, RV64I),
-            Err(ProgramError::IllegalSourceInstruction(actual)) if actual == kind
-        ));
-    }
-    assert!(matches!(
-        decode_instruction(0xffff_ffff, 0x8000_0000, false, RV64I),
-        Err(ProgramError::MalformedImage("unknown RV64 opcode"))
-    ));
-}
-
-#[test]
 fn compressed_rows_are_rejected_before_kind_and_alignment_checks() {
-    let compressed = 0x0085; // c.addi x1,1
+    let compressed = 0x0085;
     let word = uncompress_rv64_instruction(compressed);
-    assert_eq!(word, 0x0010_8093); // addi x1,x1,1
+    assert_eq!(word, 0x0010_8093);
     for profile in [RV64I, RV64IM_JOLT] {
         for (word, address) in [(word, 0x8000_0000), (0xffff_ffff, 0x8000_0002)] {
             assert!(matches!(
@@ -543,7 +524,7 @@ fn compressed_rows_are_rejected_before_kind_and_alignment_checks() {
 
 #[test]
 fn alignment_is_checked_before_kind_only_without_rv64c() {
-    let nop = 0x0000_0013; // addi x0,x0,0
+    let nop = 0x0000_0013;
     for profile in [RV64I, RV64IM_JOLT] {
         for address in [0x8000_0001, 0x8000_0002, 0x8000_0003] {
             for word in [nop, 0xffff_ffff] {

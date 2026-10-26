@@ -55,7 +55,8 @@ fn stamp_sequence_metadata(
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64I};
+    use crate::RV64I;
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
     use super::*;
 

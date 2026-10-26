@@ -302,9 +302,8 @@ const fn noop_instruction() -> JoltInstructionRow {
 mod tests {
     #[cfg(feature = "field-inline")]
     use crate::field_inline::FieldInlineInstructionError;
-    use jolt_riscv::{
-        JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64I, RV64IMAC_JOLT,
-    };
+    use crate::RV64I;
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FIELD_REGISTER_COUNT, RV64IMAC_JOLT_FIELD_INLINE};
 
