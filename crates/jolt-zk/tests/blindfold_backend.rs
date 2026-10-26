@@ -19,8 +19,8 @@ use jolt_transcript::{
 use jolt_zk::blindfold::{BlindFold, BlindFoldResidualWitness};
 use jolt_zk::masking::{
     lower_factored, sumcheck_rows, AffineRow, CommittedPadsView, MaskingRecorder,
-    OperandShapeDomain, PadIndex, PadLayout, ProductOperand, ResidualRelation, ResidualVar,
-    RoundFormat, RowsDomain, ValuesDomain, ZkBackend, ZkError,
+    OperandShapeDomain, PadIndex, PadLayout, ProductMemo, ProductOperand, ResidualRelation,
+    ResidualVar, RoundFormat, RowsDomain, ValuesDomain, ZkBackend, ZkError,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -32,7 +32,7 @@ const LABEL: &[u8] = b"blindfold-backend";
 const NUM_VARS: usize = 3;
 const DEGREE: usize = 2;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Opening {
     A,
     B,
@@ -69,6 +69,7 @@ fn layout() -> PadLayout {
     lower_factored(
         &product(),
         &mut shape,
+        &mut ProductMemo::default(),
         &mut |id| Ok(Some(PadIndex(base - 2 + *id as usize))),
         &mut |_| Ok(fr(0)),
     )
@@ -137,6 +138,7 @@ fn residual(
     let output = lower_factored(
         &product(),
         &mut rows,
+        &mut ProductMemo::default(),
         &mut |id| {
             Ok(match id {
                 Opening::A => a.clone(),
@@ -182,6 +184,7 @@ fn prove(y_offset: Fr) -> Result<Vec<u8>, ZkError> {
     let _ = lower_factored(
         &product(),
         &mut values,
+        &mut ProductMemo::default(),
         &mut |id| {
             Ok(match id {
                 Opening::A => a[0],

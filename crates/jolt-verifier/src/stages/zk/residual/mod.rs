@@ -101,8 +101,8 @@ use jolt_sumcheck::{BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDo
 use jolt_transcript::ClaimDomain;
 use jolt_zk::masking::{
     lower_factored, sumcheck_rows, AffineRow, LoweringDomain, MaskedOperand, OperandRule,
-    OperandShapeDomain, PadLayout, ProductSum, ResidualRelation, ResidualRows, RoundFormat,
-    RowsDomain, ValuesDomain, ZkError,
+    OperandShapeDomain, PadLayout, ProductMemo, ProductSum, ResidualRelation, ResidualRows,
+    RoundFormat, RowsDomain, ValuesDomain, ZkError,
 };
 use std::collections::BTreeMap;
 
@@ -443,6 +443,7 @@ impl<F: JoltField> JoltResidual<F> {
             })
         };
         let mut claims = Vec::with_capacity(self.stages.len());
+        let mut products = ProductMemo::default();
         for stage in &self.stages {
             let mut input = domain.constant(F::zero());
             let max_num_vars = stage.degrees.num_rounds();
@@ -453,8 +454,9 @@ impl<F: JoltField> JoltResidual<F> {
                         stage.name, member.rounds
                     ))
                 })?;
-                let value = lower_factored(&member.input, domain, opening, &mut public)?
-                    .into_value(domain)?;
+                let value =
+                    lower_factored(&member.input, domain, &mut products, opening, &mut public)?
+                        .into_value(domain)?;
                 input = domain.add(
                     &input,
                     &domain.scale(&value, member.coefficient * F::pow2(extra)),
@@ -462,7 +464,8 @@ impl<F: JoltField> JoltResidual<F> {
             }
             let mut output = ProductSum::zero(domain);
             for member in &stage.members {
-                let value = lower_factored(&member.output, domain, opening, &mut public)?;
+                let value =
+                    lower_factored(&member.output, domain, &mut products, opening, &mut public)?;
                 output = output.add(value.scale(member.coefficient, domain), domain);
             }
             claims.push(StageClaims { input, output });
