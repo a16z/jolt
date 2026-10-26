@@ -195,7 +195,7 @@ pub use common::context::{
     context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,
     CudaKernelContext, DEVICE_COUNT_VARIABLE,
 };
-pub use common::device::{as_fr_slice, fr_into, DeviceFrVec, LIMBS};
+pub use common::device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
 pub use common::error::CudaError;
 pub use common::lt_poly::DeviceLtPolynomial;
 pub use common::msm::{AffineLimbs, JacobianLimbs};
@@ -294,7 +294,9 @@ mod tests {
     use cudarc::driver::CudaContext;
     use jolt_field::{Fr, Ring};
 
-    use super::shared_context;
+    use std::sync::Arc;
+
+    use super::{as_fr_slice, fr_into, fr_vec_into, shared_context, DeviceFrVec, LIMBS};
 
     macro_rules! require_device {
         () => {
@@ -367,5 +369,41 @@ mod tests {
         let small: Vec<Fr> = sample(8).into_iter().map(|v| v + Fr::from_u64(1)).collect();
         let small_device = context.upload(&small).expect("upload small");
         assert_eq!(small_device.to_host().expect("download small"), small);
+    }
+
+    #[test]
+    fn raw_limb_readback_respects_the_logical_length() {
+        let context = require_device!();
+        let values = [
+            Fr::from_u64(0),
+            Fr::from_u64(1),
+            -Fr::from_u64(1),
+            Fr::from_u128(u128::MAX),
+            Fr::from_u64(0x0123_4567_89ab_cdef),
+        ];
+        let words: Vec<_> = values
+            .iter()
+            .flat_map(|value| value.inner_limbs())
+            .collect();
+        for len in [0usize, 1, 3, values.len()] {
+            let buffer = context.upload_u64_slice(&words).expect("upload limbs");
+            let device = DeviceFrVec::from_parts(Arc::clone(context.stream()), buffer, len);
+            assert_eq!(
+                device.to_limbs().expect("download raw limbs"),
+                words[..len * LIMBS],
+            );
+            assert_eq!(
+                device.to_host().expect("download field values"),
+                values[..len],
+            );
+        }
+    }
+
+    #[test]
+    fn field_reinterprets_round_trip_for_fr() {
+        let values = sample(4);
+        assert_eq!(as_fr_slice::<Fr>(&values).expect("Fr slice"), &values[..]);
+        assert_eq!(fr_vec_into::<Fr>(values.clone()).expect("Fr vec"), values,);
+        assert_eq!(fr_into::<Fr>(values[0]).expect("Fr scalar"), values[0]);
     }
 }

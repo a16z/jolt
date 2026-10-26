@@ -90,6 +90,17 @@ impl DeviceFrVec {
         })
     }
 
+    /// Download the logical elements as four Montgomery limbs per field value.
+    pub fn to_limbs(&self) -> Result<Vec<u64>, CudaError> {
+        if self.len == 0 {
+            return Ok(Vec::new());
+        }
+        let limbs = self.len * LIMBS;
+        xfer_stats::timed(Phase::D2h, limbs * size_of::<u64>(), || {
+            Ok(self.stream.clone_dtoh(&self.buffer.slice(0..limbs))?)
+        })
+    }
+
     pub fn first(&self) -> Result<Fr, CudaError> {
         if self.len == 0 {
             return Err(CudaError::LengthMismatch {

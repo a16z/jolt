@@ -390,6 +390,38 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    /// Convert `len` unsigned integers stored as low/high `u64` pairs on this
+    /// context's device to BN254 field elements. Unlike the host-input path,
+    /// this launches the unsigned kernel directly, without a sign buffer.
+    pub fn u128_to_montgomery_device(
+        &self,
+        value: &CudaSlice<u64>,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        if len == 0 {
+            return Ok(output);
+        }
+        if value.len() < len * 2 {
+            return Err(CudaError::LengthMismatch {
+                expected: len * 2,
+                got: value.len(),
+            });
+        }
+        let count = Self::count_of(len)?;
+        let mut builder = self.stream().launch_builder(&self.u128_to_mont);
+        let _ = builder.arg(value);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads `value[2i]` and `value[2i + 1]`,
+        // checked above to be inside a `2 * count`-word buffer, and writes only
+        // `out[i*4..i*4+4]` of a `count * LIMBS` buffer; the two are distinct
+        // allocations. Threads with `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
     pub fn i128_to_montgomery_device(
         &self,
         value: &CudaSlice<u64>,
@@ -617,6 +649,7 @@ mod tests {
 
     use super::super::context::{shared_context, CudaKernelContext};
     use super::super::device::DeviceFrVec;
+    use super::super::error::CudaError;
 
     fn device() -> Option<&'static CudaKernelContext> {
         shared_context()
@@ -930,6 +963,62 @@ mod tests {
                 .exclusive_scan_u32(&values)
                 .expect("device exclusive_scan_u32");
             prop_assert_eq!(got, expected);
+        }
+    }
+
+    #[test]
+    fn device_u128_conversion_preserves_unsigned_values_and_input_bounds() {
+        let Some(context) = device() else {
+            return;
+        };
+        let edges = [
+            0,
+            1,
+            u64::MAX as u128,
+            1u128 << 64,
+            (1u128 << 127) - 1,
+            1u128 << 127,
+            u128::MAX - 1,
+            u128::MAX,
+        ];
+        for len in [0usize, 1, 8, 255, 256, 257, 1025] {
+            let values: Vec<_> = edges.iter().copied().cycle().take(len).collect();
+            let mut words: Vec<_> = values
+                .iter()
+                .flat_map(|&value| [value as u64, (value >> 64) as u64])
+                .collect();
+            words.extend([0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210]);
+            let input = context.upload_u64_slice(&words).expect("upload integers");
+            let converted = context
+                .u128_to_montgomery_device(&input, len)
+                .expect("convert unsigned integers");
+            let expected: Vec<_> = values.iter().copied().map(Fr::from_u128).collect();
+            assert_eq!(converted.len(), len);
+            assert_eq!(
+                converted.to_host().expect("download field values"),
+                expected
+            );
+            assert_eq!(
+                context.stream().clone_dtoh(&input).expect("read input"),
+                words,
+                "conversion changed the input or its trailing words",
+            );
+        }
+
+        for words in [vec![], vec![u64::MAX]] {
+            let input = context
+                .upload_u64_slice(&words)
+                .expect("upload short input");
+            assert!(context
+                .u128_to_montgomery_device(&input, 0)
+                .expect("convert empty input")
+                .to_host()
+                .expect("read empty output")
+                .is_empty());
+            assert!(matches!(
+                context.u128_to_montgomery_device(&input, 1),
+                Err(CudaError::LengthMismatch { expected: 2, got }) if got == words.len()
+            ));
         }
     }
 
