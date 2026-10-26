@@ -84,7 +84,7 @@ pub trait ProverTranscript: Transcript {
     /// # Errors
     /// As [`grind`](Self::grind).
     #[cfg(feature = "prover-grinding")]
-    fn public_grind(&mut self, bits: u32) -> Result<Option<u32>, VerificationError>;
+    fn public_grind(&mut self, bits: u32) -> Result<Option<u64>, VerificationError>;
 }
 
 /// A prover transcript that a prover builds itself, bound to the same
@@ -154,7 +154,7 @@ where
     }
 
     #[cfg(feature = "prover-grinding")]
-    fn public_grind(&mut self, bits: u32) -> Result<Option<u32>, VerificationError> {
+    fn public_grind(&mut self, bits: u32) -> Result<Option<u64>, VerificationError> {
         if bits == 0 {
             return Ok(None);
         }

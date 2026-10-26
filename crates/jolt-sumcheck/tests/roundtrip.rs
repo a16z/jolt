@@ -14,7 +14,7 @@ type F = Fr;
 
 /// Grinds one round's proof of work the way the verifier checks it: after the
 /// round message is absorbed, at the difficulty for the claim's `degree`.
-fn grind_round(degree: usize, transcript: &mut ProverState<Blake2b512>, nonces: &mut Vec<u32>) {
+fn grind_round(degree: usize, transcript: &mut ProverState<Blake2b512>, nonces: &mut Vec<u64>) {
     let bits = round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap();
     nonces.extend(transcript.public_grind(bits).unwrap());
 }

@@ -1,12 +1,12 @@
 //! Proof of work on the transcript sponge, as a standalone step.
 //!
-//! The prover sends a nonce below `2^(bits + 7)`. The NARG string carries it
-//! as canonical LEB128; the sponge absorbs it as one `u64` little-endian word,
-//! in one prover message. Both parties then squeeze eight bytes and accept iff
-//! the low `bits` bits of their little-endian `u64` are zero. The absorb and
-//! the check are each one word, so the step keeps the transcript word
-//! aligned. The step protects the verifier messages that follow it, up to the
-//! next prover message.
+//! The prover sends a nonce below `2^(bits + 7)`, a `u64` for every supported
+//! difficulty. The NARG string carries it as canonical LEB128; the sponge
+//! absorbs it as one `u64` little-endian word, in one prover message. Both
+//! parties then squeeze eight bytes and accept iff the low `bits` bits of
+//! their little-endian `u64` are zero. The absorb and the check are each one
+//! word, so the step keeps the transcript word aligned. The step protects the
+//! verifier messages that follow it, up to the next prover message.
 //!
 //! The search primitive and probe follow the ones proposed for spongefish in
 //! arkworks-rs/spongefish#301 (`MessageSearch`, `Probe`), which are not in the
@@ -84,14 +84,14 @@ impl<H: DuplexSpongeInterface<U = u8> + Sync> Probe for MessageSearch<H> {
 /// better of the two strategies. Grinds of up to 8 bits almost always end
 /// here.
 #[cfg(feature = "parallel")]
-const CALLER_NONCES: u32 = 1024;
+const CALLER_NONCES: u64 = 1024;
 
 /// Bytes squeezed for a proof-of-work check: one word.
 pub(crate) const CHECK_BYTES: usize = 8;
 
 /// The absorbed form of a proof-of-work nonce: one `u64` little-endian word.
-pub(crate) fn nonce_word(nonce: u32) -> [u8; 8] {
-    u64::from(nonce).to_le_bytes()
+pub(crate) fn nonce_word(nonce: u64) -> [u8; 8] {
+    nonce.to_le_bytes()
 }
 
 /// The layout of one proof-of-work step at a difficulty of `1..=MAX_POW_BITS`.
@@ -110,12 +110,12 @@ impl SpongePow {
         }
     }
 
-    /// The largest nonce, `2^(bits + 7) - 1`.
-    pub(crate) const fn last_nonce(self) -> u32 {
-        u32::MAX >> (MAX_POW_BITS - self.bits)
+    /// The largest nonce, `2^(bits + 7) - 1`: `u64::MAX` at `MAX_POW_BITS`.
+    pub(crate) const fn last_nonce(self) -> u64 {
+        u64::MAX >> (MAX_POW_BITS - self.bits)
     }
 
-    /// `ceil((bits + 7) / 7)` bytes encode every nonce, at most 5.
+    /// `ceil((bits + 7) / 7)` bytes encode every nonce, at most 10.
     pub(crate) const fn max_nonce_len(self) -> usize {
         (self.bits as usize + 13) / 7
     }
@@ -137,15 +137,16 @@ impl SpongePow {
     pub(crate) fn read_nonce<E>(
         self,
         mut next: impl FnMut() -> Result<u8, E>,
-    ) -> Result<Option<u32>, E> {
-        let mut value = 0u64;
+    ) -> Result<Option<u64>, E> {
+        // At most 10 bytes of 7 bits: below `2^70`, so no bit is lost.
+        let mut value = 0u128;
         for i in 0..self.max_nonce_len() {
             let byte = next()?;
-            value |= u64::from(byte & 0x7f) << (7 * i);
+            value |= u128::from(byte & 0x7f) << (7 * i);
             if byte & 0x80 == 0 {
                 // A canonical encoding has no trailing zero byte.
                 let canonical = i == 0 || byte != 0;
-                return Ok(u32::try_from(value)
+                return Ok(u64::try_from(value)
                     .ok()
                     .filter(|&nonce| canonical && nonce <= self.last_nonce()));
             }
@@ -155,7 +156,7 @@ impl SpongePow {
 
     /// Whether sending `nonce` makes the next squeezed bytes pass the check.
     #[cfg(feature = "prover-grinding")]
-    fn accepts_nonce(self, probe: &impl Probe, nonce: u32) -> bool {
+    fn accepts_nonce(self, probe: &impl Probe, nonce: u64) -> bool {
         let mut check = [0u8; CHECK_BYTES];
         probe.probe(&nonce_word(nonce), &mut check);
         self.accepts(&check)
@@ -167,9 +168,9 @@ impl SpongePow {
     /// calling thread. Either way the result is the least accepted nonce, so
     /// the proof does not depend on the thread count.
     #[cfg(feature = "prover-grinding")]
-    pub(crate) fn search(self, probe: &impl Probe) -> Option<u32> {
+    pub(crate) fn search(self, probe: &impl Probe) -> Option<u64> {
         let last = self.last_nonce();
-        // `u64::MAX` is no nonce, so it marks "not found".
+        // `u64::MAX` marks "not found"; see `resolve`.
         let least = AtomicU64::new(u64::MAX);
         #[cfg(feature = "parallel")]
         {
@@ -178,50 +179,62 @@ impl SpongePow {
             if least.load(Ordering::Relaxed) == u64::MAX && caller_last < last {
                 // Each thread scans its own residue class of the rest.
                 drop(rayon::broadcast(|ctx| {
-                    let first = u64::from(caller_last) + 1 + ctx.index() as u64;
+                    let first = caller_last + 1 + ctx.index() as u64;
                     self.scan(probe, first, ctx.num_threads(), last, &least);
                 }));
             }
         }
         #[cfg(not(feature = "parallel"))]
         self.scan(probe, 0, 1, last, &least);
-        u32::try_from(least.into_inner()).ok()
+        self.resolve(probe, least.into_inner())
+    }
+
+    /// Turns the scans' result into the search's: `least` itself, unless it
+    /// is the "not found" mark `u64::MAX`. The scans never try `u64::MAX`,
+    /// which is a nonce only at `MAX_POW_BITS`, so it is tried here, last.
+    #[cfg(feature = "prover-grinding")]
+    fn resolve(self, probe: &impl Probe, least: u64) -> Option<u64> {
+        if least != u64::MAX {
+            Some(least)
+        } else if self.last_nonce() == u64::MAX && self.accepts_nonce(probe, u64::MAX) {
+            Some(u64::MAX)
+        } else {
+            None
+        }
     }
 
     /// Scans the nonces `first, first + stride, ...` up to `last` in
     /// increasing order and lowers `least` to the first one accepted. Stops
-    /// once it cannot beat `least`, which other scans may lower meanwhile.
+    /// once it cannot beat `least`, which other scans may lower meanwhile, so
+    /// it never tries `u64::MAX`.
     #[cfg(feature = "prover-grinding")]
-    fn scan(self, probe: &impl Probe, first: u64, stride: usize, last: u32, least: &AtomicU64) {
-        let nonces = (first..=u64::from(last))
-            .step_by(stride)
-            .filter_map(|nonce| u32::try_from(nonce).ok());
-        for nonce in nonces {
-            if u64::from(nonce) >= least.load(Ordering::Relaxed) {
+    fn scan(self, probe: &impl Probe, first: u64, stride: usize, last: u64, least: &AtomicU64) {
+        for nonce in (first..=last).step_by(stride) {
+            if nonce >= least.load(Ordering::Relaxed) {
                 break;
             }
             if self.accepts_nonce(probe, nonce) {
-                let _ = least.fetch_min(u64::from(nonce), Ordering::SeqCst);
+                let _ = least.fetch_min(nonce, Ordering::SeqCst);
                 break;
             }
         }
     }
 }
 
-/// The canonical LEB128 encoding of a `u32`: seven bits per byte, least
+/// The canonical LEB128 encoding of a `u64`: seven bits per byte, least
 /// significant first, the high bit set on every byte but the last. This is
 /// the nonce's NARG form; [`SpongePow::read_nonce`] parses it.
 #[cfg(feature = "prover-grinding")]
 #[derive(Clone, Copy)]
 pub(crate) struct Leb128 {
-    bytes: [u8; 5],
+    bytes: [u8; 10],
     len: usize,
 }
 
 #[cfg(feature = "prover-grinding")]
 impl Leb128 {
-    pub(crate) fn new(mut value: u32) -> Self {
-        let mut bytes = [0u8; 5];
+    pub(crate) fn new(mut value: u64) -> Self {
+        let mut bytes = [0u8; 10];
         let mut len = 0;
         for byte in &mut bytes {
             len += 1;
@@ -261,7 +274,15 @@ mod tests {
         assert_eq!(layout(1), (255, 2));
         assert_eq!(layout(8), ((1 << 15) - 1, 3));
         assert_eq!(layout(10), ((1 << 17) - 1, 3));
-        assert_eq!(layout(25), (u32::MAX, 5));
+        // The cap was 25 bits with a `u32` nonce; the layout up to it is
+        // unchanged.
+        assert_eq!(layout(25), (u64::from(u32::MAX), 5));
+        assert_eq!(layout(26), ((1 << 33) - 1, 5));
+        assert_eq!(layout(28), ((1 << 35) - 1, 5));
+        assert_eq!(layout(29), ((1 << 36) - 1, 6));
+        assert_eq!(layout(56), ((1 << 63) - 1, 9));
+        assert_eq!(layout(MAX_POW_BITS), (u64::MAX, 10));
+        assert_eq!(MAX_POW_BITS, 57);
     }
 
     #[test]
@@ -296,8 +317,12 @@ mod tests {
         assert_eq!(read(1, &[0xff, 0x01]), Ok(Some(255)));
         assert_eq!(
             read(25, &[0xff, 0xff, 0xff, 0xff, 0x0f]),
-            Ok(Some(u32::MAX))
+            Ok(Some(u32::MAX.into()))
         );
+        assert_eq!(read(26, &[0x80, 0x80, 0x80, 0x80, 0x10]), Ok(Some(1 << 32)));
+        let max = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
+        assert_eq!(read(57, &max), Ok(Some(u64::MAX)));
+        assert_eq!(read(57, &[0x00]), Ok(Some(0)));
         // A trailing zero byte, a nonce of 2^8 at 1 bit, a continuation past
         // the longest encoding, a nonce of 2^32 at 25 bits, and a short read.
         assert_eq!(read(1, &[0x80, 0x00]), Ok(None));
@@ -306,6 +331,22 @@ mod tests {
         assert_eq!(read(1, &[0x80, 0x80, 0x01]), Ok(None));
         assert_eq!(read(25, &[0x80, 0x80, 0x80, 0x80, 0x10]), Ok(None));
         assert_eq!(read(8, &[0x80]), Err("short"));
+        // At 57 bits: a tenth byte carrying a bit past `2^64`, a trailing
+        // zero tenth byte, a continuation past ten bytes, a nonce of `2^63`
+        // at 56 bits, and a short read.
+        let high = |last: u8| {
+            let mut bytes = [0xff; 10];
+            bytes[9] = last;
+            bytes
+        };
+        assert_eq!(read(57, &high(0x02)), Ok(None));
+        assert_eq!(read(57, &high(0x7f)), Ok(None));
+        assert_eq!(read(57, &high(0x00)), Ok(None));
+        assert_eq!(read(57, &high(0x81)), Ok(None));
+        let two_63 = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01];
+        assert_eq!(read(57, &two_63), Ok(Some(1 << 63)));
+        assert_eq!(read(56, &two_63), Ok(None));
+        assert_eq!(read(57, &[0xff; 9]), Err("short"));
     }
 
     #[cfg(feature = "prover-grinding")]
@@ -319,7 +360,12 @@ mod tests {
             assert_eq!(encode(127), [0x7f]);
             assert_eq!(encode(128), [0x80, 0x01]);
             assert_eq!(encode(300), [0xac, 0x02]);
-            assert_eq!(encode(u32::MAX), [0xff, 0xff, 0xff, 0xff, 0x0f]);
+            assert_eq!(encode(u32::MAX.into()), [0xff, 0xff, 0xff, 0xff, 0x0f]);
+            assert_eq!(encode(1 << 32), [0x80, 0x80, 0x80, 0x80, 0x10]);
+            assert_eq!(
+                encode(u64::MAX),
+                [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]
+            );
             for bits in 1..=MAX_POW_BITS {
                 let pow = SpongePow::new(bits).unwrap();
                 let longest = Leb128::new(pow.last_nonce());
@@ -333,12 +379,12 @@ mod tests {
         }
 
         /// The least accepted nonce, by a plain scan.
-        fn least_accepted(pow: SpongePow, probe: &impl Probe) -> Option<u32> {
+        fn least_accepted(pow: SpongePow, probe: &impl Probe) -> Option<u64> {
             (0..=pow.last_nonce()).find(|&nonce| pow.accepts_nonce(probe, nonce))
         }
 
         /// A probe that accepts exactly the nonce `target`, or none.
-        struct AcceptOnly(Option<u32>);
+        struct AcceptOnly(Option<u64>);
 
         impl Probe for AcceptOnly {
             fn probe(&self, candidate: &[u8], out: &mut [u8]) {
@@ -360,8 +406,38 @@ mod tests {
             }
         }
 
+        /// At `MAX_POW_BITS` the last nonce is `u64::MAX`, the search's
+        /// "not found" mark. The scans stop short of it and `resolve` tries
+        /// it last. A full search over `2^64` nonces is out of reach, so this
+        /// checks the scans' tail and `resolve` directly, and full searches
+        /// whose answer comes early.
+        #[test]
+        fn search_handles_u64_max_at_the_cap() {
+            use std::sync::atomic::AtomicU64;
+
+            let pow = SpongePow::new(MAX_POW_BITS).unwrap();
+            assert_eq!(pow.last_nonce(), u64::MAX);
+            for target in [Some(0), Some(1), Some(1500)] {
+                assert_eq!(pow.search(&AcceptOnly(target)), target);
+            }
+            let tail = |target| {
+                let least = AtomicU64::new(u64::MAX);
+                pow.scan(&AcceptOnly(Some(target)), u64::MAX - 3, 1, u64::MAX, &least);
+                least.into_inner()
+            };
+            assert_eq!(tail(u64::MAX - 1), u64::MAX - 1);
+            assert_eq!(tail(u64::MAX), u64::MAX, "the scans never try u64::MAX");
+            let at_cap = AcceptOnly(Some(u64::MAX));
+            assert_eq!(pow.resolve(&at_cap, u64::MAX), Some(u64::MAX));
+            assert_eq!(pow.resolve(&at_cap, 7), Some(7));
+            assert_eq!(pow.resolve(&AcceptOnly(None), u64::MAX), None);
+            // Below the cap `u64::MAX` is out of range, whatever the probe.
+            let below = SpongePow::new(MAX_POW_BITS - 1).unwrap();
+            assert_eq!(below.resolve(&at_cap, u64::MAX), None);
+        }
+
         /// A probe that accepts every nonce in a set.
-        struct AcceptAny(Vec<u32>);
+        struct AcceptAny(Vec<u64>);
 
         impl Probe for AcceptAny {
             fn probe(&self, candidate: &[u8], out: &mut [u8]) {

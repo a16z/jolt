@@ -217,7 +217,7 @@ impl<T: ProverTranscript, F, S: Script<F>> ProverTranscript for ScriptedTranscri
     }
 
     #[cfg(feature = "prover-grinding")]
-    fn public_grind(&mut self, bits: u32) -> Result<Option<u32>, VerificationError> {
+    fn public_grind(&mut self, bits: u32) -> Result<Option<u64>, VerificationError> {
         self.inner.public_grind(bits)
     }
 }

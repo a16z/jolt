@@ -65,7 +65,7 @@ pub struct Stage6bProverOutput<F: JoltField, C> {
     #[cfg(feature = "zk")]
     pub committed_witness: CommittedSumcheckWitness<F>,
     /// The nonce ground before the post-6a draws, when their loss needs one.
-    pub pow_nonce: Option<u32>,
+    pub pow_nonce: Option<u64>,
 }
 
 /// Prove stage 6b on `transcript` (positioned at the stage-6a boundary).

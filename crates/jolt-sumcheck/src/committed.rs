@@ -70,7 +70,7 @@ pub struct CommittedSumcheckProof<C> {
     pub rounds: Vec<CommittedRound<C>>,
     /// One proof-of-work nonce per round, ground after the round commitment
     /// and before its challenge; empty when the round difficulty is zero.
-    pub pow_nonces: Vec<u32>,
+    pub pow_nonces: Vec<u64>,
     pub output_claims: CommittedOutputClaims<C>,
 }
 
@@ -252,7 +252,7 @@ where
     setup: &'a VC::Setup,
     rng: R,
     rounds: Vec<CommittedRound<VC::Output>>,
-    pow_nonces: Vec<u32>,
+    pow_nonces: Vec<u64>,
     witness: CommittedSumcheckWitness<F>,
 }
 

@@ -1107,7 +1107,7 @@ fn append_relaxed_instance<F, C, T>(
 }
 
 /// Grinds the proof-of-work nonce for `site` right before its challenge draw.
-fn grind<F, T>(site: PowSite, transcript: &mut T) -> Result<Option<u32>, ProverError<F>>
+fn grind<F, T>(site: PowSite, transcript: &mut T) -> Result<Option<u64>, ProverError<F>>
 where
     F: JoltField,
     T: FieldTranscript<F> + ProverTranscript,

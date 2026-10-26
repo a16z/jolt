@@ -103,7 +103,7 @@ impl PowSite {
 /// The proof-of-work nonces of every [`PowSite`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "PowNonceWire", try_from = "PowNonceWire")]
-pub struct StagePowNonces([Option<u32>; PowSite::ALL.len()]);
+pub struct StagePowNonces([Option<u64>; PowSite::ALL.len()]);
 
 impl StagePowNonces {
     /// No nonces.
@@ -111,11 +111,11 @@ impl StagePowNonces {
         Self([None; PowSite::ALL.len()])
     }
 
-    pub fn get(&self, site: PowSite) -> Option<u32> {
+    pub fn get(&self, site: PowSite) -> Option<u64> {
         self.0.get(slot(site)).copied().flatten()
     }
 
-    pub fn set(&mut self, site: PowSite, nonce: Option<u32>) {
+    pub fn set(&mut self, site: PowSite, nonce: Option<u64>) {
         if let Some(entry) = self.0.get_mut(slot(site)) {
             *entry = nonce;
         }
@@ -131,7 +131,7 @@ fn slot(site: PowSite) -> usize {
 #[derive(Serialize, Deserialize)]
 struct PowNonceWire {
     present: u16,
-    nonces: Vec<u32>,
+    nonces: Vec<u64>,
 }
 
 impl From<StagePowNonces> for PowNonceWire {
@@ -242,5 +242,39 @@ mod tests {
         for (present, nonces) in [(0b1, vec![]), (0b1, vec![1, 2]), (0x800, vec![1])] {
             assert!(StagePowNonces::try_from(PowNonceWire { present, nonces }).is_err());
         }
+    }
+
+    /// Nonces were `u32` before the proof-of-work cap rose to 57 bits.
+    /// bincode's varint encodes an integer by value, not width, so a proof
+    /// whose nonces are below `2^32` keeps its bytes.
+    #[test]
+    fn widened_nonces_keep_their_wire_bytes_below_u32() {
+        #[derive(serde::Serialize)]
+        struct U32Wire {
+            present: u16,
+            nonces: Vec<u32>,
+        }
+
+        let config = bincode::config::standard();
+        let mut slots = StagePowNonces::default();
+        let nonces = [0, 251, 65_536, u32::MAX];
+        for (site, nonce) in PowSite::ALL.into_iter().zip(nonces) {
+            slots.set(site, Some(u64::from(nonce)));
+        }
+        let present = PowNonceWire::from(slots).present;
+        let old = U32Wire {
+            present,
+            nonces: nonces.to_vec(),
+        };
+        assert_eq!(
+            bincode::serde::encode_to_vec(slots, config).unwrap(),
+            bincode::serde::encode_to_vec(old, config).unwrap()
+        );
+
+        slots.set(PowSite::Stage8, Some(u64::MAX));
+        let bytes = bincode::serde::encode_to_vec(slots, config).unwrap();
+        let (back, _): (StagePowNonces, _) =
+            bincode::serde::decode_from_slice(&bytes, config).unwrap();
+        assert_eq!(back, slots);
     }
 }

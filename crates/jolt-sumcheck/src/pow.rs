@@ -45,7 +45,7 @@ pub fn round_pow_bits<F: Field, T: FieldTranscript<F>>(
 /// The verifier's view of a proof's round nonces, checked for count up front.
 pub(crate) struct RoundNonces<'a> {
     bits: u32,
-    nonces: &'a [u32],
+    nonces: &'a [u64],
 }
 
 impl<'a> RoundNonces<'a> {
@@ -54,7 +54,7 @@ impl<'a> RoundNonces<'a> {
     pub(crate) fn new<F: Field, T: FieldTranscript<F>>(
         degree: usize,
         rounds: usize,
-        nonces: &'a [u32],
+        nonces: &'a [u64],
     ) -> Result<Self, SumcheckError<F>> {
         let bits = round_pow_bits::<F, T>(degree)?;
         let expected = if bits == 0 { 0 } else { rounds };
@@ -87,7 +87,7 @@ impl<'a> RoundNonces<'a> {
 pub fn grind_round<F: Field, T: FieldTranscript<F> + ProverTranscript>(
     degree: usize,
     round: usize,
-    nonces: &mut Vec<u32>,
+    nonces: &mut Vec<u64>,
     transcript: &mut T,
 ) -> Result<(), SumcheckError<F>> {
     let bits = round_pow_bits::<F, T>(degree)?;
@@ -109,13 +109,13 @@ pub fn grind_round<F: Field, T: FieldTranscript<F> + ProverTranscript>(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Nonced<M> {
     pub messages: Vec<M>,
-    pub pow_nonces: Vec<u32>,
+    pub pow_nonces: Vec<u64>,
 }
 
 /// Borrowed [`Nonced`], for serialization.
 pub struct NoncedRef<'a, M> {
     pub messages: &'a [M],
-    pub pow_nonces: &'a [u32],
+    pub pow_nonces: &'a [u64],
 }
 
 impl<M: Serialize> Serialize for NoncedRef<'_, M> {
@@ -164,7 +164,7 @@ impl<'de, M: Deserialize<'de>> Deserialize<'de> for Nonced<M> {
                     messages.push(seq.next_element()?.ok_or_else(missing)?);
                 }
                 let pow_nonces = if header & 1 == 1 {
-                    let nonces: Vec<u32> = seq.next_element()?.ok_or_else(missing)?;
+                    let nonces: Vec<u64> = seq.next_element()?.ok_or_else(missing)?;
                     if nonces.is_empty() {
                         return Err(A::Error::custom("empty proof-of-work nonce list"));
                     }

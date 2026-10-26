@@ -36,7 +36,7 @@ fn bytes(values: &[F8]) -> Vec<u8> {
 }
 
 /// The canonical LEB128 encoding of `value`.
-fn leb128(mut value: u32) -> Vec<u8> {
+fn leb128(mut value: u64) -> Vec<u8> {
     let mut out = Vec::new();
     loop {
         let low = (value & 0x7f) as u8;
@@ -50,16 +50,16 @@ fn leb128(mut value: u32) -> Vec<u8> {
 }
 
 /// Decodes a LEB128 encoding, without canonicality checks.
-fn decode(encoding: &[u8]) -> u32 {
+fn decode(encoding: &[u8]) -> u64 {
     encoding
         .iter()
         .rev()
-        .fold(0, |value, byte| (value << 7) | u32::from(byte & 0x7f))
+        .fold(0, |value, byte| (value << 7) | u64::from(byte & 0x7f))
 }
 
 /// The absorbed form of a nonce: one `u64` little-endian word.
-fn word(value: u32) -> [u8; 8] {
-    u64::from(value).to_le_bytes()
+fn word(value: u64) -> [u8; 8] {
+    value.to_le_bytes()
 }
 
 /// The low `bits` bits of the eight little-endian `check` bytes are zero.
@@ -70,7 +70,7 @@ fn passes(bits: u32, check: &[u8]) -> bool {
 
 /// Sends `value` as the step does: one prover message, canonical LEB128 in
 /// the NARG string and one `u64` word in the sponge.
-fn send_nonce<H: DuplexSpongeInterface<U = u8>>(prover: &mut ProverState<H>, value: u32) {
+fn send_nonce<H: DuplexSpongeInterface<U = u8>>(prover: &mut ProverState<H>, value: u64) {
     prover.prover_message_with(
         &value,
         |&value| word(value),
@@ -93,7 +93,7 @@ fn manual_check(bits: u32, n: usize) {
     let tail: [u8; 8] = jolt.verifier_message();
     let value = decode(&nonce);
     assert_eq!(nonce, leb128(value), "bits {bits}");
-    assert!(u64::from(value) < 1 << (bits + 7), "bits {bits}");
+    assert!(value < 1 << (bits + 7), "bits {bits}");
 
     let mut manual = prover();
     send_nonce(&mut manual, value);
@@ -179,7 +179,7 @@ fn sponge_checks<H: DuplexSpongeInit<U = u8> + Sync>() {
         let base = sponge_prover::<H>();
         let prefix = base.narg_string().to_vec();
         let search = ProverTranscript::message_search(&base);
-        let probe_passes = |value: u32| {
+        let probe_passes = |value: u64| {
             let mut check = [0u8; 8];
             search.probe(&word(value), &mut check);
             passes(bits, &check)
@@ -215,7 +215,7 @@ fn sponge_checks<H: DuplexSpongeInit<U = u8> + Sync>() {
             }
         }
 
-        let range = 1u32 << (bits + 7);
+        let range = 1u64 << (bits + 7);
         let larger = (value + 1..range)
             .find(|&value| probe_passes(value))
             .unwrap();
@@ -337,4 +337,140 @@ fn rejects_unsupported_difficulties_before_touching_the_sponge() {
         );
         assert!(verifier.check_eof().is_err());
     }
+}
+
+fn unhex(hex: &str) -> Vec<u8> {
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+/// Grinds at `bits` after a fixed prefix and checks the nonce's NARG bytes,
+/// the public nonce and the 32 bytes squeezed next against pinned values,
+/// for both the NARG and the public form of the step.
+fn golden<H: DuplexSpongeInit<U = u8> + Sync>(bits: u32, narg_nonce: &str, next: &str) {
+    use jolt_transcript::Transcript;
+
+    let session = protocol_tag(b"jolt/pow/vectors/v1");
+    let start = || {
+        let mut prover = prover_transcript::<H>(&session, b"statement");
+        prover.send(&BytesMsg(b"before".to_vec()));
+        prover
+    };
+    let (narg_nonce, next) = (unhex(narg_nonce), unhex(next));
+
+    let mut prover = start();
+    let offset = prover.narg_string().len();
+    ProverTranscript::grind(&mut prover, bits).unwrap();
+    assert_eq!(prover.narg_string()[offset..], narg_nonce, "bits {bits}");
+    assert_eq!(
+        prover.verifier_message::<[u8; 32]>()[..],
+        next,
+        "bits {bits}"
+    );
+    let narg = prover.narg_string().to_vec();
+    let mut verifier = verifier_transcript::<H>(&session, b"statement", &narg);
+    let _ = verifier.prover_message::<BytesMsg>().unwrap();
+    VerifierTranscript::check_grind(&mut verifier, bits).unwrap();
+    assert_eq!(verifier.verifier_message::<[u8; 32]>()[..], next);
+    verifier.check_eof().unwrap();
+
+    let mut public = start();
+    let nonce = ProverTranscript::public_grind(&mut public, bits).unwrap();
+    assert_eq!(nonce, Some(decode(&narg_nonce)), "bits {bits}");
+    assert_eq!(
+        public.verifier_message::<[u8; 32]>()[..],
+        next,
+        "bits {bits}"
+    );
+    let mut checked = start();
+    checked.check_public_grind(bits, nonce).unwrap();
+    assert_eq!(checked.verifier_message::<[u8; 32]>()[..], next);
+}
+
+/// Pinned proofs of work, recorded when the cap was 25 bits with a `u32`
+/// nonce. Raising the cap to 57 bits with a `u64` nonce must leave every
+/// proof at 25 bits or fewer byte-identical, so these must never change.
+#[test]
+fn proofs_below_the_old_cap_are_pinned() {
+    golden::<Keccak>(
+        1,
+        "02",
+        "78c7410ea2ad9bc80448ea478cbc0cd37d72c4ba0ccbe07f782f1ec6274e8c18",
+    );
+    golden::<Keccak>(
+        9,
+        "cd01",
+        "89b528ad2b391a202ad724c3b15975dd8b578b885cb7cc5120b1da3c0dae0fd6",
+    );
+    golden::<Keccak>(
+        16,
+        "bd69",
+        "79c695b236d2dd0fd964f155341700962846f28f5600c3ff9c311acd5bc48c6a",
+    );
+    golden::<Keccak>(
+        18,
+        "dd8816",
+        "5273b11d93eed9e64e1bcff14e42dfacc189e6140ae4ebcae62aac4d3eeb3002",
+    );
+    golden::<Blake2b512>(
+        8,
+        "d404",
+        "c74dd1cad3f5c766784cca285e77ae0628dc88cbb8c7fc6f731b40a9adcb6bf9",
+    );
+    golden::<Blake2b512>(
+        12,
+        "8e62",
+        "8def0a4d7294cbc687c7686412466ed00bb37d6b8a68d003c0a8dee5280d390c",
+    );
+    golden::<PoseidonSponge>(
+        6,
+        "e501",
+        "e0a94ccbc4e0450c3a0f4e1c5185daf84d1d0af8d5b16a1ab75da7409da5d8e4",
+    );
+    golden::<PoseidonSponge>(
+        11,
+        "950e",
+        "f75aba1a60e0499488195c22928e546f7b95a69fd30946239ca5a97c5910357d",
+    );
+}
+
+/// A nonce of `2^32` or more, past the old `u32` range, is in range from 26
+/// bits on and is absorbed as its full `u64` word: the verifier accepts it
+/// exactly when the check bytes after that word pass. Out of range, at 25
+/// bits, it is rejected whatever its check bytes.
+#[test]
+fn public_nonces_past_u32_are_absorbed_as_full_words() {
+    use jolt_transcript::Transcript;
+
+    let search = ProverTranscript::message_search(&prover());
+    let check = |value: u64| {
+        let mut check = [0u8; 8];
+        search.probe(&word(value), &mut check);
+        check
+    };
+    // Nonces whose check passes at 1 bit and, separately, fails at 1 bit.
+    let pass = (1u64 << 32..1 << 33)
+        .find(|&value| passes(1, &check(value)))
+        .unwrap();
+    let fail = (1u64 << 32..1 << 33)
+        .find(|&value| !passes(1, &check(value)))
+        .unwrap();
+    for bits in [26, MAX_POW_BITS] {
+        for nonce in [pass, fail, u64::MAX >> (MAX_POW_BITS - bits)] {
+            let mut verifier = prover();
+            assert_eq!(
+                verifier.check_public_grind(bits, Some(nonce)).is_ok(),
+                passes(bits, &check(nonce)),
+                "bits {bits}, nonce {nonce}"
+            );
+        }
+        // The word's high half reaches the sponge.
+        assert_ne!(check(pass), check(pass & u64::from(u32::MAX)));
+    }
+    let mut verifier = prover();
+    assert!(verifier.check_public_grind(25, Some(1 << 32)).is_err());
+    let mut verifier = prover();
+    assert!(verifier.check_public_grind(26, Some(1 << 33)).is_err());
 }

@@ -1748,7 +1748,7 @@ fn prove_slow_sumcheck(
 
 /// Grinds the nonce an honest prover sends before a challenge draw of loss
 /// `loss` over `FieldTranscript::challenge`.
-fn grind_draw(transcript: &mut ProverState<Blake2b512>, loss: u64) -> Option<u32> {
+fn grind_draw(transcript: &mut ProverState<Blake2b512>, loss: u64) -> Option<u64> {
     let bits = grind_bits_for_loss(loss, F::CHALLENGE_SET_SIZE, SECURITY_BITS).expect("difficulty");
     transcript.public_grind(bits).expect("proof of work")
 }

@@ -36,7 +36,7 @@ use crate::{ProverConfig, ProverError, StageProver as _};
 /// carrier downstream stages consume.
 pub struct Stage3ProverOutput<F: JoltField, C> {
     /// Nonce ground before the stage's challenge burst.
-    pub pow_nonce: Option<u32>,
+    pub pow_nonce: Option<u64>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage3OutputClaims<F>,
     pub clear_output: Stage3ClearOutput<F>,

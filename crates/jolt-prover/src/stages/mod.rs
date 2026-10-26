@@ -39,7 +39,7 @@ pub(crate) fn grind_pow<F, T>(
     site: PowSite,
     loss: u64,
     transcript: &mut T,
-) -> Result<Option<u32>, VerifierError>
+) -> Result<Option<u64>, VerifierError>
 where
     T: FieldTranscript<F> + ProverTranscript,
 {

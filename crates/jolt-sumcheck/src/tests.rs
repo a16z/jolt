@@ -45,7 +45,7 @@ fn grind_rounds<R: RoundMessage>(
     rounds: &[R],
     degree: usize,
     transcript: &mut ProverState<Blake2b512>,
-) -> Vec<u32> {
+) -> Vec<u64> {
     rounds
         .iter()
         .filter_map(|round| {
@@ -1822,16 +1822,47 @@ fn nonced_round_trips_and_rejects_malformed_input() {
     assert!(decode(&[3, 7, 0]).is_err());
 }
 
+/// Nonces were `u32` before the proof-of-work cap rose to 57 bits. bincode's
+/// varint encodes an integer by value, not width, so every nonce below
+/// `2^32` keeps its wire bytes, and a nonce past `u32` still round-trips.
+#[test]
+fn widened_nonces_keep_their_wire_bytes_below_u32() {
+    let config = bincode::config::standard();
+    let small = [0, 250, 251, 65_535, 65_536, 4_473_341, u32::MAX];
+    let wire = bincode::serde::encode_to_vec(
+        NoncedRef {
+            messages: &[1u64, 2],
+            pow_nonces: &small.map(u64::from),
+        },
+        config,
+    )
+    .unwrap();
+    let as_u32 = bincode::serde::encode_to_vec((5u64, 1u64, 2u64, small.to_vec()), config).unwrap();
+    assert_eq!(wire, as_u32);
+
+    let wide = vec![1 << 32, u64::MAX];
+    let wire = bincode::serde::encode_to_vec(
+        NoncedRef {
+            messages: &[1u64],
+            pow_nonces: &wide,
+        },
+        config,
+    )
+    .unwrap();
+    let (decoded, _) = bincode::serde::decode_from_slice::<Nonced<u64>, _>(&wire, config).unwrap();
+    assert_eq!(decoded.pow_nonces, wide);
+}
+
 /// Replays rounds `0..round` with their honest nonces on a transcript for
 /// `session`, absorbs `rounds[round]`, and returns the first nonce that fails
 /// that round's proof of work.
 fn failing_nonce<R: RoundMessage>(
     rounds: &[R],
-    nonces: &[u32],
+    nonces: &[u64],
     round: usize,
     degree: usize,
     session: &[u8],
-) -> u32 {
+) -> u64 {
     let bits = round_pow_bits::<P, PT>(degree).unwrap();
     let probe = || {
         let mut transcript =
@@ -1844,7 +1875,7 @@ fn failing_nonce<R: RoundMessage>(
         rounds[round].append_to_transcript(&mut transcript);
         transcript
     };
-    (0..u32::MAX)
+    (0..u64::MAX)
         .find(|&nonce| probe().check_public_grind(bits, Some(nonce)).is_err())
         .unwrap()
 }
@@ -1984,7 +2015,7 @@ fn committed_rounds_reject_wrong_and_dropped_pow_nonces() {
 
     let bits = round_pow_bits::<P, PT>(2).unwrap();
     let mut wrong = pow_nonces.clone();
-    wrong[0] = (0..u32::MAX)
+    wrong[0] = (0..u64::MAX)
         .find(|&nonce| {
             let mut probe = prover_transcript::<Blake2b512>(
                 &jolt_transcript::protocol_tag(b"committed-sumcheck"),

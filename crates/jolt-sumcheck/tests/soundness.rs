@@ -299,7 +299,7 @@ fn absorb_compressed_round(round: &CompressedPoly<F>, transcript: &mut ProverSta
 }
 
 /// The nonces an honest prover grinds for `rounds` at degree bound `degree`.
-fn grind_compressed_nonces(rounds: &[CompressedPoly<F>], degree: usize) -> Vec<u32> {
+fn grind_compressed_nonces(rounds: &[CompressedPoly<F>], degree: usize) -> Vec<u64> {
     let mut transcript = new_transcript();
     rounds
         .iter()

@@ -133,7 +133,7 @@ pub trait Transcript: Sealed {
     fn check_public_grind(
         &mut self,
         bits: u32,
-        nonce: Option<u32>,
+        nonce: Option<u64>,
     ) -> Result<(), VerificationError> {
         let Some(pow) = SpongePow::new(bits) else {
             return self.require(bits == 0 && nonce.is_none());

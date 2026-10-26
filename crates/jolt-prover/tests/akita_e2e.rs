@@ -277,7 +277,7 @@ mod akita_tests {
         let (run, config) = muldiv_run();
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("Akita proof must verify");
-        let with_nonce = |site: PowSite, nonce: Option<u32>| {
+        let with_nonce = |site: PowSite, nonce: Option<u64>| {
             let mut proof = proved.proof.clone();
             proof.stages.pow_nonces.set(site, nonce);
             ProvedGuest {

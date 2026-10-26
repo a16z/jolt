@@ -107,7 +107,7 @@ where
         // A truncated, non-canonical or out-of-range nonce fails the read,
         // which poisons the state and absorbs nothing; a failed check poisons
         // it through `check`. Either way `check_eof` fails afterwards too.
-        let _nonce: u32 = VerifierState::prover_message_with(
+        let _nonce: u64 = VerifierState::prover_message_with(
             self,
             |reader| {
                 pow.read_nonce(|| reader.read::<u8>())?

@@ -45,7 +45,7 @@ fn grind_nonces(
     rounds: &[CommittedRound<Bn254G1>],
     degree: usize,
     session: &'static [u8],
-) -> Vec<u32> {
+) -> Vec<u64> {
     let bits = round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap();
     let mut transcript =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(session), b"");

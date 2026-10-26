@@ -71,7 +71,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     transcript: &mut T,
-) -> Result<(PCS::Proof, Option<u32>), ProverError<F>>
+) -> Result<(PCS::Proof, Option<u64>), ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,

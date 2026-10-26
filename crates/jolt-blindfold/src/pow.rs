@@ -49,12 +49,12 @@ impl PowSite {
 /// The proof's nonces, read in site order by the draws whose difficulty is
 /// positive. A draw of difficulty 0 takes no nonce.
 pub(crate) struct PowNonces<'a> {
-    nonces: &'a [u32],
+    nonces: &'a [u64],
     next: usize,
 }
 
 impl<'a> PowNonces<'a> {
-    pub(crate) fn new(nonces: &'a [u32]) -> Self {
+    pub(crate) fn new(nonces: &'a [u64]) -> Self {
         Self { nonces, next: 0 }
     }
 

@@ -59,9 +59,9 @@ use crate::{ProverConfig, ProverError, StageProver as _};
 /// verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage2ProverOutput<F: JoltField, C> {
     /// Nonce ground before the `tau_high` draw.
-    pub tau_high_pow_nonce: Option<u32>,
+    pub tau_high_pow_nonce: Option<u64>,
     /// Nonce ground before the stage's challenge burst.
-    pub pow_nonce: Option<u32>,
+    pub pow_nonce: Option<u64>,
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage2OutputClaims<F>,

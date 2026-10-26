@@ -27,7 +27,7 @@ pub struct ClearSumcheckProof<F: Field> {
     pub round_polynomials: Vec<UnivariatePoly<F>>,
     /// One proof-of-work nonce per round, ground after the round polynomial
     /// and before its challenge; empty when the round difficulty is zero.
-    pub pow_nonces: Vec<u32>,
+    pub pow_nonces: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub struct CompressedSumcheckProof<F: Field> {
     /// Boolean-hypercube round polynomials with the linear coefficient omitted.
     pub round_polynomials: Vec<CompressedPoly<F>>,
     /// One proof-of-work nonce per round, as in [`ClearSumcheckProof`].
-    pub pow_nonces: Vec<u32>,
+    pub pow_nonces: Vec<u64>,
 }
 
 /// Serializes the rounds and their nonces as one [`Nonced`] list, so a proof

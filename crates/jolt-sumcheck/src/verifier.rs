@@ -49,7 +49,7 @@ impl SumcheckVerifier {
     pub fn verify<F, T, R, D>(
         claim: &SumcheckClaim<F>,
         round_proofs: &[R],
-        pow_nonces: &[u32],
+        pow_nonces: &[u64],
         domain: D,
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
@@ -142,7 +142,7 @@ impl SumcheckVerifier {
     pub fn verify_committed_round_consistency<F, T, C>(
         statement: SumcheckStatement,
         round_proofs: &[CommittedRound<C>],
-        pow_nonces: &[u32],
+        pow_nonces: &[u64],
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where

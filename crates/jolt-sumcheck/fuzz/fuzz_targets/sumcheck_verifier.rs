@@ -59,7 +59,7 @@ fuzz_target!(|data: &[u8]| {
     }
     // Remaining bytes become proof-of-work nonces, so the count and value
     // checks see attacker-chosen input too.
-    let pow_nonces = data[cursor..].iter().map(|&byte| u32::from(byte)).collect();
+    let pow_nonces = data[cursor..].iter().map(|&byte| u64::from(byte)).collect();
     let proof = CompressedSumcheckProof {
         round_polynomials,
         pow_nonces,

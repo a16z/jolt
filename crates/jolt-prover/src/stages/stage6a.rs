@@ -52,7 +52,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// cross-stage carrier stage 6b consumes.
 pub struct Stage6aProverOutput<F: JoltField, C> {
     /// Nonce ground before the stage's challenge burst.
-    pub pow_nonce: Option<u32>,
+    pub pow_nonce: Option<u64>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6aOutputClaims<F>,
     pub clear_output: Stage6aClearOutput<F>,

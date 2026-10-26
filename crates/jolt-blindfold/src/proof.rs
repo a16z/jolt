@@ -16,7 +16,7 @@ pub struct BlindFoldProof<F: JoltField, Com> {
     /// Proof-of-work nonces for the folding challenge, the outer zero-check
     /// point and the inner combination, in that order, one for each of these
     /// draws whose difficulty is positive.
-    pub pow_nonces: Vec<u32>,
+    pub pow_nonces: Vec<u64>,
     pub outer_sumcheck: CompressedSumcheckProof<F>,
     pub az_rx: F,
     pub bz_rx: F,

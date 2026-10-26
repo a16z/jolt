@@ -106,7 +106,7 @@ pub struct RecordedSumcheck<F: Field, P> {
 )]
 pub struct ClearSumcheckRecorder<F: Field> {
     round_polynomials: Vec<CompressedPoly<F>>,
-    pow_nonces: Vec<u32>,
+    pow_nonces: Vec<u64>,
 }
 
 impl<F: Field> Default for ClearSumcheckRecorder<F> {

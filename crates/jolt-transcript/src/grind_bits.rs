@@ -22,9 +22,15 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
-/// The largest supported difficulty. The nonce space, all of `u32` at this
+/// The largest supported difficulty. The nonce space, all of `u64` at this
 /// difficulty, still holds `2^7` times the expected number of trials.
-pub const MAX_POW_BITS: u32 = 25;
+///
+/// This was 25, with a `u32` nonce. Every difficulty up to 25 keeps its
+/// layout and its nonces, and [`grind_bits_for_loss`] returns the same
+/// difficulty for every input it answered before; only inputs that needed
+/// more than 25 bits, which were [`GrindBitsError::Unattainable`], can now
+/// succeed, with a difficulty of 26 to 57.
+pub const MAX_POW_BITS: u32 = 57;
 
 /// The Fiat-Shamir security level Jolt targets: about `2^128` hash calls to
 /// make any protected challenge land in its bad set.
@@ -320,6 +326,9 @@ mod tests {
             (1 << 25) - 1,
             1 << 25,
             (1 << 25) + 1,
+            (1 << 57) - 1,
+            1 << 57,
+            (1 << 57) + 1,
             u64::MAX,
         ];
         for (size, exact) in sets() {
@@ -333,6 +342,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Raising the cap from 25 to 57 bits changes no answer below it: every
+    /// input that the 25-bit cap answered gets the same difficulty, and only
+    /// inputs it called unattainable may now get one, of 26 to 57 bits. The
+    /// 25-bit boundary cases from before the change are pinned here.
+    #[test]
+    fn raising_the_cap_only_answers_formerly_unattainable_inputs() {
+        const OLD_MAX_POW_BITS: u32 = 25;
+        let losses = [1, 2, 3, 8, (1 << 25) - 1, 1 << 25, 1 << 40, u64::MAX];
+        let near_the_caps = [70, 71, 80, 102, 103].map(|bits| {
+            (
+                ChallengeSetSize::power_of_two(bits),
+                BigUint::from(1u8) << bits,
+            )
+        });
+        for (size, exact) in sets().into_iter().chain(near_the_caps) {
+            for loss in losses {
+                for security_bits in [0, 5, 64, 100, 128, MAX_SECURITY_BITS] {
+                    let target = BigUint::from(loss) << security_bits;
+                    let old = (0..=OLD_MAX_POW_BITS).find(|&bits| (&exact << bits) >= target);
+                    let new = grind_bits_for_loss(loss, size, security_bits);
+                    match old {
+                        Some(bits) => assert_eq!(new, Ok(bits)),
+                        None => assert!(
+                            matches!(new, Ok(26..=57) | Err(GrindBitsError::Unattainable)),
+                            "size={exact}, loss={loss}, security_bits={security_bits}"
+                        ),
+                    }
+                }
+            }
+        }
+        let fp128 = ChallengeSetSize::field_order(P128, 1).unwrap();
+        assert_eq!(grind_bits_for_loss((1 << 25) - 1, fp128, 128), Ok(25));
+        assert_eq!(grind_bits_for_loss(1 << 25, fp128, 128), Ok(26));
+        let set = ChallengeSetSize::power_of_two(103);
+        assert_eq!(grind_bits_for_loss(1, set, 128), Ok(25));
+        assert_eq!(grind_bits_for_loss(2, set, 128), Ok(26));
+        let set = ChallengeSetSize::power_of_two(102);
+        assert_eq!(grind_bits_for_loss(1, set, 128), Ok(26));
     }
 
     /// The least `b` with `2^b ≥ L · 2^λ`, at which `grind_bits_for_loss`
@@ -367,21 +416,22 @@ mod tests {
 
     #[test]
     fn the_last_supported_difficulty_is_exact() {
+        assert_eq!(MAX_POW_BITS, 57);
         let fp128 = ChallengeSetSize::field_order(P128, 1).unwrap();
-        assert_eq!(grind_bits_for_loss((1 << 25) - 1, fp128, 128), Ok(25));
+        assert_eq!(grind_bits_for_loss((1 << 57) - 1, fp128, 128), Ok(57));
         assert_eq!(
-            grind_bits_for_loss(1 << 25, fp128, 128),
+            grind_bits_for_loss(1 << 57, fp128, 128),
             Err(GrindBitsError::Unattainable)
         );
-        // Equality reaches the target: 2^103 · 2^25 = 1 · 2^128.
-        let set = ChallengeSetSize::power_of_two(103);
+        // Equality reaches the target: 2^71 · 2^57 = 1 · 2^128.
+        let set = ChallengeSetSize::power_of_two(71);
         assert_eq!(grind_bits_for_loss(1, set, 128), Ok(MAX_POW_BITS));
         assert_eq!(
             grind_bits_for_loss(2, set, 128),
             Err(GrindBitsError::Unattainable)
         );
         assert_eq!(
-            grind_bits_for_loss(1, ChallengeSetSize::power_of_two(102), 128),
+            grind_bits_for_loss(1, ChallengeSetSize::power_of_two(70), 128),
             Err(GrindBitsError::Unattainable)
         );
         // Difficulty above λ rounds the target up: 2 · 2^6 ≥ 3 · 2^5 > 2 · 2^5.

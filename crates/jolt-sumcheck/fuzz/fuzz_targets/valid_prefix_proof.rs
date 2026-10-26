@@ -59,7 +59,7 @@ fuzz_target!(|data: &[u8]| {
     let mut round_proofs: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
     let bits =
         round_pow_bits::<Fr, ProverState<Blake2b512>>(degree).expect("difficulty for degree <= 6");
-    let mut pow_nonces: Vec<u32> = Vec::with_capacity(num_vars);
+    let mut pow_nonces: Vec<u64> = Vec::with_capacity(num_vars);
 
     for round in 0..num_vars {
         if round < valid_rounds {
