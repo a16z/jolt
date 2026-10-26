@@ -6,6 +6,12 @@
 //! address span within the caller's bound; changing the source identity clears
 //! the cache. Shared ownership keeps buffers alive while kernels use them.
 
+#![expect(
+    dead_code,
+    reason = "`Entry::bytes` is read only by the allocative visitor, and `DeviceBytes` is \
+              implemented for every device buffer type the cache can hold"
+)]
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -21,11 +27,14 @@ use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::JoltField;
 use jolt_witness::backend::cuda::DeviceTrace;
 use jolt_witness::JoltWitnessPlane;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 #[cfg(test)]
 use super::context::current_device;
 use super::context::CudaKernelContext;
 use super::device::{DeviceFrVec, LIMBS};
+use super::pack::COLD;
 use crate::cuda::common::devices::CycleWindow;
 use crate::cuda::witness::session_device_trace_window;
 use crate::{KernelError, ProofSession};
@@ -74,13 +83,6 @@ struct Entry {
     value: Arc<dyn Any + Send + Sync>,
     cycles: usize,
     span: usize,
-    #[cfg_attr(
-        not(feature = "allocative"),
-        expect(
-            dead_code,
-            reason = "device bytes are read only by the allocation visitor"
-        )
-    )]
     bytes: usize,
 }
 
@@ -137,6 +139,12 @@ impl DeviceColumns {
         resident
             .sort_unstable_by_key(|&(column, cycles, span)| (format!("{column:?}"), cycles, span));
         resident
+    }
+
+    #[cfg(test)]
+    pub(crate) fn evict(&mut self, column: DeviceColumn) {
+        self.entries
+            .retain(|key, _| key.ordinal != current_device() || key.column != column);
     }
 }
 
@@ -262,6 +270,18 @@ pub(crate) struct DeviceTraceColumns {
     pub(crate) lookup: Arc<CudaSlice<u64>>,
     pub(crate) pc: Arc<CudaSlice<u32>>,
     pub(crate) ram: Arc<CudaSlice<u32>>,
+}
+
+fn live_span(words: &[u32]) -> usize {
+    #[cfg(feature = "parallel")]
+    let highest = words
+        .par_iter()
+        .filter(|&&word| word != COLD)
+        .copied()
+        .max();
+    #[cfg(not(feature = "parallel"))]
+    let highest = words.iter().filter(|&&word| word != COLD).copied().max();
+    highest.map_or(NO_SPAN, |highest| highest as usize + 1)
 }
 
 fn resident_window<F>(
