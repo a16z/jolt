@@ -392,11 +392,11 @@ impl VerifierFixtureKind {
             // cache, so a ZK transcript change must rename them or stale cached
             // proofs fail verification instead of regenerating.
             #[cfg(feature = "zk")]
-            Self::ZkMulDivSmall => "zk-muldiv-small-word-aligned",
+            Self::ZkMulDivSmall => "zk-muldiv-small-word-aligned-sha3",
             #[cfg(feature = "zk")]
-            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-word-aligned",
+            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-word-aligned-sha3",
             #[cfg(feature = "zk")]
-            Self::ZkAdviceConsumer => "zk-advice-consumer-word-aligned",
+            Self::ZkAdviceConsumer => "zk-advice-consumer-word-aligned-sha3",
         }
     }
 }
