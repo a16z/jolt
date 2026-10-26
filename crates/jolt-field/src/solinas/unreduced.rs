@@ -27,6 +27,7 @@
 //! `add.4s`/`sub.4s`/`neg.4s` (and `mul.4s` for scaling) instructions at
 //! opt-level 3 (see specs/jolt-field-rebuild.md dropped-specialization evidence).
 
+use super::word::ext2_product_sums;
 use super::{Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8};
 use crate::{
     CanonicalEncoding, Ext2Config, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
@@ -525,53 +526,22 @@ fn fp64_accum_limbs(lo128: u128, hi_carry: u128) -> [u128; 2] {
     [lo128 as u64 as u128, (lo128 >> 64) | (hi_carry << 64)]
 }
 
-/// Widening `FpExt2<Fp64>` multiply with delayed reduction and explicit
-/// carry tracking.
+/// Widening `FpExt2<Fp64>` multiply with delayed reduction: the exact
+/// coordinate integers of [`ext2_product_sums`] (each `< 3P²`, carry ≤ 2)
+/// split into base-2^64 limb pairs.
 ///
-/// Coefficient bounds (`pᵢⱼ ≤ (P−1)² < 2^128`):
-/// - `NR = −1`: `c0 = p00 + P² − p11 ∈ [0, 2P²) ⊂ [0, 2^129)`. The add
-///   carry and sub borrow satisfy `carry ≥ borrow` (a borrow with no carry
-///   would need `p00 + P² < p11 < P²`, impossible), so
-///   `hi_carry = carry − borrow ∈ {0, 1}`.
-/// - `NR = 2`: `c0 = p00 + 2·p11 < 3P² < 2^130`, carry ∈ {0, 1, 2}.
-/// - `c1 = p01 + p10 < 2P² < 2^129`, carry ∈ {0, 1}.
-///
-/// The specialized carry analysis applies to these two non-residues. Other
-/// configurations reduce each product first and lift its canonical
-/// coordinates into the same exact accumulator representation.
+/// Non-residues without a fused schedule reduce each product first and lift
+/// its canonical coordinates into the same exact accumulator representation.
 #[inline(always)]
 fn fp_ext2_mul_to_accum_fp64<const P: u64, C: Ext2Config<Fp64<P>>>(
     a: [Fp64<P>; 2],
     b: [Fp64<P>; 2],
 ) -> FpExt2Fp64ProductAccum {
-    let subtract_p11 = match C::NON_RESIDUE_KIND {
-        crate::Ext2NonResidueKind::Generic => {
-            return fp_ext2_reduced_product_accum::<P, C>(a, b);
-        }
-        crate::Ext2NonResidueKind::NegOne => true,
-        crate::Ext2NonResidueKind::Two => false,
+    let Some([(c0, c0_carry), (c1, c1_carry)]) = ext2_product_sums::<P, C>(a, b) else {
+        return fp_ext2_reduced_product_accum::<P, C>(a, b);
     };
-    let p00 = a[0].mul_wide(b[0]);
-    let p11 = a[1].mul_wide(b[1]);
-    let p01 = a[0].mul_wide(b[1]);
-    let p10 = a[1].mul_wide(b[0]);
-
-    let [c0_lo, c0_hi] = if subtract_p11 {
-        // c0 = p00 + P² − p11 (the P² bias keeps it non-negative and is
-        // invisible mod p).
-        let modulus_sq = (P as u128) * (P as u128);
-        let (sum, carry_add) = p00.overflowing_add(modulus_sq);
-        let (diff, borrow) = sum.overflowing_sub(p11);
-        let hi_carry = (carry_add as u128) - (borrow as u128);
-        fp64_accum_limbs(diff, hi_carry)
-    } else {
-        let (sum1, carry1) = p00.overflowing_add(p11);
-        let (sum2, carry2) = sum1.overflowing_add(p11);
-        fp64_accum_limbs(sum2, (carry1 as u128) + (carry2 as u128))
-    };
-    let (c1_sum, c1_carry) = p01.overflowing_add(p10);
-    let [c1_lo, c1_hi] = fp64_accum_limbs(c1_sum, c1_carry as u128);
-
+    let [c0_lo, c0_hi] = fp64_accum_limbs(c0, u128::from(c0_carry));
+    let [c1_lo, c1_hi] = fp64_accum_limbs(c1, u128::from(c1_carry));
     FpExt2Fp64ProductAccum([c0_lo, c0_hi, c1_lo, c1_hi])
 }
 

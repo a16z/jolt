@@ -1,5 +1,5 @@
-//! Coefficient schedules for the degree-4/8 cyclotomic extension multiply,
-//! generic over the lane type.
+//! Coefficient schedules for the quadratic and degree-4/8 cyclotomic
+//! extension multiplies.
 //!
 //! One fold-algebra source of truth per schedule: the same formulas serve
 //! the scalar [`PseudoMersenne`](crate::PseudoMersenne) kernel-hook defaults
@@ -14,8 +14,31 @@
 //! that reduce per operation (field lanes) and callers that defer reduction
 //! (integer lanes) are both correct, provided the accumulator has headroom.
 
-use crate::Ring;
+use crate::{Ext2Config, Field, Ring};
 use std::ops::{Add, Mul, Sub};
+
+/// Multiplies quadratic-extension coefficients in `F[u]/(u² − NR)`, basis
+/// `[1, u]`, by Karatsuba: 3 base multiplies (2 when `NR = −1` makes the
+/// non-residue product free).
+#[inline(always)]
+pub(crate) fn ext2_mul_coeffs<F: Field, C: Ext2Config<F>>(a: [F; 2], b: [F; 2]) -> [F; 2] {
+    let v0 = a[0] * b[0];
+    let v1 = a[1] * b[1];
+    let cross = (a[0] + a[1]) * (b[0] + b[1]);
+    [v0 + C::mul_non_residue(v1, |base| base), cross - v0 - v1]
+}
+
+/// Squares quadratic-extension coefficients with 2 base multiplies:
+/// `(c0 + c1·u)² = (c0² + NR·c1²) + (2·c0·c1)·u`.
+#[inline(always)]
+pub(crate) fn ext2_square_coeffs<F: Field, C: Ext2Config<F>>(a: [F; 2]) -> [F; 2] {
+    let v0 = a[0] * a[0];
+    let v1 = a[1] * a[1];
+    [
+        v0 + C::mul_non_residue(v1, |base| base),
+        (a[0] + a[0]) * a[1],
+    ]
+}
 
 /// Multiplies degree-4 coefficient arrays in the `[1, e1, e2, e3]` basis.
 #[inline(always)]

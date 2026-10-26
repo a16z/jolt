@@ -210,6 +210,23 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
     /// Offset `c` in `2^k − c`.
     const OFFSET: u128;
 
+    /// Quadratic extension multiply kernel in `Self[u]/(u² − NR)`, basis
+    /// `[1, u]`.
+    ///
+    /// Defaults to Karatsuba; base fields whose representation supports
+    /// fusing product sums before reduction override it (`Fp64` sums raw
+    /// products in `u128` and reduces once per coordinate).
+    #[inline(always)]
+    fn ext2_mul<C: crate::Ext2Config<Self>>(a: [Self; 2], b: [Self; 2]) -> [Self; 2] {
+        crate::schedules::ext2_mul_coeffs::<Self, C>(a, b)
+    }
+
+    /// Quadratic extension squaring kernel in `Self[u]/(u² − NR)`.
+    #[inline(always)]
+    fn ext2_square<C: crate::Ext2Config<Self>>(a: [Self; 2]) -> [Self; 2] {
+        crate::schedules::ext2_square_coeffs::<Self, C>(a)
+    }
+
     /// Degree-4 extension multiply kernel in the `[1, e1, e2, e3]` basis.
     ///
     /// Defaults to the generic coefficient schedule; base fields whose
