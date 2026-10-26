@@ -647,10 +647,11 @@ fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
 }
 
 /// A47: the cut sends u_a compressed, one 8-coefficient payload per chunk
-/// of Akita's split chain: muldiv's u_a is 19 × `R_64`, 1,216 coefficients,
-/// so three chunk payloads (byte tampers are the census sweep's).
+/// of Whiteout's split chain, whose chunks hold up to 884 coefficients (O5,
+/// D34): muldiv's u_a is 19 × `R_64`, 1,216 coefficients, so two chunk
+/// payloads (byte tampers are the census sweep's).
 #[test]
-fn whiteout_compressed_residual_commitment_is_three_chunk_payloads() {
+fn whiteout_compressed_residual_commitment_is_two_chunk_payloads() {
     let (_, trace) = honest();
     let cut = classify(&trace)
         .into_iter()
@@ -665,8 +666,8 @@ fn whiteout_compressed_residual_commitment_is_three_chunk_payloads() {
         .expect("the cut level's successor payload");
     assert_eq!(
         cut.bytes,
-        3 * 8 * FIELD_BYTES,
-        "the cut sends three chunk payloads"
+        2 * 8 * FIELD_BYTES,
+        "the cut sends two chunk payloads"
     );
 }
 

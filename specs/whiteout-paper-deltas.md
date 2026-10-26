@@ -63,6 +63,7 @@ so the authors can fold it into the paper.
 | D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
 | D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation; their trust root is the holder of r | departure (stricter than paper), clarification | implemented (W6f, A44) |
 | D32 | Persisted plans: the ZK catalog (planned at setup) and exported response schedules enter a setup only at construction, are re-audited and re-admitted on load, and the pads absorb the masked catalog's, selected row's and response schedule's digests | extension (public parameters), transcript change | implemented (O1) |
+| D34 | Small byte items (O5): compressed images chunk at the chain's SIS bound (884 coefficients, the paper's `FCHAIN_MAX_IMAGE`), so t_p and cm(u_a) take 2 chunks, not 3; a repeated intermediate product takes one auxiliary slot. One-chunk t_p is impossible at R_Σ | departure narrowed (D9), slot sharing (D12, D26) | implemented (O5) |
 
 ## D1. Constant-time Σ attempt
 
@@ -1586,3 +1587,124 @@ before any challenge that depends on them.
 **For the paper.** State in §3 that the schedules are public parameters
 the verifier validates and the transcript binds before the first
 challenge that depends on them.
+
+## D34. Small byte items (O5)
+
+**Paper says.** t_p, u_a and t_D are each sent as one 128 B compressed
+commitment (`06_evaluation.tex:188-190`), with chains of up to
+`FCHAIN_MAX_IMAGE = 884` coefficients. The auxiliary block holds one masked
+value per multiplication gate whose output is not an existing slot: 28
+products, 2 affine operands and 2 Akita values, 512 B at T = 2^24
+(`06_evaluation.tex:83-88`).
+
+**Before O5.** t_p (pad commitment, rank 19 over `R_64`, 1,216
+coefficients) and cm(u_a) (1,216 coefficients) were 3 chunks of at most
+512 coefficients each, 384 B apiece (D9). The auxiliary block was 45
+slots, 720 B, on all three workloads: Akita's 2 range-leaf squares, 2
+defining slots (stage 1's outer remainder and stage 2), and 41
+intermediate products (7 in stage 5, 34 in stage 6's cycle phase).
+
+**Implementation.**
+
+- *Chunks at the certified bound* (Akita `wo/akita-o5`,
+  `akita-params/src/compression/chain.rs`,
+  `akita-pcs/src/zk/compression.rs`). Whiteout's images are cut into
+  chunks of `CompressionChainPlan::max_certified_source_coefficients`:
+  the largest source whose first map stays inside its rank-one SIS cell.
+  At q128 that cell is d = 16, 7,077 columns of `{−1, 0, 1}`
+  differences (`akita-params/src/sis/compression.rs`), and a source of n
+  coefficients needs `128·n/16` columns, so n ≤ 884 (7,072 columns); 885
+  needs 7,080. The second map's input is the first map's 16-coefficient
+  output, 256 `R_8` columns of its cell's 508, whatever n is. Each chunk is
+  derived by `for_certified_source`: the same two maps, the same
+  certification and the same 128 B terminal as the policy chain, without
+  the 8 KiB cap. That cap still bounds every clear B/D image, so no clear
+  catalog, plan or descriptor changes. t_p and cm(u_a) become 2 chunks
+  (884 + 332 coefficients), 256 B each; t_D (64 coefficients) stays 1.
+- *Shared intermediate products* (jolt `wo/o5-bytes`,
+  `jolt-zk/src/masking/lowering.rs`, `ProductMemo`). One memo spans a
+  relation's lowering (`JoltResidual::lower_claims`). A term's chain
+  starts at its first single-opening factor and multiplies the others in
+  formula order; an intermediate product whose factors so far are all
+  openings is keyed by those openings, in chain order, and takes a slot
+  only the first time. Stage 6's lattice bytecode read-RAF cycle output
+  (`read_raf_cycle_output_committed_lattice`) repeats `ra₀·ra₁` in its 8
+  `ra₀ra₁·val_s`-type terms and `fused·ra₀` and `fused·ra₀·ra₁` in its 4
+  fused-increment terms: 16 slots become 3. The block is 32 slots, 512 B:
+  the paper's count.
+
+**Argument.**
+
+- *Chunk binding.* Lemma `wo:lem:compressed-binding` applies per chunk
+  (D9): two openings of one chunk's `cm` that reconstruct different images
+  give a nonzero `{−1, 0, 1}` vector in the kernel of `K₁` (width ≤ 7,077
+  at d = 16) or `K₂` (width 256 at d = 8), each certified by its cell at
+  128 bits under the policy's ADPS16 quantum estimate, the authority every
+  compression map is priced by (`min_compression_secure_rank`). The 884
+  bound is that cell's own limit, not a new estimate. The chain rows'
+  α-reduction error is unchanged per row (degree ≤ 15), and there are
+  fewer rows. The binary constraint covers ξ₁ and ξ₂ of every chunk, as
+  before; ξ₁'s length depends only on the image, and each removed chunk
+  removes one ξ₂ (2,048 digits). The response schedule is keyed by `e`'s
+  length, so a shorter `e` selects its row by the existing lookup.
+  Hiding is unchanged: compressed forms are functions of the raw images
+  (D9).
+- *Where the chunk geometry is bound.* It is a function of the modulus
+  profile alone (`compression::chunks`), the single owner both roles and
+  `CompressionShape::payload_len` read, so the payload lengths the
+  verifier receives at `PADS` and at the cut follow from public
+  parameters, as before. No transcript site moves; only two message
+  lengths change.
+- *Slot sharing.* A shared slot z is defined once, by the product row
+  `x·y = z` the first term emits, and each later term with the same key
+  reads z. The key is the ordered list of opening ids whose decoded values
+  the chain multiplies, so every term with that key computes the same
+  value in the clear verifier: the decoded relation is the clear stage
+  checks, and Lemma `wo:lem:residual-correct` holds as before. The memo
+  keys on structure only (ids, never values), and the shape, values and
+  rows domains run the same lowering in the same order, so they allocate
+  the same slots, with each slot still defined by one earlier row (the
+  acyclic chain of D12). ZK: the relation's shape is public and there are
+  fewer pads.
+
+**Not done, and why.**
+
+- *One-chunk t_p.* It needs t_p ≤ 884 coefficients, i.e. `rank_p·64 ≤ 884`,
+  rank ≤ 13 at d = 64. A_p must be SIS-binding at the Σ collision radius
+  R_Σ ≈ 2^47.82, because the Σ extractor certifies the pads only inside its
+  Gaussian box (`sigma_matrix_rank`, `specs/whiteout-o7-sigma-radius.md`
+  §3): the Σ-binding table gives rank 18 for widths up to 2,463 columns and
+  19 above (muldiv's A_p is 3,330 columns, rank 19), and hardness tracks
+  n = rank·d, so another ring dimension does not help. The tables give
+  rank 13 at d = 64 only at radii up to about 2^39.7 (O7 §3.2), 2^8 below
+  R_Σ. Narrowing
+  A_p to rank 18 would still need 2 chunks (1,152 coefficients). A
+  chain with a 1,216-coefficient source needs a rank-2 first map, whose
+  32-coefficient output needs 512 `R_8` columns at the second map, over its
+  cell's 508; a third map would break the fixed two-map chain.
+- *The 2 defining slots.* Distributing an affine operand over its
+  openings (`(Σ c_i o_i + c₀)·y = Σ o_i·(c_i y) + c₀ y`, a multi-pair row)
+  would remove both (−32 B), at the cost of 35 + 3 more operand pads for
+  stage 1's and stage 2's affine factors. Not taken; the paper also counts
+  2 affine operands.
+- *The rest.* Akita's 2 slots are the degree-4 range leaf's square
+  (`check_range_leaf`), and each remaining product slot is an
+  intermediate of a product of h ≥ 3 distinct hidden factors (h − 2 per
+  product). Every slot holds a uniformly masked field element, so
+  nothing in the block compresses.
+
+**Measured** (release, `--backend optimized`; proof wire bytes):
+
+| | muldiv | fib 2^16 | fib 2^20 |
+|---|---|---|---|
+| before (whiteout/dev 9cb3ee7ec) | 93,892 | 96,072 | 98,458 |
+| after | 93,358 | 95,513 | 97,896 |
+| Δ | −534 | −559 | −562 |
+
+Per region: pads −128, cm(u_a) in the masked prefix −128, auxiliary
+block −208 (720 → 512); the response proof moves by −70 / −95 / −99 B,
+within its run-to-run spread (about 100 B, V6), plus two fewer chains'
+rows.
+
+**For the paper.** None for the chunk bound (it is the paper's). For the
+auxiliary count: say that a product repeated across terms is one gate.
