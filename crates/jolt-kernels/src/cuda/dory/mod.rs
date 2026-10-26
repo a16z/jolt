@@ -10,6 +10,8 @@ mod combine;
 #[cfg(any(test, not(feature = "zk")))]
 mod curve;
 #[cfg(test)]
+mod gt;
+#[cfg(test)]
 mod handle;
 #[cfg(test)]
 mod routines;
