@@ -185,11 +185,11 @@ Two further properties of the leaf matter for its proof but are not bugs.
   words up to offset `J + 136 - a`, where `J ≤ 15` bytes are already copied
   and `a ∈ 1..7` is the source word offset. Both wrappers jump to the leaf
   only for `n ≥ 544`, and `jolt_copy_misaligned_correct` assumes that bound.
-  Run alone, the leaf copies correctly for every mismatched alignment at
-  `n = 143`. At `n = 142` it faults for 14 of the 112 alignment and
-  direction combinations, on the last load of the first iteration (offset
-  `0x188` forward, `0x376` backward), for example `dst = 0x100000`,
-  `src = 0x100041`.
+  The executable model, running the leaf alone with `|src - dst|` about 64
+  and every mismatched pair of offsets in both directions (112 cases),
+  copies correctly at `n = 143`. At `n = 142` it faults in 14 of them, on
+  the last load of the first iteration (offset `0x188` forward, `0x376`
+  backward), for example `dst = 0x100000`, `src = 0x100041`.
 * **The first aligned source word is partly stale.** The setup loads `t3`
   from the aligned word just below the source cursor (forward) or at it
   (backward). If the distance `|src - dst|` is smaller than the offset `a`,
