@@ -8,3 +8,4 @@ import CopyRuntime.Proof.Wrapper.Setup
 import CopyRuntime.Proof.Memory
 import CopyRuntime.Proof.Wrapper.Facts
 import CopyRuntime.Proof.Wrapper.Exits
+import CopyRuntime.Proof.Wrapper.Tables

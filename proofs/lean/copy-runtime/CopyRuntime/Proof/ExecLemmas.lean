@@ -20,9 +20,9 @@ attribute [rv_exec] execute BranchCond.eval AluImmOp.eval AluOp.eval Width.bytes
   Bool.false_and Bool.and_false Bool.not_true Bool.not_false beq_self_eq_true
   Bool.true_or Bool.or_true Bool.false_or Bool.or_false bne_self_eq_false
   Option.some.injEq beq_iff_eq bne_iff_ne decide_eq_true_eq ne_eq not_false_eq_true
-  not_true_eq_false accessOk_rangePerm
+  not_true_eq_false accessOk_rangePerm Bool.false_eq_true Bool.true_eq_false
 
-attribute [rv_exec_proc] reduceIte reduceDIte Fin.reduceEq Fin.reduceNe Fin.isValue
+attribute [rv_exec_proc] reduceIte reduceDIte reduceCtorEq Fin.reduceEq Fin.reduceNe Fin.isValue
   BitVec.reduceOfInt BitVec.reduceOfNat BitVec.reduceAdd BitVec.reduceSub BitVec.reduceMul
   BitVec.reduceAnd BitVec.reduceOr BitVec.reduceXOr BitVec.reduceNot BitVec.reduceNeg
   BitVec.reduceHShiftLeft BitVec.reduceHShiftRight BitVec.reduceShiftLeft
@@ -42,13 +42,13 @@ attribute [rv_exec_proc] reduceIte reduceDIte Fin.reduceEq Fin.reduceNe Fin.isVa
 @[rv_exec] theorem writeReg_apply (r : Reg → BitVec 64) (rd i : Reg) (v : BitVec 64) :
     writeReg r rd v i = if i = rd then v else r i := rfl
 
-/-- Register-file normal form: at most one write per register, outermost
-write to the highest register number. -/
+/-- Collapse two adjacent writes to the same register. (Sorting writes by
+register number inside `simp` was tried and is far too slow.) -/
 @[rv_exec] theorem writeReg_writeReg_same (f : Reg → BitVec 64) (r : Reg) (a b : BitVec 64) :
     writeReg (writeReg f r a) r b = writeReg f r b := by
   funext i; simp only [writeReg]; split <;> rfl
 
-@[rv_exec] theorem writeReg_writeReg_swap (f : Reg → BitVec 64) {q r : Reg} (h : q < r)
+theorem writeReg_writeReg_swap (f : Reg → BitVec 64) {q r : Reg} (h : q < r)
     (a b : BitVec 64) : writeReg (writeReg f r a) q b = writeReg (writeReg f q b) r a := by
   funext i; simp only [writeReg]
   split <;> split <;> first | rfl | (subst_vars; exact absurd h (Fin.lt_irrefl _))

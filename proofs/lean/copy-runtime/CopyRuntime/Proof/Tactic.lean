@@ -97,35 +97,76 @@ elab "rv_fetch " hc:term : tactic => do
   let hc ← elabTerm hc none
   stepCore hc
 
-/-- Discharger for the conditional rewrite rules of `rv_exec`. -/
+/-- Arithmetic normalization: `toNat` of sums of a symbolic atom and literals
+becomes Nat arithmetic. -/
+syntax "rv_arith_simp" (Lean.Parser.Tactic.location)? : tactic
+macro_rules
+  | `(tactic| rv_arith_simp $[$loc]?) => `(tactic|
+    simp only [Arith.add_sub_cancel_left, Arith.add_sub_add_left, Arith.add_lit_lit,
+      BitVec.toNat_add, BitVec.toNat_ofNat, BitVec.toNat_sub, BitVec.ofNat_eq_ofNat,
+      Nat.reduceMod, Nat.reduceAdd, Nat.reducePow, Nat.reduceSub, BitVec.reduceToNat,
+      BitVec.reduceSub, BitVec.reduceAdd, ne_eq, BitVec.toNat_eq] $[$loc]?)
+
+/-- Discharger for the conditional rewrite rules of `rv_exec`. It must not
+change the local context (rewriting hypotheses inside a `simp` discharger made
+the enclosing `simp` lose its cache and run exponentially long), so it only
+normalizes its own goal before `omega`. The trailing `fail` keeps a failed
+alternative from running in error-recovery mode (which would log an error and
+admit the side goal). -/
 macro "rv_disch" : tactic =>
-  -- The trailing `fail` keeps a failed `bv_omega` from running in error-recovery
-  -- mode (which would log an error and admit the side goal).
-  `(tactic| first | assumption | decide | bv_omega | fail "rv_disch")
+  `(tactic| first | assumption | decide | ((try rv_arith_simp); omega) | fail "rv_disch")
+
+/-- `rv_simp [lemmas]` is `simp (disch := rv_disch) only [rv_exec, lemmas]`
+except that it tells `simp` that the discharger is well behaved (it only reads
+the initial local context). Lean marks every custom discharger as not well
+behaved, which disables simp's cache below binders; on long symbolic runs that
+made each step exponentially slow in the length of the register-write chain. -/
+syntax (name := rvSimp) "rv_simp" (" [" term,* "]")? : tactic
+
+@[tactic rvSimp] def evalRvSimp : Tactic := fun stx => withMainContext do
+  let args : Array Term :=
+    if stx[1].getNumArgs == 0 then #[] else stx[1][1].getSepArgs.map (⟨·⟩)
+  let lemmas ← args.mapM fun t => `(Lean.Parser.Tactic.simpLemma| $t:term)
+  let simpStx ← `(tactic| simp (disch := rv_disch) only [rv_exec, $lemmas,*])
+  let { ctx, simprocs, dischargeWrapper, .. } ← mkSimpContext simpStx (eraseLocal := false)
+  let .custom ref disch := dischargeWrapper | throwError "rv_simp: expected a custom discharger"
+  ref.set (← getThe Term.State)
+  try
+    let mvarId ← getMainGoal
+    let target ← instantiateMVars (← mvarId.getType)
+    let (r, _) ← Simp.mainCore target ctx {}
+      (methods := Simp.mkMethods simprocs disch (wellBehavedDischarge := true))
+    if r.expr == target then throwError "rv_simp made no progress"
+    let newGoal ← applySimpResultToTarget mvarId target r
+    if r.expr.isConstOf ``True then
+      newGoal.assign (mkConst ``True.intro)
+      replaceMainGoal []
+    else
+      replaceMainGoal [newGoal]
+  finally
+    set (← ref.get)
 
 /-- After evaluating a branch, split on its condition and drop the branches
-that `bv_omega` refutes from the hypotheses. -/
+that `omega` refutes from the hypotheses. -/
 macro "rv_branch" : tactic =>
-  `(tactic| split <;> try (exfalso; bv_omega))
+  `(tactic| split <;> try (exfalso; (try rv_arith_simp at *); omega))
 
 /-- One symbolic step: fetch, evaluate with `rv_exec` (plus extra lemmas), and
 split on an undecided branch condition. -/
 syntax "rv_step " term:max (" [" term,* "]")? : tactic
 macro_rules
   | `(tactic| rv_step $hc) => `(tactic| rv_step $hc [])
-  | `(tactic| rv_step $hc [$ls,*]) => do
-    let args ← ls.getElems.mapM fun t => `(Lean.Parser.Tactic.simpLemma| $t:term)
-    `(tactic| (rv_fetch $hc; simp (disch := rv_disch) only [rv_exec, $args,*]; try rv_branch))
+  | `(tactic| rv_step $hc [$ls,*]) =>
+    `(tactic| (rv_fetch $hc; rv_simp [$ls,*]; try rv_branch))
 
 /-- One symbolic step through an instruction whose fetch is given by `h`
 (used at relocation sites). -/
 syntax "rv_step_at " term:max (" [" term,* "]")? : tactic
 macro_rules
   | `(tactic| rv_step_at $h) => `(tactic| rv_step_at $h [])
-  | `(tactic| rv_step_at $h [$ls,*]) => do
-    let args ← ls.getElems.mapM fun t => `(Lean.Parser.Tactic.simpLemma| $t:term)
+  | `(tactic| rv_step_at $h [$ls,*]) =>
     `(tactic| (refine Exits.step_fetch $h (by rv_region) ?_
-               simp (disch := rv_disch) only [rv_exec, $args,*]
+               rv_simp [$ls,*]
                try rv_branch))
 
 end CopyRuntime.Tactic
