@@ -175,6 +175,23 @@ mod matrix {
                     )),
                     ..GuestCase::new("stdlib-guest")
                 };
+                memory_copy => GuestCase {
+                    func: Some("memory_copy"),
+                    std: true,
+                    stack_size: Some(1 << 20),
+                    max_padded_trace_length: 1 << 18,
+                    inputs: encode(&1031u32),
+                    expected_output: Some(encode(&{
+                        let n = 1031;
+                        let original: Vec<u8> =
+                            (0..n + 8).map(|i| (i * 197 + i / 7) as u8).collect();
+                        let mut expected = vec![0; n + 8];
+                        expected[1..n].copy_from_slice(&original[1..n]);
+                        expected[n] = original[n + 1];
+                        expected
+                    })),
+                    ..GuestCase::new("stdlib-guest")
+                };
                 advice_consumer => GuestCase {
                     inputs: encode(&12u64),
                     untrusted_advice: encode(&5u64),

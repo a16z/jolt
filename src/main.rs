@@ -219,6 +219,15 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         jolt_rustflags.push("-Zunstable-options");
     }
 
+    if args
+        .base
+        .target
+        .as_deref()
+        .is_none_or(|target| target.starts_with("riscv64"))
+    {
+        jolt_rustflags.extend(["-Clink-arg=--wrap=memcpy", "-Clink-arg=--wrap=memmove"]);
+    }
+
     // Also set medany for C code (cc crate reads CFLAGS_{target}).
     let cflags_target = match args.base.mode {
         StdMode::Std => "riscv64imac_zero_linux_musl",
