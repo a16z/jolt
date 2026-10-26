@@ -308,6 +308,15 @@ paper delta.
   LOADED: response planning 3.5–7× faster; the ~1 s target is not met.
 - **M1 (prover memory)** opened: peak RSS 0.60 → 7.94 GiB at fib 2^20, the
   response proof dominant.
+- **O5 (compression and shared products, D34).** One review; every item was
+  fixed. Compressed images are chunked at the chain's SIS bound and
+  balanced (1216 → 608 + 608), lifting the first map to 141 bits under a new
+  policy tag; `ProductMemo` shares repeated product slots (aux block 45 → 32
+  slots). The fixed saving is −464 B/proof (pads −128, cut −128, aux −208),
+  and totals are 93,325 / 95,535 / 97,883 B for muldiv / fib 2^16 / fib 2^20.
+  The checked-in ZK fuzz bundles were already broken at base and were
+  regenerated. Merged; combined bars are green, and Akita's dump identity is
+  exactly the 5 known rows.
 
 ## Not verified
 
