@@ -144,6 +144,20 @@ in.
   - Auxiliary blocks (720 B): audit what they carry and drop or compress any
     redundant part.
   - jolt.
+  - **Outcome (`wo/o5-bytes` + Akita `wo/akita-o5`, paper delta D34).**
+    −464 B deterministic on every workload; −534 to −575 B in total
+    (muldiv, fib 2^16, fib 2^20, two runs; the rest is response-proof
+    noise). Whiteout's
+    compressed images take the fewest balanced chunks under the chain's
+    SIS bound, 884 coefficients (the paper's `FCHAIN_MAX_IMAGE`), instead
+    of the 8 KiB clear cap: t_p and cm(u_a) go from 3 chunks to 2 of 608
+    (−128 B each). A repeated intermediate product takes one auxiliary
+    slot: 45 → 32 slots (−208 B), all in stage 6's bytecode read-RAF
+    cycle output; BlindFold committed-program proofs drop 38 → 27. One-chunk
+    t_p is impossible: A_p must bind at R_Σ, which needs rank ≥ 18 at
+    d = 64 (1,152 coefficients), above the 884 a two-map chain
+    certifies. The 2 defining slots stay (−32 B for 38 more operand
+    pads); the other slots are irreducible.
 
 ### P2: structural (needs P0 numbers, and decisions)
 

@@ -63,6 +63,7 @@ so the authors can fold it into the paper.
 | D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
 | D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation; their trust root is the holder of r | departure (stricter than paper), clarification | implemented (W6f, A44) |
 | D32 | Persisted plans: the ZK catalog (planned at setup) and exported response schedules enter a setup only at construction, are re-audited and re-admitted on load, and the pads absorb the masked catalog's, selected row's and response schedule's digests | extension (public parameters), transcript change | implemented (O1) |
+| D34 | Small byte items (O5): compressed images take the fewest balanced chunks under the chain's SIS bound (884 coefficients, the paper's `FCHAIN_MAX_IMAGE`), so t_p and cm(u_a) take 2 chunks, not 3; a repeated intermediate product takes one auxiliary slot (Whiteout and BlindFold committed proofs). One-chunk t_p is impossible at R_Σ | departure narrowed (D9), slot sharing (D12, D26) | implemented (O5) |
 
 ## D1. Constant-time Σ attempt
 
@@ -501,6 +502,9 @@ evaluation charges 416 B for three compressed commitments plus the nonce
 - W5c lands in RP4 (commit `fe57e2446` and reviewer steering). Images above
   Akita's 512-coefficient (8 KiB) cap are split into ⌈len/512⌉ chunks, each
   compressed by the existing two-map chain.
+- Since O5 (D34) the chunks hold up to 884 coefficients, the first map's
+  SIS bound and the paper's `FCHAIN_MAX_IMAGE`; an image takes the fewest
+  chunks, balanced. The 8 KiB cap still bounds clear B/D images.
 
 **Why.** Akita's compression source is capped at 512 Fp128 coefficients
 (`akita-params/src/compression.rs:19`, per `whiteout-sigma.md` A12), and the
@@ -525,8 +529,10 @@ load-bearing: the prover chooses `cm`, and a carry inside `ξ₁` (bits
 `(0, −1)` → `(−2, 0)`, then `ξ₂` and `cm` recomputed) passes everything
 else (Akita spec §5.7).
 
-**For the paper.** See Q4: the cost model's `FCHAIN_MAX_IMAGE = 884`
-disagrees with Akita's 512 cap. Price the split chain, and state the rows
+**For the paper.** Q4 (closed by D34): the cost model's
+`FCHAIN_MAX_IMAGE = 884` now matches Whiteout's chunk bound. Price the
+split chain for images above it (t_p and u_a, 1,216 coefficients at
+rank 19, take two chunks), and state the rows
 as reduced evaluations at `α` (or the paper's coefficient rows, at the cost
 of `d` rows per map).
 
@@ -1586,3 +1592,157 @@ before any challenge that depends on them.
 **For the paper.** State in §3 that the schedules are public parameters
 the verifier validates and the transcript binds before the first
 challenge that depends on them.
+
+## D34. Small byte items (O5)
+
+**Paper says.** The evaluation charges 416 B for three compressed
+commitments, each one two-map chain of 128 B (the pad commitment, t_D and
+the commitment to e that begins its Akita proof), plus the attempt nonce
+(`06_evaluation.tex:188-190`); its cost script chains images of up to
+`FCHAIN_MAX_IMAGE = 884` coefficients. The cut sends `cm(u_a)` the same
+way (Item 3, A47). The auxiliary block holds one masked value per
+multiplication gate whose output is not an existing slot: 28 products,
+2 affine operands and 2 Akita values, 512 B at T = 2^24
+(`06_evaluation.tex:83-88`).
+
+**Before O5.** t_p (pad commitment, rank 19 over `R_64`, 1,216
+coefficients) and cm(u_a) (1,216 coefficients) were 3 chunks of at most
+512 coefficients each, 384 B apiece (D9). The auxiliary block was 45
+slots, 720 B, on all three workloads: Akita's 2 range-leaf squares, 2
+defining slots (stage 1's outer remainder and stage 2), and 41
+intermediate products (7 in stage 5, 34 in stage 6's cycle phase).
+
+**Implementation.**
+
+- *Chunks below the certified bound* (Akita `wo/akita-o5`,
+  `akita-params/src/compression/chain.rs`,
+  `akita-pcs/src/zk/compression.rs`). The bound is
+  `CompressionChainPlan::max_certified_source_coefficients`: the largest
+  source whose first map stays inside its rank-one SIS cell. At q128 that
+  cell is d = 16, 7,077 columns of `{−1, 0, 1}` differences
+  (`akita-params/src/sis/compression.rs`), and a source of n coefficients
+  needs `128·n/16` columns, so n ≤ 884 (7,072 columns); 885 needs 7,080.
+  An image takes the fewest chunks that bound allows, balanced to within
+  one coefficient (`compression::chunks`, the single owner of the
+  geometry). Each chunk is derived by `for_certified_source`: the same two
+  maps, the same certification and the same 128 B terminal as the clear
+  chain, without the 8 KiB cap, under its own policy id
+  `NegativeBinaryTwoMapSisBoundV1` (tag 4, appended), which no instance
+  descriptor admits. The cap still bounds every clear B/D image, so no
+  clear catalog, plan or descriptor changes. t_p and cm(u_a) become 2
+  chunks of 608 coefficients, 256 B each; t_D (64 coefficients) stays 1.
+- *Shared intermediate products* (jolt `wo/o5-bytes`,
+  `jolt-zk/src/masking/lowering.rs`, `ProductMemo`). One memo spans a
+  relation's lowering in one domain (`JoltResidual::lower_claims`). A
+  term's chain starts at its first single-opening factor and multiplies
+  the others in formula order; an intermediate product whose factors so
+  far are all openings is keyed by those openings, in chain order, and
+  takes a slot only the first time. On the Akita build, stage 6's lattice
+  bytecode read-RAF cycle output (`read_raf_cycle_output_committed_lattice`)
+  repeats `ra₀·ra₁` in its 8 staged-Val terms and `fused·ra₀` and
+  `fused·ra₀·ra₁` in its 4 fused-increment terms: 16 slots become 3. The
+  block is 32 slots, 512 B: the paper's count.
+- *BlindFold.* The memo is in the shared lowering, so BlindFold committed-
+  program proofs shrink too: `ReadRafCyclePhaseCommitted` repeats the
+  bytecode RA product in every staged-Val term, and the committed muldiv
+  fixture goes from 38 auxiliary slots to 27 (pinned in
+  `tests/completeness/zk.rs`). The plain muldiv fixture repeats no product
+  and keeps 26. The ZK verifier-fixture cache key of the committed case is
+  renamed, and the ZK fuzz bundles are regenerated (at the base they
+  already failed to verify: `zk-muldiv` at the final opening, the other two
+  with `Transcript(NonCanonical)`).
+
+**Argument.**
+
+- *Chunk binding.* Lemma `wo:lem:compressed-binding` applies per chunk
+  (D9): two openings of one chunk's `cm` that reconstruct different images
+  give a nonzero `{−1, 0, 1}` vector in the kernel of `K₁` or `K₂`. The
+  maps' widths and Akita's estimator (`sis_estimator_once`, q128,
+  rank 1, ℓ∞ bound 1):
+
+  | map | width (columns) | exhaustive β search | proven-pruned (early exit) | local-minimum |
+  |---|---|---|---|---|
+  | `K₁`, a 608-coefficient chunk (t_p, u_a) | 4,864 of 7,077 | 140.98 bits (β 532) | above target (≥ 128.26) | 155.3 bits |
+  | `K₁` at the bound, 884 coefficients | 7,072 | 128.26 bits (β 484) | above target | 141.3 bits |
+  | `K₁` one past the cell | 7,078 | — | 127.995 bits | 141.0 bits |
+  | `K₂` (every chunk) | 256 of 508 | — | above target | 168.8 bits |
+  | `K₁`, t_D (64 coefficients) | 512 | — | inside the cell (narrower than 4,864) | — |
+
+  The cell is the authority every compression map is priced by
+  (`min_compression_secure_rank`). Balancing keeps the chunks t_p and u_a
+  use 12.7 bits above the target (140.98 against 128.26 at the bound); the
+  bound's 0.26-bit margin applies only to an image that fills a whole
+  chunk. The chain rows'
+  α-reduction error is unchanged per row (degree ≤ 15), and there are
+  fewer rows. The binary constraint covers ξ₁ and ξ₂ of every chunk, as
+  before; ξ₁'s length depends only on the image, and each removed chunk
+  removes one ξ₂ (2,048 digits). The response schedule is keyed by `e`'s
+  length, so a shorter `e` selects its row by the existing lookup.
+  Hiding is unchanged: compressed forms are functions of the raw images
+  (D9).
+- *Where the chunk geometry is bound.* It is a function of the modulus
+  profile and the image length alone (`compression::chunks`), which both
+  roles and `CompressionShape::payload_len` read, so every payload length
+  the verifier receives follows from public parameters, as before. No
+  transcript site moves. Message lengths change at the pad commitment and
+  the cut (one chunk fewer each), at the auxiliary block (fewer slots) and
+  in the response proof (fewer chains in `e` and in Item 2).
+- *Slot sharing.* A shared slot z is defined once, by the product row
+  `x·y = z` the first term emits, and each later term with the same key
+  reads z. The key is the ordered list of opening ids whose decoded values
+  the chain multiplies, so every term with that key computes the same
+  value in the clear verifier: the decoded relation is the clear stage
+  checks, and Lemma `wo:lem:residual-correct` holds as before. The memo
+  keys on structure only (ids, never values), and the shape, values and
+  rows domains each run the same lowering, in the same order, over a
+  fresh memo, so they allocate the same slots, with each slot still
+  defined by one earlier row (the acyclic chain of D12). ZK: the
+  relation's shape is public and there are fewer pads.
+
+**Not done, and why.**
+
+- *One-chunk t_p.* It needs t_p ≤ 884 coefficients, i.e. `rank_p·64 ≤ 884`,
+  rank ≤ 13 at d = 64. A_p must be SIS-binding at the Σ collision radius
+  R_Σ ≈ 2^47.82, because the Σ extractor certifies the pads only inside its
+  Gaussian box (`sigma_matrix_rank`, `specs/whiteout-o7-sigma-radius.md`
+  §3): the Σ-binding table gives rank 18 for widths up to 2,463 columns and
+  19 above (muldiv's A_p is 3,330 columns, rank 19), and hardness tracks
+  n = rank·d, so another ring dimension does not help. The tables give
+  rank 13 at d = 64 only at radii up to about 2^39.7 (O7 §3.2), 2^8 below
+  R_Σ. Narrowing A_p to rank 18 would still need 2 chunks (1,152
+  coefficients). A chain with a 1,216-coefficient source needs a rank-2
+  first map, whose 32-coefficient output needs 512 `R_8` columns at the
+  second map, over its cell's 508; a third map would break the fixed
+  two-map chain.
+- *The 2 defining slots.* Distributing an affine operand over its
+  openings (`(Σ c_i o_i + c₀)·y = Σ o_i·(c_i y) + c₀ y`, a multi-pair row)
+  would remove both (−32 B), at the cost of 35 + 3 more operand pads for
+  stage 1's and stage 2's affine factors. Not taken; the paper also counts
+  2 affine operands.
+- *The rest.* Akita's 2 slots are the degree-4 range leaf's square
+  (`check_range_leaf`), and each remaining product slot is an
+  intermediate of a product of h ≥ 3 distinct hidden factors (h − 2 per
+  product). Every slot holds a uniformly masked field element, so
+  nothing in the block compresses.
+
+**Measured** (release, `--backend optimized`; proof wire bytes):
+
+| | muldiv | fib 2^16 | fib 2^20 |
+|---|---|---|---|
+| before (whiteout/dev 9cb3ee7ec) | 93,892 | 96,072 | 98,458 |
+| after, run 1 (884 + 332 chunks) | 93,358 | 95,513 | 97,896 |
+| after, run 2 (balanced 608 + 608) | 93,325 | 95,535 | 97,883 |
+| Δ | −534 / −567 | −559 / −537 | −562 / −575 |
+
+Per region, identical in both runs: pads −128, cm(u_a) in the masked
+prefix −128, auxiliary block −208 (720 → 512), so −464 B is deterministic.
+The rest is the response proof, which varies run to run by about 100 B
+(V6; here 70,324–70,358 / 70,556–70,578 / 70,742–70,755 against
+70,428 / 70,651 / 70,854 before), plus a byte or two of variable-length
+encoding in the prefix, so the regions sum to the totals only within that
+spread (fib 2^20, run 1: −563 by region against −562 in total).
+Balancing does not change the byte count: the payload is 8 coefficients
+per chunk either way.
+
+**For the paper.** None for the chunk bound (it is the paper's). For the
+auxiliary count: say that a product repeated across terms is one gate.

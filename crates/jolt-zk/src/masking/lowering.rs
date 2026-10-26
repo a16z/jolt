@@ -4,8 +4,9 @@
 //! over a [`ClaimDomain`] (`jolt-transcript`'s, shared with Akita's stage
 //! checks): an affine value plus each term's last product, left pending so
 //! that a check can land it without a slot ([`ClaimDomain::products_into`]).
-//! Every other intermediate product takes one auxiliary slot.
-//! The allocation depends only on the formula's structure, never on values,
+//! Every other intermediate product takes one auxiliary slot, shared by
+//! every term that repeats it ([`ProductMemo`]).
+//! The allocation depends only on the formulas' structure, never on values,
 //! so the same routine serves three domains:
 //!
 //! - [`OperandShapeDomain`] counts auxiliary slots and records the product
@@ -15,6 +16,9 @@
 //!
 //! Auxiliary slots form an acyclic chain: each is defined by exactly one
 //! product row or defining affine row whose inputs are earlier slots.
+
+use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
 
 use jolt_algebra::Field;
 use jolt_claims::{Expr, FactoredExpr, Source};
@@ -504,13 +508,55 @@ impl<V: Clone> ProductSum<V> {
     }
 }
 
+/// The intermediate products a lowering has taken slots for, keyed by their
+/// opening factors in chain order. One memo spans a whole relation's
+/// lowering, so a product of the same openings that recurs across terms,
+/// members or stages takes one slot ([`lower_factored`]). Keys are
+/// structural, so every domain hits the same entries.
+///
+/// Contract: one memo per lowering of one relation in one domain. Its values
+/// are that domain's slots, so another domain, or a second pass over the same
+/// relation, starts from a fresh memo.
+#[derive(Debug)]
+pub struct ProductMemo<O, V> {
+    products: BTreeMap<Vec<O>, V>,
+}
+
+impl<O, V> Default for ProductMemo<O, V> {
+    fn default() -> Self {
+        Self {
+            products: BTreeMap::new(),
+        }
+    }
+}
+
+impl<O: Ord + Clone, V: Clone> ProductMemo<O, V> {
+    /// `x · y`, with `key` the openings of `x · y` in chain order: the slot
+    /// an earlier term took for the same key, or a new one.
+    fn product<F, D>(&mut self, key: Option<&[O]>, x: V, y: V, domain: &mut D) -> Result<V, ZkError>
+    where
+        D: ClaimDomain<F, Value = V, Error = ZkError>,
+    {
+        let Some(key) = key else {
+            return domain.product(x, y);
+        };
+        match self.products.entry(key.to_vec()) {
+            Entry::Occupied(product) => Ok(product.get().clone()),
+            Entry::Vacant(slot) => Ok(slot.insert(domain.product(x, y)?).clone()),
+        }
+    }
+}
+
 /// Lowers `expr` into `domain`. Openings resolve to domain values; challenges
 /// and derived ids resolve to public scalars. Auxiliary slots are allocated
-/// per term from its structure and the domain's [`OperandRule`] alone: a term
-/// with h ≥ 2 hidden factors takes h − 2 product slots and leaves its last
-/// product pending, plus, under [`OperandRule::MaskedSlot`], one defining
-/// slot when none of its factors is a single opening. No term is skipped,
-/// whatever its coefficient.
+/// per term from its structure, the domain's [`OperandRule`] and `products`
+/// alone, never from values. A term with h ≥ 2 hidden factors chains its
+/// first single-opening factor, then the others in formula order, and
+/// leaves the last product pending: h − 2 intermediate products, each of
+/// which takes a slot unless an earlier term took one for the same openings
+/// in the same order (`products`). Under [`OperandRule::MaskedSlot`] a term
+/// with no single-opening factor first takes one defining slot. No term is
+/// skipped, whatever its coefficient.
 ///
 /// # Errors
 ///
@@ -519,18 +565,20 @@ impl<V: Clone> ProductSum<V> {
 pub fn lower_factored<F, O, P, C, D>(
     expr: &FactoredExpr<F, O, P, C>,
     domain: &mut D,
+    products: &mut ProductMemo<O, D::Value>,
     opening: &mut impl FnMut(&O) -> Result<D::Value, ZkError>,
     public: &mut impl FnMut(&Source<O, P, C>) -> Result<F, ZkError>,
 ) -> Result<ProductSum<D::Value>, ZkError>
 where
     F: Field,
+    O: Ord + Clone,
     D: LoweringDomain<F, Error = ZkError>,
 {
     let mut sum = ProductSum::zero(domain);
     for term in &expr.terms {
         let mut scale = term.coefficient;
-        let mut hidden = Vec::new();
-        let mut operand = None;
+        // Each hidden factor's value, and its opening when it is a single one.
+        let mut hidden: Vec<(D::Value, Option<&O>)> = Vec::new();
         for factor in &term.factors {
             match classify(factor)? {
                 Factor::Public => scale *= evaluate_affine(factor, domain, opening, public)?.1,
@@ -546,13 +594,10 @@ where
                             scale *= public(source)?;
                         }
                     }
-                    if operand.is_none() {
-                        operand = Some(hidden.len());
-                    }
-                    hidden.push(opening(id)?);
+                    hidden.push((opening(id)?, Some(id)));
                 }
                 Factor::Affine => {
-                    hidden.push(evaluate_affine(factor, domain, opening, public)?.0);
+                    hidden.push((evaluate_affine(factor, domain, opening, public)?.0, None));
                 }
             }
         }
@@ -563,19 +608,27 @@ where
             },
             1 => ProductSum {
                 pairs: Vec::new(),
-                affine: hidden.swap_remove(0),
+                affine: hidden.swap_remove(0).0,
             },
             _ => {
+                let operand = hidden.iter().position(|(_, id)| id.is_some());
+                let (first, first_id) = hidden.remove(operand.unwrap_or(0));
                 let mut product = match (operand, domain.operands()) {
-                    (Some(index), _) => hidden.remove(index),
-                    (None, OperandRule::Affine) => hidden.remove(0),
-                    (None, OperandRule::MaskedSlot) => domain.define_auxiliary(hidden.remove(0))?,
+                    (Some(_), _) | (None, OperandRule::Affine) => first,
+                    (None, OperandRule::MaskedSlot) => domain.define_auxiliary(first)?,
                 };
-                let last = hidden.pop().ok_or(ZkError::InvalidRelation {
+                let (last, _) = hidden.pop().ok_or(ZkError::InvalidRelation {
                     reason: "a product term lost its last factor",
                 })?;
-                for factor in hidden {
-                    product = domain.product(product, factor)?;
+                // The chain's openings so far, while it is a product of
+                // openings alone.
+                let mut key = first_id.map(|id| vec![id.clone()]);
+                for (factor, id) in hidden {
+                    key = key.zip(id).map(|(mut key, id)| {
+                        key.push(id.clone());
+                        key
+                    });
+                    product = products.product(key.as_deref(), product, factor, domain)?;
                 }
                 ProductSum {
                     pairs: vec![(product, last)],

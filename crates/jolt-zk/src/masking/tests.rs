@@ -24,7 +24,7 @@ const NUM_VARS: usize = 3;
 const DEGREE: usize = 2;
 const UNISKIP_DOMAIN: usize = 3;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Opening {
     A,
     B,
@@ -85,6 +85,7 @@ fn layout() -> PadLayout {
     lower_factored(
         &product(),
         &mut shape,
+        &mut ProductMemo::default(),
         &mut |id| {
             Ok(Some(PadIndex(match id {
                 Opening::A => base - 2,
@@ -138,6 +139,7 @@ fn prove() -> Proof {
     let _ = lower_factored(
         &product(),
         &mut values,
+        &mut ProductMemo::default(),
         &mut |id| {
             Ok(match id {
                 Opening::A => a[0],
@@ -231,6 +233,7 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
     let output = lower_factored(
         &product(),
         &mut rows,
+        &mut ProductMemo::default(),
         &mut |id| {
             Ok(match id {
                 Opening::A => AffineRow::masked(a, PadIndex(slot_a)),
@@ -359,11 +362,22 @@ fn shape_and_values_domains_allocate_alike() {
             opening(Opening::Uniskip),
         ]) + FactoredExpr::from(opening::<Fr, Opening, (), ()>(Opening::A))
             + FactoredExpr::product(vec![opening(Opening::A), opening(Opening::B)])
-                .scale(Fr::from_u64(0));
+                .scale(Fr::from_u64(0))
+            + FactoredExpr::product(vec![
+                opening(Opening::A),
+                opening(Opening::Uniskip),
+                opening(Opening::B),
+            ])
+            + FactoredExpr::product(vec![
+                opening(Opening::A),
+                opening(Opening::Uniskip),
+                opening(Opening::A),
+            ]);
     let mut shape = OperandShapeDomain::new(3);
     let _ = lower_factored(
         &three_factors,
         &mut shape,
+        &mut ProductMemo::default(),
         &mut |id| Ok(Some(PadIndex(*id as usize))),
         &mut |_| Ok(Fr::from_u64(0)),
     )
@@ -373,6 +387,7 @@ fn shape_and_values_domains_allocate_alike() {
     let value = lower_factored(
         &three_factors,
         &mut values,
+        &mut ProductMemo::default(),
         &mut |id| {
             Ok(match id {
                 Opening::A => fr(2),
@@ -384,11 +399,20 @@ fn shape_and_values_domains_allocate_alike() {
     )
     .unwrap();
     // A·(B + U) takes a slot and its product with U stays pending, as does
-    // the zero-coefficient A·B.
-    assert_eq!(shape.auxiliary.len(), 1);
-    assert_eq!(values.auxiliary, vec![fr(16)]);
-    assert_eq!(value.pairs, vec![(fr(16), fr(5)), (fr(2), fr(0))]);
-    assert_eq!(evaluate(&value), fr(80) + fr(2));
+    // the zero-coefficient A·B. A·U takes one slot for both terms that
+    // repeat it.
+    assert_eq!(shape.auxiliary.len(), 2);
+    assert_eq!(values.auxiliary, vec![fr(16), fr(10)]);
+    assert_eq!(
+        value.pairs,
+        vec![
+            (fr(16), fr(5)),
+            (fr(2), fr(0)),
+            (fr(10), fr(3)),
+            (fr(10), fr(2))
+        ]
+    );
+    assert_eq!(evaluate(&value), fr(80) + fr(2) + fr(30) + fr(20));
 }
 
 /// `Σ_k x_k · y_k + affine`.
@@ -465,6 +489,7 @@ fn lowering_domains_agree_on_random_formulas() {
         lower_factored(
             &expr,
             &mut shape,
+            &mut ProductMemo::default(),
             &mut |id| Ok(Some(PadIndex(*id))),
             &mut public.clone(),
         )
@@ -477,6 +502,7 @@ fn lowering_domains_agree_on_random_formulas() {
         let value = lower_factored(
             &expr,
             &mut values,
+            &mut ProductMemo::default(),
             &mut |id| Ok(openings[*id]),
             &mut public.clone(),
         )
@@ -495,6 +521,7 @@ fn lowering_domains_agree_on_random_formulas() {
         let output = lower_factored(
             &expr,
             &mut rows,
+            &mut ProductMemo::default(),
             &mut |id| Ok(AffineRow::masked(openings[*id] + pads[*id], PadIndex(*id))),
             &mut public.clone(),
         )
@@ -537,6 +564,7 @@ fn operand_rules_decide_the_defining_slot() {
         lower_factored(
             &expr,
             &mut shape,
+            &mut ProductMemo::default(),
             &mut |id| Ok(Some(PadIndex(*id))),
             &mut no_public,
         )
@@ -550,6 +578,7 @@ fn operand_rules_decide_the_defining_slot() {
         let value = lower_factored(
             &expr,
             &mut values,
+            &mut ProductMemo::default(),
             &mut |id| Ok(openings[*id]),
             &mut no_public,
         )
@@ -562,6 +591,7 @@ fn operand_rules_decide_the_defining_slot() {
         lower_factored(
             &expr,
             &mut rows,
+            &mut ProductMemo::default(),
             &mut |id| Ok(AffineRow::masked(openings[*id] + pads[*id], PadIndex(*id))),
             &mut no_public,
         )

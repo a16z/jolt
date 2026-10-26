@@ -22,8 +22,8 @@ mod tests;
 
 pub use backend::{ErasedSource, ZkBackend, ZkError};
 pub use lowering::{
-    lower_factored, sumcheck_rows, LoweringDomain, OperandShapeDomain, ProductSum, RoundFormat,
-    RowsDomain, ValuesDomain,
+    lower_factored, sumcheck_rows, LoweringDomain, OperandShapeDomain, ProductMemo, ProductSum,
+    RoundFormat, RowsDomain, ValuesDomain,
 };
 pub use pads::{
     CommittedPads, CommittedPadsView, MaskedProver, MaskedVerifier, PadIndex, PadLayout,
