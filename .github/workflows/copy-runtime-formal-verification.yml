@@ -1,0 +1,50 @@
+name: Copy runtime formal verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/copy-runtime-formal-verification.yml"
+      - "jolt-platform/src/memory.S"
+      - "jolt-platform/src/memory.rs"
+      - "proofs/lean/copy-runtime/**"
+      - "rust-toolchain.toml"
+  pull_request:
+    branches: ["**", main]
+    paths:
+      - ".github/workflows/copy-runtime-formal-verification.yml"
+      - "jolt-platform/src/memory.S"
+      - "jolt-platform/src/memory.rs"
+      - "proofs/lean/copy-runtime/**"
+      - "rust-toolchain.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  copy-runtime-lean:
+    name: Check Lean proofs of memcpy/memmove
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # regenerate.sh assembles memory.S with the pinned rustc and lists it
+      # with that toolchain's llvm-objdump.
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: llvm-tools
+          cache: false
+      - name: Build the proofs and the axiom audit
+        uses: leanprover/lean-action@50fcf42d2e460296f1a34b402e990d1b24f8b596 # v1
+        with:
+          lake-package-directory: ./proofs/lean/copy-runtime
+          build: true
+          test: false
+      - name: Require the proofs to match memory.S and contain no sorry
+        working-directory: ./proofs/lean/copy-runtime
+        run: ./check.sh
