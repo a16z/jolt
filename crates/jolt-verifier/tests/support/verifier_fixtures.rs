@@ -405,7 +405,7 @@ impl VerifierFixtureKind {
             #[cfg(feature = "zk")]
             Self::ZkMulDivSmall => "zk-muldiv-small-masked",
             #[cfg(feature = "zk")]
-            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-masked",
+            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-masked-shared-products",
             #[cfg(feature = "zk")]
             Self::ZkAdviceConsumer => "zk-advice-consumer-masked",
         }

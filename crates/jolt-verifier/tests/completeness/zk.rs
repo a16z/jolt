@@ -65,8 +65,8 @@ fn zk_muldiv_masked_shape_matches_golden() {
         .expect("auxiliary block");
     let relation = masked.relation(&auxiliary).expect("residual relation");
     let layout = masked.pads.layout();
-    // Auxiliary slots: one per intermediate product that is not a term's
-    // last (26). BlindFold takes affine operands, so Spartan's outer and
+    // Auxiliary slots: one per distinct intermediate product that is not a
+    // term's last (26; this layout repeats none). BlindFold takes affine operands, so Spartan's outer and
     // product remainders need no defining slot. Each term's last product is
     // a pair of its stage's check row: stage 1's single pair, then the
     // multi-pair rows of stages 2–6, after the 26 single-pair rows of the
@@ -139,6 +139,23 @@ fn zk_muldiv_every_masked_value_is_constrained() {
         unconstrained.is_empty(),
         "masked values no row constrains: {unconstrained:?}"
     );
+}
+
+/// The committed-program fixture's auxiliary slots. Its bytecode read-RAF
+/// cycle output (`ReadRafCyclePhaseCommitted`) repeats the bytecode RA
+/// product in every staged-Val term; the lowering takes one slot per
+/// distinct product (D34): 27, where one slot per repetition took 38.
+#[test]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+fn zk_committed_muldiv_auxiliary_slots_match_golden() {
+    let case = crate::support::verifier_fixtures::zk_committed_muldiv_case();
+    let mut transcript = VerifierTranscript::<JoltSponge>::new(
+        &jolt_protocol_id::<JoltSponge>(),
+        JOLT_SESSION,
+        &case.proof.narg,
+    );
+    let masked = masked_stages(&case, &mut transcript);
+    assert_eq!(masked.pads.layout().auxiliary.len(), 27);
 }
 
 /// Replays the stage spine over the fixture's argument string and returns

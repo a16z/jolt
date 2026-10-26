@@ -513,6 +513,10 @@ impl<V: Clone> ProductSum<V> {
 /// lowering, so a product of the same openings that recurs across terms,
 /// members or stages takes one slot ([`lower_factored`]). Keys are
 /// structural, so every domain hits the same entries.
+///
+/// Contract: one memo per lowering of one relation in one domain. Its values
+/// are that domain's slots, so another domain, or a second pass over the same
+/// relation, starts from a fresh memo.
 #[derive(Debug)]
 pub struct ProductMemo<O, V> {
     products: BTreeMap<Vec<O>, V>,

@@ -10,7 +10,8 @@
 //! - one row equates that running claim with the batched output claim; each
 //!   output term's last product lands in that row as one of its pairs;
 //! - claim formulas come from `jolt-claims` in factored form and lower through
-//!   [`lower_factored`], one auxiliary slot per other intermediate product;
+//!   [`lower_factored`], one auxiliary slot per other intermediate product,
+//!   shared by every term that repeats it;
 //! - runtime claim aliases, which a masked proof sends, become equality rows.
 //!
 //! Each stage file computes the stage's public values (eq/lt evaluations,
