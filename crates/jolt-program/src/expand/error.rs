@@ -10,6 +10,8 @@ pub enum ExpansionError {
     InlineRegistersStillAllocated,
     #[error("inline expansion attempted to write to register {register}, but inline outputs must use x0 or virtual registers >= {minimum_register}")]
     InvalidInlineWriteTarget { register: u8, minimum_register: u8 },
+    #[error("inline load or store offset {offset} is outside the signed 12-bit range")]
+    InlineMemoryOffsetOutOfRange { offset: i128 },
     #[error("expansion produced an empty instruction sequence")]
     EmptySequence,
     #[error("expansion produced {actual} rows, exceeding the per-source capacity {capacity}")]

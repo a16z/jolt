@@ -233,6 +233,18 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     // has no satisfying RAM address. jolt-lookup-tables pins that a memory row
     // looks up no table or an `AddressOffset` table; any other table would
     // shift its RAM address.
+    //
+    // `Rs1Value + Imm` is the unwrapped sum, while the tracer wraps `ea` mod
+    // 2^64, so an access whose sum carries has no satisfying RAM address on
+    // any layout the tracer can allocate. Load and store immediates are signed
+    // 12-bit (decoded rows by encoding, inline rows by jolt-program's
+    // `materialize_inline`), so such an access lands within 2 KiB of 0 or
+    // 2^64: past that RAM, or below `lowest_address`, which is at least 2^30
+    // because `MemoryLayout::try_new` pads I/O below `RAM_START_ADDRESS` = 2^31
+    // to a power of two and rejects a region reaching 0. The tracer faults
+    // there, except that it reads loads below `lowest_address` as 0. Those are
+    // unprovable unwrapped too, except in the no-access zero doubleword: a
+    // load that carries into it runs but cannot be proven.
     a_rows.push(row::<F>(&[(V_FLAG_LOAD, 1), (V_FLAG_STORE, 1)]));
     b_rows.push(row::<F>(&[
         (V_RAM_ADDRESS, 1),

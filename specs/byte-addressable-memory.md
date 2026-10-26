@@ -327,6 +327,17 @@ enters and in how applicability is encoded; both deviations remove protocol surf
   - They keep the signed load/store immediate (`FormatLoad`/`FormatS`): constraint 0 reads the
     same `Imm` column as the lookup index, so the `u64`-wrapped immediate of the other
     `AddOperands` rows would put `RamAddress` `2^64` away.
+  - Constraint 0 adds `Rs1Value + Imm` unwrapped, so an access whose sum carries past 2^64 is
+    unprovable. Decoded offsets are signed 12-bit, and `materialize_inline` rejects an inline load
+    or store offset outside that range, so such an access lands within 2 KiB of 0 or 2^64, outside
+    the memory layout of any program the tracer can run. The tracer faults there or reads a load
+    as 0, which is unprovable anyway except in the no-access zero doubleword (the argument is
+    constraint 0's NOTE in `rv64.rs`).
+  - On main, narrow accesses formed the address with wrapping lookups (`AlignAddr` for loads,
+    `ADDI` for stores), so any inline offset worked and a narrow load carrying into the zero
+    doubleword proved; only carrying `LD`/`SD` accesses were unprovable. The inline bound is
+    static, since `rs1` is unknown at expansion, so it also rejects wider offsets that do not
+    carry, which main proved. No shipped inline uses one.
   - Each row carries its own width's table, so a narrow store's load and store rows are pinned
     independently.
 - **Sequences.** Tier 0 rejected the fused single-lookup extract, so loads keep the window-mask

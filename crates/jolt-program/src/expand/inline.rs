@@ -216,6 +216,10 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit or expand a load-shaped I-format row with a signed byte offset.
+    ///
+    /// Materialization rejects an offset outside RISC-V's signed 12-bit range;
+    /// for a wider one, compute the address into an inline register and use
+    /// that as the base.
     pub fn emit_ld(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -244,6 +248,10 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit or expand an S-format row with a signed byte offset.
+    ///
+    /// Materialization rejects an offset outside RISC-V's signed 12-bit range;
+    /// for a wider one, compute the address into an inline register and use
+    /// that as the base.
     pub fn emit_s(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,

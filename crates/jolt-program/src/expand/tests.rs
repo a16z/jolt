@@ -320,6 +320,62 @@ fn inline_provider_output_is_validated_and_stamped() {
 }
 
 #[test]
+fn inline_provider_memory_offsets_must_fit_twelve_bits() -> Result<(), ExpansionError> {
+    struct MemoryProvider {
+        kind: SourceInstructionKind,
+        offset: i64,
+    }
+
+    impl InlineExpansionProvider for MemoryProvider {
+        fn expand_inline(
+            &mut self,
+            instruction: &SourceInstruction,
+            _profile: JoltInstructionProfile,
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+            let mut builder = InlineExpansionBuilder::new(*instruction.row());
+            let register = builder.allocate_for_inline()?;
+            if self.kind == SourceInstructionKind::SD {
+                builder.emit_s(self.kind, 10, *register, self.offset);
+            } else {
+                builder.emit_ld(self.kind, *register, 10, self.offset);
+            }
+            builder.release(register);
+            builder.finalize()
+        }
+    }
+
+    let input = instruction(SourceInstructionKind::Inline, Some(3), false);
+    let expand = |kind, offset| {
+        expand_instruction_with_provider(
+            &input,
+            &mut ExpansionAllocator::new(),
+            &mut MemoryProvider { kind, offset },
+            RV64IMAC_JOLT,
+        )
+    };
+
+    for (kind, offset) in [
+        (SourceInstructionKind::LBU, 2047),
+        (SourceInstructionKind::SD, -2048),
+    ] {
+        let memory_row = rows(expand(kind, offset)?)[0];
+        assert_eq!(memory_row.operands.imm, i128::from(offset));
+    }
+    for (kind, offset) in [
+        (SourceInstructionKind::LBU, 0x8000_1001),
+        (SourceInstructionKind::SD, 2048),
+        (SourceInstructionKind::SD, -2049),
+    ] {
+        assert!(matches!(
+            expand(kind, offset),
+            Err(ExpansionError::InlineMemoryOffsetOutOfRange { offset: rejected })
+                if rejected == i128::from(offset)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError> {
     struct AllocatingProvider;
 
