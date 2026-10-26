@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793040228828,
+  "lastUpdate": 1793042472109,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -200266,6 +200266,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 862068,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b4f9183e11089370f2603b1f7645667239e4bd64",
+          "message": "chore(deps): clear the RustSec findings behind the nightly cargo audit (#2147)\n\n* chore(deps): clear the RustSec findings behind the nightly cargo audit\n\nBump ctutils 0.4.2 -> 0.4.6 (RUSTSEC-2026-0385) in the root lockfile and\nthe seven fuzz lockfiles that pin it, and zstd-sys 2.0.16 -> 2.1.2\n(RUSTSEC-2026-0410) in the root lockfile.\n\nIgnore the advisories that have no compatible fix, in a new\n.cargo/audit.toml with the reachability argument for each:\n\n- RUSTSEC-2026-0387 (crypto-bigint 0.5.5): the RustCrypto 0.13 curve\n  stack needs 0.5, and the latest alloy releases still require k256 0.13.\n  Only examples/sig-recovery (public-key recovery) and jolt-inlines-p256\n  tests (throwaway keys) reach it.\n- RUSTSEC-2026-0391 and RUSTSEC-2026-0395..0406 (zstd 0.13.3,\n  zstd-safe 7.2.4): lockfile-only. The weak `reth-codecs?/serde` edge\n  locks reth-codecs -> reth-zstd-compressors -> zstd, but no build enables\n  reth-codecs, and reth-zstd-compressors 0.8.2 still requires zstd 0.13.\n\nAlso correct the workflow header, which still said only two fuzz\nworkspaces commit a lockfile; all twelve do.\n\nCloses #2138.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* chore(deps): drop reth-codecs from the lockfile instead of ignoring zstd\n\nThe sig-recovery example decodes EIP-2718 bytes and never serializes a reth\ntype, so it needs neither reth crate's `serde` feature nor\nreth-ethereum-primitives' default `std`. Those features carried the weak\n`reth-codecs?/...` edges that locked reth-codecs -> reth-zstd-compressors ->\nzstd. Without them, 13 packages leave Cargo.lock, including zstd, zstd-safe\nand zstd-sys, so the 13 zstd ignores go away. RUSTSEC-2026-0387 is the only\nignore left.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* chore(deps): drop the reth feature comment from Cargo.toml\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* chore(deps): move the jolt-inlines-p256 tests to p256 0.14\n\nThe p256 0.13 dev-dependency was one of two paths to crypto-bigint 0.5.5\n(RUSTSEC-2026-0387). p256 0.14 sits on elliptic-curve 0.14 and\ncrypto-bigint 0.7.10. It takes a rand_core 0.10 RNG, so the rand\ndev-dependency moves to 0.10 (already locked via plonky3). It also\nrenames `to_encoded_point` to `to_sec1_point` and deprecates\n`SigningKey::random` in favor of `Generate::generate_from_rng`.\n\nalloy's k256 0.13 in examples/sig-recovery is now the only path to\ncrypto-bigint 0.5, and the audit.toml entry says so.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T11:14:32-07:00",
+          "tree_id": "a74e2647cb4d119cf073e370d7271b6b0a6aa3f9",
+          "url": "https://github.com/a16z/jolt/commit/b4f9183e11089370f2603b1f7645667239e4bd64"
+        },
+        "date": 1793042464314,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.4836,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7981,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 504640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0745,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500656,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.9065,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 502428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.0775,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 499624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9709,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 216180,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.0532,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866748,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.9154,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 497488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6805,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.353,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 496712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4392,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 41.9888,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1971632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.275,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 649276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 93.9191,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1168508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9638,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 504332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.2336,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 506976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.7342,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 867356,
             "unit": "KB",
             "extra": ""
           }
