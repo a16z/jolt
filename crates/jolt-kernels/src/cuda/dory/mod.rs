@@ -7,7 +7,7 @@
 #[cfg(any(test, not(feature = "zk")))]
 mod arena;
 mod combine;
-#[cfg(not(feature = "zk"))]
+#[cfg(any(test, not(feature = "zk")))]
 mod curve;
 #[cfg(test)]
 mod handle;

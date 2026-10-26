@@ -93,6 +93,12 @@ impl Arena {
         })
     }
 
+    fn primary(&self) -> Result<&CudaSlice<u64>, CudaError> {
+        self.buffers.first().ok_or(CudaError::InvariantViolation {
+            reason: "a Dory arena holds no device buffer",
+        })
+    }
+
     const fn limbs(&self) -> usize {
         self.capacity * self.words
     }
@@ -428,6 +434,70 @@ pub(super) fn mirrors(family: Family) -> usize {
 }
 
 #[cfg(test)]
+const MILLER_SPLIT_PAIRS: usize = 1 << 13;
+
+#[cfg(test)]
+fn lane_chunks(lanes: usize, devices: usize) -> Vec<Range<usize>> {
+    let devices = devices.clamp(1, lanes.max(1));
+    let base = lanes / devices;
+    let remainder = lanes % devices;
+    let mut chunks = Vec::with_capacity(devices);
+    let mut start = 0;
+    for device in 0..devices {
+        let len = base + usize::from(device < remainder);
+        chunks.push(start..start + len);
+        start += len;
+    }
+    chunks
+}
+
+#[cfg(test)]
+pub(super) fn multi_miller_batch(
+    segments: &[(usize, usize)],
+    count: usize,
+) -> Result<Vec<u64>, CudaError> {
+    G1_ARENA.with_borrow(|g1| {
+        G2_ARENA.with_borrow(|g2| match (g1.as_ref(), g2.as_ref()) {
+            (Some(g1), Some(g2)) => miller_batch(g1, g2, segments, count),
+            _ => Err(closed()),
+        })
+    })
+}
+
+#[cfg(test)]
+fn miller_batch(
+    g1: &Arena,
+    g2: &Arena,
+    segments: &[(usize, usize)],
+    count: usize,
+) -> Result<Vec<u64>, CudaError> {
+    let pairs = g1.buffers.iter().zip(&g2.buffers);
+    let mirrored: Vec<(&CudaSlice<u64>, &CudaSlice<u64>)> = pairs.collect();
+    let split = mirrored.len() > 1
+        && segments.len() > 1
+        && segments.len().saturating_mul(count) >= MILLER_SPLIT_PAIRS;
+    if !split {
+        return device(0)?.multi_miller_batch(g1.primary()?, g2.primary()?, segments, count);
+    }
+    let tasks: Vec<DeviceTask<'_, Vec<u64>, CudaError>> =
+        lane_chunks(segments.len(), mirrored.len())
+            .into_iter()
+            .zip(&mirrored)
+            .enumerate()
+            .map(|(ordinal, (lanes, &(g1, g2)))| {
+                let task: DeviceTask<'_, Vec<u64>, CudaError> = Box::new(move || {
+                    let lanes = segments.get(lanes).ok_or(CudaError::InvariantViolation {
+                        reason: "a Dory Miller lane chunk fell outside the segment list",
+                    })?;
+                    device(ordinal)?.multi_miller_batch(g1, g2, lanes, count)
+                });
+                task
+            })
+            .collect();
+    Ok(fan_out(tasks)?.concat())
+}
+
+#[cfg(test)]
 pub(super) fn g2_fixed_base(
     base_offset: usize,
     out_offset: usize,
@@ -507,7 +577,8 @@ pub(super) fn g2_point(limbs: &[u64]) -> G2Projective {
     reason = "test module: device storage failures fail loudly"
 )]
 mod tests {
-    use ark_bn254::{Fr, G1Affine, G1Projective, G2Affine, G2Projective};
+    use ark_bn254::{Bn254, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
+    use ark_ec::pairing::Pairing;
     use ark_ec::PrimeGroup;
     use ark_ff::UniformRand;
     use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};
@@ -516,11 +587,13 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
+    use super::super::curve::fq12;
     use super::super::handle::{span, span_g2, store_all, store_all_g2};
     use super::super::routines::{CudaG1Routines, CudaG2Routines};
 
     use super::*;
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::pairing::FQ12_LIMBS;
 
     #[test]
     fn reservations_frozen_prefixes_and_mirrors_preserve_point_storage() {
@@ -753,6 +826,79 @@ mod tests {
             G2Affine::from(expected.0),
             "a {len}-base split G2 MSM diverged from reference Dory",
         );
+    }
+
+    #[test]
+    fn lane_chunks_partition_every_lane_count_into_near_equal_runs() {
+        for lanes in [1usize, 2, 3, 4, 5, 8, 17, 64] {
+            for devices in [1usize, 2, 3, 4, 8, 64] {
+                let chunks = lane_chunks(lanes, devices);
+                assert!(
+                    chunks.len() <= devices.min(lanes),
+                    "{lanes} lane(s) over {devices} device(s) asked for {} chunk(s)",
+                    chunks.len(),
+                );
+                let mut next = 0;
+                for chunk in &chunks {
+                    assert_eq!(
+                        chunk.start, next,
+                        "{lanes} lane(s) over {devices} device(s) leave a gap at lane {next}",
+                    );
+                    next = chunk.end;
+                }
+                assert_eq!(
+                    next, lanes,
+                    "{lanes} lane(s) over {devices} device(s) do not cover the lane list",
+                );
+                let widths: Vec<usize> = chunks.iter().map(Range::len).collect();
+                let spread = widths.iter().max().copied().unwrap_or(0)
+                    - widths.iter().min().copied().unwrap_or(0);
+                assert!(
+                    spread <= 1,
+                    "{lanes} lane(s) over {devices} device(s) landed {spread} lanes apart: \
+                     {widths:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_split_miller_batch_matches_arkworks_lane_for_lane() {
+        if shared_context().is_none() {
+            return;
+        }
+        let lanes = 2 * device_count();
+        let count = MILLER_SPLIT_PAIRS.div_ceil(lanes);
+        let pairs = lanes * count;
+        let Ok(guard) = open(pairs + 64, pairs + 64) else {
+            return;
+        };
+
+        let mut rng = ChaCha20Rng::seed_from_u64(1_301);
+        let ps: Vec<_> = (0..pairs).map(|_| G1Projective::rand(&mut rng)).collect();
+        let qs: Vec<_> = (0..pairs).map(|_| G2Projective::rand(&mut rng)).collect();
+        let g1 = store_all(&ps);
+        let g2 = store_all_g2(&qs);
+        let g1_base = span(&g1).expect("a contiguous G1 pair span");
+        let g2_base = span_g2(&g2).expect("a contiguous G2 pair span");
+        let segments: Vec<(usize, usize)> = (0..lanes)
+            .map(|lane| (g1_base + lane * count, g2_base + lane * count))
+            .collect();
+
+        let limbs = multi_miller_batch(&segments, count).expect("a split Miller batch");
+        assert!(!poisoned(), "the split Miller batch poisoned the arena");
+        drop(guard);
+
+        let got: Vec<_> = limbs.chunks_exact(FQ12_LIMBS).map(fq12).collect();
+        assert_eq!(got.len(), lanes, "the split batch lost a lane");
+        for (lane, value) in got.iter().enumerate() {
+            let span = lane * count..(lane + 1) * count;
+            let expected = Bn254::multi_miller_loop(ps[span.clone()].to_vec(), qs[span].to_vec()).0;
+            assert_eq!(
+                *value, expected,
+                "lane {lane} of a {lanes}-lane x {count}-pair split batch diverged from arkworks",
+            );
+        }
     }
 
     #[test]
