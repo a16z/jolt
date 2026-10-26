@@ -135,22 +135,14 @@ pub struct CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     so_claims: CudaFunction,
     sop_round: CudaFunction,
-    #[cfg(test)]
     msm_fq_add: CudaFunction,
-    #[cfg(test)]
     msm_fq_sub: CudaFunction,
-    #[cfg(test)]
     msm_fq_mul: CudaFunction,
     msm_fq_batch_inverse: CudaFunction,
-    #[cfg(test)]
     msm_g1_double: CudaFunction,
-    #[cfg(test)]
     msm_g1_add: CudaFunction,
-    #[cfg(test)]
     msm_g1_add_affine: CudaFunction,
-    #[cfg(test)]
     msm_affine_denominators: CudaFunction,
-    #[cfg(test)]
     msm_affine_combine: CudaFunction,
     msm_from_montgomery: CudaFunction,
     msm_digits: CudaFunction,
@@ -368,22 +360,14 @@ impl CudaKernelContext {
             #[cfg(not(feature = "field-inline"))]
             so_claims: module.load_function("so_claims_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
-            #[cfg(test)]
             msm_fq_add: module.load_function("msm_fq_add_kernel")?,
-            #[cfg(test)]
             msm_fq_sub: module.load_function("msm_fq_sub_kernel")?,
-            #[cfg(test)]
             msm_fq_mul: module.load_function("msm_fq_mul_kernel")?,
             msm_fq_batch_inverse: module.load_function("msm_fq_batch_inverse_kernel")?,
-            #[cfg(test)]
             msm_g1_double: module.load_function("msm_g1_double_kernel")?,
-            #[cfg(test)]
             msm_g1_add: module.load_function("msm_g1_add_kernel")?,
-            #[cfg(test)]
             msm_g1_add_affine: module.load_function("msm_g1_add_affine_kernel")?,
-            #[cfg(test)]
             msm_affine_denominators: module.load_function("msm_affine_denominators_kernel")?,
-            #[cfg(test)]
             msm_affine_combine: module.load_function("msm_affine_combine_kernel")?,
             msm_from_montgomery: module.load_function("msm_from_montgomery_kernel")?,
             msm_digits: module.load_function("msm_digits_kernel")?,
@@ -867,17 +851,14 @@ impl CudaKernelContext {
         &self.sop_round
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_fq_add(&self) -> &CudaFunction {
         &self.msm_fq_add
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_fq_sub(&self) -> &CudaFunction {
         &self.msm_fq_sub
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_fq_mul(&self) -> &CudaFunction {
         &self.msm_fq_mul
     }
@@ -886,27 +867,22 @@ impl CudaKernelContext {
         &self.msm_fq_batch_inverse
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g1_double(&self) -> &CudaFunction {
         &self.msm_g1_double
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g1_add(&self) -> &CudaFunction {
         &self.msm_g1_add
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_g1_add_affine(&self) -> &CudaFunction {
         &self.msm_g1_add_affine
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_affine_denominators(&self) -> &CudaFunction {
         &self.msm_affine_denominators
     }
 
-    #[cfg(test)]
     pub(crate) const fn msm_affine_combine(&self) -> &CudaFunction {
         &self.msm_affine_combine
     }

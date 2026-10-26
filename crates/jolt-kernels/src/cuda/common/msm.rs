@@ -570,7 +570,6 @@ fn unflatten_jacobian(flat: &[u64]) -> Vec<JacobianLimbs> {
         .collect()
 }
 
-#[cfg(test)]
 fn unflatten_affine(flat: &[u64]) -> Vec<AffineLimbs> {
     flat.chunks_exact(AFFINE_LIMBS)
         .map(|point| {
@@ -597,7 +596,6 @@ impl CudaKernelContext {
         })
     }
 
-    #[cfg(test)]
     fn fq_binary(
         &self,
         kernel: &CudaFunction,
@@ -636,7 +634,6 @@ impl CudaKernelContext {
             .collect())
     }
 
-    #[cfg(test)]
     fn g1_binary(
         &self,
         kernel: &CudaFunction,
@@ -673,7 +670,6 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
-    #[cfg(test)]
     pub fn fq_add(
         &self,
         left: &[[u64; FQ_LIMBS]],
@@ -682,7 +678,6 @@ impl CudaKernelContext {
         self.fq_binary(self.msm_fq_add(), left, right)
     }
 
-    #[cfg(test)]
     pub fn fq_sub(
         &self,
         left: &[[u64; FQ_LIMBS]],
@@ -691,7 +686,6 @@ impl CudaKernelContext {
         self.fq_binary(self.msm_fq_sub(), left, right)
     }
 
-    #[cfg(test)]
     pub fn fq_mul(
         &self,
         left: &[[u64; FQ_LIMBS]],
@@ -700,7 +694,6 @@ impl CudaKernelContext {
         self.fq_binary(self.msm_fq_mul(), left, right)
     }
 
-    #[cfg(test)]
     pub fn fq_batch_inverse(
         &self,
         values: &[[u64; FQ_LIMBS]],
@@ -750,7 +743,6 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn g1_double(&self, points: &[JacobianLimbs]) -> Result<Vec<JacobianLimbs>, CudaError> {
         if points.is_empty() {
             return Ok(Vec::new());
@@ -771,7 +763,6 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
-    #[cfg(test)]
     pub fn g1_add(
         &self,
         left: &[JacobianLimbs],
@@ -785,7 +776,6 @@ impl CudaKernelContext {
         )
     }
 
-    #[cfg(test)]
     pub fn g1_add_affine(
         &self,
         left: &[JacobianLimbs],
@@ -799,7 +789,6 @@ impl CudaKernelContext {
         )
     }
 
-    #[cfg(test)]
     pub fn g1_batch_add_affine_pairs(
         &self,
         left: &[AffineLimbs],
