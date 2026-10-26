@@ -1,156 +1,25 @@
-//! CUDA precommitted, increment, register and instruction claim reductions.
-//! Also provides instruction-input checking, RAM output and value checking,
-//! RAM hamming-weight booleanity, Spartan outer constraints, product virtualization,
-//! shift checking, register-value evaluation, RAM RAF evaluation, instruction read-RAF,
-//! RAM/register read/write checking, witness/advice commitments, joint-opening
-//! polynomial views, and initial-RAM opening evaluation.
+//! BN254 CUDA kernels behind the same relation slots as [`crate::optimized`].
 //!
-//! [`JoltBackend::cuda`] replaces the advice, bytecode, and program-image
-//! cycle/address slots, RAM/register increment reduction, register-value
-//! reduction, instruction operand reduction, instruction-input and read-RAF checking,
-//! RAM output and value checking, hamming-weight booleanity, Spartan shift
-//! checking, register-value evaluation, RAM RAF evaluation, and RAM/register read/write checking
-//! plus witness/advice commitments, joint-opening polynomial views, and initial-RAM
-//! opening evaluation in the optimized registry.
-//! Spartan outer and product uni-skip and remainder slots use CUDA for RV64;
-//! field-inline retains the optimized implementations.
-//! [`CudaDoryScheme`] selects the PCS separately and currently forwards to CPU Dory
-//! with shared proof and setup types.
+//! The host owns relation geometry, challenges, interpolation, and the proof
+//! transcript. Device kernels reduce round evaluations and bind resident
+//! columns; exact field arithmetic preserves the optimized round polynomials.
 //!
-//! The shared CUDA runtime owns process-wide device contexts and compiled
-//! modules. [`DeviceFrVec`] stores BN254 Montgomery limbs on its owning stream;
-//! [`CudaKernelContext::fr_identity`] copies those elements on the device.
-//! Elementwise field arithmetic uses CUDA kernels over that representation
-//! and synchronizes the stream before returning each output buffer.
-//! Polynomial binding writes a fresh device buffer for either variable order;
-//! summation reduces on the device and downloads only the final field element.
-//! Equality tables use separate input/output buffers at each level to avoid races;
-//! less-than tables expand in place. Levels run in order on the owning stream.
-//! Integer inputs upload as compact limbs and convert to Montgomery form on the
-//! device. Host `i128` inputs use separate signs and magnitudes; device `i128`
-//! inputs use two's-complement limbs.
-//! `u32` prefix scans combine per-block scans with recursively scanned block
-//! sums; the host-input API transfers those sums and offsets between levels,
-//! while the device-input API keeps them on the device.
-//! [`DeviceLtPolynomial`] keeps its shift and split factors separate throughout
-//! binding; optimized stores the shift in its high table and later combines the factors.
-//! Weighted half-fold kernels promote packed integers when loading them.
-//! Contiguous rows use a block reduction; strided columns use one thread per output.
-//! Sum-of-products rounds evaluate finite points and leading coefficients on
-//! device, then reduce the per-block results for each evaluation separately.
-//! Gruen-weighted rounds cache the host's split-equality levels on device and
-//! return both endpoints and the leading coefficient to the shared host
-//! interpolation routines.
-//! Lazy one-hot selectors gather from hot indices and challenge-scaled address
-//! tables for both binding orders. CUDA materializes a dense table at the third
-//! bind (`T/8` entries); optimized's shared lazy-RA path normally waits until `T/16`.
-//! Dense-product rounds combine dense factors with lazy one-hot and split
-//! less-than factors. Shards sum their round evaluations on the host, then
-//! gather their final scalars onto one device to bind the remaining shard bits.
-//! Integer-weighted scatters accumulate unreduced products in split 32-bit
-//! lanes using atomic additions, then perform one field reduction per bucket.
-//! One-hot cycle folds use shared-memory buckets when the address domain fits
-//! and otherwise accumulate into global slots before field reduction.
-//! BN254 base-field arithmetic supports curve coordinates. Batch inversion
-//! assigns independent chunks to GPU threads and preserves zero entries.
-//! G1 kernels double and add Jacobian points, including mixed affine addends.
-//! Batched affine-pair addition uses those inversions for finite, distinct-x pairs.
-//! G1 normalization batch-inverts Jacobian z-coordinates and keeps the resulting
-//! affine base table on the device.
-//! Segmented G1 sums select thread, warp, or block reductions according to segment
-//! sizes. One-hot chunks build their segment plan on the host and sum on device.
-//! Weighted G1 bucket sums split across blocks and merge their partials per row;
-//! window folding combines those results from the most significant window down.
-//! Fr row MSMs extract scalar windows and build buckets on the device. Windows
-//! batch within a memory budget and otherwise accumulate sequentially.
-//! Signed row MSMs reuse those buckets with 64-bit magnitudes and separate signs;
-//! host staging rejects inputs outside `[-u64::MAX, u64::MAX]`.
-//! Commitment increments derive those magnitudes and sign bytes directly from
-//! packed trace pre/post values, with absent destinations contributing zero.
-//! One-hot row MSMs count and scatter indices on device, using shared-memory
-//! tallies when they fit. The host scans counts before the segmented G1 sums.
-//! For fully covered chunks, dominant buckets can use the total base sum minus
-//! the other buckets; cold cycles disable this complement shortcut.
-//! G1 GLV kernels split scalars into two signed components and emit matching
-//! original/endomorphism point spans. Magnitudes stay on device; signs return
-//! to the host for scheduling.
-//! Shared-scalar row MSMs reuse one coefficient vector across a matrix of points.
-//! Larger batches share a window schedule when the device memory budget permits;
-//! other batches use a GLV block reduction per row.
-//! Resident G1 MSMs read a device point span and store the sum back on device;
-//! their GLV-expanded affine bases and Pippenger accumulators stay on the GPU.
-//! G2 sums use Jacobian coordinates over Fq2 and signed base indices. Segments
-//! run independently unless a large segment benefits from warp cooperation.
-//! G2 scalar decomposition sums precomputed power-of-two entries on device.
-//! Four component arrays retain their magnitudes there and return sign bytes
-//! to the host, with `1` meaning negative rather than the CPU's positive flag.
-//! G2 Frobenius expansion retains Jacobian coordinates and emits four point
-//! spans matching those components, using coefficients derived from Arkworks.
-//! Resident G2 MSMs build signed buckets, merge weighted partial sums and fold
-//! windows on device. They decline shapes beyond the batch budget or segment
-//! estimate; their output stays in the device buffer.
-//! Fq6 and Fq12 arithmetic use Montgomery Fq2 coefficients, with specialized
-//! sparse products for pairing line evaluations.
-//! Line evaluation scales the coefficients by G1 coordinates and multiplies
-//! the sparse result into each thread's Fq12 accumulator.
-//! G2 Miller steps use homogeneous Fq2 coordinates and emit line coefficients.
-//! Each host thread caches curve and Frobenius constants per device.
-//! Fq12 products reduce independent segments in bounded chunks, repeating on
-//! device until only one product per segment remains for download.
-//! The warp Miller loop assigns one warp per G1/G2 pair. Lanes cooperate on
-//! the six Fq2 accumulator coefficients; normalization and loop steps stay on
-//! device, and identity pairs contribute one to the segment product.
-//! The block Miller loop assigns one pair per thread, keeping its full Fq12
-//! accumulator local. Batches with at most 256 total pairs use the warp loop;
-//! larger batches use the block loop.
-//! When multiple block-loop segments share a G2 span, CUDA prepares its line
-//! coefficients once on device, using at most 512 MiB. The prepared loop combines
-//! four strided pairs per thread to share accumulator squarings. Larger coefficient
-//! tables use the direct block loop; identity pairs skip coefficient reads.
-//! Opening row folds assign one output column per thread and sum its weighted
-//! entries, including windows that start partway through a row. Sparse one-hot
-//! folds gather row weights directly from hot indices; cold entries contribute
-//! zero. Sparse embedding scatters ones into a zeroed address-by-cycle table.
-//! Prefix/suffix sumchecks first bind compact weight and accumulator tables,
-//! then fold the original field columns on device to build the suffix phase.
-//! Equality and shifted-equality weights share this engine; final column claims
-//! are read from the fully bound suffix tables.
-//! Windowed prefix/suffix rounds fold each resident window on its owning GPU.
-//! Prefix accumulators are summed on the host; suffix folds are concatenated
-//! in window order and uploaded to the device running the round loop.
-//! Lookup suffixes evaluate masked bit strings with integer arithmetic on
-//! device, matching the optimized lookup tables' `u64` results. One thread
-//! handles each input; field promotion is left to the consuming sumcheck.
-//! Prefix phase tables use the canonical host definitions for every prefix;
-//! optimized materializes only prefixes used by present lookup tables. CUDA
-//! uploads the phase tables, evaluates them at 0 and 2, and binds their rows
-//! in batched device launches before downloading the next phase's checkpoints.
-//! Sparse read/write matrices keep native value checkpoints and merge adjacent
-//! cycle rows on device. Coefficient lookup tables grow with each bind, as in
-//! optimized. CUDA writes merged rows to fresh arrays; optimized's indexed and
-//! direct stages compact existing entries in place.
-//! Cycle shards sum round coefficients on the host and gather their remaining
-//! rows on GPU 0 before binding the shard variables.
-//! Address-first rounds sort entry indices on the host and permute their device
-//! columns, then merge adjacent addresses with initial-value checkpoints.
-//! After the last address bind, dense cycle columns use split-eq reductions.
-//! CUDA uses this sparse matrix path for both RAM and registers; optimized
-//! registers instead scan compact access chunks with raw increment checkpoints.
-//! Advice reductions upload oracle values and permute their rows on device into
-//! the shared opening schedule. Inactive rounds halve the running scale; active
-//! rounds reduce the product at 0 and 2 and interpolate with the incoming claim.
-//! The cycle phase parks its device rows for the address phase; optimized parks
-//! host polynomial tables across that same boundary.
-//! Committed bytecode uses the canonical host coefficient builder. CUDA forms
-//! the lane-weighted equality grid on device in the requested polynomial order,
-//! then permutes both rows for the shared cycle/address reduction engine.
-//! Program-image reductions upload padded words as field elements and compute
-//! shifted RAM equality weights per entry on device. Optimized builds those
-//! weights in aligned blocks and permutes words before field conversion.
-//! Dense booleanity rounds reduce both endpoint values and the quadratic
-//! coefficient against split equality tables. RAM hamming weights use a dense
-//! field table for these rounds; optimized starts with bit-pattern histograms
-//! before materializing its table.
+//! Shared implementation choices:
+//!
+//! - Packed trace windows and derived columns live in the [`ProofSession`],
+//!   so successive relations can reuse uploads. Device contexts and compiled
+//!   modules are process-wide; witness data is not.
+//! - Cycle work is partitioned into aligned windows. Sharded round kernels
+//!   combine local messages on the host and move the remaining tables to GPU 0
+//!   once the local cycle variables are bound. Small domains use one device.
+//! - Split-eq and prefix/suffix factorizations follow the optimized algorithms,
+//!   with GPU reductions in place of Rayon walks. Materialization thresholds
+//!   differ where device gathers and dense arithmetic have different costs.
+//!
+//! [`JoltBackend::cuda`] starts from the optimized registry. Field-inline
+//! Spartan, bytecode read/RAF, and field-register slots retain optimized
+//! implementations. [`CudaDoryScheme`] selects CUDA PCS operations separately
+//! from the relation registry; using `DoryScheme` retains its CPU opening path.
 
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -228,17 +97,11 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// Replace supported claim reductions, instruction-input checking, instruction
-    /// RA virtualization, RAM output and value checking, RAM hamming booleanity,
-    /// hamming-weight claim reduction, booleanity checking,
-    /// register-value evaluation, Spartan shift, RAM RAF evaluation, RAM RA claim
-    /// reduction and virtualization, and RV64 bytecode read-RAF, Spartan outer,
-    /// and product kernels, plus instruction read-RAF and initial-RAM opening
-    /// evaluation, witness/advice commitments, and joint-opening polynomial views,
-    /// with CUDA implementations.
+    /// Replace the supported optimized slots with CUDA implementations.
     ///
     /// Construction is lazy: the first device operation initializes CUDA.
-    /// The PCS must accept device-produced row commitments.
+    /// The PCS must accept device-produced row commitments; choose
+    /// [`CudaDoryScheme`] to also accelerate clear Dory openings.
     pub fn cuda() -> Self
     where
         PCS: DeviceTier1Commitment,
