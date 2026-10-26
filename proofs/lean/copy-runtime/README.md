@@ -23,7 +23,7 @@ splits into path lemmas under `CopyRuntime/Proof/`.
 | dispatch from the entry point to all of the above, and to `.Lgeneral` | `Wrapper.dispatch`, `Wrapper.general_entry` | proved |
 | `.Lgeneral` with `dst = src` | `Wrapper.general_path` | proved |
 | `.Lgeneral` forward copy (`src > dst`): alignment prologue, 256-byte loop, 80-byte block loop, word loop, and byte tail | `Wrapper.forward_path` (from `fwd_prologue`, `fwd_large`, `fwd_pairs`, `fwd_blocks`, `fwd_words`, `fwd_tail`) | proved |
-| `.Lgeneral` backward copy (`src < dst`) | `Wrapper.backward_path` | `sorry` |
+| `.Lgeneral` backward copy (`src < dst`): alignment prologue, 256-byte loop (a generic `ld`/`sd` pair run), 80-byte block loop, word loop, and byte tail | `Wrapper.backward_path` (`bwd_prologue`, `bwd_large`, `bwd_pairs`, `bwd_blocks`, `bwd_words`, `bwd_tail`) | proved |
 | `__jolt_copy_misaligned` | `Leaf.leaf_path` | `sorry` (the word-combining identity `Leaf.combine_byte` is proved) |
 
 The main theorems compose these lemmas without further gaps, so they hold

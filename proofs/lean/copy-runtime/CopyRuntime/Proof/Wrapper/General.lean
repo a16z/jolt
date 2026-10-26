@@ -1,4 +1,5 @@
 import CopyRuntime.Proof.Wrapper.Forward
+import CopyRuntime.Proof.Wrapper.Backward
 
 /-!
 # The general (equal-offset) path, `.Lgeneral` at offset `0xa4`
@@ -55,14 +56,20 @@ theorem forward_path (ctx : Ctx cfg B L F) (regs : Reg → BitVec 64) (mem : Mem
   exact fwd_prologue ⟨ctx, hsb, hargs, hRout, Nat.le_of_lt hlt, hds⟩ regs mem he hn8
 
 /-- Backward copy (`src < dst`), from `add a1, a1, a2` at `0x2c0`: the mirror
-image of `forward_path`, copying from the high end down. -/
+image of `forward_path`, copying from the high end down (`Backward.lean`).
+Every load reads a source byte below the part already copied, which no store
+has reached, because the destination lies above the source. -/
 theorem backward_path (ctx : Ctx cfg B L F) (regs : Reg → BitVec 64) (mem : Mem)
     {dst src n R : BitVec 64} (he : EntryRegs regs dst src n R) (hsb : Sandbox cfg dst src n)
     (hargs : ArgsOk dst src n R) (hRout : ¬ region B R)
     (hsame : (dst - src).toNat % 8 = 0) (hlt : src.toNat < dst.toNat) (hn8 : 8 ≤ n.toNat) :
     Exits cfg (region B) (Returned ⟨B + 0x2c0#64, regs, mem⟩ R dst src n)
       ⟨B + 0x2c0#64, regs, mem⟩ := by
-  sorry
+  have hds : dst.toNat % 8 = src.toNat % 8 := by
+    rw [BitVec.toNat_sub] at hsame
+    have := dst.isLt; have := src.isLt
+    omega
+  exact bwd_prologue ⟨ctx, hsb, hargs, hRout, hlt, hds⟩ regs mem he hn8
 
 /-- `.Lgeneral` at `0xa4`. -/
 theorem general_path (ctx : Ctx cfg B L F) (regs : Reg → BitVec 64) (mem : Mem)

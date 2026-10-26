@@ -52,10 +52,20 @@ namespace CopyRuntime
 #assert_axioms Theorems.wrappers_same_code [propext, Classical.choice, Quot.sound]
 #assert_axioms Theorems.exit_state_unique [propext, Classical.choice, Quot.sound]
 
--- Main theorems: still depend on `Wrapper.backward_path` and `Leaf.leaf_path`,
--- which are `sorry`.
-#assert_axioms Theorems.wrap_memcpy_correct [propext, Classical.choice, Quot.sound, sorryAx]
-#assert_axioms Theorems.wrap_memmove_correct [propext, Classical.choice, Quot.sound, sorryAx]
+-- Backward general path (`src < dst`).
+#assert_axioms Wrapper.backward_path [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_prologue [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_large [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_pairs [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_blocks [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_words [propext, Classical.choice, Quot.sound]
+#assert_axioms Wrapper.bwd_tail [propext, Classical.choice, Quot.sound]
+
+-- Wrapper theorems (outcomes (a)-(c), leaf treated as an exit): fully proved.
+#assert_axioms Theorems.wrap_memcpy_correct [propext, Classical.choice, Quot.sound]
+#assert_axioms Theorems.wrap_memmove_correct [propext, Classical.choice, Quot.sound]
+
+-- Leaf and linked theorems: still depend on `Leaf.leaf_path`, which is `sorry`.
 #assert_axioms Theorems.jolt_copy_misaligned_correct
   [propext, Classical.choice, Quot.sound, sorryAx]
 #assert_axioms Theorems.wrap_memcpy_linked_correct
