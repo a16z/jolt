@@ -3,9 +3,10 @@ use jolt_claims::protocols::jolt::{JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
+use jolt_transcript::DigestHasher;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
+use sha3::Digest;
 use std::sync::Arc;
 
 use crate::VerifierError;
@@ -157,7 +158,8 @@ const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
-    /// preamble: Keccak-256 over the domain tag and this value's bincode
+    /// preamble: the selected digest hash ([`jolt_transcript::DIGEST_HASH`],
+    /// SHA3-256 by default) over the domain tag and this value's bincode
     /// encoding. Hashing the whole type binds every field the verifier trusts
     /// (mode, bytecode or its commitments, RAM image, memory layout, trace
     /// bound) without a hand-maintained field list, so a field added to any
@@ -172,7 +174,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                 }
             })?;
         Ok(
-            Keccak256::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
+            DigestHasher::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
                 .chain_update(encoded)
                 .finalize()
                 .into(),

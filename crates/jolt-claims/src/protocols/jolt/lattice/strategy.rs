@@ -4,7 +4,8 @@ use std::ops::Range;
 
 use jolt_field::Field;
 use jolt_openings::OpeningsError;
-use sha3::{Digest, Keccak256};
+use jolt_transcript::DigestHasher;
+use sha3::Digest;
 
 use super::super::JoltCommittedPolynomial;
 use super::geometry::{LatticeGeometryError, FUSED_INC_BITS};
@@ -165,7 +166,7 @@ fn layout_digest(
     num_vars: usize,
     columns: &[JoltCommittedPolynomial],
 ) -> Result<[u8; 32], OpeningsError> {
-    let mut hasher = Keccak256::new();
+    let mut hasher = DigestHasher::new();
     hasher.update(b"jolt/akita/one_hot_trace/native-batch/v8");
     append_usize(&mut hasher, num_vars);
     append_usize(&mut hasher, columns.len());
@@ -203,7 +204,7 @@ fn layout_digest(
     Ok(hasher.finalize().into())
 }
 
-fn append_usize(hasher: &mut Keccak256, value: usize) {
+fn append_usize(hasher: &mut DigestHasher, value: usize) {
     hasher.update((value as u64).to_le_bytes());
 }
 

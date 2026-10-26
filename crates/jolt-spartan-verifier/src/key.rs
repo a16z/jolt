@@ -1,8 +1,8 @@
 use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
-use jolt_transcript::{Encoding, FieldTranscript};
-use sha3::{Digest, Keccak256};
+use jolt_transcript::{DigestHasher, Encoding, FieldTranscript};
+use sha3::Digest;
 
 use crate::{outer_relation, SpartanError};
 
@@ -24,16 +24,16 @@ pub struct SpartanKey<F: JoltField> {
 
 const RELATION_DIGEST_DOMAIN: &[u8] = b"jolt-spartan-relation-v1";
 
-/// Keccak-256 over the domain, `num_constraints`, `num_vars`,
-/// `public_columns`, then each A/B/C row as its length followed by
-/// `(column, coefficient)` entries. Integers are big-endian u64 and
+/// The selected digest hash ([`jolt_transcript::DIGEST_HASH`]) over the
+/// domain, `num_constraints`, `num_vars`, `public_columns`, then each A/B/C row
+/// as its length followed by `(column, coefficient)` entries. Integers are big-endian u64 and
 /// coefficients canonical little-endian; row counts are fixed by the validated
 /// `num_constraints`, so the encoding is injective.
 fn relation_digest<F: JoltField>(
     matrices: &ConstraintMatrices<F>,
     public_columns: usize,
 ) -> [u8; 32] {
-    let mut hasher = Keccak256::new_with_prefix(RELATION_DIGEST_DOMAIN);
+    let mut hasher = DigestHasher::new_with_prefix(RELATION_DIGEST_DOMAIN);
     for word in [matrices.num_constraints, matrices.num_vars, public_columns] {
         hasher.update((word as u64).to_be_bytes());
     }

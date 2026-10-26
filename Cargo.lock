@@ -3242,6 +3242,7 @@ dependencies = [
  "jolt-poly",
  "jolt-r1cs",
  "jolt-riscv",
+ "jolt-transcript",
  "jolt-utils",
  "num-traits",
  "rand_chacha 0.3.1",
@@ -3900,6 +3901,7 @@ dependencies = [
  "light-poseidon",
  "num-bigint 0.4.6",
  "rayon",
+ "sha3 0.12.0",
  "spongefish 0.8.0",
 ]
 

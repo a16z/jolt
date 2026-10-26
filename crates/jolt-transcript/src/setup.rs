@@ -8,10 +8,12 @@ use spongefish::instantiations::TurboShake128;
 use spongefish::{DuplexSpongeInit, Encoding, ProverState, SessionId, VerifierState};
 
 use crate::codec::{protocol_tag, BytesMsg, TAG_BYTES};
+use crate::digest_hash::{DigestHash, DIGEST_HASH};
 
-/// Crate-wide protocol tag, `a16z/jolt-transcript/v2` zero-padded to 32
-/// bytes. [`session_id`] derives the spongefish session identifier from it,
-/// so a change to anything below changes every proof's challenges.
+/// Crate-wide protocol tag, `a16z/jolt-transcript/v2/sha3` zero-padded to 32
+/// bytes (`a16z/jolt-transcript/v2/keccak` under `keccak256-digests`).
+/// [`session_id`] derives the spongefish session identifier from it, so a
+/// change to anything below changes every proof's challenges.
 ///
 /// Version 2 fixes:
 /// - **The absorb layout.** The transcript is positional: no message carries
@@ -32,11 +34,16 @@ use crate::codec::{protocol_tag, BytesMsg, TAG_BYTES};
 ///   string and one `u64` LE word in the sponge; the check is eight squeezed
 ///   bytes whose little-endian `u64` has its low `bits` bits zero.
 ///
-/// The tag does not name the sponge: a different sponge is a different hash
-/// function and changes every output by itself.
+/// The suffix names the digest hash ([`DIGEST_HASH`]) behind every digest a
+/// statement or key binds, so a proof made under one never verifies under the
+/// other. The tag does not name the sponge: a different sponge is a different
+/// hash function and changes every output by itself.
 ///
 /// [`ChallengeCodec`]: crate::ChallengeCodec
-pub const PROTOCOL_ID: [u8; TAG_BYTES] = protocol_tag(b"a16z/jolt-transcript/v2");
+pub const PROTOCOL_ID: [u8; TAG_BYTES] = protocol_tag(match DIGEST_HASH {
+    DigestHash::Sha3_256 => b"a16z/jolt-transcript/v2/sha3".as_slice(),
+    DigestHash::Keccak256 => b"a16z/jolt-transcript/v2/keccak".as_slice(),
+});
 
 /// The spongefish instance: the 32-byte session tag, then the statement as a
 /// [`BytesMsg`]. Never empty, so spongefish's constructors accept it. The tag
@@ -128,9 +135,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_id_is_the_padded_v2_tag() {
-        assert_eq!(&PROTOCOL_ID[..23], b"a16z/jolt-transcript/v2");
-        assert!(PROTOCOL_ID[23..].iter().all(|&byte| byte == 0));
+    fn protocol_id_is_the_padded_v2_tag_naming_the_digest_hash() {
+        let name: &[u8] = match DIGEST_HASH {
+            DigestHash::Sha3_256 => b"a16z/jolt-transcript/v2/sha3",
+            DigestHash::Keccak256 => b"a16z/jolt-transcript/v2/keccak",
+        };
+        assert_eq!(&PROTOCOL_ID[..name.len()], name);
+        assert!(PROTOCOL_ID[name.len()..].iter().all(|&byte| byte == 0));
         assert_ne!(
             PROTOCOL_ID[..],
             protocol_tag(b"a16z/jolt-transcript/v1")[..],

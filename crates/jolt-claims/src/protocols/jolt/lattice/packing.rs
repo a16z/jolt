@@ -11,7 +11,8 @@ use jolt_openings::{
     CommitmentGroupRole, EvaluationClaim, OpeningsError, PrefixPackedClaims, PrefixPackedLayout,
 };
 use jolt_poly::eq_index_msb;
-use sha3::{Digest, Keccak256};
+use jolt_transcript::DigestHasher;
+use sha3::Digest;
 
 use super::super::geometry::claim_reductions::bytecode::bytecode_total_vars;
 use super::super::geometry::ra::JoltRaPolynomialLayout;
@@ -336,7 +337,7 @@ fn packed_object_layout_digest(
     logical_num_vars: &BTreeMap<JoltCommittedPolynomial, usize>,
     trace_order: Option<TracePolynomialOrder>,
 ) -> Result<[u8; 32], OpeningsError> {
-    let mut hasher = Keccak256::new();
+    let mut hasher = DigestHasher::new();
     hasher.update(b"jolt/akita/fixed-prefix-object/v1");
     hasher.update((domain.len() as u64).to_le_bytes());
     hasher.update(domain);
@@ -358,7 +359,7 @@ fn packed_object_layout_digest(
 }
 
 fn append_packed_object_id(
-    hasher: &mut Keccak256,
+    hasher: &mut DigestHasher,
     id: JoltCommittedPolynomial,
 ) -> Result<(), OpeningsError> {
     let (tag, index, secondary) = match id {
@@ -378,7 +379,7 @@ fn append_packed_object_id(
     Ok(())
 }
 
-fn append_usize(hasher: &mut Keccak256, value: usize) {
+fn append_usize(hasher: &mut DigestHasher, value: usize) {
     hasher.update((value as u64).to_le_bytes());
 }
 

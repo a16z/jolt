@@ -30,6 +30,9 @@ bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
 transcript-blake2b = ["dep:blake2"]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["bn254", "dep:light-poseidon"]
+# Keccak-256 (`0x01` pad) instead of SHA3-256 for every digest a statement or
+# key binds (`DigestHasher`). Names itself in `PROTOCOL_ID`.
+keccak256-digests = []
 # `ScriptedTranscript`: scripted challenges, an event log, no proof of work. Tests only.
 test-utils = []
 
@@ -43,6 +46,7 @@ jolt-field = { path = "../jolt-field", default-features = false, features = [
   "spongefish",
 ] }
 rayon = { workspace = true, optional = true }
+sha3.workspace = true
 
 # spongefish seeds the prover's private RNG from getrandom 0.4, which needs
 # an explicit backend on wasm32-unknown-unknown.

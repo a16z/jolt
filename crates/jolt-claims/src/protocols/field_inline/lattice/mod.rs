@@ -4,7 +4,8 @@ use jolt_field::Field;
 #[cfg(feature = "akita")]
 use jolt_openings::CommitmentGroupRole;
 use jolt_openings::OpeningsError;
-use sha3::{Digest, Keccak256};
+use jolt_transcript::DigestHasher;
+use sha3::Digest;
 
 use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
 
@@ -26,7 +27,7 @@ impl FieldIncLayout {
     }
 
     pub fn layout_digest(self) -> [u8; 32] {
-        let mut hasher = Keccak256::new();
+        let mut hasher = DigestHasher::new();
         hasher.update(b"jolt/field-inline/akita/inc/v1");
         hasher.update((self.log_t as u64).to_le_bytes());
         hasher.update((self.num_vars() as u64).to_le_bytes());

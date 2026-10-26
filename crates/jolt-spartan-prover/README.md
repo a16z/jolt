@@ -26,7 +26,8 @@ deserialize `ConstraintMatrices`, then invoke the checked constructor. Shape
 validation is not authentication: applications must select the intended
 matrices, public partition, transcript, and PCS setup independently of the
 proof. `policy_id` is the authenticated identifier of that application policy.
-`SpartanKey::begin` absorbs the key's relation digest: Keccak-256 over the
+`SpartanKey::begin` absorbs the key's relation digest: SHA3-256 (Keccak-256 under
+`jolt-transcript/keccak256-digests`) over the
 dimensions, public partition, and exact matrix encoding, computed once by
 `SpartanKey::new` from the matrices it owns. No prover-supplied digest is read.
 

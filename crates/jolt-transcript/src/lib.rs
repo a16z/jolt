@@ -37,6 +37,7 @@
 
 mod challenge;
 mod codec;
+mod digest_hash;
 mod grind_bits;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
@@ -61,6 +62,7 @@ pub use pow::{MessageSearch, Probe};
 pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
+pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
 pub use spongefish::{Encoding, ProverState, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};
