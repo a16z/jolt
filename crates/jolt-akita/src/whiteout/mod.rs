@@ -1660,10 +1660,18 @@ impl ResponsePlans {
 
     /// The response prover of `e` with `num_vars` variables.
     fn get(&self, num_vars: usize) -> Result<Arc<PlannedResponse>, ZkError> {
-        let mut derived = self.derived.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(response) = derived.get(&num_vars) {
+        if let Some(response) = self
+            .derived
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&num_vars)
+        {
             return Ok(Arc::clone(response));
         }
+        // Planned outside the lock: planning runs on Rayon, and a worker
+        // waiting in it could steal a job that waits on this lock. Two
+        // callers may plan one length; they plan the same row, and the first
+        // inserted is kept.
         let response = Arc::new(match &self.persisted {
             Some(persisted) => {
                 let artifact = persisted.get(&num_vars).ok_or_else(|| {
@@ -1675,8 +1683,13 @@ impl ResponsePlans {
             }
             None => PlannedResponse::plan(num_vars)?,
         });
-        let _ = derived.insert(num_vars, Arc::clone(&response));
-        Ok(response)
+        Ok(Arc::clone(
+            self.derived
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(num_vars)
+                .or_insert(response),
+        ))
     }
 
     /// The persisted plans with the derived ones.
