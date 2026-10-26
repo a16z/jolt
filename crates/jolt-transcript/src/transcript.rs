@@ -64,7 +64,21 @@ pub(crate) mod sealed {
 /// sides.
 pub trait Transcript: Sealed {
     /// Absorbs `message` as a public message.
+    ///
+    /// The encoding must be a whole number of eight-byte words, so the
+    /// absorb ends on a word boundary. Every production field element, group
+    /// element and `u64` qualifies. A value with a shorter encoding, such as a
+    /// 32-bit field element, goes through [`append_values`](Self::append_values),
+    /// which zero-pads it to a word.
+    ///
+    /// # Panics
+    /// In debug builds, if the encoding's length is not a multiple of eight.
     fn append<M: Encoding + ?Sized>(&mut self, message: &M) {
+        debug_assert_eq!(
+            message.encode().as_ref().len() % WORD_BYTES,
+            0,
+            "Transcript::append needs a whole number of words; pad with append_values"
+        );
         self.absorb(message);
     }
 

@@ -537,3 +537,17 @@ fn append_values_pads_an_odd_count_of_four_byte_values() {
     assert_eq!(challenge, expected.verifier_message::<[u8; 32]>());
     assert_ne!(challenge, unpadded.verifier_message::<[u8; 32]>());
 }
+
+/// `append` absorbs an encoding as it is, so it accepts only whole words: a
+/// bare 4-byte `Prime32Offset99` would leave the next message off a word
+/// boundary. Debug builds reject it; such a value goes through
+/// `append_values`, which pads it.
+#[cfg(all(feature = "solinas", debug_assertions))]
+#[test]
+#[should_panic(expected = "whole number of words")]
+fn append_rejects_a_sub_word_encoding() {
+    use jolt_field::Ring;
+    use jolt_transcript::Transcript;
+    let mut transcript = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    transcript.append(&Prime32Offset99::from_u64(77));
+}
