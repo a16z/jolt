@@ -1,6 +1,8 @@
 # Z3 verifier
 
-This crate uses the Z3 SMT solver to try and verify (1) the R1CS/product constraints by the Jolt CPU and (2) the virtual sequences used by Jolt.
+This crate uses the Z3 SMT solver to try and verify (1) the R1CS/product constraints by the Jolt CPU, (2) the virtual sequences used by Jolt, and (3) the guest `memcpy` and `memmove` in `jolt-platform/src/memory.S`, for every length, address, overlap, and memory content.
+
+The copy-runtime proofs (`copy_runtime::test_copy_runtime_*`) assemble `memory.S` with `clang` and link it with the toolchain's `rust-lld`, so they need `clang` on `PATH`. They take several minutes each.
 
 This is structured as tests, but note that all tests are not expected to succeed. Some hang due to solver limitations, and some fail but due to reasons which are understood (e.g. `NextIsNoop` makes `JAL/JALR` jump destination underconstrained).
 
