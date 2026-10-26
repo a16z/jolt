@@ -1,5 +1,7 @@
 #[cfg(test)]
-#[cfg(feature = "host")]
+// The fixtures are Dory proofs, and `VerifierPCS` is Dory. With `akita`,
+// `jolt_verifier::verify` is the Akita path, whose bounds Dory does not meet.
+#[cfg(all(feature = "host", not(feature = "akita")))]
 mod tests {
     use jolt_sdk::{
         deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof,
