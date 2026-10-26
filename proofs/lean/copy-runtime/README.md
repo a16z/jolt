@@ -171,8 +171,8 @@ hardware.
 Two edge cases need a range whose one-past-the-end address is 2^64. C forbids
 such an object, since the end pointer would not be representable, and no Jolt
 guest can produce one. They are why `ArgsOk` requires `src + n < 2^64` and
-`dst + n < 2^64` instead of `≤`. `tools/Simulate.lean` reproduces both on the
-extracted bytes.
+`dst + n < 2^64` instead of `≤`, and `memory.S` states that bound.
+`tools/Simulate.lean` reproduces both cases on the extracted bytes.
 
 * **Forward word loop and `src + n = 2^64`.** `.Lforward_words` computes the
   end pointer `t0 = a1 + (a2 & ~7)` and loops while `a1 < t0` (unsigned). If
@@ -189,12 +189,14 @@ extracted bytes.
   shifted out, but the sandbox faults on the read. An example is `n = 600`,
   `dst = 2^64 - 600`, `src = dst - 1`.
 
-Two properties of the leaf matter for its proof but are not bugs.
+Two properties of the leaf matter for its proof but are not bugs. `memory.S`
+notes both.
 
 * **The leaf needs `n ≥ 143` on its own.** After the alignment prologue it
   enters its 128-byte loop without a length check. With `J` bytes already
-  copied and source word offset `a ∈ 1..7`, the first iteration loads source
-  words up to offset `J + 136 - a`, and the prologue leaves `J - a ≤ 7`.
+  copied and source word offset `a ∈ 1..7`, the last load of the first
+  iteration ends at source offset `J + 136 - a`, and the prologue leaves
+  `J - a ≤ 7`.
   Both wrappers jump to the leaf only for `n ≥ 544`, and
   `jolt_copy_misaligned_correct` assumes that bound. A run of the model on the
   leaf alone with `|src - dst|` about 64 and every mismatched pair of offsets
