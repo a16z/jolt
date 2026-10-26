@@ -293,6 +293,9 @@ where
     })?;
     mark_region("sigma_response", &transcript);
     drop(stage8);
+    // The response proof's tables are sized by `e`, not the trace, so they
+    // are released whatever the trace length `finish_stage` gates on.
+    let _ = jolt_kernels::mem::release_retained_memory();
     finish_stage("stage8", log_t, backend.session(), &());
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(ZkConfig::Whiteout),

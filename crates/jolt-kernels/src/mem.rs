@@ -44,7 +44,7 @@ pub fn purge_retained_memory(log_t: usize) {
 
 /// Return allocator-retained pages to the OS. Only macOS pressure relief
 /// reports a byte count.
-fn release_retained_memory() -> usize {
+pub fn release_retained_memory() -> usize {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: NULL zone and zero goal are valid; no Rust pointer is passed.
