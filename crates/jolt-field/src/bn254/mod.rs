@@ -9,8 +9,33 @@ mod mont;
 pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
-use ark_ff::{BigInteger, PrimeField, UniformRand};
+use ark_ff::{BigInt, BigInteger, PrimeField, UniformRand};
 use rand_core::RngCore;
+
+/// Bytes per chunk of [`reduce_le_bytes`]: 248 bits, below both 254-bit moduli.
+const CHUNK_BYTES: usize = 31;
+
+/// Reduces little-endian bytes modulo the order of a 254-bit BN254 field.
+///
+/// Horner's rule over 31-byte chunks, each below the modulus and so converted
+/// directly. It returns what arkworks' `from_le_bytes_mod_order` returns, but
+/// that folds in one byte at a time past the first 31 bytes, at two Montgomery
+/// multiplications per byte; a 52-byte challenge costs about 42 of them there
+/// and 3 here.
+fn reduce_le_bytes<F: PrimeField<BigInt = BigInt<4>>>(bytes: &[u8]) -> F {
+    // 2^248, one chunk.
+    let shift = F::from(BigInt([0, 0, 0, 1 << 56]));
+    let chunk_to_field = |chunk: &[u8]| {
+        let mut limbs = [0u64; 4];
+        for (i, &byte) in chunk.iter().enumerate() {
+            limbs[i / 8] |= u64::from(byte) << (8 * (i % 8));
+        }
+        F::from(BigInt(limbs))
+    };
+    let mut chunks = bytes.chunks(CHUNK_BYTES).rev();
+    let top = chunks.next().map_or_else(F::zero, chunk_to_field);
+    chunks.fold(top, |acc, chunk| acc * shift + chunk_to_field(chunk))
+}
 
 macro_rules! from_primitives {
     ($ty:ident: $via:ident[$($prim:ty),*]) => {
@@ -123,7 +148,7 @@ macro_rules! wrap_bn254 {
 
             #[inline]
             fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
-                $ty(<$inner>::from_le_bytes_mod_order(bytes))
+                $ty(reduce_le_bytes(bytes))
             }
 
             #[inline]
