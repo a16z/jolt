@@ -1,7 +1,9 @@
 //! SHAKE128 (FIPS 202) as a spongefish sponge.
 
 use shake::digest::{ExtendableOutput, Update};
+use shake::{Shake128 as Shake128Core, Shake128Reader};
 use spongefish::instantiations::{XofRate, XOF};
+use spongefish::ProverState as SpongefishProverState;
 
 /// The SHAKE128 suite of draft-irtf-cfrg-fiat-shamir, over the `shake` crate.
 ///
@@ -11,9 +13,9 @@ use spongefish::instantiations::{XofRate, XOF};
 /// ([`ProverState`]).
 pub type Shake128 = XOF<Shake128Hasher>;
 
-/// [`shake::Shake128`] with the rate spongefish's [`XOF`] bridge reads.
+/// [`Shake128Core`] with the rate spongefish's [`XOF`] bridge reads.
 #[derive(Clone, Default)]
-pub struct Shake128Hasher(shake::Shake128);
+pub struct Shake128Hasher(Shake128Core);
 
 impl Update for Shake128Hasher {
     fn update(&mut self, data: &[u8]) {
@@ -22,7 +24,7 @@ impl Update for Shake128Hasher {
 }
 
 impl ExtendableOutput for Shake128Hasher {
-    type Reader = shake::Shake128Reader;
+    type Reader = Shake128Reader;
 
     fn finalize_xof(self) -> Self::Reader {
         self.0.finalize_xof()
@@ -36,4 +38,4 @@ impl XofRate for Shake128Hasher {
 
 /// Spongefish's prover state over sponge `H`, with [`Shake128`] for the
 /// prover's private coins.
-pub type ProverState<H> = spongefish::ProverState<H, Shake128>;
+pub type ProverState<H> = SpongefishProverState<H, Shake128>;
