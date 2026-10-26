@@ -24,7 +24,9 @@
 //! vectors, at `T/16` length, and drops the index source. Peak memory falls
 //! from `N·T` field elements to the index source plus `N·T/16`. A consumer
 //! whose base tables are too large to stay cache-resident as they double
-//! materializes a bind earlier, at `T/8` (`max_width`).
+//! materializes a bind earlier, at `T/8` (`max_width`). Large address domains
+//! switch sooner when expanding the branch tables would cost at least as
+//! many field elements as the bound dense tables.
 //!
 //! A polynomial whose base table is too large to tensor out (a virtual RA
 //! over a wide lookup-index chunk) is served as the product of `factors`
@@ -214,18 +216,36 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 factors,
                 source,
             } => {
-                let tables = double_branches(tables, factors, challenge);
-                if width < max_width {
+                let next_width = width * 2;
+                let dense_elements = source.cycles() / next_width * (tables.len() / factors);
+                let branch_elements = tables
+                    .iter()
+                    .enumerate()
+                    .map(|(column, table)| {
+                        table.len() * if column.is_multiple_of(factors) { 2 } else { 1 }
+                    })
+                    .sum::<usize>();
+                if width < max_width && branch_elements < dense_elements {
                     Self::Lazy {
-                        tables,
-                        width: width * 2,
+                        tables: double_branches(tables, factors, challenge),
+                        width: next_width,
                         max_width,
                         factors,
                         source,
                     }
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
-                    let dense = Self::Dense(materialize(&tables, factors, &source, width * 2));
+                    // Gather and bind directly before a wide address table would expand.
+                    let (tables, branches, bind) = if branch_elements >= dense_elements {
+                        (tables, width, Some(challenge))
+                    } else {
+                        (
+                            double_branches(tables, factors, challenge),
+                            next_width,
+                            None,
+                        )
+                    };
+                    let dense = Self::Dense(materialize(&tables, factors, &source, branches, bind));
                     crate::mem::drop_in_background_thread(tables);
                     crate::mem::drop_in_background_thread(source);
                     crate::mem::purge_retained_memory(log_t);
@@ -233,9 +253,17 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 }
             }
             Self::Dense(mut polys) => {
-                for poly in &mut polys {
+                let bind = |poly: &mut Polynomial<F>| {
                     poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+                };
+                #[cfg(feature = "parallel")]
+                if polys.first().is_some_and(|poly| poly.len() >= 1 << 10) {
+                    polys.par_iter_mut().for_each(bind);
+                } else {
+                    polys.iter_mut().for_each(bind);
                 }
+                #[cfg(not(feature = "parallel"))]
+                polys.iter_mut().for_each(bind);
                 Self::Dense(polys)
             }
         };
@@ -347,22 +375,26 @@ fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, factors: usize, challenge:
     }
 }
 
-/// The switching bind's materialization: gather every polynomial dense at
-/// `cycles / branches` length through the pre-scaled branch tables —
-/// lookups and adds only. The switch depth trades the dense tables'
-/// footprint (`N · T / branches` field elements — the stage-6b peak at
-/// large T) against one more gather round and double the branch tables;
-/// measured on a 64-thread host, T/16 beats the original T/8 on both axes.
+/// Materializes branch gathers, optionally fusing the next low-to-high bind
+/// to avoid expanding the address tables at the storage crossover.
 fn materialize<F: JoltField, S: ChunkIndexSource>(
     tables: &[Vec<F>],
     factors: usize,
     source: &S,
     branches: usize,
+    bind: Option<F>,
 ) -> Vec<Polynomial<F>> {
     debug_assert!(source.cycles() >= branches);
-    let new_len = source.cycles() / branches;
+    let new_len = source.cycles() / branches / if bind.is_some() { 2 } else { 1 };
     let materialize_poly = |i: usize| -> Polynomial<F> {
-        let eval = |j: usize| gather_poly(tables, factors, branches, source, i, j);
+        let eval = |j: usize| match bind {
+            Some(challenge) => {
+                let lo = gather_poly(tables, factors, branches, source, i, 2 * j);
+                let hi = gather_poly(tables, factors, branches, source, i, 2 * j + 1);
+                lo + challenge * (hi - lo)
+            }
+            None => gather_poly(tables, factors, branches, source, i, j),
+        };
         #[cfg(feature = "parallel")]
         let evals: Vec<F> = (0..new_len).into_par_iter().map(eval).collect();
         #[cfg(not(feature = "parallel"))]
@@ -377,5 +409,85 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
     #[cfg(not(feature = "parallel"))]
     {
         (0..polys).map(materialize_poly).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::EqPolynomial;
+
+    use super::{ChunkIndexSource, LazyFoldedRa};
+
+    struct SelectorRows {
+        columns: usize,
+    }
+
+    impl ChunkIndexSource for SelectorRows {
+        fn num_columns(&self) -> usize {
+            self.columns
+        }
+
+        fn cycles(&self) -> usize {
+            4096
+        }
+
+        fn index(&self, column: usize, cycle: usize) -> Option<usize> {
+            (!cycle.is_multiple_of(11)).then_some((cycle + column) % 16)
+        }
+    }
+
+    #[test]
+    fn storage_crossover_preserves_factored_selector_evaluations() {
+        for factors in [1, 2, 4] {
+            for (domain, switching_bind) in [(16, 4), (64, 3), (256, 2), (1024, 1)] {
+                let source = SelectorRows {
+                    columns: 2 * factors,
+                };
+                let tables: Vec<Vec<Fr>> = (0..source.columns)
+                    .map(|column| {
+                        (0..domain)
+                            .map(|i| Fr::from_u64((i + column + 1) as u64))
+                            .collect()
+                    })
+                    .collect();
+                let mut ra = LazyFoldedRa::factored(tables.clone(), factors, 8, source);
+                let challenges: Vec<Fr> = (0..12).map(|i| Fr::from_u64(i + 2)).collect();
+                for (round, &challenge) in challenges.iter().enumerate() {
+                    ra.bind(challenge);
+                    assert_eq!(
+                        matches!(ra, LazyFoldedRa::Dense(_)),
+                        round + 1 >= switching_bind,
+                        "factors={factors}, domain={domain}, round={round}"
+                    );
+                }
+                let point: Vec<_> = challenges.iter().copied().rev().collect();
+                let weights = EqPolynomial::<Fr>::evals(&point, None);
+                let source = SelectorRows {
+                    columns: 2 * factors,
+                };
+                for (poly, actual) in ra.final_values().into_iter().enumerate() {
+                    let expected: Fr = weights
+                        .iter()
+                        .enumerate()
+                        .map(|(cycle, &weight)| {
+                            let product: Fr = (0..factors)
+                                .map(|factor| {
+                                    let column = poly * factors + factor;
+                                    source
+                                        .index(column, cycle)
+                                        .map_or(Fr::from_u64(0), |index| tables[column][index])
+                                })
+                                .product();
+                            weight * product
+                        })
+                        .sum();
+                    assert_eq!(
+                        actual, expected,
+                        "factors={factors}, domain={domain}, poly={poly}"
+                    );
+                }
+            }
+        }
     }
 }

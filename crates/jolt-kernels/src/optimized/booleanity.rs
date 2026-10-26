@@ -1599,6 +1599,8 @@ mod categorical_tests {
     }
 
     fn check_categorical_case<F: JoltField>(gamma: F, exceptional: Option<ExceptionalEq>) {
+        // Keep the 16-address fixture lazy through its first bind.
+        let log_t = 7;
         for addresses in [2, 16, 256] {
             for bind in [F::zero(), F::one(), F::from_u64(13)] {
                 // All-cold, alternating hot/cold, and fully hot families.
@@ -1607,7 +1609,7 @@ mod categorical_tests {
                 let source = Source(
                     (0..3)
                         .map(|family| {
-                            (0..32)
+                            (0..1 << log_t)
                                 .map(|row| {
                                     if family == 0 || (family == 1 && row % 3 == 0) {
                                         None
@@ -1648,8 +1650,12 @@ mod categorical_tests {
                     .collect();
                 let mut lazy = LazyFoldedRa::new(tables, source);
                 let reference: Vec<F> = exceptional.map_or_else(
-                    || (0..5).map(|i| F::from_u64(7 + 3 * i)).collect(),
-                    |case| case.point(5, bind),
+                    || {
+                        (0..log_t)
+                            .map(|i| F::from_u64((7 + 3 * i) as u64))
+                            .collect()
+                    },
+                    |case| case.point(log_t, bind),
                 );
                 let mut prefix = F::from_u64(19);
                 let mut eq = GruenSplitEqPolynomial::new_with_scaling(
@@ -1658,8 +1664,8 @@ mod categorical_tests {
                     Some(prefix),
                 );
                 for round in 0..if addresses <= 16 { 2 } else { 1 } {
-                    let suffix = eq_table(&reference[..4 - round]);
-                    let bit = reference[4 - round];
+                    let suffix = eq_table(&reference[..log_t - 1 - round]);
+                    let bit = reference[log_t - 1 - round];
                     // Direct evaluations of the defining weighted cubic;
                     // neither Gruen reconstruction nor coefficient caching.
                     let direct: Vec<F> = (0..4)
