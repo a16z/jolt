@@ -927,6 +927,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("rowptr-registers");
     #[cfg(feature = "tensor-eq-runs")]
     program.add_guest_feature("tensor-eq-runs");
+    #[cfg(feature = "setup-sop-structured")]
+    program.add_guest_feature("setup-sop-structured");
     program.set_memory_config(memory_config);
     program
 }

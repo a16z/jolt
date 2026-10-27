@@ -56,6 +56,8 @@ word-transcript = ["akita", "jolt-akita/word-transcript"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
 # Row pointers (default on): forwards `rowptr-registers` to the verifier guest.
 rowptr-registers = []
+# Structured setup sums of products (default off): structured-site sums of products in the Akita setup scan.
+setup-sop-structured = ["akita", "jolt-akita/setup-sop-structured"]
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
