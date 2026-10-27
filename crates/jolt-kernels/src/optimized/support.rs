@@ -147,7 +147,7 @@ fn accumulate_product<F: JoltField>(factors: &[F], lane: &mut F::Accumulator) {
 /// differences (additions only). That costs `O(n log n)` multiplications
 /// instead of the `n · (n − 2)` of multiplying every factor at every point;
 /// the root's multiplications fuse into the deferred-reduction lanes.
-/// Four and eight factors take unrolled forms of the same tree that keep
+/// Four, five, eight, and nine factors take unrolled forms of the same tree that keep
 /// every table on the stack.
 /// `scratch` must hold [`product_grid_scratch_len`]`(n)` elements.
 #[inline]
@@ -162,6 +162,63 @@ pub(crate) fn accumulate_product_grid<F: JoltField>(
     debug_assert_eq!(evals.len(), n);
     debug_assert_eq!(steps.len(), n);
     match (evals, steps, lanes) {
+        (
+            [a, b, c, d, e, f, g, h, i],
+            [da, db, dc, dd, de, df, dg, dh, di],
+            lanes @ [_, _, _, _, _, _, _, _, _],
+        ) if db.is_zero() && dc.is_zero() && dd.is_zero() && de.is_zero() => {
+            let constant = *b * *c * *d * *e;
+            let samples = quintic_product_samples([*a, *f, *g, *h, *i], [*da, *df, *dg, *dh, *di]);
+            let mut grid = [F::zero(); 8];
+            grid[..5].copy_from_slice(&samples[..5]);
+            extend_by_differences(&mut grid, 5, samples[5], scratch);
+            for (lane, value) in lanes[..8].iter_mut().zip(grid) {
+                lane.fmadd(constant, value);
+            }
+        }
+        (
+            [a, b, c, d, e, f, g, h, i],
+            [da, db, dc, dd, de, df, dg, dh, di],
+            lanes @ [_, _, _, _, _, _, _, _, _],
+        ) => {
+            let left = quartic_product_samples([*a, *b, *c, *d], [*da, *db, *dc, *dd]);
+            let right = quintic_product_samples([*e, *f, *g, *h, *i], [*de, *df, *dg, *dh, *di]);
+            let mut left_grid = [F::zero(); 8];
+            let mut right_grid = [F::zero(); 8];
+            left_grid[..4].copy_from_slice(&left[..4]);
+            right_grid[..5].copy_from_slice(&right[..5]);
+            extend_by_differences(&mut left_grid, 4, left[4], scratch);
+            extend_by_differences(&mut right_grid, 5, right[5], scratch);
+            for ((lane, left), right) in lanes[..8].iter_mut().zip(left_grid).zip(right_grid) {
+                lane.fmadd(left, right);
+            }
+            lanes[8].fmadd(left[4], right[5]);
+        }
+        ([a, b, c, d, e], [da, db, dc, dd, de], lanes @ [_, _, _, _, _]) => {
+            let left = quadratic_product_samples([*a, *b], [*da, *db]);
+            let right = quadratic_product_samples([*d, *e], [*dd, *de]);
+            let left_third = quadratic_next(left);
+            let right_third = quadratic_next(right);
+            let c_second = *c + *dc;
+            let c_third = c_second + *dc;
+            let cubic = [
+                *c * right[0],
+                c_second * right[1],
+                c_third * right_third,
+                *dc * right[2],
+            ];
+            let third_difference = cubic[3].mul_u64(6);
+            let cubic_next = cubic[2] - cubic[1];
+            let cubic_next = cubic_next + cubic_next + cubic_next + cubic[0] + third_difference;
+            let left_fourth = left_third + left[2];
+            let left_fourth = left_fourth + left_fourth - left[1];
+            lanes[0].fmadd(left[0], cubic[0]);
+            lanes[1].fmadd(left[1], cubic[1]);
+            lanes[2].fmadd(left_third, cubic[2]);
+            lanes[3].fmadd(left_fourth, cubic_next);
+            lanes[4].fmadd(left[2], cubic[3]);
+        }
+
         ([a, b, c, d], [da, db, dc, dd], lanes @ [_, _, _, _]) => {
             let left = quadratic_product_samples([*a, *b], [*da, *db]);
             let right = quadratic_product_samples([*c, *d], [*dc, *dd]);
@@ -225,6 +282,34 @@ pub(crate) fn accumulate_product_grid<F: JoltField>(
             lanes[n - 1].fmadd(left_lead, right_lead);
         }
     }
+}
+
+#[inline]
+fn quintic_product_samples<F: JoltField>(values: [F; 5], steps: [F; 5]) -> [F; 6] {
+    let left = quadratic_product_samples([values[0], values[1]], [steps[0], steps[1]]);
+    let right = quadratic_product_samples([values[3], values[4]], [steps[3], steps[4]]);
+    let c_second = values[2] + steps[2];
+    let c_third = c_second + steps[2];
+    let mut cubic = [
+        values[2] * right[0],
+        c_second * right[1],
+        c_third * quadratic_next(right),
+        F::zero(),
+        F::zero(),
+    ];
+    let lead = steps[2] * right[2];
+    let mut scratch = [F::zero(); 6];
+    extend_by_differences(&mut cubic, 3, lead, &mut scratch);
+    let mut quad = [left[0], left[1], F::zero(), F::zero(), F::zero()];
+    extend_by_differences(&mut quad, 2, left[2], &mut scratch);
+    [
+        quad[0] * cubic[0],
+        quad[1] * cubic[1],
+        quad[2] * cubic[2],
+        quad[3] * cubic[3],
+        quad[4] * cubic[4],
+        left[2] * lead,
+    ]
 }
 
 #[inline]
@@ -299,6 +384,7 @@ fn linear_product<F: JoltField>(values: &[F], steps: &[F], out: &mut [F], scratc
 /// `t ≤ values.len()`: the `degree`-th difference is the constant
 /// `degree! · lead`, so each new point costs `degree` additions after one
 /// backward-difference table at `t = degree`.
+#[inline(always)]
 fn extend_by_differences<F: JoltField>(
     values: &mut [F],
     degree: usize,
@@ -425,7 +511,7 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     let half = table.len() / 2;
     for y in 0..half {
         let even = table[2 * y];
-        table[y] = even + r * (table[2 * y + 1] - even);
+        table[y] = r.mul_add(table[2 * y + 1] - even, even);
     }
     table.truncate(half);
 }
@@ -440,7 +526,7 @@ pub(crate) fn bind_prefix_pairs<F: JoltField>(table: &mut Vec<F>, r: F, boundary
             .par_chunks(2)
             .map(|pair| {
                 let lo = pair[0];
-                lo + r * (pair.get(1).copied().unwrap_or(boundary) - lo)
+                r.mul_add(pair.get(1).copied().unwrap_or(boundary) - lo, lo)
             })
             .collect();
         return;
@@ -448,7 +534,7 @@ pub(crate) fn bind_prefix_pairs<F: JoltField>(table: &mut Vec<F>, r: F, boundary
     for index in 0..len {
         let lo = table[2 * index];
         let hi = table.get(2 * index + 1).copied().unwrap_or(boundary);
-        table[index] = lo + r * (hi - lo);
+        table[index] = r.mul_add(hi - lo, lo);
     }
     table.truncate(len);
 }
@@ -1161,7 +1247,10 @@ mod product_grid_tests {
         };
         for row in 0..32 {
             let values = random(row == 1);
-            let steps = random(row == 0);
+            let mut steps = random(row == 0);
+            if factors == 9 && row == 2 {
+                steps[1..5].fill(F::zero());
+            }
             for (slot, value) in scratch.iter_mut().zip(random(false).iter().cycle()) {
                 *slot = *value;
             }
@@ -1184,7 +1273,7 @@ mod product_grid_tests {
         }
     }
 
-    /// Covers the direct walk (2, 3), the unrolled forms (4, 8), and the
+    /// Covers the direct walk (2, 3), the unrolled forms (4, 5, 8, 9), and the
     /// balanced tree at every other length up to the largest supported one,
     /// odd splits included.
     #[test]

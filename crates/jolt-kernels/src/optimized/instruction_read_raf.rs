@@ -365,6 +365,37 @@ impl ChunkIndexSource for LookupIndexChunks {
         Some(((self.rows[j].lookup_index() >> shift) & mask) as usize)
     }
 
+    fn gather_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        width: usize,
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) {
+        let mut local = [0u128; 16];
+        let mut heap;
+        let indices = if width <= local.len() {
+            &mut local[..width]
+        } else {
+            heap = vec![0; width];
+            heap.as_mut_slice()
+        };
+        for (branch, index) in indices.iter_mut().enumerate() {
+            *index = self.rows[row * width + branch].lookup_index();
+        }
+        let mask = (1u128 << self.chunk_bits) - 1;
+        let stride = 1usize << self.chunk_bits;
+        for (column, table) in out.iter_mut().zip(tables).rev() {
+            let mut sum = F::Accumulator::default();
+            for (branch, index) in indices.iter_mut().enumerate() {
+                sum.add(table[branch * stride + (*index & mask) as usize]);
+                *index >>= self.chunk_bits;
+            }
+            column[output_row] = sum.reduce();
+        }
+    }
+
     #[inline]
     fn gather_pairs<F: JoltField>(
         &self,
