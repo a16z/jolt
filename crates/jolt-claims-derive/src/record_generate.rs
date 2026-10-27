@@ -1,12 +1,12 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse2, parse_quote, Error, Expr, ItemFn, Pat, Stmt};
+use syn::{parse2, parse_quote, Error, Expr, ItemFn, Pat, Result, Stmt};
 
 fn path(expression: &Expr, name: &str) -> bool {
     matches!(expression, Expr::Path(value) if value.path.is_ident(name))
 }
 
-pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
+pub fn expand(input: TokenStream) -> Result<TokenStream> {
     let mut function: ItemFn = parse2(input)?;
     if function.sig.ident != "collect_guest_proofs" {
         return Err(Error::new_spanned(

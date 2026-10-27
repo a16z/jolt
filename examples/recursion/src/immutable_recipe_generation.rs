@@ -8,10 +8,11 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{Error as IoError, Write};
 use std::path::PathBuf;
+use std::result::Result as StdResult;
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type Result<T> = StdResult<T, Box<dyn Error>>;
 
 #[derive(Serialize)]
 struct Context {
@@ -42,9 +43,7 @@ pub(crate) struct Request {
 impl Request {
     pub(crate) fn observe_trace(&mut self, trace_length: usize) -> Result<()> {
         if trace_length == 0 || self.trace_length.replace(trace_length).is_some() {
-            return Err(
-                io::Error::other("exactly one nonempty canonical trace is required").into(),
-            );
+            return Err(IoError::other("exactly one nonempty canonical trace is required").into());
         }
         Ok(())
     }
@@ -77,17 +76,16 @@ pub(crate) fn request(
     };
     let output = PathBuf::from(output);
     if !output.is_absolute() || output.exists() {
-        return Err(io::Error::other("recipe output must be a fresh absolute directory").into());
+        return Err(IoError::other("recipe output must be a fresh absolute directory").into());
     }
     if mode != ProgramPreprocessingMode::Full || guest != GuestProgram::Fibonacci || proofs != 1 {
-        return Err(io::Error::other(
-            "recipe generation requires exactly one Full Fibonacci proof",
-        )
-        .into());
+        return Err(
+            IoError::other("recipe generation requires exactly one Full Fibonacci proof").into(),
+        );
     }
     if AkitaField::immutable_recipe_native_field().is_none() {
         return Err(
-            io::Error::other("native recipe generation requires the admitted Fp128 type").into(),
+            IoError::other("native recipe generation requires the admitted Fp128 type").into(),
         );
     }
     let scalar: u32 = std::env::var("RECURSION_FIB_N")?.parse()?;
@@ -121,7 +119,7 @@ pub(crate) fn begin(
 ) -> Option<Pending> {
     request.map(|request| {
         let session = if n != 1 || actual_count != 1 {
-            Err(io::Error::other("canonical generation proof count changed").into())
+            Err(IoError::other("canonical generation proof count changed").into())
         } else {
             Session::begin().map_err(Into::into)
         };
@@ -142,10 +140,10 @@ impl Pending {
     ) -> Result<Ready> {
         let capture = self.session?.finish()?;
         let [(proof, public_io)] = records else {
-            return Err(io::Error::other("canonical generation proof count changed").into());
+            return Err(IoError::other("canonical generation proof count changed").into());
         };
         if !matches!(proof.trace_length, 4096 | 1048576) {
-            return Err(io::Error::other(
+            return Err(IoError::other(
                 "canonical generation is outside the two admitted padded sizes",
             )
             .into());
@@ -153,16 +151,15 @@ impl Pending {
         let actual_trace_length = self
             .request
             .trace_length
-            .ok_or_else(|| io::Error::other("canonical unpadded trace observation missing"))?;
+            .ok_or_else(|| IoError::other("canonical unpadded trace observation missing"))?;
         let proof_bytes = bincode::serde::encode_to_vec(proof, bincode::config::standard())?;
         let public_io_bytes =
             bincode::serde::encode_to_vec(public_io, bincode::config::standard())?;
         let setup_bytes = bincode::serde::encode_to_vec(setup, bincode::config::standard())?;
         if public_io.inputs != self.request.input {
-            return Err(io::Error::other(
-                "accepted public input differs from the pre-trace request",
-            )
-            .into());
+            return Err(
+                IoError::other("accepted public input differs from the pre-trace request").into(),
+            );
         }
         let executable = fs::read(std::env::current_exe()?)?;
         Ok(Ready {
@@ -238,16 +235,16 @@ pub(crate) fn publish(pending: Option<Result<Ready>>, stream: &[u8]) -> Result<(
     }))?;
     let context = serde_json::to_vec_pretty(&ready.context)?;
     if ready.output.exists() {
-        return Err(io::Error::other("recipe output already exists").into());
+        return Err(IoError::other("recipe output already exists").into());
     }
     let parent = ready
         .output
         .parent()
-        .ok_or_else(|| io::Error::other("recipe output has no parent"))?;
+        .ok_or_else(|| IoError::other("recipe output has no parent"))?;
     let name = ready
         .output
         .file_name()
-        .ok_or_else(|| io::Error::other("recipe output has no name"))?;
+        .ok_or_else(|| IoError::other("recipe output has no name"))?;
     let mut temporary_name = name.to_os_string();
     temporary_name.push(format!(".staging-{}", std::process::id()));
     let temporary = parent.join(temporary_name);
@@ -264,7 +261,7 @@ pub(crate) fn publish(pending: Option<Result<Ready>>, stream: &[u8]) -> Result<(
     manifest.push_str(&staging.write("input.bin", &ready.input)?);
     let _ = staging.write("SHA256SUMS", manifest.as_bytes())?;
     if ready.output.exists() {
-        return Err(io::Error::other("recipe output appeared during staging").into());
+        return Err(IoError::other("recipe output appeared during staging").into());
     }
     fs::rename(&staging.path, &ready.output)?;
     staging.published = true;

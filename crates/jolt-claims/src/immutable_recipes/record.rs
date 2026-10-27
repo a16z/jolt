@@ -8,8 +8,9 @@ use crate::protocols::field_inline::{
 use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use crate::{Expr, Source};
 use jolt_field::Ring;
+use serde::Serializer;
 use std::collections::BTreeSet;
-use std::fmt::{self, Write};
+use std::fmt::{Error as FmtError, Result as FmtResult, Write};
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::{Mutex, MutexGuard};
@@ -121,16 +122,16 @@ fn detail(value: usize) -> u64 {
 
 /// Implemented by exhaustive identifier matches, never by Debug output.
 pub trait RenderId {
-    fn render(&self, writer: &mut dyn Write) -> fmt::Result;
+    fn render(&self, writer: &mut dyn Write) -> FmtResult;
 }
 
 impl RenderId for usize {
-    fn render(&self, writer: &mut dyn Write) -> fmt::Result {
+    fn render(&self, writer: &mut dyn Write) -> FmtResult {
         write!(writer, "{self}usize")
     }
 }
 impl RenderId for () {
-    fn render(&self, writer: &mut dyn Write) -> fmt::Result {
+    fn render(&self, writer: &mut dyn Write) -> FmtResult {
         writer.write_str("()")
     }
 }
@@ -647,25 +648,19 @@ struct SourceText {
     value: String,
 }
 impl Write for SourceText {
-    fn write_str(&mut self, value: &str) -> fmt::Result {
-        let length = self
-            .value
-            .len()
-            .checked_add(value.len())
-            .ok_or(fmt::Error)?;
+    fn write_str(&mut self, value: &str) -> FmtResult {
+        let length = self.value.len().checked_add(value.len()).ok_or(FmtError)?;
         if length > MAX_BYTES {
-            return Err(fmt::Error);
+            return Err(FmtError);
         }
-        self.value
-            .try_reserve(value.len())
-            .map_err(|_| fmt::Error)?;
+        self.value.try_reserve(value.len()).map_err(|_| FmtError)?;
         self.value.push_str(value);
         Ok(())
     }
 }
 
 impl<O: RenderId, D: RenderId, C: RenderId> NativeRecord<O, D, C> {
-    fn render(&self, writer: &mut dyn Write) -> fmt::Result {
+    fn render(&self, writer: &mut dyn Write) -> FmtResult {
         writer.write_str("match Record::new(&[")?;
         for word in &self.key {
             write!(writer, "{word}u64,")?;
@@ -733,7 +728,7 @@ impl Capture {
         Ok(writer.value)
     }
 
-    fn render_source(&self, writer: &mut dyn Write) -> fmt::Result {
+    fn render_source(&self, writer: &mut dyn Write) -> FmtResult {
         writer.write_str("use crate::Source;\n")?;
         for family in ["JOLT", "COMPOSED", "FIELD"] {
             let table = match family {
@@ -777,10 +772,7 @@ pub struct RecordIdentity<'a> {
 
 /// Canonical coefficients are field elements up to 128 bits; JSON numbers cannot
 /// carry them exactly, so the capture receipt writes them as decimal strings.
-fn decimal_strings<S: serde::Serializer>(
-    values: &&[u128],
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
+fn decimal_strings<S: Serializer>(values: &&[u128], serializer: S) -> Result<S::Ok, S::Error> {
     serializer.collect_seq(values.iter().map(u128::to_string))
 }
 

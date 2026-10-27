@@ -7,12 +7,12 @@ pub mod record;
 pub use key::{KeySink, KeyVisit};
 /// Exact source-owned base eligibility for generic composed relations.
 pub struct BasePermit<S> {
-    marker: std::marker::PhantomData<fn() -> S>,
+    marker: PhantomData<fn() -> S>,
 }
 impl<S> BasePermit<S> {
     pub(crate) fn new() -> Self {
         Self {
-            marker: std::marker::PhantomData,
+            marker: PhantomData,
         }
     }
 }
@@ -20,7 +20,7 @@ impl<S> BasePermit<S> {
 use crate::{Expr, Source, Term};
 use jolt_field::{ImmutableRecipeField, Ring, IMMUTABLE_RECIPE_MODULUS};
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, marker::PhantomData, slice::Iter};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {
@@ -191,7 +191,7 @@ pub struct Recipe<'a, F, O, D, C> {
 }
 
 struct CompareKey<'a> {
-    words: std::slice::Iter<'a, u64>,
+    words: Iter<'a, u64>,
     order: Ordering,
 }
 impl KeySink for CompareKey<'_> {
@@ -249,7 +249,7 @@ pub(crate) fn find<'a, F: Ring, O, D, C>(
 }
 
 enum Factors<'a, O, D, C> {
-    Canonical(std::slice::Iter<'a, Source<O, D, C>>),
+    Canonical(Iter<'a, Source<O, D, C>>),
     Compact {
         words: &'a [u64],
         sources: &'a [Source<O, D, C>],
@@ -294,7 +294,7 @@ struct TermView<'a, F, O, D, C> {
     factors: Factors<'a, O, D, C>,
 }
 enum Terms<'a, F, O, D, C> {
-    Canonical(std::slice::Iter<'a, Term<F, O, D, C>>),
+    Canonical(Iter<'a, Term<F, O, D, C>>),
     Compact {
         record: &'a Record<'a, O, D, C>,
         term: usize,

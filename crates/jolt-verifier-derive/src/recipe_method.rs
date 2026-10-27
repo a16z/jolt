@@ -10,45 +10,43 @@ use syn::punctuated::Punctuated;
 #[cfg(any(feature = "immutable-recipes", test))]
 use syn::visit_mut::{self, VisitMut};
 #[cfg(any(feature = "immutable-recipes", test))]
-use syn::{parse_quote, Expr, ExprLit, FnArg, ImplItemFn, Lit, MetaNameValue, ReturnType, Token};
+use syn::{
+    parse_quote, Expr, ExprLit, FnArg, ImplItem, ImplItemFn, ItemImpl, Lit, MetaNameValue,
+    ReturnType, Token,
+};
+use syn::{Error, Path, Result};
 
 /// Without the feature the recipe attributes are never applied (every use is
 /// `cfg_attr(feature = "immutable-recipes", ..)`), so this only reports misuse.
 #[cfg(not(any(feature = "immutable-recipes", test)))]
-pub(crate) fn expand(_arguments: TokenStream, _original: TokenStream) -> syn::Result<TokenStream> {
-    Err(syn::Error::new(
+pub(crate) fn expand(_arguments: TokenStream, _original: TokenStream) -> Result<TokenStream> {
+    Err(Error::new(
         Span::call_site(),
         "recipe expansion requires the immutable-recipes feature",
     ))
 }
 
 #[cfg(any(feature = "immutable-recipes", test))]
-pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> syn::Result<TokenStream> {
+pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> Result<TokenStream> {
     let mut expected = BTreeMap::new();
     let mut returns_set = false;
     for option in Punctuated::<MetaNameValue, Token![,]>::parse_terminated.parse2(arguments)? {
         let name = option
             .path
             .get_ident()
-            .ok_or_else(|| syn::Error::new_spanned(&option, "expected seam name"))?
+            .ok_or_else(|| Error::new_spanned(&option, "expected seam name"))?
             .to_string();
         let Expr::Lit(ExprLit {
             lit: Lit::Int(value),
             ..
         }) = &option.value
         else {
-            return Err(syn::Error::new_spanned(
-                &option,
-                "seam count must be a literal",
-            ));
+            return Err(Error::new_spanned(&option, "seam count must be a literal"));
         };
         let count = value.base10_parse::<usize>()?;
         if name == "returns_set" {
             if count != 1 || returns_set {
-                return Err(syn::Error::new_spanned(
-                    &option,
-                    "invalid set result option",
-                ));
+                return Err(Error::new_spanned(&option, "invalid set result option"));
             }
             returns_set = true;
         } else if !matches!(
@@ -65,12 +63,9 @@ pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> syn::Resu
                 | "call_expected_final_claim"
                 | "call_validate_member_output_shape"
         ) {
-            return Err(syn::Error::new_spanned(&option, "unknown recipe seam"));
+            return Err(Error::new_spanned(&option, "unknown recipe seam"));
         } else if count == 0 || expected.insert(name, count).is_some() {
-            return Err(syn::Error::new_spanned(
-                &option,
-                "duplicate or zero seam count",
-            ));
+            return Err(Error::new_spanned(&option, "duplicate or zero seam count"));
         }
     }
     let mut selected: ImplItemFn = syn::parse2(original.clone())?;
@@ -84,7 +79,7 @@ pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> syn::Resu
         return Err(error);
     }
     if transform.counts != expected {
-        return Err(syn::Error::new(
+        return Err(Error::new(
             Span::call_site(),
             format!(
                 "recipe seam inventory mismatch: expected {expected:?}, observed {:?}",
@@ -97,18 +92,20 @@ pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> syn::Resu
         selected.sig.inputs.first(),
         Some(FnArg::Receiver(_))
     ));
-    selected.sig.inputs.insert(
-        offset,
-        parse_quote!(__recipe_context: &crate::immutable_recipes::RecipeContext<'_>),
-    );
+    let recipe_context = quote!(crate::immutable_recipes::RecipeContext);
+    selected
+        .sig
+        .inputs
+        .insert(offset, parse_quote!(__recipe_context: &#recipe_context<'_>));
     if returns_set {
         let ReturnType::Type(_, ty) = &selected.sig.output else {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 &selected.sig,
                 "set method has no return type",
             ));
         };
-        selected.sig.output = parse_quote!(-> Result<#ty, crate::VerifierError>);
+        let verifier_error = quote!(crate::VerifierError);
+        selected.sig.output = parse_quote!(-> Result<#ty, #verifier_error>);
         let body = selected.block;
         selected.block = parse_quote!({ let __recipe_set = #body; Ok(__recipe_set) });
     }
@@ -119,7 +116,7 @@ pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> syn::Resu
 struct Transform {
     counts: BTreeMap<String, usize>,
     declared: BTreeMap<String, usize>,
-    errors: Option<syn::Error>,
+    errors: Option<Error>,
 }
 
 #[cfg(any(feature = "immutable-recipes", test))]
@@ -128,7 +125,7 @@ impl Transform {
         *self.counts.entry(name.to_owned()).or_default() += 1;
     }
     fn reject(&mut self, expression: &Expr, reason: &str) {
-        let error = syn::Error::new_spanned(expression, reason);
+        let error = Error::new_spanned(expression, reason);
         if let Some(previous) = &mut self.errors {
             previous.combine(error);
         } else {
@@ -168,11 +165,12 @@ impl VisitMut for Transform {
                         let relation = &construction.receiver;
                         let method = &construction.method;
                         let arguments = call.args.iter();
+                        let phase_type = quote!(::jolt_claims::immutable_recipes::Phase);
                         *expression = parse_quote!({
                             use crate::immutable_recipes::RecipeEvaluation as _;
                             let __recipe_symbolic = &(#relation);
                             __recipe_symbolic.evaluate_recipe::<#field>(
-                                ::jolt_claims::immutable_recipes::Phase::#phase,
+                                #phase_type::#phase,
                                 __recipe_context, || __recipe_symbolic.#method #types (), #(#arguments),*,
                             )
                         });
@@ -244,8 +242,8 @@ impl VisitMut for Transform {
 pub(crate) fn batch_companions(
     driver: TokenStream,
     _members: usize,
-    _krate: &syn::Path,
-) -> syn::Result<TokenStream> {
+    _krate: &Path,
+) -> Result<TokenStream> {
     Ok(driver)
 }
 
@@ -254,17 +252,17 @@ pub(crate) fn batch_companions(
 pub(crate) fn batch_companions(
     driver: TokenStream,
     members: usize,
-    krate: &syn::Path,
-) -> syn::Result<TokenStream> {
+    krate: &Path,
+) -> Result<TokenStream> {
     // Only the verifier's internal derives own this feature and context API.
     // External/default consumers retain their original expansion verbatim.
     if !krate.is_ident("crate") {
         return Ok(driver);
     }
-    let item: syn::ItemImpl = syn::parse2(driver.clone())?;
+    let item: ItemImpl = syn::parse2(driver.clone())?;
     let mut companions = Vec::new();
     for method in &item.items {
-        let syn::ImplItem::Fn(method) = method else {
+        let ImplItem::Fn(method) = method else {
             continue;
         };
         let arguments = match method.sig.ident.to_string().as_str() {
@@ -275,9 +273,9 @@ pub(crate) fn batch_companions(
             _ => continue,
         };
         let pair = expand(arguments, quote!(#method))?;
-        let parsed: syn::ItemImpl = syn::parse2(quote!(impl Example { #pair }))?;
-        let Some(syn::ImplItem::Fn(mut selected)) = parsed.items.last().cloned() else {
-            return Err(syn::Error::new_spanned(
+        let parsed: ItemImpl = syn::parse2(quote!(impl Example { #pair }))?;
+        let Some(ImplItem::Fn(mut selected)) = parsed.items.last().cloned() else {
+            return Err(Error::new_spanned(
                 method,
                 "missing selected batch companion",
             ));
@@ -288,7 +286,7 @@ pub(crate) fn batch_companions(
             Some(FnArg::Receiver(_))
         ));
         let Some(argument) = selected.sig.inputs.iter_mut().nth(offset) else {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 method,
                 "missing recipe context argument",
             ));
@@ -300,7 +298,7 @@ pub(crate) fn batch_companions(
         companions.push(selected);
     }
     let mut selected_impl = item;
-    selected_impl.items = companions.into_iter().map(syn::ImplItem::Fn).collect();
+    selected_impl.items = companions.into_iter().map(ImplItem::Fn).collect();
     selected_impl
         .attrs
         .push(parse_quote!(#[cfg(feature = "immutable-recipes")]));
@@ -312,6 +310,7 @@ pub(crate) fn batch_companions(
 mod tests {
     use super::expand;
     use quote::quote;
+    use syn::{ImplItem, ItemImpl};
 
     #[test]
     fn trailing_callback_comma_produces_two_parseable_methods() {
@@ -323,14 +322,14 @@ mod tests {
             }
         };
         let expanded = expand(quote!(output = 1), original).expect("literal parser fixture");
-        let implementation: syn::ItemImpl =
+        let implementation: ItemImpl =
             syn::parse2(quote!(impl Fixture { #expanded })).expect("generated methods parse");
         assert_eq!(implementation.items.len(), 2);
         let selected = implementation
             .items
             .last()
             .and_then(|item| match item {
-                syn::ImplItem::Fn(selected) => Some(selected),
+                ImplItem::Fn(selected) => Some(selected),
                 _ => None,
             })
             .expect("selected method missing");

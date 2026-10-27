@@ -132,7 +132,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericArgument,
+    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Error, Fields, GenericArgument,
     GenericParam, Ident, ItemFn, Meta, PathArguments, Token, Type,
 };
 
@@ -1435,7 +1435,7 @@ mod recipe_method;
 #[proc_macro_attribute]
 pub fn recipe_method(arguments: TokenStream, item: TokenStream) -> TokenStream {
     recipe_method::expand(arguments.into(), item.into())
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
@@ -1445,7 +1445,7 @@ fn fixed_recipe_method(
     profile: TokenStream2,
 ) -> TokenStream {
     if !arguments.is_empty() {
-        return syn::Error::new_spanned(
+        return Error::new_spanned(
             TokenStream2::from(arguments),
             "fixed recipe attribute accepts no arguments",
         )
@@ -1453,7 +1453,7 @@ fn fixed_recipe_method(
         .into();
     }
     recipe_method::expand(profile, item.into())
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 

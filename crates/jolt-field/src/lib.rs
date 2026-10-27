@@ -238,37 +238,42 @@ macro_rules! immutable_recipe_fp128_methods {
     };
 }
 
+#[cfg(all(feature = "immutable-recipes", feature = "solinas"))]
+use solinas::FIELD_INLINE_FP128_MODULUS;
+#[cfg(feature = "immutable-recipes")]
+use std::marker::PhantomData;
+
 /// Proof of the exact field implementation and active RV64 selector. Downstream
 /// Ring implementations cannot construct this capability for their own Self.
 #[cfg(feature = "immutable-recipes")]
 #[derive(Clone, Copy)]
 pub struct ImmutableRecipeField<F> {
-    marker: std::marker::PhantomData<fn() -> F>,
+    marker: PhantomData<fn() -> F>,
 }
 
 #[cfg(feature = "immutable-recipes")]
 impl<F> ImmutableRecipeField<F> {
     pub(crate) fn new() -> Self {
         Self {
-            marker: std::marker::PhantomData,
+            marker: PhantomData,
         }
     }
 }
 
 #[cfg(all(feature = "immutable-recipes", feature = "solinas"))]
-pub const IMMUTABLE_RECIPE_MODULUS: u128 = solinas::FIELD_INLINE_FP128_MODULUS;
+pub const IMMUTABLE_RECIPE_MODULUS: u128 = FIELD_INLINE_FP128_MODULUS;
 
 /// Native canonical export eligibility, separate from guest recipe eligibility.
 #[cfg(feature = "immutable-recipes")]
 #[derive(Clone, Copy)]
 pub struct ImmutableRecipeNativeField<F> {
-    marker: std::marker::PhantomData<fn() -> F>,
+    marker: PhantomData<fn() -> F>,
 }
 #[cfg(feature = "immutable-recipes")]
 impl<F> ImmutableRecipeNativeField<F> {
     pub(crate) fn new() -> Self {
         Self {
-            marker: std::marker::PhantomData,
+            marker: PhantomData,
         }
     }
 }

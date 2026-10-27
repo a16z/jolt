@@ -707,8 +707,10 @@ crate::recipe_id! { crate::protocols::jolt; BytecodeClaimReductionChallenge {
     Eta = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-impl crate::immutable_recipes::KeyVisit for RetiredIdentifier {
-    fn visit(&self, _sink: &mut dyn crate::immutable_recipes::KeySink) -> bool {
+use crate::immutable_recipes::{KeySink, KeyVisit};
+#[cfg(feature = "immutable-recipes")]
+impl KeyVisit for RetiredIdentifier {
+    fn visit(&self, _sink: &mut dyn KeySink) -> bool {
         match *self {}
     }
 }
@@ -921,8 +923,12 @@ crate::recipe_id! { crate::protocols::jolt; JoltDerivedId {
 } }
 
 #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
-impl crate::immutable_recipes::record::RenderId for RetiredIdentifier {
-    fn render(&self, _writer: &mut dyn std::fmt::Write) -> std::fmt::Result {
+use crate::immutable_recipes::record::RenderId;
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+use std::fmt::{Result as FmtResult, Write};
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+impl RenderId for RetiredIdentifier {
+    fn render(&self, _writer: &mut dyn Write) -> FmtResult {
         match *self {}
     }
 }
