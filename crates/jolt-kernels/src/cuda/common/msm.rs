@@ -531,7 +531,7 @@ fn take_limbs(chunk: &[u64]) -> [u64; FQ_LIMBS] {
     limbs
 }
 
-#[cfg(all(test, feature = "parallel"))]
+#[cfg(feature = "parallel")]
 fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u8]) -> bool {
     use rayon::prelude::*;
 
@@ -548,7 +548,7 @@ fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u
         .reduce(|| true, |a, b| a && b)
 }
 
-#[cfg(all(test, not(feature = "parallel")))]
+#[cfg(not(feature = "parallel"))]
 fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u8]) -> bool {
     let mut fits = true;
     for ((magnitude, sign), &scalar) in magnitudes.iter_mut().zip(signs.iter_mut()).zip(rows) {
@@ -1741,7 +1741,6 @@ impl CudaKernelContext {
         Ok(true)
     }
 
-    #[cfg(test)]
     pub fn signed_column(&self, rows: &[i128]) -> Result<SignedColumn, CudaError> {
         tracing::info_span!("cuda_msm_i128_stage", len = rows.len()).in_scope(|| {
             let mut magnitudes = vec![0u64; rows.len()];
@@ -1818,7 +1817,6 @@ impl CudaKernelContext {
             .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&accumulator)?)))
     }
 
-    #[cfg(test)]
     pub fn msm_rows_i128(
         &self,
         bases: &DeviceG1Bases,
