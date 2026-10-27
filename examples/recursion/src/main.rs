@@ -924,7 +924,9 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     #[cfg(feature = "tensor-no-carry")]
     program.add_guest_feature("tensor-no-carry");
     #[cfg(feature = "rowptr-registers")]
-    program.add_guest_feature("rowptr-registers"); #[cfg(feature = "tensor-eq-runs")] program.add_guest_feature("tensor-eq-runs");
+    program.add_guest_feature("rowptr-registers");
+    #[cfg(feature = "tensor-eq-runs")]
+    program.add_guest_feature("tensor-eq-runs");
     program.set_memory_config(memory_config);
     program
 }
