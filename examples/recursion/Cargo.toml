@@ -67,6 +67,9 @@ akita = [
 # weighted-dot-horner: the verifier guest evaluates each weighted dot whose 64
 # powers are geometric, with at least five rows, by a five-row reverse Horner
 # recurrence in field registers; same field values. Default on.
+# terminal-contraction: the verifier guest (and the host's Akita) contract the
+# terminal ring relations by signed 16-bit coefficients and evaluate the fused
+# setup scan with its jobs and weighted dots inline; same field values. Default on.
 default = [
   "l3-compression-weights",
   "l2-terminal-quotient",
@@ -79,6 +82,7 @@ default = [
   "setup-sop-structured",
   "segment-setup",
   "weighted-dot-horner",
+  "terminal-contraction",
 ]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
