@@ -137,6 +137,10 @@ mod tests {
     use super::super::{ColumnSelector, ConstantSuffix, InstructionCycleRow};
     use super::*;
     use jolt_field::Fr;
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    #[cfg(feature = "akita")]
+    use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::RaChunkSelector;
     use std::sync::Arc;
 
@@ -162,7 +166,7 @@ mod tests {
                                 Some((i * 29) as u64)
                             },
                             #[cfg(feature = "akita")]
-                            jolt_witness::witnesses::FusedInc::default(),
+                            FusedInc::default(),
                         )
                     })
                     .collect();
@@ -269,6 +273,6 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn bulk_instruction_decoding_matches_selectors_fp128() {
-        check::<jolt_field::Prime128OffsetA7F7>();
+        check::<Prime128OffsetA7F7>();
     }
 }

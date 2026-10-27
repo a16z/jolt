@@ -587,6 +587,8 @@ mod tests {
         InstructionInputChallenges, InstructionInputInputClaims,
     };
     use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId, TraceDimensions};
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
     use jolt_field::{Fr, JoltField};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
@@ -790,13 +792,7 @@ mod tests {
         for prefix in [0, 1, 2, 15, 16, 17, 63, 64] {
             for exceptional in [false, true] {
                 for gamma in [0, 1, 0xDADA_CAFE] {
-                    assert_parity_field::<jolt_field::Prime128OffsetA7F7>(
-                        6,
-                        717,
-                        prefix,
-                        exceptional,
-                        gamma,
-                    );
+                    assert_parity_field::<Prime128OffsetA7F7>(6, 717, prefix, exceptional, gamma);
                 }
             }
         }
