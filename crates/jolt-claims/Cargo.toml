@@ -17,7 +17,12 @@ blake2-inline = ["dep:jolt-inlines-blake2", "jolt-inlines-blake2/digest"]
 allocative = ["dep:allocative"]
 field-inline = ["jolt-lookup-tables/field-inline"]
 test-utils = []
-immutable-recipes = ["akita", "field-inline", "jolt-field/immutable-recipes", "jolt-field/solinas"]
+immutable-recipes = [
+  "akita",
+  "field-inline",
+  "jolt-field/immutable-recipes",
+  "jolt-field/solinas",
+]
 immutable-recipes-record = ["immutable-recipes"]
 
 [dependencies]

@@ -42,7 +42,9 @@ jolt-field = { path = "../jolt-field", default-features = false }
 rand = { workspace = true, features = ["std_rng"], optional = true }
 
 [dev-dependencies]
-jolt-field = { path = "../jolt-field", default-features = false, features = ["solinas"] }
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "solinas",
+] }
 criterion = { workspace = true }
 
 [[bench]]
