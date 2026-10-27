@@ -961,7 +961,7 @@ mod scalar_tests {
     use ark_secp256r1::{Fr, Projective};
     use num_bigint::BigUint;
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     #[test]
     fn modular_addition_matches_integer_reduction_at_carry_boundaries() {
@@ -980,7 +980,7 @@ mod scalar_tests {
                 values.push(power);
             }
             values.extend(
-                (0..64).map(|_| BigUint::from_bytes_le(&rng.gen::<[u8; 32]>()) % &modulus_integer),
+                (0..64).map(|_| BigUint::from_bytes_le(&rng.random::<[u8; 32]>()) % &modulus_integer),
             );
             let limbs = |value: &BigUint| {
                 let mut bytes = [0u8; 32];
@@ -1011,7 +1011,7 @@ mod scalar_tests {
             [1 << 127, 3],
             [3, 1 << 127],
         ];
-        cases.extend((0..64).map(|_| [rng.gen(), rng.gen()]));
+        cases.extend((0..64).map(|_| [rng.random(), rng.random()]));
         for second_multiple in [0u64, 1, 2, 17] {
             let p = Projective::generator();
             let q = p * Fr::from(second_multiple);
