@@ -114,6 +114,9 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+mod guard_groups;
+use guard_groups::GuardGroups;
+
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
@@ -913,6 +916,8 @@ impl OptimizedOuterUniskip {
                     <F as WithAccumulator>::SignedProductAccumulator::default(),
                     <F as WithAccumulator>::SignedProductAccumulator::default(),
                 ); EXTENDED_NODE_COUNT];
+                let mut first_groups = GuardGroups::<F, DOMAIN, 1>::new();
+                let mut second_groups = GuardGroups::<F, SECOND_GROUP_LEN, 2>::new();
                 #[cfg(feature = "field-inline")]
                 let mut field_sums = [F::zero(); EXTENDED_NODE_COUNT];
                 #[cfg(feature = "field-inline")]
@@ -931,25 +936,47 @@ impl OptimizedOuterUniskip {
                         }
                         continue;
                     }
-                    let products = extended_products(&row.group_values());
-                    for ((low, high), product) in sums.iter_mut().zip(products) {
-                        low.fmadd_i128(e_first, product.first);
-                        low.fmadd_i128(e_second, product.second_lo);
-                        high.fmadd_i128(e_second, product.second_hi);
+                    let values = row.group_values();
+                    let first_added =
+                        first_groups.try_add(&values.a_first, [&values.b_first], e_first);
+                    let second_added = second_groups.try_add(
+                        &values.a_second,
+                        [&values.b_second_lo, &values.b_second_hi],
+                        e_second,
+                    );
+                    if !first_added || !second_added {
+                        let products = extended_products(&values);
+                        for ((low, high), product) in sums.iter_mut().zip(products) {
+                            if !first_added {
+                                low.fmadd_i128(e_first, product.first);
+                            }
+                            if !second_added {
+                                low.fmadd_i128(e_second, product.second_lo);
+                                high.fmadd_i128(e_second, product.second_hi);
+                            }
+                        }
                     }
                 }
+                let first = first_groups.finish(two_pow_64);
+                let second = second_groups.finish(two_pow_64);
+                let grouped = first.into_iter().zip(second).map(|(a, b)| a + b);
                 #[cfg(feature = "field-inline")]
                 return Ok(sums
                     .into_iter()
                     .zip(field_sums)
-                    .map(|((low, high), field_sum)| {
-                        e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce() + field_sum)
+                    .zip(grouped)
+                    .map(|(((low, high), field_sum), grouped)| {
+                        e_out[x_out]
+                            * (low.reduce() + two_pow_64 * high.reduce() + field_sum + grouped)
                     })
                     .collect());
                 #[cfg(not(feature = "field-inline"))]
                 Ok(sums
                     .into_iter()
-                    .map(|(low, high)| e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce()))
+                    .zip(grouped)
+                    .map(|((low, high), grouped)| {
+                        e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce() + grouped)
+                    })
                     .collect())
             },
         )?;
@@ -2087,6 +2114,52 @@ mod tests {
                 parity_case_with_eq(dummy, 4, 389, None, true, Some(prefix));
             }
         });
+    }
+
+    #[test]
+    fn uniskip_matches_reference_with_many_guard_patterns() {
+        let log_t = 12;
+        let rows = synthetic_rows(log_t, 0x6a_726f_7773);
+        #[cfg(feature = "field-inline")]
+        let field_rows = synthetic_field_rows(log_t, 0x6a_6669_656c);
+        let tau: Vec<Fr> = (0..log_t + 2)
+            .map(|i| Fr::from_u64(991 + 17 * i as u64))
+            .collect();
+        let backend = fixed_backend_from_rows(
+            log_t,
+            &rows,
+            #[cfg(feature = "field-inline")]
+            &field_rows,
+        );
+        let mut reference = ProofSession::default();
+        reference.park(SpartanOuterKernel::<Fr>::prepare(log_t, &tau, &backend).unwrap());
+        let expected =
+            <ReferenceBackend as UniskipKernel<Fr, OuterRemainder<Fr>>>::first_round_poly(
+                &ReferenceBackend,
+                &mut reference,
+                &[],
+                &(),
+            )
+            .unwrap();
+        let mut optimized = ProofSession::default();
+        OptimizedOuterUniskip::prepare_from_rows(
+            &mut optimized,
+            log_t,
+            &tau,
+            rows,
+            #[cfg(feature = "field-inline")]
+            field_rows,
+        )
+        .unwrap();
+        let actual =
+            <OptimizedOuterUniskip as UniskipKernel<Fr, OuterRemainder<Fr>>>::first_round_poly(
+                &OptimizedOuterUniskip,
+                &mut optimized,
+                &[],
+                &(),
+            )
+            .unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]

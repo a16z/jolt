@@ -1,3 +1,6 @@
+mod product_sum;
+pub(crate) use product_sum::{LowDegreeProductSum, TailFactorProducts};
+
 use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
@@ -1222,7 +1225,10 @@ mod product_grid_tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    use super::{accumulate_product_grid, product_grid_scratch_len, MAX_GRID_FACTORS};
+    use super::{
+        accumulate_product_grid, product_grid_scratch_len, LowDegreeProductSum, TailFactorProducts,
+        MAX_GRID_FACTORS,
+    };
 
     /// Accumulates several rows into shared lanes and compares every lane to
     /// the factors multiplied one by one at that lane's point. The scratch is
@@ -1232,6 +1238,10 @@ mod product_grid_tests {
         let mut rng = ChaCha20Rng::seed_from_u64(431);
         let mut lanes = vec![F::Accumulator::default(); factors];
         let mut expected = vec![F::zero(); factors];
+        let mut deferred_lanes = vec![F::Accumulator::default(); factors];
+        let mut low_degree = LowDegreeProductSum::default();
+        let mut uncached = LowDegreeProductSum::default();
+        let mut uncached_lanes = vec![F::Accumulator::default(); factors];
         let mut scratch = vec![F::zero(); product_grid_scratch_len(factors)];
         let mut random = |zero: bool| -> Vec<F> {
             (0..factors)
@@ -1245,16 +1255,39 @@ mod product_grid_tests {
                 })
                 .collect()
         };
+        let mut tail_values = random(false);
+        if factors > 4 {
+            tail_values[4] = F::zero();
+        }
+        let tail_products = TailFactorProducts::new(&tail_values[1..]);
         for row in 0..32 {
-            let values = random(row == 1);
+            let mut values = random(row == 1);
             let mut steps = random(row == 0);
             if factors == 9 && row == 2 {
                 steps[1..5].fill(F::zero());
+            }
+            if factors == 9 && row >= 3 {
+                let degree = (row - 3) % 10;
+                for index in 0..9 - degree {
+                    steps[index] = F::zero();
+                    if index != 0 && row % 2 == 0 {
+                        values[index] = tail_values[index];
+                    }
+                }
+                if row == 13 {
+                    values[0] = F::zero();
+                }
             }
             for (slot, value) in scratch.iter_mut().zip(random(false).iter().cycle()) {
                 *slot = *value;
             }
             accumulate_product_grid(&values, &steps, &mut lanes, &mut scratch);
+            if !low_degree.try_accumulate(&values, &steps, tail_products.as_ref()) {
+                accumulate_product_grid(&values, &steps, &mut deferred_lanes, &mut scratch);
+            }
+            if !uncached.try_accumulate(&values, &steps, None) {
+                accumulate_product_grid(&values, &steps, &mut uncached_lanes, &mut scratch);
+            }
             for (index, expected) in expected.iter_mut().enumerate() {
                 *expected += if index == factors - 1 {
                     steps.iter().copied().product::<F>()
@@ -1268,8 +1301,24 @@ mod product_grid_tests {
                 };
             }
         }
-        for (index, (lane, expected)) in lanes.iter().zip(expected).enumerate() {
+        low_degree.merge_into(&mut deferred_lanes, &mut scratch);
+        uncached.merge_into(&mut uncached_lanes, &mut scratch);
+        for (index, (lane, expected)) in uncached_lanes.iter().zip(&expected).enumerate() {
+            assert_eq!(
+                lane.reduce(),
+                *expected,
+                "{factors} factors, uncached lane {index}"
+            );
+        }
+        for (index, ((lane, deferred), expected)) in
+            lanes.iter().zip(deferred_lanes).zip(expected).enumerate()
+        {
             assert_eq!(lane.reduce(), expected, "{factors} factors, lane {index}");
+            assert_eq!(
+                deferred.reduce(),
+                expected,
+                "{factors} factors, adaptive lane {index}"
+            );
         }
     }
 
