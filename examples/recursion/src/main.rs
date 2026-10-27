@@ -20,6 +20,7 @@ use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
@@ -1123,7 +1124,7 @@ echo "$3"
 "#;
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let exe = std::env::current_exe().ok()?;
-    let output = std::process::Command::new("sh")
+    let output = Command::new("sh")
         .arg("-c")
         .arg(SCRIPT)
         .arg("sh")
