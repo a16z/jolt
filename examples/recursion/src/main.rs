@@ -300,12 +300,15 @@ impl GuestProgram {
     }
 }
 
-/// Write a generated guest source. With `RECURSION_WRITE_IF_CHANGED` set, a file whose
-/// bytes already match is left untouched, so its mtime does not force a guest rebuild;
-/// unset, every file is rewritten as before. Tooling only: the bytes on disk are the same.
+/// Write a generated guest source. A file whose bytes already match is left
+/// untouched, so its mtime does not force a guest rebuild;
+/// `RECURSION_WRITE_IF_CHANGED=off` rewrites every file as before. Tooling only:
+/// the bytes on disk are the same.
 fn write_generated(path: &Path, bytes: &[u8]) {
-    if std::env::var_os("RECURSION_WRITE_IF_CHANGED").is_some()
-        && std::fs::read(path).is_ok_and(|existing| existing == bytes)
+    if !matches!(
+        std::env::var("RECURSION_WRITE_IF_CHANGED").as_deref(),
+        Ok("off")
+    ) && std::fs::read(path).is_ok_and(|existing| existing == bytes)
     {
         info!("Unchanged, not rewritten: {}", path.display());
         return;
