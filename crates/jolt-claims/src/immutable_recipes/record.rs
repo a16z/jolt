@@ -97,14 +97,21 @@ pub enum CaptureError {
     Poisoned,
     #[error("immutable recipe recorder capacity exceeded")]
     Capacity,
-    #[error("canonical expression cannot be represented by the closed recipe")]
-    Representation,
+    /// Names the failing check and one detail value (a count or an index; 0 when
+    /// the check has none), so a generation failure identifies its cause.
+    #[error("canonical expression cannot be represented by the closed recipe: {0} (detail {1})")]
+    Representation(&'static str, u64),
     #[error("one complete recipe key produced different canonical values")]
     Conflict,
     #[error("canonical capture did not cover the required relation phases")]
     Coverage,
     #[error("canonical recipe source serialization failed")]
     Serialization,
+}
+
+/// Saturating conversion of a count or index into an error detail value.
+fn detail(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 /// Implemented by exhaustive identifier matches, never by Debug output.
@@ -333,11 +340,14 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
         budget: &mut Budget,
     ) -> Result<(), CaptureError> {
         if self.phase == Phase::Support {
-            return Err(CaptureError::Representation);
+            return Err(CaptureError::Representation("expression observed in the support phase", 0));
         }
         for term in &expression.terms {
             if term.factors.len() > 12 {
-                return Err(CaptureError::Representation);
+                return Err(CaptureError::Representation(
+                    "term has more than 12 factors",
+                    detail(term.factors.len()),
+                ));
             }
             budget.factors = budget
                 .factors
@@ -349,9 +359,9 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
             let coefficient = term
                 .coefficient
                 .immutable_recipe_export()
-                .ok_or(CaptureError::Representation)?;
+                .ok_or(CaptureError::Representation("coefficient has no canonical export", 0))?;
             if coefficient >= IMMUTABLE_RECIPE_MODULUS {
-                return Err(CaptureError::Representation);
+                return Err(CaptureError::Representation("coefficient is not below the modulus", 0));
             }
             let coefficient_index = if let Some(index) = self
                 .coefficients
@@ -364,10 +374,14 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
                 budget.push(&mut self.coefficients, coefficient)?;
                 index
             };
-            let coefficient_index =
-                u16::try_from(coefficient_index).map_err(|_| CaptureError::Representation)?;
-            let count =
-                u64::try_from(term.factors.len()).map_err(|_| CaptureError::Representation)?;
+            let coefficient_index = u16::try_from(coefficient_index).map_err(|_| {
+                CaptureError::Representation(
+                    "coefficient index exceeds 16 bits",
+                    detail(coefficient_index),
+                )
+            })?;
+            let count = u64::try_from(term.factors.len())
+                .map_err(|_| CaptureError::Representation("factor count exceeds 64 bits", 0))?;
             budget.push(
                 &mut self.headers,
                 (u64::from(coefficient_index) << 4) | count,
@@ -382,8 +396,12 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
                         budget.push(&mut self.sources, *source)?;
                         index
                     };
-                let source_index =
-                    u16::try_from(source_index).map_err(|_| CaptureError::Representation)?;
+                let source_index = u16::try_from(source_index).map_err(|_| {
+                    CaptureError::Representation(
+                        "source index exceeds 16 bits",
+                        detail(source_index),
+                    )
+                })?;
                 word |= u64::from(source_index) << ((index % 4) * 16);
                 if index % 4 == 3 || index + 1 == term.factors.len() {
                     budget.push(&mut self.factors, word)?;
@@ -404,7 +422,12 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
             &self.support,
         )
         .map(|_| ())
-        .map_err(|_| CaptureError::Representation)
+        .map_err(|_| {
+            CaptureError::Representation(
+                "record failed closed-recipe validation",
+                detail(self.key.len()),
+            )
+        })
     }
 }
 
