@@ -1,6 +1,5 @@
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier};
-use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::AkitaVerifierSetup;
 
 use crate::configs::{AkitaChunkProfile, JoltOneHotK16};
@@ -99,18 +98,6 @@ macro_rules! define_family_types {
                     $(OneHotFamilyKind::$variant =>
                         TrustedScheduleCatalog::<$cfg>::from_artifact_bytes(
                             bytes, family.profile().witness_cfg(),
-                        ).map(AkitaCommitmentScheme::new).map(Self::$variant)),+
-                }
-            }
-
-            pub(crate) fn from_catalog(
-                family: OneHotFamily,
-                catalog: ValidatedScheduleCatalog,
-            ) -> Result<Self, AkitaError> {
-                match family.kind {
-                    $(OneHotFamilyKind::$variant =>
-                        TrustedScheduleCatalog::<$cfg>::new(
-                            catalog, family.profile().witness_cfg(),
                         ).map(AkitaCommitmentScheme::new).map(Self::$variant)),+
                 }
             }
