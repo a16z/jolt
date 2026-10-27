@@ -44,7 +44,10 @@ akita = [
 # tensor-eq-runs: the verifier guest (and the host's Akita) traverse the
 # constant-high runs of dense tensor equality materialization; same field
 # values. Default on; effective only with `akita`.
-default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry", "rowptr-registers", "tensor-eq-runs"]
+# setup-sop-structured: the verifier guest (and the host's Akita) sum the cached
+# structured E, T and Z contractions of the setup scan as sums of products;
+# same field values. Default on; effective only with `akita`.
+default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry", "rowptr-registers", "tensor-eq-runs", "setup-sop-structured"]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
@@ -56,8 +59,8 @@ word-transcript = ["akita", "jolt-akita/word-transcript"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
 # Row pointers (default on): forwards `rowptr-registers` to the verifier guest.
 rowptr-registers = []
-# Structured setup sums of products (default off): structured-site sums of products in the Akita setup scan.
-setup-sop-structured = ["akita", "jolt-akita/setup-sop-structured"]
+# Structured setup sums of products (default on): structured-site sums of products in the Akita setup scan.
+setup-sop-structured = ["jolt-akita?/setup-sop-structured"]
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
