@@ -66,7 +66,8 @@ use super::constant_suffix::ConstantSuffix;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks, prefix_cycle_weights,
-    product_grid_scratch_len, scan_chunk_size, BundleAccess, GruenRoundMessage, RoundProgress,
+    product_grid_scratch_len, scan_chunk_size, BundleAccess, GruenRoundMessage,
+    LowDegreeProductSum, RoundProgress, TailFactorProducts,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -1291,6 +1292,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
         let factors = 1 + self.dimensions.num_virtual_ra_polys();
+        let tail_products = TailFactorProducts::new(cycle.ra.tail_values());
 
         struct Scratch<F: JoltField> {
             /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
@@ -1300,6 +1302,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             evals: Vec<F>,
             steps: Vec<F>,
             grid: Vec<F>,
+            low_degree: LowDegreeProductSum<F>,
         }
 
         let prefix_pairs = cycle
@@ -1323,6 +1326,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 evals: vec![F::zero(); factors],
                 steps: vec![F::zero(); factors],
                 grid: vec![F::zero(); product_grid_scratch_len(factors)],
+                low_degree: LowDegreeProductSum::default(),
             },
             |scratch, row, _x_in, e_in| {
                 let (val, ra) = scratch.pairs.split_at_mut(1);
@@ -1339,14 +1343,23 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     *eval = hi;
                     *step = hi - lo;
                 }
-                accumulate_product_grid(
+                if !scratch.low_degree.try_accumulate(
                     &scratch.evals,
                     &scratch.steps,
-                    &mut scratch.lanes,
-                    &mut scratch.grid,
-                );
+                    tail_products.as_ref(),
+                ) {
+                    accumulate_product_grid(
+                        &scratch.evals,
+                        &scratch.steps,
+                        &mut scratch.lanes,
+                        &mut scratch.grid,
+                    );
+                }
             },
-            |_x_out, e_out, scratch| {
+            |_x_out, e_out, mut scratch| {
+                scratch
+                    .low_degree
+                    .merge_into(&mut scratch.lanes, &mut scratch.grid);
                 let mut out = vec![F::Accumulator::default(); factors];
                 for (out, lane) in out.iter_mut().zip(scratch.lanes) {
                     out.fmadd(e_out, lane.reduce());
