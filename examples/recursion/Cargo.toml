@@ -47,7 +47,7 @@ l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
 word-decode = ["jolt-akita?/word-decode"]
 tensor-no-carry = ["jolt-akita?/tensor-no-carry"]
-
+tensor-eq-runs = ["jolt-akita?/tensor-eq-runs"]
 # Each remaining arm is selected independently and forwarded to the guest.
 word-transcript = ["akita", "jolt-akita/word-transcript"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]

@@ -35,7 +35,7 @@ word-transcript = ["jolt-transcript/word-transcript"]
 word-decode = ["jolt-field/word-decode"]
 ont-static-base = ["akita-challenges/ont-static-base"]
 tensor-no-carry = ["akita-algebra/tensor-no-carry"]
-
+tensor-eq-runs = ["akita-algebra/tensor-eq-runs"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
