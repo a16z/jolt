@@ -817,7 +817,7 @@ impl AkitaVerifierSetup {
                     CatalogSource::Artifact(bytes) => {
                         AkitaOneHotBackendScheme::from_artifact(family, bytes)
                     }
-                    CatalogSource::VerifierView(view) => {
+                    #[rustfmt::skip] CatalogSource::VerifierView(view) => { #[cfg(feature = "prevalidated-catalog")] if let Some(scheme) = crate::prevalidated_catalog::one_hot_scheme(family, view) { return scheme; }
                         AkitaOneHotBackendScheme::from_verifier_view(family, view)
                     }
                 })
@@ -1523,6 +1523,22 @@ where
     bridged_session.extend_from_slice(session_label);
     bridged_session.extend_from_slice(&bridge_bytes);
     bridged_session
+}
+
+#[cfg(all(feature = "prevalidated-catalog", not(target_arch = "riscv64")))]
+impl AkitaVerifierSetup {
+    /// Host: the source of the prevalidated one-hot catalog file for a guest
+    /// that embeds this setup (see the `prevalidated_catalog` module). Needs
+    /// this setup's prepared one-hot verifier view (payloads attached).
+    pub fn prevalidated_catalog_source(&self) -> Result<String, String> {
+        let CatalogSource::VerifierView(view) = self.catalog_source(AkitaBackendFlavor::OneHot)?
+        else {
+            return Err("the one-hot catalog is not a prepared verifier view".to_owned());
+        };
+        let family = OneHotFamily::from_parts(self.one_hot_k, self.akita_chunk_profile())
+            .map_err(|error| error.to_string())?;
+        crate::prevalidated_catalog::render(family, view).map_err(|error| error.to_string())
+    }
 }
 
 #[cfg(test)]

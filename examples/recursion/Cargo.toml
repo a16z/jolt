@@ -98,6 +98,9 @@ rowptr-registers = []
 # Structured setup sums of products (default on): structured-site sums of products in the Akita setup scan.
 setup-sop-structured = ["jolt-akita?/setup-sop-structured"]
 weighted-dot-horner = []
+# Prevalidated catalog (default off): the host prevalidates the embedded one-hot catalog view
+# and the guest rebuilds it from that record when its bytes are equal.
+prevalidated-catalog = ["akita", "jolt-akita/prevalidated-catalog", "dep:sha2", "dep:hex"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }

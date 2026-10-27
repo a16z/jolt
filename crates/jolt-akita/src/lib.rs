@@ -58,3 +58,8 @@ pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 /// backend use the exact transform the adapter uses.
 #[doc(hidden)]
 pub use adapters::{jolt_to_akita_evals, jolt_to_akita_index, reverse_point};
+
+#[cfg(feature = "prevalidated-catalog")]
+mod prevalidated_catalog;
+#[cfg(feature = "prevalidated-catalog")]
+pub use prevalidated_catalog::{EMPTY_PREVALIDATED_CATALOG_SOURCE, PREVALIDATED_CATALOG_VARIABLE};

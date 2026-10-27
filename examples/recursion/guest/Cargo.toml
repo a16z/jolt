@@ -49,6 +49,7 @@ rowptr-registers = ["jolt-field/field-inline-rowptr"]
 weighted-dot-horner = ["jolt-field/field-inline-horner"]
 tensor-eq-runs = ["akita", "jolt-akita/tensor-eq-runs"]
 setup-sop-structured = ["akita", "jolt-akita/setup-sop-structured"]
+prevalidated-catalog = ["akita", "jolt-akita/prevalidated-catalog"]
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
 # embedded_bytecode.rs imports jolt-riscv types when the host prepares an
