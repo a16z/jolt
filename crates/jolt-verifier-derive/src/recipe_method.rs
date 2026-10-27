@@ -1,11 +1,28 @@
 use proc_macro2::{Span, TokenStream};
+#[cfg(any(feature = "immutable-recipes", test))]
 use quote::{format_ident, quote};
+#[cfg(any(feature = "immutable-recipes", test))]
 use std::collections::BTreeMap;
+#[cfg(any(feature = "immutable-recipes", test))]
 use syn::parse::Parser;
+#[cfg(any(feature = "immutable-recipes", test))]
 use syn::punctuated::Punctuated;
+#[cfg(any(feature = "immutable-recipes", test))]
 use syn::visit_mut::{self, VisitMut};
+#[cfg(any(feature = "immutable-recipes", test))]
 use syn::{parse_quote, Expr, ExprLit, FnArg, ImplItemFn, Lit, MetaNameValue, ReturnType, Token};
 
+/// Without the feature the recipe attributes are never applied (every use is
+/// `cfg_attr(feature = "immutable-recipes", ..)`), so this only reports misuse.
+#[cfg(not(any(feature = "immutable-recipes", test)))]
+pub(crate) fn expand(_arguments: TokenStream, _original: TokenStream) -> syn::Result<TokenStream> {
+    Err(syn::Error::new(
+        Span::call_site(),
+        "recipe expansion requires the immutable-recipes feature",
+    ))
+}
+
+#[cfg(any(feature = "immutable-recipes", test))]
 pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> syn::Result<TokenStream> {
     let mut expected = BTreeMap::new();
     let mut returns_set = false;
@@ -98,12 +115,14 @@ pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> syn::Resu
     Ok(quote!(#original #selected))
 }
 
+#[cfg(any(feature = "immutable-recipes", test))]
 struct Transform {
     counts: BTreeMap<String, usize>,
     declared: BTreeMap<String, usize>,
     errors: Option<syn::Error>,
 }
 
+#[cfg(any(feature = "immutable-recipes", test))]
 impl Transform {
     fn count(&mut self, name: &str) {
         *self.counts.entry(name.to_owned()).or_default() += 1;
@@ -118,6 +137,7 @@ impl Transform {
     }
 }
 
+#[cfg(any(feature = "immutable-recipes", test))]
 impl VisitMut for Transform {
     fn visit_expr_mut(&mut self, expression: &mut Expr) {
         if let Expr::MethodCall(call) = expression {
@@ -218,7 +238,19 @@ impl VisitMut for Transform {
     }
 }
 
+/// Without the feature the companions would all be compiled out by their
+/// `cfg(feature = "immutable-recipes")` attributes; emit the driver unchanged.
+#[cfg(not(any(feature = "immutable-recipes", test)))]
+pub(crate) fn batch_companions(
+    driver: TokenStream,
+    _members: usize,
+    _krate: &syn::Path,
+) -> syn::Result<TokenStream> {
+    Ok(driver)
+}
+
 /// The permitted transformations follow the already declared batch members.
+#[cfg(any(feature = "immutable-recipes", test))]
 pub(crate) fn batch_companions(
     driver: TokenStream,
     members: usize,
