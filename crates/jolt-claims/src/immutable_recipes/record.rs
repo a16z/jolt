@@ -340,7 +340,10 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
         budget: &mut Budget,
     ) -> Result<(), CaptureError> {
         if self.phase == Phase::Support {
-            return Err(CaptureError::Representation("expression observed in the support phase", 0));
+            return Err(CaptureError::Representation(
+                "expression observed in the support phase",
+                0,
+            ));
         }
         for term in &expression.terms {
             if term.factors.len() > 12 {
@@ -356,12 +359,18 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
             if budget.factors > MAX_FACTORS {
                 return Err(CaptureError::Capacity);
             }
-            let coefficient = term
-                .coefficient
-                .immutable_recipe_export()
-                .ok_or(CaptureError::Representation("coefficient has no canonical export", 0))?;
+            let coefficient =
+                term.coefficient
+                    .immutable_recipe_export()
+                    .ok_or(CaptureError::Representation(
+                        "coefficient has no canonical export",
+                        0,
+                    ))?;
             if coefficient >= IMMUTABLE_RECIPE_MODULUS {
-                return Err(CaptureError::Representation("coefficient is not below the modulus", 0));
+                return Err(CaptureError::Representation(
+                    "coefficient is not below the modulus",
+                    0,
+                ));
             }
             let coefficient_index = if let Some(index) = self
                 .coefficients
