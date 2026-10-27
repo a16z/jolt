@@ -107,7 +107,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_support)]
     #[cfg_attr(
         not(feature = "field-inline"),
         expect(

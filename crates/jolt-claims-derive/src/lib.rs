@@ -862,3 +862,32 @@ fn expand_challenges(input: DeriveInput) -> Result<TokenStream2> {
         }
     })
 }
+
+mod recipe_items;
+
+#[proc_macro]
+pub fn immutable_recipe_items(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    recipe_items::expand(input.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+mod record_generate;
+
+#[proc_macro_attribute]
+pub fn record_generate(
+    arguments: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    if !arguments.is_empty() {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "record_generate accepts no override",
+        )
+        .into_compile_error()
+        .into();
+    }
+    record_generate::expand(input.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}

@@ -240,7 +240,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         let prepared = self.prepare_output(input_points, output_points)?;
         self.evaluate_public(public, &prepared, challenges)
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_output_call)]
     fn expected_output(
         &self,
         input_points: &InstructionReadRafInputClaims<Vec<F>>,

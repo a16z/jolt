@@ -73,3 +73,34 @@ pub use verifier::{
     validate_inputs_from_parts, verify, verify_until_stage1, CheckedInputs, PreStage1VerifierState,
     ProofTranscriptConfig,
 };
+
+#[cfg(feature = "immutable-recipes")]
+pub mod immutable_recipes;
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! recipe_verify_clear {
+    ($checked:expr; $receiver:ident ($($argument:expr),* $(,)?)) => {{
+        #[cfg(not(feature = "immutable-recipes"))]
+        { $receiver.verify_clear($($argument),*) }
+        #[cfg(feature = "immutable-recipes")]
+        {
+            let context = $crate::immutable_recipes::RecipeContext::from_checked($checked);
+            $receiver.verify_clear_with_recipes(&context, $($argument),*)
+        }
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! recipe_validate_output_claims {
+    ($checked:expr; $receiver:ident ($($argument:expr),* $(,)?)) => {{
+        #[cfg(not(feature = "immutable-recipes"))]
+        { $receiver.validate_output_claims($($argument),*) }
+        #[cfg(feature = "immutable-recipes")]
+        {
+            let context = $crate::immutable_recipes::RecipeContext::from_checked($checked);
+            $receiver.validate_output_claims_with_recipes(&context, $($argument),*)
+        }
+    }};
+}

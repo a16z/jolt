@@ -55,6 +55,7 @@ field-inline-horner = ["field-inline-guest"]
 # Byte-preserving recursion experiments, default off.
 word-transcript = []
 word-decode = []
+immutable-recipes = []
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires

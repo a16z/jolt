@@ -420,7 +420,7 @@ fn preprocess_guest_prover(
 ) -> JoltProverPreprocessing {
     jolt_sdk::preprocess_program(guest_prog, memory_config, max_trace_length, mode).unwrap()
 }
-
+#[cfg_attr(feature = "immutable-recipes-record", jolt_claims::record_generate)]
 /// The packed (Akita) inner proofs use the modular prover over fp128 and the
 /// packed verifier preprocessing from
 /// the host's own verification of each proof.
@@ -936,7 +936,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     #[cfg(feature = "weighted-dot-horner")]
     program.add_guest_feature("weighted-dot-horner");
     program.set_memory_config(memory_config);
-    program
+    self::immutable_recursion_program!(program)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -1473,3 +1473,21 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+mod immutable_recipe_generation;
+
+#[cfg(not(feature = "immutable-recipes"))]
+macro_rules! immutable_recursion_program {
+    ($program:ident) => {
+        $program
+    };
+}
+#[cfg(feature = "immutable-recipes")]
+macro_rules! immutable_recursion_program {
+    ($program:ident) => {{
+        $program.add_guest_feature("immutable-recipes");
+        $program
+    }};
+}
+pub(crate) use immutable_recursion_program;

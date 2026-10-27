@@ -43,3 +43,22 @@ pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
 pub use jolt_claims_derive::{InputClaims, OutputClaims, SumcheckChallenges};
 pub use sumcheck::SumcheckDomain;
 pub use symbolic::{referenced_openings, SymbolicSumcheck};
+
+#[cfg(feature = "immutable-recipes")]
+pub mod immutable_recipes;
+
+#[cfg(not(feature = "immutable-recipes"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_recipe_items {
+    ($($item:item)*) => { $($item)* };
+}
+#[cfg(feature = "immutable-recipes")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_recipe_items {
+    ($($item:item)*) => { ::jolt_claims_derive::immutable_recipe_items! { $($item)* } };
+}
+
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+pub use jolt_claims_derive::record_generate;

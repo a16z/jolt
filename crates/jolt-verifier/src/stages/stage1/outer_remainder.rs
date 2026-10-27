@@ -309,7 +309,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
         };
         Ok(output)
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method())]
     fn expected_output(
         &self,
         _input_points: &SelectedInputs<Vec<F>>,

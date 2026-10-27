@@ -111,7 +111,7 @@ where
     // Rejects val-stage claims whose presence or count disagrees with the
     // committed-program mode (the bytecode member's wire set carries the staged
     // `BytecodeValClaim` ids exactly when the program is committed).
-    address_sumchecks.validate_output_claims(claims)?;
+    crate::recipe_validate_output_claims!(checked; address_sumchecks(claims))?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening (plus, under akita, the four reduced `Inc`
@@ -148,7 +148,7 @@ where
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
-    let output_points = address_sumchecks.verify_clear(
+    let output_points = crate::recipe_verify_clear!(checked; address_sumchecks(
         &address_input_values,
         &address_input_points,
         &address_challenges,
@@ -156,7 +156,7 @@ where
         &proof.stages.stage6a_sumcheck_proof,
         transcript,
         6,
-    )?;
+    ))?;
 
     // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
     // then booleanity `intermediate`) is single-sourced from the generated

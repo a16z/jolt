@@ -171,7 +171,7 @@ where
         let claims = &proof.clear_claims()?.stage4;
         let stage2 = stage2.clear()?;
         let stage3 = stage3.clear()?;
-        sumchecks.validate_output_claims(claims)?;
+        crate::recipe_validate_output_claims!(checked; sumchecks(claims))?;
         // Attaches the claimed advice / program-image opening values (consumed by the
         // input wiring and carried downstream for the stage-6/7 address-phase
         // reductions); presence against the init structure is validated by the
@@ -189,7 +189,7 @@ where
             &init_structure,
         );
 
-        let output_points = sumchecks.verify_clear(
+        let output_points = crate::recipe_verify_clear!(checked; sumchecks(
             &input_values,
             &input_points,
             &challenges,
@@ -197,7 +197,7 @@ where
             &proof.stages.stage4_sumcheck_proof,
             transcript,
             4,
-        )?;
+        ))?;
 
         claims.append_to_transcript(transcript);
 

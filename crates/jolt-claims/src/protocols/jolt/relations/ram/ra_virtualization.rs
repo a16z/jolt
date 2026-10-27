@@ -44,7 +44,7 @@ impl SymbolicSumcheck for RaVirtualization {
     type Challenges<F> = crate::NoChallenges<F>;
     type Inputs<C> = RamRaVirtualizationInputClaims<C>;
     type Outputs<C> = RamRaVirtualizationOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(24, JOLT, Jolt; shape);
     fn new(shape: RamRaVirtualizationDimensions) -> Self {
         Self { shape }
     }

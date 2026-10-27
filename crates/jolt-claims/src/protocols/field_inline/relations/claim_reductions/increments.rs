@@ -97,3 +97,8 @@ mod tests {
         assert_eq!(inputs.canonical_order(), claim_reduction_input_openings());
     }
 }
+
+macro_rules! immutable_twist_recipe {
+    (ClaimReduction) => { crate::immutable_symbolic_recipe!(26, FIELD, Field; shape); };
+}
+pub(crate) use immutable_twist_recipe;

@@ -110,7 +110,7 @@ impl SymbolicSumcheck for InputVirtualization {
     type Challenges<F> = InstructionInputChallenges<F>;
     type Inputs<C> = InstructionInputInputClaims<C>;
     type Outputs<C> = InstructionInputOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(9, JOLT, Jolt; shape);
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }
     }

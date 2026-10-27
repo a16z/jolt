@@ -1061,7 +1061,7 @@ impl<const P: u128> Ring for Fp128<P> {
             -Self::from_u128(v.unsigned_abs())
         }
     }
-
+    crate::immutable_recipe_fp128_methods!();
     #[inline(always)]
     fn square(&self) -> Self {
         // A guest that routes this field squares in one field-inline multiply.

@@ -68,3 +68,10 @@ pub fn booleanity_address_phase_opening() -> JoltOpeningId {
         JoltRelationId::Booleanity,
     )
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(BooleanityDimensions {
+    layout,
+    log_t,
+    log_k_chunk
+});

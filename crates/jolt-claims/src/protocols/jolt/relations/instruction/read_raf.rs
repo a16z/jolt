@@ -67,7 +67,7 @@ impl SymbolicSumcheck for ReadRaf {
     type Challenges<F> = InstructionReadRafChallenges<F>;
     type Inputs<C> = InstructionReadRafInputClaims<C>;
     type Outputs<C> = InstructionReadRafOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(14, JOLT, Jolt; shape);
     fn new(shape: InstructionReadRafDimensions) -> Self {
         Self { shape }
     }

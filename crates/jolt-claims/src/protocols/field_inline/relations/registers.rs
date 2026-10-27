@@ -183,3 +183,9 @@ mod tests {
         assert_eq!(inputs.canonical_order(), val_evaluation_input_openings());
     }
 }
+
+macro_rules! immutable_twist_recipe {
+    (ReadWriteChecking) => { crate::immutable_symbolic_recipe!(12, FIELD, Field; shape); };
+    (ValEvaluation) => { crate::immutable_symbolic_recipe!(17, FIELD, Field; shape); };
+}
+pub(crate) use immutable_twist_recipe;

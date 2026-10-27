@@ -63,7 +63,7 @@ impl SymbolicSumcheck for RaClaimReduction {
     type Challenges<F> = RamRaClaimReductionChallenges<F>;
     type Inputs<C> = RamRaClaimReductionInputClaims<C>;
     type Outputs<C> = RamRaClaimReductionOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(15, JOLT, Jolt; shape);
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }
     }

@@ -1128,3 +1128,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(BytecodeReadRafDimensions {
+    log_t,
+    log_k,
+    committed_ra_polys
+});

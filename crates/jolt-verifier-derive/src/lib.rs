@@ -1182,7 +1182,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #absorb_methods
         }
     };
-
+    let driver_impl = recipe_method::batch_companions(driver_impl, plans.len(), &krate)?;
     // Each opening cell instantiation is its own concrete aggregate: `*Claims`
     // holds the wire *values* (`Inputs<F>` / `Outputs<F>`); `*Points` holds the
     // derived opening points (`Inputs<Vec<F>>` / `Outputs<Vec<F>>`). Only the
@@ -1426,4 +1426,79 @@ fn option_inner(ty: &Type) -> Option<&Type> {
         GenericArgument::Type(ty) => Some(ty),
         _ => None,
     })
+}
+
+mod recipe_method;
+
+/// Derive only declared recipe seams from the canonical method body. The
+/// original method tokens are emitted unchanged; every match count is checked.
+#[proc_macro_attribute]
+pub fn recipe_method(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    recipe_method::expand(arguments.into(), item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn fixed_recipe_method(
+    arguments: TokenStream,
+    item: TokenStream,
+    profile: TokenStream2,
+) -> TokenStream {
+    if !arguments.is_empty() {
+        return syn::Error::new_spanned(
+            TokenStream2::from(arguments),
+            "fixed recipe attribute accepts no arguments",
+        )
+        .into_compile_error()
+        .into();
+    }
+    recipe_method::expand(profile, item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Fixed canonical seam profile: `input = 1`.
+#[proc_macro_attribute]
+pub fn ir_input(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    fixed_recipe_method(arguments, item, quote!(input = 1))
+}
+
+/// Fixed canonical seam profile: `output = 1`.
+#[proc_macro_attribute]
+pub fn ir_output(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    fixed_recipe_method(arguments, item, quote!(output = 1))
+}
+
+/// Fixed canonical seam profile: `support = 1, returns_set = 1`.
+#[proc_macro_attribute]
+pub fn ir_support(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    fixed_recipe_method(arguments, item, quote!(support = 1, returns_set = 1))
+}
+
+/// Fixed canonical seam profile: `call_evaluate_output_expression = 1`.
+#[proc_macro_attribute]
+pub fn ir_output_call(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    fixed_recipe_method(arguments, item, quote!(call_evaluate_output_expression = 1))
+}
+
+/// Fixed canonical seam profile: `call_wire_output_openings = 1`.
+#[proc_macro_attribute]
+pub fn ir_wire_call(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    fixed_recipe_method(arguments, item, quote!(call_wire_output_openings = 1))
+}
+
+/// Fixed canonical seam profile: `output = 1, call_expected_output_from_publics = 1`.
+#[proc_macro_attribute]
+pub fn ir_public_output(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    fixed_recipe_method(
+        arguments,
+        item,
+        quote!(output = 1, call_expected_output_from_publics = 1),
+    )
+}
+
+/// Fixed canonical seam profile: `call_expected_output = 2`.
+#[proc_macro_attribute]
+pub fn ir_expected_pair(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    fixed_recipe_method(arguments, item, quote!(call_expected_output = 2))
 }

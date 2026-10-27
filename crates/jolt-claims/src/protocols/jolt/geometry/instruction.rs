@@ -554,3 +554,18 @@ mod tests {
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 1, usize::MAX - 1)).is_ok());
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(InstructionReadRafDimensions {
+    log_t,
+    instruction_address_bits,
+    num_virtual_ra_polys
+});
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(InstructionRaVirtualizationDimensions {
+    log_t,
+    virtual_ra_polys,
+    committed_per_virtual,
+    committed_ra_polys
+});

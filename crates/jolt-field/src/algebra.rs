@@ -65,7 +65,7 @@ pub trait Ring:
     fn from_i64(v: i64) -> Self;
     fn from_u128(v: u128) -> Self;
     fn from_i128(v: i128) -> Self;
-
+    crate::immutable_recipe_ring_defaults!();
     #[inline]
     fn from_bool(v: bool) -> Self {
         Self::from_u64(v as u64)
