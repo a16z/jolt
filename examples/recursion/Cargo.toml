@@ -10,8 +10,8 @@ path = "src/main.rs"
 [features]
 terminal-contraction = ["jolt-akita?/terminal-contraction"]
 segment-setup = ["jolt-akita?/segment-setup"]
-immutable-recipes = ["akita", "field-inline", "jolt-sdk/immutable-recipes"]
-immutable-recipes-record = ["immutable-recipes", "jolt-sdk/immutable-recipes-record", "dep:jolt-claims", "jolt-claims/immutable-recipes-record", "dep:jolt-field", "dep:sha2", "dep:hex", "dep:serde_json"]
+immutable-recipes = ["akita", "field-inline", "jolt-sdk/immutable-recipes", "jolt-sdk/immutable-recipes-record", "dep:jolt-claims", "jolt-claims/immutable-recipes-record", "dep:jolt-field", "dep:sha2", "dep:hex"]
+immutable-recipes-record = ["immutable-recipes", "dep:serde_json"]
 word-memory = []
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Non-default: default workspace builds must not unify field-inline into the

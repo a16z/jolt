@@ -1313,6 +1313,11 @@ fn verify_proofs(
         "Input size is too large"
     );
 
+    // Immutable recipes: tables from a native verification of this stream,
+    // or empty tables (canonical path) when any proof does not verify.
+    #[cfg(feature = "immutable-recipes")]
+    let recipe_tables =
+        immutable_recipe_tables::prepare(&all_groups_data, "/tmp/jolt-guest-targets");
     run_recursion_proof(
         guest,
         run_config,
@@ -1320,6 +1325,8 @@ fn verify_proofs(
         memory_config,
         guest.get_max_trace_length(use_embed),
     );
+    #[cfg(feature = "immutable-recipes")]
+    immutable_recipe_tables::release(recipe_tables);
 }
 
 fn main() {
@@ -1442,6 +1449,8 @@ fn main() {
 
 #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
 mod immutable_recipe_generation;
+#[cfg(feature = "immutable-recipes")]
+mod immutable_recipe_tables;
 
 #[cfg(not(feature = "immutable-recipes"))]
 macro_rules! immutable_recursion_program {
