@@ -243,9 +243,10 @@ impl Session {
             !state.records.iter().any(|record| {
                 let (key, actual_phase) = record.record.identity();
                 key.get(1) == Some(tag) && actual_phase == *phase
-            }) && !state.fallbacks.iter().any(|listed| {
-                listed.key.get(1) == Some(tag) && listed.phase == phase_name(*phase)
-            })
+            }) && !state
+                .fallbacks
+                .iter()
+                .any(|listed| listed.key.get(1) == Some(tag) && listed.phase == phase_name(*phase))
         }) {
             return Err(CaptureError::Coverage);
         }
