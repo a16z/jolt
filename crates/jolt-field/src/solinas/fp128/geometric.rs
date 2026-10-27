@@ -40,7 +40,8 @@ mod tests {
             changed[index] += F::one();
             assert_eq!(ratio(&changed), None);
         }
-        assert_eq!(ratio::<{ super::super::FIELD_INLINE_FP128_MODULUS }>(&[]), None);
+        let empty: [F; 0] = [];
+        assert_eq!(ratio(&empty), None);
         assert_eq!(ratio(&[F::one()]), None);
     }
 }
