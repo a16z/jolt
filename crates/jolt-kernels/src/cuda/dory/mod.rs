@@ -305,6 +305,7 @@ impl AdditivelyHomomorphic for CudaDoryScheme {
         DoryScheme::combine(commitments, scalars)
     }
 
+    #[tracing::instrument(skip_all, name = "CudaDoryScheme::combine_hints")]
     fn combine_hints(hints: Vec<Self::OpeningHint>, scalars: &[Self::Field]) -> Self::OpeningHint {
         combine::combine_hints(hints, scalars)
     }
