@@ -958,7 +958,7 @@ fn limb_ntt_commit_preserves_signed_convolution_across_flushes() {
             POSITIONS * (D / K)
         }
         fn num_columns(&self) -> usize {
-            3
+            7
         }
         fn fill_row(&self, row: usize, selected: &mut [u8]) {
             selected[0] = 15;
@@ -968,6 +968,10 @@ fn limb_ntt_commit_preserves_signed_convolution_across_flushes() {
             } else {
                 selected[1]
             };
+            selected[3] = 0;
+            selected[4] = selected[0];
+            selected[5] = 7;
+            selected[6] = selected[2];
         }
         fn committed_digit_zero_mask(&self, _row: usize) -> u64 {
             0
@@ -997,6 +1001,11 @@ fn limb_ntt_commit_preserves_signed_convolution_across_flushes() {
     let mut sparse = AkitaWideRing::<D>::zero();
     wide.shift_accumulate_into(&mut sparse, 1);
     let per_position = [dense.reduce::<AkitaField>(), sparse.reduce::<AkitaField>()];
+    let mut other_dense = AkitaWideRing::<D>::zero();
+    for row in 0..D / K {
+        wide.shift_accumulate_into(&mut other_dense, row * K + 7);
+    }
+    let other_dense = other_dense.reduce::<AkitaField>();
     for positions in [251, 252, 253, 1007, 1008, 1009, 2021] {
         let actual = prepared
             .commit_part(&columns[0], 0, 100..100 + positions)
@@ -1010,6 +1019,15 @@ fn limb_ntt_commit_preserves_signed_convolution_across_flushes() {
                     * AkitaField::from_u64((positions - dense_positions) as u64)
         });
         assert_eq!(actual[2].coeffs, expected_mixed);
+        assert_eq!(actual[3], CyclotomicRing::zero());
+        assert_eq!(actual[4], actual[0]);
+        assert_eq!(actual[6], actual[2]);
+        assert_eq!(
+            actual[5].coeffs,
+            other_dense
+                .coeffs
+                .map(|value| value * AkitaField::from_u64(positions as u64))
+        );
         for (actual, expected) in actual.iter().zip(per_position) {
             let scale = AkitaField::from_u64(positions as u64);
             assert_eq!(actual.coeffs, expected.coeffs.map(|value| value * scale));

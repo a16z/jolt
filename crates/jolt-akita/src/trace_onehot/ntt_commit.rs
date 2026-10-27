@@ -18,6 +18,7 @@ const DIGIT_LIMBS: usize = 8;
 const DIGIT_BITS: usize = 16;
 const MAX_NTT_POSITIONS: usize = 252;
 const DOT_BATCH: usize = 6;
+const COLUMN_TILE: usize = 4;
 const COMMIT_RING_DIMENSION: usize = 512;
 const COMMIT_ONE_HOT_K: usize = 16;
 const MAX_ACCUMULATED_POSITIONS: usize =
@@ -127,7 +128,7 @@ struct NttCommitScratch<const D: usize> {
     populated_rows: [usize; DOT_BATCH],
     buffered: usize,
     batch_start: usize,
-    transformed: Vec<NttRing<D>>,
+    transformed: Vec<[NttRing<D>; DOT_BATCH]>,
     accumulators: Vec<[NttRing<D>; DIGIT_LIMBS]>,
     ntt_used: Vec<bool>,
     digit_accumulators: Vec<DigitAccumulator<D>>,
@@ -148,7 +149,9 @@ impl<const D: usize> NttCommitScratch<D> {
             populated_rows: [0; DOT_BATCH],
             buffered: 0,
             batch_start: 0,
-            transformed: vec![NttRing::zero(); DOT_BATCH],
+            transformed: (0..COLUMN_TILE)
+                .map(|_| std::array::from_fn(|_| NttRing::zero()))
+                .collect(),
             accumulators: (0..num_columns)
                 .map(|_| std::array::from_fn(|_| NttRing::zero()))
                 .collect(),
@@ -185,6 +188,8 @@ impl<const D: usize> NttCommitScratch<D> {
             return;
         }
         let mut windows_loaded = false;
+        let mut tile_columns = [0usize; COLUMN_TILE];
+        let mut tile_len = 0;
         for column in 0..self.num_columns {
             let mut selected = 0;
             for slot in 0..self.buffered {
@@ -218,13 +223,13 @@ impl<const D: usize> NttCommitScratch<D> {
             }
             for slot in 0..self.buffered {
                 if self.shifts[slot].is_empty() {
-                    self.transformed[slot] = NttRing::zero();
+                    self.transformed[tile_len][slot] = NttRing::zero();
                 } else {
                     let mut coefficients = [0i8; D];
                     for &shift in &self.shifts[slot] {
                         coefficients[shift] = 1;
                     }
-                    self.transformed[slot].assign_i8_with_lut(
+                    self.transformed[tile_len][slot].assign_i8_with_lut(
                         &coefficients,
                         &prepared.params,
                         &prepared.lut,
@@ -232,16 +237,34 @@ impl<const D: usize> NttCommitScratch<D> {
                 }
             }
             self.ntt_used[column] = true;
-            for (accumulator, matrix) in self.accumulators[column].iter_mut().zip(&prepared.matrix)
-            {
-                accumulator.add_assign_pointwise_dot(
-                    &matrix[self.batch_start..self.batch_start + self.buffered],
-                    &self.transformed[..self.buffered],
+            tile_columns[tile_len] = column;
+            tile_len += 1;
+            if tile_len == COLUMN_TILE {
+                self.accumulate_tile(prepared, &tile_columns);
+                tile_len = 0;
+            }
+        }
+        self.accumulate_tile(prepared, &tile_columns[..tile_len]);
+        self.buffered = 0;
+    }
+
+    /// Reuse one matrix limb across several columns while its six rings
+    /// remain cache-resident. The arithmetic and reconstruction bounds are
+    /// unchanged; only the order of independent column updates changes.
+    fn accumulate_tile(&mut self, prepared: &PreparedNttCommit<'_, D>, columns: &[usize]) {
+        if columns.is_empty() {
+            return;
+        }
+        for (limb, matrix) in prepared.matrix.iter().enumerate() {
+            let matrix = &matrix[self.batch_start..self.batch_start + self.buffered];
+            for (&column, transformed) in columns.iter().zip(&self.transformed) {
+                self.accumulators[column][limb].add_assign_pointwise_dot(
+                    matrix,
+                    &transformed[..self.buffered],
                     &prepared.params,
                 );
             }
         }
-        self.buffered = 0;
     }
 
     fn reconstruct(&mut self, prepared: &PreparedNttCommit<'_, D>) {
