@@ -34,6 +34,8 @@
 //! the fully-bound Gruen scalar must equal `derive_output_term(EqCycle)`,
 //! exactly as the naive tier's bound `EqCycle` table is checked.
 
+mod categorical;
+
 use std::sync::Arc;
 
 use super::constant_suffix::ConstantSuffix;
@@ -238,74 +240,78 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             grid: Vec<F>,
         }
 
-        let block_lanes = self.gruen.par_fold_out_in_prefix(
-            prefix_pairs,
-            || Scratch {
-                lanes: vec![F::Accumulator::default(); n],
-                row_lanes: vec![F::Accumulator::default(); n],
-                pairs: vec![(F::zero(), F::zero()); num_committed],
-                evals: vec![F::zero(); n],
-                steps: vec![F::zero(); n],
-                grid: vec![F::zero(); product_grid_scratch_len(n)],
-            },
-            |scratch, row, _x_in, e_in| {
-                folded_ra.lo_hi_all(row, &mut scratch.pairs);
-                for lane in &mut scratch.row_lanes {
-                    *lane = F::Accumulator::default();
-                }
-                for (group, pairs) in scratch
-                    .pairs
-                    .chunks_exact(n)
-                    .take(self.active_virtuals)
-                    .enumerate()
-                {
-                    if let Some((values, product)) = constant_groups.get(group) {
-                        if pairs
-                            .iter()
-                            .zip(*values)
-                            .all(|((lo, hi), value)| lo == value && hi == value)
-                        {
-                            // Equal endpoints make this product constant; its
-                            // degree-n coefficient (the last lane) is zero.
-                            for lane in &mut scratch.row_lanes[..n - 1] {
-                                lane.add(*product);
-                            }
-                            continue;
-                        }
+        let block_lanes = if let Some(lanes) = self.categorical_lanes(prefix_pairs) {
+            lanes
+        } else {
+            self.gruen.par_fold_out_in_prefix(
+                prefix_pairs,
+                || Scratch {
+                    lanes: vec![F::Accumulator::default(); n],
+                    row_lanes: vec![F::Accumulator::default(); n],
+                    pairs: vec![(F::zero(), F::zero()); num_committed],
+                    evals: vec![F::zero(); n],
+                    steps: vec![F::zero(); n],
+                    grid: vec![F::zero(); product_grid_scratch_len(n)],
+                },
+                |scratch, row, _x_in, e_in| {
+                    folded_ra.lo_hi_all(row, &mut scratch.pairs);
+                    for lane in &mut scratch.row_lanes {
+                        *lane = F::Accumulator::default();
                     }
-                    for ((pair, eval), step) in pairs
-                        .iter()
-                        .zip(scratch.evals.iter_mut())
-                        .zip(scratch.steps.iter_mut())
+                    for (group, pairs) in scratch
+                        .pairs
+                        .chunks_exact(n)
+                        .take(self.active_virtuals)
+                        .enumerate()
                     {
-                        *eval = pair.1;
-                        *step = pair.1 - pair.0;
+                        if let Some((values, product)) = constant_groups.get(group) {
+                            if pairs
+                                .iter()
+                                .zip(*values)
+                                .all(|((lo, hi), value)| lo == value && hi == value)
+                            {
+                                // Equal endpoints make this product constant; its
+                                // degree-n coefficient (the last lane) is zero.
+                                for lane in &mut scratch.row_lanes[..n - 1] {
+                                    lane.add(*product);
+                                }
+                                continue;
+                            }
+                        }
+                        for ((pair, eval), step) in pairs
+                            .iter()
+                            .zip(scratch.evals.iter_mut())
+                            .zip(scratch.steps.iter_mut())
+                        {
+                            *eval = pair.1;
+                            *step = pair.1 - pair.0;
+                        }
+                        accumulate_product_grid(
+                            &scratch.evals,
+                            &scratch.steps,
+                            &mut scratch.row_lanes,
+                            &mut scratch.grid,
+                        );
                     }
-                    accumulate_product_grid(
-                        &scratch.evals,
-                        &scratch.steps,
-                        &mut scratch.row_lanes,
-                        &mut scratch.grid,
-                    );
-                }
-                for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
-                    lane.fmadd(e_in, row_lane.reduce());
-                }
-            },
-            |_x_out, e_out, scratch| {
-                let mut out = vec![F::Accumulator::default(); n];
-                for (out, lane) in out.iter_mut().zip(scratch.lanes) {
-                    out.fmadd(e_out, lane.reduce());
-                }
-                out
-            },
-            |mut a, b| {
-                for (a, b) in a.iter_mut().zip(b) {
-                    a.merge(b);
-                }
-                a
-            },
-        );
+                    for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
+                        lane.fmadd(e_in, row_lane.reduce());
+                    }
+                },
+                |_x_out, e_out, scratch| {
+                    let mut out = vec![F::Accumulator::default(); n];
+                    for (out, lane) in out.iter_mut().zip(scratch.lanes) {
+                        out.fmadd(e_out, lane.reduce());
+                    }
+                    out
+                },
+                |mut a, b| {
+                    for (a, b) in a.iter_mut().zip(b) {
+                        a.merge(b);
+                    }
+                    a
+                },
+            )
+        };
 
         let mut q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
         // Finite grid values receive the constant suffix; its leading
@@ -850,6 +856,19 @@ mod tests {
 
     /// Production shape: 8 virtuals × 4 committed each, 4-bit chunks (the
     /// 128-bit instruction address).
+    #[test]
+    fn parity_categorical_quartics() {
+        assert_parity(10, 8, 4, 4, 933, false);
+        for gamma in [fr(0), fr(1), fr(31)] {
+            for prefix in [0, 513, 1023] {
+                assert_parity_case(10, 2, 4, 2, 377, false, gamma, None, Some(prefix));
+            }
+        }
+        for case in ExceptionalEq::ALL {
+            assert_parity_case(10, 2, 4, 2, 377, false, fr(31), Some(case), Some(513));
+        }
+    }
+
     #[test]
     fn parity_production_geometry() {
         assert_parity(4, 8, 4, 4, 42, false);

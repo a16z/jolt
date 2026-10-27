@@ -331,6 +331,12 @@ pub(crate) struct LookupIndexChunks {
 }
 
 impl LookupIndexChunks {
+    /// The packed address before extracting the committed selector chunks.
+    #[inline]
+    pub(crate) fn packed_index(&self, cycle: usize) -> u128 {
+        self.rows[cycle].lookup_index()
+    }
+
     pub(crate) fn new(
         rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         chunks: usize,
@@ -362,7 +368,7 @@ impl ChunkIndexSource for LookupIndexChunks {
     fn index(&self, i: usize, j: usize) -> Option<usize> {
         let shift = (self.chunks - 1 - i) * self.chunk_bits;
         let mask = (1u128 << self.chunk_bits) - 1;
-        Some(((self.rows[j].lookup_index() >> shift) & mask) as usize)
+        Some(((self.packed_index(j) >> shift) & mask) as usize)
     }
 
     fn gather_values<F: JoltField>(
