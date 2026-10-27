@@ -3537,6 +3537,7 @@ name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
  "blake2 0.11.0",
+ "digest 0.11.3",
  "jolt-inlines-sdk",
  "rand 0.8.7",
  "tracer",
@@ -3563,6 +3564,7 @@ dependencies = [
  "jolt-inlines-blake3",
  "jolt-inlines-grumpkin",
  "jolt-inlines-keccak256",
+ "jolt-inlines-ntt",
  "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
@@ -3597,6 +3599,15 @@ dependencies = [
  "rand 0.8.7",
  "sha3 0.12.0",
  "tiny-keccak",
+ "tracer",
+]
+
+[[package]]
+name = "jolt-inlines-ntt"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+ "rand 0.8.7",
  "tracer",
 ]
 
