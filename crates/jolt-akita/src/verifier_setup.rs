@@ -1,104 +1,114 @@
-use akita_params::PolynomialGroupLayout;
-use jolt_openings::OpeningsError;
+use std::{collections::BTreeSet, sync::Arc};
 
-use crate::adapters::{
-    invalid_setup, validate_one_hot_k, AkitaSetupFlavor, AkitaVerifierScheduleArtifacts,
-    BackendVerifierCache,
+use akita_config::{
+    required_setup_prefix_slot_ids_for_schedule, CommitmentConfig, TrustedScheduleCatalog,
 };
-use crate::one_hot_family::OneHotFamily;
-use crate::{AkitaChunkProfile, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup};
+use akita_params::{setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule};
+use akita_pcs::{AkitaError, CpuBackend};
+use akita_types::{
+    derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
+    SetupPrefixVerifierRegistry,
+};
 
-impl AkitaScheme {
-    /// Build shape-specific public metadata without generating matrices or commitments.
-    pub fn verifier_setup_from_params(
-        params: &AkitaSetupParams,
-    ) -> Result<AkitaVerifierSetup, OpeningsError> {
-        if params.max_num_polys_per_commitment_group == 0
-            || params.max_num_polys_per_commitment_group > params.max_total_batch_polys
-        {
-            return Err(invalid_setup(
-                "verifier group width must fit its nonzero batch capacity",
-            ));
+use crate::adapters::{AkitaBackendVerifierSetup, AkitaField};
+
+pub(crate) fn streamed_verifier_setup<Cfg: CommitmentConfig<Field = AkitaField>>(
+    catalog: &TrustedScheduleCatalog<Cfg>,
+    max_num_vars: usize,
+    max_total_batch_polys: usize,
+) -> Result<AkitaBackendVerifierSetup, AkitaError> {
+    let rows = catalog.rows_within_setup_capacity(max_num_vars, max_total_batch_polys)?;
+    if rows.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "verifier capacity admits no rows in the requested catalog".to_owned(),
+        ));
+    }
+    let mut retained_fields = 1;
+    let mut prefix_ids = BTreeSet::new();
+    for row in rows {
+        let layout = row.profiles().opening_layout()?;
+        retained_fields = retained_fields.max(
+            verifier_setup_matrix_capacity_for_schedule(row.schedule(), &layout)?
+                .num_field_elements,
+        );
+        prefix_ids.extend(required_setup_prefix_slot_ids_for_schedule(
+            row.schedule(),
+            &layout,
+        )?);
+    }
+    let mut generation_fields = retained_fields;
+    for id in &prefix_ids {
+        generation_fields = generation_fields.max(setup_prefix_slot_field_elements(id)?);
+    }
+    let mut descriptor = AkitaSetupDescriptor {
+        max_num_vars,
+        max_num_batched_polys: max_total_batch_polys,
+        num_field_elements: generation_fields,
+        setup_seed: sample_akita_setup_seed(),
+    };
+    let mut prefixes = SetupPrefixVerifierRegistry::new(descriptor.setup_seed.clone());
+    if !prefix_ids.is_empty() {
+        let generated = CpuBackend::<AkitaField, AkitaField>::export_setup_prefixes_from_seed(
+            &descriptor,
+            &prefix_ids.into_iter().collect::<Vec<_>>(),
+        )?;
+        for slot in generated.verifier_slots() {
+            prefixes.insert(slot)?;
         }
-        if params.flavor == AkitaSetupFlavor::Dense
-            && params.akita_chunk_profile != AkitaChunkProfile::default()
-        {
-            return Err(OpeningsError::InvalidSetup(
-                "dense-only Akita setup cannot select one-hot witness chunking".to_owned(),
-            ));
+    }
+    // Prefix commitments stream from the seed; only direct and terminal verifier
+    // matrices are retained, sized by Akita's schedule capacity calculation above.
+    descriptor.num_field_elements = retained_fields;
+    let coefficients = derive_public_matrix_prefix(retained_fields, &descriptor.setup_seed);
+    let expanded =
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(descriptor, coefficients);
+    AkitaBackendVerifierSetup::from_parts(Arc::new(expanded), prefixes)
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests assert valid verifier preprocessing"
+)]
+mod tests {
+    use super::*;
+    use akita_config::SetupRequirements;
+    use akita_pcs::AkitaCommitmentScheme;
+
+    use crate::adapters::with_backend_pool;
+    use crate::configs::JoltOneHotK16;
+    use crate::{AkitaChunkProfile, AkitaScheduleArtifacts, AKITA_ONE_HOT_K16};
+
+    #[test]
+    fn streamed_setup_retains_only_verifier_matrices_and_required_prefixes() {
+        let profile = AkitaChunkProfile::default();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let catalog = TrustedScheduleCatalog::<JoltOneHotK16>::new(
+            artifacts
+                .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
+                .unwrap(),
+            profile.witness_cfg(),
+        )
+        .unwrap();
+        let requirements = SetupRequirements::from_catalog(&catalog, 25, 51).unwrap();
+        assert!(!requirements.prefix_slot_ids().is_empty());
+        let setup = with_backend_pool(|| streamed_verifier_setup(&catalog, 25, 51)).unwrap();
+        for id in requirements.prefix_slot_ids() {
+            assert!(setup.prefix_slots().get(id).is_some());
         }
-        if params.flavor != AkitaSetupFlavor::Dense {
-            OneHotFamily::from_parts(params.one_hot_k, params.akita_chunk_profile)
-                .and_then(|family| {
-                    family.validate_num_vars(
-                        params.max_num_vars,
-                        params.max_num_polys_per_commitment_group,
-                    )
-                })
-                .map_err(invalid_setup)?;
-        }
-        if params.grouped_schedule.as_ref().is_some_and(|request| {
-            request.final_group()
-                != PolynomialGroupLayout::new(
-                    params.max_num_vars,
-                    params.max_num_polys_per_commitment_group,
-                )
-        }) {
-            return Err(OpeningsError::InvalidSetup(
-                "the grouped schedule request final shape must equal setup shape".to_owned(),
-            ));
-        }
-        let _ = validate_one_hot_k(params.one_hot_k).map_err(invalid_setup)?;
-        let artifacts = &params.schedule_artifacts;
-        let dense_catalog = artifacts.dense_catalog().map_err(invalid_setup)?;
-        let dense_schedule_artifact = || dense_catalog.to_artifact_bytes().map_err(invalid_setup);
-        let one_hot_schedule_artifact = || {
-            let base = artifacts
-                .one_hot_catalog_for_profile(params.one_hot_k, params.akita_chunk_profile)
-                .map_err(invalid_setup)?;
-            let catalog = params
-                .grouped_schedule
-                .as_ref()
-                .map_or_else(
-                    || Ok(base.clone()),
-                    |grouped_schedule| {
-                        grouped_schedule.extend_catalog(
-                            &dense_catalog,
-                            &artifacts.full_dense_catalog()?,
-                            &base,
-                            params.one_hot_k,
-                            params.akita_chunk_profile,
-                        )
-                    },
-                )
-                .map_err(invalid_setup)?;
-            catalog.to_artifact_bytes().map_err(invalid_setup)
-        };
-        let profile = params.akita_chunk_profile;
-        let schedule_artifacts = match params.flavor {
-            AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
-                dense_profile: artifacts.dense_profile(),
-                profile,
-                dense: dense_schedule_artifact()?,
-                one_hot: one_hot_schedule_artifact()?,
-            },
-            AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
-                profile,
-                one_hot: one_hot_schedule_artifact()?,
-            },
-            AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
-                dense_profile: artifacts.dense_profile(),
-                dense: dense_schedule_artifact()?,
-            },
-        };
-        Ok(AkitaVerifierSetup {
-            max_num_vars: params.max_num_vars,
-            max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
-            max_total_batch_polys: params.max_total_batch_polys,
-            default_layout_digest: params.default_layout_digest,
-            one_hot_k: params.one_hot_k,
-            schedule_artifacts: schedule_artifacts.into(),
-            backend_cache: BackendVerifierCache::default(),
-        })
+        let retained = setup.expanded().shared_matrix().num_field_elements();
+        assert!(requirements
+            .prefix_slot_ids()
+            .iter()
+            .any(|id| id.n_prefix().unwrap() > retained));
+        let scheme = AkitaCommitmentScheme::new(catalog);
+        let verifier = with_backend_pool(|| scheme.verifier(setup)).unwrap();
+        assert!(scheme
+            .schedules()
+            .rows_within_setup_capacity(25, 51)
+            .unwrap()
+            .iter()
+            .all(|row| verifier.admits(row.selection().row_digest)));
     }
 }

@@ -796,8 +796,7 @@ mod tests {
             schedule_artifacts: AkitaVerifierScheduleArtifacts::OneHot {
                 profile: AkitaChunkProfile::default(),
                 one_hot: Vec::new(),
-            }
-            .into(),
+            },
             backend_cache: Default::default(),
         };
         let mut serialized = serde_json::to_value(setup).unwrap();
@@ -836,8 +835,7 @@ mod tests {
                 profile: AkitaChunkProfile::default(),
                 dense: Vec::new(),
                 one_hot: Vec::new(),
-            }
-            .into(),
+            },
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);
