@@ -37,7 +37,9 @@ akita = [
 # tensor-no-carry: the verifier guest (and the host's Akita) separate dense
 # residual equality weights into a high-part sum and a no-carry low span; same
 # field values. Default on; effective only with `akita`.
-default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry"]
+# rowptr-registers: the verifier guest keeps the weighted-dot row base pointers in
+# registers (jolt-field field-inline-rowptr); same field values. Default on.
+default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry", "rowptr-registers"]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
@@ -47,7 +49,7 @@ tensor-no-carry = ["jolt-akita?/tensor-no-carry"]
 # Each remaining arm is selected independently and forwarded to the guest.
 word-transcript = ["akita", "jolt-akita/word-transcript"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
-# Row pointers (default off): forwards `rowptr-registers` to the verifier guest.
+# Row pointers (default on): forwards `rowptr-registers` to the verifier guest.
 rowptr-registers = []
 
 [dependencies]
