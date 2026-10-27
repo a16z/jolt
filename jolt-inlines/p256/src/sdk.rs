@@ -980,7 +980,8 @@ mod scalar_tests {
                 values.push(power);
             }
             values.extend(
-                (0..64).map(|_| BigUint::from_bytes_le(&rng.random::<[u8; 32]>()) % &modulus_integer),
+                (0..64)
+                    .map(|_| BigUint::from_bytes_le(&rng.random::<[u8; 32]>()) % &modulus_integer),
             );
             let limbs = |value: &BigUint| {
                 let mut bytes = [0u8; 32];
