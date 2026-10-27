@@ -32,5 +32,5 @@ printf '#![no_std]\ncore::arch::global_asm!(include_str!("memory.S"));\n' >"$WOR
 "$LLVM_OBJDUMP" -d -r --mattr=+c -M no-aliases -M numeric "$WORK/memory.o" >"$WORK/listing"
 
 python3 -I "$HERE/extract.py" "$WORK/memory.o" "$WORK/listing" \
-  "$REPO_ROOT/jolt-platform/src/memory.S" "$HERE/CopyRuntime/Generated"
+  "$HERE/CopyRuntime/Generated"
 echo "regenerated $HERE/CopyRuntime/Generated"
