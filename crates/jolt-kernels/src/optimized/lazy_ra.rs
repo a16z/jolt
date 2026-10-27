@@ -68,6 +68,23 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     /// The scale-table index of column `i`'s hot address at unbound cycle
     /// `j`; `None` when the cycle is cold for that column.
     fn index(&self, i: usize, j: usize) -> Option<usize>;
+
+    fn gather_pairs<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        width: usize,
+        row: usize,
+        out: &mut [(F, F)],
+    ) where
+        Self: Sized,
+    {
+        for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
+            *out = (
+                gather(table, width, self, i, 2 * row),
+                gather(table, width, self, i, 2 * row + 1),
+            );
+        }
+    }
 }
 
 /// `N` address-folded selector polynomials bound `LowToHigh`, lazily until
@@ -208,12 +225,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             } => {
                 let (width, factors) = (*width, *factors);
                 if factors == 1 {
-                    for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
-                        *out = (
-                            gather(table, width, source, i, 2 * row),
-                            gather(table, width, source, i, 2 * row + 1),
-                        );
-                    }
+                    source.gather_pairs(tables, width, row, out);
                 } else {
                     for (i, (out, tables)) in
                         out.iter_mut().zip(tables.chunks_exact(factors)).enumerate()

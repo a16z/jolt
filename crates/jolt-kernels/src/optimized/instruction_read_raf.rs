@@ -364,6 +364,37 @@ impl ChunkIndexSource for LookupIndexChunks {
         let mask = (1u128 << self.chunk_bits) - 1;
         Some(((self.rows[j].lookup_index() >> shift) & mask) as usize)
     }
+
+    #[inline]
+    fn gather_pairs<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        width: usize,
+        row: usize,
+        out: &mut [(F, F)],
+    ) {
+        let mask = (1u128 << self.chunk_bits) - 1;
+        let stride = 1usize << self.chunk_bits;
+        for branch in 0..width {
+            let mut lo = self.rows[2 * row * width + branch].lookup_index();
+            let mut hi = self.rows[(2 * row + 1) * width + branch].lookup_index();
+            let base = branch * stride;
+            for (out, table) in out.iter_mut().zip(tables).rev() {
+                let pair = (
+                    table[base + (lo & mask) as usize],
+                    table[base + (hi & mask) as usize],
+                );
+                if branch == 0 {
+                    *out = pair;
+                } else {
+                    out.0 += pair.0;
+                    out.1 += pair.1;
+                }
+                lo >>= self.chunk_bits;
+                hi >>= self.chunk_bits;
+            }
+        }
+    }
 }
 
 /// Lazy-RA index source for the combined cycle value: the packed claim byte
