@@ -1,11 +1,11 @@
-//! The optimized witness-commitment kernel: the reference consumer's exact
-//! per-column call sequences, parallelized.
+//! The optimized witness-commitment kernel: the reference consumer's
+//! commitment and opening-hint semantics, parallelized.
 //!
 //! The reference kernel streams `row_width`-cycle chunks and advances every
 //! column's commitment state serially per chunk — each tier-1 group operation
 //! (one MSM or batch addition per column per chunk) runs alone on the calling
 //! thread, so the whole commit is wall-clock serial. This kernel restores the
-//! legacy prover's parallel shape on the same call sequences:
+//! legacy prover's parallel shape:
 //!
 //! - The stream delivers *superchunks* (many `row_width` windows at once), so
 //!   one extraction pass fans out to a `(column × window)` rayon grid via the
@@ -14,8 +14,9 @@
 //! - Tier-2 finishes (one multi-pairing per column) run in parallel across
 //!   columns.
 //!
-//! Per column the fed windows, their order, and the finish calls are exactly
-//! the reference kernel's, so commitments and hints are byte-identical.
+//! Whole constant padding windows reuse their deterministic one-hot row
+//! commitments; zero increment rows use the PCS zero-feed path. The logical
+//! window order and full opening hints are preserved.
 //! The materializing modes (address-major order, widened grids) and advice
 //! commits delegate to the reference kernel unchanged.
 
@@ -26,12 +27,14 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "field-inline")]
 use jolt_witness::JoltWitnessPlane;
-use jolt_witness::{
-    stream_witnesses, JoltWitnessOracle, RandomAccessRows, RowSource, StreamConsumer, WitnessError,
-};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
+#[cfg(feature = "parallel")]
+use jolt_witness::{RandomAccessRows, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "parallel")]
+use super::support::BundleAccess;
 #[cfg(feature = "field-inline")]
 use crate::commitment::FieldInlineWitnessCommitment;
 use crate::commitment::{
@@ -173,12 +176,6 @@ where
     Ok(package::<F, PCS>(consumers.0.finish(setup), ids))
 }
 
-/// The pipelined commit pass over a slice-backed source: while the column
-/// grid advances over superchunk `k`, workers extract superchunk `k + 1`
-/// into the spare buffer (two reused buffers, swapped per delivery). Per
-/// column the fed windows, their order, and the finish calls are exactly
-/// the chunk walk's — the pipeline only overlaps extraction with group
-/// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
 fn collect_range_into(
     access: &RandomAccessRows,
@@ -222,12 +219,22 @@ where
     let kinds = column_kinds(ids, grid)?;
     let mut state = BatchedColumns::<F, PCS>::begin(&kinds, row_width, grid, setup);
 
+    let prefix =
+        BundleAccess::<CommittedColumnsWitness>::View(access).constant_suffix_start(cycles)?;
+    let candidate = prefix.div_ceil(row_width) * row_width;
+    let padding = if candidate < cycles {
+        let row: CommittedColumnsWitness = access.window(candidate)?;
+        (row.rd_inc.0 == 0 && row.ram_inc.0 == 0).then_some(row)
+    } else {
+        None
+    };
+    let explicit_cycles = if padding.is_some() { candidate } else { cycles };
     let mut front: Vec<CommittedColumnsWitness> = Vec::new();
     let mut back: Vec<CommittedColumnsWitness> = Vec::new();
-    let mut end = superchunk.min(cycles);
+    let mut end = superchunk.min(explicit_cycles);
     collect_range_into(access, 0..end, &mut front)?;
     loop {
-        let next_end = (end + superchunk).min(cycles);
+        let next_end = (end + superchunk).min(explicit_cycles);
         let (fill, ()) = rayon::join(
             || {
                 if end < next_end {
@@ -243,6 +250,9 @@ where
         }
         core::mem::swap(&mut front, &mut back);
         end = next_end;
+    }
+    if let Some(row) = padding {
+        state.consume_padding(&row, cycles - explicit_cycles);
     }
     Ok(package::<F, PCS>(state.finish(setup), ids))
 }
@@ -325,6 +335,29 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitmen
         }
     }
 
+    #[cfg(feature = "parallel")]
+    fn consume_padding(&mut self, row: &CommittedColumnsWitness, cycles: usize) {
+        let windows = cycles / self.row_width;
+        debug_assert_eq!(windows * self.row_width, cycles);
+        let advance = |column: &mut ColumnCommitState<PCS>| match column {
+            ColumnCommitState::Increment { kind, partial } => {
+                debug_assert_eq!(kind.increment(row), 0);
+                PCS::feed_zeros(partial, self.row_width, windows, self.setup);
+            }
+            ColumnCommitState::OneHot {
+                kind,
+                context,
+                chunk_commitments,
+            } => {
+                let indices = vec![kind.hot_address(row); self.row_width];
+                let commitment =
+                    PCS::process_one_hot_chunk(context, self.setup, self.one_hot_k, &indices);
+                chunk_commitments.extend(std::iter::repeat_n(commitment, windows));
+            }
+        };
+        self.columns.par_iter_mut().for_each(advance);
+    }
+
     fn finish(self, setup: &PCS::ProverSetup) -> Vec<(PCS::Output, PCS::OpeningHint)> {
         let one_hot_k = self.one_hot_k;
         let finish_column = |column: ColumnCommitState<PCS>| match column {
@@ -392,7 +425,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> S
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "test module")]
 
@@ -413,16 +446,28 @@ mod tests {
         assert_eq!(reference.len(), optimized.len());
         for (reference, optimized) in reference.iter().zip(optimized) {
             assert_eq!(reference.id, optimized.id);
+            // Under ZK each commitment draws a fresh tier-2 blind, so only the
+            // deterministic row commitments are comparable across runs.
+            #[cfg(feature = "zk")]
             assert_eq!(
-                reference.commitment, optimized.commitment,
-                "{:?} commitment diverged",
+                reference.hint.row_commitments(),
+                optimized.hint.row_commitments(),
+                "{:?} row commitments diverged",
                 reference.id
             );
-            assert_eq!(
-                reference.hint, optimized.hint,
-                "{:?} hint diverged",
-                reference.id
-            );
+            #[cfg(not(feature = "zk"))]
+            {
+                assert_eq!(
+                    reference.commitment, optimized.commitment,
+                    "{:?} commitment diverged",
+                    reference.id
+                );
+                assert_eq!(
+                    reference.hint, optimized.hint,
+                    "{:?} hint diverged",
+                    reference.id
+                );
+            }
         }
     }
 
@@ -432,8 +477,14 @@ mod tests {
     /// window (multi-delivery sequencing).
     #[test]
     fn optimized_commit_matches_reference() {
+        for prefix in [0, 1, 62, 63, 64, 65, 254, 255] {
+            assert_commit_matches_reference(prefix);
+        }
+    }
+
+    fn assert_commit_matches_reference(prefix: usize) {
         let shape = FixtureShape {
-            log_t: 6,
+            log_t: 8,
             ram_k: 16,
         };
         let ops = vec![
@@ -445,6 +496,7 @@ mod tests {
             RamOp::Write { word: 2, post: 9 },
             RamOp::Read { word: 3 },
         ];
+        let ops = ops.into_iter().cycle().take(prefix).collect();
         with_ram_fixture(shape, ops, |witness| {
             let ids: Vec<JoltCommittedPolynomial> = witness
                 .committed_order()
