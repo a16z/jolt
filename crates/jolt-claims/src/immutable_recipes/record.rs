@@ -743,7 +743,10 @@ impl Capture {
             };
             // An inline const gives the record slice a 'static lifetime; a plain `&[...]`
             // argument holding constructor calls is a temporary that a static cannot borrow.
-            write!(writer, "pub static {family}:{table}=match {table}::new(const {{&[")?;
+            write!(
+                writer,
+                "pub static {family}:{table}=match {table}::new(const {{&["
+            )?;
             for record in &self.records {
                 match &record.record {
                     Captured::Jolt(record) if family == "JOLT" => record.render(writer)?,
@@ -752,7 +755,8 @@ impl Capture {
                     _ => {}
                 }
             }
-            writer.write_str("]}){Ok(table)=>table,Err(_)=>panic!(\"invalid closed table\")};\n")?;
+            writer
+                .write_str("]}){Ok(table)=>table,Err(_)=>panic!(\"invalid closed table\")};\n")?;
         }
         Ok(())
     }
