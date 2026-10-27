@@ -1069,18 +1069,19 @@ fn tamper_l2(
 }
 
 /// Guest build settings the verifier guest uses by default (feature
-/// `guest-codegen`): a higher LLVM inline threshold and one codegen unit for
-/// the guest's release profile. Measured as the fewest trace rows of the
-/// guest build configurations screened at inner sizes 2^12 and 2^20; the inner
-/// proofs are unchanged. A value the caller already set for either variable
-/// wins, and `RECURSION_GUEST_CODEGEN=off` (or building without the feature)
-/// restores the stock guest build.
-const RECURSION_GUEST_CODEGEN: [(&str, &str); 2] = [
+/// `guest-codegen`): a higher LLVM inline threshold, one codegen unit and no
+/// debug information for the guest's release profile. Measured as the fewest
+/// trace rows of the guest build configurations screened at inner sizes 2^12
+/// and 2^20; the inner proofs are unchanged. A value the caller already set for
+/// any of these variables wins, and `RECURSION_GUEST_CODEGEN=off` (or building
+/// without the feature) restores the stock guest build.
+const RECURSION_GUEST_CODEGEN: [(&str, &str); 3] = [
     (
         "ZEROOS_GUEST_RUSTFLAGS",
         "-Cllvm-args=-inline-threshold=1750 -Cllvm-args=-enable-gvn-hoist -Cllvm-args=-enable-dfa-jump-thread -Cllvm-args=-enable-ext-tsp-block-placement -Cllvm-args=-enable-tail-merge=false -Cllvm-args=-split-spill-mode=size -Cllvm-args=-riscv-disable-cost-per-use=true -Cllvm-args=-phi-elim-split-all-critical-edges=true -Cllvm-args=-no-phi-elim-live-out-early-exit=true -Cllvm-args=-enable-spill-copy-elim=true -Cllvm-args=-enable-post-misched=true",
     ),
     ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+    ("CARGO_PROFILE_RELEASE_DEBUG", "0"),
 ];
 
 /// Content key of the verifier-guest build for the optional ELF cache
