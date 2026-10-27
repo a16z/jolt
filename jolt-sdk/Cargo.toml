@@ -16,7 +16,10 @@ edition = "2021"
 
 [features]
 immutable-recipes = ["jolt-verifier?/immutable-recipes"]
-immutable-recipes-record = ["immutable-recipes", "jolt-verifier?/immutable-recipes-record"]
+immutable-recipes-record = [
+  "immutable-recipes",
+  "jolt-verifier?/immutable-recipes-record",
+]
 default = ["jolt-platform/random"]
 # std guests: route Rust allocations to jolt-platform's O(1) size-class
 # arena instead of musl's malloc over ZeroOS's first-fit heap.

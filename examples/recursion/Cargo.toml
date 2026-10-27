@@ -10,7 +10,17 @@ path = "src/main.rs"
 [features]
 terminal-contraction = ["jolt-akita?/terminal-contraction"]
 segment-setup = ["jolt-akita?/segment-setup"]
-immutable-recipes = ["akita", "field-inline", "jolt-sdk/immutable-recipes", "jolt-sdk/immutable-recipes-record", "dep:jolt-claims", "jolt-claims/immutable-recipes-record", "dep:jolt-field", "dep:sha2", "dep:hex"]
+immutable-recipes = [
+  "akita",
+  "field-inline",
+  "jolt-sdk/immutable-recipes",
+  "jolt-sdk/immutable-recipes-record",
+  "dep:jolt-claims",
+  "jolt-claims/immutable-recipes-record",
+  "dep:jolt-field",
+  "dep:sha2",
+  "dep:hex",
+]
 immutable-recipes-record = ["immutable-recipes", "dep:serde_json"]
 word-memory = []
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
@@ -57,7 +67,19 @@ akita = [
 # weighted-dot-horner: the verifier guest evaluates each weighted dot whose 64
 # powers are geometric, with at least five rows, by a five-row reverse Horner
 # recurrence in field registers; same field values. Default on.
-default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry", "rowptr-registers", "tensor-eq-runs", "setup-sop-structured", "segment-setup", "weighted-dot-horner"]
+default = [
+  "l3-compression-weights",
+  "l2-terminal-quotient",
+  "word-decode",
+  "word-memory",
+  "guest-codegen",
+  "tensor-no-carry",
+  "rowptr-registers",
+  "tensor-eq-runs",
+  "setup-sop-structured",
+  "segment-setup",
+  "weighted-dot-horner",
+]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
